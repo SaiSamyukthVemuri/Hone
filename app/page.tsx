@@ -1,14 +1,12 @@
-import Link from "next/link";
 import { Reveal } from "./_components/Reveal";
 import { WaitlistForm } from "./_components/WaitlistForm";
-
-const PALETTE = {
-  bg: "#FAFAF7",
-  ink: "#0A0A0A",
-  muted: "#6B6B6B",
-  rule: "#E5E2DA",
-  card: "#FFFFFF",
-} as const;
+import { MarketingHeader } from "./_components/MarketingHeader";
+import { MarketingFooter } from "./_components/MarketingFooter";
+import {
+  EyebrowCaption,
+  Hairline,
+} from "./_components/MarketingAtoms";
+import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 
 export default function HomePage() {
   return (
@@ -20,52 +18,20 @@ export default function HomePage() {
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
-      <SiteHeader />
+      <MarketingHeader />
       <Hero />
       <EditorialObservation />
       <HowItWorks />
       <CheatSheetPreview />
       <BuiltForTheWork />
       <CaseForTryingIt />
-      <SiteFooter />
+      <WhatHoneIsNot />
+      <MarketingFooter />
     </main>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Header
- * ────────────────────────────────────────────────────────────────────────── */
-
-function SiteHeader() {
-  return (
-    <header
-      className="px-6 py-5 md:px-12 lg:px-16"
-      style={{ borderBottom: `1px solid ${PALETTE.rule}` }}
-    >
-      <div className="mx-auto flex max-w-[1400px] items-baseline justify-between">
-        <div className="flex items-baseline gap-2">
-          <span
-            className="font-[var(--font-fraunces)] text-[18px] font-bold"
-            style={{ letterSpacing: "-0.02em" }}
-          >
-            Hone
-          </span>
-          <Caption>— Est. 2026</Caption>
-        </div>
-        <Link
-          href="/login"
-          className="text-[14px] font-medium hover:underline"
-        >
-          Sign in
-        </Link>
-      </div>
-    </header>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * Hero
- * ────────────────────────────────────────────────────────────────────────── */
+/* Hero ─────────────────────────────────────────────────────────────────── */
 
 function Hero() {
   return (
@@ -74,7 +40,9 @@ function Hero() {
       className="px-6 pb-32 pt-24 md:px-12 md:pb-40 md:pt-32 lg:px-16"
     >
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Charting software for electrologists</EyebrowCaption>
+        <EyebrowCaption>
+          Charting software for electrolysis and laser practitioners
+        </EyebrowCaption>
 
         <h1
           className="font-[var(--font-fraunces)] mt-10 max-w-[980px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
@@ -82,7 +50,7 @@ function Hero() {
         >
           Software <em>for</em> the
           <br />
-          two-minute window
+          two minute window
           <br />
           between clients.
         </h1>
@@ -92,13 +60,18 @@ function Hero() {
           style={{ color: PALETTE.ink }}
         >
           Type a name. See last session&rsquo;s settings. Log this one. Move on.
-          Built for the way electrologists actually chart.
+          Built for the way electrolysis and laser practitioners actually chart.
         </p>
 
-        <div className="mt-[72px] max-w-[700px]">
+        <div id="request-access" className="mt-[72px] max-w-[700px]">
           <EyebrowCaption>Request access</EyebrowCaption>
           <div className="mt-6">
             <WaitlistForm />
+          </div>
+          <div className="mt-12">
+            <EyebrowCaption>
+              Works on iPad, laptop, and phone
+            </EyebrowCaption>
           </div>
         </div>
       </div>
@@ -106,9 +79,7 @@ function Hero() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Editorial — the observation
- * ────────────────────────────────────────────────────────────────────────── */
+/* Editorial observation ────────────────────────────────────────────────── */
 
 function EditorialObservation() {
   return (
@@ -116,10 +87,13 @@ function EditorialObservation() {
       <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-16 gap-y-12 md:grid-cols-12">
         <div className="md:col-span-7">
           <h2
-            className="font-[var(--font-fraunces)] text-[64px] font-bold leading-[0.9] md:text-[120px]"
+            className="font-[var(--font-fraunces)] text-[56px] font-bold leading-[0.95] md:text-[96px]"
             style={{ letterSpacing: "-0.04em" }}
           >
-            <span className="block">Most studios</span>
+            <span className="block">
+              Most <em>electrolysis</em>
+            </span>
+            <span className="block">and laser studios</span>
             <em className="block">still</em>
             <span className="block">chart on paper.</span>
           </h2>
@@ -128,9 +102,10 @@ function EditorialObservation() {
           <p className="text-[18px] leading-[1.55] md:text-[21px]">
             Paper, because every software alternative is worse than paper.
             Booking platforms handle bookings. Medical records handle medical
-            records. The chart you actually keep — the precise log of every
-            needle, every setting, every reaction — has lived on paper because
-            the digital options have all been built for someone else.
+            records. Spa software handles inventory and retail. The chart you
+            actually keep, the precise log of every needle, every pulse, every
+            reaction, has lived on paper because the digital options have all
+            been built for someone else.
           </p>
           <p className="text-[18px] leading-[1.55] md:text-[21px]">
             Hone is the first one built for you.
@@ -141,9 +116,7 @@ function EditorialObservation() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * How it works
- * ────────────────────────────────────────────────────────────────────────── */
+/* How it works ─────────────────────────────────────────────────────────── */
 
 const HOW_STEPS: ReadonlyArray<{
   numeral: string;
@@ -170,7 +143,7 @@ const HOW_STEPS: ReadonlyArray<{
 function HowItWorks() {
   return (
     <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
-      <div className="mx-auto max-w-[1400px]">
+      <div id="how-it-works" className="mx-auto max-w-[1400px]">
         <h2
           className="font-[var(--font-fraunces)] max-w-[800px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
           style={{ letterSpacing: "-0.03em" }}
@@ -208,9 +181,7 @@ function HowItWorks() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Product preview — the cheat sheet
- * ────────────────────────────────────────────────────────────────────────── */
+/* Product preview, the cheat sheet ─────────────────────────────────────── */
 
 function CheatSheetPreview() {
   return (
@@ -328,8 +299,7 @@ function CheatSheetMockup() {
       <div className="mt-5">
         <p className="text-[18px] font-medium">Chin</p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          F3 · Blend · Picoflash · Pulse count 2 · Intensity 40 · Duration
-          0.08s
+          F3 · Blend · Pulse count 2 · Intensity 40 · Duration 0.08s
         </p>
         <p className="font-[var(--font-fraunces)] mt-3 text-[16px] italic">
           Dehydrated follicles, hyperpigmentation. Client tolerated well.
@@ -357,18 +327,16 @@ function SkinRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Built for the work — 8-item grid
- * ────────────────────────────────────────────────────────────────────────── */
+/* Built for the work, 10 item grid ─────────────────────────────────────── */
 
 const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
   {
     title: "Areas as taps, not menus",
-    body: "Upper lip, chin, full face, Brazilian — visible at a glance, one tap to select.",
+    body: "Upper lip, chin, full face, Brazilian. Visible at a glance, one tap to select.",
   },
   {
     title: "Match your machine",
-    body: "Thermolysis, Blend, Galvanic — ordered the way your Apilus is ordered. Probe sizes you actually use.",
+    body: "Thermolysis, Blend, Galvanic, ordered the way your machine is. Probe sizes you actually use. Laser parameters that match what's on your screen.",
   },
   {
     title: "Pulse counts and probe lots",
@@ -393,6 +361,14 @@ const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
   {
     title: "No clipboard, no filing cabinet",
     body: "Searchable client history that never gets lost in a move.",
+  },
+  {
+    title: "Built for both modalities",
+    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number. One tool for studios that do both.",
+  },
+  {
+    title: "Works on what you have",
+    body: "iPad in the treatment room. Laptop at the front desk. Phone for the solo practitioner. No app to install.",
   },
 ];
 
@@ -429,9 +405,7 @@ function BuiltForTheWork() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * The case for trying it
- * ────────────────────────────────────────────────────────────────────────── */
+/* The case for trying it ───────────────────────────────────────────────── */
 
 function CaseForTryingIt() {
   return (
@@ -447,30 +421,32 @@ function CaseForTryingIt() {
               C
             </span>
             <span>harting is the hidden tax</span> of running an electrolysis
-            studio. Between every client there&rsquo;s two or three minutes
-            where you write down what just happened — probe size, intensity,
-            mode, duration, area, comments. Multiply that across a day.
-            Multiply across a year. It&rsquo;s hours of your life every week
+            or laser clinic. Between every client there are two or three
+            minutes where you write down what just happened. Probe size,
+            intensity, mode, duration, area, comments. Or zone, fluence,
+            pulse width, treatment number, observations. Multiply that across
+            a day. Multiply across a year. Hours of your life every week
             that you cannot bill for.
           </p>
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
             Software has not fixed this because nobody has built software for
             it. Booking platforms handle bookings. Medical records handle
-            medical records. The chart that an electrologist actually keeps —
-            the small precise log of every needle and every setting — has
+            medical records. Salon and spa software handles inventory and
+            retail. The chart that a practitioner actually keeps, the small
+            precise log of every needle, every pulse, every setting, has
             lived on paper because the alternatives have been worse than
             paper.
           </p>
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
             Hone is the first alternative that is not worse than paper. It is
             faster than writing. It remembers everything. It hands you the
-            last session in the time it takes to glance at a clipboard. And
-            it does this without asking you to learn a new way to chart,
-            change your machine, or memorize anyone&rsquo;s interface.
+            last session in the time it takes to glance at a clipboard. It
+            does this without asking you to learn a new way to chart, change
+            your machine, or memorize anyone&rsquo;s interface.
           </p>
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
-            If you run a studio and want to be among the first to use it,
-            request access at the top of this page.
+            If you run a clinic and want to be among the first to use it,
+            request access at the top of this page or see pricing below.
           </p>
         </div>
       </div>
@@ -478,76 +454,52 @@ function CaseForTryingIt() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Footer
- * ────────────────────────────────────────────────────────────────────────── */
+/* What Hone is not ─────────────────────────────────────────────────────── */
 
-function SiteFooter() {
+const NOT_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
+  {
+    title: "Not booking software",
+    body: "Calendars, reminders, online scheduling. There are good tools for that. Hone is not one of them.",
+  },
+  {
+    title: "Not med spa software",
+    body: "Botox units, retail inventory, multi-service product catalogs. Hone is built for the chart, not the storefront.",
+  },
+  {
+    title: "Not aesthetics software",
+    body: "Facials, peels, microblading. Hone is for hair removal practitioners, and only hair removal practitioners.",
+  },
+  {
+    title: "Not for hospitals or clinics",
+    body: "We don't do EMR. We don't do OHIP. We don't do insurance. We do the precise log of what you did and how.",
+  },
+];
+
+function WhatHoneIsNot() {
   return (
-    <footer
-      className="px-6 py-16 md:px-12 lg:px-16"
-      style={{ borderTop: `1px solid ${PALETTE.rule}` }}
-    >
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-3">
-        <p
-          className="font-[var(--font-fraunces)] text-[14px] font-bold"
-          style={{ letterSpacing: "-0.02em" }}
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>What Hone is not</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
         >
-          Hone
-        </p>
-        <Caption>
-          Charting software for electrologists · A Saltkiln product · Est. 2026
-        </Caption>
-        <p
-          className="text-[12px] font-medium uppercase"
-          style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
-        >
-          © 2026 Saltkiln ·{" "}
-          <Link href="/login" className="hover:underline">
-            Sign in
-          </Link>{" "}
-          · Privacy
-        </p>
+          Not a spa. Not a med spa.
+          <br />
+          Not a booking platform.
+        </h2>
+
+        <div className="mt-20 grid grid-cols-1 gap-x-12 gap-y-10 md:grid-cols-2">
+          {NOT_ITEMS.map((item) => (
+            <div key={item.title}>
+              <h3 className="text-[18px] font-medium leading-[1.3]">
+                {item.title}
+              </h3>
+              <p className="mt-3 text-[16px] leading-[1.65]">{item.body}</p>
+            </div>
+          ))}
+        </div>
       </div>
-    </footer>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * Shared atoms
- * ────────────────────────────────────────────────────────────────────────── */
-
-function EyebrowCaption({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="flex items-center text-[12px] font-medium uppercase">
-      <span
-        aria-hidden="true"
-        className="mr-4 inline-block h-px w-8"
-        style={{ backgroundColor: PALETTE.ink }}
-      />
-      <span style={{ letterSpacing: "0.2em" }}>{children}</span>
-    </p>
-  );
-}
-
-function Caption({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="text-[10px] font-medium uppercase"
-      style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Hairline({ className = "" }: { className?: string }) {
-  return (
-    <div
-      className={className}
-      style={{ height: "1px", backgroundColor: PALETTE.rule }}
-      role="separator"
-      aria-hidden="true"
-    />
+    </Reveal>
   );
 }

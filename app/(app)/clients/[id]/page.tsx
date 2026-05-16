@@ -22,7 +22,7 @@ function formatPrice(cents: number): string {
 }
 
 function fitzpatrickLabel(value: number | null): string {
-  if (value == null) return "—";
+  if (value == null) return "Not set";
   const match = FITZPATRICK_TYPES.find((f) => f.value === value);
   return match ? match.label : String(value);
 }
@@ -138,7 +138,7 @@ export default async function ClientCheatSheetPage({
           </h2>
           {pricing.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              No custom pricing — studio defaults apply.
+              No custom pricing. Studio defaults apply.
             </p>
           ) : (
             <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -194,7 +194,7 @@ export default async function ClientCheatSheetPage({
             </div>
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-neutral-500">Date of birth</dt>
-              <dd className="font-medium">{client.date_of_birth ?? "—"}</dd>
+              <dd className="font-medium">{client.date_of_birth ?? "Not set"}</dd>
             </div>
           </dl>
           {client.skin_notes && (

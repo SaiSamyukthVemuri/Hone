@@ -167,7 +167,7 @@ export function LogElectrolysisEntryForm({
             onChange={(e) => update("probe_lot_id", e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           >
-            <option value="">—</option>
+            <option value="">None</option>
             {probeLots.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.probe_size}
@@ -255,7 +255,7 @@ export function LogElectrolysisEntryForm({
             +
           </button>
           <span className="self-center text-xs text-neutral-500">
-            Pulses per hair (1–{PULSE_COUNT_MAX}).
+            Pulses per hair (1 to {PULSE_COUNT_MAX}).
           </span>
         </div>
       </div>

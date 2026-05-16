@@ -52,7 +52,7 @@ export function ClientSearch({
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{c.name}</div>
                   <div className="truncate text-xs text-neutral-500">
-                    {[c.pronouns, c.phone, c.email].filter(Boolean).join(" · ") || "—"}
+                    {[c.pronouns, c.phone, c.email].filter(Boolean).join(" · ") || ""}
                   </div>
                 </div>
                 <span className="text-sm text-neutral-400">›</span>

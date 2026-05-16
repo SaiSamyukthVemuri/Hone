@@ -106,7 +106,7 @@ export function SessionInfoCard({
           onChange={(e) => handlePerformerChange(e.target.value)}
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         >
-          <option value="">— Select practitioner —</option>
+          <option value="">Select practitioner</option>
           {practitioners.map((p) => (
             <option key={p.id} value={p.id}>
               {p.display_name}

@@ -237,7 +237,7 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
   return (data ?? []) as ProbeLot[];
 }
 
-// Returns clients with a session that started today (in the studio's timezone — naive: server time).
+// Returns clients with a session that started today (in the studio's timezone, naive: server time).
 export async function getTodayRosterForStudio(studioId: string): Promise<
   Array<{ client: Client; sessions: Session[] }>
 > {

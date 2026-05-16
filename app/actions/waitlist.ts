@@ -21,7 +21,7 @@ export async function submitWaitlistEntry(
     .insert({ email: normalized, source: "landing" });
 
   if (error) {
-    // Treat duplicate as success — the email is on the list either way.
+    // Treat duplicate as success: the email is on the list either way.
     if (error.code === PG_UNIQUE_VIOLATION) {
       return { ok: true };
     }
