@@ -10,6 +10,5 @@ if (!apiKey) {
 
 export const resend = apiKey ? new Resend(apiKey) : null;
 
-// Until a verified hone.care sender exists in Resend, use Resend's onboarding
-// sandbox sender. Replace with "Hone <hello@hone.care>" once DNS is wired up.
-export const FROM_ADDRESS = "Hone <onboarding@resend.dev>";
+// hone.care is verified in Resend.
+export const FROM_ADDRESS = "Hone <hello@hone.care>";
