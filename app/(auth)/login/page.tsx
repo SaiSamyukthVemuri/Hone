@@ -66,20 +66,22 @@ export default function LoginPage() {
         color: PALETTE.ink,
         fontFeatureSettings: '"cv11"',
       }}
-      className="flex min-h-screen flex-col items-center justify-center px-6 py-16 font-[var(--font-inter)]"
+      className="flex min-h-screen items-center justify-center px-6 font-[var(--font-inter)]"
     >
-      <div className="w-full max-w-[420px]">
-        <Link
-          href="/"
-          className="font-[var(--font-fraunces)] mb-12 inline-block text-[28px] font-bold leading-none"
-          style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
-        >
-          Hone
-        </Link>
+      <div className="mx-auto w-full max-w-[420px] py-12">
+        <div className="mb-12 text-center">
+          <Link
+            href="/"
+            className="font-[var(--font-fraunces)] inline-block text-[28px] font-bold leading-none"
+            style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
+          >
+            Hone
+          </Link>
+        </div>
 
         <h1
-          className="font-[var(--font-fraunces)] mb-12 text-[40px] font-bold leading-[0.95] md:text-[48px]"
-          style={{ letterSpacing: "-0.03em", color: PALETTE.ink }}
+          className="font-[var(--font-fraunces)] mb-10 text-center text-[36px] font-bold leading-[1]"
+          style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
         >
           Sign in to Hone
         </h1>
@@ -92,7 +94,7 @@ export default function LoginPage() {
               type="button"
               onClick={handleGoogle}
               disabled={isBusy}
-              className="w-full px-6 py-3 text-[14px] font-medium transition-colors disabled:opacity-50 md:w-auto md:min-w-[260px]"
+              className="mx-auto mb-6 block w-full px-6 py-3 text-[14px] font-medium transition-colors disabled:opacity-50"
               style={{
                 border: `1px solid ${PALETTE.ink}`,
                 backgroundColor: "#FFFFFF",
@@ -108,7 +110,7 @@ export default function LoginPage() {
               {status.kind === "google" ? "Connecting" : "Continue with Google"}
             </button>
 
-            <div className="my-10 flex items-center gap-4">
+            <div className="mb-6 flex items-center gap-4">
               <span
                 aria-hidden="true"
                 className="h-px flex-1"
@@ -127,34 +129,34 @@ export default function LoginPage() {
               />
             </div>
 
-            <form onSubmit={handleMagicLink} className="flex flex-col gap-8">
-              <label className="flex flex-col gap-3">
-                <span
-                  className="text-[14px] font-medium"
-                  style={{ color: PALETTE.ink }}
-                >
-                  Email
-                </span>
-                <input
-                  type="email"
-                  required
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@studio.com"
-                  disabled={isBusy}
-                  className="bg-transparent pb-3 text-[18px] leading-none outline-none placeholder:text-[#6B6B6B] disabled:opacity-60"
-                  style={{
-                    borderBottom: `1px solid ${PALETTE.ink}`,
-                    color: PALETTE.ink,
-                  }}
-                />
+            <form onSubmit={handleMagicLink}>
+              <label
+                htmlFor="login-email"
+                className="mb-2 block text-left text-[14px] font-medium"
+                style={{ color: PALETTE.ink }}
+              >
+                Email
               </label>
+              <input
+                id="login-email"
+                type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@studio.com"
+                disabled={isBusy}
+                className="mb-8 block w-full bg-transparent pb-3 text-[18px] leading-none outline-none placeholder:text-[#6B6B6B] disabled:opacity-60"
+                style={{
+                  borderBottom: `1px solid ${PALETTE.ink}`,
+                  color: PALETTE.ink,
+                }}
+              />
 
               <button
                 type="submit"
                 disabled={isBusy}
-                className="w-full px-8 py-4 text-[14px] font-medium uppercase transition-opacity hover:opacity-90 disabled:opacity-50 md:w-auto md:min-w-[260px]"
+                className="mb-10 block w-full px-8 py-4 text-[14px] font-medium uppercase transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{
                   backgroundColor: PALETTE.ink,
                   color: PALETTE.bg,
@@ -165,14 +167,17 @@ export default function LoginPage() {
               </button>
 
               {status.kind === "error" && (
-                <p className="text-[13px]" style={{ color: "#B91C1C" }}>
+                <p
+                  className="mb-6 text-center text-[13px]"
+                  style={{ color: "#B91C1C" }}
+                >
                   {status.message}
                 </p>
               )}
             </form>
 
             <p
-              className="mt-12 text-[12px] leading-[1.55]"
+              className="text-center text-[12px] leading-[1.55]"
               style={{ color: PALETTE.muted }}
             >
               Trouble signing in? Email{" "}
@@ -192,7 +197,7 @@ export default function LoginPage() {
 
 function SentNotice({ email }: { email: string }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col items-center gap-3 text-center">
       <p
         className="font-[var(--font-fraunces)] text-[24px] leading-[1.2]"
         style={{ color: PALETTE.ink, letterSpacing: "-0.02em" }}
