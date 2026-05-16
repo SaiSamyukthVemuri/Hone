@@ -25,7 +25,6 @@ export default function HomePage() {
       <CheatSheetPreview />
       <BuiltForTheWork />
       <CaseForTryingIt />
-      <WhatHoneIsNot />
       <MarketingFooter />
     </main>
   );
@@ -454,52 +453,3 @@ function CaseForTryingIt() {
   );
 }
 
-/* What Hone is not ─────────────────────────────────────────────────────── */
-
-const NOT_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
-  {
-    title: "Not booking software",
-    body: "Calendars, reminders, online scheduling. There are good tools for that. Hone is not one of them.",
-  },
-  {
-    title: "Not med spa software",
-    body: "Botox units, retail inventory, multi-service product catalogs. Hone is built for the chart, not the storefront.",
-  },
-  {
-    title: "Not aesthetics software",
-    body: "Facials, peels, microblading. Hone is for hair removal practitioners, and only hair removal practitioners.",
-  },
-  {
-    title: "Not for hospitals or clinics",
-    body: "We don't do EMR. We don't do OHIP. We don't do insurance. We do the precise log of what you did and how.",
-  },
-];
-
-function WhatHoneIsNot() {
-  return (
-    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
-      <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>What Hone is not</EyebrowCaption>
-        <h2
-          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
-          style={{ letterSpacing: "-0.03em" }}
-        >
-          Not a spa. Not a med spa.
-          <br />
-          Not a booking platform.
-        </h2>
-
-        <div className="mt-20 grid grid-cols-1 gap-x-12 gap-y-10 md:grid-cols-2">
-          {NOT_ITEMS.map((item) => (
-            <div key={item.title}>
-              <h3 className="text-[18px] font-medium leading-[1.3]">
-                {item.title}
-              </h3>
-              <p className="mt-3 text-[16px] leading-[1.65]">{item.body}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Reveal>
-  );
-}
