@@ -118,6 +118,20 @@ export type Photo = {
   taken_at: string;
 };
 
+export type InvitationStatus = "pending" | "accepted" | "revoked";
+
+export type PendingInvitation = {
+  id: string;
+  studio_id: string;
+  email: string;
+  invited_by: string | null;
+  role: PractitionerRole;
+  display_name: string | null;
+  status: InvitationStatus;
+  created_at: string;
+  accepted_at: string | null;
+};
+
 export type AuditLog = {
   id: string;
   studio_id: string;

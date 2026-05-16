@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { isAdmin } from "@/lib/admin";
 import { signOut } from "./dashboard/actions";
 
 export default async function AppLayout({
@@ -8,6 +9,8 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const isOwner = practitioner.role === "owner";
+  const admin = isAdmin(practitioner.email);
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -33,6 +36,22 @@ export default async function AppLayout({
               >
                 Clients
               </Link>
+              {isOwner && (
+                <Link
+                  href="/settings/studio"
+                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                >
+                  Settings
+                </Link>
+              )}
+              {admin && (
+                <Link
+                  href="/admin"
+                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                >
+                  Admin
+                </Link>
+              )}
             </nav>
           </div>
           <div className="flex items-center gap-4">
