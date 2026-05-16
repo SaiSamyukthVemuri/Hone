@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { markDemoContactedAction } from "./actions";
 
 type StudioRow = {
@@ -40,16 +41,6 @@ type DemoRequestRow = {
   status: string | null;
   created_at: string;
 };
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 async function loadDashboard(): Promise<{
   studios: StudioRow[];
@@ -228,7 +219,7 @@ function StudiosSection({ studios }: { studios: StudioRow[] }) {
                 <Td className="tabular-nums">{s.practitioner_count}</Td>
                 <Td className="tabular-nums">{s.client_count}</Td>
                 <Td className="text-neutral-500">
-                  {formatDateTime(s.created_at)}
+                  <FormattedDateTime iso={s.created_at} />
                 </Td>
               </tr>
             ))}
@@ -267,7 +258,7 @@ function PractitionersSection({
                 <Td>{p.studio_name}</Td>
                 <Td>{p.role}</Td>
                 <Td className="text-neutral-500">
-                  {formatDateTime(p.created_at)}
+                  <FormattedDateTime iso={p.created_at} />
                 </Td>
               </tr>
             ))}
@@ -307,7 +298,7 @@ function WaitlistSection({
                   {r.practice_name ?? ""}
                 </Td>
                 <Td className="text-neutral-500">
-                  {formatDateTime(r.created_at)}
+                  <FormattedDateTime iso={r.created_at} />
                 </Td>
               </tr>
             ))}
@@ -351,7 +342,7 @@ function DemoRequestsSection({ rows }: { rows: DemoRequestRow[] }) {
                 <Td>{r.current_tool ?? ""}</Td>
                 <Td>{r.status ?? "new"}</Td>
                 <Td className="text-neutral-500">
-                  {formatDateTime(r.created_at)}
+                  <FormattedDateTime iso={r.created_at} />
                 </Td>
                 <Td>
                   {r.status !== "contacted" && (

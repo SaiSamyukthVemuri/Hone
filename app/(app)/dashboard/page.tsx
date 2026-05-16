@@ -5,13 +5,10 @@ import {
   getTodayRosterForStudio,
 } from "@/lib/supabase/queries";
 import { ClientSearch } from "@/components/client-search";
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import {
+  FormattedDateTime,
+  FormattedToday,
+} from "@/components/formatted-date-time";
 
 export default async function DashboardPage() {
   const { studio } = await getCurrentPractitionerWithStudio();
@@ -20,16 +17,12 @@ export default async function DashboardPage() {
     getClientsForStudio(studio.id),
   ]);
 
-  const today = new Date().toLocaleDateString([], {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
-
   return (
     <div className="flex flex-col gap-10">
       <section>
-        <p className="text-xs uppercase tracking-wider text-neutral-500">{today}</p>
+        <p className="text-xs uppercase tracking-wider text-neutral-500">
+          <FormattedToday format="weekday-date" />
+        </p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">Today</h1>
       </section>
 
@@ -59,9 +52,17 @@ export default async function DashboardPage() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{client.name}</div>
                     <div className="truncate text-xs text-neutral-500">
-                      {sessions
-                        .map((s) => `${formatTime(s.started_at)} · ${s.modality}`)
-                        .join("   ")}
+                      {sessions.map((s, i) => (
+                        <span key={s.id}>
+                          {i > 0 && "   "}
+                          <FormattedDateTime
+                            iso={s.started_at}
+                            format="time"
+                          />
+                          {" · "}
+                          {s.modality}
+                        </span>
+                      ))}
                     </div>
                   </div>
                   <span className="text-sm text-neutral-400">›</span>

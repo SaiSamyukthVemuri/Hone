@@ -12,6 +12,7 @@ import {
   LaserEntryRow,
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   addClientPricingAction,
   deleteClientPricingAction,
@@ -25,16 +26,6 @@ function fitzpatrickLabel(value: number | null): string {
   if (value == null) return "Not set";
   const match = FITZPATRICK_TYPES.find((f) => f.value === value);
   return match ? match.label : String(value);
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function telHref(phone: string): string {
@@ -239,7 +230,7 @@ export default async function ClientCheatSheetPage({
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">
-                  {formatDate(lastSession.started_at)}
+                  <FormattedDateTime iso={lastSession.started_at} />
                 </div>
                 <div className="text-xs text-neutral-500">
                   {lastSession.modality}

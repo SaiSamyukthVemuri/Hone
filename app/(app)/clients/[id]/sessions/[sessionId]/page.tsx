@@ -12,6 +12,7 @@ import { LogElectrolysisEntryForm } from "@/components/log-electrolysis-entry-fo
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import {
@@ -22,16 +23,6 @@ import {
   updateSessionPerformerAction,
   updateSessionPriceAction,
 } from "./actions";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export default async function SessionDetailPage({
   params,
@@ -87,7 +78,7 @@ export default async function SessionDetailPage({
             {session.modality} session
           </h1>
           <p className="text-sm text-neutral-500">
-            Started {formatDate(session.started_at)}
+            Started <FormattedDateTime iso={session.started_at} />
           </p>
         </div>
         {performerName && (

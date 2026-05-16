@@ -1,22 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import type {
   Client,
   PendingInvitation,
   Practitioner,
   Studio,
 } from "@/lib/types/database";
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 async function loadStudio(id: string): Promise<{
   studio: Studio | null;
@@ -91,7 +82,7 @@ export default async function AdminStudioPage({
           {" · "}
           {studio.owner_email}
           {" · created "}
-          {formatDateTime(studio.created_at)}
+          <FormattedDateTime iso={studio.created_at} />
         </p>
       </header>
 
@@ -121,7 +112,7 @@ export default async function AdminStudioPage({
                   </td>
                   <td className="px-3 py-2">{p.role}</td>
                   <td className="px-3 py-2 text-neutral-500">
-                    {formatDateTime(p.created_at)}
+                    <FormattedDateTime iso={p.created_at} />
                   </td>
                 </tr>
               ))}
@@ -179,7 +170,7 @@ export default async function AdminStudioPage({
                       {inv.display_name ?? ""}
                     </td>
                     <td className="px-3 py-2 text-neutral-500">
-                      {formatDateTime(inv.created_at)}
+                      <FormattedDateTime iso={inv.created_at} />
                     </td>
                   </tr>
                 ))}

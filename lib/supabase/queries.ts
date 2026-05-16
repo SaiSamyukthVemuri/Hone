@@ -93,7 +93,9 @@ export function sessionPerformerName(
 ): string | null {
   const id = session.performed_by_practitioner_id ?? session.practitioner_id;
   if (!id) return null;
-  return practitioners.find((p) => p.id === id)?.display_name ?? null;
+  const match = practitioners.find((p) => p.id === id);
+  if (!match) return null;
+  return match.display_name?.trim() ? match.display_name : match.email;
 }
 
 export async function getClientById(

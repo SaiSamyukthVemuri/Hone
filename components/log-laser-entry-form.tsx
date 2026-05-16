@@ -75,6 +75,7 @@ export function LogLaserEntryForm({
   // Once the practitioner touches the treatment number we stop auto-suggesting from zone changes.
   const [treatmentTouched, setTreatmentTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSaved, setShowSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -120,6 +121,8 @@ export function LogLaserEntryForm({
         await action(fd);
         setState(emptyState());
         setTreatmentTouched(false);
+        setShowSaved(true);
+        window.setTimeout(() => setShowSaved(false), 1500);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -279,6 +282,14 @@ export function LogLaserEntryForm({
         >
           Clear
         </button>
+        {showSaved && (
+          <span
+            className="text-sm text-green-600 dark:text-green-400"
+            aria-live="polite"
+          >
+            Saved
+          </span>
+        )}
       </div>
     </form>
   );

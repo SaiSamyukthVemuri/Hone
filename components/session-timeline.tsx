@@ -5,16 +5,7 @@ import {
 } from "@/lib/supabase/queries";
 import type { Practitioner } from "@/lib/types/database";
 import { ElectrolysisEntryRow, LaserEntryRow } from "./entry-row";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import { FormattedDateTime } from "./formatted-date-time";
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -53,7 +44,7 @@ export function SessionTimeline({
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">
-                    {formatDate(s.started_at)}
+                    <FormattedDateTime iso={s.started_at} />
                   </div>
                   <div className="text-xs text-neutral-500">
                     {s.modality} · {entryCount(s)}{" "}

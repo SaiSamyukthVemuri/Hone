@@ -13,12 +13,11 @@ export default async function SettingsLayout({
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        {isOwner && (
-          <nav className="mt-6 flex items-center gap-1 border-b border-neutral-200 dark:border-neutral-800">
-            <SettingsTab href="/settings/studio" label="Studio" />
-            <SettingsTab href="/settings/team" label="Team" />
-          </nav>
-        )}
+        <nav className="mt-6 flex items-center gap-1 border-b border-neutral-200 dark:border-neutral-800">
+          <SettingsTab href="/settings/profile" label="Profile" />
+          {isOwner && <SettingsTab href="/settings/studio" label="Studio" />}
+          {isOwner && <SettingsTab href="/settings/team" label="Team" />}
+        </nav>
       </div>
       {children}
     </div>

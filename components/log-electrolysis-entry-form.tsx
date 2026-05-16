@@ -60,6 +60,8 @@ type Props = {
   action: (formData: FormData) => Promise<void>;
 };
 
+const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
+
 export function LogElectrolysisEntryForm({
   sessionId,
   clientId,
@@ -69,6 +71,7 @@ export function LogElectrolysisEntryForm({
 }: Props) {
   const [state, setState] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  const [showSaved, setShowSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -108,6 +111,8 @@ export function LogElectrolysisEntryForm({
       try {
         await action(fd);
         setState(EMPTY);
+        setShowSaved(true);
+        window.setTimeout(() => setShowSaved(false), 1500);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -143,31 +148,25 @@ export function LogElectrolysisEntryForm({
         />
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Probe size</span>
-          <select
-            value={state.probe_size}
-            onChange={(e) => update("probe_size", e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-          >
-            <option value="">Select…</option>
-            {PROBE_SIZES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">Probe size</span>
+        <ChipSelector
+          options={PROBE_SIZE_OPTIONS}
+          value={state.probe_size}
+          onChange={(v) => update("probe_size", v)}
+          otherPlaceholder="Describe probe size"
+        />
+      </div>
 
+      {probeLots.length > 0 && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Probe lot</span>
           <select
             value={state.probe_lot_id}
             onChange={(e) => update("probe_lot_id", e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           >
-            <option value="">None</option>
+            <option value="">No lot</option>
             {probeLots.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.probe_size}
@@ -176,7 +175,7 @@ export function LogElectrolysisEntryForm({
             ))}
           </select>
         </label>
-      </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
@@ -303,6 +302,14 @@ export function LogElectrolysisEntryForm({
         >
           Clear
         </button>
+        {showSaved && (
+          <span
+            className="text-sm text-green-600 dark:text-green-400"
+            aria-live="polite"
+          >
+            Saved
+          </span>
+        )}
       </div>
     </form>
   );

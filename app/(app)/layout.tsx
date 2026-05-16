@@ -9,7 +9,6 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  const isOwner = practitioner.role === "owner";
   const admin = isAdmin(practitioner.email);
 
   return (
@@ -36,14 +35,12 @@ export default async function AppLayout({
               >
                 Clients
               </Link>
-              {isOwner && (
-                <Link
-                  href="/settings/studio"
-                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                >
-                  Settings
-                </Link>
-              )}
+              <Link
+                href="/settings/profile"
+                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                Settings
+              </Link>
               {admin && (
                 <Link
                   href="/admin"

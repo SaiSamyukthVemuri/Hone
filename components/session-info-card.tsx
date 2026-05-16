@@ -109,7 +109,7 @@ export function SessionInfoCard({
           <option value="">Select practitioner</option>
           {practitioners.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.display_name}
+              {p.display_name?.trim() ? p.display_name : p.email}
             </option>
           ))}
         </select>
