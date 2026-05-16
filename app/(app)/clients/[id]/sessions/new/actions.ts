@@ -26,6 +26,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       studio_id: studio.id,
       client_id: clientId,
       practitioner_id: practitioner.id,
+      performed_by_practitioner_id: practitioner.id,
       modality: modality as Modality,
     })
     .select("id")

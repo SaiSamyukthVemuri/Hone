@@ -5,9 +5,11 @@ import {
   FLUENCE_DEFAULT,
   FLUENCE_MAX,
   FLUENCE_MIN,
+  LASER_OBSERVATION_CHIPS,
   LASER_ZONES,
 } from "@/lib/constants";
 import type { LaserEntry } from "@/lib/types/database";
+import { appendComment } from "@/lib/comments";
 import { ChipSelector } from "./chip-selector";
 
 type FormState = {
@@ -228,15 +230,33 @@ export function LogLaserEntryForm({
         </div>
       </fieldset>
 
-      <label className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Observation notes</span>
+        <div className="flex flex-wrap gap-2">
+          {LASER_OBSERVATION_CHIPS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() =>
+                update(
+                  "observation_notes",
+                  appendComment(state.observation_notes, c),
+                )
+              }
+              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              + {c}
+            </button>
+          ))}
+        </div>
         <textarea
           rows={3}
           value={state.observation_notes}
           onChange={(e) => update("observation_notes", e.target.value)}
+          placeholder="Tap a chip or type a note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
-      </label>
+      </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

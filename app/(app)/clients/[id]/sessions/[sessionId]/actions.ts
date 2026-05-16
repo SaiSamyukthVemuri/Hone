@@ -170,3 +170,75 @@ export async function deleteLaserEntryAction(formData: FormData): Promise<void> 
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }
+
+export async function updateSessionPriceAction(formData: FormData): Promise<void> {
+  const sessionId = formData.get("session_id");
+  const clientId = formData.get("client_id");
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
+  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+
+  const rawDollars = formData.get("price_dollars");
+  let priceCents: number | null;
+  if (typeof rawDollars !== "string" || rawDollars.trim() === "") {
+    priceCents = null;
+  } else {
+    const n = Number(rawDollars);
+    if (!Number.isFinite(n) || n < 0)
+      throw new Error("Price must be a non-negative number.");
+    priceCents = Math.round(n * 100);
+  }
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  await assertSessionVisible(studio.id, clientId, sessionId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("sessions")
+    .update({ price_paid_cents: priceCents })
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id);
+  if (error) throw new Error(`Failed to update price: ${error.message}`);
+  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  revalidatePath(`/clients/${clientId}`);
+}
+
+export async function updateSessionPerformerAction(
+  formData: FormData,
+): Promise<void> {
+  const sessionId = formData.get("session_id");
+  const clientId = formData.get("client_id");
+  const performerId = formData.get("performer_id");
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
+  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  await assertSessionVisible(studio.id, clientId, sessionId);
+
+  // Confirm the chosen practitioner belongs to this studio (RLS already
+  // restricts visibility, but a second check guards against tampering).
+  const newPerformerId = typeof performerId === "string" && performerId
+    ? performerId
+    : null;
+
+  if (newPerformerId) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("practitioners")
+      .select("id")
+      .eq("id", newPerformerId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to verify practitioner: ${error.message}`);
+    if (!data) throw new Error("Practitioner not found in this studio.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("sessions")
+    .update({ performed_by_practitioner_id: newPerformerId })
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id);
+  if (error) throw new Error(`Failed to update performer: ${error.message}`);
+  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  revalidatePath(`/clients/${clientId}`);
+}

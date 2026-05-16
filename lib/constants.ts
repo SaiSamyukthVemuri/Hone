@@ -89,9 +89,20 @@ export const COMMON_COMMENTS: ReadonlyArray<string> = [
   "Client tolerated well",
 ];
 
+// Quick-tap observation chips for laser entries. Theresa will replace with the real list later.
+export const LASER_OBSERVATION_CHIPS: ReadonlyArray<string> = [
+  "Follicular erythema",
+  "Follicular edema",
+  "Very sensitive",
+  "Client tolerated well",
+  "Mild redness",
+  "Some discomfort",
+];
+
 export const FLUENCE_MIN = 1;
 export const FLUENCE_MAX = 100;
-export const FLUENCE_DEFAULT = 25;
+// Chloe always starts clients at 30 and adjusts from there.
+export const FLUENCE_DEFAULT = 30;
 
 export const PULSE_COUNT_MIN = 1;
 export const PULSE_COUNT_MAX = 10;

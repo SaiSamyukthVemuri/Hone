@@ -11,12 +11,16 @@ import {
 import { LogElectrolysisEntryForm } from "@/components/log-electrolysis-entry-form";
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
+import { SessionInfoCard } from "@/components/session-info-card";
 import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
+import { sessionPerformerName } from "@/lib/supabase/queries";
 import {
   addElectrolysisEntryAction,
   addLaserEntryAction,
   deleteElectrolysisEntryAction,
   deleteLaserEntryAction,
+  updateSessionPerformerAction,
+  updateSessionPriceAction,
 } from "./actions";
 
 function formatDate(iso: string): string {
@@ -67,6 +71,8 @@ export default async function SessionDetailPage({
       ? await getLaserTreatmentCountsForClient(studio.id, id)
       : {};
 
+  const performerName = sessionPerformerName(session, clientData.practitioners);
+
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -84,7 +90,24 @@ export default async function SessionDetailPage({
             Started {formatDate(session.started_at)}
           </p>
         </div>
+        {performerName && (
+          <p className="mt-1 text-sm text-neutral-500">
+            Performed by {performerName}
+          </p>
+        )}
       </div>
+
+      <SessionInfoCard
+        sessionId={session.id}
+        clientId={id}
+        practitioners={clientData.practitioners}
+        initialPerformerId={
+          session.performed_by_practitioner_id ?? session.practitioner_id
+        }
+        initialPriceCents={session.price_paid_cents}
+        updatePriceAction={updateSessionPriceAction}
+        updatePerformerAction={updateSessionPerformerAction}
+      />
 
       {session.modality === "electrolysis" ? (
         <LogElectrolysisEntryForm

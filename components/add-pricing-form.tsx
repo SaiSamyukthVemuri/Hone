@@ -54,16 +54,22 @@ export function AddPricingForm({ clientId, action }: Props) {
           aria-label="Service"
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
-        <input
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          placeholder="$"
-          aria-label="Price in dollars"
-          type="number"
-          step="0.01"
-          inputMode="decimal"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-        />
+        <div className="relative">
+          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-neutral-500">
+            $
+          </span>
+          <input
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            placeholder="0.00"
+            aria-label="Price in dollars"
+            type="number"
+            step="0.01"
+            min="0"
+            inputMode="decimal"
+            className="w-full rounded-md border border-neutral-300 bg-white py-2 pl-7 pr-3 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          />
+        </div>
         <input
           value={notes}
           onChange={(e) => setNotes(e.target.value)}

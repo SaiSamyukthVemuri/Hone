@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   getClientById,
   getCurrentPractitionerWithStudio,
+  sessionPerformerName,
 } from "@/lib/supabase/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import {
@@ -49,9 +50,21 @@ export default async function ClientCheatSheetPage({
     notFound();
   }
 
-  const { client, pricing, sessions } = data;
+  const { client, pricing, sessions, practitioners } = data;
   const lastSession = sessions[0];
   const olderSessions = sessions.slice(1);
+
+  const lifetimeCents = sessions.reduce(
+    (sum, s) => sum + (s.price_paid_cents ?? 0),
+    0,
+  );
+  const sessionsWithPrice = sessions.filter(
+    (s) => s.price_paid_cents != null,
+  ).length;
+
+  const lastPerformer = lastSession
+    ? sessionPerformerName(lastSession, practitioners)
+    : null;
 
   return (
     <div className="flex flex-col gap-10">
@@ -64,14 +77,31 @@ export default async function ClientCheatSheetPage({
         </Link>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">
-              {client.name}
-            </h1>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h1 className="text-3xl font-semibold tracking-tight">
+                {client.name}
+              </h1>
+              <Link
+                href={`/clients/${client.id}/edit`}
+                className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+              >
+                Edit
+              </Link>
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
               {client.pronouns && <span>{client.pronouns}</span>}
               {client.phone && <span>· {client.phone}</span>}
               {client.email && <span>· {client.email}</span>}
             </div>
+            {sessionsWithPrice > 0 && (
+              <p className="mt-2 text-sm text-neutral-500">
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  {formatPrice(lifetimeCents)}
+                </span>{" "}
+                over {sessionsWithPrice}{" "}
+                {sessionsWithPrice === 1 ? "session" : "sessions"}
+              </p>
+            )}
           </div>
           <Link
             href={`/clients/${client.id}/sessions/new`}
@@ -81,6 +111,17 @@ export default async function ClientCheatSheetPage({
           </Link>
         </div>
       </section>
+
+      {client.allergies && (
+        <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-700 dark:bg-amber-950/30">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+            Allergies
+          </h2>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">
+            {client.allergies}
+          </p>
+        </section>
+      )}
 
       <section className="grid gap-6 md:grid-cols-2">
         <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -167,6 +208,9 @@ export default async function ClientCheatSheetPage({
                 </div>
                 <div className="text-xs text-neutral-500">
                   {lastSession.modality}
+                  {lastPerformer && ` · ${lastPerformer}`}
+                  {lastSession.price_paid_cents != null &&
+                    ` · ${formatPrice(lastSession.price_paid_cents)} paid`}
                 </div>
               </div>
               <Link
@@ -195,7 +239,11 @@ export default async function ClientCheatSheetPage({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">All sessions</h2>
-        <SessionTimeline clientId={client.id} sessions={olderSessions} />
+        <SessionTimeline
+          clientId={client.id}
+          sessions={olderSessions}
+          practitioners={practitioners}
+        />
       </section>
     </div>
   );

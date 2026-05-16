@@ -37,6 +37,7 @@ export type Client = {
   address: string | null;
   fitzpatrick_type: FitzpatrickType | null;
   skin_notes: string | null;
+  allergies: string | null;
   contraindications: Record<string, unknown> | null;
   photo_consent: boolean;
   notes: string | null;
@@ -49,10 +50,12 @@ export type Session = {
   studio_id: string;
   client_id: string;
   practitioner_id: string;
+  performed_by_practitioner_id: string | null;
   modality: Modality;
   started_at: string;
   ended_at: string | null;
   session_notes: string | null;
+  price_paid_cents: number | null;
   created_at: string;
 };
 

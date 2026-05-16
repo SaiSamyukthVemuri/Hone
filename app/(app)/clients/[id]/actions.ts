@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -25,12 +26,51 @@ function nullableString(value: FormDataEntryValue | null): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+function nullableInt(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Converts a dollar string like "150" or "150.50" to integer cents.
 function dollarsToCents(value: FormDataEntryValue | null): number | null {
   if (typeof value !== "string" || value.trim() === "") return null;
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
+}
+
+export async function updateClientAction(formData: FormData): Promise<void> {
+  const clientId = formData.get("client_id");
+  if (typeof clientId !== "string" || !clientId)
+    throw new Error("Missing client id.");
+
+  const name = nullableString(formData.get("name"));
+  if (!name) throw new Error("Name is required.");
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  await assertClientVisible(studio.id, clientId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({
+      name,
+      pronouns: nullableString(formData.get("pronouns")),
+      phone: nullableString(formData.get("phone")),
+      email: nullableString(formData.get("email")),
+      date_of_birth: nullableString(formData.get("date_of_birth")),
+      fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
+      skin_notes: nullableString(formData.get("skin_notes")),
+      allergies: nullableString(formData.get("allergies")),
+    })
+    .eq("id", clientId)
+    .eq("studio_id", studio.id);
+
+  if (error) throw new Error(`Failed to update client: ${error.message}`);
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/clients");
+  redirect(`/clients/${clientId}`);
 }
 
 export async function addClientPricingAction(formData: FormData): Promise<void> {

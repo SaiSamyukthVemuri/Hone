@@ -47,6 +47,20 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
   return { practitioner: practitioner as Practitioner, studio };
 }
 
+export async function getPractitionersForStudio(
+  studioId: string,
+): Promise<Practitioner[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("active", true)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  return (data ?? []) as Practitioner[];
+}
+
 export async function getClientsForStudio(studioId: string): Promise<Client[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -68,7 +82,19 @@ export type ClientCheatSheet = {
   client: Client;
   pricing: ClientPricing[];
   sessions: SessionWithEntries[];
+  practitioners: Practitioner[];
 };
+
+// Resolves the human-readable name of who performed a session,
+// preferring performed_by_practitioner_id but falling back to the creator.
+export function sessionPerformerName(
+  session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
+  practitioners: Practitioner[],
+): string | null {
+  const id = session.performed_by_practitioner_id ?? session.practitioner_id;
+  if (!id) return null;
+  return practitioners.find((p) => p.id === id)?.display_name ?? null;
+}
 
 export async function getClientById(
   studioId: string,
@@ -86,7 +112,7 @@ export async function getClientById(
   if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
   if (!client) return null;
 
-  const [pricingRes, sessionsRes] = await Promise.all([
+  const [pricingRes, sessionsRes, practitioners] = await Promise.all([
     supabase
       .from("client_pricing")
       .select("*")
@@ -99,6 +125,7 @@ export async function getClientById(
       .eq("studio_id", studioId)
       .eq("client_id", clientId)
       .order("started_at", { ascending: false }),
+    getPractitionersForStudio(studioId),
   ]);
 
   if (pricingRes.error)
@@ -110,6 +137,7 @@ export async function getClientById(
     client: client as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
     sessions: (sessionsRes.data ?? []) as SessionWithEntries[],
+    practitioners,
   };
 }
 

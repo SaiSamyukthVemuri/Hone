@@ -1,5 +1,9 @@
 import Link from "next/link";
-import type { SessionWithEntries } from "@/lib/supabase/queries";
+import {
+  sessionPerformerName,
+  type SessionWithEntries,
+} from "@/lib/supabase/queries";
+import type { Practitioner } from "@/lib/types/database";
 import { ElectrolysisEntryRow, LaserEntryRow } from "./entry-row";
 
 function formatDate(iso: string): string {
@@ -12,6 +16,10 @@ function formatDate(iso: string): string {
   });
 }
 
+function formatPrice(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
 function entryCount(s: SessionWithEntries): number {
   return s.modality === "electrolysis"
     ? s.electrolysis_entries.length
@@ -21,9 +29,11 @@ function entryCount(s: SessionWithEntries): number {
 export function SessionTimeline({
   clientId,
   sessions,
+  practitioners,
 }: {
   clientId: string;
   sessions: SessionWithEntries[];
+  practitioners: Practitioner[];
 }) {
   if (sessions.length === 0) {
     return (
@@ -35,41 +45,47 @@ export function SessionTimeline({
 
   return (
     <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-      {sessions.map((s) => (
-        <li key={s.id}>
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">
-                  {formatDate(s.started_at)}
+      {sessions.map((s) => {
+        const performer = sessionPerformerName(s, practitioners);
+        return (
+          <li key={s.id}>
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">
+                    {formatDate(s.started_at)}
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    {s.modality} · {entryCount(s)}{" "}
+                    {entryCount(s) === 1 ? "entry" : "entries"}
+                    {performer && ` · ${performer}`}
+                    {s.price_paid_cents != null &&
+                      ` · ${formatPrice(s.price_paid_cents)} paid`}
+                  </div>
                 </div>
-                <div className="text-xs text-neutral-500">
-                  {s.modality} · {entryCount(s)}{" "}
-                  {entryCount(s) === 1 ? "entry" : "entries"}
+                <span className="text-xs text-neutral-400 transition-transform group-open:rotate-90">
+                  ›
+                </span>
+              </summary>
+              <div className="border-t border-neutral-200 bg-neutral-50/50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">
+                {s.modality === "electrolysis" ? (
+                  <ElectrolysisEntryList entries={s.electrolysis_entries} />
+                ) : (
+                  <LaserEntryList entries={s.laser_entries} />
+                )}
+                <div className="mt-3">
+                  <Link
+                    href={`/clients/${clientId}/sessions/${s.id}`}
+                    className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                  >
+                    Open session →
+                  </Link>
                 </div>
               </div>
-              <span className="text-xs text-neutral-400 transition-transform group-open:rotate-90">
-                ›
-              </span>
-            </summary>
-            <div className="border-t border-neutral-200 bg-neutral-50/50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">
-              {s.modality === "electrolysis" ? (
-                <ElectrolysisEntryList entries={s.electrolysis_entries} />
-              ) : (
-                <LaserEntryList entries={s.laser_entries} />
-              )}
-              <div className="mt-3">
-                <Link
-                  href={`/clients/${clientId}/sessions/${s.id}`}
-                  className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                >
-                  Open session →
-                </Link>
-              </div>
-            </div>
-          </details>
-        </li>
-      ))}
+            </details>
+          </li>
+        );
+      })}
     </ul>
   );
 }

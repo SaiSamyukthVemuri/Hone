@@ -37,6 +37,7 @@ export async function createClientAction(formData: FormData): Promise<void> {
       date_of_birth: nullableString(formData.get("date_of_birth")),
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
       skin_notes: nullableString(formData.get("skin_notes")),
+      allergies: nullableString(formData.get("allergies")),
       created_by: practitioner.id,
     })
     .select("id")

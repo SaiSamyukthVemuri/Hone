@@ -11,6 +11,7 @@ import {
   PULSE_COUNT_MIN,
 } from "@/lib/constants";
 import type { ElectrolysisEntry, ProbeLot } from "@/lib/types/database";
+import { appendComment } from "@/lib/comments";
 import { ChipSelector } from "./chip-selector";
 
 type FormState = {
@@ -49,14 +50,6 @@ function fromLastEntry(e: ElectrolysisEntry | null): FormState {
       e.pulse_count != null ? String(e.pulse_count) : String(PULSE_COUNT_DEFAULT),
     comments: e.comments ?? "",
   };
-}
-
-function appendComment(existing: string, chip: string): string {
-  if (!existing.trim()) return chip;
-  // Avoid appending the same chip back-to-back (only the most recent token matters).
-  const lastToken = existing.split(/,\s*/).pop()?.trim().toLowerCase();
-  if (lastToken === chip.toLowerCase()) return existing;
-  return `${existing.replace(/\s*,?\s*$/, "")}, ${chip}`;
 }
 
 type Props = {
