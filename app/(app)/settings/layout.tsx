@@ -17,6 +17,7 @@ export default async function SettingsLayout({
           <SettingsTab href="/settings/profile" label="Profile" />
           {isOwner && <SettingsTab href="/settings/studio" label="Studio" />}
           {isOwner && <SettingsTab href="/settings/team" label="Team" />}
+          {isOwner && <SettingsTab href="/settings/data" label="Data" />}
         </nav>
       </div>
       {children}
