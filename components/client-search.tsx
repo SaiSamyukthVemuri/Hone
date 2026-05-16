@@ -27,31 +27,54 @@ export function ClientSearch({
 }: Props) {
   const [query, setQuery] = useState("");
 
-  const excludeSet = useMemo(
-    () => new Set(excludeIds ?? []),
-    [excludeIds],
-  );
+  // Defensive: skip any non-string / empty entries so a malformed array
+  // can't accidentally exclude everything.
+  const excludeSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of excludeIds ?? []) {
+      if (typeof id === "string" && id.length > 0) set.add(id);
+    }
+    return set;
+  }, [excludeIds]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const minimumMet = q.length >= minChars;
+  const trimmedQuery = query.trim();
+  const queryLower = trimmedQuery.toLowerCase();
+  const minimumMet = queryLower.length >= minChars;
 
-    if (searchOnly && !minimumMet) return [];
+  function nameMatches(c: Client): boolean {
+    return (
+      (c.name ?? "").toLowerCase().includes(queryLower) ||
+      (c.email ?? "").toLowerCase().includes(queryLower) ||
+      (c.phone ?? "").toLowerCase().includes(queryLower)
+    );
+  }
 
-    const base = clients.filter((c) => !excludeSet.has(c.id));
-    if (!minimumMet) return base;
+  // visible: the clients shown in the list right now.
+  // suppressedByExclude: clients that would have matched the query but were
+  // filtered out because they're already in today's roster. Used to surface
+  // a hint so the user doesn't think the search is broken.
+  const { visible, suppressedByExclude } = useMemo(() => {
+    if (searchOnly && !minimumMet) {
+      return { visible: [] as Client[], suppressedByExclude: 0 };
+    }
 
-    return base.filter((c) => {
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.email?.toLowerCase().includes(q) ?? false) ||
-        (c.phone?.toLowerCase().includes(q) ?? false)
-      );
-    });
-  }, [clients, excludeSet, query, searchOnly, minChars]);
+    if (!minimumMet) {
+      return {
+        visible: clients.filter((c) => !excludeSet.has(c.id)),
+        suppressedByExclude: 0,
+      };
+    }
 
-  const showPrompt =
-    searchOnly && query.trim().length < minChars;
+    const matches = clients.filter(nameMatches);
+    const inExclude = matches.filter((c) => excludeSet.has(c.id)).length;
+    const shown = matches.filter((c) => !excludeSet.has(c.id));
+    return { visible: shown, suppressedByExclude: inExclude };
+    // queryLower is derived from `query`; including only the inputs the memo really depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, excludeSet, queryLower, minimumMet, searchOnly]);
+
+  const showPrompt = searchOnly && !minimumMet;
+  const showEmpty = !showPrompt && visible.length === 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -62,14 +85,27 @@ export function ClientSearch({
         placeholder={placeholder}
         className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-3 text-base outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         autoComplete="off"
+        autoCapitalize="none"
       />
-      {showPrompt ? (
+      {showPrompt && (
         <p className="py-6 text-center text-sm text-neutral-500">
           {promptLabel}
         </p>
-      ) : visible.length === 0 ? (
-        <p className="py-6 text-center text-sm text-neutral-500">{emptyLabel}</p>
-      ) : (
+      )}
+      {showEmpty && (
+        <p className="py-6 text-center text-sm text-neutral-500">
+          {emptyLabel}
+          {suppressedByExclude > 0 && (
+            <>
+              {" "}
+              {suppressedByExclude}{" "}
+              {suppressedByExclude === 1 ? "match is" : "matches are"} already
+              on today&rsquo;s roster.
+            </>
+          )}
+        </p>
+      )}
+      {!showPrompt && visible.length > 0 && (
         <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           {visible.map((c) => (
             <ClientResultRow key={c.id} client={c} />
