@@ -18,9 +18,40 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Hone",
+  title: {
+    default: "Hone. Charting software for electrolysis and laser practitioners.",
+    template: "%s · Hone",
+  },
   description:
-    "Charting software for independent electrologists. Built for the way studios actually chart.",
+    "Software for the two minute window between clients. Type a name, see last session, log this one, move on.",
+  metadataBase: new URL("https://hone.care"),
+  applicationName: "Hone",
+  authors: [{ name: "Saltkiln" }],
+  keywords: [
+    "electrolysis charting",
+    "laser hair removal software",
+    "practitioner notes",
+    "hair removal charting",
+    "electrologist software",
+  ],
+  openGraph: {
+    type: "website",
+    title: "Hone. Charting software for electrolysis and laser practitioners.",
+    description:
+      "Software for the two minute window between clients. Built for the way practitioners actually chart.",
+    url: "https://hone.care",
+    siteName: "Hone",
+    locale: "en_CA",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Hone",
+    description: "Charting software for electrolysis and laser practitioners.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
