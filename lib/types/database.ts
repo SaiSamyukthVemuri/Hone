@@ -55,10 +55,21 @@ export type Session = {
   performed_by_practitioner_id: string | null;
   modality: Modality;
   started_at: string;
+  started_at_original: string;
   ended_at: string | null;
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
+};
+
+export type SessionAudit = {
+  id: string;
+  session_id: string;
+  edited_by_practitioner_id: string | null;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  edited_at: string;
 };
 
 export type ElectrolysisEntry = {

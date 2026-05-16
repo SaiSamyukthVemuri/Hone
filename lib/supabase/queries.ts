@@ -226,6 +226,19 @@ export async function getLaserTreatmentCountsForClient(
   return counts;
 }
 
+export async function getSessionAudit(
+  sessionId: string,
+): Promise<import("@/lib/types/database").SessionAudit[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("session_audit")
+    .select("*")
+    .eq("session_id", sessionId)
+    .order("edited_at", { ascending: true });
+  if (error) throw new Error(`Failed to load session audit: ${error.message}`);
+  return (data ?? []) as import("@/lib/types/database").SessionAudit[];
+}
+
 export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> {
   const supabase = await createClient();
   const { data, error } = await supabase

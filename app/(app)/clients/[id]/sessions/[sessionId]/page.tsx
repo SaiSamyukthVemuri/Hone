@@ -6,15 +6,17 @@ import {
   getCurrentPractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getRecentEntryForClient,
+  getSessionAudit,
   getSessionForClient,
 } from "@/lib/supabase/queries";
 import { LogElectrolysisEntryForm } from "@/components/log-electrolysis-entry-form";
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
-import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
+import { EditSessionStartedAt } from "./EditSessionStartedAt";
+import { SessionEditHistory } from "./SessionEditHistory";
 import {
   addElectrolysisEntryAction,
   addLaserEntryAction,
@@ -63,29 +65,37 @@ export default async function SessionDetailPage({
       : {};
 
   const performerName = sessionPerformerName(session, clientData.practitioners);
+  const audit = await getSessionAudit(session.id);
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
+      <div className="flex flex-col gap-3">
         <Link
           href={`/clients/${id}`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {clientData.client.name}
         </Link>
-        <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-3xl font-semibold tracking-tight capitalize">
             {session.modality} session
           </h1>
-          <p className="text-sm text-neutral-500">
-            Started <FormattedDateTime iso={session.started_at} />
-          </p>
+          <EditSessionStartedAt
+            sessionId={session.id}
+            clientId={id}
+            startedAtIso={session.started_at}
+          />
         </div>
         {performerName && (
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="text-sm text-neutral-500">
             Performed by {performerName}
           </p>
         )}
+        <SessionEditHistory
+          startedAtOriginal={session.started_at_original}
+          audit={audit}
+          practitioners={clientData.practitioners}
+        />
       </div>
 
       <SessionInfoCard

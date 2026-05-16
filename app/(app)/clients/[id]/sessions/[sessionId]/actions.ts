@@ -242,3 +242,102 @@ export async function updateSessionPerformerAction(
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }
+
+export type EditStartedAtResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export async function editSessionStartedAtAction(
+  formData: FormData,
+): Promise<EditStartedAtResult> {
+  const sessionId = formData.get("session_id");
+  const clientId = formData.get("client_id");
+  const newStartedAtRaw = formData.get("new_started_at");
+
+  if (typeof sessionId !== "string" || !sessionId) {
+    return { ok: false, error: "Missing session id." };
+  }
+  if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: "Missing client id." };
+  }
+  if (typeof newStartedAtRaw !== "string" || !newStartedAtRaw) {
+    return { ok: false, error: "Pick a date and time." };
+  }
+
+  const newDate = new Date(newStartedAtRaw);
+  if (Number.isNaN(newDate.getTime())) {
+    return { ok: false, error: "That isn't a valid date or time." };
+  }
+  if (newDate.getTime() > Date.now()) {
+    return { ok: false, error: "Session time cannot be in the future." };
+  }
+  const newStartedAtIso = newDate.toISOString();
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot edit sessions." };
+  }
+
+  const supabase = await createClient();
+
+  const { data: existing, error: lookupErr } = await supabase
+    .from("sessions")
+    .select("id, started_at, ended_at")
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id)
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (lookupErr) {
+    return { ok: false, error: `Failed to load session: ${lookupErr.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "Session not found." };
+  }
+
+  if (existing.ended_at) {
+    const ended = new Date(existing.ended_at).getTime();
+    if (newDate.getTime() > ended) {
+      return {
+        ok: false,
+        error: "Session start cannot be after the session end time.",
+      };
+    }
+  }
+
+  const oldStartedAtIso = existing.started_at;
+  if (oldStartedAtIso === newStartedAtIso) {
+    return { ok: true };
+  }
+
+  const { error: updateErr } = await supabase
+    .from("sessions")
+    .update({ started_at: newStartedAtIso })
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id);
+  if (updateErr) {
+    return {
+      ok: false,
+      error: `Failed to update session time: ${updateErr.message}`,
+    };
+  }
+
+  // Audit write happens after the update so the user-visible change has
+  // already taken effect. If the audit row fails we log it; the next page
+  // render will still show the corrected time, just without an audit entry.
+  const { error: auditErr } = await supabase.from("session_audit").insert({
+    session_id: sessionId,
+    edited_by_practitioner_id: practitioner.id,
+    field: "started_at",
+    old_value: oldStartedAtIso,
+    new_value: newStartedAtIso,
+  });
+  if (auditErr) {
+    console.error("Failed to write session audit row:", auditErr);
+  }
+
+  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/dashboard");
+
+  return { ok: true };
+}
