@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
+import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -19,12 +21,60 @@ function nullableString(value: FormDataEntryValue | null): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
-async function assertOwner(): Promise<{ studioId: string; practitionerId: string }> {
+type OwnerContext = {
+  studioId: string;
+  practitionerId: string;
+  inviterName: string;
+  studioName: string;
+};
+
+async function assertOwner(): Promise<OwnerContext> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     throw new Error("Only studio owners can manage the team.");
   }
-  return { studioId: studio.id, practitionerId: practitioner.id };
+  return {
+    studioId: studio.id,
+    practitionerId: practitioner.id,
+    inviterName:
+      practitioner.display_name?.trim() ||
+      practitioner.email ||
+      "A teammate",
+    studioName: studio.name,
+  };
+}
+
+// Sends the invitation email through Resend. Never throws; logs failures
+// and lets the caller continue, since the pending_invitations row plus the
+// share-message UI are the source of truth.
+async function sendInvitationEmail(params: {
+  inviteeEmail: string;
+  inviteeDisplayName: string | null;
+  studioName: string;
+  inviterName: string;
+}): Promise<void> {
+  if (!resend) {
+    console.warn(
+      "Skipping invitation email: Resend client is not configured.",
+    );
+    return;
+  }
+
+  const { subject, html, text } = buildInvitationEmail(params);
+  try {
+    const { error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: params.inviteeEmail,
+      subject,
+      html,
+      text,
+    });
+    if (error) {
+      console.error("Failed to send invitation email:", error);
+    }
+  } catch (error) {
+    console.error("Failed to send invitation email:", error);
+  }
 }
 
 export async function invitePractitionerAction(
@@ -43,7 +93,7 @@ export async function invitePractitionerAction(
       : "practitioner";
   const displayName = nullableString(formData.get("display_name"));
 
-  let context;
+  let context: OwnerContext;
   try {
     context = await assertOwner();
   } catch (err) {
@@ -52,7 +102,7 @@ export async function invitePractitionerAction(
       error: err instanceof Error ? err.message : "Unauthorized.",
     };
   }
-  const { studioId, practitionerId } = context;
+  const { studioId, practitionerId, inviterName, studioName } = context;
 
   const supabase = await createClient();
 
@@ -110,6 +160,15 @@ export async function invitePractitionerAction(
     }
     return { ok: false, error: `Failed to send invite: ${error.message}` };
   }
+
+  // Fire-and-forget the email. Any failure stays inside sendInvitationEmail
+  // and is logged; the invite row + share-message UI cover the user path.
+  await sendInvitationEmail({
+    inviteeEmail: email,
+    inviteeDisplayName: displayName,
+    studioName,
+    inviterName,
+  });
 
   revalidatePath("/settings/team");
   return { ok: true, email };
