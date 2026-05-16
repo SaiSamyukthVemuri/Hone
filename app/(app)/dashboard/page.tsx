@@ -77,8 +77,11 @@ export default async function DashboardPage() {
         <h2 className="text-lg font-medium">Find a client</h2>
         <ClientSearch
           clients={clients}
+          excludeIds={roster.map((r) => r.client.id)}
+          searchOnly
           placeholder="Find client"
-          emptyLabel="No clients yet."
+          promptLabel="Type to search clients."
+          emptyLabel="No clients match."
         />
       </section>
     </div>

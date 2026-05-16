@@ -121,6 +121,7 @@ export function ClientForm({
         <Field
           label="Pronouns"
           placeholder="she/her, he/him, they/them, etc."
+          autoCapitalize="none"
           value={values.pronouns}
           onChange={(v) => update("pronouns", v)}
           onKeyDown={blockEnterSubmit}
@@ -278,6 +279,7 @@ function Field({
   placeholder,
   autoFocus = false,
   inputMode,
+  autoCapitalize,
   value,
   onChange,
   onKeyDown,
@@ -288,6 +290,7 @@ function Field({
   placeholder?: string;
   autoFocus?: boolean;
   inputMode?: "tel" | "email" | "text" | "numeric";
+  autoCapitalize?: "off" | "none" | "on" | "sentences" | "words" | "characters";
   value: string;
   onChange: (v: string) => void;
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
@@ -304,6 +307,7 @@ function Field({
         placeholder={placeholder}
         autoFocus={autoFocus}
         inputMode={inputMode}
+        autoCapitalize={autoCapitalize}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
