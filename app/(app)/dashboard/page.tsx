@@ -1,39 +1,85 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { signOut } from "./actions";
+import Link from "next/link";
+import {
+  getClientsForStudio,
+  getCurrentPractitionerWithStudio,
+  getTodayRosterForStudio,
+} from "@/lib/supabase/queries";
+import { ClientSearch } from "@/components/client-search";
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { studio } = await getCurrentPractitionerWithStudio();
+  const [roster, clients] = await Promise.all([
+    getTodayRosterForStudio(studio.id),
+    getClientsForStudio(studio.id),
+  ]);
 
-  if (!user) {
-    redirect("/login");
-  }
+  const today = new Date().toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-6 py-12">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Hone</h1>
-        <form action={signOut}>
-          <button
-            type="submit"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+    <div className="flex flex-col gap-10">
+      <section>
+        <p className="text-xs uppercase tracking-wider text-neutral-500">{today}</p>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Today</h1>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Roster</h2>
+          <Link
+            href="/clients/new"
+            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
-            Sign out
-          </button>
-        </form>
-      </header>
+            + Add client
+          </Link>
+        </div>
 
-      <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 dark:border-neutral-800 dark:bg-neutral-900">
-        <p className="text-sm text-neutral-500">Signed in as</p>
-        <p className="text-lg font-medium">{user.email}</p>
+        {roster.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
+            No sessions scheduled today.
+          </div>
+        ) : (
+          <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+            {roster.map(({ client, sessions }) => (
+              <li key={client.id}>
+                <Link
+                  href={`/clients/${client.id}`}
+                  className="flex items-center justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{client.name}</div>
+                    <div className="truncate text-xs text-neutral-500">
+                      {sessions
+                        .map((s) => `${formatTime(s.started_at)} · ${s.modality}`)
+                        .join("   ")}
+                    </div>
+                  </div>
+                  <span className="text-sm text-neutral-400">›</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
-      <section className="text-sm text-neutral-500">
-        Today&rsquo;s roster, client cheat sheets, and session logging land here next.
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-medium">Find a client</h2>
+        <ClientSearch
+          clients={clients}
+          placeholder="Find client"
+          emptyLabel="No clients yet."
+        />
       </section>
-    </main>
+    </div>
   );
 }
