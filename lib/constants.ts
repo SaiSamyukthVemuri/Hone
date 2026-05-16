@@ -99,6 +99,31 @@ export const LASER_OBSERVATION_CHIPS: ReadonlyArray<string> = [
   "Some discomfort",
 ];
 
+// Quick-tap chips for the client intake "Allergies" field.
+export const COMMON_ALLERGIES: ReadonlyArray<string> = [
+  "Nickel / metal sensitivity",
+  "Latex",
+  "Fragrance / perfume",
+  "Topical anesthetic (lidocaine, benzocaine)",
+  "Adhesive bandages",
+  "Hydrogen peroxide",
+  "Aloe",
+];
+
+// Quick-tap chips for the client intake "Skin notes" field.
+export const COMMON_SKIN_CONDITIONS: ReadonlyArray<string> = [
+  "Acne-prone",
+  "Rosacea",
+  "Hidradenitis suppurativa",
+  "Eczema / atopic dermatitis",
+  "Psoriasis",
+  "Hyperpigmentation tendency",
+  "Hypopigmentation tendency",
+  "Keloid scarring history",
+  "Recent sun exposure",
+  "Currently pregnant",
+];
+
 export const FLUENCE_MIN = 1;
 export const FLUENCE_MAX = 100;
 // Chloe always starts clients at 30 and adjusts from there.

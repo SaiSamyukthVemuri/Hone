@@ -6,11 +6,11 @@ import {
   sessionPerformerName,
 } from "@/lib/supabase/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
+import { SessionTimeline } from "@/components/session-timeline";
 import {
-  ElectrolysisEntryList,
-  LaserEntryList,
-  SessionTimeline,
-} from "@/components/session-timeline";
+  ElectrolysisEntryRow,
+  LaserEntryRow,
+} from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
 import {
   addClientPricingAction,
@@ -35,6 +35,11 @@ function formatDate(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function telHref(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, "");
+  return `tel:${digits}`;
 }
 
 export default async function ClientCheatSheetPage({
@@ -65,6 +70,9 @@ export default async function ClientCheatSheetPage({
   const lastPerformer = lastSession
     ? sessionPerformerName(lastSession, practitioners)
     : null;
+
+  const hasEmergencyContact =
+    !!client.emergency_contact_name || !!client.emergency_contact_phone;
 
   return (
     <div className="flex flex-col gap-10">
@@ -197,6 +205,33 @@ export default async function ClientCheatSheetPage({
         </div>
       </section>
 
+      {hasEmergencyContact && (
+        <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+            Emergency contact
+          </h2>
+          <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            {client.emergency_contact_name && (
+              <span className="font-medium">
+                {client.emergency_contact_name}
+              </span>
+            )}
+            {client.emergency_contact_name &&
+              client.emergency_contact_phone && (
+                <span className="text-neutral-400">·</span>
+              )}
+            {client.emergency_contact_phone && (
+              <a
+                href={telHref(client.emergency_contact_phone)}
+                className="text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:text-neutral-300 dark:decoration-neutral-700"
+              >
+                {client.emergency_contact_phone}
+              </a>
+            )}
+          </p>
+        </section>
+      )}
+
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Last session</h2>
         {lastSession ? (
@@ -220,15 +255,11 @@ export default async function ClientCheatSheetPage({
                 Open →
               </Link>
             </div>
-            <div className="mt-4">
-              {lastSession.modality === "electrolysis" ? (
-                <ElectrolysisEntryList
-                  entries={lastSession.electrolysis_entries}
-                />
-              ) : (
-                <LaserEntryList entries={lastSession.laser_entries} />
-              )}
-            </div>
+            <LastSessionEntries
+              modality={lastSession.modality}
+              electrolysisEntries={lastSession.electrolysis_entries}
+              laserEntries={lastSession.laser_entries}
+            />
           </div>
         ) : (
           <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
@@ -246,5 +277,52 @@ export default async function ClientCheatSheetPage({
         />
       </section>
     </div>
+  );
+}
+
+function LastSessionEntries({
+  modality,
+  electrolysisEntries,
+  laserEntries,
+}: {
+  modality: "electrolysis" | "laser";
+  electrolysisEntries: import("@/lib/types/database").ElectrolysisEntry[];
+  laserEntries: import("@/lib/types/database").LaserEntry[];
+}) {
+  if (modality === "electrolysis") {
+    if (electrolysisEntries.length === 0) {
+      return (
+        <p className="mt-4 text-xs text-neutral-500">No entries logged.</p>
+      );
+    }
+    const sorted = [...electrolysisEntries].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+    return (
+      <ul className="mt-4 flex flex-col gap-2">
+        {sorted.map((e) => (
+          <li key={e.id}>
+            <ElectrolysisEntryRow entry={e} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (laserEntries.length === 0) {
+    return <p className="mt-4 text-xs text-neutral-500">No entries logged.</p>;
+  }
+  const sorted = [...laserEntries].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  return (
+    <ul className="mt-4 flex flex-col gap-2">
+      {sorted.map((e) => (
+        <li key={e.id}>
+          <LaserEntryRow entry={e} />
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -38,6 +38,8 @@ export type Client = {
   fitzpatrick_type: FitzpatrickType | null;
   skin_notes: string | null;
   allergies: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_phone: string | null;
   contraindications: Record<string, unknown> | null;
   photo_consent: boolean;
   notes: string | null;

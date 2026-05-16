@@ -28,6 +28,8 @@ export default async function EditClientPage({
       c.fitzpatrick_type != null ? String(c.fitzpatrick_type) : "",
     skin_notes: c.skin_notes ?? "",
     allergies: c.allergies ?? "",
+    emergency_contact_name: c.emergency_contact_name ?? "",
+    emergency_contact_phone: c.emergency_contact_phone ?? "",
   };
 
   return (

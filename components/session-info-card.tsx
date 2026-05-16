@@ -132,9 +132,9 @@ export function SessionInfoCard({
             value={price}
             onChange={(e) => setPrice(e.target.value)}
             onBlur={handlePriceBlur}
-            placeholder="0.00"
+            placeholder="0"
             type="number"
-            step="0.01"
+            step="1"
             min="0"
             inputMode="decimal"
             className="w-full rounded-md border border-neutral-300 bg-white py-2 pl-7 pr-3 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"

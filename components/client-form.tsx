@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { FITZPATRICK_TYPES } from "@/lib/constants";
+import {
+  COMMON_ALLERGIES,
+  COMMON_SKIN_CONDITIONS,
+  FITZPATRICK_TYPES,
+} from "@/lib/constants";
+import { appendComment } from "@/lib/comments";
 
 export type ClientFormValues = {
   name: string;
@@ -13,6 +18,8 @@ export type ClientFormValues = {
   fitzpatrick_type: string;
   skin_notes: string;
   allergies: string;
+  emergency_contact_name: string;
+  emergency_contact_phone: string;
 };
 
 export const EMPTY_CLIENT_FORM: ClientFormValues = {
@@ -24,6 +31,8 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
   fitzpatrick_type: "",
   skin_notes: "",
   allergies: "",
+  emergency_contact_name: "",
+  emergency_contact_phone: "",
 };
 
 type Props = {
@@ -159,27 +168,64 @@ export function ClientForm({
         </select>
       </label>
 
-      <label className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Skin notes</span>
+        <ChipRow
+          options={COMMON_SKIN_CONDITIONS}
+          onAppend={(chip) =>
+            update("skin_notes", appendComment(values.skin_notes, chip))
+          }
+        />
         <textarea
           value={values.skin_notes}
           onChange={(e) => update("skin_notes", e.target.value)}
           rows={4}
-          placeholder="Sensitivities, conditions, scarring tendencies…"
+          placeholder="Tap a chip or type a note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
-      </label>
+      </div>
 
-      <label className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Allergies</span>
+        <ChipRow
+          options={COMMON_ALLERGIES}
+          onAppend={(chip) =>
+            update("allergies", appendComment(values.allergies, chip))
+          }
+        />
         <textarea
           value={values.allergies}
           onChange={(e) => update("allergies", e.target.value)}
           rows={3}
-          placeholder="Latex, fragrances, any product reactions…"
+          placeholder="Tap a chip or type a note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
-      </label>
+      </div>
+
+      <fieldset className="flex flex-col gap-3 rounded-md border border-neutral-200 p-4 dark:border-neutral-800">
+        <legend className="px-1 text-sm font-medium">
+          Emergency contact{" "}
+          <span className="text-neutral-500">(optional)</span>
+        </legend>
+        <div className="grid gap-5 md:grid-cols-2">
+          <Field
+            label="Name"
+            placeholder="e.g. Partner, mother, friend"
+            value={values.emergency_contact_name}
+            onChange={(v) => update("emergency_contact_name", v)}
+            onKeyDown={blockEnterSubmit}
+          />
+          <Field
+            label="Phone"
+            type="tel"
+            inputMode="tel"
+            placeholder="555-555-5555"
+            value={values.emergency_contact_phone}
+            onChange={(v) => update("emergency_contact_phone", v)}
+            onKeyDown={blockEnterSubmit}
+          />
+        </div>
+      </fieldset>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
@@ -199,6 +245,29 @@ export function ClientForm({
         </Link>
       </div>
     </form>
+  );
+}
+
+function ChipRow({
+  options,
+  onAppend,
+}: {
+  options: ReadonlyArray<string>;
+  onAppend: (chip: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onAppend(c)}
+          className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+        >
+          + {c}
+        </button>
+      ))}
+    </div>
   );
 }
 
