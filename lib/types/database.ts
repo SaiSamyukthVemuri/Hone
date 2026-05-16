@@ -65,6 +65,7 @@ export type ElectrolysisEntry = {
   mode: ElectrolysisMode | null;
   intensity: number | null;
   duration_seconds: number | null;
+  pulse_count: number;
   comments: string | null;
   created_at: string;
 };

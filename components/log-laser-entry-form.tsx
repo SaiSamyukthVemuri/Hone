@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import {
+  FLUENCE_DEFAULT,
+  FLUENCE_MAX,
+  FLUENCE_MIN,
+  LASER_ZONES,
+} from "@/lib/constants";
 import type { LaserEntry } from "@/lib/types/database";
+import { ChipSelector } from "./chip-selector";
 
 type FormState = {
   zone: string;
@@ -12,32 +19,46 @@ type FormState = {
   observation_notes: string;
 };
 
-const EMPTY: FormState = {
-  zone: "",
-  session_number: "",
-  fluence: "",
-  pulse_width: "",
-  spot_size: "",
-  observation_notes: "",
-};
+function emptyState(): FormState {
+  return {
+    zone: "",
+    session_number: "",
+    fluence: String(FLUENCE_DEFAULT),
+    pulse_width: "",
+    spot_size: "",
+    observation_notes: "",
+  };
+}
 
 function fromLastEntry(e: LaserEntry | null): FormState {
-  if (!e) return EMPTY;
+  if (!e) return emptyState();
   const params = (e.equipment_params ?? {}) as Record<string, unknown>;
   return {
     zone: e.zone ?? "",
     session_number: e.session_number != null ? String(e.session_number) : "",
-    fluence: typeof params.fluence === "string" ? params.fluence : "",
+    fluence:
+      typeof params.fluence === "string" && params.fluence
+        ? params.fluence
+        : String(FLUENCE_DEFAULT),
     pulse_width: typeof params.pulse_width === "string" ? params.pulse_width : "",
     spot_size: typeof params.spot_size === "string" ? params.spot_size : "",
     observation_notes: e.observation_notes ?? "",
   };
 }
 
+function suggestTreatmentNumber(
+  zone: string,
+  counts: Record<string, number>,
+): string {
+  if (!zone) return "";
+  return String((counts[zone] ?? 0) + 1);
+}
+
 type Props = {
   sessionId: string;
   clientId: string;
   lastEntry: LaserEntry | null;
+  treatmentCounts: Record<string, number>;
   action: (formData: FormData) => Promise<void>;
 };
 
@@ -45,14 +66,34 @@ export function LogLaserEntryForm({
   sessionId,
   clientId,
   lastEntry,
+  treatmentCounts,
   action,
 }: Props) {
-  const [state, setState] = useState<FormState>(EMPTY);
+  const [state, setState] = useState<FormState>(emptyState);
+  // Once the practitioner touches the treatment number we stop auto-suggesting from zone changes.
+  const [treatmentTouched, setTreatmentTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setState((s) => ({ ...s, [key]: value }));
+  }
+
+  function handleZoneChange(zone: string) {
+    setState((s) => ({
+      ...s,
+      zone,
+      session_number: treatmentTouched
+        ? s.session_number
+        : suggestTreatmentNumber(zone, treatmentCounts),
+    }));
+  }
+
+  function bumpFluence(delta: number) {
+    const current = Number(state.fluence);
+    const base = Number.isFinite(current) ? current : FLUENCE_DEFAULT;
+    const next = Math.min(FLUENCE_MAX, Math.max(FLUENCE_MIN, base + delta));
+    update("fluence", String(next));
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -75,7 +116,8 @@ export function LogLaserEntryForm({
     startTransition(async () => {
       try {
         await action(fd);
-        setState(EMPTY);
+        setState(emptyState());
+        setTreatmentTouched(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -92,49 +134,79 @@ export function LogLaserEntryForm({
         <button
           type="button"
           disabled={!lastEntry}
-          onClick={() => setState(fromLastEntry(lastEntry))}
+          onClick={() => {
+            setState(fromLastEntry(lastEntry));
+            setTreatmentTouched(true);
+          }}
           className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Copy from last session
         </button>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">
-            Zone<span className="ml-1 text-red-500">*</span>
-          </span>
-          <input
-            value={state.zone}
-            onChange={(e) => update("zone", e.target.value)}
-            required
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Session number</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={state.session_number}
-            onChange={(e) => update("session_number", e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-          />
-        </label>
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">
+          Zone<span className="ml-1 text-red-500">*</span>
+        </span>
+        <ChipSelector
+          options={LASER_ZONES}
+          value={state.zone}
+          onChange={handleZoneChange}
+          otherPlaceholder="Describe zone"
+        />
       </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Treatment #</span>
+        <input
+          type="number"
+          min={1}
+          inputMode="numeric"
+          value={state.session_number}
+          onChange={(e) => {
+            setTreatmentTouched(true);
+            update("session_number", e.target.value);
+          }}
+          className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-3 text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        />
+        <span className="text-xs text-neutral-500">
+          Number of laser treatments completed on this zone, including today.
+        </span>
+      </label>
 
       <fieldset className="flex flex-col gap-3">
         <legend className="text-sm font-medium">Equipment</legend>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
             <span className="text-xs text-neutral-500">Fluence</span>
-            <input
-              value={state.fluence}
-              onChange={(e) => update("fluence", e.target.value)}
-              placeholder="e.g. 18 J/cm²"
-              className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-            />
-          </label>
+            <div className="flex items-stretch gap-2">
+              <button
+                type="button"
+                onClick={() => bumpFluence(-1)}
+                aria-label="Decrease fluence"
+                className="rounded-md border border-neutral-300 px-3 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={FLUENCE_MIN}
+                max={FLUENCE_MAX}
+                value={state.fluence}
+                onChange={(e) => update("fluence", e.target.value)}
+                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              />
+              <button
+                type="button"
+                onClick={() => bumpFluence(1)}
+                aria-label="Increase fluence"
+                className="rounded-md border border-neutral-300 px-3 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                +
+              </button>
+            </div>
+          </div>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-neutral-500">Pulse width</span>
             <input
@@ -178,7 +250,10 @@ export function LogLaserEntryForm({
         </button>
         <button
           type="button"
-          onClick={() => setState(EMPTY)}
+          onClick={() => {
+            setState(emptyState());
+            setTreatmentTouched(false);
+          }}
           disabled={pending}
           className="rounded-md border border-neutral-300 px-5 py-3 text-base hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >

@@ -18,7 +18,11 @@ export default function NewClientPage() {
       <form action={createClientAction} className="flex flex-col gap-5">
         <Field label="Name" name="name" required autoFocus />
         <div className="grid gap-5 md:grid-cols-2">
-          <Field label="Pronouns" name="pronouns" placeholder="she/her" />
+          <Field
+            label="Pronouns"
+            name="pronouns"
+            placeholder="she/her, he/him, they/them, etc."
+          />
           <Field
             label="Date of birth"
             name="date_of_birth"

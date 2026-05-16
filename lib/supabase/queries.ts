@@ -168,6 +168,34 @@ export async function getRecentEntryForClient(
   return null;
 }
 
+// Counts past laser entries for this client grouped by zone, across all sessions
+// (including any in-progress one). Used to auto-suggest the next "Treatment #".
+export async function getLaserTreatmentCountsForClient(
+  studioId: string,
+  clientId: string,
+): Promise<Record<string, number>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id, laser_entries(zone)")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("modality", "laser");
+
+  if (error)
+    throw new Error(`Failed to load laser treatment counts: ${error.message}`);
+
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const entries = (row as unknown as { laser_entries: { zone: string }[] })
+      .laser_entries;
+    for (const e of entries ?? []) {
+      counts[e.zone] = (counts[e.zone] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> {
   const supabase = await createClient();
   const { data, error } = await supabase

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { SessionWithEntries } from "@/lib/supabase/queries";
+import { ElectrolysisEntryRow, LaserEntryRow } from "./entry-row";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString([], {
@@ -82,34 +83,10 @@ export function ElectrolysisEntryList({
     return <p className="text-xs text-neutral-500">No entries.</p>;
   }
   return (
-    <ul className="flex flex-col gap-2 text-sm">
+    <ul className="flex flex-col gap-2">
       {entries.map((e) => (
-        <li
-          key={e.id}
-          className="rounded-md border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950"
-        >
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-medium">{e.area}</span>
-            {e.probe_size && (
-              <span className="text-xs text-neutral-500">probe {e.probe_size}</span>
-            )}
-            {e.mode && (
-              <span className="text-xs text-neutral-500">{e.mode}</span>
-            )}
-            {e.intensity != null && (
-              <span className="text-xs text-neutral-500">int {e.intensity}</span>
-            )}
-            {e.duration_seconds != null && (
-              <span className="text-xs text-neutral-500">
-                {e.duration_seconds}s
-              </span>
-            )}
-          </div>
-          {e.comments && (
-            <div className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-              {e.comments}
-            </div>
-          )}
+        <li key={e.id}>
+          <ElectrolysisEntryRow entry={e} density="compact" />
         </li>
       ))}
     </ul>
@@ -125,45 +102,12 @@ export function LaserEntryList({
     return <p className="text-xs text-neutral-500">No entries.</p>;
   }
   return (
-    <ul className="flex flex-col gap-2 text-sm">
-      {entries.map((e) => {
-        const params = (e.equipment_params ?? {}) as Record<string, unknown>;
-        return (
-          <li
-            key={e.id}
-            className="rounded-md border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950"
-          >
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="font-medium">{e.zone}</span>
-              {e.session_number != null && (
-                <span className="text-xs text-neutral-500">
-                  #{e.session_number}
-                </span>
-              )}
-              {typeof params.fluence === "string" && params.fluence && (
-                <span className="text-xs text-neutral-500">
-                  fluence {params.fluence}
-                </span>
-              )}
-              {typeof params.pulse_width === "string" && params.pulse_width && (
-                <span className="text-xs text-neutral-500">
-                  pw {params.pulse_width}
-                </span>
-              )}
-              {typeof params.spot_size === "string" && params.spot_size && (
-                <span className="text-xs text-neutral-500">
-                  spot {params.spot_size}
-                </span>
-              )}
-            </div>
-            {e.observation_notes && (
-              <div className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                {e.observation_notes}
-              </div>
-            )}
-          </li>
-        );
-      })}
+    <ul className="flex flex-col gap-2">
+      {entries.map((e) => (
+        <li key={e.id}>
+          <LaserEntryRow entry={e} density="compact" />
+        </li>
+      ))}
     </ul>
   );
 }

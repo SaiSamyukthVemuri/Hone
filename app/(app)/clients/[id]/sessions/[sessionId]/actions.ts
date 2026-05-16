@@ -4,8 +4,20 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { ElectrolysisMode } from "@/lib/types/database";
+import {
+  PULSE_COUNT_DEFAULT,
+  PULSE_COUNT_MAX,
+  PULSE_COUNT_MIN,
+} from "@/lib/constants";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
+
+function clampedPulseCount(value: FormDataEntryValue | null): number {
+  if (typeof value !== "string" || value.trim() === "") return PULSE_COUNT_DEFAULT;
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n)) return PULSE_COUNT_DEFAULT;
+  return Math.min(PULSE_COUNT_MAX, Math.max(PULSE_COUNT_MIN, n));
+}
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -63,6 +75,7 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     mode,
     intensity: nullableNumber(formData.get("intensity")),
     duration_seconds: nullableNumber(formData.get("duration_seconds")),
+    pulse_count: clampedPulseCount(formData.get("pulse_count")),
     comments: nullableString(formData.get("comments")),
   });
 

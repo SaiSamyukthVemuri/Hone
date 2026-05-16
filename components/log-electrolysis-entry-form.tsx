@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ELECTROLYSIS_MODES, PROBE_SIZES } from "@/lib/constants";
+import {
+  AREAS,
+  COMMON_COMMENTS,
+  ELECTROLYSIS_MODES,
+  PROBE_SIZES,
+  PULSE_COUNT_DEFAULT,
+  PULSE_COUNT_MAX,
+  PULSE_COUNT_MIN,
+} from "@/lib/constants";
 import type { ElectrolysisEntry, ProbeLot } from "@/lib/types/database";
-import { AreaChipSelector } from "./area-chip-selector";
+import { ChipSelector } from "./chip-selector";
 
 type FormState = {
   area: string;
@@ -12,6 +20,7 @@ type FormState = {
   mode: string;
   intensity: string;
   duration_seconds: string;
+  pulse_count: string;
   comments: string;
 };
 
@@ -22,6 +31,7 @@ const EMPTY: FormState = {
   mode: "",
   intensity: "",
   duration_seconds: "",
+  pulse_count: String(PULSE_COUNT_DEFAULT),
   comments: "",
 };
 
@@ -35,8 +45,18 @@ function fromLastEntry(e: ElectrolysisEntry | null): FormState {
     intensity: e.intensity != null ? String(e.intensity) : "",
     duration_seconds:
       e.duration_seconds != null ? String(e.duration_seconds) : "",
+    pulse_count:
+      e.pulse_count != null ? String(e.pulse_count) : String(PULSE_COUNT_DEFAULT),
     comments: e.comments ?? "",
   };
+}
+
+function appendComment(existing: string, chip: string): string {
+  if (!existing.trim()) return chip;
+  // Avoid appending the same chip back-to-back (only the most recent token matters).
+  const lastToken = existing.split(/,\s*/).pop()?.trim().toLowerCase();
+  if (lastToken === chip.toLowerCase()) return existing;
+  return `${existing.replace(/\s*,?\s*$/, "")}, ${chip}`;
 }
 
 type Props = {
@@ -62,6 +82,16 @@ export function LogElectrolysisEntryForm({
     setState((s) => ({ ...s, [key]: value }));
   }
 
+  function bumpPulse(delta: number) {
+    const current = parseInt(state.pulse_count, 10);
+    const base = Number.isFinite(current) ? current : PULSE_COUNT_DEFAULT;
+    const next = Math.min(
+      PULSE_COUNT_MAX,
+      Math.max(PULSE_COUNT_MIN, base + delta),
+    );
+    update("pulse_count", String(next));
+  }
+
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -78,6 +108,7 @@ export function LogElectrolysisEntryForm({
     fd.set("mode", state.mode);
     fd.set("intensity", state.intensity);
     fd.set("duration_seconds", state.duration_seconds);
+    fd.set("pulse_count", state.pulse_count);
     fd.set("comments", state.comments);
 
     startTransition(async () => {
@@ -111,10 +142,11 @@ export function LogElectrolysisEntryForm({
         <span className="text-sm font-medium">
           Area<span className="ml-1 text-red-500">*</span>
         </span>
-        <AreaChipSelector
-          name="area"
+        <ChipSelector
+          options={AREAS}
           value={state.area}
           onChange={(v) => update("area", v)}
+          otherPlaceholder="Describe area"
         />
       </div>
 
@@ -201,15 +233,64 @@ export function LogElectrolysisEntryForm({
         </label>
       </div>
 
-      <label className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Pulse count</span>
+        <div className="flex items-stretch gap-2">
+          <button
+            type="button"
+            onClick={() => bumpPulse(-1)}
+            aria-label="Decrease pulse count"
+            className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            −
+          </button>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={PULSE_COUNT_MIN}
+            max={PULSE_COUNT_MAX}
+            value={state.pulse_count}
+            onChange={(e) => update("pulse_count", e.target.value)}
+            className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          />
+          <button
+            type="button"
+            onClick={() => bumpPulse(1)}
+            aria-label="Increase pulse count"
+            className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            +
+          </button>
+          <span className="self-center text-xs text-neutral-500">
+            Pulses per hair (1–{PULSE_COUNT_MAX}).
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Comments</span>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_COMMENTS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() =>
+                update("comments", appendComment(state.comments, c))
+              }
+              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              + {c}
+            </button>
+          ))}
+        </div>
         <textarea
           rows={2}
           value={state.comments}
           onChange={(e) => update("comments", e.target.value)}
+          placeholder="Tap a chip or type a note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
-      </label>
+      </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
