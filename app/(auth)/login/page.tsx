@@ -4,6 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
+const PALETTE = {
+  bg: "#FAFAF7",
+  ink: "#0A0A0A",
+  muted: "#6B6B6B",
+  rule: "#E5E2DA",
+  hoverBg: "#F5F2EB",
+} as const;
+
 type Status =
   | { kind: "idle" }
   | { kind: "google" }
@@ -52,78 +60,125 @@ export default function LoginPage() {
   const isBusy = status.kind === "google" || status.kind === "sending";
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6">
-      <div className="w-full max-w-sm">
+    <main
+      style={{
+        backgroundColor: PALETTE.bg,
+        color: PALETTE.ink,
+        fontFeatureSettings: '"cv11"',
+      }}
+      className="flex min-h-screen flex-col items-center justify-center px-6 py-16 font-[var(--font-inter)]"
+    >
+      <div className="w-full max-w-[420px]">
         <Link
           href="/"
-          className="mb-8 inline-block text-2xl font-semibold tracking-tight"
+          className="font-[var(--font-fraunces)] mb-12 inline-block text-[28px] font-bold leading-none"
+          style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
         >
           Hone
         </Link>
 
-        <h1 className="mb-6 text-2xl font-semibold">Sign in to Hone</h1>
+        <h1
+          className="font-[var(--font-fraunces)] mb-12 text-[40px] font-bold leading-[0.95] md:text-[48px]"
+          style={{ letterSpacing: "-0.03em", color: PALETTE.ink }}
+        >
+          Sign in to Hone
+        </h1>
 
         {status.kind === "sent" ? (
-          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-            <p className="font-medium">Check your email.</p>
-            <p className="mt-1 text-neutral-500">
-              We sent a sign-in link to{" "}
-              <span className="font-medium">{email}</span>.
-            </p>
-          </div>
+          <SentNotice email={email} />
         ) : (
           <>
             <button
               type="button"
               onClick={handleGoogle}
               disabled={isBusy}
-              className="w-full border border-neutral-900 bg-white px-6 py-3 text-sm font-medium text-neutral-900 transition-colors hover:bg-[#FAFAF7] disabled:opacity-50 md:w-auto"
+              className="w-full px-6 py-3 text-[14px] font-medium transition-colors disabled:opacity-50 md:w-auto md:min-w-[260px]"
+              style={{
+                border: `1px solid ${PALETTE.ink}`,
+                backgroundColor: "#FFFFFF",
+                color: PALETTE.ink,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = PALETTE.hoverBg;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "#FFFFFF";
+              }}
             >
               {status.kind === "google" ? "Connecting" : "Continue with Google"}
             </button>
 
-            <div className="my-6 flex items-center gap-3">
-              <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
-              <span className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+            <div className="my-10 flex items-center gap-4">
+              <span
+                aria-hidden="true"
+                className="h-px flex-1"
+                style={{ backgroundColor: PALETTE.rule }}
+              />
+              <span
+                className="text-[11px] lowercase"
+                style={{ color: PALETTE.muted, letterSpacing: "0.04em" }}
+              >
                 or
               </span>
-              <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
+              <span
+                aria-hidden="true"
+                className="h-px flex-1"
+                style={{ backgroundColor: PALETTE.rule }}
+              />
             </div>
 
-            <form onSubmit={handleMagicLink} className="flex flex-col gap-3">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Email</span>
+            <form onSubmit={handleMagicLink} className="flex flex-col gap-8">
+              <label className="flex flex-col gap-3">
+                <span
+                  className="text-[14px] font-medium"
+                  style={{ color: PALETTE.ink }}
+                >
+                  Email
+                </span>
                 <input
                   type="email"
                   required
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                   placeholder="you@studio.com"
+                  disabled={isBusy}
+                  className="bg-transparent pb-3 text-[18px] leading-none outline-none placeholder:text-[#6B6B6B] disabled:opacity-60"
+                  style={{
+                    borderBottom: `1px solid ${PALETTE.ink}`,
+                    color: PALETTE.ink,
+                  }}
                 />
               </label>
 
               <button
                 type="submit"
                 disabled={isBusy}
-                className="mt-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                className="w-full px-8 py-4 text-[14px] font-medium uppercase transition-opacity hover:opacity-90 disabled:opacity-50 md:w-auto md:min-w-[260px]"
+                style={{
+                  backgroundColor: PALETTE.ink,
+                  color: PALETTE.bg,
+                  letterSpacing: "0.1em",
+                }}
               >
                 {status.kind === "sending" ? "Sending" : "Send magic link"}
               </button>
 
               {status.kind === "error" && (
-                <p className="text-sm text-red-600 dark:text-red-400">
+                <p className="text-[13px]" style={{ color: "#B91C1C" }}>
                   {status.message}
                 </p>
               )}
             </form>
 
-            <p className="mt-8 text-xs text-neutral-500">
+            <p
+              className="mt-12 text-[12px] leading-[1.55]"
+              style={{ color: PALETTE.muted }}
+            >
               Trouble signing in? Email{" "}
               <a
                 href="mailto:hello@hone.care"
-                className="underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                className="underline hover:text-[#0A0A0A]"
               >
                 hello@hone.care
               </a>
@@ -132,5 +187,37 @@ export default function LoginPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function SentNotice({ email }: { email: string }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p
+        className="font-[var(--font-fraunces)] text-[24px] leading-[1.2]"
+        style={{ color: PALETTE.ink, letterSpacing: "-0.02em" }}
+      >
+        Check your email.
+      </p>
+      <p
+        className="text-[16px] leading-[1.55]"
+        style={{ color: PALETTE.muted }}
+      >
+        We sent a sign-in link to{" "}
+        <span style={{ color: PALETTE.ink, fontWeight: 500 }}>{email}</span>.
+      </p>
+      <p
+        className="mt-8 text-[12px] leading-[1.55]"
+        style={{ color: PALETTE.muted }}
+      >
+        Didn&rsquo;t get it? Email{" "}
+        <a
+          href="mailto:hello@hone.care"
+          className="underline hover:text-[#0A0A0A]"
+        >
+          hello@hone.care
+        </a>
+      </p>
+    </div>
   );
 }
