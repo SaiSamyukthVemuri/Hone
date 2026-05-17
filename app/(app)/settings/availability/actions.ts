@@ -13,16 +13,6 @@ function nullable(value: FormDataEntryValue | null): string | null {
   return t.length === 0 ? null : t;
 }
 
-function parseInteger(
-  value: FormDataEntryValue | null,
-  fallback: number,
-): number {
-  const t = trimmed(value);
-  if (!t) return fallback;
-  const n = parseInt(t, 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 async function assertOwner(): Promise<{ studioId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
@@ -31,55 +21,45 @@ async function assertOwner(): Promise<{ studioId: string }> {
   return { studioId: studio.id };
 }
 
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-export async function updateStudioBookingPrefsAction(
-  formData: FormData,
-): Promise<void> {
+// Upserts one day-of-week row. Lets the inline editor save a single day
+// without restating the other six. Returns nothing on success.
+export async function upsertDayDefaultAction(formData: FormData): Promise<void> {
   const { studioId } = await assertOwner();
-
-  const tz = trimmed(formData.get("timezone")) || "America/Toronto";
-  const defaultDuration = parseInteger(
-    formData.get("default_appointment_duration_minutes"),
-    60,
-  );
-  const buffer = parseInteger(formData.get("buffer_minutes"), 15);
-  const slugRaw = trimmed(formData.get("slug")).toLowerCase();
-  const address = nullable(formData.get("address"));
-  const bookingDescription = nullable(formData.get("booking_description"));
-
-  if (!SLUG_RE.test(slugRaw)) {
-    throw new Error(
-      "Slug must be lowercase letters, numbers, and dashes (1–64 chars).",
-    );
+  const dowRaw = trimmed(formData.get("day_of_week"));
+  const dow = Number(dowRaw);
+  if (!Number.isFinite(dow) || dow < 0 || dow > 6) {
+    throw new Error("Day of week must be 0–6.");
   }
-  if (defaultDuration < 5 || defaultDuration > 480) {
-    throw new Error("Default duration must be between 5 and 480 minutes.");
-  }
-  if (buffer < 0 || buffer > 240) {
-    throw new Error("Buffer must be between 0 and 240 minutes.");
+  const isOpen = trimmed(formData.get("is_open")) === "true";
+  const open = nullable(formData.get("open_time"));
+  const close = nullable(formData.get("close_time"));
+
+  if (isOpen) {
+    if (!open || !close)
+      throw new Error("Open and close times are required for open days.");
+    if (!TIME_RE.test(open) || !TIME_RE.test(close))
+      throw new Error("Times must be in HH:MM format.");
+    if (open >= close)
+      throw new Error("Close time must be after open time.");
   }
 
   const supabase = await createClient();
   const { error } = await supabase
-    .from("studios")
-    .update({
-      timezone: tz,
-      default_appointment_duration_minutes: defaultDuration,
-      buffer_minutes: buffer,
-      slug: slugRaw,
-      address,
-      booking_description: bookingDescription,
-    })
-    .eq("id", studioId);
-  if (error) {
-    if (error.code === "23505") {
-      throw new Error("That slug is already taken. Pick another.");
-    }
-    throw new Error(`Failed to update booking settings: ${error.message}`);
-  }
+    .from("studio_availability_default")
+    .upsert(
+      {
+        studio_id: studioId,
+        day_of_week: dow,
+        is_open: isOpen,
+        open_time: isOpen ? open : null,
+        close_time: isOpen ? close : null,
+      },
+      { onConflict: "studio_id,day_of_week" },
+    );
+  if (error) throw new Error(`Failed to save: ${error.message}`);
   revalidatePath("/settings/availability");
-  revalidatePath("/settings/studio");
 }
 
 // Saves the weekly default in one round-trip. Form encodes seven rows.
