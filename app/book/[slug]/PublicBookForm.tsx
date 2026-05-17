@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { Service } from "@/lib/types/database";
 import { fetchPublicSlotsAction, publicBookAppointmentAction } from "./actions";
 
@@ -26,11 +26,19 @@ export function PublicBookForm({ slug, services, defaultDate }: Props) {
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
 
-  function loadSlots(svc: string, d: string) {
+  // Single source of truth for the slots fetch: re-runs only when slug,
+  // serviceId, or date actually change. Race-safe via a cancellation flag.
+  useEffect(() => {
+    if (!serviceId || !date) {
+      setSlots([]);
+      return;
+    }
+    let cancelled = false;
     setError(null);
     setPicked(null);
     startLoading(async () => {
-      const r = await fetchPublicSlotsAction({ slug, serviceId: svc, date: d });
+      const r = await fetchPublicSlotsAction({ slug, serviceId, date });
+      if (cancelled) return;
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
@@ -38,15 +46,16 @@ export function PublicBookForm({ slug, services, defaultDate }: Props) {
       }
       setSlots(r.slots);
     });
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, serviceId, date]);
 
   function onService(v: string) {
     setServiceId(v);
-    if (v && date) loadSlots(v, date);
   }
   function onDate(v: string) {
     setDate(v);
-    if (serviceId && v) loadSlots(serviceId, v);
   }
 
   function submit(e: React.FormEvent) {
@@ -99,13 +108,6 @@ export function PublicBookForm({ slug, services, defaultDate }: Props) {
         directly.
       </p>
     );
-  }
-
-  // Once user clicked load via dropdown changes, slots renders.
-  // For the very first render, default to loading on mount via an effect-free trick:
-  // request slots when service+date both present and slots state still empty.
-  if (slots.length === 0 && !loadingSlots && serviceId && date && !error) {
-    loadSlots(serviceId, date);
   }
 
   return (
