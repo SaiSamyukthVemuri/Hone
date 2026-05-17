@@ -1,0 +1,152 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  localDateString,
+  localDayOfWeek,
+  localMinutesSinceMidnight,
+  localTimeString,
+  minutesToHHMM,
+  utcInstantFromLocal,
+} from "./tz";
+
+export type Slot = {
+  start: string; // ISO UTC
+  end: string; // ISO UTC
+  startLabel: string; // local "HH:MM" in studio tz
+};
+
+type StudioRow = {
+  id: string;
+  timezone: string;
+  default_appointment_duration_minutes: number;
+  buffer_minutes: number;
+};
+
+type DefaultRow = {
+  day_of_week: number;
+  is_open: boolean;
+  open_time: string | null;
+  close_time: string | null;
+};
+
+type OverrideRow = {
+  is_open: boolean;
+  open_time: string | null;
+  close_time: string | null;
+};
+
+type AppointmentRow = {
+  starts_at: string;
+  ends_at: string;
+};
+
+type BlockoutRow = {
+  starts_on: string;
+  ends_on: string;
+};
+
+const SLOT_GRANULARITY_MINUTES = 15;
+
+// Strips seconds from a "HH:MM:SS" coming back from a postgres time column.
+function trimTime(t: string | null): string | null {
+  if (!t) return null;
+  return t.slice(0, 5);
+}
+
+export async function getAvailableSlots(
+  supabase: SupabaseClient,
+  studio: StudioRow,
+  dateStr: string,
+  serviceDurationMinutes?: number,
+): Promise<Slot[]> {
+  const tz = studio.timezone;
+  const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
+  const buffer = Math.max(0, studio.buffer_minutes ?? 0);
+  const duration =
+    serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;
+
+  // Blockout?
+  const { data: blockouts } = await supabase
+    .from("studio_blockouts")
+    .select("starts_on, ends_on")
+    .eq("studio_id", studio.id)
+    .lte("starts_on", dateStr)
+    .gte("ends_on", dateStr);
+  if (blockouts && (blockouts as BlockoutRow[]).length > 0) {
+    return [];
+  }
+
+  // Determine open window: override wins over default.
+  let openTime: string | null = null;
+  let closeTime: string | null = null;
+  let isOpen = false;
+
+  const { data: overrideRows } = await supabase
+    .from("studio_availability_overrides")
+    .select("is_open, open_time, close_time")
+    .eq("studio_id", studio.id)
+    .eq("effective_date", dateStr)
+    .maybeSingle();
+  if (overrideRows) {
+    const o = overrideRows as OverrideRow;
+    isOpen = o.is_open;
+    openTime = trimTime(o.open_time);
+    closeTime = trimTime(o.close_time);
+  } else {
+    const { data: defaultRow } = await supabase
+      .from("studio_availability_default")
+      .select("is_open, open_time, close_time")
+      .eq("studio_id", studio.id)
+      .eq("day_of_week", dow)
+      .maybeSingle();
+    if (defaultRow) {
+      const d = defaultRow as DefaultRow;
+      isOpen = d.is_open;
+      openTime = trimTime(d.open_time);
+      closeTime = trimTime(d.close_time);
+    }
+  }
+
+  if (!isOpen || !openTime || !closeTime) return [];
+
+  // Load same-day confirmed appointments. Filter by a generous UTC window
+  // (the studio could span across UTC midnight).
+  const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
+  const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
+  const { data: appts } = await supabase
+    .from("appointments")
+    .select("starts_at, ends_at")
+    .eq("studio_id", studio.id)
+    .eq("status", "confirmed")
+    .gte("starts_at", windowStartUtc.toISOString())
+    .lt("starts_at", windowEndUtc.toISOString());
+
+  const conflicts = ((appts ?? []) as AppointmentRow[]).map((a) => ({
+    start: new Date(a.starts_at).getTime() - buffer * 60_000,
+    end: new Date(a.ends_at).getTime() + buffer * 60_000,
+  }));
+
+  const openMin = localMinutesSinceMidnight(openTime);
+  const closeMin = localMinutesSinceMidnight(closeTime);
+
+  const slots: Slot[] = [];
+  for (let m = openMin; m + duration <= closeMin; m += SLOT_GRANULARITY_MINUTES) {
+    const startLabel = minutesToHHMM(m);
+    const slotStart = utcInstantFromLocal(dateStr, startLabel, tz);
+    const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
+    const slotStartMs = slotStart.getTime();
+    const slotEndMs = slotEnd.getTime();
+
+    const overlap = conflicts.some(
+      (c) => slotStartMs < c.end && slotEndMs > c.start,
+    );
+    if (overlap) continue;
+
+    slots.push({
+      start: slotStart.toISOString(),
+      end: slotEnd.toISOString(),
+      startLabel: localTimeString(slotStart, tz),
+    });
+  }
+
+  return slots;
+}

@@ -13,6 +13,9 @@ import {
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { getActiveServices } from "@/lib/booking/queries";
+import { todayInTz } from "@/lib/booking/tz";
+import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
   deleteClientPricingAction,
@@ -49,6 +52,8 @@ export default async function ClientCheatSheetPage({
   const { client, pricing, sessions, practitioners } = data;
   const lastSession = sessions[0];
   const olderSessions = sessions.slice(1);
+  const services = await getActiveServices(studio.id);
+  const today = todayInTz(studio.timezone);
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -102,12 +107,21 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <Link
-            href={`/clients/${client.id}/sessions/new`}
-            className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            + Log session
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/clients/${client.id}/sessions/new`}
+              className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            >
+              + Log session
+            </Link>
+          </div>
+        </div>
+        <div className="mt-4">
+          <BookAppointment
+            clientId={client.id}
+            services={services}
+            defaultDate={today}
+          />
         </div>
       </section>
 

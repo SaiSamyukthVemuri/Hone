@@ -13,6 +13,93 @@ export type Studio = {
   legal_entity_name: string | null;
   owner_email: string;
   created_at: string;
+  // Booking v1 additions (migration 0010)
+  timezone: string;
+  default_appointment_duration_minutes: number;
+  buffer_minutes: number;
+  slug: string;
+  address: string | null;
+  booking_description: string | null;
+};
+
+export type StudioAvailabilityDefault = {
+  id: string;
+  studio_id: string;
+  day_of_week: number; // 0 = Sunday, 6 = Saturday
+  is_open: boolean;
+  open_time: string | null; // "HH:MM:SS"
+  close_time: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StudioAvailabilityOverride = {
+  id: string;
+  studio_id: string;
+  effective_date: string; // "YYYY-MM-DD"
+  is_open: boolean;
+  open_time: string | null;
+  close_time: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StudioBlockout = {
+  id: string;
+  studio_id: string;
+  starts_on: string;
+  ends_on: string;
+  reason: string | null;
+  created_at: string;
+};
+
+export type Service = {
+  id: string;
+  studio_id: string;
+  name: string;
+  description: string | null;
+  default_duration_minutes: number;
+  price_cents: number | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppointmentStatus =
+  | "confirmed"
+  | "cancelled"
+  | "completed"
+  | "no_show";
+
+export type CancelledBy = "client" | "practitioner" | "owner";
+
+export type Appointment = {
+  id: string;
+  studio_id: string;
+  practitioner_id: string | null;
+  client_id: string;
+  service_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  notes: string | null;
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
+  cancelled_by: CancelledBy | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppointmentAudit = {
+  id: string;
+  appointment_id: string;
+  actor_type: "practitioner" | "client" | "system";
+  actor_id: string | null;
+  action: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export type Practitioner = {
