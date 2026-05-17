@@ -163,17 +163,6 @@ export type Session = {
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
-
-  // Session-level Apilus parameters (added in 0009). All nullable.
-  electrolysis_mode: ElectrolysisMode | null;
-  apilus_modality: ApilusModality | null;
-  intensity_pct: number | null;
-  duration_seconds: number | null;
-  pulses: number | null;
-  minutes_performed: number | null;
-  energy_level: number | null;
-  probe_type: ProbeType | null;
-  machine_frequency: MachineFrequency | null;
 };
 
 export type SessionAudit = {
@@ -197,6 +186,12 @@ export type ElectrolysisEntry = {
   duration_seconds: number | null;
   pulse_count: number;
   comments: string | null;
+  // Migration 0011: parameters moved from session level to entry level.
+  apilus_modality: ApilusModality | null;
+  energy_level: number | null;
+  minutes_performed: number | null;
+  probe_type: ProbeType | null;
+  machine_frequency: MachineFrequency | null;
   created_at: string;
 };
 

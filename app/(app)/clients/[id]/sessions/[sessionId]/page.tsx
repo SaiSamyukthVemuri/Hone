@@ -17,7 +17,6 @@ import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
-import { SessionTreatmentParams } from "./SessionTreatmentParams";
 import {
   addElectrolysisEntryAction,
   addLaserEntryAction,
@@ -111,20 +110,26 @@ export default async function SessionDetailPage({
         updatePerformerAction={updateSessionPerformerAction}
       />
 
-      {session.modality === "electrolysis" && (
-        <SessionTreatmentParams
-          sessionId={session.id}
-          clientId={id}
-          session={session}
-        />
-      )}
-
       {session.modality === "electrolysis" ? (
         <LogElectrolysisEntryForm
           sessionId={session.id}
           clientId={id}
           probeLots={probeLots}
           lastEntry={lastEntryNotFromThisSession as ElectrolysisEntry | null}
+          stickyDefaults={(() => {
+            // Carry forward probe_type and machine_frequency from the latest
+            // in-session entry. Migration 0011 moved these to the entry level.
+            const sorted = [...session.electrolysis_entries].sort(
+              (a, b) =>
+                new Date(b.created_at).getTime() -
+                new Date(a.created_at).getTime(),
+            );
+            const latest = sorted[0];
+            return {
+              probe_type: latest?.probe_type ?? "",
+              machine_frequency: latest?.machine_frequency ?? "",
+            };
+          })()}
           action={addElectrolysisEntryAction}
         />
       ) : (

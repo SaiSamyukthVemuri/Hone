@@ -15,17 +15,28 @@ export function ElectrolysisEntryRow({
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
 }) {
+  // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
   if (entry.probe_size) meta.push(entry.probe_size);
   const mLabel = modeLabel(entry.mode);
   if (mLabel) meta.push(mLabel);
+  if (entry.apilus_modality) meta.push(entry.apilus_modality);
   if (entry.pulse_count != null) {
     meta.push(
       `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
     );
   }
-  if (entry.intensity != null) meta.push(`int ${entry.intensity}`);
+  if (entry.intensity != null) meta.push(`${entry.intensity}%`);
   if (entry.duration_seconds != null) meta.push(`${entry.duration_seconds}s`);
+
+  // Secondary meta line: EL · minutes · probe type · machine frequency
+  const sub: string[] = [];
+  if (entry.energy_level != null) sub.push(`EL ${entry.energy_level}`);
+  if (entry.minutes_performed != null) {
+    sub.push(`${entry.minutes_performed} min`);
+  }
+  if (entry.probe_type) sub.push(`${entry.probe_type} probe`);
+  if (entry.machine_frequency) sub.push(entry.machine_frequency);
 
   return (
     <div
@@ -39,6 +50,9 @@ export function ElectrolysisEntryRow({
         <div className="font-medium">{entry.area}</div>
         {meta.length > 0 && (
           <div className="text-xs text-neutral-500">{meta.join(" · ")}</div>
+        )}
+        {sub.length > 0 && (
+          <div className="text-xs text-neutral-500">{sub.join(" · ")}</div>
         )}
         {entry.comments && (
           <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">

@@ -66,6 +66,26 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
 
+  // Migration 0011: Apilus parameters are now per-entry. Galvanic carries
+  // no apilus_modality or energy_level even if the form happens to submit one.
+  const apilusModalityRaw = pickEnum(
+    formData.get("apilus_modality"),
+    APILUS_MODALITY_VALUES,
+  );
+  const apilusModality = mode === "galv" ? null : apilusModalityRaw;
+  const energyLevelRaw = pickInteger(formData.get("energy_level"), {
+    min: 0,
+  });
+  const energyLevel = mode === "galv" ? null : energyLevelRaw;
+  const minutesPerformed = pickInteger(formData.get("minutes_performed"), {
+    min: 0,
+  });
+  const probeType = pickEnum(formData.get("probe_type"), PROBE_TYPE_VALUES);
+  const machineFrequency = pickEnum(
+    formData.get("machine_frequency"),
+    MACHINE_FREQUENCY_VALUES,
+  );
+
   const supabase = await createClient();
   const { error } = await supabase.from("electrolysis_entries").insert({
     session_id: sessionId,
@@ -77,6 +97,11 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     duration_seconds: nullableNumber(formData.get("duration_seconds")),
     pulse_count: clampedPulseCount(formData.get("pulse_count")),
     comments: nullableString(formData.get("comments")),
+    apilus_modality: apilusModality,
+    energy_level: energyLevel,
+    minutes_performed: minutesPerformed,
+    probe_type: probeType,
+    machine_frequency: machineFrequency,
   });
 
   if (error) throw new Error(`Failed to add entry: ${error.message}`);
@@ -247,11 +272,6 @@ export type EditStartedAtResult =
   | { ok: true }
   | { ok: false; error: string };
 
-export type TreatmentParamsResult =
-  | { ok: true }
-  | { ok: false; error: string };
-
-const ELECTROLYSIS_MODE_VALUES = ["thermo", "blend", "galv"] as const;
 const APILUS_MODALITY_VALUES = [
   "Multiplex",
   "Microflash",
@@ -276,26 +296,16 @@ function pickEnum<T extends string>(
   return (allowed as ReadonlyArray<string>).includes(raw) ? (raw as T) : null;
 }
 
-function pickNumber(
+function pickInteger(
   raw: FormDataEntryValue | null,
-  opts: { integer?: boolean; min?: number; max?: number } = {},
+  opts: { min?: number; max?: number } = {},
 ): number | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
-  const n = opts.integer ? parseInt(raw, 10) : Number(raw);
+  const n = parseInt(raw, 10);
   if (!Number.isFinite(n)) return null;
   if (opts.min !== undefined && n < opts.min) return null;
   if (opts.max !== undefined && n > opts.max) return null;
   return n;
-}
-
-function diffValue(
-  oldVal: unknown,
-  newVal: unknown,
-): { old: string | null; new: string | null } | null {
-  const oldStr = oldVal == null ? null : String(oldVal);
-  const newStr = newVal == null ? null : String(newVal);
-  if (oldStr === newStr) return null;
-  return { old: oldStr, new: newStr };
 }
 
 export async function editSessionStartedAtAction(
@@ -393,133 +403,3 @@ export async function editSessionStartedAtAction(
   return { ok: true };
 }
 
-export async function updateSessionTreatmentParamsAction(
-  formData: FormData,
-): Promise<TreatmentParamsResult> {
-  const sessionId = formData.get("session_id");
-  const clientId = formData.get("client_id");
-  if (typeof sessionId !== "string" || !sessionId) {
-    return { ok: false, error: "Missing session id." };
-  }
-  if (typeof clientId !== "string" || !clientId) {
-    return { ok: false, error: "Missing client id." };
-  }
-
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  if (!practitioner.active) {
-    return { ok: false, error: "Inactive practitioners cannot edit sessions." };
-  }
-
-  const electrolysisMode = pickEnum(
-    formData.get("electrolysis_mode"),
-    ELECTROLYSIS_MODE_VALUES,
-  );
-  const apilusModalityRaw = pickEnum(
-    formData.get("apilus_modality"),
-    APILUS_MODALITY_VALUES,
-  );
-  // Galvanic mode never carries an apilus modality or energy level.
-  const apilusModality =
-    electrolysisMode === "galv" ? null : apilusModalityRaw;
-  const intensityPct = pickNumber(formData.get("intensity_pct"), {
-    min: 0,
-    max: 100,
-  });
-  const duration = pickNumber(formData.get("duration_seconds"), { min: 0 });
-  const pulses = pickNumber(formData.get("pulses"), { integer: true, min: 0 });
-  const minutesPerformed = pickNumber(formData.get("minutes_performed"), {
-    integer: true,
-    min: 0,
-  });
-  const energyLevelRaw = pickNumber(formData.get("energy_level"), {
-    integer: true,
-    min: 0,
-  });
-  const energyLevel = electrolysisMode === "galv" ? null : energyLevelRaw;
-  const probeType = pickEnum(formData.get("probe_type"), PROBE_TYPE_VALUES);
-  const machineFrequency = pickEnum(
-    formData.get("machine_frequency"),
-    MACHINE_FREQUENCY_VALUES,
-  );
-
-  const supabase = await createClient();
-
-  const { data: existing, error: lookupErr } = await supabase
-    .from("sessions")
-    .select(
-      "id, electrolysis_mode, apilus_modality, intensity_pct, duration_seconds, pulses, minutes_performed, energy_level, probe_type, machine_frequency",
-    )
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId)
-    .maybeSingle();
-  if (lookupErr) {
-    return { ok: false, error: `Failed to load session: ${lookupErr.message}` };
-  }
-  if (!existing) {
-    return { ok: false, error: "Session not found." };
-  }
-
-  const next = {
-    electrolysis_mode: electrolysisMode,
-    apilus_modality: apilusModality,
-    intensity_pct: intensityPct,
-    duration_seconds: duration,
-    pulses,
-    minutes_performed: minutesPerformed,
-    energy_level: energyLevel,
-    probe_type: probeType,
-    machine_frequency: machineFrequency,
-  } as const;
-
-  const diffs: Array<{
-    field: string;
-    old_value: string | null;
-    new_value: string | null;
-  }> = [];
-  for (const key of Object.keys(next) as Array<keyof typeof next>) {
-    const change = diffValue(
-      (existing as Record<string, unknown>)[key],
-      next[key],
-    );
-    if (change) {
-      diffs.push({ field: key, old_value: change.old, new_value: change.new });
-    }
-  }
-
-  if (diffs.length === 0) {
-    return { ok: true };
-  }
-
-  const { error: updateErr } = await supabase
-    .from("sessions")
-    .update(next)
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id);
-  if (updateErr) {
-    return {
-      ok: false,
-      error: `Failed to update session: ${updateErr.message}`,
-    };
-  }
-
-  const auditRows = diffs.map((d) => ({
-    session_id: sessionId,
-    edited_by_practitioner_id: practitioner.id,
-    field: d.field,
-    old_value: d.old_value,
-    new_value: d.new_value,
-  }));
-  const { error: auditErr } = await supabase
-    .from("session_audit")
-    .insert(auditRows);
-  if (auditErr) {
-    console.error("Failed to write session_audit rows:", auditErr);
-  }
-
-  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
-  revalidatePath(`/clients/${clientId}`);
-  revalidatePath("/dashboard");
-
-  return { ok: true };
-}
