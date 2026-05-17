@@ -47,6 +47,22 @@ export type Client = {
   created_by: string | null;
 };
 
+export type ApilusModality =
+  | "Multiplex"
+  | "Microflash"
+  | "Picoflash"
+  | "Synchro"
+  | "Thermoflash"
+  | "Meloflash"
+  | "Evolublend"
+  | "Omniblend"
+  | "Picoblend"
+  | "Synchroblend"
+  | "Multiblend";
+
+export type ProbeType = "Regular" | "IBL" | "ITH";
+export type MachineFrequency = "13.5 MHz" | "27.12 MHz";
+
 export type Session = {
   id: string;
   studio_id: string;
@@ -60,6 +76,17 @@ export type Session = {
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
+
+  // Session-level Apilus parameters (added in 0009). All nullable.
+  electrolysis_mode: ElectrolysisMode | null;
+  apilus_modality: ApilusModality | null;
+  intensity_pct: number | null;
+  duration_seconds: number | null;
+  pulses: number | null;
+  minutes_performed: number | null;
+  energy_level: number | null;
+  probe_type: ProbeType | null;
+  machine_frequency: MachineFrequency | null;
 };
 
 export type SessionAudit = {

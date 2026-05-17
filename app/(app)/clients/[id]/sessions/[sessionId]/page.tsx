@@ -17,6 +17,7 @@ import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
+import { SessionTreatmentParams } from "./SessionTreatmentParams";
 import {
   addElectrolysisEntryAction,
   addLaserEntryAction,
@@ -109,6 +110,14 @@ export default async function SessionDetailPage({
         updatePriceAction={updateSessionPriceAction}
         updatePerformerAction={updateSessionPerformerAction}
       />
+
+      {session.modality === "electrolysis" && (
+        <SessionTreatmentParams
+          sessionId={session.id}
+          clientId={id}
+          session={session}
+        />
+      )}
 
       {session.modality === "electrolysis" ? (
         <LogElectrolysisEntryForm

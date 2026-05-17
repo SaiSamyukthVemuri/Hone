@@ -87,6 +87,45 @@ export const COMMON_COMMENTS: ReadonlyArray<string> = [
   "Erythema",
   "Slight edema",
   "Client tolerated well",
+  "Lots of anagen",
+  "Lots of catagen",
+  "Lots of telogen",
+  "Shallow follicles",
+];
+
+// Apilus sub-modalities, scoped by electrolysis mode. Galvanic has no
+// sub-modality, so it's intentionally absent from the map.
+export const APILUS_MODALITIES_BY_MODE: Record<
+  "thermo" | "blend",
+  ReadonlyArray<string>
+> = {
+  thermo: [
+    "Multiplex",
+    "Microflash",
+    "Picoflash",
+    "Synchro",
+    "Thermoflash",
+    "Meloflash",
+  ],
+  blend: [
+    "Evolublend",
+    "Omniblend",
+    "Picoblend",
+    "Synchroblend",
+    "Multiblend",
+  ],
+};
+
+export const ALL_APILUS_MODALITIES: ReadonlyArray<string> = [
+  ...APILUS_MODALITIES_BY_MODE.thermo,
+  ...APILUS_MODALITIES_BY_MODE.blend,
+];
+
+export const PROBE_TYPES: ReadonlyArray<string> = ["Regular", "IBL", "ITH"];
+
+export const MACHINE_FREQUENCIES: ReadonlyArray<string> = [
+  "13.5 MHz",
+  "27.12 MHz",
 ];
 
 // Quick-tap observation chips for laser entries. Theresa will replace with the real list later.
