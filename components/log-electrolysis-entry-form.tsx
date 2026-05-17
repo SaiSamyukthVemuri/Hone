@@ -34,6 +34,7 @@ type FormState = {
   pulse_count: string;
   energy_level: string;
   minutes_performed: string;
+  hairs_treated: string;
   probe_type: string;
   machine_frequency: string;
   comments: string;
@@ -50,6 +51,7 @@ const EMPTY: FormState = {
   pulse_count: String(PULSE_COUNT_DEFAULT),
   energy_level: "",
   minutes_performed: "",
+  hairs_treated: "",
   probe_type: "",
   machine_frequency: "",
   comments: "",
@@ -87,6 +89,7 @@ function fromLastEntry(e: ElectrolysisEntry | null): FormState {
     energy_level: e.energy_level != null ? String(e.energy_level) : "",
     minutes_performed:
       e.minutes_performed != null ? String(e.minutes_performed) : "",
+    hairs_treated: e.hairs_treated != null ? String(e.hairs_treated) : "",
     probe_type: e.probe_type ?? "",
     machine_frequency: e.machine_frequency ?? "",
     comments: e.comments ?? "",
@@ -166,6 +169,7 @@ export function LogElectrolysisEntryForm({
     fd.set("pulse_count", state.pulse_count);
     fd.set("energy_level", state.energy_level);
     fd.set("minutes_performed", state.minutes_performed);
+    fd.set("hairs_treated", state.hairs_treated);
     fd.set("probe_type", state.probe_type);
     fd.set("machine_frequency", state.machine_frequency);
     fd.set("comments", state.comments);
@@ -357,8 +361,8 @@ export function LogElectrolysisEntryForm({
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          {showEnergyLevel && (
+        {showEnergyLevel && (
+          <div className="md:max-w-[16rem]">
             <SuffixField
               label="Energy Level (EL)"
               value={state.energy_level}
@@ -367,17 +371,8 @@ export function LogElectrolysisEntryForm({
               min={0}
               integer
             />
-          )}
-          <SuffixField
-            label="Minutes performed"
-            suffix="min"
-            value={state.minutes_performed}
-            onChange={(v) => update("minutes_performed", v)}
-            step="1"
-            min={0}
-            integer
-          />
-        </div>
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">
@@ -425,6 +420,27 @@ export function LogElectrolysisEntryForm({
               })}
             </div>
           </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <SuffixField
+            label="Minutes performed"
+            suffix="min"
+            value={state.minutes_performed}
+            onChange={(v) => update("minutes_performed", v)}
+            step="1"
+            min={0}
+            integer
+          />
+          <SuffixField
+            label="Total hairs treated"
+            value={state.hairs_treated}
+            onChange={(v) => update("hairs_treated", v)}
+            step="1"
+            min={0}
+            integer
+            placeholder="500"
+          />
         </div>
       </div>
 

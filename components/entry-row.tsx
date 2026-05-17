@@ -29,14 +29,15 @@ export function ElectrolysisEntryRow({
   if (entry.intensity != null) meta.push(`${entry.intensity}%`);
   if (entry.duration_seconds != null) meta.push(`${entry.duration_seconds}s`);
 
-  // Secondary meta line: EL · minutes · probe type · machine frequency
+  // Secondary meta line: EL · probe type · machine frequency · minutes · hairs
   const sub: string[] = [];
   if (entry.energy_level != null) sub.push(`EL ${entry.energy_level}`);
+  if (entry.probe_type) sub.push(`${entry.probe_type} probe`);
+  if (entry.machine_frequency) sub.push(entry.machine_frequency);
   if (entry.minutes_performed != null) {
     sub.push(`${entry.minutes_performed} min`);
   }
-  if (entry.probe_type) sub.push(`${entry.probe_type} probe`);
-  if (entry.machine_frequency) sub.push(entry.machine_frequency);
+  if (entry.hairs_treated != null) sub.push(`${entry.hairs_treated} hairs`);
 
   return (
     <div

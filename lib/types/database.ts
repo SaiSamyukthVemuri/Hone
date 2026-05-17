@@ -192,6 +192,8 @@ export type ElectrolysisEntry = {
   minutes_performed: number | null;
   probe_type: ProbeType | null;
   machine_frequency: MachineFrequency | null;
+  // Migration 0012: optional total hair count per entry.
+  hairs_treated: number | null;
   created_at: string;
 };
 

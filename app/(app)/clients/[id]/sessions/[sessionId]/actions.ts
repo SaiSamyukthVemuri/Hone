@@ -85,6 +85,7 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     formData.get("machine_frequency"),
     MACHINE_FREQUENCY_VALUES,
   );
+  const hairsTreated = pickInteger(formData.get("hairs_treated"), { min: 0 });
 
   const supabase = await createClient();
   const { error } = await supabase.from("electrolysis_entries").insert({
@@ -102,6 +103,7 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     minutes_performed: minutesPerformed,
     probe_type: probeType,
     machine_frequency: machineFrequency,
+    hairs_treated: hairsTreated,
   });
 
   if (error) throw new Error(`Failed to add entry: ${error.message}`);
