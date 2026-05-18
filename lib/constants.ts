@@ -121,7 +121,12 @@ export const ALL_APILUS_MODALITIES: ReadonlyArray<string> = [
   ...APILUS_MODALITIES_BY_MODE.blend,
 ];
 
-export const PROBE_TYPES: ReadonlyArray<string> = ["Regular", "IBL", "ITH"];
+export const PROBE_TYPES: ReadonlyArray<string> = [
+  "Stainless steel regular",
+  "Stainless steel gold",
+  "IBL",
+  "ITH",
+];
 
 export const MACHINE_FREQUENCIES: ReadonlyArray<string> = [
   "13.56 MHz",

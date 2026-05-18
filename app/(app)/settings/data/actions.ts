@@ -85,7 +85,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     supabase
       .from("electrolysis_entries")
       .select(
-        "id, session_id, area, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, comments, created_at",
+        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, comments, created_at",
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -206,6 +206,20 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // Flatten the `areas` text[] to a semicolon-separated string so it renders
+  // cleanly in spreadsheets (CSV's own delimiter is a comma).
+  type ElectRow = {
+    id: string;
+    session_id: string;
+    area: string | null;
+    areas: string[] | null;
+    [k: string]: unknown;
+  };
+  const electRows = (filteredElectrolysis as unknown as ElectRow[]).map((e) => ({
+    ...e,
+    areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
+  }));
+
   zip.file(
     "electrolysis_entries.csv",
     rowsToCsv(
@@ -213,6 +227,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "id",
         "session_id",
         "area",
+        "areas",
         "probe_size",
         "probe_lot_id",
         "mode",
@@ -222,7 +237,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "comments",
         "created_at",
       ],
-      filteredElectrolysis as unknown as Record<string, unknown>[],
+      electRows,
     ),
   );
 

@@ -13,6 +13,7 @@ import { LogElectrolysisEntryForm } from "@/components/log-electrolysis-entry-fo
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
+import { getClientTags } from "@/lib/client-tags/queries";
 import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
@@ -67,6 +68,7 @@ export default async function SessionDetailPage({
 
   const performerName = sessionPerformerName(session, clientData.practitioners);
   const audit = await getSessionAudit(session.id);
+  const clientTags = await getClientTags(studio.id, id);
 
   return (
     <div className="flex flex-col gap-8">
@@ -116,6 +118,7 @@ export default async function SessionDetailPage({
           sessionId={session.id}
           clientId={id}
           probeLots={probeLots}
+          clientTagLabels={clientTags.map((t) => t.label)}
           lastEntry={lastEntryNotFromThisSession as ElectrolysisEntry | null}
           stickyDefaults={(() => {
             // Carry forward probe_type and machine_frequency from the latest

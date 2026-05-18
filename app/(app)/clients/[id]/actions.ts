@@ -126,3 +126,52 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
   if (error) throw new Error(`Failed to delete pricing: ${error.message}`);
   revalidatePath(`/clients/${clientId}`);
 }
+
+export async function addClientTagAction(formData: FormData): Promise<void> {
+  const clientId = formData.get("client_id");
+  const label = nullableString(formData.get("label"));
+  if (typeof clientId !== "string" || !clientId) {
+    throw new Error("Missing client id.");
+  }
+  if (!label) throw new Error("Tag label is required.");
+  if (label.length > 60) throw new Error("Tag label must be 60 characters or fewer.");
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  await assertClientVisible(studio.id, clientId);
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("client_tags").insert({
+    studio_id: studio.id,
+    client_id: clientId,
+    label,
+    created_by: practitioner.id,
+  });
+  if (error) throw new Error(`Failed to add tag: ${error.message}`);
+  revalidatePath(`/clients/${clientId}`);
+}
+
+export async function removeClientTagAction(formData: FormData): Promise<void> {
+  const tagId = formData.get("tag_id");
+  const clientId = formData.get("client_id");
+  if (typeof tagId !== "string" || !tagId) throw new Error("Missing tag id.");
+  if (typeof clientId !== "string" || !clientId) {
+    throw new Error("Missing client id.");
+  }
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  await assertClientVisible(studio.id, clientId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("client_tags")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: practitioner.id,
+    })
+    .eq("id", tagId)
+    .eq("studio_id", studio.id)
+    .eq("client_id", clientId)
+    .is("deleted_at", null);
+  if (error) throw new Error(`Failed to remove tag: ${error.message}`);
+  revalidatePath(`/clients/${clientId}`);
+}

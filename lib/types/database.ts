@@ -147,7 +147,11 @@ export type ApilusModality =
   | "Synchroblend"
   | "Multiblend";
 
-export type ProbeType = "Regular" | "IBL" | "ITH";
+export type ProbeType =
+  | "Stainless steel regular"
+  | "Stainless steel gold"
+  | "IBL"
+  | "ITH";
 export type MachineFrequency = "13.56 MHz" | "27.12 MHz";
 
 export type Session = {
@@ -182,7 +186,11 @@ export type SessionAudit = {
 export type ElectrolysisEntry = {
   id: string;
   session_id: string;
+  // Legacy single-area field. Always populated for backwards compatibility
+  // (first entry of `areas`). New code should prefer `areas`.
   area: string;
+  // Migration 0017: multiple areas treated with the same settings.
+  areas: string[] | null;
   probe_size: string | null;
   probe_lot_id: string | null;
   mode: ElectrolysisMode | null;
@@ -256,6 +264,19 @@ export type PendingInvitation = {
   status: InvitationStatus;
   created_at: string;
   accepted_at: string | null;
+};
+
+export type ClientTag = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  label: string;
+  color: string | null;
+  created_at: string;
+  created_by: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
 };
 
 export type IntakeStatus = "in_progress" | "submitted" | "reviewed";

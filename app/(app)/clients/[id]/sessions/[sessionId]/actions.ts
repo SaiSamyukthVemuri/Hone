@@ -32,6 +32,29 @@ function nullableNumber(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Parses a JSON array of strings from form data and returns trimmed,
+// deduplicated, non-empty entries. Falls back to [] for any malformed input.
+function parseAreasJson(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== "string" || value.trim() === "") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of parsed) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 async function assertSessionVisible(
   studioId: string,
   clientId: string,
@@ -52,11 +75,15 @@ async function assertSessionVisible(
 export async function addElectrolysisEntryAction(formData: FormData): Promise<void> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
-  const area = nullableString(formData.get("area"));
+  const areas = parseAreasJson(formData.get("areas"));
 
   if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
   if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
-  if (!area) throw new Error("Area is required.");
+  if (areas.length === 0) throw new Error("Area is required.");
+  // The legacy `area` column is still NOT NULL in the schema. Migration 0017
+  // adds `areas text[]`, but the column stays around for backwards compat
+  // until a follow-up migration drops it. Mirror the first array value.
+  const area = areas[0];
 
   const modeRaw = formData.get("mode");
   const mode =
@@ -92,6 +119,7 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   const { error } = await supabase.from("electrolysis_entries").insert({
     session_id: sessionId,
     area,
+    areas,
     probe_size: nullableString(formData.get("probe_size")),
     probe_lot_id: nullableString(formData.get("probe_lot_id")),
     mode,
@@ -288,7 +316,12 @@ const APILUS_MODALITY_VALUES = [
   "Synchroblend",
   "Multiblend",
 ] as const;
-const PROBE_TYPE_VALUES = ["Regular", "IBL", "ITH"] as const;
+const PROBE_TYPE_VALUES = [
+  "Stainless steel regular",
+  "Stainless steel gold",
+  "IBL",
+  "ITH",
+] as const;
 const MACHINE_FREQUENCY_VALUES = ["13.56 MHz", "27.12 MHz"] as const;
 
 function pickEnum<T extends string>(
