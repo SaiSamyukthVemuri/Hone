@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { Service } from "@/lib/types/database";
+import {
+  formatServiceLabel,
+  groupServicesByModality,
+} from "@/lib/booking/format";
 import { fetchPublicSlotsAction, publicBookAppointmentAction } from "./actions";
 
 type Slot = { start: string; end: string; startLabel: string };
@@ -13,7 +17,9 @@ type Props = {
 };
 
 export function PublicBookForm({ slug, services, defaultDate }: Props) {
-  const [serviceId, setServiceId] = useState(services[0]?.id ?? "");
+  const groups = useMemo(() => groupServicesByModality(services), [services]);
+  const firstServiceId = groups[0]?.services[0]?.id ?? "";
+  const [serviceId, setServiceId] = useState(firstServiceId);
   const [date, setDate] = useState(defaultDate);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [picked, setPicked] = useState<Slot | null>(null);
@@ -120,11 +126,25 @@ export function PublicBookForm({ slug, services, defaultDate }: Props) {
             className="w-full bg-transparent py-2 text-[16px] outline-none"
             style={{ borderBottom: "1px solid #0A0A0A" }}
           >
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.default_duration_minutes} min)
-              </option>
-            ))}
+            {groups.map((group) =>
+              groups.length === 1 && group.modality === null ? (
+                // Single ungrouped bucket: skip the optgroup wrapper so the
+                // dropdown reads as a flat list without an "Other" heading.
+                group.services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {formatServiceLabel(s)}
+                  </option>
+                ))
+              ) : (
+                <optgroup key={group.modality ?? "_other"} label={group.label}>
+                  {group.services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {formatServiceLabel(s)}
+                    </option>
+                  ))}
+                </optgroup>
+              ),
+            )}
           </select>
         </Field>
         <Field label="Date">
