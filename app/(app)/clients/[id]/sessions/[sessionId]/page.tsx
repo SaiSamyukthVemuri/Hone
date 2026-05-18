@@ -17,6 +17,7 @@ import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
+import { DeleteSessionForm } from "./DeleteSessionForm";
 import {
   addElectrolysisEntryAction,
   addLaserEntryAction,
@@ -165,6 +166,10 @@ export default async function SessionDetailPage({
           />
         )}
       </section>
+
+      <div className="pt-6">
+        <DeleteSessionForm sessionId={session.id} clientId={id} />
+      </div>
     </div>
   );
 }
