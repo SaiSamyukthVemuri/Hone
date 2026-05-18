@@ -132,6 +132,18 @@ export default async function ClientIntakePage({
         </p>
       </div>
 
+      {responses.requires_epipen === "yes" && (
+        <div className="rounded-md border border-red-400 bg-red-50 p-4 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100">
+          <p className="font-semibold uppercase tracking-wider text-xs">
+            EpiPen required
+          </p>
+          <p className="mt-1">
+            This client requires an EpiPen. Confirm they have it with them
+            before starting treatment.
+          </p>
+        </div>
+      )}
+
       {intake.status === "in_progress" ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
           The client has not submitted their intake yet. Responses shown below

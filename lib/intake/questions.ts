@@ -73,6 +73,12 @@ const HAIR_DURATION: ReadonlyArray<Option> = [
   { value: "adolescence", label: "Since adolescence" },
 ];
 
+// Sentinel value used by multi_select questions to express "none of the
+// above" as an active choice rather than an empty selection. The wizard
+// treats this value as exclusive: selecting it clears all other choices;
+// selecting any other option clears this one.
+export const NONE_VALUE = "__none__";
+
 const REMOVAL_METHODS: ReadonlyArray<Option> = [
   { value: "shaving", label: "Shaving" },
   { value: "waxing", label: "Waxing" },
@@ -81,6 +87,7 @@ const REMOVAL_METHODS: ReadonlyArray<Option> = [
   { value: "depilatory", label: "Depilatory creams" },
   { value: "plucking", label: "Plucking" },
   { value: "other", label: "Other" },
+  { value: NONE_VALUE, label: "I haven't tried any of these" },
 ];
 
 const RECENCY: ReadonlyArray<Option> = [
@@ -99,13 +106,17 @@ const MEDS: ReadonlyArray<Option> = [
   { value: "steroids", label: "Steroids (oral or topical near treatment area)" },
   { value: "immunosuppressants", label: "Immunosuppressants" },
   { value: "acne_meds", label: "Acne medications" },
+  { value: NONE_VALUE, label: "I'm not taking any of these" },
 ];
 
+// Note: the "Keloid scarring tendency" item was removed from this list when
+// the Skin step's scarring_tendency question was relabeled to "Tendency to
+// scar or keloid?" The single question now covers both signals.
 const CONDITIONS: ReadonlyArray<Option> = [
   { value: "pregnancy", label: "Pregnancy or breastfeeding" },
   { value: "diabetes", label: "Diabetes" },
   { value: "thyroid", label: "Thyroid disorder (hyper or hypothyroid)" },
-  { value: "pcos", label: "Polycystic ovary syndrome (PCOS)" },
+  { value: "pcos", label: "Polycystic ovarian syndrome (PCOS / PMOD)" },
   { value: "lupus_autoimmune", label: "Lupus or other autoimmune conditions" },
   { value: "epilepsy", label: "Epilepsy or seizure disorder" },
   { value: "heart", label: "Heart conditions" },
@@ -113,10 +124,17 @@ const CONDITIONS: ReadonlyArray<Option> = [
   { value: "metal_implants", label: "Metal implants, plates, or screws" },
   { value: "cancer", label: "Cancer (current or recent treatment)" },
   { value: "blood_borne", label: "HIV, hepatitis, or other blood-borne conditions" },
-  { value: "keloid", label: "Keloid scarring tendency" },
   { value: "skin_condition", label: "Eczema, psoriasis, or other skin conditions" },
   { value: "recent_surgery", label: "Recent surgery (within the last 6 months)" },
   { value: "other", label: "Other" },
+  { value: NONE_VALUE, label: "None of these apply to me" },
+];
+
+const METAL_ALLERGY_TYPES: ReadonlyArray<Option> = [
+  { value: "nickel", label: "Nickel" },
+  { value: "stainless_steel", label: "Stainless steel" },
+  { value: "gold", label: "Gold" },
+  { value: "other", label: "Other (please specify below)" },
 ];
 
 const SENSITIVITY: ReadonlyArray<Option> = [
@@ -171,6 +189,15 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         label: "Primary areas of concern",
         options: BODY_AREAS,
         required: true,
+      },
+      {
+        key: "areas_of_concern_other_text",
+        type: "short_text",
+        label: "Tell us about the area you'd like treated",
+        conditional: {
+          whenKey: "areas_of_concern",
+          whenEquals: ["other"],
+        },
       },
       {
         key: "hair_growth_duration",
@@ -291,9 +318,32 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         followUpNotesPrompt: "Please list them.",
       },
       {
+        key: "requires_epipen",
+        type: "yes_no",
+        label: "Do you require an EpiPen?",
+        helpText: "If yes, please bring it to your appointment.",
+        conditional: { whenKey: "has_allergies", whenEquals: ["yes"] },
+      },
+      {
         key: "metal_allergy",
         type: "yes_no",
-        label: "Metal allergies (nickel, stainless steel, gold)?",
+        label: "Do you have a metal allergy?",
+      },
+      {
+        key: "metal_allergy_types",
+        type: "multi_select",
+        label: "Which metal are you allergic to?",
+        options: METAL_ALLERGY_TYPES,
+        conditional: { whenKey: "metal_allergy", whenEquals: ["yes"] },
+      },
+      {
+        key: "metal_allergy_other_text",
+        type: "short_text",
+        label: "If other, please describe",
+        conditional: {
+          whenKey: "metal_allergy_types",
+          whenEquals: ["other"],
+        },
       },
       { key: "latex_allergy", type: "yes_no", label: "Latex allergy?" },
       {
@@ -317,7 +367,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
       {
         key: "scarring_tendency",
         type: "single_select",
-        label: "Tendency to scar",
+        label: "Tendency to scar or keloid",
         options: SCARRING,
       },
       {
@@ -329,6 +379,12 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         key: "recent_self_tanner",
         type: "yes_no",
         label: "Recent self-tanner use (within the last 2 weeks)?",
+      },
+      {
+        key: "regular_spf_use",
+        type: "yes_no",
+        label: "Do you regularly wear SPF on the treatment area?",
+        followUpNotesPrompt: "Any details?",
       },
       {
         key: "cold_sore_tendency",
@@ -345,6 +401,8 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         key: "skin_sensitizing_products",
         type: "yes_no",
         label: "Recent use of skin-sensitizing products near treatment area?",
+        helpText:
+          "Examples: AHA, BHA, retinoids, prescription acne medications.",
         followUpNotesPrompt: "Which products?",
       },
       {
