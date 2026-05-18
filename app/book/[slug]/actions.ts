@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
@@ -182,6 +183,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Emails.
   const cancelToken = generateCancellationToken(created.id, new Date(created.starts_at));
   const cancellationUrl = `${APP_ORIGIN}/cancel/${cancelToken}`;
+
+  // Ensure an in-progress intake exists for this client and attach the link
+  // to the confirmation email. Returns null if they already have a submitted
+  // or reviewed intake on file, in which case the email omits the section.
+  const intake = await ensureIntakeForClient({
+    studioId: studio.id,
+    clientId,
+    appOrigin: APP_ORIGIN,
+  });
+
   await sendBookingConfirmationToClient({
     appointment: created,
     service,
@@ -191,6 +202,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientName,
     clientEmail: email,
     cancellationUrl,
+    intakeUrl: intake?.url ?? null,
     appBaseUrl: APP_ORIGIN,
   });
   if (owner?.email) {
