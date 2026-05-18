@@ -15,6 +15,7 @@ import { AddPricingForm } from "@/components/add-pricing-form";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
+import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -54,6 +55,7 @@ export default async function ClientCheatSheetPage({
   const olderSessions = sessions.slice(1);
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
+  const intake = await getLatestIntakeForClient(studio.id, client.id);
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -208,6 +210,64 @@ export default async function ClientCheatSheetPage({
             </p>
           )}
         </div>
+      </section>
+
+      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+            Health intake
+          </h2>
+          {intake?.status === "reviewed" && (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+              Reviewed
+            </span>
+          )}
+          {intake?.status === "submitted" && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+              Awaiting review
+            </span>
+          )}
+        </div>
+        {!intake && (
+          <p className="mt-2 text-sm text-neutral-500">
+            No intake on file. A link is sent automatically with each booking
+            confirmation.
+          </p>
+        )}
+        {intake?.status === "in_progress" && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-neutral-600">
+              Intake started <FormattedDateTime iso={intake.started_at} />, not
+              yet submitted.
+            </p>
+          </div>
+        )}
+        {intake?.status === "submitted" && intake.submitted_at && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-neutral-600">
+              Submitted <FormattedDateTime iso={intake.submitted_at} />
+            </p>
+            <Link
+              href={`/clients/${client.id}/intake`}
+              className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              View intake →
+            </Link>
+          </div>
+        )}
+        {intake?.status === "reviewed" && intake.reviewed_at && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-neutral-600">
+              Reviewed <FormattedDateTime iso={intake.reviewed_at} />
+            </p>
+            <Link
+              href={`/clients/${client.id}/intake`}
+              className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              View intake →
+            </Link>
+          </div>
+        )}
       </section>
 
       {hasEmergencyContact && (

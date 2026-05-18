@@ -54,6 +54,7 @@ export async function sendBookingConfirmationToClient(params: {
   clientName: string;
   clientEmail: string;
   cancellationUrl: string;
+  intakeUrl: string | null;
   appBaseUrl: string;
 }) {
   if (!params.clientEmail) return;
@@ -72,6 +73,7 @@ export async function sendBookingConfirmationToClient(params: {
     endsAt: end,
     timezone: params.studio.timezone,
     cancellationUrl: params.cancellationUrl,
+    intakeUrl: params.intakeUrl,
   });
 
   const ics = buildIcs({

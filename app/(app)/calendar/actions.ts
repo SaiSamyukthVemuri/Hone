@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
@@ -235,6 +236,11 @@ async function dispatchBookingEmails(p: DispatchParams) {
   const appointmentUrl = `${APP_ORIGIN}/calendar`;
 
   if (p.clientEmail) {
+    const intake = await ensureIntakeForClient({
+      studioId: p.studio.id,
+      clientId: p.appointment.client_id,
+      appOrigin: APP_ORIGIN,
+    });
     await sendBookingConfirmationToClient({
       appointment: p.appointment,
       service: p.service,
@@ -243,6 +249,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
       clientName: p.clientName,
       clientEmail: p.clientEmail,
       cancellationUrl,
+      intakeUrl: intake?.url ?? null,
       appBaseUrl: APP_ORIGIN,
     });
   }

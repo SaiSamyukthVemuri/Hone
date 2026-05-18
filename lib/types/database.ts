@@ -258,6 +258,25 @@ export type PendingInvitation = {
   accepted_at: string | null;
 };
 
+export type IntakeStatus = "in_progress" | "submitted" | "reviewed";
+
+export type ClientIntakeForm = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  status: IntakeStatus;
+  current_step: number;
+  responses: Record<string, unknown>;
+  started_at: string;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  practitioner_notes: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AuditLog = {
   id: string;
   studio_id: string;

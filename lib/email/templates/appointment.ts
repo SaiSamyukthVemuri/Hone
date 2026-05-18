@@ -38,6 +38,7 @@ type ConfirmationToClient = {
   endsAt: Date;
   timezone: string;
   cancellationUrl: string;
+  intakeUrl: string | null;
 };
 
 export function buildClientConfirmationEmail(p: ConfirmationToClient): {
@@ -79,6 +80,21 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
         <tr><td style="padding:24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.65; color:#6B6B6B;">
           ${escapeHtml(PREP_INSTRUCTIONS)}
         </td></tr>
+        ${
+          p.intakeUrl
+            ? `<tr><td style="padding:20px 0 8px 0; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+                Before your appointment, please complete your health intake form:
+              </td></tr>
+              <tr><td style="padding-bottom:8px;">
+                <a href="${p.intakeUrl}" style="display:inline-block; padding:12px 20px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">
+                  Complete intake form
+                </a>
+              </td></tr>
+              <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
+                This takes about 5 minutes. Your electrologist will review it before your appointment.
+              </td></tr>`
+            : ""
+        }
         <tr><td style="padding-bottom:32px;">
           <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
             Cancel this appointment
@@ -103,7 +119,7 @@ ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${PREP_INSTRUCTIONS}
-
+${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 5 minutes):\n${p.intakeUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
 
 Hone. Charting software for electrolysis and laser practitioners.
