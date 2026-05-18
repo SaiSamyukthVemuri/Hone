@@ -1,14 +1,19 @@
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import type {
+  ApilusModality,
   Client,
   ClientPricing,
   ElectrolysisEntry,
+  ElectrolysisMode,
   LaserEntry,
+  MachineFrequency,
   Modality,
   Practitioner,
   ProbeLot,
+  ProbeType,
   Session,
+  SessionBlock,
   Studio,
 } from "@/lib/types/database";
 
@@ -289,4 +294,141 @@ export async function getTodayRosterForStudio(studioId: string): Promise<
     }
   }
   return Array.from(grouped.values());
+}
+
+// Migration 0019: session block helpers.
+// 17.5b.2 will use these to render blocks in the UI. They exist now so the
+// query layer is complete and the new shape is reviewable in isolation.
+
+export type SessionBlockWithEntries = SessionBlock & {
+  electrolysis_entries: ElectrolysisEntry[];
+};
+
+export type SessionWithBlocks = {
+  session: Session;
+  blocks: SessionBlockWithEntries[];
+  // Entries that somehow don't have a block_id, returned separately so the
+  // UI can flag them. Expected to be empty after 0020 backfills and new
+  // inserts go through ensureEntryHasBlock().
+  orphan_entries: ElectrolysisEntry[];
+};
+
+// Returns all non-deleted blocks for a session, ordered by sort_order.
+export async function getSessionBlocks(
+  sessionId: string,
+): Promise<SessionBlock[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("session_blocks")
+    .select("*")
+    .eq("session_id", sessionId)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: true });
+  if (error) throw new Error(`Failed to load session blocks: ${error.message}`);
+  return (data ?? []) as SessionBlock[];
+}
+
+export async function getSessionBlockById(
+  blockId: string,
+): Promise<SessionBlock | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("session_blocks")
+    .select("*")
+    .eq("id", blockId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load block: ${error.message}`);
+  return (data ?? null) as SessionBlock | null;
+}
+
+// Fetches a session plus all its non-deleted blocks and the electrolysis
+// entries grouped under each block. Laser entries are out of scope for the
+// blocks restructure (blocks model electrolysis treatment-level params).
+export async function getSessionWithBlocks(
+  sessionId: string,
+): Promise<SessionWithBlocks | null> {
+  const supabase = await createClient();
+
+  const [sessionRes, blocksRes, entriesRes] = await Promise.all([
+    supabase
+      .from("sessions")
+      .select("*")
+      .eq("id", sessionId)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    supabase
+      .from("session_blocks")
+      .select("*")
+      .eq("session_id", sessionId)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("electrolysis_entries")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  if (sessionRes.error)
+    throw new Error(`Failed to load session: ${sessionRes.error.message}`);
+  if (blocksRes.error)
+    throw new Error(`Failed to load blocks: ${blocksRes.error.message}`);
+  if (entriesRes.error)
+    throw new Error(`Failed to load entries: ${entriesRes.error.message}`);
+  if (!sessionRes.data) return null;
+
+  const session = sessionRes.data as Session;
+  const blocks = (blocksRes.data ?? []) as SessionBlock[];
+  const entries = (entriesRes.data ?? []) as ElectrolysisEntry[];
+
+  const byBlock = new Map<string, ElectrolysisEntry[]>();
+  const orphan: ElectrolysisEntry[] = [];
+  for (const e of entries) {
+    if (e.block_id) {
+      const bucket = byBlock.get(e.block_id) ?? [];
+      bucket.push(e);
+      byBlock.set(e.block_id, bucket);
+    } else {
+      orphan.push(e);
+    }
+  }
+
+  const blocksWithEntries: SessionBlockWithEntries[] = blocks.map((b) => ({
+    ...b,
+    electrolysis_entries: byBlock.get(b.id) ?? [],
+  }));
+
+  return { session, blocks: blocksWithEntries, orphan_entries: orphan };
+}
+
+// Resolved treatment params for an entry: prefers block-level values and
+// falls back to entry-level for backwards compatibility. During the
+// 17.5b.1 -> 17.5b.2 transition, every entry has a block (via the 0020
+// backfill or ensureEntryHasBlock for new rows). After the duplicate
+// columns are dropped from electrolysis_entries in a future cleanup
+// session, the fallback layer goes away.
+export type TreatmentParams = {
+  mode: ElectrolysisMode | null;
+  apilus_modality: ApilusModality | null;
+  energy_level: number | null;
+  minutes_performed: number | null;
+  probe_type: ProbeType | null;
+  probe_size: string | null;
+  machine_frequency: MachineFrequency | null;
+};
+
+export function resolveTreatmentParams(
+  entry: ElectrolysisEntry,
+  block: SessionBlock | null,
+): TreatmentParams {
+  return {
+    mode: block?.mode ?? entry.mode,
+    apilus_modality: block?.apilus_modality ?? entry.apilus_modality,
+    energy_level: block?.energy_level ?? entry.energy_level,
+    minutes_performed: block?.minutes_performed ?? entry.minutes_performed,
+    probe_type: block?.probe_type ?? entry.probe_type,
+    probe_size: block?.probe_size ?? entry.probe_size,
+    machine_frequency: block?.machine_frequency ?? entry.machine_frequency,
+  };
 }
