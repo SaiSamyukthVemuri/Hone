@@ -61,6 +61,12 @@ function Hero() {
           Type a name. See last session&rsquo;s settings. Log this one. Move on.
           Built for the way electrolysis and laser practitioners actually chart.
         </p>
+        <p
+          className="mt-6 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]"
+          style={{ color: PALETTE.ink }}
+        >
+          Booking, scheduling, and charting in one place. No more juggling tools.
+        </p>
 
         <div id="request-access" className="mt-[72px] max-w-[700px]">
           <EyebrowCaption>Request access</EyebrowCaption>
@@ -100,14 +106,17 @@ function EditorialObservation() {
         <div className="space-y-6 md:col-span-5">
           <p className="text-[18px] leading-[1.55] md:text-[21px]">
             Paper, because every software alternative is worse than paper.
-            Booking platforms handle bookings. Medical records handle medical
-            records. Spa software handles inventory and retail. The chart you
-            actually keep, the precise log of every needle, every pulse, every
-            reaction, has lived on paper because the digital options have all
-            been built for someone else.
+            Generic booking platforms don&rsquo;t understand probe sizes or
+            pulse counts. Medical records are built for doctors and dentists,
+            not practitioners working hair by hair. Spa software handles
+            inventory and retail, not the precise log of every needle and
+            every reaction. The chart you actually keep has lived on paper
+            because the digital options have all been built for someone else.
           </p>
           <p className="text-[18px] leading-[1.55] md:text-[21px]">
-            Hone is the first one built for you.
+            Hone is the first one built for you. Booking, scheduling,
+            charting, and client management. One tool, designed for how you
+            actually work.
           </p>
         </div>
       </div>
@@ -137,6 +146,11 @@ const HOW_STEPS: ReadonlyArray<{
     title: "Move on",
     body: "Saved. Treatment counts increment. Audit history grows. You're already with the next client.",
   },
+  {
+    numeral: "04",
+    title: "Or let them book themselves",
+    body: "Share your booking link. Clients pick a service, pick a slot, confirm. You see it on your calendar. They get an email with the date and a one-click cancel.",
+  },
 ];
 
 function HowItWorks() {
@@ -154,7 +168,7 @@ function HowItWorks() {
           shouldn&rsquo;t be slow.
         </h2>
 
-        <div className="mt-20 grid grid-cols-1 gap-x-12 gap-y-16 md:grid-cols-3">
+        <div className="mt-20 grid grid-cols-1 gap-x-12 gap-y-16 md:grid-cols-2 lg:grid-cols-4">
           {HOW_STEPS.map((step) => (
             <div key={step.numeral}>
               <p
@@ -346,8 +360,8 @@ const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
     body: "Same client, same approach. Pre-fill, edit, save. Under five seconds.",
   },
   {
-    title: "Per-client pricing",
-    body: "Package deals, grandfathered rates, custom quotes. Inline, no menu-diving.",
+    title: "Built for both modalities",
+    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number. One tool for studios that do both.",
   },
   {
     title: "Multi-practitioner studios",
@@ -358,16 +372,24 @@ const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
     body: "Export anytime. Cancel anytime. Your client records are yours.",
   },
   {
-    title: "No clipboard, no filing cabinet",
-    body: "Searchable client history that never gets lost in a move.",
-  },
-  {
-    title: "Built for both modalities",
-    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number. One tool for studios that do both.",
-  },
-  {
     title: "Works on what you have",
     body: "iPad in the treatment room. Laptop at the front desk. Phone for the solo practitioner. No app to install.",
+  },
+  {
+    title: "Book directly from your studio link",
+    body: "Clients book themselves. Share hone.care/book/your-studio. They pick a service, pick a time, get an email. You get the calendar entry.",
+  },
+  {
+    title: "Calendar that knows your hours",
+    body: "Set Tuesday 10 to 6 once. Override one Wednesday for a long day. Block out vacation. Slots respect everything, automatically.",
+  },
+  {
+    title: "Email confirmations that import to their calendar",
+    body: "Every booking sends a confirmation with a calendar file. Apple, Google, Outlook. They click once, it's in their calendar.",
+  },
+  {
+    title: "One-click cancellation",
+    body: "Every confirmation email has a cancel link. Clients can cancel themselves. You get a notification. The slot opens up.",
   },
 ];
 
@@ -442,6 +464,14 @@ function CaseForTryingIt() {
             last session in the time it takes to glance at a clipboard. It
             does this without asking you to learn a new way to chart, change
             your machine, or memorize anyone&rsquo;s interface.
+          </p>
+          <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
+            And because charting alone isn&rsquo;t enough, Hone also runs
+            your bookings. Your clients pick their own appointment time on
+            your studio&rsquo;s booking link. Confirmations send themselves.
+            Cancellations handle themselves. The calendar is one tap away.
+            You stop juggling tools and start running your studio from one
+            place.
           </p>
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
             If you run a clinic and want to be among the first to use it,

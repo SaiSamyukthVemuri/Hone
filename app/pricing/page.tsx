@@ -22,10 +22,12 @@ const PLANS: ReadonlyArray<Plan> = [
     cadence: "/ month",
     pitch: "For the single-practitioner studio.",
     features: [
-      "Unlimited clients",
-      "Unlimited sessions",
+      "Unlimited clients and sessions",
       "Full charting for electrolysis and laser",
-      "Per client pricing and packages",
+      "Public booking page with your studio link",
+      "Calendar with services, availability, and blockouts",
+      "Automated booking confirmations and cancellations",
+      "Per-client pricing and packages",
       "Export anytime",
     ],
     cta: { label: "Request access", href: "/#request-access" },
@@ -39,7 +41,8 @@ const PLANS: ReadonlyArray<Plan> = [
     features: [
       "All Solo features, plus:",
       "Up to 5 practitioner seats",
-      "Multi practitioner studio management",
+      "Multi-practitioner studio management",
+      "Multiple practitioners on the booking page (clients pick who they want)",
       "Audit-ready export for inspections",
       "Priority email support",
     ],
@@ -70,6 +73,10 @@ const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: "How does billing work?",
     a: "Monthly, charged on the day you start. Stripe handles payments. No setup fees, no contracts, cancel anytime.",
+  },
+  {
+    q: "Does Hone include booking, or do I need a separate tool?",
+    a: "Hone includes booking. Public booking page, calendar, services, availability management, automated confirmations, one-click cancellation. You don't need Calendly or Jane or Square Appointments on top.",
   },
   {
     q: "Can I import my existing client list?",
@@ -222,8 +229,9 @@ function AllPlansInclude() {
           All plans include
         </p>
         <p className="mt-5 text-[18px] leading-[1.65] md:text-[21px]">
-          Magic link sign in. iPad, laptop, and phone support. Your data
-          exportable any time. No setup fees. No contracts.
+          Magic link sign in. iPad, laptop, and phone support. Booking,
+          calendar, and cancellation built in. Your data exportable any time.
+          No setup fees. No contracts.
         </p>
       </div>
     </Reveal>
