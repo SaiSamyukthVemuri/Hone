@@ -80,6 +80,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
       )
       .eq("studio_id", studio.id)
+      .is("deleted_at", null)
       .order("started_at", { ascending: false }),
     supabase
       .from("electrolysis_entries")
@@ -122,6 +123,19 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     }
   }
 
+  // Entries are fetched in parallel with sessions, so they may contain rows
+  // belonging to soft-deleted sessions. Filter them out using the set of
+  // active session IDs returned above.
+  const activeSessionIds = new Set(
+    ((sessionsRes.data ?? []) as { id: string }[]).map((s) => s.id),
+  );
+  const filteredElectrolysis = (
+    (electRes.data ?? []) as { session_id: string }[]
+  ).filter((e) => activeSessionIds.has(e.session_id));
+  const filteredLaser = (
+    (laserRes.data ?? []) as { session_id: string }[]
+  ).filter((e) => activeSessionIds.has(e.session_id));
+
   // Flatten the laser equipment_params JSON into top-level CSV columns so
   // spreadsheets show fluence / pulse_width / spot_size as plain fields.
   type LaserRow = {
@@ -133,7 +147,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     observation_notes: string | null;
     created_at: string;
   };
-  const laserRows = ((laserRes.data ?? []) as LaserRow[]).map((e) => {
+  const laserRows = (filteredLaser as unknown as LaserRow[]).map((e) => {
     const params = (e.equipment_params ?? {}) as Record<string, unknown>;
     return {
       id: e.id,
@@ -208,7 +222,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "comments",
         "created_at",
       ],
-      electRes.data ?? [],
+      filteredElectrolysis as unknown as Record<string, unknown>[],
     ),
   );
 

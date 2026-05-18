@@ -148,7 +148,7 @@ export type ApilusModality =
   | "Multiblend";
 
 export type ProbeType = "Regular" | "IBL" | "ITH";
-export type MachineFrequency = "13.5 MHz" | "27.12 MHz";
+export type MachineFrequency = "13.56 MHz" | "27.12 MHz";
 
 export type Session = {
   id: string;
@@ -163,6 +163,10 @@ export type Session = {
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
+  // Migration 0013: soft delete.
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
 };
 
 export type SessionAudit = {

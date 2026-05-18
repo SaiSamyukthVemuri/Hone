@@ -124,7 +124,7 @@ export const ALL_APILUS_MODALITIES: ReadonlyArray<string> = [
 export const PROBE_TYPES: ReadonlyArray<string> = ["Regular", "IBL", "ITH"];
 
 export const MACHINE_FREQUENCIES: ReadonlyArray<string> = [
-  "13.5 MHz",
+  "13.56 MHz",
   "27.12 MHz",
 ];
 

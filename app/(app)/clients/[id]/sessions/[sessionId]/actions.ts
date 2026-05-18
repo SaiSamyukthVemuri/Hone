@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { ElectrolysisMode } from "@/lib/types/database";
@@ -288,7 +289,7 @@ const APILUS_MODALITY_VALUES = [
   "Multiblend",
 ] as const;
 const PROBE_TYPE_VALUES = ["Regular", "IBL", "ITH"] as const;
-const MACHINE_FREQUENCY_VALUES = ["13.5 MHz", "27.12 MHz"] as const;
+const MACHINE_FREQUENCY_VALUES = ["13.56 MHz", "27.12 MHz"] as const;
 
 function pickEnum<T extends string>(
   raw: FormDataEntryValue | null,
@@ -405,3 +406,39 @@ export async function editSessionStartedAtAction(
   return { ok: true };
 }
 
+export async function softDeleteSessionAction(formData: FormData): Promise<void> {
+  const sessionId = formData.get("session_id");
+  const clientId = formData.get("client_id");
+  const reasonRaw = formData.get("delete_reason");
+
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
+  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+
+  const reason = typeof reasonRaw === "string" ? reasonRaw.trim() : "";
+  if (reason.length < 10) {
+    throw new Error("Reason must be at least 10 characters.");
+  }
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    throw new Error("Inactive practitioners cannot delete sessions.");
+  }
+  await assertSessionVisible(studio.id, clientId, sessionId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("sessions")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: practitioner.id,
+      delete_reason: reason,
+    })
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id)
+    .is("deleted_at", null);
+  if (error) throw new Error(`Failed to delete session: ${error.message}`);
+
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/dashboard");
+  redirect(`/clients/${clientId}`);
+}

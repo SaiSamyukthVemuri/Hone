@@ -126,6 +126,7 @@ export async function getClientById(
       .select("*, electrolysis_entries(*), laser_entries(*)")
       .eq("studio_id", studioId)
       .eq("client_id", clientId)
+      .is("deleted_at", null)
       .order("started_at", { ascending: false }),
     getPractitionersForStudio(studioId),
   ]);
@@ -155,6 +156,7 @@ export async function getSessionForClient(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .eq("id", sessionId)
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (error) throw new Error(`Failed to load session: ${error.message}`);
@@ -177,6 +179,7 @@ export async function getRecentEntryForClient(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .eq("modality", modality)
+    .is("deleted_at", null)
     .order("started_at", { ascending: false })
     .limit(10);
 
@@ -210,7 +213,8 @@ export async function getLaserTreatmentCountsForClient(
     .select("id, laser_entries(zone)")
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
-    .eq("modality", "laser");
+    .eq("modality", "laser")
+    .is("deleted_at", null);
 
   if (error)
     throw new Error(`Failed to load laser treatment counts: ${error.message}`);
@@ -266,6 +270,7 @@ export async function getTodayRosterForStudio(studioId: string): Promise<
     .from("sessions")
     .select("*, client:clients(*)")
     .eq("studio_id", studioId)
+    .is("deleted_at", null)
     .gte("started_at", start.toISOString())
     .lte("started_at", end.toISOString())
     .order("started_at", { ascending: true });
