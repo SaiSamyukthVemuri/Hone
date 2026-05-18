@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   INTAKE_STEPS,
+  NONE_VALUE,
   TOTAL_STEPS,
   stepById,
   type Question,
@@ -421,12 +422,20 @@ function renderControl(
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {(q.options ?? []).map((opt) => {
           const isSel = selected.has(opt.value);
+          const isNone = opt.value === NONE_VALUE;
           return (
             <button
               key={opt.value}
               type="button"
               onClick={() => {
+                // "None of the above" is exclusive: selecting it clears any
+                // other choices; selecting any other option clears it.
+                if (isNone) {
+                  onChange(isSel ? [] : [NONE_VALUE]);
+                  return;
+                }
                 const next = new Set(selected);
+                next.delete(NONE_VALUE);
                 if (isSel) next.delete(opt.value);
                 else next.add(opt.value);
                 onChange(Array.from(next));
@@ -435,7 +444,7 @@ function renderControl(
                 isSel
                   ? "border-neutral-900 bg-neutral-900 text-white"
                   : "border-neutral-300 bg-white text-neutral-700"
-              }`}
+              } ${isNone ? "sm:col-span-2" : ""}`}
             >
               {opt.label}
             </button>

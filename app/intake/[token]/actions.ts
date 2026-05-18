@@ -106,5 +106,62 @@ export async function submitIntakeAction(payload: {
     .eq("id", v.intake_id);
   if (updateErr) return { ok: false, error: updateErr.message };
 
+  // Fix 9: pull emergency contact from the intake into the client row so the
+  // practitioner does not have to retype it. Only writes to fields that are
+  // currently null: a practitioner who has already manually populated them
+  // takes precedence over what the client typed at intake.
+  await syncEmergencyContactToClient(merged, existing.client_id);
+
   return { ok: true };
+}
+
+async function syncEmergencyContactToClient(
+  responses: Record<string, unknown>,
+  clientId: string,
+): Promise<void> {
+  const name = stringOrNull(responses.emergency_contact_name);
+  const phone = stringOrNull(responses.emergency_contact_phone);
+  if (!name && !phone) return;
+
+  const admin = createAdminClient();
+  const { data: client, error: lookupErr } = await admin
+    .from("clients")
+    .select("emergency_contact_name, emergency_contact_phone")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (lookupErr || !client) {
+    if (lookupErr) {
+      console.error(
+        "Failed to look up client for emergency contact sync:",
+        lookupErr.message,
+      );
+    }
+    return;
+  }
+
+  const patch: Record<string, string> = {};
+  if (name && !client.emergency_contact_name) {
+    patch.emergency_contact_name = name;
+  }
+  if (phone && !client.emergency_contact_phone) {
+    patch.emergency_contact_phone = phone;
+  }
+  if (Object.keys(patch).length === 0) return;
+
+  const { error: updateErr } = await admin
+    .from("clients")
+    .update(patch)
+    .eq("id", clientId);
+  if (updateErr) {
+    console.error(
+      "Failed to sync emergency contact to client:",
+      updateErr.message,
+    );
+  }
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
