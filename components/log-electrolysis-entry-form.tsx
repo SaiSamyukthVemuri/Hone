@@ -22,9 +22,10 @@ import type {
 } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
 import { ChipSelector } from "./chip-selector";
+import { MultiChipSelector } from "./multi-chip-selector";
 
 type FormState = {
-  area: string;
+  areas: string[];
   probe_size: string;
   probe_lot_id: string;
   mode: string;
@@ -41,7 +42,7 @@ type FormState = {
 };
 
 const EMPTY: FormState = {
-  area: "",
+  areas: [],
   probe_size: "",
   probe_lot_id: "",
   mode: "",
@@ -75,8 +76,12 @@ function blankStateWithStickyFrom(state: FormState): FormState {
 
 function fromLastEntry(e: ElectrolysisEntry | null): FormState {
   if (!e) return EMPTY;
+  // Note: areas intentionally start empty even when copying from last entry.
+  // Areas are per-entry, not per-session, so carrying them forward would
+  // mislead the practitioner into reusing a body region that was already
+  // treated.
   return {
-    area: e.area ?? "",
+    areas: [],
     probe_size: e.probe_size ?? "",
     probe_lot_id: e.probe_lot_id ?? "",
     mode: e.mode ?? "",
@@ -100,6 +105,8 @@ type Props = {
   sessionId: string;
   clientId: string;
   probeLots: ProbeLot[];
+  /** Active client tag labels shown read-only above the comments box. */
+  clientTagLabels?: ReadonlyArray<string>;
   lastEntry: ElectrolysisEntry | null;
   /** Sticky defaults for probe_type + machine_frequency (latest in-session entry). */
   stickyDefaults: StickyDefaults;
@@ -112,6 +119,7 @@ export function LogElectrolysisEntryForm({
   sessionId,
   clientId,
   probeLots,
+  clientTagLabels = [],
   lastEntry,
   stickyDefaults,
   action,
@@ -152,14 +160,14 @@ export function LogElectrolysisEntryForm({
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    if (!state.area) {
+    if (state.areas.length === 0) {
       setError("Area is required.");
       return;
     }
     const fd = new FormData();
     fd.set("session_id", sessionId);
     fd.set("client_id", clientId);
-    fd.set("area", state.area);
+    fd.set("areas", JSON.stringify(state.areas));
     fd.set("probe_size", state.probe_size);
     fd.set("probe_lot_id", state.probe_lot_id);
     fd.set("mode", state.mode);
@@ -216,15 +224,36 @@ export function LogElectrolysisEntryForm({
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">
-          Area<span className="ml-1 text-red-500">*</span>
+          Areas<span className="ml-1 text-red-500">*</span>
+          <span className="ml-2 text-xs font-normal text-neutral-500">
+            Tap any number that were treated with the same settings
+          </span>
         </span>
-        <ChipSelector
+        <MultiChipSelector
           options={AREAS}
-          value={state.area}
-          onChange={(v) => update("area", v)}
+          values={state.areas}
+          onChange={(v) => update("areas", v)}
           otherPlaceholder="Describe area"
         />
       </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Probe type</span>
+        <select
+          value={state.probe_type}
+          onChange={(e) =>
+            update("probe_type", e.target.value as ProbeType | "")
+          }
+          className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        >
+          <option value="">Select…</option>
+          {PROBE_TYPES.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Probe size</span>
@@ -374,51 +403,31 @@ export function LogElectrolysisEntryForm({
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Probe type</span>
-            <select
-              value={state.probe_type}
-              onChange={(e) =>
-                update("probe_type", e.target.value as ProbeType | "")
-              }
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-            >
-              <option value="">Select…</option>
-              {PROBE_TYPES.map((p) => (
-                <option key={p} value={p}>
-                  {p} probe
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Machine frequency</span>
-            <div className="flex flex-wrap gap-2">
-              {MACHINE_FREQUENCIES.map((f) => {
-                const selected = state.machine_frequency === f;
-                return (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() =>
-                      update(
-                        "machine_frequency",
-                        selected ? "" : (f as MachineFrequency),
-                      )
-                    }
-                    className={`rounded-full border px-4 py-2 text-sm transition ${
-                      selected
-                        ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                        : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-                    }`}
-                  >
-                    {f}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Machine frequency</span>
+          <div className="flex flex-wrap gap-2">
+            {MACHINE_FREQUENCIES.map((f) => {
+              const selected = state.machine_frequency === f;
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() =>
+                    update(
+                      "machine_frequency",
+                      selected ? "" : (f as MachineFrequency),
+                    )
+                  }
+                  className={`rounded-full border px-4 py-2 text-sm transition ${
+                    selected
+                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                  }`}
+                >
+                  {f}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -445,6 +454,23 @@ export function LogElectrolysisEntryForm({
       </div>
 
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-5 dark:border-neutral-800">
+        {clientTagLabels.length > 0 && (
+          <div className="flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Client tags
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {clientTagLabels.map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 ring-1 ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-200 dark:ring-neutral-700"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <span className="text-sm font-medium">Comments</span>
         <div className="flex flex-wrap gap-2">
           {COMMON_COMMENTS.map((c) => (

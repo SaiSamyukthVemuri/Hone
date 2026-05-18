@@ -32,7 +32,7 @@ export function ElectrolysisEntryRow({
   // Secondary meta line: EL · probe type · machine frequency · minutes · hairs
   const sub: string[] = [];
   if (entry.energy_level != null) sub.push(`EL ${entry.energy_level}`);
-  if (entry.probe_type) sub.push(`${entry.probe_type} probe`);
+  if (entry.probe_type) sub.push(entry.probe_type);
   if (entry.machine_frequency) sub.push(entry.machine_frequency);
   if (entry.minutes_performed != null) {
     sub.push(`${entry.minutes_performed} min`);
@@ -48,7 +48,11 @@ export function ElectrolysisEntryRow({
       }
     >
       <div className="min-w-0 flex-1">
-        <div className="font-medium">{entry.area}</div>
+        <div className="font-medium">
+          {entry.areas && entry.areas.length > 0
+            ? entry.areas.join(" · ")
+            : entry.area}
+        </div>
         {meta.length > 0 && (
           <div className="text-xs text-neutral-500">{meta.join(" · ")}</div>
         )}

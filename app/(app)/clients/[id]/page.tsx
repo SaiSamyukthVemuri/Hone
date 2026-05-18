@@ -12,14 +12,18 @@ import {
   LaserEntryRow,
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
+import { ClientTagsCard } from "@/components/client-tags-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { getClientTags } from "@/lib/client-tags/queries";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
+  addClientTagAction,
   deleteClientPricingAction,
+  removeClientTagAction,
 } from "./actions";
 
 function formatPrice(cents: number): string {
@@ -56,6 +60,7 @@ export default async function ClientCheatSheetPage({
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
   const intake = await getLatestIntakeForClient(studio.id, client.id);
+  const tags = await getClientTags(studio.id, client.id);
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -137,6 +142,13 @@ export default async function ClientCheatSheetPage({
           </p>
         </section>
       )}
+
+      <ClientTagsCard
+        clientId={client.id}
+        tags={tags}
+        addAction={addClientTagAction}
+        removeAction={removeClientTagAction}
+      />
 
       <section className="grid gap-6 md:grid-cols-2">
         <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
