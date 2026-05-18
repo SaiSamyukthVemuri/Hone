@@ -402,12 +402,20 @@ export async function getSessionWithBlocks(
   return { session, blocks: blocksWithEntries, orphan_entries: orphan };
 }
 
-// Resolved treatment params for an entry: prefers block-level values and
-// falls back to entry-level for backwards compatibility. During the
-// 17.5b.1 -> 17.5b.2 transition, every entry has a block (via the 0020
-// backfill or ensureEntryHasBlock for new rows). After the duplicate
-// columns are dropped from electrolysis_entries in a future cleanup
-// session, the fallback layer goes away.
+// Block params are the working template (current grouping and defaults for
+// new entries in this block). Entry params are the historical snapshot
+// (what was actually done at the moment of treatment). They are not
+// duplicates pending cleanup; they capture different things.
+//
+// When rendering a block-grouped view, prefer block params for the GROUPED
+// display (block header treatment params line) and entry params for the
+// per-entry detail. The "Override" badge fires when entry.mode and
+// block.mode differ.
+//
+// The resolver below is for "best available" rendering when the caller
+// hasn't been passed the block context separately. Prefer the explicit
+// prop pattern where the parent computes resolved params once and passes
+// them down (see session-blocks-view.tsx).
 export type TreatmentParams = {
   mode: ElectrolysisMode | null;
   apilus_modality: ApilusModality | null;

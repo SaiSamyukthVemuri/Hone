@@ -1,5 +1,19 @@
 "use client";
 
+// Legacy / full entry form. After Session 17.5b.2 this is no longer the
+// primary entry-creation surface; SimplifiedEntryForm handles new entries
+// within a block, with treatment params inherited from the block.
+//
+// This form remains reachable for:
+//   - Editing an existing entry (preserves mode override and other entry-
+//     level adjustments)
+//   - Mode override on a freshly-created entry via "Edit details"
+//
+// TODO: Sunset evaluation after 20-30 real sessions logged via the
+// simplified form. If this form is never reached for new entries, fold its
+// extra fields into the simplified form and remove. If it is reached
+// frequently, fold those fields back into the simplified form.
+
 import { useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,

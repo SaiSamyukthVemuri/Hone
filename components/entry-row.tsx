@@ -1,4 +1,9 @@
-import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
+import type {
+  ElectrolysisEntry,
+  LaserEntry,
+  SessionBlock,
+} from "@/lib/types/database";
+import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES } from "@/lib/constants";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
@@ -6,21 +11,40 @@ function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   return ELECTROLYSIS_MODES.find((m) => m.value === value)?.label ?? value;
 }
 
+// Optional treatmentParams + block are computed upstream by SessionBlocksView
+// and passed in. When omitted (legacy callers like SessionTimeline and the
+// client cheat-sheet "last session" preview), the row falls back to reading
+// entry-level fields directly. This keeps backwards compat without invoking
+// the resolver inside the row.
 export function ElectrolysisEntryRow({
   entry,
+  treatmentParams,
+  block,
   density = "comfortable",
   action,
 }: {
   entry: ElectrolysisEntry;
+  treatmentParams?: TreatmentParams;
+  block?: SessionBlock | null;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
 }) {
+  const params: TreatmentParams = treatmentParams ?? {
+    mode: entry.mode,
+    apilus_modality: entry.apilus_modality,
+    energy_level: entry.energy_level,
+    minutes_performed: entry.minutes_performed,
+    probe_type: entry.probe_type,
+    probe_size: entry.probe_size,
+    machine_frequency: entry.machine_frequency,
+  };
+
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
-  if (entry.probe_size) meta.push(entry.probe_size);
-  const mLabel = modeLabel(entry.mode);
+  if (params.probe_size) meta.push(params.probe_size);
+  const mLabel = modeLabel(params.mode);
   if (mLabel) meta.push(mLabel);
-  if (entry.apilus_modality) meta.push(entry.apilus_modality);
+  if (params.apilus_modality) meta.push(params.apilus_modality);
   if (entry.pulse_count != null) {
     meta.push(
       `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
@@ -31,13 +55,20 @@ export function ElectrolysisEntryRow({
 
   // Secondary meta line: EL · probe type · machine frequency · minutes · hairs
   const sub: string[] = [];
-  if (entry.energy_level != null) sub.push(`EL ${entry.energy_level}`);
-  if (entry.probe_type) sub.push(entry.probe_type);
-  if (entry.machine_frequency) sub.push(entry.machine_frequency);
-  if (entry.minutes_performed != null) {
-    sub.push(`${entry.minutes_performed} min`);
+  if (params.energy_level != null) sub.push(`EL ${params.energy_level}`);
+  if (params.probe_type) sub.push(params.probe_type);
+  if (params.machine_frequency) sub.push(params.machine_frequency);
+  if (params.minutes_performed != null) {
+    sub.push(`${params.minutes_performed} min`);
   }
   if (entry.hairs_treated != null) sub.push(`${entry.hairs_treated} hairs`);
+
+  // Override badge: the entry's own mode differs from its block's mode.
+  // Only renders when BOTH are non-null. Backfilled blocks with null mode
+  // and entries with null mode never trigger the badge.
+  const isOverride = Boolean(
+    block && block.mode && entry.mode && block.mode !== entry.mode,
+  );
 
   return (
     <div
@@ -48,10 +79,20 @@ export function ElectrolysisEntryRow({
       }
     >
       <div className="min-w-0 flex-1">
-        <div className="font-medium">
-          {entry.areas && entry.areas.length > 0
-            ? entry.areas.join(" · ")
-            : entry.area}
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="font-medium">
+            {entry.areas && entry.areas.length > 0
+              ? entry.areas.join(" · ")
+              : entry.area}
+          </span>
+          {isOverride && (
+            <span
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              title="This entry's mode differs from its block's mode."
+            >
+              Override
+            </span>
+          )}
         </div>
         {meta.length > 0 && (
           <div className="text-xs text-neutral-500">{meta.join(" · ")}</div>
