@@ -206,7 +206,38 @@ export type ElectrolysisEntry = {
   machine_frequency: MachineFrequency | null;
   // Migration 0012: optional total hair count per entry.
   hairs_treated: number | null;
+  // Migration 0019: pointer to the block this entry belongs to. Nullable
+  // because legacy rows existed before blocks; 0020 backfilled them. All
+  // new inserts get a block_id via ensureEntryHasBlock().
+  block_id: string | null;
   created_at: string;
+};
+
+// Migration 0019: block-level treatment params. SessionMode mirrors the
+// existing ElectrolysisMode values (thermo / blend / galv).
+export type SessionMode = ElectrolysisMode;
+
+export type SessionBlock = {
+  id: string;
+  studio_id: string;
+  session_id: string;
+  sort_order: number;
+  block_name: string | null;
+  block_notes: string | null;
+  mode: SessionMode | null;
+  apilus_modality: ApilusModality | null;
+  energy_level: number | null;
+  minutes_performed: number | null;
+  probe_type: ProbeType | null;
+  probe_size: string | null;
+  machine_frequency: MachineFrequency | null;
+  started_at: string | null;
+  ended_at: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type LaserEntry = {

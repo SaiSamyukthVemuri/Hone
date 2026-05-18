@@ -72,6 +72,68 @@ async function assertSessionVisible(
   if (!data) throw new Error("Session not found.");
 }
 
+// Migration 0019/0020 plumbing: every electrolysis entry should point at a
+// session block. After the 0020 backfill, all pre-existing sessions have a
+// "Main" block. For sessions created entirely after 0019 (no entries yet),
+// this helper creates the first block on demand using the entry's own
+// treatment params as the block's initial values. Once a block exists for
+// a session, we never overwrite its params from a later entry (first-write
+// semantics). 17.5b.2 UI will surface block creation explicitly; until then
+// this stays invisible to the user.
+type EnsureBlockParams = {
+  studioId: string;
+  sessionId: string;
+  mode: ElectrolysisMode | null;
+  apilusModality: string | null;
+  energyLevel: number | null;
+  minutesPerformed: number | null;
+  probeType: string | null;
+  probeSize: string | null;
+  machineFrequency: string | null;
+};
+
+async function ensureBlockForSession(
+  params: EnsureBlockParams,
+): Promise<string> {
+  const supabase = await createClient();
+  const { data: existing, error: lookupErr } = await supabase
+    .from("session_blocks")
+    .select("id")
+    .eq("session_id", params.sessionId)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (lookupErr) {
+    throw new Error(`Failed to look up session block: ${lookupErr.message}`);
+  }
+  if (existing) return existing.id;
+
+  const { data: created, error: insertErr } = await supabase
+    .from("session_blocks")
+    .insert({
+      studio_id: params.studioId,
+      session_id: params.sessionId,
+      sort_order: 1,
+      block_name: "Main",
+      mode: params.mode,
+      apilus_modality: params.apilusModality,
+      energy_level: params.energyLevel,
+      minutes_performed: params.minutesPerformed,
+      probe_type: params.probeType,
+      probe_size: params.probeSize,
+      machine_frequency: params.machineFrequency,
+    })
+    .select("id")
+    .single();
+  if (insertErr || !created) {
+    throw new Error(
+      `Failed to create session block: ${insertErr?.message ?? "no id returned"}`,
+    );
+  }
+  return created.id;
+}
+
 export async function addElectrolysisEntryAction(formData: FormData): Promise<void> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
@@ -114,13 +176,30 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     MACHINE_FREQUENCY_VALUES,
   );
   const hairsTreated = pickInteger(formData.get("hairs_treated"), { min: 0 });
+  const probeSize = nullableString(formData.get("probe_size"));
+
+  // Ensure a block exists for this session before inserting. After the 0020
+  // backfill every session already has one; the only case where this creates
+  // a fresh block is a brand-new session whose first entry hasn't been logged.
+  const blockId = await ensureBlockForSession({
+    studioId: studio.id,
+    sessionId,
+    mode,
+    apilusModality,
+    energyLevel,
+    minutesPerformed,
+    probeType,
+    probeSize,
+    machineFrequency,
+  });
 
   const supabase = await createClient();
   const { error } = await supabase.from("electrolysis_entries").insert({
     session_id: sessionId,
+    block_id: blockId,
     area,
     areas,
-    probe_size: nullableString(formData.get("probe_size")),
+    probe_size: probeSize,
     probe_lot_id: nullableString(formData.get("probe_lot_id")),
     mode,
     intensity: nullableNumber(formData.get("intensity")),
