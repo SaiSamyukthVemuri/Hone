@@ -223,12 +223,12 @@ function CheatSheetPreview() {
       <div className="mx-auto max-w-[1400px]">
         <EyebrowCaption>The client cheat sheet</EyebrowCaption>
         <h2
-          className="font-[var(--font-fraunces)] mt-10 max-w-[720px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
           style={{ letterSpacing: "-0.03em" }}
         >
-          Everything you need,
+          The memory practitioners
           <br />
-          where you need it.
+          actually need.
         </h2>
         <p className="mt-8 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]">
           One screen per client. Their full memory: pricing, skin notes,
@@ -288,35 +288,72 @@ function CheatSheetMockup() {
 
       <Hairline className="my-10" />
 
+      <SectionLabel>Allergies</SectionLabel>
+      <p className="mt-3 text-[15px]">
+        Nickel  ·  Topical anesthetic (lidocaine, benzocaine)
+      </p>
+
+      <Hairline className="my-10" />
+
+      <SectionLabel>Tags</SectionLabel>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Chip>Low pain tolerance</Chip>
+        <Chip>Sensitive on chin</Chip>
+        <Chip>Afternoon appointments preferred</Chip>
+      </div>
+
+      <Hairline className="my-10" />
+
       <div className="grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-16">
         <div>
-          <p
-            className="text-[12px] font-medium uppercase"
-            style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
-          >
-            Pricing
-          </p>
+          <SectionLabel>Pricing</SectionLabel>
           <div className="mt-4 flex flex-col gap-3">
             <PriceRow label="Full face electrolysis (30 min)" amount="$45.00" />
             <PriceRow label="Underarm laser" amount="$60.00" />
           </div>
         </div>
         <div>
-          <p
-            className="text-[12px] font-medium uppercase"
-            style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
-          >
-            Skin
-          </p>
+          <SectionLabel>Skin</SectionLabel>
           <div className="mt-4 flex flex-col gap-3">
             <SkinRow label="Fitzpatrick" value="III" />
-            <SkinRow
-              label="Notes"
-              value="Sensitive on chin · prone to follicular erythema"
-            />
+            <SkinRow label="Notes" value="Prone to follicular erythema" />
           </div>
         </div>
       </div>
+
+      <Hairline className="my-10" />
+
+      <div className="flex flex-wrap items-baseline justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <SectionLabel>Health intake</SectionLabel>
+          <span
+            className="rounded-full px-2.5 py-0.5 text-[11px] font-medium uppercase"
+            style={{
+              letterSpacing: "0.1em",
+              backgroundColor: "#E4EFE3",
+              color: "#2B5A2B",
+            }}
+          >
+            Reviewed
+          </span>
+          <span className="text-[14px]" style={{ color: PALETTE.muted }}>
+            May 14, 2026  ·  11:08 PM
+          </span>
+        </div>
+        <span
+          className="text-[13px] font-medium"
+          style={{ color: PALETTE.ink }}
+        >
+          View intake →
+        </span>
+      </div>
+
+      <Hairline className="my-10" />
+
+      <SectionLabel>Emergency contact</SectionLabel>
+      <p className="mt-3 text-[15px]">
+        Alex Doe (sister)  ·  416 555 0192
+      </p>
 
       <Hairline className="my-10" />
 
@@ -331,15 +368,44 @@ function CheatSheetMockup() {
       </h3>
 
       <div className="mt-5">
-        <p className="text-[18px] font-medium">Chin</p>
+        <p className="text-[18px] font-medium">Chin · Upper lip</p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          F3 · Blend · Pulse count 2 · Intensity 40 · Duration 0.08s
+          Thermolysis  ·  Microflash  ·  13.56 MHz  ·  Stainless steel regular  ·  F3
+        </p>
+        <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
+          Pulse count 2  ·  Intensity 40  ·  Duration 0.08s  ·  15 hairs treated
         </p>
         <p className="font-[var(--font-fraunces)] mt-3 text-[16px] italic">
           Dehydrated follicles, hyperpigmentation. Client tolerated well.
         </p>
       </div>
     </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className="text-[12px] font-medium uppercase"
+      style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="rounded-full px-3 py-1 text-[13px]"
+      style={{
+        backgroundColor: PALETTE.bg,
+        border: `1px solid ${PALETTE.rule}`,
+        color: PALETTE.ink,
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
