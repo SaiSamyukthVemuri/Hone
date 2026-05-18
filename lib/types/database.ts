@@ -62,9 +62,26 @@ export type Service = {
   default_duration_minutes: number;
   price_cents: number | null;
   active: boolean;
+  // Migration 0021: free-text modality grouping for the booking menu. Common
+  // values: 'electrolysis', 'laser', 'consultation'. Null renders as "Other".
+  modality: string | null;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 };
+
+// Known modality values surfaced in UI dropdowns. The DB column accepts any
+// string, so studios can introduce custom modalities later without a
+// migration; KNOWN_MODALITIES is for the picker convenience only.
+export type ServiceModality = "electrolysis" | "laser" | "consultation";
+export const KNOWN_MODALITIES: ReadonlyArray<{
+  value: ServiceModality;
+  label: string;
+}> = [
+  { value: "electrolysis", label: "Electrolysis" },
+  { value: "laser", label: "Laser" },
+  { value: "consultation", label: "Consultation" },
+];
 
 export type AppointmentStatus =
   | "confirmed"

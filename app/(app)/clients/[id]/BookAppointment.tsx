@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Service } from "@/lib/types/database";
+import {
+  formatServiceLabel,
+  groupServicesByModality,
+} from "@/lib/booking/format";
 import { fetchSlotsForClientBookingAction } from "./booking-actions";
 import { bookAppointmentForClientAction } from "../../calendar/actions";
 
@@ -17,7 +21,9 @@ type Props = {
 export function BookAppointment({ clientId, services, defaultDate }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [serviceId, setServiceId] = useState(services[0]?.id ?? "");
+  const groups = useMemo(() => groupServicesByModality(services), [services]);
+  const firstServiceId = groups[0]?.services[0]?.id ?? "";
+  const [serviceId, setServiceId] = useState(firstServiceId);
   const [date, setDate] = useState(defaultDate);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
@@ -118,11 +124,23 @@ export function BookAppointment({ clientId, services, defaultDate }: Props) {
             onChange={(e) => handleService(e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           >
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {s.default_duration_minutes} min
-              </option>
-            ))}
+            {groups.map((group) =>
+              groups.length === 1 && group.modality === null ? (
+                group.services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {formatServiceLabel(s)}
+                  </option>
+                ))
+              ) : (
+                <optgroup key={group.modality ?? "_other"} label={group.label}>
+                  {group.services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {formatServiceLabel(s)}
+                    </option>
+                  ))}
+                </optgroup>
+              ),
+            )}
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
