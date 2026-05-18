@@ -178,20 +178,23 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   const hairsTreated = pickInteger(formData.get("hairs_treated"), { min: 0 });
   const probeSize = nullableString(formData.get("probe_size"));
 
-  // Ensure a block exists for this session before inserting. After the 0020
-  // backfill every session already has one; the only case where this creates
-  // a fresh block is a brand-new session whose first entry hasn't been logged.
-  const blockId = await ensureBlockForSession({
-    studioId: studio.id,
-    sessionId,
-    mode,
-    apilusModality,
-    energyLevel,
-    minutesPerformed,
-    probeType,
-    probeSize,
-    machineFrequency,
-  });
+  // The simplified entry form passes block_id explicitly so multi-block
+  // sessions target the correct block. Legacy form callers omit this; for
+  // them we look up (or create) the primary block via ensureBlockForSession.
+  const explicitBlockId = nullableString(formData.get("block_id"));
+  const blockId =
+    explicitBlockId ??
+    (await ensureBlockForSession({
+      studioId: studio.id,
+      sessionId,
+      mode,
+      apilusModality,
+      energyLevel,
+      minutesPerformed,
+      probeType,
+      probeSize,
+      machineFrequency,
+    }));
 
   const supabase = await createClient();
   const { error } = await supabase.from("electrolysis_entries").insert({

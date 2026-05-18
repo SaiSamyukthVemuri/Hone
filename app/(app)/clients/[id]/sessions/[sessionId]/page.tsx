@@ -1,28 +1,26 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  getActiveProbeLots,
   getClientById,
   getCurrentPractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getRecentEntryForClient,
   getSessionAudit,
   getSessionForClient,
+  getSessionWithBlocks,
 } from "@/lib/supabase/queries";
-import { LogElectrolysisEntryForm } from "@/components/log-electrolysis-entry-form";
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
-import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
+import { LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
 import { getClientTags } from "@/lib/client-tags/queries";
-import type { ElectrolysisEntry, LaserEntry } from "@/lib/types/database";
+import type { LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
+import { SessionBlocksView } from "./session-blocks-view";
 import {
-  addElectrolysisEntryAction,
   addLaserEntryAction,
-  deleteElectrolysisEntryAction,
   deleteLaserEntryAction,
   updateSessionPerformerAction,
   updateSessionPriceAction,
@@ -48,18 +46,12 @@ export default async function SessionDetailPage({
     id,
     session.modality,
   );
-  // Exclude entries from this same session so "copy from last" really means previous session.
   const sessionEntryIds = new Set([
     ...session.electrolysis_entries.map((e) => e.id),
     ...session.laser_entries.map((e) => e.id),
   ]);
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
-
-  const probeLots =
-    session.modality === "electrolysis"
-      ? await getActiveProbeLots(studio.id)
-      : [];
 
   const treatmentCounts =
     session.modality === "laser"
@@ -69,6 +61,13 @@ export default async function SessionDetailPage({
   const performerName = sessionPerformerName(session, clientData.practitioners);
   const audit = await getSessionAudit(session.id);
   const clientTags = await getClientTags(studio.id, id);
+
+  // Electrolysis sessions render through the block-grouped view. We fetch
+  // the with-blocks shape only when needed.
+  const blockData =
+    session.modality === "electrolysis"
+      ? await getSessionWithBlocks(sessionId)
+      : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -113,113 +112,43 @@ export default async function SessionDetailPage({
         updatePerformerAction={updateSessionPerformerAction}
       />
 
-      {session.modality === "electrolysis" ? (
-        <LogElectrolysisEntryForm
+      {session.modality === "electrolysis" && blockData ? (
+        <SessionBlocksView
           sessionId={session.id}
           clientId={id}
-          probeLots={probeLots}
+          blocks={blockData.blocks}
+          orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
-          lastEntry={lastEntryNotFromThisSession as ElectrolysisEntry | null}
-          stickyDefaults={(() => {
-            // Carry forward probe_type and machine_frequency from the latest
-            // in-session entry. Migration 0011 moved these to the entry level.
-            const sorted = [...session.electrolysis_entries].sort(
-              (a, b) =>
-                new Date(b.created_at).getTime() -
-                new Date(a.created_at).getTime(),
-            );
-            const latest = sorted[0];
-            return {
-              probe_type: latest?.probe_type ?? "",
-              machine_frequency: latest?.machine_frequency ?? "",
-            };
-          })()}
-          action={addElectrolysisEntryAction}
         />
       ) : (
-        <LogLaserEntryForm
-          sessionId={session.id}
-          clientId={id}
-          lastEntry={lastEntryNotFromThisSession as LaserEntry | null}
-          treatmentCounts={treatmentCounts}
-          action={addLaserEntryAction}
-        />
+        <>
+          <LogLaserEntryForm
+            sessionId={session.id}
+            clientId={id}
+            lastEntry={lastEntryNotFromThisSession as LaserEntry | null}
+            treatmentCounts={treatmentCounts}
+            action={addLaserEntryAction}
+          />
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium">
+              Entries this session
+              <span className="ml-2 text-sm font-normal text-neutral-500">
+                {session.laser_entries.length}
+              </span>
+            </h2>
+            <LaserEntriesSection
+              clientId={id}
+              sessionId={session.id}
+              entries={session.laser_entries}
+            />
+          </section>
+        </>
       )}
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">
-          Entries this session
-          <span className="ml-2 text-sm font-normal text-neutral-500">
-            {session.modality === "electrolysis"
-              ? session.electrolysis_entries.length
-              : session.laser_entries.length}
-          </span>
-        </h2>
-        {session.modality === "electrolysis" ? (
-          <ElectrolysisEntriesSection
-            clientId={id}
-            sessionId={session.id}
-            entries={session.electrolysis_entries}
-          />
-        ) : (
-          <LaserEntriesSection
-            clientId={id}
-            sessionId={session.id}
-            entries={session.laser_entries}
-          />
-        )}
-      </section>
 
       <div className="pt-6">
         <DeleteSessionForm sessionId={session.id} clientId={id} />
       </div>
     </div>
-  );
-}
-
-function ElectrolysisEntriesSection({
-  clientId,
-  sessionId,
-  entries,
-}: {
-  clientId: string;
-  sessionId: string;
-  entries: ElectrolysisEntry[];
-}) {
-  if (entries.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-        No entries yet.
-      </div>
-    );
-  }
-  const sorted = [...entries].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-  return (
-    <ul className="flex flex-col gap-2">
-      {sorted.map((e) => (
-        <li key={e.id}>
-          <ElectrolysisEntryRow
-            entry={e}
-            action={
-              <form action={deleteElectrolysisEntryAction}>
-                <input type="hidden" name="id" value={e.id} />
-                <input type="hidden" name="session_id" value={sessionId} />
-                <input type="hidden" name="client_id" value={clientId} />
-                <button
-                  type="submit"
-                  aria-label="Delete entry"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  ✕
-                </button>
-              </form>
-            }
-          />
-        </li>
-      ))}
-    </ul>
   );
 }
 
