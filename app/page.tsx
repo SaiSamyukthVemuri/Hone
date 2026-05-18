@@ -20,6 +20,7 @@ export default function HomePage() {
     >
       <MarketingHeader />
       <Hero />
+      <PracticeMemory />
       <EditorialObservation />
       <HowItWorks />
       <CheatSheetPreview />
@@ -40,32 +41,27 @@ function Hero() {
     >
       <div className="mx-auto max-w-[1400px]">
         <EyebrowCaption>
-          Charting software for electrolysis and laser practitioners
+          Practice software for electrolysis and laser
         </EyebrowCaption>
 
         <h1
           className="font-[var(--font-fraunces)] mt-10 max-w-[980px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
           style={{ letterSpacing: "-0.045em" }}
         >
-          Software <em>for</em> the
+          Never wonder
           <br />
-          two minute window
+          what you did
           <br />
-          between clients.
+          last session.
         </h1>
 
         <p
           className="mt-10 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]"
           style={{ color: PALETTE.ink }}
         >
-          Type a name. See last session&rsquo;s settings. Log this one. Move on.
-          Built for the way electrolysis and laser practitioners actually chart.
-        </p>
-        <p
-          className="mt-6 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]"
-          style={{ color: PALETTE.ink }}
-        >
-          Booking, scheduling, and charting in one place. No more juggling tools.
+          Type a name. See exactly what worked last time: settings, areas, what
+          they tolerated, what to avoid. Log this session in under a minute.
+          Move on.
         </p>
 
         <div id="request-access" className="mt-[72px] max-w-[700px]">
@@ -79,6 +75,29 @@ function Hero() {
             </EyebrowCaption>
           </div>
         </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Practice memory positioning ──────────────────────────────────────────── */
+
+function PracticeMemory() {
+  return (
+    <Reveal as="section" className="px-6 py-24 md:px-12 md:py-32 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <p
+          className="font-[var(--font-fraunces)] max-w-[900px] text-[28px] font-bold leading-[1.15] md:text-[36px]"
+          style={{ letterSpacing: "-0.025em" }}
+        >
+          Hone is the practice memory system for permanent hair removal.
+        </p>
+        <p className="mt-6 max-w-[680px] text-[18px] leading-[1.65] md:text-[21px]">
+          Booking and scheduling are table stakes. The real product is the
+          thing every practitioner needs but no software has given them: a
+          faithful, fast, structured memory of what you did with each client,
+          across every session, for as long as you treat them.
+        </p>
       </div>
     </Reveal>
   );
@@ -114,9 +133,11 @@ function EditorialObservation() {
             because the digital options have all been built for someone else.
           </p>
           <p className="text-[18px] leading-[1.55] md:text-[21px]">
-            Hone is the first one built for you. Booking, scheduling,
-            charting, and client management. One tool, designed for how you
-            actually work.
+            Hone is the first one built for you. It remembers what you did
+            with each client, what worked, what to avoid. It runs your booking
+            and calendar so you don&rsquo;t juggle tools. And it does this in
+            the two-minute window between clients, because that&rsquo;s the
+            only time you actually have.
           </p>
         </div>
       </div>
@@ -133,8 +154,8 @@ const HOW_STEPS: ReadonlyArray<{
 }> = [
   {
     numeral: "01",
-    title: "Find your client",
-    body: "Type the first three letters. The cheat sheet appears with pricing, skin notes, allergies, and the exact settings from last session.",
+    title: "Find your client and see their memory",
+    body: "Type the first three letters. The cheat sheet appears with pricing, skin notes, allergies, what they tolerated last time, and the exact settings that worked.",
   },
   {
     numeral: "02",
@@ -210,8 +231,8 @@ function CheatSheetPreview() {
           where you need it.
         </h2>
         <p className="mt-8 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]">
-          One screen per client. Pricing, skin notes, allergies, last
-          session&rsquo;s exact settings, full treatment history. Nothing to
+          One screen per client. Their full memory: pricing, skin notes,
+          allergies, every session, every setting, every reaction. Nothing to
           dig for.
         </p>
 
@@ -452,11 +473,12 @@ function CaseForTryingIt() {
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
             Software has not fixed this because nobody has built software for
             it. Booking platforms handle bookings. Medical records handle
-            medical records. Salon and spa software handles inventory and
-            retail. The chart that a practitioner actually keeps, the small
-            precise log of every needle, every pulse, every setting, has
-            lived on paper because the alternatives have been worse than
-            paper.
+            diagnoses. Salon software handles inventory. None of them remember
+            what you did with each client. None of them treat treatment memory
+            as the product. So the chart that a practitioner actually keeps,
+            the small precise log of every needle, every pulse, every setting,
+            has lived on paper. Because the digital alternatives have been
+            worse than paper.
           </p>
           <p className="mt-8 text-[18px] leading-[1.65] md:text-[21px]">
             Hone is the first alternative that is not worse than paper. It is

@@ -18,7 +18,7 @@ export function MarketingFooter() {
           className="text-[10px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
         >
-          Charting software for electrolysis and laser practitioners. A Saltkiln product.
+          The practice memory system for permanent hair removal. A Saltkiln product.
         </p>
         <p
           className="text-[12px] font-medium uppercase"

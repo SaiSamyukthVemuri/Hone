@@ -39,9 +39,9 @@ function DemoHero() {
           this works.
         </h1>
         <p className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
-          Tell us about your clinic. We&rsquo;ll book a fifteen minute
-          walkthrough on Zoom, screen sharing the actual app, no slides, no
-          pitch. If it&rsquo;s right for you, you&rsquo;ll know.
+          Fifteen minutes on Zoom. Real app, no slides. We&rsquo;ll show you
+          how Hone remembers what you did last session, what settings worked,
+          what each client tolerated, and how that changes your practice.
         </p>
 
         <div className="mt-16 max-w-[560px]">
