@@ -314,6 +314,18 @@ export type PendingInvitation = {
   accepted_at: string | null;
 };
 
+// Migration 0022: practitioner-authored short notes pinned to a client and
+// surfaced everywhere that client appears (profile, appointment detail,
+// today's roster). No edit-in-place: remove and re-add to change.
+export type ClientPinnedNote = {
+  id: string;
+  client_id: string;
+  studio_id: string;
+  text: string;
+  created_by_practitioner_id: string | null;
+  created_at: string;
+};
+
 export type ClientTag = {
   id: string;
   studio_id: string;
