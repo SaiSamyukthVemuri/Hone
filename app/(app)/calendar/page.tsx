@@ -3,6 +3,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getAppointmentsForRange,
   getBlockouts,
+  type AppointmentWithPractitionerColor,
 } from "@/lib/booking/queries";
 import {
   addDays,
@@ -12,6 +13,7 @@ import {
   todayInTz,
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
+import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 
 const HOUR_START = 8;
 const HOUR_END = 20;
@@ -157,7 +159,7 @@ function DayColumn({
   tz,
 }: {
   date: string;
-  appts: import("@/lib/types/database").Appointment[];
+  appts: AppointmentWithPractitionerColor[];
   blocked: boolean;
   tz: string;
 }) {
@@ -205,12 +207,13 @@ function DayColumn({
           ROW_HEIGHT_PX - 2,
           (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
+        const color = resolvePractitionerColor(a.practitioner?.color);
         return (
           <Link
             key={a.id}
             href={`/calendar/${a.id}`}
             style={{ top, height }}
-            className="absolute inset-x-1 z-10 overflow-hidden rounded-md border border-neutral-900 bg-neutral-900 px-2 py-1 text-[11px] text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-md ${color.bg} ${color.text} px-2 py-1 text-[11px] hover:opacity-90`}
           >
             <div className="truncate font-medium">
               {localTime} · {a.duration_minutes}m

@@ -127,6 +127,9 @@ export type Practitioner = {
   email: string;
   role: PractitionerRole;
   active: boolean;
+  // Migration 0023: token from lib/practitioner-colors PRACTITIONER_COLORS.
+  // Free text in the DB; UI resolves via resolvePractitionerColor.
+  color: string;
   created_at: string;
 };
 
