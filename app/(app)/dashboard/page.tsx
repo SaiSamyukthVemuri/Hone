@@ -4,11 +4,17 @@ import {
   getCurrentPractitionerWithStudio,
   getTodayRosterForStudio,
 } from "@/lib/supabase/queries";
+import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
 import { ClientSearch } from "@/components/client-search";
 import {
   FormattedDateTime,
   FormattedToday,
 } from "@/components/formatted-date-time";
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trimEnd()}…`;
+}
 
 export default async function DashboardPage() {
   const { studio } = await getCurrentPractitionerWithStudio();
@@ -16,6 +22,10 @@ export default async function DashboardPage() {
     getTodayRosterForStudio(studio.id),
     getClientsForStudio(studio.id),
   ]);
+  const pinnedByClient = await getLatestPinnedNoteByClient(
+    studio.id,
+    roster.map((r) => r.client.id),
+  );
 
   return (
     <div className="flex flex-col gap-10">
@@ -43,32 +53,46 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {roster.map(({ client, sessions }) => (
-              <li key={client.id}>
-                <Link
-                  href={`/clients/${client.id}`}
-                  className="flex items-center justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">{client.name}</div>
-                    <div className="truncate text-xs text-neutral-500">
-                      {sessions.map((s, i) => (
-                        <span key={s.id}>
-                          {i > 0 && "   "}
-                          <FormattedDateTime
-                            iso={s.started_at}
-                            format="time"
-                          />
-                          {" · "}
-                          {s.modality}
-                        </span>
-                      ))}
+            {roster.map(({ client, sessions }) => {
+              const pinned = pinnedByClient.get(client.id);
+              return (
+                <li key={client.id}>
+                  <Link
+                    href={`/clients/${client.id}`}
+                    className="flex items-center justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{client.name}</div>
+                      <div className="truncate text-xs text-neutral-500">
+                        {sessions.map((s, i) => (
+                          <span key={s.id}>
+                            {i > 0 && "   "}
+                            <FormattedDateTime
+                              iso={s.started_at}
+                              format="time"
+                            />
+                            {" · "}
+                            {s.modality}
+                          </span>
+                        ))}
+                      </div>
+                      {pinned && (
+                        <div
+                          className="mt-1 truncate text-xs text-amber-800 dark:text-amber-300"
+                          title={pinned.text}
+                        >
+                          <span className="font-semibold uppercase tracking-wider text-[10px]">
+                            Pinned
+                          </span>{" "}
+                          {truncate(pinned.text, 40)}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <span className="text-sm text-neutral-400">›</span>
-                </Link>
-              </li>
-            ))}
+                    <span className="text-sm text-neutral-400">›</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

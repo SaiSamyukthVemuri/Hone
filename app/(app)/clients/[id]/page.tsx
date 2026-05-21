@@ -12,12 +12,14 @@ import {
   LaserEntryRow,
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
+import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
 import { ClientTagsCard } from "@/components/client-tags-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
+import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -25,6 +27,10 @@ import {
   deleteClientPricingAction,
   removeClientTagAction,
 } from "./actions";
+import {
+  addClientPinnedNoteAction,
+  removeClientPinnedNoteAction,
+} from "./pinned-notes-actions";
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -61,6 +67,7 @@ export default async function ClientCheatSheetPage({
   const today = todayInTz(studio.timezone);
   const intake = await getLatestIntakeForClient(studio.id, client.id);
   const tags = await getClientTags(studio.id, client.id);
+  const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -131,6 +138,13 @@ export default async function ClientCheatSheetPage({
           />
         </div>
       </section>
+
+      <ClientPinnedNotesCard
+        clientId={client.id}
+        notes={pinnedNotes}
+        addAction={addClientPinnedNoteAction}
+        removeAction={removeClientPinnedNoteAction}
+      />
 
       {client.allergies && (
         <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-700 dark:bg-amber-950/30">

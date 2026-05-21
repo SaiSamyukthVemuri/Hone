@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { cancelAppointmentAction } from "../actions";
 import type { Appointment, Client, Service } from "@/lib/types/database";
 
@@ -30,6 +32,9 @@ export default async function AppointmentDetailPage({
   if (!data) notFound();
 
   const isCancelled = data.status === "cancelled";
+  const pinnedNotes = data.client
+    ? await getPinnedNotesForClient(studio.id, data.client.id)
+    : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -52,6 +57,8 @@ export default async function AppointmentDetailPage({
           )}
         </p>
       </header>
+
+      <PinnedNotesReadonly notes={pinnedNotes} />
 
       <section className="rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
         <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
