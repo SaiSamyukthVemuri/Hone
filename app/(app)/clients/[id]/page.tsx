@@ -29,6 +29,11 @@ import {
 } from "@/lib/treatment-time/queries";
 import { TreatmentTimeCard } from "@/components/treatment-time-card";
 import { upsertTreatmentGoalAction } from "./treatment-time-actions";
+import {
+  ProfileTabBar,
+  isProfileTab,
+  type ProfileTab,
+} from "@/components/profile-tab-bar";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -62,10 +67,15 @@ function telHref(phone: string): string {
 
 export default async function ClientCheatSheetPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const activeTab: ProfileTab = isProfileTab(sp.tab) ? sp.tab : "overview";
+
   const { studio } = await getCurrentPractitionerWithStudio();
   const data = await getClientById(studio.id, id);
 
@@ -161,36 +171,40 @@ export default async function ClientCheatSheetPage({
         </div>
       </section>
 
-      <ClientPinnedNotesCard
-        clientId={client.id}
-        notes={pinnedNotes}
-        addAction={addClientPinnedNoteAction}
-        removeAction={removeClientPinnedNoteAction}
-      />
+      <ProfileTabBar active={activeTab} />
 
-      {client.allergies && (
-        <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-700 dark:bg-amber-950/30">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-            Allergies
-          </h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">
-            {client.allergies}
-          </p>
-        </section>
-      )}
+      {activeTab === "overview" && (
+        <>
+          <ClientPinnedNotesCard
+            clientId={client.id}
+            notes={pinnedNotes}
+            addAction={addClientPinnedNoteAction}
+            removeAction={removeClientPinnedNoteAction}
+          />
 
-      <ClientTagsCard
-        clientId={client.id}
-        tags={tags}
-        addAction={addClientTagAction}
-        removeAction={removeClientTagAction}
-      />
+          {client.allergies && (
+            <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-700 dark:bg-amber-950/30">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                Allergies
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">
+                {client.allergies}
+              </p>
+            </section>
+          )}
 
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Pricing
-          </h2>
+          <ClientTagsCard
+            clientId={client.id}
+            tags={tags}
+            addAction={addClientTagAction}
+            removeAction={removeClientTagAction}
+          />
+
+          <section className="grid gap-6 md:grid-cols-2">
+            <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+                Pricing
+              </h2>
           {pricing.length === 0 ? (
             <p className="text-sm text-neutral-500">
               No custom pricing. Studio defaults apply.
@@ -257,159 +271,167 @@ export default async function ClientCheatSheetPage({
               {client.skin_notes}
             </p>
           )}
-        </div>
-      </section>
+            </div>
+          </section>
 
-      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Health intake
-          </h2>
-          {intake?.status === "reviewed" && (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-              Reviewed
-            </span>
+          {hasEmergencyContact && (
+            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+                Emergency contact
+              </h2>
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                {client.emergency_contact_name && (
+                  <span className="font-medium">
+                    {client.emergency_contact_name}
+                  </span>
+                )}
+                {client.emergency_contact_name &&
+                  client.emergency_contact_phone && (
+                    <span className="text-neutral-400">·</span>
+                  )}
+                {client.emergency_contact_phone && (
+                  <a
+                    href={telHref(client.emergency_contact_phone)}
+                    className="text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:text-neutral-300 dark:decoration-neutral-700"
+                  >
+                    {client.emergency_contact_phone}
+                  </a>
+                )}
+              </p>
+            </section>
           )}
-          {intake?.status === "submitted" && (
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-200">
-              Awaiting review
-            </span>
-          )}
-        </div>
-        {!intake && (
-          <p className="mt-2 text-sm text-neutral-500">
-            No intake on file. A link is sent automatically with each booking
-            confirmation.
-          </p>
-        )}
-        {intake?.status === "in_progress" && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-neutral-600">
-              Intake started <FormattedDateTime iso={intake.started_at} />, not
-              yet submitted.
-            </p>
-          </div>
-        )}
-        {intake?.status === "submitted" && intake.submitted_at && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-neutral-600">
-              Submitted <FormattedDateTime iso={intake.submitted_at} />
-            </p>
-            <Link
-              href={`/clients/${client.id}/intake`}
-              className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-            >
-              View intake →
-            </Link>
-          </div>
-        )}
-        {intake?.status === "reviewed" && intake.reviewed_at && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-neutral-600">
-              Reviewed <FormattedDateTime iso={intake.reviewed_at} />
-            </p>
-            <Link
-              href={`/clients/${client.id}/intake`}
-              className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-            >
-              View intake →
-            </Link>
-          </div>
-        )}
-      </section>
+        </>
+      )}
 
-      {hasEmergencyContact && (
+      {activeTab === "health" && (
         <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Emergency contact
-          </h2>
-          <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-            {client.emergency_contact_name && (
-              <span className="font-medium">
-                {client.emergency_contact_name}
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Health intake
+            </h2>
+            {intake?.status === "reviewed" && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                Reviewed
               </span>
             )}
-            {client.emergency_contact_name &&
-              client.emergency_contact_phone && (
-                <span className="text-neutral-400">·</span>
-              )}
-            {client.emergency_contact_phone && (
-              <a
-                href={telHref(client.emergency_contact_phone)}
-                className="text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:text-neutral-300 dark:decoration-neutral-700"
-              >
-                {client.emergency_contact_phone}
-              </a>
+            {intake?.status === "submitted" && (
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+                Awaiting review
+              </span>
             )}
-          </p>
+          </div>
+          {!intake && (
+            <p className="mt-2 text-sm text-neutral-500">
+              No intake on file. A link is sent automatically with each booking
+              confirmation.
+            </p>
+          )}
+          {intake?.status === "in_progress" && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-neutral-600">
+                Intake started <FormattedDateTime iso={intake.started_at} />, not
+                yet submitted.
+              </p>
+            </div>
+          )}
+          {intake?.status === "submitted" && intake.submitted_at && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-neutral-600">
+                Submitted <FormattedDateTime iso={intake.submitted_at} />
+              </p>
+              <Link
+                href={`/clients/${client.id}/intake`}
+                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+              >
+                View intake →
+              </Link>
+            </div>
+          )}
+          {intake?.status === "reviewed" && intake.reviewed_at && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-neutral-600">
+                Reviewed <FormattedDateTime iso={intake.reviewed_at} />
+              </p>
+              <Link
+                href={`/clients/${client.id}/intake`}
+                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+              >
+                View intake →
+              </Link>
+            </div>
+          )}
         </section>
       )}
 
-      <TreatmentTimeCard
-        clientId={client.id}
-        totals={treatmentTotals}
-        breakdown={treatmentByArea}
-        goal={treatmentGoal}
-        upsertGoalAction={upsertTreatmentGoalAction}
-      />
+      {activeTab === "treatment" && (
+        <>
+          <TreatmentTimeCard
+            clientId={client.id}
+            totals={treatmentTotals}
+            breakdown={treatmentByArea}
+            goal={treatmentGoal}
+            upsertGoalAction={upsertTreatmentGoalAction}
+          />
 
-      <TreatmentPlansCard
-        clientId={client.id}
-        plans={treatmentPlans}
-        createAction={createTreatmentPlanAction}
-        closeAction={closeTreatmentPlanAction}
-        practitionerNames={practitionerNames}
-      />
+          <TreatmentPlansCard
+            clientId={client.id}
+            plans={treatmentPlans}
+            createAction={createTreatmentPlanAction}
+            closeAction={closeTreatmentPlanAction}
+            practitionerNames={practitionerNames}
+          />
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Last session</h2>
-        {lastSession ? (
-          <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-            <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">
-                  <FormattedDateTime iso={lastSession.started_at} />
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium">Last session</h2>
+            {lastSession ? (
+              <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">
+                      <FormattedDateTime iso={lastSession.started_at} />
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      {lastSession.modality}
+                      {lastPerformer && ` · ${lastPerformer}`}
+                      {lastSession.price_paid_cents != null &&
+                        ` · ${formatPrice(lastSession.price_paid_cents)} paid`}
+                    </div>
+                  </div>
+                  <Link
+                    href={`/clients/${client.id}/sessions/${lastSession.id}`}
+                    className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                  >
+                    Open →
+                  </Link>
                 </div>
-                <div className="text-xs text-neutral-500">
-                  {lastSession.modality}
-                  {lastPerformer && ` · ${lastPerformer}`}
-                  {lastSession.price_paid_cents != null &&
-                    ` · ${formatPrice(lastSession.price_paid_cents)} paid`}
-                </div>
+                <LastSessionEntries
+                  modality={lastSession.modality}
+                  electrolysisEntries={lastSession.electrolysis_entries}
+                  laserEntries={lastSession.laser_entries}
+                />
               </div>
-              <Link
-                href={`/clients/${client.id}/sessions/${lastSession.id}`}
-                className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-              >
-                Open →
-              </Link>
-            </div>
-            <LastSessionEntries
-              modality={lastSession.modality}
-              electrolysisEntries={lastSession.electrolysis_entries}
-              laserEntries={lastSession.laser_entries}
-            />
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-12 text-center dark:border-neutral-700 dark:bg-neutral-900">
-            <p
-              className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
-              style={{ letterSpacing: "-0.01em" }}
-            >
-              First session won&rsquo;t be long.
-            </p>
-          </div>
-        )}
-      </section>
+            ) : (
+              <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-12 text-center dark:border-neutral-700 dark:bg-neutral-900">
+                <p
+                  className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
+                  style={{ letterSpacing: "-0.01em" }}
+                >
+                  First session won&rsquo;t be long.
+                </p>
+              </div>
+            )}
+          </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">All sessions</h2>
-        <SessionTimeline
-          clientId={client.id}
-          sessions={olderSessions}
-          practitioners={practitioners}
-        />
-      </section>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium">All sessions</h2>
+            <SessionTimeline
+              clientId={client.id}
+              sessions={olderSessions}
+              practitioners={practitioners}
+            />
+          </section>
+        </>
+      )}
     </div>
   );
 }
