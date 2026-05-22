@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, resend } from "@/lib/email/client";
 import {
   buildClientConfirmationEmail,
@@ -14,41 +15,185 @@ import type { Appointment, Service, Studio } from "@/lib/types/database";
 
 type AnyAppointment = Appointment;
 
-async function safeSend(opts: {
+// Typed delivery result so call sites can stamp DB columns conditionally.
+// Replaces the old safeSend() void return that silently swallowed Resend
+// errors. Callers MUST inspect `ok` before treating a send as delivered.
+export type EmailSendResult =
+  | { ok: true; messageId?: string }
+  | { ok: false; error: string; retryable: boolean };
+
+const RESEND_TIMEOUT_MS = 15_000;
+
+type RawResendError = {
+  statusCode?: number;
+  name?: string;
+  message?: string;
+};
+
+// Inspect Resend's error envelope and decide whether to retry. Default
+// to retryable=true when the shape is unfamiliar so we don't give up on
+// transient network blips.
+function classifyResendError(err: RawResendError): {
+  message: string;
+  retryable: boolean;
+} {
+  const message = err.message ?? err.name ?? "Unknown Resend error";
+  const status = err.statusCode;
+  if (typeof status === "number") {
+    if (status === 429) return { message, retryable: true };
+    if (status >= 500) return { message, retryable: true };
+    if (status >= 400) return { message, retryable: false };
+  }
+  // Specific Resend error names that we know are non-retryable.
+  if (
+    err.name === "validation_error" ||
+    err.name === "invalid_to_address" ||
+    err.name === "missing_required_field"
+  ) {
+    return { message, retryable: false };
+  }
+  return { message, retryable: true };
+}
+
+export async function sendEmailSafely(opts: {
   to: string;
   subject: string;
   html: string;
   text: string;
   icsContent?: string;
-}): Promise<void> {
+}): Promise<EmailSendResult> {
   if (!resend) {
-    console.warn("Resend client not configured; skipping send.", opts.subject);
-    return;
-  }
-  try {
-    const payload: Parameters<typeof resend.emails.send>[0] = {
-      from: FROM_ADDRESS,
-      to: opts.to,
-      subject: opts.subject,
-      html: opts.html,
-      text: opts.text,
+    return {
+      ok: false,
+      error: "Resend not configured (RESEND_API_KEY missing)",
+      retryable: false,
     };
-    if (opts.icsContent) {
-      // Resend accepts a Buffer or base64 string for attachment content.
-      payload.attachments = [
-        {
-          filename: "appointment.ics",
-          content: Buffer.from(opts.icsContent, "utf8"),
-        },
-      ];
-    }
-    const { error } = await resend.emails.send(payload);
-    if (error) {
-      console.error("Failed to send appointment email:", error);
-    }
-  } catch (err) {
-    console.error("Failed to send appointment email:", err);
   }
+
+  if (!opts.to || !opts.to.includes("@")) {
+    return {
+      ok: false,
+      error: `Invalid recipient: ${opts.to || "(empty)"}`,
+      retryable: false,
+    };
+  }
+
+  const payload: Parameters<typeof resend.emails.send>[0] = {
+    from: FROM_ADDRESS,
+    to: opts.to,
+    subject: opts.subject,
+    html: opts.html,
+    text: opts.text,
+  };
+  if (opts.icsContent) {
+    payload.attachments = [
+      {
+        filename: "appointment.ics",
+        content: Buffer.from(opts.icsContent, "utf8"),
+      },
+    ];
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
+
+  try {
+    // The Resend SDK doesn't accept an AbortSignal directly, so we race
+    // its promise against a manually-rejected timer. Whichever resolves
+    // first wins; the loser is ignored.
+    const sendPromise = resend.emails.send(payload);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () =>
+        reject(new Error("__timeout__")),
+      );
+    });
+    const result = (await Promise.race([sendPromise, timeoutPromise])) as
+      | { data: { id?: string } | null; error: RawResendError | null }
+      | undefined;
+    clearTimeout(timeout);
+
+    if (!result) {
+      return { ok: false, error: "Empty response from Resend", retryable: true };
+    }
+    if (result.error) {
+      const c = classifyResendError(result.error);
+      return { ok: false, error: c.message, retryable: c.retryable };
+    }
+    return { ok: true, messageId: result.data?.id };
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof Error && err.message === "__timeout__") {
+      return {
+        ok: false,
+        error: `Resend timeout after ${RESEND_TIMEOUT_MS}ms`,
+        retryable: true,
+      };
+    }
+    const message = err instanceof Error ? err.message : "Unknown send error";
+    // Network errors throw synchronously / asynchronously and rarely
+    // carry structured shape; treat as retryable.
+    return { ok: false, error: message, retryable: true };
+  }
+}
+
+export type EmailType =
+  | "confirmation"
+  | "reminder_24h"
+  | "reminder_2h"
+  | "no_show";
+
+// Atomic single-statement DB update via the record_email_attempt RPC
+// (migration 0028). Increments the matching _send_attempts column AND
+// stamps _sent_at only when success is true. Both branches share the
+// same code path so we can't accidentally double-increment.
+//
+// We don't backfill or null out *_sent_at columns populated by the old
+// (broken) safeSend code path. This fix applies to all new sends going
+// forward. A separate optional SQL block in migration 0028 resets
+// stuck attempt counters for future-dated appointments only.
+export async function recordEmailAttempt(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: EmailType,
+  success: boolean,
+): Promise<void> {
+  const { error } = await admin.rpc("record_email_attempt", {
+    p_appointment_id: appointmentId,
+    p_email_type: emailType,
+    p_success: success,
+  });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "record_email_attempt_failed",
+        appointmentId,
+        emailType,
+        success,
+        error: String(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+}
+
+export function logEmailFailure(opts: {
+  appointmentId: string;
+  emailType: EmailType;
+  error: string;
+  retryable: boolean;
+  attemptNumber?: number;
+}): void {
+  console.error(
+    JSON.stringify({
+      event: "email_send_failed",
+      appointmentId: opts.appointmentId,
+      emailType: opts.emailType,
+      error: opts.error,
+      retryable: opts.retryable,
+      attemptNumber: opts.attemptNumber,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 }
 
 export async function sendBookingConfirmationToClient(params: {
@@ -66,8 +211,10 @@ export async function sendBookingConfirmationToClient(params: {
   intakeUrl: string | null;
   treatmentTimeLine: string | null;
   appBaseUrl: string;
-}) {
-  if (!params.clientEmail) return;
+}): Promise<EmailSendResult> {
+  if (!params.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const serviceName = params.service?.name ?? "Appointment";
@@ -103,7 +250,7 @@ export async function sendBookingConfirmationToClient(params: {
     attendeeEmail: params.clientEmail,
   });
 
-  await safeSend({
+  return sendEmailSafely({
     to: params.clientEmail,
     subject,
     html,
@@ -140,7 +287,7 @@ export async function sendBookingNotificationToPractitioner(params: {
     notes: params.notes,
     appointmentUrl: params.appointmentUrl,
   });
-  await safeSend({
+  await sendEmailSafely({
     to: params.practitionerEmail,
     subject,
     html,
@@ -171,7 +318,7 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await safeSend({
+  await sendEmailSafely({
     to: params.to,
     subject,
     html,
@@ -194,8 +341,12 @@ type ReminderInput = {
   treatmentTimeLine: string | null;
 };
 
-export async function send24hReminderToClient(p: ReminderInput): Promise<void> {
-  if (!p.clientEmail) return;
+export async function send24hReminderToClient(
+  p: ReminderInput,
+): Promise<EmailSendResult> {
+  if (!p.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build24hReminderEmail({
@@ -213,11 +364,15 @@ export async function send24hReminderToClient(p: ReminderInput): Promise<void> {
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
   });
-  await safeSend({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
 }
 
-export async function send2hReminderToClient(p: ReminderInput): Promise<void> {
-  if (!p.clientEmail) return;
+export async function send2hReminderToClient(
+  p: ReminderInput,
+): Promise<EmailSendResult> {
+  if (!p.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build2hReminderEmail({
@@ -235,7 +390,7 @@ export async function send2hReminderToClient(p: ReminderInput): Promise<void> {
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
   });
-  await safeSend({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
 }
 
 export async function sendNoShowFollowupToClient(params: {
@@ -243,12 +398,14 @@ export async function sendNoShowFollowupToClient(params: {
   clientEmail: string;
   studio: Studio;
   rebookUrl: string | null;
-}): Promise<void> {
-  if (!params.clientEmail) return;
+}): Promise<EmailSendResult> {
+  if (!params.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
   const { subject, html, text } = buildNoShowFollowupEmail({
     clientName: params.clientName,
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
   });
-  await safeSend({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
 }
