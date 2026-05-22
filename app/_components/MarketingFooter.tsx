@@ -15,6 +15,12 @@ export function MarketingFooter() {
           Hone
         </p>
         <p
+          className="font-[var(--font-fraunces)] text-[14px] italic"
+          style={{ color: MARKETING_PALETTE.muted }}
+        >
+          Practice memory, made carefully.
+        </p>
+        <p
           className="text-[10px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
         >

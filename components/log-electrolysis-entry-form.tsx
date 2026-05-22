@@ -35,6 +35,7 @@ import type {
   ProbeType,
 } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
+import { pickSavedLabel } from "@/lib/saved-label";
 import { ChipSelector } from "./chip-selector";
 import { MultiChipSelector } from "./multi-chip-selector";
 
@@ -144,7 +145,7 @@ export function LogElectrolysisEntryForm({
     machine_frequency: stickyDefaults.machine_frequency,
   }));
   const [error, setError] = useState<string | null>(null);
-  const [showSaved, setShowSaved] = useState(false);
+  const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -201,8 +202,8 @@ export function LogElectrolysisEntryForm({
         await action(fd);
         // After save, reset everything except the sticky pair.
         setState((s) => blankStateWithStickyFrom(s));
-        setShowSaved(true);
-        window.setTimeout(() => setShowSaved(false), 1500);
+        setSavedLabel(pickSavedLabel());
+        window.setTimeout(() => setSavedLabel(null), 1500);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -527,12 +528,12 @@ export function LogElectrolysisEntryForm({
         >
           Clear
         </button>
-        {showSaved && (
+        {savedLabel && (
           <span
             className="text-sm text-green-600 dark:text-green-400"
             aria-live="polite"
           >
-            Saved
+            {savedLabel}
           </span>
         )}
       </div>

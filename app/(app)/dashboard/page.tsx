@@ -68,8 +68,13 @@ export default async function DashboardPage() {
         </div>
 
         {roster.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-            No sessions scheduled today.
+          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-16 text-center dark:border-neutral-700 dark:bg-neutral-900">
+            <p
+              className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
+              style={{ letterSpacing: "-0.01em" }}
+            >
+              Today is open.
+            </p>
           </div>
         ) : (
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
