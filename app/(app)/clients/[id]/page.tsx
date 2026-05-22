@@ -353,8 +353,13 @@ export default async function ClientCheatSheetPage({
             />
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-            No sessions logged yet.
+          <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-12 text-center dark:border-neutral-700 dark:bg-neutral-900">
+            <p
+              className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
+              style={{ letterSpacing: "-0.01em" }}
+            >
+              First session won&rsquo;t be long.
+            </p>
           </div>
         )}
       </section>

@@ -10,6 +10,7 @@ import {
 } from "@/lib/constants";
 import type { SessionBlock } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
+import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
 
@@ -55,7 +56,7 @@ export function SimplifiedEntryForm({
 }: Props) {
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [error, setError] = useState<string | null>(null);
-  const [savedHint, setSavedHint] = useState(false);
+  const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -108,8 +109,8 @@ export function SimplifiedEntryForm({
       try {
         await addElectrolysisEntryAction(fd);
         setDraft(emptyDraft());
-        setSavedHint(true);
-        window.setTimeout(() => setSavedHint(false), 1500);
+        setSavedLabel(pickSavedLabel());
+        window.setTimeout(() => setSavedLabel(null), 1500);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -270,12 +271,12 @@ export function SimplifiedEntryForm({
         >
           {pending ? "Adding…" : "Add entry"}
         </button>
-        {savedHint && (
+        {savedLabel && (
           <span
             className="text-sm text-green-600 dark:text-green-400"
             aria-live="polite"
           >
-            Saved
+            {savedLabel}
           </span>
         )}
       </div>
