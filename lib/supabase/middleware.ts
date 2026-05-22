@@ -38,8 +38,15 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/auth/") ||
     pathname === "/pricing" ||
     pathname === "/demo" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
     pathname.startsWith("/book/") ||
     pathname.startsWith("/cancel/") ||
+    // Token-authenticated public flows: clients click links from email
+    // (intake form completion, reschedule picker) without being logged in.
+    // The route handlers verify the signed token themselves.
+    pathname.startsWith("/intake/") ||
+    pathname.startsWith("/reschedule/") ||
     // Cron endpoints authenticate via the CRON_SECRET Bearer header
     // checked inside each route handler; don't let middleware redirect
     // them to /login.
