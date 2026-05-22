@@ -39,7 +39,11 @@ export async function updateSession(request: NextRequest) {
     pathname === "/pricing" ||
     pathname === "/demo" ||
     pathname.startsWith("/book/") ||
-    pathname.startsWith("/cancel/");
+    pathname.startsWith("/cancel/") ||
+    // Cron endpoints authenticate via the CRON_SECRET Bearer header
+    // checked inside each route handler; don't let middleware redirect
+    // them to /login.
+    pathname.startsWith("/api/cron/");
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
