@@ -2,18 +2,13 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
-
-export type ProfileTab = "overview" | "health" | "treatment";
+import type { ProfileTab } from "./profile-tab";
 
 const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "overview", label: "Overview" },
   { value: "health", label: "Health" },
   { value: "treatment", label: "Treatment" },
 ];
-
-export function isProfileTab(value: string | null | undefined): value is ProfileTab {
-  return value === "overview" || value === "health" || value === "treatment";
-}
 
 type Props = {
   active: ProfileTab;
