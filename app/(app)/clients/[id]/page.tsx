@@ -14,12 +14,14 @@ import {
 import { AddPricingForm } from "@/components/add-pricing-form";
 import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
 import { ClientTagsCard } from "@/components/client-tags-card";
+import { TreatmentPlansCard } from "@/components/treatment-plans-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
+import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -31,6 +33,10 @@ import {
   addClientPinnedNoteAction,
   removeClientPinnedNoteAction,
 } from "./pinned-notes-actions";
+import {
+  closeTreatmentPlanAction,
+  createTreatmentPlanAction,
+} from "./treatment-plans-actions";
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -68,6 +74,10 @@ export default async function ClientCheatSheetPage({
   const intake = await getLatestIntakeForClient(studio.id, client.id);
   const tags = await getClientTags(studio.id, client.id);
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
+  const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
+  const practitionerNames: Record<string, string> = Object.fromEntries(
+    practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
+  );
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -322,6 +332,14 @@ export default async function ClientCheatSheetPage({
           </p>
         </section>
       )}
+
+      <TreatmentPlansCard
+        clientId={client.id}
+        plans={treatmentPlans}
+        createAction={createTreatmentPlanAction}
+        closeAction={closeTreatmentPlanAction}
+        practitionerNames={practitionerNames}
+      />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Last session</h2>

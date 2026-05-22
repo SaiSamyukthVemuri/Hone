@@ -13,6 +13,12 @@ import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
 import { getClientTags } from "@/lib/client-tags/queries";
+import {
+  getActiveTreatmentPlansForClient,
+  getTreatmentPlanWithCount,
+} from "@/lib/treatment-plans/queries";
+import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
+import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
 import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
@@ -25,6 +31,10 @@ import {
   updateSessionPerformerAction,
   updateSessionPriceAction,
 } from "./actions";
+import {
+  attachChartEntryToPlanAction,
+  detachChartEntryFromPlanAction,
+} from "../../treatment-plans-actions";
 
 export default async function SessionDetailPage({
   params,
@@ -69,8 +79,20 @@ export default async function SessionDetailPage({
       ? await getSessionWithBlocks(sessionId)
       : null;
 
+  // Treatment plan attachment context: the active plans the practitioner
+  // can attach to (excludes closed), plus the resolved attached plan + its
+  // count if this session is already attached.
+  const [activePlansForClient, attachedPlan] = await Promise.all([
+    getActiveTreatmentPlansForClient(studio.id, id),
+    session.treatment_plan_id
+      ? getTreatmentPlanWithCount(studio.id, session.treatment_plan_id)
+      : Promise.resolve(null),
+  ]);
+
   return (
     <div className="flex flex-col gap-8">
+      {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
+
       <div className="flex flex-col gap-3">
         <Link
           href={`/clients/${id}`}
@@ -97,6 +119,25 @@ export default async function SessionDetailPage({
           startedAtOriginal={session.started_at_original}
           audit={audit}
           practitioners={clientData.practitioners}
+        />
+        <TreatmentPlanAttachment
+          sessionId={session.id}
+          clientId={id}
+          attachedPlan={
+            attachedPlan
+              ? {
+                  id: attachedPlan.id,
+                  name: attachedPlan.name,
+                  status: attachedPlan.status,
+                }
+              : null
+          }
+          activePlans={activePlansForClient.map((p) => ({
+            id: p.id,
+            name: p.name,
+          }))}
+          attachAction={attachChartEntryToPlanAction}
+          detachAction={detachChartEntryFromPlanAction}
         />
       </div>
 
