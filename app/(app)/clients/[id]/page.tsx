@@ -29,11 +29,8 @@ import {
 } from "@/lib/treatment-time/queries";
 import { TreatmentTimeCard } from "@/components/treatment-time-card";
 import { upsertTreatmentGoalAction } from "./treatment-time-actions";
-import {
-  ProfileTabBar,
-  isProfileTab,
-  type ProfileTab,
-} from "@/components/profile-tab-bar";
+import { ProfileTabBar } from "@/components/profile-tab-bar";
+import { isProfileTab, type ProfileTab } from "@/components/profile-tab";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
