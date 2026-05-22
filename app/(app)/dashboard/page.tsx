@@ -13,6 +13,7 @@ import {
 } from "@/components/formatted-date-time";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type { Practitioner, Session } from "@/lib/types/database";
+import { DashboardGreeting } from "./DashboardGreeting";
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -33,7 +34,7 @@ function performerForRoster(
 }
 
 export default async function DashboardPage() {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const [roster, clients, practitioners] = await Promise.all([
     getTodayRosterForStudio(studio.id),
     getClientsForStudio(studio.id),
@@ -48,7 +49,8 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-col gap-10">
       <section>
-        <p className="text-xs uppercase tracking-wider text-neutral-500">
+        <DashboardGreeting displayName={practitioner.display_name} />
+        <p className="mt-2 text-xs uppercase tracking-wider text-neutral-500">
           <FormattedToday format="weekday-date" />
         </p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">Today</h1>
