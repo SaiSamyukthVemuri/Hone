@@ -144,6 +144,9 @@ export type Appointment = {
   confirmation_send_attempts: number;
   reminder_24h_send_attempts: number;
   reminder_2h_send_attempts: number;
+  // Migration 0028: attempts counter for the no-show follow-up email,
+  // added so the no-show path has the same 3-strike behavior as the others.
+  no_show_email_send_attempts: number;
   cancellation_token: string | null;
 };
 
