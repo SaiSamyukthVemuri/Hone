@@ -191,6 +191,25 @@ export type Session = {
   deleted_at: string | null;
   deleted_by: string | null;
   delete_reason: string | null;
+  // Migration 0024: optional attachment to a multi-session treatment plan.
+  treatment_plan_id: string | null;
+};
+
+export type TreatmentPlanStatus = "active" | "closed";
+
+// Migration 0024: tracks multi-session electrolysis work against a target
+// visit count. Sessions opt in via sessions.treatment_plan_id.
+export type TreatmentPlan = {
+  id: string;
+  client_id: string;
+  studio_id: string;
+  name: string;
+  suggested_visit_count: number;
+  status: TreatmentPlanStatus;
+  created_by_practitioner_id: string | null;
+  closed_by_practitioner_id: string | null;
+  created_at: string;
+  closed_at: string | null;
 };
 
 export type SessionAudit = {
