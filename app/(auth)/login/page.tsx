@@ -22,8 +22,16 @@ type Status =
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [agreed, setAgreed] = useState(false);
 
   async function handleGoogle() {
+    if (!agreed) {
+      setStatus({
+        kind: "error",
+        message: "Please agree to the Terms of Service and Privacy Policy.",
+      });
+      return;
+    }
     setStatus({ kind: "google" });
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOAuth({
@@ -40,6 +48,13 @@ export default function LoginPage() {
 
   async function handleMagicLink(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!agreed) {
+      setStatus({
+        kind: "error",
+        message: "Please agree to the Terms of Service and Privacy Policy.",
+      });
+      return;
+    }
     setStatus({ kind: "sending" });
 
     const supabase = createClient();
@@ -58,6 +73,7 @@ export default function LoginPage() {
   }
 
   const isBusy = status.kind === "google" || status.kind === "sending";
+  const gateDisabled = isBusy || !agreed;
 
   return (
     <main
@@ -90,10 +106,47 @@ export default function LoginPage() {
           <SentNotice email={email} />
         ) : (
           <>
+            <label className="mb-6 flex items-start gap-3 text-left text-[13px] leading-[1.55]">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => {
+                  setAgreed(e.target.checked);
+                  if (e.target.checked && status.kind === "error") {
+                    setStatus({ kind: "idle" });
+                  }
+                }}
+                disabled={isBusy}
+                aria-label="Agree to Terms of Service and Privacy Policy"
+                className="mt-0.5 h-4 w-4 shrink-0"
+              />
+              <span style={{ color: PALETTE.ink }}>
+                I agree to the{" "}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Terms of Service
+                </a>{" "}
+                and{" "}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            </label>
+
             <button
               type="button"
               onClick={handleGoogle}
-              disabled={isBusy}
+              disabled={gateDisabled}
               className="mx-auto mb-6 flex w-full items-center justify-center gap-3 px-6 py-3 text-[14px] font-medium transition-colors disabled:opacity-50"
               style={{
                 border: `1px solid ${PALETTE.ink}`,
@@ -160,7 +213,7 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                disabled={isBusy}
+                disabled={gateDisabled}
                 className="mb-10 block w-full px-8 py-4 text-[14px] font-medium uppercase transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{
                   backgroundColor: PALETTE.ink,

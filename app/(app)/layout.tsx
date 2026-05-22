@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
+import { AppFooter } from "@/app/_components/AppFooter";
 import { signOut } from "./dashboard/actions";
 
 export default async function AppLayout({
@@ -76,6 +77,7 @@ export default async function AppLayout({
       <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-10">
         {children}
       </main>
+      <AppFooter />
     </div>
   );
 }

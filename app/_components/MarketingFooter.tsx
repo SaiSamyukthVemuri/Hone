@@ -30,11 +30,22 @@ export function MarketingFooter() {
           className="text-[12px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
         >
-          © 2026 Saltkiln.{" "}
+          © 2026 Sam Vemuri (operating as Hone).{" "}
+          <Link href="/privacy" className="hover:underline">
+            Privacy
+          </Link>
+          {" · "}
+          <Link href="/terms" className="hover:underline">
+            Terms
+          </Link>
+          {" · "}
+          <a href="mailto:privacy@hone.care" className="hover:underline">
+            privacy@hone.care
+          </a>
+          {" · "}
           <Link href="/login" className="hover:underline">
             Sign in
           </Link>
-          . Privacy.
         </p>
       </div>
     </footer>
