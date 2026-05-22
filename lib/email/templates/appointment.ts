@@ -1,4 +1,4 @@
-import { localDateString, localTimeString } from "@/lib/booking/tz";
+import { localTimeString } from "@/lib/booking/tz";
 
 function escapeHtml(s: string): string {
   return s

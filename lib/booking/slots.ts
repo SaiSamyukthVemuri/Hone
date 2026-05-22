@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  localDateString,
   localDayOfWeek,
   localMinutesSinceMidnight,
   localTimeString,

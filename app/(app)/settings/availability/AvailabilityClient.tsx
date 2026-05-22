@@ -530,7 +530,7 @@ function WeeklyGrid({
       <div className="min-w-[640px]">
         <div className="grid grid-cols-[48px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
           <div />
-          {DAY_LABELS.map((label, i) => (
+          {DAY_LABELS.map((label) => (
             <div
               key={label}
               className="border-l border-neutral-200 px-3 py-2 text-center text-xs font-medium dark:border-neutral-800"
