@@ -4,6 +4,10 @@ import {
   send24hReminderToClient,
   send2hReminderToClient,
 } from "@/lib/email/send-appointment";
+import {
+  buildTreatmentTimeLine,
+  getTreatmentTimeContextForEmail,
+} from "@/lib/treatment-time/queries";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
@@ -115,6 +119,17 @@ async function sendReminderPass(opts: {
       null;
 
     try {
+      const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
+        ? buildTreatmentTimeLine({
+            enabled: true,
+            clientFirstName:
+              appt.client.name.split(/\s+/)[0] || appt.client.name,
+            context: await getTreatmentTimeContextForEmail(
+              appt.studio.id,
+              appt.client_id,
+            ),
+          })
+        : null;
       const sendFn =
         opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
       await sendFn({
@@ -126,6 +141,7 @@ async function sendReminderPass(opts: {
         clientEmail: appt.client.email,
         cancellationUrl,
         rescheduleUrl,
+        treatmentTimeLine,
       });
       await admin
         .from("appointments")

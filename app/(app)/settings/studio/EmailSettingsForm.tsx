@@ -12,6 +12,7 @@ type Toggle = {
     | "send_2h_reminders"
     | "auto_mark_no_shows"
     | "send_no_show_followup"
+    | "show_treatment_time_to_clients"
   >;
   label: string;
   helper?: string;
@@ -35,6 +36,12 @@ const TOGGLES: ReadonlyArray<Toggle> = [
     helper:
       "Sends a message to clients who didn't make it, inviting them to rebook.",
   },
+  {
+    key: "show_treatment_time_to_clients",
+    label: "Show treatment time to clients in emails",
+    helper:
+      "When on, confirmation and reminder emails include the client's total treatment time so far and the session number. Useful for transparency; some practitioners prefer keeping this internal.",
+  },
 ];
 
 type Props = {
@@ -45,6 +52,7 @@ type Props = {
     | "send_2h_reminders"
     | "auto_mark_no_shows"
     | "send_no_show_followup"
+    | "show_treatment_time_to_clients"
   >;
 };
 

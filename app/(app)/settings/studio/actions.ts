@@ -65,6 +65,10 @@ export async function setStudioEmailSettingsAction(
       send_2h_reminders: readBool(formData, "send_2h_reminders"),
       auto_mark_no_shows: readBool(formData, "auto_mark_no_shows"),
       send_no_show_followup: readBool(formData, "send_no_show_followup"),
+      show_treatment_time_to_clients: readBool(
+        formData,
+        "show_treatment_time_to_clients",
+      ),
     })
     .eq("id", studio.id);
   if (error) return { ok: false, error: error.message };

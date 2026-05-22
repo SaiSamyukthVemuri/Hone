@@ -6,6 +6,10 @@ import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { sendBookingConfirmationToClient } from "@/lib/email/send-appointment";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
+import {
+  buildTreatmentTimeLine,
+  getTreatmentTimeContextForEmail,
+} from "@/lib/treatment-time/queries";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
@@ -342,6 +346,17 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         .eq("id", existing.studio_id)
         .single();
       if (studioFull) {
+        const treatmentTimeLine = studioFull.show_treatment_time_to_clients
+          ? buildTreatmentTimeLine({
+              enabled: true,
+              clientFirstName:
+                clientRow.name.split(/\s+/)[0] || clientRow.name,
+              context: await getTreatmentTimeContextForEmail(
+                existing.studio_id,
+                existing.client_id,
+              ),
+            })
+          : null;
         await sendBookingConfirmationToClient({
           appointment: created,
           service: serviceRow,
@@ -353,6 +368,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
           cancellationUrl,
           rescheduleUrl,
           intakeUrl: intake?.url ?? null,
+          treatmentTimeLine,
           appBaseUrl: APP_ORIGIN,
         });
         await admin

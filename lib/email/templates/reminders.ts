@@ -36,6 +36,7 @@ type ReminderProps = {
   cancellationUrl: string;
   rescheduleUrl: string | null;
   preCareInstructions: string | null;
+  treatmentTimeLine: string | null;
 };
 
 function reminderHtml(opts: {
@@ -75,6 +76,7 @@ function reminderHtml(opts: {
           ${escapeHtml(timeStr)} (${escapeHtml(p.timezone)})<br/>
           Duration: ${p.durationMinutes} minutes
           ${safeAddress ? `<br/><br/>${safeAddress}` : ""}
+          ${p.treatmentTimeLine ? `<br/><br/><span style="font-family:Georgia, serif; font-style:italic; color:#6B6B6B;">${escapeHtml(p.treatmentTimeLine)}</span>` : ""}
         </td></tr>
         ${
           p.preCareInstructions
@@ -126,6 +128,7 @@ ${dayStr}
 ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
+${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}

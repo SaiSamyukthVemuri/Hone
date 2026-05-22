@@ -26,6 +26,25 @@ export type Studio = {
   send_2h_reminders: boolean;
   auto_mark_no_shows: boolean;
   send_no_show_followup: boolean;
+  // Migration 0026: opt-in display of client treatment time in emails.
+  show_treatment_time_to_clients: boolean;
+};
+
+export type TreatmentGoalStatus = "active" | "reached" | "revised" | "archived";
+
+// Migration 0026: single estimated-total per client. Editing the row in
+// place is the supported flow; status moves from active → reached or
+// active → revised as the practitioner judges.
+export type TreatmentGoal = {
+  id: string;
+  client_id: string;
+  studio_id: string;
+  estimated_total_minutes: number;
+  notes: string | null;
+  status: TreatmentGoalStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type StudioAvailabilityDefault = {
