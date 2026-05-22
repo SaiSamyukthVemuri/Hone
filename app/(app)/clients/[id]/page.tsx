@@ -22,6 +22,13 @@ import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
+import {
+  getTotalTreatmentTime,
+  getTreatmentTimeByArea,
+  getTreatmentGoal,
+} from "@/lib/treatment-time/queries";
+import { TreatmentTimeCard } from "@/components/treatment-time-card";
+import { upsertTreatmentGoalAction } from "./treatment-time-actions";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -75,6 +82,11 @@ export default async function ClientCheatSheetPage({
   const tags = await getClientTags(studio.id, client.id);
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
   const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
+  const [treatmentTotals, treatmentByArea, treatmentGoal] = await Promise.all([
+    getTotalTreatmentTime(studio.id, client.id),
+    getTreatmentTimeByArea(studio.id, client.id),
+    getTreatmentGoal(studio.id, client.id),
+  ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
@@ -332,6 +344,14 @@ export default async function ClientCheatSheetPage({
           </p>
         </section>
       )}
+
+      <TreatmentTimeCard
+        clientId={client.id}
+        totals={treatmentTotals}
+        breakdown={treatmentByArea}
+        goal={treatmentGoal}
+        upsertGoalAction={upsertTreatmentGoalAction}
+      />
 
       <TreatmentPlansCard
         clientId={client.id}

@@ -8,6 +8,10 @@ import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
+  buildTreatmentTimeLine,
+  getTreatmentTimeContextForEmail,
+} from "@/lib/treatment-time/queries";
+import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
@@ -203,6 +207,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   // Studio toggle: skip the confirmation email entirely if disabled.
   if (studio.send_confirmation_emails) {
+    const treatmentTimeLine = studio.show_treatment_time_to_clients
+      ? buildTreatmentTimeLine({
+          enabled: true,
+          clientFirstName: clientName.split(/\s+/)[0] || clientName,
+          context: await getTreatmentTimeContextForEmail(studio.id, clientId),
+        })
+      : null;
     try {
       await sendBookingConfirmationToClient({
         appointment: created,
@@ -215,6 +226,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         cancellationUrl,
         rescheduleUrl,
         intakeUrl: intake?.url ?? null,
+        treatmentTimeLine,
         appBaseUrl: APP_ORIGIN,
       });
       await admin

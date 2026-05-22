@@ -8,6 +8,10 @@ import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
+  buildTreatmentTimeLine,
+  getTreatmentTimeContextForEmail,
+} from "@/lib/treatment-time/queries";
+import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
   sendCancellationEmail,
@@ -248,6 +252,16 @@ async function dispatchBookingEmails(p: DispatchParams) {
       clientId: p.appointment.client_id,
       appOrigin: APP_ORIGIN,
     });
+    const treatmentTimeLine = p.studio.show_treatment_time_to_clients
+      ? buildTreatmentTimeLine({
+          enabled: true,
+          clientFirstName: p.clientName.split(/\s+/)[0] || p.clientName,
+          context: await getTreatmentTimeContextForEmail(
+            p.studio.id,
+            p.appointment.client_id,
+          ),
+        })
+      : null;
     try {
       await sendBookingConfirmationToClient({
         appointment: p.appointment,
@@ -259,6 +273,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
         cancellationUrl,
         rescheduleUrl,
         intakeUrl: intake?.url ?? null,
+        treatmentTimeLine,
         appBaseUrl: APP_ORIGIN,
       });
       // Stamp confirmation_sent_at via admin client so the appointment-detail

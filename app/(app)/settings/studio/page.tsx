@@ -33,6 +33,7 @@ export default async function StudioSettingsPage() {
           send_2h_reminders: studio.send_2h_reminders,
           auto_mark_no_shows: studio.auto_mark_no_shows,
           send_no_show_followup: studio.send_no_show_followup,
+          show_treatment_time_to_clients: studio.show_treatment_time_to_clients,
         }}
       />
     </section>

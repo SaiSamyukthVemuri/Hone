@@ -17,6 +17,10 @@ import {
   getActiveTreatmentPlansForClient,
   getTreatmentPlanWithCount,
 } from "@/lib/treatment-plans/queries";
+import {
+  getSessionNumberForClient,
+  formatMinutes,
+} from "@/lib/treatment-time/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
@@ -89,6 +93,14 @@ export default async function SessionDetailPage({
       : Promise.resolve(null),
   ]);
 
+  // Running total: only shown for electrolysis sessions (the modality the
+  // treatment-time system tracks). Laser sessions skip the line.
+  const runningTotal =
+    session.modality === "electrolysis"
+      ? await getSessionNumberForClient(studio.id, id, session.id)
+      : null;
+  const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
+
   return (
     <div className="flex flex-col gap-8">
       {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
@@ -113,6 +125,13 @@ export default async function SessionDetailPage({
         {performerName && (
           <p className="text-sm text-neutral-500">
             Performed by {performerName}
+          </p>
+        )}
+        {runningTotal && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {runningTotal.sessionNumber === 1
+              ? `First electrolysis session for ${clientFirstName}`
+              : `Session ${runningTotal.sessionNumber} for ${clientFirstName} · ${formatMinutes(runningTotal.totalMinutesBefore)} total before today`}
           </p>
         )}
         <SessionEditHistory

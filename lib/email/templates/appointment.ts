@@ -41,6 +41,11 @@ type ConfirmationToClient = {
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   preCareInstructions: string | null;
+  // Optional client-facing treatment-time line. Rendered only when the
+  // studio toggle is on AND the field is set. Format: "Treatment time so
+  // far: 23h 45m · This will be session 19" or "This will be Sarah's
+  // first electrolysis session".
+  treatmentTimeLine: string | null;
 };
 
 export function buildClientConfirmationEmail(p: ConfirmationToClient): {
@@ -78,6 +83,7 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
           ${escapeHtml(timeStr)} (${escapeHtml(p.timezone)})<br/>
           Duration: ${p.durationMinutes} minutes
           ${safeAddress ? `<br/><br/>${safeAddress}` : ""}
+          ${p.treatmentTimeLine ? `<br/><br/><span style="font-family:Georgia, serif; font-style:italic; color:#6B6B6B;">${escapeHtml(p.treatmentTimeLine)}</span>` : ""}
         </td></tr>
         <tr><td style="padding:24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.65; color:#6B6B6B;">
           ${escapeHtml(PREP_INSTRUCTIONS)}
@@ -137,6 +143,7 @@ ${dayStr}
 ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
+${p.treatmentTimeLine ? `${p.treatmentTimeLine}\n` : ""}
 ${PREP_INSTRUCTIONS}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 5 minutes):\n${p.intakeUrl}\n` : ""}

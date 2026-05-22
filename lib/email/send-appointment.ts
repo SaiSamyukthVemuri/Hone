@@ -64,6 +64,7 @@ export async function sendBookingConfirmationToClient(params: {
   cancellationUrl: string;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
+  treatmentTimeLine: string | null;
   appBaseUrl: string;
 }) {
   if (!params.clientEmail) return;
@@ -85,6 +86,7 @@ export async function sendBookingConfirmationToClient(params: {
     rescheduleUrl: params.rescheduleUrl,
     intakeUrl: params.intakeUrl,
     preCareInstructions: params.service?.pre_care_instructions ?? null,
+    treatmentTimeLine: params.treatmentTimeLine,
   });
 
   const ics = buildIcs({
@@ -189,6 +191,7 @@ type ReminderInput = {
   clientEmail: string;
   cancellationUrl: string;
   rescheduleUrl: string | null;
+  treatmentTimeLine: string | null;
 };
 
 export async function send24hReminderToClient(p: ReminderInput): Promise<void> {
@@ -208,6 +211,7 @@ export async function send24hReminderToClient(p: ReminderInput): Promise<void> {
     cancellationUrl: p.cancellationUrl,
     rescheduleUrl: p.rescheduleUrl,
     preCareInstructions: p.service?.pre_care_instructions ?? null,
+    treatmentTimeLine: p.treatmentTimeLine,
   });
   await safeSend({ to: p.clientEmail, subject, html, text });
 }
@@ -229,6 +233,7 @@ export async function send2hReminderToClient(p: ReminderInput): Promise<void> {
     cancellationUrl: p.cancellationUrl,
     rescheduleUrl: p.rescheduleUrl,
     preCareInstructions: p.service?.pre_care_instructions ?? null,
+    treatmentTimeLine: p.treatmentTimeLine,
   });
   await safeSend({ to: p.clientEmail, subject, html, text });
 }
