@@ -134,7 +134,6 @@ export default async function CalendarPage({
             {days.map((date) => (
               <DayColumn
                 key={date}
-                date={date}
                 appts={byDate.get(date) ?? []}
                 blocked={blockoutDates.has(date)}
                 tz={studio.timezone}
@@ -153,12 +152,10 @@ export default async function CalendarPage({
 }
 
 function DayColumn({
-  date,
   appts,
   blocked,
   tz,
 }: {
-  date: string;
   appts: AppointmentWithPractitionerColor[];
   blocked: boolean;
   tz: string;
