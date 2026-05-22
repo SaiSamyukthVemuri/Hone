@@ -76,25 +76,45 @@ export async function getBlockouts(studioId: string): Promise<StudioBlockout[]> 
   return (data ?? []) as StudioBlockout[];
 }
 
+// Appointment shape returned by getAppointmentsForRange. Includes a small
+// practitioner join so the calendar can color pills without an N+1 lookup.
+export type AppointmentWithPractitionerColor = Appointment & {
+  practitioner: { id: string; color: string } | null;
+};
+
 export async function getAppointmentsForRange(
   studioId: string,
   startIso: string,
   endIso: string,
-): Promise<Appointment[]> {
+): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("appointments")
-    .select("*")
+    .select("*, practitioner:practitioners(id, color)")
     .eq("studio_id", studioId)
     .gte("starts_at", startIso)
     .lt("starts_at", endIso)
     .order("starts_at");
   if (error) throw new Error(`Failed to load appointments: ${error.message}`);
-  return (data ?? []) as Appointment[];
+
+  // Supabase types joined relations as either a single row or an array.
+  // Normalize so the caller can do `a.practitioner?.color` without branching.
+  type Raw = Appointment & {
+    practitioner:
+      | { id: string; color: string }
+      | { id: string; color: string }[]
+      | null;
+  };
+  return ((data ?? []) as Raw[]).map((row) => {
+    const p = Array.isArray(row.practitioner)
+      ? row.practitioner[0] ?? null
+      : row.practitioner;
+    return { ...row, practitioner: p };
+  });
 }
 
 // Service-role lookup of a studio by public slug. Used by /book/[slug] and
-// /cancel/[token] — both pre-auth flows.
+// /cancel/[token]: both pre-auth flows.
 export async function getStudioBySlug(slug: string): Promise<Studio | null> {
   const admin = createAdminClient();
   const { data, error } = await admin
