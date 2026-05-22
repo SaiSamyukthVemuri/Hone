@@ -193,6 +193,18 @@ function ServiceEditRow({ service }: { service: Service }) {
           placeholder="Description (optional)"
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-xs outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-500">
+            Pre-care instructions (shown in confirmation + reminder emails)
+          </span>
+          <textarea
+            name="pre_care_instructions"
+            defaultValue={service.pre_care_instructions ?? ""}
+            rows={2}
+            placeholder="e.g. Please arrive 5 minutes early. Skin should be free of lotion or makeup."
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-xs outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          />
+        </label>
       </form>
       <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
         <span>

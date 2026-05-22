@@ -20,6 +20,12 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
+  // Migration 0025: studio-level email toggles.
+  send_confirmation_emails: boolean;
+  send_24h_reminders: boolean;
+  send_2h_reminders: boolean;
+  auto_mark_no_shows: boolean;
+  send_no_show_followup: boolean;
 };
 
 export type StudioAvailabilityDefault = {
@@ -66,6 +72,9 @@ export type Service = {
   // values: 'electrolysis', 'laser', 'consultation'. Null renders as "Other".
   modality: string | null;
   sort_order: number;
+  // Migration 0025: optional pre-care text included in confirmation +
+  // reminder emails for appointments of this service.
+  pre_care_instructions: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -107,6 +116,16 @@ export type Appointment = {
   cancelled_by: CancelledBy | null;
   created_at: string;
   updated_at: string;
+  // Migration 0025: email tracking + opaque token used in cancel and
+  // reschedule URLs.
+  confirmation_sent_at: string | null;
+  reminder_24h_sent_at: string | null;
+  reminder_2h_sent_at: string | null;
+  no_show_email_sent_at: string | null;
+  confirmation_send_attempts: number;
+  reminder_24h_send_attempts: number;
+  reminder_2h_send_attempts: number;
+  cancellation_token: string | null;
 };
 
 export type AppointmentAudit = {
