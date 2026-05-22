@@ -12,6 +12,8 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import {
+  logEmailFailure,
+  recordEmailAttempt,
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
   sendCancellationEmail,
@@ -262,33 +264,33 @@ async function dispatchBookingEmails(p: DispatchParams) {
           ),
         })
       : null;
-    try {
-      await sendBookingConfirmationToClient({
-        appointment: p.appointment,
-        service: p.service,
-        studio: p.studio,
-        practitionerDisplayName: p.practitionerName,
-        clientName: p.clientName,
-        clientEmail: p.clientEmail,
-        cancellationUrl,
-        rescheduleUrl,
-        intakeUrl: intake?.url ?? null,
-        treatmentTimeLine,
-        appBaseUrl: APP_ORIGIN,
+    // Email reporting is truthful: recordEmailAttempt stamps
+    // confirmation_sent_at only when Resend actually delivered. The old
+    // code path stamped on every booking, falsely advertising delivery.
+    const result = await sendBookingConfirmationToClient({
+      appointment: p.appointment,
+      service: p.service,
+      studio: p.studio,
+      practitionerDisplayName: p.practitionerName,
+      clientName: p.clientName,
+      clientEmail: p.clientEmail,
+      cancellationUrl,
+      rescheduleUrl,
+      intakeUrl: intake?.url ?? null,
+      treatmentTimeLine,
+      appBaseUrl: APP_ORIGIN,
+    });
+    const { createAdminClient } = await import("@/lib/supabase/admin-server");
+    const admin = createAdminClient();
+    await recordEmailAttempt(admin, p.appointment.id, "confirmation", result.ok);
+    if (!result.ok) {
+      logEmailFailure({
+        appointmentId: p.appointment.id,
+        emailType: "confirmation",
+        error: result.error,
+        retryable: result.retryable,
+        attemptNumber: 1,
       });
-      // Stamp confirmation_sent_at via admin client so the appointment-detail
-      // email log reflects the send. Best-effort: don't fail the booking.
-      const { createAdminClient } = await import("@/lib/supabase/admin-server");
-      const admin = createAdminClient();
-      await admin
-        .from("appointments")
-        .update({
-          confirmation_sent_at: new Date().toISOString(),
-          confirmation_send_attempts: 1,
-        })
-        .eq("id", p.appointment.id);
-    } catch (err) {
-      console.error("Confirmation email failed:", err);
     }
   }
   await sendBookingNotificationToPractitioner({

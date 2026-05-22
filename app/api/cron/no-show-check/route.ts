@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { sendNoShowFollowupToClient } from "@/lib/email/send-appointment";
+import {
+  logEmailFailure,
+  recordEmailAttempt,
+  sendNoShowFollowupToClient,
+} from "@/lib/email/send-appointment";
 import type { Appointment, Studio } from "@/lib/types/database";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
@@ -70,22 +74,30 @@ export async function GET(req: Request) {
     stats.marked += 1;
 
     if (appt.studio.send_no_show_followup && appt.client?.email) {
-      try {
-        await sendNoShowFollowupToClient({
-          clientName: appt.client.name,
-          clientEmail: appt.client.email,
-          studio: appt.studio,
-          rebookUrl: appt.studio.slug
-            ? `${APP_ORIGIN}/book/${appt.studio.slug}`
-            : null,
-        });
-        await admin
-          .from("appointments")
-          .update({ no_show_email_sent_at: new Date().toISOString() })
-          .eq("id", appt.id);
+      // Cron query intentionally untouched per the email-truthful refactor
+      // spec. recordEmailAttempt stamps no_show_email_sent_at only when
+      // the send actually succeeded, and increments
+      // no_show_email_send_attempts atomically in both branches.
+      const attemptNumber = appt.no_show_email_send_attempts + 1;
+      const result = await sendNoShowFollowupToClient({
+        clientName: appt.client.name,
+        clientEmail: appt.client.email,
+        studio: appt.studio,
+        rebookUrl: appt.studio.slug
+          ? `${APP_ORIGIN}/book/${appt.studio.slug}`
+          : null,
+      });
+      await recordEmailAttempt(admin, appt.id, "no_show", result.ok);
+      if (result.ok) {
         stats.followups_sent += 1;
-      } catch (err) {
-        console.error(`No-show followup email failed for ${appt.id}:`, err);
+      } else {
+        logEmailFailure({
+          appointmentId: appt.id,
+          emailType: "no_show",
+          error: result.error,
+          retryable: result.retryable,
+          attemptNumber,
+        });
       }
     }
   }
