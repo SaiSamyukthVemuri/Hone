@@ -102,6 +102,8 @@ export default async function AppointmentDetailPage({
         </section>
       )}
 
+      <EmailActivity appointment={data} />
+
       {isCancelled ? (
         <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
           Cancelled
@@ -174,5 +176,36 @@ function PractitionerLine({
         {name}
       </span>
     </p>
+  );
+}
+
+function EmailActivity({ appointment }: { appointment: Appointment }) {
+  function row(label: string, iso: string | null) {
+    return (
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+        <span className="text-neutral-500">{label}</span>
+        {iso ? (
+          <span className="text-neutral-700 dark:text-neutral-300">
+            <FormattedDateTime iso={iso} />
+          </span>
+        ) : (
+          <span className="text-neutral-400">Not sent</span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+        Email activity
+      </h2>
+      <div className="mt-3 flex flex-col gap-1.5">
+        {row("Confirmation sent", appointment.confirmation_sent_at)}
+        {row("24-hour reminder sent", appointment.reminder_24h_sent_at)}
+        {row("2-hour reminder sent", appointment.reminder_2h_sent_at)}
+        {appointment.no_show_email_sent_at &&
+          row("No-show follow-up sent", appointment.no_show_email_sent_at)}
+      </div>
+    </section>
   );
 }

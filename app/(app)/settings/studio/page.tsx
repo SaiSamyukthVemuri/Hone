@@ -1,5 +1,6 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { StudioSettingsForm } from "./StudioSettingsForm";
+import { EmailSettingsForm } from "./EmailSettingsForm";
 
 export default async function StudioSettingsPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -13,7 +14,7 @@ export default async function StudioSettingsPage() {
   }
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-10">
       <div>
         <h2 className="text-xl font-medium">Studio</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -24,6 +25,15 @@ export default async function StudioSettingsPage() {
         initialName={studio.name}
         initialLegalEntity={studio.legal_entity_name ?? ""}
         ownerEmail={studio.owner_email}
+      />
+      <EmailSettingsForm
+        initial={{
+          send_confirmation_emails: studio.send_confirmation_emails,
+          send_24h_reminders: studio.send_24h_reminders,
+          send_2h_reminders: studio.send_2h_reminders,
+          auto_mark_no_shows: studio.auto_mark_no_shows,
+          send_no_show_followup: studio.send_no_show_followup,
+        }}
       />
     </section>
   );

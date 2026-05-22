@@ -4,6 +4,31 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 
+// Resolves a cancel/reschedule URL token to an appointment id. New emails
+// use the column-based token in appointments.cancellation_token; older
+// in-flight emails use the HMAC token from generateCancellationToken().
+// Try the column path first, fall back to HMAC verification.
+async function resolveAppointmentIdFromToken(
+  token: string,
+): Promise<
+  | { ok: true; appointment_id: string }
+  | { ok: false; error: "expired" | "invalid" }
+> {
+  if (!token) return { ok: false, error: "invalid" };
+
+  const admin = createAdminClient();
+  const { data: byColumn } = await admin
+    .from("appointments")
+    .select("id")
+    .eq("cancellation_token", token)
+    .maybeSingle();
+  if (byColumn) return { ok: true, appointment_id: byColumn.id };
+
+  const v = verifyCancellationToken(token);
+  if (v.ok) return { ok: true, appointment_id: v.appointment_id };
+  return { ok: false, error: v.error === "expired" ? "expired" : "invalid" };
+}
+
 export type PublicCancelResult =
   | { ok: true; alreadyCancelled?: boolean }
   | { ok: false; error: string };
@@ -15,12 +40,12 @@ export async function publicCancelAppointmentAction(
   const reason = strOrNull(formData.get("reason"));
   if (!token) return { ok: false, error: "Missing token." };
 
-  const v = verifyCancellationToken(token);
-  if (!v.ok) {
+  const resolved = await resolveAppointmentIdFromToken(token);
+  if (!resolved.ok) {
     return {
       ok: false,
       error:
-        v.error === "expired"
+        resolved.error === "expired"
           ? "This cancellation link has expired."
           : "This cancellation link is no longer valid.",
     };
@@ -30,7 +55,7 @@ export async function publicCancelAppointmentAction(
   const { data: appt, error: lookupErr } = await admin
     .from("appointments")
     .select("*, client:clients(name, email), service:services(name), studio:studios(*)")
-    .eq("id", v.appointment_id)
+    .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (lookupErr) return { ok: false, error: lookupErr.message };
   if (!appt) return { ok: false, error: "Appointment not found." };
@@ -48,11 +73,11 @@ export async function publicCancelAppointmentAction(
       cancellation_reason: reason,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", v.appointment_id);
+    .eq("id", resolved.appointment_id);
   if (updateErr) return { ok: false, error: updateErr.message };
 
   await admin.from("appointment_audit").insert({
-    appointment_id: v.appointment_id,
+    appointment_id: resolved.appointment_id,
     actor_type: "client",
     actor_id: null,
     action: "cancelled",
@@ -95,12 +120,12 @@ export type AppointmentSummary = {
 export async function fetchAppointmentForCancelAction(
   token: string,
 ): Promise<{ ok: true; summary: AppointmentSummary } | { ok: false; error: string }> {
-  const v = verifyCancellationToken(token);
-  if (!v.ok) {
+  const resolved = await resolveAppointmentIdFromToken(token);
+  if (!resolved.ok) {
     return {
       ok: false,
       error:
-        v.error === "expired"
+        resolved.error === "expired"
           ? "This cancellation link has expired."
           : "This cancellation link is no longer valid.",
     };
@@ -111,7 +136,7 @@ export async function fetchAppointmentForCancelAction(
     .select(
       "id, status, starts_at, studio:studios(name, timezone), service:services(name), client:clients(name)",
     )
-    .eq("id", v.appointment_id)
+    .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
   if (!data) return { ok: false, error: "Appointment not found." };

@@ -38,7 +38,9 @@ type ConfirmationToClient = {
   endsAt: Date;
   timezone: string;
   cancellationUrl: string;
+  rescheduleUrl: string | null;
   intakeUrl: string | null;
+  preCareInstructions: string | null;
 };
 
 export function buildClientConfirmationEmail(p: ConfirmationToClient): {
@@ -81,6 +83,18 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
           ${escapeHtml(PREP_INSTRUCTIONS)}
         </td></tr>
         ${
+          p.preCareInstructions
+            ? `<tr><td style="padding:0 0 20px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F1EA; border-left:3px solid #C9C4B6;">
+                  <tr><td style="padding:16px 20px;">
+                    <p style="margin:0 0 8px 0; font-family:-apple-system, system-ui, sans-serif; font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">Before your appointment</p>
+                    <p style="margin:0; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; white-space:pre-wrap;">${escapeHtml(p.preCareInstructions)}</p>
+                  </td></tr>
+                </table>
+              </td></tr>`
+            : ""
+        }
+        ${
           p.intakeUrl
             ? `<tr><td style="padding:20px 0 8px 0; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
                 Before your appointment, please complete your health intake form:
@@ -96,8 +110,13 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
             : ""
         }
         <tr><td style="padding-bottom:32px;">
+          ${
+            p.rescheduleUrl
+              ? `<a href="${p.rescheduleUrl}" style="display:inline-block; padding:12px 20px; margin-right:12px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">Reschedule</a>`
+              : ""
+          }
           <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
-            Cancel this appointment
+            Cancel
           </a>
         </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
@@ -119,7 +138,9 @@ ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${PREP_INSTRUCTIONS}
+${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 5 minutes):\n${p.intakeUrl}\n` : ""}
+${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
 
 Hone. Charting software for electrolysis and laser practitioners.

@@ -4,6 +4,11 @@ import {
   buildPractitionerNotificationEmail,
   buildCancellationEmail,
 } from "@/lib/email/templates/appointment";
+import {
+  build24hReminderEmail,
+  build2hReminderEmail,
+  buildNoShowFollowupEmail,
+} from "@/lib/email/templates/reminders";
 import { buildIcs } from "@/lib/booking/ical";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -48,12 +53,16 @@ async function safeSend(opts: {
 
 export async function sendBookingConfirmationToClient(params: {
   appointment: AnyAppointment;
-  service: Pick<Service, "name" | "default_duration_minutes"> | null;
+  service: Pick<
+    Service,
+    "name" | "default_duration_minutes" | "pre_care_instructions"
+  > | null;
   studio: Studio;
   practitionerDisplayName: string | null;
   clientName: string;
   clientEmail: string;
   cancellationUrl: string;
+  rescheduleUrl: string | null;
   intakeUrl: string | null;
   appBaseUrl: string;
 }) {
@@ -73,14 +82,16 @@ export async function sendBookingConfirmationToClient(params: {
     endsAt: end,
     timezone: params.studio.timezone,
     cancellationUrl: params.cancellationUrl,
+    rescheduleUrl: params.rescheduleUrl,
     intakeUrl: params.intakeUrl,
+    preCareInstructions: params.service?.pre_care_instructions ?? null,
   });
 
   const ics = buildIcs({
     uid: params.appointment.id,
     start,
     end,
-    summary: `${serviceName} — ${params.studio.name}`,
+    summary: `${serviceName} · ${params.studio.name}`,
     location: params.studio.address ?? undefined,
     description:
       `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`,
@@ -164,4 +175,75 @@ export async function sendCancellationEmail(params: {
     html,
     text,
   });
+}
+
+type ReminderInput = {
+  appointment: AnyAppointment;
+  service: Pick<
+    Service,
+    "name" | "default_duration_minutes" | "pre_care_instructions"
+  > | null;
+  studio: Studio;
+  practitionerDisplayName: string | null;
+  clientName: string;
+  clientEmail: string;
+  cancellationUrl: string;
+  rescheduleUrl: string | null;
+};
+
+export async function send24hReminderToClient(p: ReminderInput): Promise<void> {
+  if (!p.clientEmail) return;
+  const start = new Date(p.appointment.starts_at);
+  const end = new Date(p.appointment.ends_at);
+  const { subject, html, text } = build24hReminderEmail({
+    clientName: p.clientName,
+    studioName: p.studio.name,
+    studioAddress: p.studio.address,
+    practitionerName: p.practitionerDisplayName,
+    serviceName: p.service?.name ?? "Appointment",
+    durationMinutes: p.appointment.duration_minutes,
+    startsAt: start,
+    endsAt: end,
+    timezone: p.studio.timezone,
+    cancellationUrl: p.cancellationUrl,
+    rescheduleUrl: p.rescheduleUrl,
+    preCareInstructions: p.service?.pre_care_instructions ?? null,
+  });
+  await safeSend({ to: p.clientEmail, subject, html, text });
+}
+
+export async function send2hReminderToClient(p: ReminderInput): Promise<void> {
+  if (!p.clientEmail) return;
+  const start = new Date(p.appointment.starts_at);
+  const end = new Date(p.appointment.ends_at);
+  const { subject, html, text } = build2hReminderEmail({
+    clientName: p.clientName,
+    studioName: p.studio.name,
+    studioAddress: p.studio.address,
+    practitionerName: p.practitionerDisplayName,
+    serviceName: p.service?.name ?? "Appointment",
+    durationMinutes: p.appointment.duration_minutes,
+    startsAt: start,
+    endsAt: end,
+    timezone: p.studio.timezone,
+    cancellationUrl: p.cancellationUrl,
+    rescheduleUrl: p.rescheduleUrl,
+    preCareInstructions: p.service?.pre_care_instructions ?? null,
+  });
+  await safeSend({ to: p.clientEmail, subject, html, text });
+}
+
+export async function sendNoShowFollowupToClient(params: {
+  clientName: string;
+  clientEmail: string;
+  studio: Studio;
+  rebookUrl: string | null;
+}): Promise<void> {
+  if (!params.clientEmail) return;
+  const { subject, html, text } = buildNoShowFollowupEmail({
+    clientName: params.clientName,
+    studioName: params.studio.name,
+    rebookUrl: params.rebookUrl,
+  });
+  await safeSend({ to: params.clientEmail, subject, html, text });
 }

@@ -100,6 +100,7 @@ export async function createServiceAction(formData: FormData): Promise<void> {
     modality,
     sort_order,
     active: true,
+    pre_care_instructions: nullable(formData.get("pre_care_instructions")),
   });
   if (error) throw new Error(`Failed to add service: ${error.message}`);
   revalidatePath("/settings/services");
@@ -127,6 +128,7 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
     default_duration_minutes: duration,
     price_cents: parsePriceCents(formData.get("price_dollars")),
     modality,
+    pre_care_instructions: nullable(formData.get("pre_care_instructions")),
     updated_at: new Date().toISOString(),
   };
   if (sort_order != null) update.sort_order = sort_order;

@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   sendBookingConfirmationToClient,
@@ -153,6 +154,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .eq("role", "owner")
     .maybeSingle();
 
+  const appointmentToken = generateAppointmentToken();
   const { data: created, error: insertErr } = await admin
     .from("appointments")
     .insert({
@@ -165,6 +167,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,
+      cancellation_token: appointmentToken,
     })
     .select("*")
     .single();
@@ -180,9 +183,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     details: { source: "public_booking", email, notes },
   });
 
-  // Emails.
-  const cancelToken = generateCancellationToken(created.id, new Date(created.starts_at));
-  const cancellationUrl = `${APP_ORIGIN}/cancel/${cancelToken}`;
+  // Emails. New confirmation + reminder + reschedule URLs use the random
+  // appointment_token column; legacy /cancel/[hmac] route still validates
+  // older in-flight links.
+  const cancellationUrl = `${APP_ORIGIN}/cancel/${appointmentToken}`;
+  const rescheduleUrl = `${APP_ORIGIN}/reschedule/${appointmentToken}`;
+  // Generated but unused now that we prefer the column-based token;
+  // kept assigned so the import stays useful for legacy callers if any.
+  generateCancellationToken(created.id, new Date(created.starts_at));
 
   // Ensure an in-progress intake exists for this client and attach the link
   // to the confirmation email. Returns null if they already have a submitted
@@ -193,18 +201,37 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     appOrigin: APP_ORIGIN,
   });
 
-  await sendBookingConfirmationToClient({
-    appointment: created,
-    service,
-    studio,
-    practitionerDisplayName:
-      owner?.display_name?.trim() || owner?.email || studio.name,
-    clientName,
-    clientEmail: email,
-    cancellationUrl,
-    intakeUrl: intake?.url ?? null,
-    appBaseUrl: APP_ORIGIN,
-  });
+  // Studio toggle: skip the confirmation email entirely if disabled.
+  if (studio.send_confirmation_emails) {
+    try {
+      await sendBookingConfirmationToClient({
+        appointment: created,
+        service,
+        studio,
+        practitionerDisplayName:
+          owner?.display_name?.trim() || owner?.email || studio.name,
+        clientName,
+        clientEmail: email,
+        cancellationUrl,
+        rescheduleUrl,
+        intakeUrl: intake?.url ?? null,
+        appBaseUrl: APP_ORIGIN,
+      });
+      await admin
+        .from("appointments")
+        .update({
+          confirmation_sent_at: new Date().toISOString(),
+          confirmation_send_attempts: 1,
+        })
+        .eq("id", created.id);
+    } catch (err) {
+      console.error("Confirmation email failed:", err);
+      await admin
+        .from("appointments")
+        .update({ confirmation_send_attempts: 1 })
+        .eq("id", created.id);
+    }
+  }
   if (owner?.email) {
     await sendBookingNotificationToPractitioner({
       appointment: created,

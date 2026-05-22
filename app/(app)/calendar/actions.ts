@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   sendBookingConfirmationToClient,
@@ -81,6 +82,7 @@ export async function bookAppointmentForClientAction(
     return { ok: false, error: "That slot is no longer available." };
   }
 
+  const appointmentToken = generateAppointmentToken();
   const { data: created, error: insertErr } = await supabase
     .from("appointments")
     .insert({
@@ -93,6 +95,7 @@ export async function bookAppointmentForClientAction(
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,
+      cancellation_token: appointmentToken,
     })
     .select("*")
     .single();
@@ -228,30 +231,50 @@ type DispatchParams = {
 };
 
 async function dispatchBookingEmails(p: DispatchParams) {
-  const cancelToken = generateCancellationToken(
-    p.appointment.id,
-    new Date(p.appointment.starts_at),
-  );
-  const cancellationUrl = `${APP_ORIGIN}/cancel/${cancelToken}`;
+  // Prefer the column-based token if the row has one; legacy callers that
+  // missed the new path can still produce a working HMAC link.
+  const token =
+    p.appointment.cancellation_token ??
+    generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
+  const cancellationUrl = `${APP_ORIGIN}/cancel/${token}`;
+  const rescheduleUrl = p.appointment.cancellation_token
+    ? `${APP_ORIGIN}/reschedule/${p.appointment.cancellation_token}`
+    : null;
   const appointmentUrl = `${APP_ORIGIN}/calendar`;
 
-  if (p.clientEmail) {
+  if (p.clientEmail && p.studio.send_confirmation_emails) {
     const intake = await ensureIntakeForClient({
       studioId: p.studio.id,
       clientId: p.appointment.client_id,
       appOrigin: APP_ORIGIN,
     });
-    await sendBookingConfirmationToClient({
-      appointment: p.appointment,
-      service: p.service,
-      studio: p.studio,
-      practitionerDisplayName: p.practitionerName,
-      clientName: p.clientName,
-      clientEmail: p.clientEmail,
-      cancellationUrl,
-      intakeUrl: intake?.url ?? null,
-      appBaseUrl: APP_ORIGIN,
-    });
+    try {
+      await sendBookingConfirmationToClient({
+        appointment: p.appointment,
+        service: p.service,
+        studio: p.studio,
+        practitionerDisplayName: p.practitionerName,
+        clientName: p.clientName,
+        clientEmail: p.clientEmail,
+        cancellationUrl,
+        rescheduleUrl,
+        intakeUrl: intake?.url ?? null,
+        appBaseUrl: APP_ORIGIN,
+      });
+      // Stamp confirmation_sent_at via admin client so the appointment-detail
+      // email log reflects the send. Best-effort: don't fail the booking.
+      const { createAdminClient } = await import("@/lib/supabase/admin-server");
+      const admin = createAdminClient();
+      await admin
+        .from("appointments")
+        .update({
+          confirmation_sent_at: new Date().toISOString(),
+          confirmation_send_attempts: 1,
+        })
+        .eq("id", p.appointment.id);
+    } catch (err) {
+      console.error("Confirmation email failed:", err);
+    }
   }
   await sendBookingNotificationToPractitioner({
     appointment: p.appointment,
