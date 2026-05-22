@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   getClientsForStudio,
   getCurrentPractitionerWithStudio,
+  getPractitionersForStudio,
   getTodayRosterForStudio,
 } from "@/lib/supabase/queries";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
@@ -10,22 +11,39 @@ import {
   FormattedDateTime,
   FormattedToday,
 } from "@/components/formatted-date-time";
+import { resolvePractitionerColor } from "@/lib/practitioner-colors";
+import type { Practitioner, Session } from "@/lib/types/database";
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
+// Pick the practitioner-of-record for a client's roster row: the performer
+// of the earliest session today, falling back to its creator. Roster
+// sessions are sorted ascending so sessions[0] is the first appointment.
+function performerForRoster(
+  sessions: Session[],
+  byId: Map<string, Practitioner>,
+): Practitioner | null {
+  const first = sessions[0];
+  if (!first) return null;
+  const id = first.performed_by_practitioner_id ?? first.practitioner_id;
+  return id ? byId.get(id) ?? null : null;
+}
+
 export default async function DashboardPage() {
   const { studio } = await getCurrentPractitionerWithStudio();
-  const [roster, clients] = await Promise.all([
+  const [roster, clients, practitioners] = await Promise.all([
     getTodayRosterForStudio(studio.id),
     getClientsForStudio(studio.id),
+    getPractitionersForStudio(studio.id),
   ]);
   const pinnedByClient = await getLatestPinnedNoteByClient(
     studio.id,
     roster.map((r) => r.client.id),
   );
+  const practitionerById = new Map(practitioners.map((p) => [p.id, p]));
 
   return (
     <div className="flex flex-col gap-10">
@@ -55,6 +73,9 @@ export default async function DashboardPage() {
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {roster.map(({ client, sessions }) => {
               const pinned = pinnedByClient.get(client.id);
+              const performer = performerForRoster(sessions, practitionerById);
+              const performerName = performer?.display_name?.trim();
+              const performerColor = resolvePractitionerColor(performer?.color);
               return (
                 <li key={client.id}>
                   <Link
@@ -75,6 +96,23 @@ export default async function DashboardPage() {
                             {s.modality}
                           </span>
                         ))}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-xs">
+                        {performerName ? (
+                          <>
+                            <span
+                              aria-hidden
+                              className={`inline-block h-2 w-2 rounded-full ${performerColor.bg}`}
+                            />
+                            <span className="text-neutral-600 dark:text-neutral-400">
+                              {performerName}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-neutral-400 dark:text-neutral-500">
+                            Unassigned
+                          </span>
+                        )}
                       </div>
                       {pinned && (
                         <div

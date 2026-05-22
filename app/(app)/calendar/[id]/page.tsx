@@ -5,12 +5,19 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
+import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { cancelAppointmentAction } from "../actions";
-import type { Appointment, Client, Service } from "@/lib/types/database";
+import type {
+  Appointment,
+  Client,
+  Practitioner,
+  Service,
+} from "@/lib/types/database";
 
 type Joined = Appointment & {
   client: Pick<Client, "id" | "name" | "email" | "phone"> | null;
   service: Pick<Service, "id" | "name" | "default_duration_minutes"> | null;
+  practitioner: Pick<Practitioner, "id" | "display_name" | "color"> | null;
 };
 
 export default async function AppointmentDetailPage({
@@ -24,7 +31,9 @@ export default async function AppointmentDetailPage({
 
   const { data, error } = await supabase
     .from("appointments")
-    .select("*, client:clients(id, name, email, phone), service:services(id, name, default_duration_minutes)")
+    .select(
+      "*, client:clients(id, name, email, phone), service:services(id, name, default_duration_minutes), practitioner:practitioners(id, display_name, color)",
+    )
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle<Joined>();
@@ -56,6 +65,7 @@ export default async function AppointmentDetailPage({
             </span>
           )}
         </p>
+        <PractitionerLine practitioner={data.practitioner} />
       </header>
 
       <PinnedNotesReadonly notes={pinnedNotes} />
@@ -137,5 +147,32 @@ export default async function AppointmentDetailPage({
         </form>
       )}
     </div>
+  );
+}
+
+function PractitionerLine({
+  practitioner,
+}: {
+  practitioner: Pick<Practitioner, "id" | "display_name" | "color"> | null;
+}) {
+  const name = practitioner?.display_name?.trim();
+  if (!practitioner || !name) {
+    return (
+      <p className="mt-2 text-sm text-neutral-400 dark:text-neutral-500">
+        Unassigned
+      </p>
+    );
+  }
+  const color = resolvePractitionerColor(practitioner.color);
+  return (
+    <p className="mt-2 flex items-center gap-2 text-sm">
+      <span
+        aria-hidden
+        className={`inline-block h-2.5 w-2.5 rounded-full ${color.bg}`}
+      />
+      <span className="font-medium text-neutral-800 dark:text-neutral-200">
+        {name}
+      </span>
+    </p>
   );
 }
