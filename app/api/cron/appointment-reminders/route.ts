@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
+  logEmailFailure,
+  recordEmailAttempt,
   send24hReminderToClient,
   send2hReminderToClient,
+  type EmailType,
 } from "@/lib/email/send-appointment";
 import {
   buildTreatmentTimeLine,
@@ -69,6 +72,10 @@ async function sendReminderPass(opts: {
   windowStartIso: string;
   windowEndIso: string;
 }): Promise<RunStats> {
+  // The cron query intentionally remains untouched per the email-truthful
+  // refactor spec. The bug was in how _sent_at got stamped, not in how
+  // rows were picked. recordEmailAttempt handles attempts + timestamp
+  // atomically via the record_email_attempt RPC (migration 0028).
   const sentColumn =
     opts.kind === "24h" ? "reminder_24h_sent_at" : "reminder_2h_sent_at";
   const attemptsColumn =
@@ -77,6 +84,8 @@ async function sendReminderPass(opts: {
       : "reminder_2h_send_attempts";
   const studioToggle =
     opts.kind === "24h" ? "send_24h_reminders" : "send_2h_reminders";
+  const emailType: EmailType =
+    opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
 
   const appts = await loadAppointmentsForWindow({
     startIso: opts.windowStartIso,
@@ -97,17 +106,20 @@ async function sendReminderPass(opts: {
     if (!appt.client?.email) continue;
 
     stats.attempted += 1;
+    const attemptNumber = (appt[attemptsColumn] as number) + 1;
     const token = appt.cancellation_token;
     if (!token) {
-      // Without a token there's no cancel/reschedule URL; skip and mark
-      // as attempted so we don't loop forever on rows that pre-date the
-      // backfill or hit an insert race.
-      await admin
-        .from("appointments")
-        .update({
-          [attemptsColumn]: (appt[attemptsColumn] as number) + 1,
-        })
-        .eq("id", appt.id);
+      // Without a token there's no cancel/reschedule URL. Record a failed
+      // attempt via the RPC so we don't loop forever on rows that pre-date
+      // the token backfill.
+      await recordEmailAttempt(admin, appt.id, emailType, false);
+      logEmailFailure({
+        appointmentId: appt.id,
+        emailType,
+        error: "Missing cancellation_token",
+        retryable: false,
+        attemptNumber,
+      });
       stats.failed += 1;
       continue;
     }
@@ -118,47 +130,41 @@ async function sendReminderPass(opts: {
       appt.practitioner?.email ||
       null;
 
-    try {
-      const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
-        ? buildTreatmentTimeLine({
-            enabled: true,
-            clientFirstName:
-              appt.client.name.split(/\s+/)[0] || appt.client.name,
-            context: await getTreatmentTimeContextForEmail(
-              appt.studio.id,
-              appt.client_id,
-            ),
-          })
-        : null;
-      const sendFn =
-        opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
-      await sendFn({
-        appointment: appt,
-        service: appt.service,
-        studio: appt.studio,
-        practitionerDisplayName: practitionerName,
-        clientName: appt.client.name,
-        clientEmail: appt.client.email,
-        cancellationUrl,
-        rescheduleUrl,
-        treatmentTimeLine,
-      });
-      await admin
-        .from("appointments")
-        .update({
-          [sentColumn]: new Date().toISOString(),
-          [attemptsColumn]: (appt[attemptsColumn] as number) + 1,
+    const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
+      ? buildTreatmentTimeLine({
+          enabled: true,
+          clientFirstName:
+            appt.client.name.split(/\s+/)[0] || appt.client.name,
+          context: await getTreatmentTimeContextForEmail(
+            appt.studio.id,
+            appt.client_id,
+          ),
         })
-        .eq("id", appt.id);
+      : null;
+    const sendFn =
+      opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
+    const result = await sendFn({
+      appointment: appt,
+      service: appt.service,
+      studio: appt.studio,
+      practitionerDisplayName: practitionerName,
+      clientName: appt.client.name,
+      clientEmail: appt.client.email,
+      cancellationUrl,
+      rescheduleUrl,
+      treatmentTimeLine,
+    });
+    await recordEmailAttempt(admin, appt.id, emailType, result.ok);
+    if (result.ok) {
       stats.succeeded += 1;
-    } catch (err) {
-      console.error(`Reminder ${opts.kind} send failed for ${appt.id}:`, err);
-      await admin
-        .from("appointments")
-        .update({
-          [attemptsColumn]: (appt[attemptsColumn] as number) + 1,
-        })
-        .eq("id", appt.id);
+    } else {
+      logEmailFailure({
+        appointmentId: appt.id,
+        emailType,
+        error: result.error,
+        retryable: result.retryable,
+        attemptNumber,
+      });
       stats.failed += 1;
     }
   }

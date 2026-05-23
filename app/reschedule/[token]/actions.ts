@@ -4,7 +4,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
-import { sendBookingConfirmationToClient } from "@/lib/email/send-appointment";
+import {
+  logEmailFailure,
+  recordEmailAttempt,
+  sendBookingConfirmationToClient,
+} from "@/lib/email/send-appointment";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -357,7 +361,9 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
               ),
             })
           : null;
-        await sendBookingConfirmationToClient({
+        // Truthful reporting: stamp confirmation_sent_at only when Resend
+        // actually delivered, not just when we called it.
+        const result = await sendBookingConfirmationToClient({
           appointment: created,
           service: serviceRow,
           studio: studioFull,
@@ -371,16 +377,26 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
           treatmentTimeLine,
           appBaseUrl: APP_ORIGIN,
         });
-        await admin
-          .from("appointments")
-          .update({
-            confirmation_sent_at: new Date().toISOString(),
-            confirmation_send_attempts: 1,
-          })
-          .eq("id", created.id);
+        await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
+        if (!result.ok) {
+          logEmailFailure({
+            appointmentId: created.id,
+            emailType: "confirmation",
+            error: result.error,
+            retryable: result.retryable,
+            attemptNumber: 1,
+          });
+        }
       }
     } catch (err) {
-      console.error("Reschedule confirmation email failed:", err);
+      console.error(
+        JSON.stringify({
+          event: "reschedule_confirmation_unexpected_error",
+          appointmentId: created.id,
+          error: err instanceof Error ? err.message : String(err),
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
   }
 

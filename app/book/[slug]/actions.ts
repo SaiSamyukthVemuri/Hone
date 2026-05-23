@@ -12,6 +12,8 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import {
+  logEmailFailure,
+  recordEmailAttempt,
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
@@ -206,6 +208,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   });
 
   // Studio toggle: skip the confirmation email entirely if disabled.
+  // Email reporting is truthful: recordEmailAttempt atomically increments
+  // confirmation_send_attempts AND stamps confirmation_sent_at only when
+  // the Resend call actually succeeded. The old code path stamped the
+  // timestamp unconditionally, which falsely advertised delivery.
   if (studio.send_confirmation_emails) {
     const treatmentTimeLine = studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
@@ -214,34 +220,29 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           context: await getTreatmentTimeContextForEmail(studio.id, clientId),
         })
       : null;
-    try {
-      await sendBookingConfirmationToClient({
-        appointment: created,
-        service,
-        studio,
-        practitionerDisplayName:
-          owner?.display_name?.trim() || owner?.email || studio.name,
-        clientName,
-        clientEmail: email,
-        cancellationUrl,
-        rescheduleUrl,
-        intakeUrl: intake?.url ?? null,
-        treatmentTimeLine,
-        appBaseUrl: APP_ORIGIN,
+    const result = await sendBookingConfirmationToClient({
+      appointment: created,
+      service,
+      studio,
+      practitionerDisplayName:
+        owner?.display_name?.trim() || owner?.email || studio.name,
+      clientName,
+      clientEmail: email,
+      cancellationUrl,
+      rescheduleUrl,
+      intakeUrl: intake?.url ?? null,
+      treatmentTimeLine,
+      appBaseUrl: APP_ORIGIN,
+    });
+    await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
+    if (!result.ok) {
+      logEmailFailure({
+        appointmentId: created.id,
+        emailType: "confirmation",
+        error: result.error,
+        retryable: result.retryable,
+        attemptNumber: 1,
       });
-      await admin
-        .from("appointments")
-        .update({
-          confirmation_sent_at: new Date().toISOString(),
-          confirmation_send_attempts: 1,
-        })
-        .eq("id", created.id);
-    } catch (err) {
-      console.error("Confirmation email failed:", err);
-      await admin
-        .from("appointments")
-        .update({ confirmation_send_attempts: 1 })
-        .eq("id", created.id);
     }
   }
   if (owner?.email) {
