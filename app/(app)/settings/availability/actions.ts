@@ -282,6 +282,15 @@ export async function createTimedBlockAction(
     endLocal,
     studio.timezone,
   );
+  // Reject blocks whose entire interval is in the past. The
+  // local-date guard above catches yesterday and earlier; this
+  // catches "today, but the end time already passed". A block
+  // whose start has passed but whose end is still in the future
+  // (e.g. blocking the remainder of an active meeting) is
+  // intentionally allowed.
+  if (new Date(endsAt).getTime() <= Date.now()) {
+    throw new Error("Blocked time must end in the future.");
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.from("studio_timed_blocks").insert({
@@ -343,6 +352,15 @@ export async function updateTimedBlockAction(
     endLocal,
     studio.timezone,
   );
+  // Reject blocks whose entire interval is in the past. The
+  // local-date guard above catches yesterday and earlier; this
+  // catches "today, but the end time already passed". A block
+  // whose start has passed but whose end is still in the future
+  // (e.g. blocking the remainder of an active meeting) is
+  // intentionally allowed.
+  if (new Date(endsAt).getTime() <= Date.now()) {
+    throw new Error("Blocked time must end in the future.");
+  }
 
   const supabase = await createClient();
   const { error } = await supabase
