@@ -148,6 +148,13 @@ export type Appointment = {
   // added so the no-show path has the same 3-strike behavior as the others.
   no_show_email_send_attempts: number;
   cancellation_token: string | null;
+  // Migration 0029: buffer-aware blocked window. Snapshotted from
+  // studios.buffer_minutes at booking time so existing appointments
+  // keep their original protected window even if the studio later
+  // changes its buffer. The exclusion constraint enforces non-overlap
+  // on this window, not on raw starts_at/ends_at.
+  blocked_starts_at: string;
+  blocked_ends_at: string;
 };
 
 export type AppointmentAudit = {
