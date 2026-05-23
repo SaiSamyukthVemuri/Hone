@@ -123,7 +123,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     service.default_duration_minutes,
   );
   const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) return { ok: false, error: "That slot was just taken. Pick another." };
+  if (!free) {
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
+  }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
 
@@ -211,7 +216,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       );
       return {
         ok: false,
-        error: "This slot was just booked by someone else. Please pick another time.",
+        error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
     }

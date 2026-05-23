@@ -90,7 +90,10 @@ export async function bookAppointmentForClientAction(
   );
   const isFree = slots.some((s) => new Date(s.start).getTime() === start.getTime());
   if (!isFree) {
-    return { ok: false, error: "That slot is no longer available." };
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
   }
 
   const appointmentToken = generateAppointmentToken();
@@ -128,7 +131,7 @@ export async function bookAppointmentForClientAction(
       );
       return {
         ok: false,
-        error: "That slot was just taken. Refresh and pick another time.",
+        error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
     }

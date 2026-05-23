@@ -256,7 +256,10 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     (s) => new Date(s.start).getTime() === start.getTime(),
   );
   if (!free) {
-    return { ok: false, error: "That slot was just taken. Pick another." };
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
   }
 
   // Single-transaction reschedule via the reschedule_appointment RPC
@@ -296,7 +299,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       );
       return {
         ok: false,
-        error: "That slot was just taken. Pick another.",
+        error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
     }
