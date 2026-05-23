@@ -7,6 +7,7 @@ import type {
   StudioAvailabilityDefault,
   StudioAvailabilityOverride,
   StudioBlockout,
+  StudioTimedBlock,
 } from "@/lib/types/database";
 
 // Active services for the studio, ordered by name.
@@ -74,6 +75,27 @@ export async function getBlockouts(studioId: string): Promise<StudioBlockout[]> 
     .order("starts_on");
   if (error) throw new Error(`Failed to load blockouts: ${error.message}`);
   return (data ?? []) as StudioBlockout[];
+}
+
+// Timed blocks within a UTC range. Used by the calendar grid and the
+// settings/availability upcoming-blocks list. RLS allows studio
+// members to SELECT.
+export async function getTimedBlocksForRange(
+  studioId: string,
+  startIso: string,
+  endIso: string,
+): Promise<StudioTimedBlock[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_timed_blocks")
+    .select("*")
+    .eq("studio_id", studioId)
+    .lt("starts_at", endIso)
+    .gt("ends_at", startIso)
+    .order("starts_at");
+  if (error)
+    throw new Error(`Failed to load timed blocks: ${error.message}`);
+  return (data ?? []) as StudioTimedBlock[];
 }
 
 // Appointment shape returned by getAppointmentsForRange. Includes a small

@@ -33,13 +33,14 @@ type OverrideRow = {
   close_time: string | null;
 };
 
-type AppointmentRow = {
+// Migration 0030: slots now reads the unified shadow table
+// studio_calendar_reservations, which holds protected intervals for
+// confirmed appointments (with trailing buffer), one-off timed
+// blocks, and full-day blockouts. Only the interval is selected;
+// category labels and private notes never reach the public page.
+type ReservationRow = {
   starts_at: string;
-  // Migration 0029: trailing-only buffered end stored on each row by
-  // the snapshot_appointment_buffer trigger. We read this directly
-  // instead of expanding starts_at/ends_at in JS so the UI conflict
-  // rule matches the DB exclusion constraint exactly.
-  blocked_ends_at: string;
+  ends_at: string;
 };
 
 type BlockoutRow = {
@@ -111,28 +112,24 @@ export async function getAvailableSlots(
 
   if (!isOpen || !openTime || !closeTime) return [];
 
-  // Load every confirmed appointment whose protected interval
-  // [starts_at, blocked_ends_at) overlaps the day's availability
-  // window. Filtering only on starts_at would miss a late
-  // previous-day appointment whose buffer extends into the day we
-  // are searching, leaving its trailing buffer unenforced in the UI.
+  // Load every reservation whose interval overlaps the day's
+  // availability window. The shadow holds appointment protected
+  // intervals, one-off timed blocks, and full-day blockouts as
+  // concrete UTC ranges. Filtering only on starts_at would miss a
+  // late previous-day reservation whose interval extends into the
+  // day we are searching.
   const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
-  const { data: appts } = await supabase
-    .from("appointments")
-    .select("starts_at, blocked_ends_at")
+  const { data: reservations } = await supabase
+    .from("studio_calendar_reservations")
+    .select("starts_at, ends_at")
     .eq("studio_id", studio.id)
-    .eq("status", "confirmed")
     .lt("starts_at", windowEndUtc.toISOString())
-    .gt("blocked_ends_at", windowStartUtc.toISOString());
+    .gt("ends_at", windowStartUtc.toISOString());
 
-  // Each existing appointment occupies its protected interval
-  // [starts_at, blocked_ends_at), where blocked_ends_at is
-  // ends_at + the studio's buffer at booking time (snapshotted by
-  // the DB trigger in migration 0029).
-  const conflicts = ((appts ?? []) as AppointmentRow[]).map((a) => ({
-    start: new Date(a.starts_at).getTime(),
-    end: new Date(a.blocked_ends_at).getTime(),
+  const conflicts = ((reservations ?? []) as ReservationRow[]).map((r) => ({
+    start: new Date(r.starts_at).getTime(),
+    end: new Date(r.ends_at).getTime(),
   }));
 
   const openMin = localMinutesSinceMidnight(openTime);
