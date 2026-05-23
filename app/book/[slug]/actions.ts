@@ -6,6 +6,7 @@ import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import { localDateString } from "@/lib/booking/tz";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -93,8 +94,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .maybeSingle();
   if (!service) return { ok: false, error: "Service no longer available." };
 
-  // Re-verify slot is free.
-  const dateStr = start.toISOString().slice(0, 10);
+  // Re-verify slot is free. Use the studio's local date, not the
+  // UTC date: a 10pm Toronto booking would otherwise look up slots
+  // for the next calendar day.
+  const dateStr = localDateString(start, studio.timezone);
   const slots = await getAvailableSlots(
     admin,
     {
@@ -111,13 +114,6 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!free) return { ok: false, error: "That slot was just taken. Pick another." };
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
-  // Snapshot the studio's current buffer into the blocked window so
-  // the row carries its own protection even if the studio later
-  // changes buffer_minutes. Matches lib/booking/slots.ts conflict
-  // logic exactly: starts_at - buffer, ends_at + buffer.
-  const bufferMs = (studio.buffer_minutes ?? 0) * 60_000;
-  const blockedStart = new Date(start.getTime() - bufferMs);
-  const blockedEnd = new Date(end.getTime() + bufferMs);
 
   // Match existing client by email within this studio, else create.
   const { data: existingClient } = await admin
@@ -177,8 +173,6 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       service_id: serviceId,
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
-      blocked_starts_at: blockedStart.toISOString(),
-      blocked_ends_at: blockedEnd.toISOString(),
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,
