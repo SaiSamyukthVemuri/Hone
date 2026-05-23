@@ -5,12 +5,12 @@ import type { StudioTimedBlock } from "@/lib/types/database";
 import {
   createTimedBlockAction,
   deleteTimedBlockAction,
+  updateTimedBlockAction,
 } from "./actions";
 
 type Props = {
   studioTimezone: string;
   todayLocal: string;
-  ninetyDaysOut: string;
   blocks: ReadonlyArray<StudioTimedBlock>;
 };
 
@@ -29,6 +29,7 @@ function formatCategory(c: string): string {
   return CATEGORIES.find((x) => x.value === c)?.label ?? c;
 }
 
+// Display formatting for the upcoming-blocks list.
 function formatLocal(iso: string, tz: string): { date: string; time: string } {
   const d = new Date(iso);
   const date = new Intl.DateTimeFormat("en-CA", {
@@ -46,21 +47,54 @@ function formatLocal(iso: string, tz: string): { date: string; time: string } {
   return { date, time };
 }
 
+// Form-input formatting (YYYY-MM-DD and HH:MM in studio tz). Used to
+// prefill the edit form from an existing block's UTC instants.
+function formatDateForInput(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+function formatTimeForInput(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+const DEFAULT_START = "12:00";
+const DEFAULT_END = "12:30";
+const DEFAULT_CATEGORY = "meeting";
+
 export function TimedBlocksSection({
   studioTimezone,
   todayLocal,
-  ninetyDaysOut,
   blocks,
 }: Props) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState(todayLocal);
-  const [startLocal, setStartLocal] = useState("12:00");
-  const [endLocal, setEndLocal] = useState("12:30");
-  const [category, setCategory] = useState("meeting");
+  const [startLocal, setStartLocal] = useState(DEFAULT_START);
+  const [endLocal, setEndLocal] = useState(DEFAULT_END);
+  const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [privateNote, setPrivateNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function onCreate() {
+  function resetForm() {
+    setEditingId(null);
+    setDate(todayLocal);
+    setStartLocal(DEFAULT_START);
+    setEndLocal(DEFAULT_END);
+    setCategory(DEFAULT_CATEGORY);
+    setPrivateNote("");
+    setError(null);
+  }
+
+  function onSubmit() {
     setError(null);
     const fd = new FormData();
     fd.set("date", date);
@@ -68,14 +102,39 @@ export function TimedBlocksSection({
     fd.set("end_local", endLocal);
     fd.set("category", category);
     fd.set("private_note", privateNote);
+
     startTransition(async () => {
       try {
-        await createTimedBlockAction(fd);
-        setPrivateNote("");
+        if (editingId) {
+          fd.set("id", editingId);
+          await updateTimedBlockAction(fd);
+        } else {
+          await createTimedBlockAction(fd);
+        }
+        resetForm();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to add block.");
+        // A 23P01 conflict leaves the original row unchanged because
+        // updateTimedBlockAction's failure aborts the UPDATE. We keep
+        // the form in edit mode so the user can adjust and retry.
+        setError(
+          e instanceof Error
+            ? e.message
+            : editingId
+              ? "Failed to update block."
+              : "Failed to add block.",
+        );
       }
     });
+  }
+
+  function onEdit(b: StudioTimedBlock) {
+    setEditingId(b.id);
+    setDate(formatDateForInput(b.starts_at, studioTimezone));
+    setStartLocal(formatTimeForInput(b.starts_at, studioTimezone));
+    setEndLocal(formatTimeForInput(b.ends_at, studioTimezone));
+    setCategory(b.category);
+    setPrivateNote(b.private_note ?? "");
+    setError(null);
   }
 
   function onDelete(id: string) {
@@ -84,11 +143,22 @@ export function TimedBlocksSection({
     startTransition(async () => {
       try {
         await deleteTimedBlockAction(fd);
+        if (editingId === id) {
+          resetForm();
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to delete block.");
       }
     });
   }
+
+  const submitLabel = editingId
+    ? pending
+      ? "Saving…"
+      : "Save changes"
+    : pending
+      ? "Saving…"
+      : "Add block";
 
   return (
     <section className="flex flex-col gap-4">
@@ -102,6 +172,11 @@ export function TimedBlocksSection({
       </div>
 
       <div className="grid gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 md:grid-cols-[1fr_1fr_1fr_1fr] dark:border-neutral-800 dark:bg-neutral-900">
+        {editingId && (
+          <div className="md:col-span-4 -mt-1 rounded bg-neutral-100 px-2 py-1 text-xs uppercase tracking-wider text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+            Editing block
+          </div>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Date
@@ -110,7 +185,6 @@ export function TimedBlocksSection({
             type="date"
             value={date}
             min={todayLocal}
-            max={ninetyDaysOut}
             onChange={(e) => setDate(e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
           />
@@ -173,34 +247,52 @@ export function TimedBlocksSection({
               {error}
             </span>
           )}
-          <button
-            type="button"
-            onClick={onCreate}
-            disabled={pending}
-            className="ml-auto rounded-md bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            {pending ? "Saving…" : "Add block"}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {editingId && (
+              <button
+                type="button"
+                onClick={resetForm}
+                disabled={pending}
+                className="rounded-md border border-neutral-300 px-4 py-1.5 text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={pending}
+              className="rounded-md bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            >
+              {submitLabel}
+            </button>
+          </div>
         </div>
       </div>
 
       {blocks.length > 0 && (
         <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           {blocks.map((b) => {
-            const startLocalFmt = formatLocal(b.starts_at, studioTimezone);
-            const endLocalFmt = formatLocal(b.ends_at, studioTimezone);
+            const startFmt = formatLocal(b.starts_at, studioTimezone);
+            const endFmt = formatLocal(b.ends_at, studioTimezone);
+            const isEditing = editingId === b.id;
             return (
               <li
                 key={b.id}
-                className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-2.5 text-sm"
+                className={
+                  "flex flex-wrap items-baseline justify-between gap-2 px-4 py-2.5 text-sm " +
+                  (isEditing
+                    ? "bg-neutral-50 dark:bg-neutral-900"
+                    : "")
+                }
               >
                 <span className="flex items-baseline gap-3">
                   <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">
                     {formatCategory(b.category)}
                   </span>
-                  <span className="font-medium">{startLocalFmt.date}</span>
+                  <span className="font-medium">{startFmt.date}</span>
                   <span className="text-neutral-500">
-                    {startLocalFmt.time} to {endLocalFmt.time}
+                    {startFmt.time} to {endFmt.time}
                   </span>
                   {b.private_note && (
                     <span className="text-neutral-500 italic">
@@ -208,14 +300,24 @@ export function TimedBlocksSection({
                     </span>
                   )}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => onDelete(b.id)}
-                  disabled={pending}
-                  className="text-xs text-neutral-500 hover:text-red-600 disabled:opacity-50"
-                >
-                  Delete
-                </button>
+                <span className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(b)}
+                    disabled={pending}
+                    className="text-xs text-neutral-500 hover:text-neutral-900 disabled:opacity-50 dark:hover:text-neutral-100"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(b.id)}
+                    disabled={pending}
+                    className="text-xs text-neutral-500 hover:text-red-600 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </span>
               </li>
             );
           })}

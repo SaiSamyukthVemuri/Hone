@@ -3,9 +3,9 @@ import {
   getAvailabilityDefaults,
   getBlockouts,
   getOverridesForRange,
-  getTimedBlocksForRange,
+  getUpcomingTimedBlocks,
 } from "@/lib/booking/queries";
-import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
+import { addDays, todayInTz } from "@/lib/booking/tz";
 import { AvailabilityClient } from "./AvailabilityClient";
 import { TimedBlocksSection } from "./TimedBlocksSection";
 
@@ -24,25 +24,17 @@ export default async function AvailabilitySettingsPage() {
   const today = todayInTz(studio.timezone);
   const ninetyDaysOut = addDays(today, 90);
 
-  // UTC bounds for the next 90 local days, used to load upcoming
-  // timed blocks. We over-fetch by a day on each side so a block
-  // straddling local midnight is included regardless of UTC offset.
-  const timedBlocksStartUtc = utcInstantFromLocal(today, "00:00", studio.timezone);
-  const timedBlocksEndUtc = utcInstantFromLocal(
-    addDays(ninetyDaysOut, 1),
-    "00:00",
-    studio.timezone,
-  );
+  // Timed blocks: load every current-and-future block across the
+  // forward horizon, ordered soonest first. The 90-day public horizon
+  // does NOT apply to owner-managed time; the owner can block a
+  // meeting six months out and we must surface it here.
+  const nowIso = new Date().toISOString();
 
   const [defaults, overrides, blockouts, timedBlocks] = await Promise.all([
     getAvailabilityDefaults(studio.id),
     getOverridesForRange(studio.id, today, ninetyDaysOut),
     getBlockouts(studio.id),
-    getTimedBlocksForRange(
-      studio.id,
-      timedBlocksStartUtc.toISOString(),
-      timedBlocksEndUtc.toISOString(),
-    ),
+    getUpcomingTimedBlocks(studio.id, nowIso),
   ]);
 
   return (
@@ -65,7 +57,6 @@ export default async function AvailabilitySettingsPage() {
       <TimedBlocksSection
         studioTimezone={studio.timezone}
         todayLocal={today}
-        ninetyDaysOut={ninetyDaysOut}
         blocks={timedBlocks}
       />
     </section>
