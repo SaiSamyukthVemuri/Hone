@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
+import { localDateString } from "@/lib/booking/tz";
 import {
   logEmailFailure,
   recordEmailAttempt,
@@ -228,7 +229,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .maybeSingle();
   if (!studioRow) return { ok: false, error: "Studio missing." };
 
-  const dateStr = start.toISOString().slice(0, 10);
+  const dateStr = localDateString(start, studioRow.timezone);
   const slots = await getAvailableSlots(
     admin,
     {
@@ -274,7 +275,6 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       p_new_ends_at: end.toISOString(),
       p_new_duration_minutes: existing.duration_minutes,
       p_new_cancellation_token: newToken,
-      p_studio_buffer_minutes: studioRow.buffer_minutes ?? 0,
     },
   );
 
