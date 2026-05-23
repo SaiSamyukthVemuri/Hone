@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { utcInstantFromLocal } from "@/lib/booking/tz";
+import type { Practitioner, Studio } from "@/lib/types/database";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -19,6 +21,17 @@ async function assertOwner(): Promise<{ studioId: string }> {
     throw new Error("Only studio owners can change availability.");
   }
   return { studioId: studio.id };
+}
+
+async function assertOwnerWithStudio(): Promise<{
+  studio: Studio;
+  practitioner: Practitioner;
+}> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    throw new Error("Only studio owners can change availability.");
+  }
+  return { studio, practitioner };
 }
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -186,4 +199,161 @@ export async function deleteBlockoutAction(formData: FormData): Promise<void> {
     .eq("studio_id", studioId);
   if (error) throw new Error(`Failed to delete blockout: ${error.message}`);
   revalidatePath("/settings/availability");
+}
+
+// -------------------------------------------------------------------------
+// One-off timed blocks (migration 0030). Owner-only via RLS. The DB
+// trigger mirrors writes into studio_calendar_reservations, where the
+// unified gist exclusion enforces no overlap with appointments,
+// other blocks, or full-day blockouts. A 23P01 from PostgREST means
+// the block conflicts; we surface a clean message.
+// -------------------------------------------------------------------------
+
+const TIMED_BLOCK_CATEGORIES = [
+  "lunch",
+  "break",
+  "meeting",
+  "emergency",
+  "personal",
+  "training",
+  "admin",
+  "other",
+] as const;
+
+const RESERVATION_CONFLICT_MESSAGE =
+  "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
+
+function buildBlockUtcRange(
+  dateStr: string,
+  startLocal: string,
+  endLocal: string,
+  tz: string,
+): { startsAt: string; endsAt: string } {
+  const start = utcInstantFromLocal(dateStr, startLocal, tz);
+  const end = utcInstantFromLocal(dateStr, endLocal, tz);
+  return { startsAt: start.toISOString(), endsAt: end.toISOString() };
+}
+
+export async function createTimedBlockAction(
+  formData: FormData,
+): Promise<void> {
+  const { studio, practitioner } = await assertOwnerWithStudio();
+  const dateStr = trimmed(formData.get("date"));
+  const startLocal = trimmed(formData.get("start_local"));
+  const endLocal = trimmed(formData.get("end_local"));
+  const category = trimmed(formData.get("category")).toLowerCase();
+  const privateNote = nullable(formData.get("private_note"));
+
+  if (!dateStr || !startLocal || !endLocal) {
+    throw new Error("Date and start/end times are required.");
+  }
+  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+    throw new Error("Times must be in HH:MM format.");
+  }
+  if (startLocal >= endLocal) {
+    throw new Error("End time must be after start time.");
+  }
+  if (
+    !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
+  ) {
+    throw new Error("Invalid category.");
+  }
+
+  const { startsAt, endsAt } = buildBlockUtcRange(
+    dateStr,
+    startLocal,
+    endLocal,
+    studio.timezone,
+  );
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("studio_timed_blocks").insert({
+    studio_id: studio.id,
+    starts_at: startsAt,
+    ends_at: endsAt,
+    category,
+    private_note: privateNote,
+    created_by: practitioner.id,
+  });
+  if (error) {
+    if (error.code === "23P01") {
+      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+    }
+    throw new Error(`Failed to add block: ${error.message}`);
+  }
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+}
+
+export async function updateTimedBlockAction(
+  formData: FormData,
+): Promise<void> {
+  const { studio } = await assertOwnerWithStudio();
+  const id = trimmed(formData.get("id"));
+  const dateStr = trimmed(formData.get("date"));
+  const startLocal = trimmed(formData.get("start_local"));
+  const endLocal = trimmed(formData.get("end_local"));
+  const category = trimmed(formData.get("category")).toLowerCase();
+  const privateNote = nullable(formData.get("private_note"));
+
+  if (!id) throw new Error("Missing block id.");
+  if (!dateStr || !startLocal || !endLocal) {
+    throw new Error("Date and start/end times are required.");
+  }
+  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+    throw new Error("Times must be in HH:MM format.");
+  }
+  if (startLocal >= endLocal) {
+    throw new Error("End time must be after start time.");
+  }
+  if (
+    !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
+  ) {
+    throw new Error("Invalid category.");
+  }
+
+  const { startsAt, endsAt } = buildBlockUtcRange(
+    dateStr,
+    startLocal,
+    endLocal,
+    studio.timezone,
+  );
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studio_timed_blocks")
+    .update({
+      starts_at: startsAt,
+      ends_at: endsAt,
+      category,
+      private_note: privateNote,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("studio_id", studio.id);
+  if (error) {
+    if (error.code === "23P01") {
+      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+    }
+    throw new Error(`Failed to update block: ${error.message}`);
+  }
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+}
+
+export async function deleteTimedBlockAction(
+  formData: FormData,
+): Promise<void> {
+  const { studio } = await assertOwnerWithStudio();
+  const id = trimmed(formData.get("id"));
+  if (!id) throw new Error("Missing block id.");
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studio_timed_blocks")
+    .delete()
+    .eq("id", id)
+    .eq("studio_id", studio.id);
+  if (error) throw new Error(`Failed to delete block: ${error.message}`);
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
 }
