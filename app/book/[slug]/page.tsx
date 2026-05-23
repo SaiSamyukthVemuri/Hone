@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
+import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
@@ -29,6 +30,7 @@ export default async function PublicBookingPage({
   const services = (servicesData ?? []) as Service[];
 
   const today = todayInTz(studio.timezone);
+  const horizon = horizonRangeInStudioTz(studio.timezone);
 
   return (
     <main
@@ -66,6 +68,8 @@ export default async function PublicBookingPage({
             slug={studio.slug}
             services={services}
             defaultDate={today}
+            minDate={horizon.minDateStr}
+            maxDate={horizon.maxDateStr}
           />
         </div>
       </section>

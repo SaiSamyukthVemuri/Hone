@@ -7,6 +7,10 @@ import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { localDateString } from "@/lib/booking/tz";
+import {
+  horizonRangeInStudioTz,
+  isWithinPublicBookingHorizon,
+} from "@/lib/booking/horizon";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -29,6 +33,11 @@ export async function fetchPublicSlotsAction(params: {
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+
+  const horizon = horizonRangeInStudioTz(studio.timezone);
+  if (params.date < horizon.minDateStr || params.date > horizon.maxDateStr) {
+    return { ok: false, error: "Date is outside the booking window." };
+  }
 
   const admin = createAdminClient();
   const { data: service, error } = await admin
@@ -82,6 +91,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (Number.isNaN(start.getTime())) {
     return { ok: false, error: "Invalid time." };
   }
+  if (!isWithinPublicBookingHorizon(start, studio.timezone)) {
+    return { ok: false, error: "That date is outside the booking window." };
+  }
 
   const admin = createAdminClient();
 
@@ -111,7 +123,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     service.default_duration_minutes,
   );
   const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) return { ok: false, error: "That slot was just taken. Pick another." };
+  if (!free) {
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
+  }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
 
@@ -199,7 +216,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       );
       return {
         ok: false,
-        error: "This slot was just booked by someone else. Please pick another time.",
+        error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
     }

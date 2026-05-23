@@ -5,6 +5,10 @@ import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { localDateString } from "@/lib/booking/tz";
 import {
+  horizonRangeInStudioTz,
+  isWithinPublicBookingHorizon,
+} from "@/lib/booking/horizon";
+import {
   logEmailFailure,
   recordEmailAttempt,
   sendBookingConfirmationToClient,
@@ -161,6 +165,11 @@ export async function fetchRescheduleSlotsAction(params: {
   const stu = pick(r.studio);
   if (!stu) return { ok: false, error: "Studio missing." };
 
+  const horizon = horizonRangeInStudioTz(stu.timezone);
+  if (params.date < horizon.minDateStr || params.date > horizon.maxDateStr) {
+    return { ok: false, error: "Date is outside the booking window." };
+  }
+
   const slots = await getAvailableSlots(
     admin,
     {
@@ -226,6 +235,10 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .maybeSingle();
   if (!studioRow) return { ok: false, error: "Studio missing." };
 
+  if (!isWithinPublicBookingHorizon(start, studioRow.timezone)) {
+    return { ok: false, error: "That date is outside the booking window." };
+  }
+
   const dateStr = localDateString(start, studioRow.timezone);
   const slots = await getAvailableSlots(
     admin,
@@ -243,7 +256,10 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     (s) => new Date(s.start).getTime() === start.getTime(),
   );
   if (!free) {
-    return { ok: false, error: "That slot was just taken. Pick another." };
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
   }
 
   // Single-transaction reschedule via the reschedule_appointment RPC
@@ -283,7 +299,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       );
       return {
         ok: false,
-        error: "That slot was just taken. Pick another.",
+        error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
     }

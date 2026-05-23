@@ -79,6 +79,49 @@ export type StudioBlockout = {
   created_at: string;
 };
 
+// Migration 0030: one-off time-specific blocks (lunch, meeting,
+// emergency, etc). Categories are stored lowercase; the UI renders
+// them in title case.
+export type StudioTimedBlockCategory =
+  | "lunch"
+  | "break"
+  | "meeting"
+  | "emergency"
+  | "personal"
+  | "training"
+  | "admin"
+  | "other";
+
+export type StudioTimedBlock = {
+  id: string;
+  studio_id: string;
+  starts_at: string;
+  ends_at: string;
+  category: StudioTimedBlockCategory;
+  private_note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Migration 0030: unified shadow table. Source_kind covers
+// appointment, timed_block, full_day_blockout, and (Phase 2)
+// recurring_break_occurrence.
+export type StudioCalendarReservationKind =
+  | "appointment"
+  | "timed_block"
+  | "full_day_blockout"
+  | "recurring_break_occurrence";
+
+export type StudioCalendarReservation = {
+  id: string;
+  studio_id: string;
+  source_kind: StudioCalendarReservationKind;
+  source_id: string;
+  starts_at: string;
+  ends_at: string;
+};
+
 export type Service = {
   id: string;
   studio_id: string;

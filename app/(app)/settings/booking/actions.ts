@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -21,6 +22,20 @@ function parseInteger(
   if (!t) return fallback;
   const n = parseInt(t, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// Strict preset validation. parseInt() would happily parse "15garbage"
+// as 15 and pass our membership check; require the raw string to be
+// one of the exact preset literals before converting.
+const BUFFER_PRESET_STRINGS = BUFFER_PRESET_MINUTES.map(String);
+function parseBufferPreset(value: FormDataEntryValue | null): number {
+  const raw = trimmed(value);
+  if (!BUFFER_PRESET_STRINGS.includes(raw)) {
+    throw new Error(
+      `Buffer must be one of: ${BUFFER_PRESET_MINUTES.join(", ")} minutes.`,
+    );
+  }
+  return Number(raw);
 }
 
 async function assertOwner(): Promise<{ studioId: string }> {
@@ -43,7 +58,7 @@ export async function updateStudioBookingPrefsAction(
     formData.get("default_appointment_duration_minutes"),
     60,
   );
-  const buffer = parseInteger(formData.get("buffer_minutes"), 15);
+  const buffer = parseBufferPreset(formData.get("buffer_minutes"));
   const slugRaw = trimmed(formData.get("slug")).toLowerCase();
   const address = nullable(formData.get("address"));
   const bookingDescription = nullable(formData.get("booking_description"));
@@ -55,9 +70,6 @@ export async function updateStudioBookingPrefsAction(
   }
   if (defaultDuration < 5 || defaultDuration > 480) {
     throw new Error("Default duration must be between 5 and 480 minutes.");
-  }
-  if (buffer < 0 || buffer > 240) {
-    throw new Error("Buffer must be between 0 and 240 minutes.");
   }
 
   const supabase = await createClient();
@@ -76,9 +88,21 @@ export async function updateStudioBookingPrefsAction(
     if (error.code === "23505") {
       throw new Error("That slug is already taken. Pick another.");
     }
+    // 23P01: the timezone-change trigger rebuilt this studio's
+    // full_day_blockout reservation rows into UTC instants under the
+    // new timezone, and at least one recalculated interval collided
+    // with another reservation. The studios UPDATE rolled back.
+    // Buffer changes do NOT trigger retroactive resync; existing
+    // appointments keep their migration 0029 snapshot.
+    if (error.code === "23P01") {
+      throw new Error(
+        "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
+      );
+    }
     throw new Error(`Failed to update booking settings: ${error.message}`);
   }
   revalidatePath("/settings/booking");
   revalidatePath("/settings/availability");
   revalidatePath("/settings/studio");
+  revalidatePath("/calendar");
 }
