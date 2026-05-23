@@ -14,9 +14,17 @@ type Props = {
   slug: string;
   services: Service[];
   defaultDate: string;
+  minDate: string;
+  maxDate: string;
 };
 
-export function PublicBookForm({ slug, services, defaultDate }: Props) {
+export function PublicBookForm({
+  slug,
+  services,
+  defaultDate,
+  minDate,
+  maxDate,
+}: Props) {
   const groups = useMemo(() => groupServicesByModality(services), [services]);
   const firstServiceId = groups[0]?.services[0]?.id ?? "";
   const [serviceId, setServiceId] = useState(firstServiceId);
@@ -151,6 +159,8 @@ export function PublicBookForm({ slug, services, defaultDate }: Props) {
           <input
             type="date"
             value={date}
+            min={minDate}
+            max={maxDate}
             onChange={(e) => onDate(e.target.value)}
             className="w-full bg-transparent py-2 text-[16px] outline-none"
             style={{ borderBottom: "1px solid #0A0A0A" }}
