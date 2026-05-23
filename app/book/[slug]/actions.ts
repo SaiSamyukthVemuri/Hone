@@ -111,6 +111,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!free) return { ok: false, error: "That slot was just taken. Pick another." };
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
+  // Snapshot the studio's current buffer into the blocked window so
+  // the row carries its own protection even if the studio later
+  // changes buffer_minutes. Matches lib/booking/slots.ts conflict
+  // logic exactly: starts_at - buffer, ends_at + buffer.
+  const bufferMs = (studio.buffer_minutes ?? 0) * 60_000;
+  const blockedStart = new Date(start.getTime() - bufferMs);
+  const blockedEnd = new Date(end.getTime() + bufferMs);
 
   // Match existing client by email within this studio, else create.
   const { data: existingClient } = await admin
@@ -170,6 +177,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       service_id: serviceId,
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
+      blocked_starts_at: blockedStart.toISOString(),
+      blocked_ends_at: blockedEnd.toISOString(),
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,

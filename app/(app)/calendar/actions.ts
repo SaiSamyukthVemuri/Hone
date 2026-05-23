@@ -70,6 +70,11 @@ export async function bookAppointmentForClientAction(
     return { ok: false, error: "Invalid start time." };
   }
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
+  // Snapshot the buffer at booking time so the row carries its own
+  // protected window. Matches lib/booking/slots.ts conflict logic.
+  const bufferMs = (studio.buffer_minutes ?? 0) * 60_000;
+  const blockedStart = new Date(start.getTime() - bufferMs);
+  const blockedEnd = new Date(end.getTime() + bufferMs);
 
   // Re-verify the slot is still available (race-safe).
   const dateStr = start.toISOString().slice(0, 10);
@@ -100,6 +105,8 @@ export async function bookAppointmentForClientAction(
       service_id: serviceId,
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
+      blocked_starts_at: blockedStart.toISOString(),
+      blocked_ends_at: blockedEnd.toISOString(),
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,
