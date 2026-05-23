@@ -57,7 +57,7 @@ export async function fetchPublicSlotsAction(params: {
 
 export type PublicBookResult =
   | { ok: true; appointmentId: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: "slot_taken" };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
   const slug = trimmed(formData.get("slug"));
@@ -178,6 +178,28 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .select("*")
     .single();
   if (insertErr || !created) {
+    // sqlstate 23P01 = exclusion_violation. Fires when the
+    // no_overlapping_active_appointments_per_studio constraint
+    // catches a race the UI-layer slot check could not. A rejected
+    // booking must NOT trigger a confirmation email, so we return
+    // before any send path.
+    if (insertErr?.code === "23P01") {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_collision",
+          studioId: studio.id,
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          source: "public_booking",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "This slot was just booked by someone else. Please pick another time.",
+        code: "slot_taken",
+      };
+    }
     return { ok: false, error: insertErr?.message ?? "Failed to book." };
   }
 

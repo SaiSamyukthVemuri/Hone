@@ -21,7 +21,9 @@ import {
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
-type BookResult = { ok: true; appointmentId: string } | { ok: false; error: string };
+export type BookResult =
+  | { ok: true; appointmentId: string }
+  | { ok: false; error: string; code?: "slot_taken" };
 
 export async function bookAppointmentForClientAction(
   formData: FormData,
@@ -106,6 +108,27 @@ export async function bookAppointmentForClientAction(
     .select("*")
     .single();
   if (insertErr || !created) {
+    // sqlstate 23P01 = exclusion_violation from the
+    // no_overlapping_active_appointments_per_studio constraint. The
+    // structured code lets the calendar UI surface a toast and
+    // refresh the grid without parsing the message string.
+    if (insertErr?.code === "23P01") {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_collision",
+          studioId: studio.id,
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          source: "in_app_calendar",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "That slot was just taken. Refresh and pick another time.",
+        code: "slot_taken",
+      };
+    }
     return { ok: false, error: insertErr?.message ?? "Insert failed." };
   }
 
