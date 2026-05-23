@@ -79,9 +79,19 @@ export async function updateStudioBookingPrefsAction(
     if (error.code === "23505") {
       throw new Error("That slug is already taken. Pick another.");
     }
+    // 23P01: a downstream trigger on studios change (timezone rebuild
+    // of full_day_blockout reservations, or buffer-change resync of
+    // appointment reservations) ran into the unified shadow's
+    // exclusion. The entire studios UPDATE rolled back.
+    if (error.code === "23P01") {
+      throw new Error(
+        "These settings would push an appointment or blockout into a conflict. Reschedule or remove the affected calendar items first.",
+      );
+    }
     throw new Error(`Failed to update booking settings: ${error.message}`);
   }
   revalidatePath("/settings/booking");
   revalidatePath("/settings/availability");
   revalidatePath("/settings/studio");
+  revalidatePath("/calendar");
 }

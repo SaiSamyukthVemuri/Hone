@@ -127,6 +127,15 @@ export async function getAvailableSlots(
     .lt("starts_at", windowEndUtc.toISOString())
     .gt("ends_at", windowStartUtc.toISOString());
 
+  // The reservation rows already encode every relevant buffer:
+  //   - appointment rows: ends_at = blocked_ends_at (starts_at +
+  //     snapshotted buffer at booking time, per migration 0029).
+  //   - timed_block rows: raw (starts_at, ends_at). Blocks do not
+  //     impose their own buffer.
+  //   - full_day_blockout rows: raw local-midnight UTC range.
+  // We MUST NOT widen these intervals again on the JS side. Doing
+  // so would double-count the buffer (the bug from the first
+  // migration 0029 attempt).
   const conflicts = ((reservations ?? []) as ReservationRow[]).map((r) => ({
     start: new Date(r.starts_at).getTime(),
     end: new Date(r.ends_at).getTime(),

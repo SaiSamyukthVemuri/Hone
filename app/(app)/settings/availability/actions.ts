@@ -183,8 +183,17 @@ export async function createBlockoutAction(formData: FormData): Promise<void> {
     ends_on: ends,
     reason,
   });
-  if (error) throw new Error(`Failed to add blockout: ${error.message}`);
+  if (error) {
+    // 23P01: the AFTER trigger upsert into studio_calendar_reservations
+    // collided with an existing appointment, timed block, or other
+    // blockout. The blockout insert was rolled back.
+    if (error.code === "23P01") {
+      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+    }
+    throw new Error(`Failed to add blockout: ${error.message}`);
+  }
   revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
 }
 
 export async function deleteBlockoutAction(formData: FormData): Promise<void> {
