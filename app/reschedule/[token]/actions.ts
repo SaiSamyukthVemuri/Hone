@@ -199,7 +199,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   const { data: existing, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes",
+      "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes, cancellation_token",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -254,15 +254,27 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // fails, including the exclusion constraint catching a slot race,
   // Postgres rolls back the entire transaction and the original
   // appointment stays confirmed.
+  if (!existing.cancellation_token) {
+    // Should never happen: migration 0025 backfilled tokens on every
+    // confirmed appointment. Treat as not-reschedulable so the RPC
+    // doesn't get called with a null current-token.
+    return {
+      ok: false,
+      error: "This appointment can no longer be rescheduled.",
+    };
+  }
+
   const newToken = generateAppointmentToken();
   const { data: rpcData, error: rpcErr } = await admin.rpc(
     "reschedule_appointment",
     {
       p_original_appointment_id: existing.id,
+      p_current_cancellation_token: existing.cancellation_token,
       p_new_starts_at: start.toISOString(),
       p_new_ends_at: end.toISOString(),
       p_new_duration_minutes: existing.duration_minutes,
       p_new_cancellation_token: newToken,
+      p_studio_buffer_minutes: studioRow.buffer_minutes ?? 0,
     },
   );
 
