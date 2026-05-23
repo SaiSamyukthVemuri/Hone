@@ -180,7 +180,7 @@ export async function fetchRescheduleSlotsAction(params: {
 
 export type RescheduleResult =
   | { ok: true; newAppointmentId: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: "slot_taken" };
 
 export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
   RescheduleResult
@@ -248,71 +248,81 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     return { ok: false, error: "That slot was just taken. Pick another." };
   }
 
-  // Cancel the original, create the new one with a fresh token.
-  const cancelStamp = new Date().toISOString();
-  const { error: cancelErr } = await admin
-    .from("appointments")
-    .update({
-      status: "cancelled",
-      cancelled_at: cancelStamp,
-      cancelled_by: "client",
-      cancellation_reason: "Rescheduled via email link",
-      updated_at: cancelStamp,
-    })
-    .eq("id", existing.id);
-  if (cancelErr) return { ok: false, error: cancelErr.message };
-
+  // Single-transaction reschedule via the reschedule_appointment RPC
+  // (migration 0029). Cancels the original row, inserts the
+  // replacement, and writes both audit rows atomically. If anything
+  // fails, including the exclusion constraint catching a slot race,
+  // Postgres rolls back the entire transaction and the original
+  // appointment stays confirmed.
   const newToken = generateAppointmentToken();
-  const { data: created, error: insertErr } = await admin
-    .from("appointments")
-    .insert({
-      studio_id: existing.studio_id,
-      practitioner_id: existing.practitioner_id,
-      client_id: existing.client_id,
-      service_id: existing.service_id,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      duration_minutes: existing.duration_minutes,
-      status: "confirmed",
-      notes: null,
-      cancellation_token: newToken,
-    })
-    .select("*")
-    .single();
-  if (insertErr || !created) {
-    // Roll back the cancel so the client isn't left with no appointment.
-    await admin
-      .from("appointments")
-      .update({
-        status: "confirmed",
-        cancelled_at: null,
-        cancelled_by: null,
-        cancellation_reason: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", existing.id);
-    return {
-      ok: false,
-      error: insertErr?.message ?? "Failed to create the rescheduled appointment.",
-    };
+  const { data: rpcData, error: rpcErr } = await admin.rpc(
+    "reschedule_appointment",
+    {
+      p_original_appointment_id: existing.id,
+      p_new_starts_at: start.toISOString(),
+      p_new_ends_at: end.toISOString(),
+      p_new_duration_minutes: existing.duration_minutes,
+      p_new_cancellation_token: newToken,
+    },
+  );
+
+  if (rpcErr) {
+    if (rpcErr.code === "23P01") {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_collision",
+          studioId: existing.studio_id,
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          source: "reschedule",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "That slot was just taken. Pick another.",
+        code: "slot_taken",
+      };
+    }
+    return { ok: false, error: rpcErr.message };
   }
 
-  await admin.from("appointment_audit").insert([
-    {
-      appointment_id: existing.id,
-      actor_type: "client",
-      actor_id: null,
-      action: "cancelled",
-      details: { reason: "rescheduled", new_appointment_id: created.id },
-    },
-    {
-      appointment_id: created.id,
-      actor_type: "client",
-      actor_id: null,
-      action: "created",
-      details: { source: "reschedule_link", original_appointment_id: existing.id },
-    },
-  ]);
+  const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+  if (!row || typeof row.result !== "string") {
+    return { ok: false, error: "Unexpected response from server." };
+  }
+
+  if (row.result !== "success") {
+    switch (row.result) {
+      case "appointment_not_found":
+        return { ok: false, error: "Appointment not found." };
+      case "appointment_not_reschedulable":
+        return {
+          ok: false,
+          error: "This appointment can no longer be rescheduled.",
+        };
+      case "invalid_time_range":
+        return { ok: false, error: "Invalid time." };
+      default:
+        return { ok: false, error: "Unexpected error." };
+    }
+  }
+
+  const newAppointmentId = row.new_appointment_id as string;
+
+  // Re-fetch the newly inserted row so the email-builder has the
+  // complete appointment shape. The RPC returns only the id.
+  const { data: created, error: fetchErr } = await admin
+    .from("appointments")
+    .select("*")
+    .eq("id", newAppointmentId)
+    .single();
+  if (fetchErr || !created) {
+    return {
+      ok: false,
+      error: fetchErr?.message ?? "Could not load the rescheduled appointment.",
+    };
+  }
 
   // Send a fresh confirmation email for the new appointment.
   const { data: clientRow } = await admin
