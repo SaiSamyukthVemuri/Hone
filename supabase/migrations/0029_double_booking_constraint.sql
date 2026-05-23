@@ -89,7 +89,7 @@ begin
   end if;
 
   new.buffer_minutes_snapshot := v_buffer;
-  new.blocked_ends_at := new.ends_at + (v_buffer || ' minutes')::interval;
+  new.blocked_ends_at := new.ends_at + make_interval(mins => v_buffer);
   return new;
 end;
 $$;
@@ -117,7 +117,7 @@ create or replace trigger appointments_snapshot_buffer_trg
 -- ---------------------------------------------------------------------------
 update public.appointments a
 set buffer_minutes_snapshot = coalesce(s.buffer_minutes, 0),
-    blocked_ends_at = a.ends_at + (coalesce(s.buffer_minutes, 0) || ' minutes')::interval
+    blocked_ends_at = a.ends_at + make_interval(mins => coalesce(s.buffer_minutes, 0))
 from public.studios s
 where a.studio_id = s.id
   and (a.buffer_minutes_snapshot is null or a.blocked_ends_at is null);
@@ -193,6 +193,24 @@ begin
       add constraint appointments_blocked_ends_at_after_ends_at
       check (blocked_ends_at >= ends_at);
   end if;
+
+  -- Exact equality: every row's blocked_ends_at must equal
+  -- ends_at + (snapshot minutes). If the trigger is bypassed or a
+  -- direct write somehow lands an inconsistent pair, the row is
+  -- rejected. With the trigger as sole writer this is belt-and-
+  -- suspenders, but the constraint makes the invariant machine-
+  -- checked rather than relying on trigger correctness alone.
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'appointments_blocked_end_matches_snapshot'
+      and conrelid = 'public.appointments'::regclass
+  ) then
+    alter table public.appointments
+      add constraint appointments_blocked_end_matches_snapshot
+      check (
+        blocked_ends_at = ends_at + make_interval(mins => buffer_minutes_snapshot)
+      );
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -263,15 +281,17 @@ declare
   v_original public.appointments%rowtype;
   v_new_id uuid;
 begin
+  -- Lock the row matching BOTH id and submitted token. A mismatched
+  -- token (or a NULL submitted token vs a populated column) means
+  -- no row is locked and the function returns appointment_not_found,
+  -- indistinguishable from a missing id by a probing caller.
   select * into v_original
   from public.appointments
   where id = p_original_appointment_id
+    and cancellation_token = p_current_cancellation_token
   for update;
 
-  if not found
-     or v_original.cancellation_token is null
-     or v_original.cancellation_token <> p_current_cancellation_token
-  then
+  if not found then
     return query select 'appointment_not_found'::text, null::uuid, null::text;
     return;
   end if;
