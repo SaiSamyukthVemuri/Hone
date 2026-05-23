@@ -24,6 +24,20 @@ function parseInteger(
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Strict preset validation. parseInt() would happily parse "15garbage"
+// as 15 and pass our membership check; require the raw string to be
+// one of the exact preset literals before converting.
+const BUFFER_PRESET_STRINGS = BUFFER_PRESET_MINUTES.map(String);
+function parseBufferPreset(value: FormDataEntryValue | null): number {
+  const raw = trimmed(value);
+  if (!BUFFER_PRESET_STRINGS.includes(raw)) {
+    throw new Error(
+      `Buffer must be one of: ${BUFFER_PRESET_MINUTES.join(", ")} minutes.`,
+    );
+  }
+  return Number(raw);
+}
+
 async function assertOwner(): Promise<{ studioId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
@@ -44,7 +58,7 @@ export async function updateStudioBookingPrefsAction(
     formData.get("default_appointment_duration_minutes"),
     60,
   );
-  const buffer = parseInteger(formData.get("buffer_minutes"), 15);
+  const buffer = parseBufferPreset(formData.get("buffer_minutes"));
   const slugRaw = trimmed(formData.get("slug")).toLowerCase();
   const address = nullable(formData.get("address"));
   const bookingDescription = nullable(formData.get("booking_description"));
@@ -56,11 +70,6 @@ export async function updateStudioBookingPrefsAction(
   }
   if (defaultDuration < 5 || defaultDuration > 480) {
     throw new Error("Default duration must be between 5 and 480 minutes.");
-  }
-  if (!BUFFER_PRESET_MINUTES.includes(buffer)) {
-    throw new Error(
-      `Buffer must be one of: ${BUFFER_PRESET_MINUTES.join(", ")} minutes.`,
-    );
   }
 
   const supabase = await createClient();
@@ -79,13 +88,15 @@ export async function updateStudioBookingPrefsAction(
     if (error.code === "23505") {
       throw new Error("That slug is already taken. Pick another.");
     }
-    // 23P01: a downstream trigger on studios change (timezone rebuild
-    // of full_day_blockout reservations, or buffer-change resync of
-    // appointment reservations) ran into the unified shadow's
-    // exclusion. The entire studios UPDATE rolled back.
+    // 23P01: the timezone-change trigger rebuilt this studio's
+    // full_day_blockout reservation rows into UTC instants under the
+    // new timezone, and at least one recalculated interval collided
+    // with another reservation. The studios UPDATE rolled back.
+    // Buffer changes do NOT trigger retroactive resync; existing
+    // appointments keep their migration 0029 snapshot.
     if (error.code === "23P01") {
       throw new Error(
-        "These settings would push an appointment or blockout into a conflict. Reschedule or remove the affected calendar items first.",
+        "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
       );
     }
     throw new Error(`Failed to update booking settings: ${error.message}`);
