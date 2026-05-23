@@ -1,149 +1,203 @@
 -- Migration 0029: DB-level double-booking prevention + atomic
--- reschedule, using snapshotted buffer-aware blocked windows.
+-- reschedule, using a trailing-only protected interval.
 --
--- The earlier draft of this migration constrained the raw
--- [starts_at, ends_at) window. That did NOT match the real conflict
--- rule used by lib/booking/slots.ts, which expands each appointment
--- by studio.buffer_minutes on both sides before checking overlap.
--- Result: two appointments could satisfy the raw constraint while
--- still violating the buffer rule (e.g. 10:00 to 11:00 and 11:10 to
--- 11:40 with a 15 minute buffer).
+-- The first draft of this migration constrained the raw
+-- [starts_at, ends_at) window, which did not match
+-- lib/booking/slots.ts. A second draft used symmetric blocked
+-- windows (expand both sides by buffer_minutes), which double-
+-- counted the buffer: with a 15 minute buffer, 10:00 to 11:00 and
+-- 11:15 to 12:15 ended up overlapping on the symmetric windows
+-- even though there is a full 15 minute gap between them.
 --
--- This revision stores the buffered window per appointment so the
--- DB exclusion constraint enforces the same rule the UI does, AND
--- so existing appointments keep their original protected window if
--- the studio later changes its buffer_minutes setting.
+-- This revision uses a one-sided trailing buffer: each appointment
+-- protects the interval [starts_at, ends_at + buffer). The buffer
+-- is the minimum gap required AFTER one appointment before the
+-- next can start. With a 15 minute buffer:
+--
+--   A 10:00-11:00 occupies [10:00, 11:15)
+--   B 11:15-12:15 occupies [11:15, 12:30)
+--   half-open overlap test: no conflict. Correct.
+--
+--   A 10:00-11:00 occupies [10:00, 11:15)
+--   B 11:10-11:40 occupies [11:10, 11:55) (with same buffer policy)
+--   half-open overlap: [10:00, 11:15) && [11:10, 11:55) -> reject.
+--   Correct.
 --
 -- Pieces, in order:
 --
---   1. blocked_starts_at / blocked_ends_at columns on appointments.
---   2. Backfill from each studio's current buffer_minutes.
---   3. Diagnostic (manual paste; must return 0 rows).
---   4. NOT NULL + range/containment check constraints.
---   5. btree_gist extension.
---   6. Exclusion constraint on the BLOCKED window per studio.
---   7. reschedule_appointment RPC with token verification, buffer-
---      aware blocked-window computation, and notes preservation.
---   8. Revoke execute from public/anon/authenticated; grant to
---      service_role only.
+--   1. buffer_minutes_snapshot integer column on appointments.
+--   2. blocked_ends_at timestamptz column on appointments.
+--   3. Backfill snapshot from studios.buffer_minutes (default 0 if
+--      a row is null) and blocked_ends_at from ends_at + snapshot.
+--   4. Manual diagnostic (must return 0 rows before continuing).
+--   5. NOT NULL + invariant checks on the new columns.
+--   6. snapshot_appointment_buffer trigger so the values are
+--      derived inside the DB, not passed from the app.
+--   7. btree_gist + exclusion constraint on
+--      tstzrange(starts_at, blocked_ends_at, '[)') per studio.
+--   8. reschedule_appointment RPC, signature reduced (no buffer
+--      param: the INSERT inside the RPC triggers a fresh snapshot
+--      using the studio's current buffer_minutes).
+--   9. Revoke execute from public/anon/authenticated; grant only
+--      to service_role.
 --
--- Half-open interval [blocked_starts_at, blocked_ends_at) so an
--- appointment whose blocked window ends at 11:15 does NOT conflict
--- with one whose blocked window starts at 11:15.
+-- SOLO-PRACTITIONER SCOPE: studio-scoped predicate on purpose.
+-- Multi-practitioner support requires revising the predicate, see
+-- prior session notes.
 --
--- SOLO-PRACTITIONER SCOPE: the constraint is studio-scoped on
--- purpose. Before multi-practitioner concurrent booking, revise to
--- constrain by practitioner_id or a bookable-resource id.
---
--- Re-runnable: every alter is guarded with drop constraint if exists
--- or add column if not exists; backfill is guarded by `is null`;
--- function uses create or replace with explicit drops of any prior
--- signatures.
+-- Re-runnable: every alter is guarded, the function uses
+-- create or replace, the trigger is dropped before re-creation.
 
 -- ---------------------------------------------------------------------------
--- Step 1: blocked-window columns. Nullable initially so the backfill
--- in step 2 can populate existing rows before NOT NULL tightens.
+-- Step 1 + 2: add columns. Nullable initially so the backfill in
+-- step 3 can populate existing rows.
 -- ---------------------------------------------------------------------------
 alter table public.appointments
-  add column if not exists blocked_starts_at timestamptz,
+  add column if not exists buffer_minutes_snapshot integer,
   add column if not exists blocked_ends_at timestamptz;
 
 -- ---------------------------------------------------------------------------
--- Step 2: backfill from studios.buffer_minutes. Guarded by `is null`
--- so re-running the migration does not reset values for rows that
--- already received the columns.
+-- Step 3: backfill. Snapshot the studio's CURRENT buffer at apply
+-- time and derive blocked_ends_at from it. Guarded by `is null` so
+-- re-runs are no-ops on already-populated rows.
 -- ---------------------------------------------------------------------------
 update public.appointments a
-set blocked_starts_at = a.starts_at - (s.buffer_minutes || ' minutes')::interval,
-    blocked_ends_at   = a.ends_at   + (s.buffer_minutes || ' minutes')::interval
+set buffer_minutes_snapshot = coalesce(s.buffer_minutes, 0),
+    blocked_ends_at = a.ends_at + (coalesce(s.buffer_minutes, 0) || ' minutes')::interval
 from public.studios s
 where a.studio_id = s.id
-  and a.blocked_starts_at is null;
+  and (a.buffer_minutes_snapshot is null or a.blocked_ends_at is null);
 
 -- ---------------------------------------------------------------------------
--- Step 3 (manual): run the diagnostic below and confirm 0 rows
--- before continuing. If it returns anything, stop and investigate
--- before tightening NOT NULL or adding the exclusion constraint.
+-- Step 4 (manual): the next query must return 0 rows before
+-- continuing. If it does not, stop and investigate.
 --
--- select id, studio_id, starts_at, ends_at, blocked_starts_at, blocked_ends_at
+-- select id, studio_id, starts_at, ends_at, buffer_minutes_snapshot, blocked_ends_at
 -- from public.appointments
--- where blocked_starts_at is null
+-- where buffer_minutes_snapshot is null
 --    or blocked_ends_at is null
---    or blocked_ends_at <= blocked_starts_at
---    or blocked_starts_at > starts_at
+--    or buffer_minutes_snapshot < 0
 --    or blocked_ends_at < ends_at;
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- Step 4: tighten the blocked-window columns to NOT NULL plus
--- invariant checks. The window must be positive and must fully
--- contain the raw appointment window.
+-- Step 5: tighten the new columns. NOT NULL plus invariant checks.
+-- blocked_ends_at >= ends_at allows zero-buffer studios.
 -- ---------------------------------------------------------------------------
 alter table public.appointments
-  alter column blocked_starts_at set not null,
+  alter column buffer_minutes_snapshot set not null,
   alter column blocked_ends_at set not null;
 
 alter table public.appointments
-  drop constraint if exists appointments_blocked_window_valid;
+  drop constraint if exists appointments_buffer_snapshot_non_negative;
 alter table public.appointments
-  add constraint appointments_blocked_window_valid
-  check (blocked_ends_at > blocked_starts_at);
+  add constraint appointments_buffer_snapshot_non_negative
+  check (buffer_minutes_snapshot >= 0);
 
 alter table public.appointments
-  drop constraint if exists appointments_blocked_window_contains_appointment;
+  drop constraint if exists appointments_blocked_ends_at_after_ends_at;
 alter table public.appointments
-  add constraint appointments_blocked_window_contains_appointment
-  check (blocked_starts_at <= starts_at and blocked_ends_at >= ends_at);
+  add constraint appointments_blocked_ends_at_after_ends_at
+  check (blocked_ends_at >= ends_at);
 
 -- ---------------------------------------------------------------------------
--- Step 5: btree_gist for uuid equality inside the gist exclusion.
--- Idempotent.
+-- Step 6: BEFORE INSERT OR UPDATE trigger that snapshots the
+-- studio's current buffer and derives blocked_ends_at. The trigger
+-- is the only intended writer of these two columns; any value the
+-- caller tries to write is overwritten.
+--
+-- On INSERT: always snapshot.
+-- On UPDATE: only re-snapshot if studio_id, starts_at, or ends_at
+-- changed. If those are stable, the existing snapshot is preserved
+-- (so studios changing buffer_minutes later does not retroactively
+-- alter their existing appointments).
+-- ---------------------------------------------------------------------------
+create or replace function public.snapshot_appointment_buffer()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_buffer integer;
+begin
+  if tg_op = 'UPDATE'
+     and new.studio_id = old.studio_id
+     and new.starts_at = old.starts_at
+     and new.ends_at   = old.ends_at
+  then
+    new.buffer_minutes_snapshot := old.buffer_minutes_snapshot;
+    new.blocked_ends_at := old.blocked_ends_at;
+    return new;
+  end if;
+
+  select coalesce(s.buffer_minutes, 0) into v_buffer
+  from public.studios s
+  where s.id = new.studio_id;
+
+  if v_buffer is null then
+    v_buffer := 0;
+  end if;
+
+  new.buffer_minutes_snapshot := v_buffer;
+  new.blocked_ends_at := new.ends_at + (v_buffer || ' minutes')::interval;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists appointments_snapshot_buffer_trg on public.appointments;
+create trigger appointments_snapshot_buffer_trg
+  before insert or update of studio_id, starts_at, ends_at
+  on public.appointments
+  for each row
+  execute function public.snapshot_appointment_buffer();
+
+-- ---------------------------------------------------------------------------
+-- Step 7: btree_gist + exclusion constraint on the one-sided
+-- protected interval. The predicate matches lib/booking/slots.ts:
+-- only confirmed rows block availability. Cancelled, completed,
+-- and no_show rows do not, so a cancellation re-opens the slot
+-- immediately.
 -- ---------------------------------------------------------------------------
 create extension if not exists btree_gist;
 
--- ---------------------------------------------------------------------------
--- Step 6: exclusion constraint on the BLOCKED window per studio.
--- The predicate matches lib/booking/slots.ts: only confirmed rows
--- block availability. Cancelled, completed, and no_show rows do
--- not, so cancellation re-opens the slot immediately.
--- ---------------------------------------------------------------------------
 alter table public.appointments
   drop constraint if exists no_overlapping_active_appointments_per_studio;
 alter table public.appointments
   add constraint no_overlapping_active_appointments_per_studio
   exclude using gist (
     studio_id with =,
-    tstzrange(blocked_starts_at, blocked_ends_at, '[)') with &&
+    tstzrange(starts_at, blocked_ends_at, '[)') with &&
   ) where (status = 'confirmed');
 
 -- ---------------------------------------------------------------------------
--- Step 7: atomic reschedule RPC.
+-- Step 8: atomic reschedule RPC.
 --
--- Cancels the original, inserts the replacement with computed
--- blocked window, writes both audit rows. All four DB operations
--- live in one transaction so any failure (including the exclusion
--- constraint firing) rolls back to the pre-reschedule state.
+-- The INSERT inside this function fires the buffer-snapshot
+-- trigger, so the replacement row picks up the studio's CURRENT
+-- buffer_minutes. The caller does not pass buffer minutes and
+-- cannot tamper with the snapshot.
 --
 -- Token verification: the caller must supply the current
--- cancellation_token alongside the id. Mismatched tokens or missing
--- rows both return 'appointment_not_found' so a probing caller
--- cannot distinguish them.
+-- cancellation_token alongside the id. Mismatched tokens and
+-- missing rows both return 'appointment_not_found' so the response
+-- cannot be used to distinguish them.
 --
 -- Returned result values:
 --   'success'                       - new appointment created
 --   'appointment_not_found'         - id missing OR token mismatch
 --   'appointment_not_reschedulable' - status is not 'confirmed'
 --   'invalid_time_range'            - new ends_at <= new starts_at
---
--- The exclusion-violation case is NOT returned as a string. Postgres
--- raises sqlstate 23P01 (exclusion_violation), PostgREST surfaces it
--- on the response, and the application catches it.
 -- ---------------------------------------------------------------------------
 drop function if exists public.reschedule_appointment(
   uuid, timestamptz, timestamptz, integer, text
 );
 drop function if exists public.reschedule_appointment(
   uuid, text, timestamptz, timestamptz, integer, text, integer
+);
+drop function if exists public.reschedule_appointment(
+  uuid, text, timestamptz, timestamptz, integer, text
 );
 
 create or replace function public.reschedule_appointment(
@@ -152,8 +206,7 @@ create or replace function public.reschedule_appointment(
   p_new_starts_at timestamptz,
   p_new_ends_at timestamptz,
   p_new_duration_minutes integer,
-  p_new_cancellation_token text,
-  p_studio_buffer_minutes integer
+  p_new_cancellation_token text
 ) returns table (
   result text,
   new_appointment_id uuid,
@@ -166,8 +219,6 @@ as $$
 declare
   v_original public.appointments%rowtype;
   v_new_id uuid;
-  v_blocked_start timestamptz;
-  v_blocked_end timestamptz;
 begin
   select * into v_original
   from public.appointments
@@ -194,9 +245,6 @@ begin
     return;
   end if;
 
-  v_blocked_start := p_new_starts_at - (p_studio_buffer_minutes || ' minutes')::interval;
-  v_blocked_end   := p_new_ends_at   + (p_studio_buffer_minutes || ' minutes')::interval;
-
   update public.appointments
     set status = 'cancelled',
         cancelled_at = now(),
@@ -205,6 +253,9 @@ begin
         updated_at = now()
     where id = p_original_appointment_id;
 
+  -- The INSERT below fires snapshot_appointment_buffer, which sets
+  -- buffer_minutes_snapshot and blocked_ends_at from the studio's
+  -- current buffer_minutes. We do NOT pass these columns.
   insert into public.appointments (
     studio_id,
     practitioner_id,
@@ -215,9 +266,7 @@ begin
     duration_minutes,
     status,
     notes,
-    cancellation_token,
-    blocked_starts_at,
-    blocked_ends_at
+    cancellation_token
   )
   values (
     v_original.studio_id,
@@ -229,9 +278,7 @@ begin
     p_new_duration_minutes,
     'confirmed',
     v_original.notes,
-    p_new_cancellation_token,
-    v_blocked_start,
-    v_blocked_end
+    p_new_cancellation_token
   )
   returning id into v_new_id;
 
@@ -268,19 +315,17 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Step 8: tighten execute permissions. The RPC is service_role only.
--- Token verification inside the function is defense in depth; the
--- grant model is the primary access control.
+-- Step 9: tighten execute permissions. The RPC is service_role only.
 -- ---------------------------------------------------------------------------
 revoke execute on function public.reschedule_appointment(
-  uuid, text, timestamptz, timestamptz, integer, text, integer
+  uuid, text, timestamptz, timestamptz, integer, text
 ) from public;
 revoke execute on function public.reschedule_appointment(
-  uuid, text, timestamptz, timestamptz, integer, text, integer
+  uuid, text, timestamptz, timestamptz, integer, text
 ) from anon;
 revoke execute on function public.reschedule_appointment(
-  uuid, text, timestamptz, timestamptz, integer, text, integer
+  uuid, text, timestamptz, timestamptz, integer, text
 ) from authenticated;
 grant execute on function public.reschedule_appointment(
-  uuid, text, timestamptz, timestamptz, integer, text, integer
+  uuid, text, timestamptz, timestamptz, integer, text
 ) to service_role;

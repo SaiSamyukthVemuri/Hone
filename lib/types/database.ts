@@ -148,12 +148,14 @@ export type Appointment = {
   // added so the no-show path has the same 3-strike behavior as the others.
   no_show_email_send_attempts: number;
   cancellation_token: string | null;
-  // Migration 0029: buffer-aware blocked window. Snapshotted from
-  // studios.buffer_minutes at booking time so existing appointments
-  // keep their original protected window even if the studio later
-  // changes its buffer. The exclusion constraint enforces non-overlap
-  // on this window, not on raw starts_at/ends_at.
-  blocked_starts_at: string;
+  // Migration 0029: trailing-only protected interval
+  // [starts_at, blocked_ends_at). buffer_minutes_snapshot is a copy
+  // of studios.buffer_minutes at the moment the row was inserted or
+  // last had its starts_at/ends_at/studio_id changed. Both columns
+  // are populated by the snapshot_appointment_buffer trigger; the
+  // app never writes them directly. The exclusion constraint
+  // enforces non-overlap on this interval per studio.
+  buffer_minutes_snapshot: number;
   blocked_ends_at: string;
 };
 
