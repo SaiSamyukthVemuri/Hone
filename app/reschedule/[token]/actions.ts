@@ -1,7 +1,6 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { localDateString } from "@/lib/booking/tz";
@@ -18,23 +17,27 @@ import {
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
+// Reschedule is column-token-only. The legacy HMAC token fallback
+// is intentionally NOT used here: migration 0025 backfilled an
+// opaque column token onto every confirmed appointment, and the
+// reschedule_appointment RPC verifies the SUBMITTED token against
+// the row's cancellation_token field. Keeping HMAC as a fallback
+// would let a caller with a stale signed URL bypass that check.
 async function resolveAppointmentIdFromToken(
   token: string,
 ): Promise<
   | { ok: true; appointment_id: string }
-  | { ok: false; error: "expired" | "invalid" }
+  | { ok: false; error: "invalid" }
 > {
   if (!token) return { ok: false, error: "invalid" };
   const admin = createAdminClient();
-  const { data: byColumn } = await admin
+  const { data } = await admin
     .from("appointments")
     .select("id")
     .eq("cancellation_token", token)
     .maybeSingle();
-  if (byColumn) return { ok: true, appointment_id: byColumn.id };
-  const v = verifyCancellationToken(token);
-  if (v.ok) return { ok: true, appointment_id: v.appointment_id };
-  return { ok: false, error: v.error === "expired" ? "expired" : "invalid" };
+  if (!data) return { ok: false, error: "invalid" };
+  return { ok: true, appointment_id: data.id };
 }
 
 export type RescheduleSummary = {
@@ -58,13 +61,7 @@ export async function fetchAppointmentForRescheduleAction(
 ): Promise<FetchRescheduleResult> {
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
-    return {
-      ok: false,
-      error:
-        resolved.error === "expired"
-          ? "This reschedule link has expired."
-          : "This reschedule link is no longer valid.",
-    };
+    return { ok: false, error: "This reschedule link is no longer valid." };
   }
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -200,7 +197,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   const { data: existing, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes, cancellation_token",
+      "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -255,22 +252,16 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // fails, including the exclusion constraint catching a slot race,
   // Postgres rolls back the entire transaction and the original
   // appointment stays confirmed.
-  if (!existing.cancellation_token) {
-    // Should never happen: migration 0025 backfilled tokens on every
-    // confirmed appointment. Treat as not-reschedulable so the RPC
-    // doesn't get called with a null current-token.
-    return {
-      ok: false,
-      error: "This appointment can no longer be rescheduled.",
-    };
-  }
-
   const newToken = generateAppointmentToken();
+  // Pass the SUBMITTED token (from the URL) so the RPC verifies it
+  // against the row's cancellation_token. Passing
+  // existing.cancellation_token here would make the verification
+  // tautological and defeat its purpose.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
     "reschedule_appointment",
     {
       p_original_appointment_id: existing.id,
-      p_current_cancellation_token: existing.cancellation_token,
+      p_current_cancellation_token: token,
       p_new_starts_at: start.toISOString(),
       p_new_ends_at: end.toISOString(),
       p_new_duration_minutes: existing.duration_minutes,

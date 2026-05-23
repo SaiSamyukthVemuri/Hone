@@ -111,8 +111,11 @@ export async function getAvailableSlots(
 
   if (!isOpen || !openTime || !closeTime) return [];
 
-  // Load same-day confirmed appointments. Filter by a generous UTC window
-  // (the studio could span across UTC midnight).
+  // Load every confirmed appointment whose protected interval
+  // [starts_at, blocked_ends_at) overlaps the day's availability
+  // window. Filtering only on starts_at would miss a late
+  // previous-day appointment whose buffer extends into the day we
+  // are searching, leaving its trailing buffer unenforced in the UI.
   const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
   const { data: appts } = await supabase
@@ -120,8 +123,8 @@ export async function getAvailableSlots(
     .select("starts_at, blocked_ends_at")
     .eq("studio_id", studio.id)
     .eq("status", "confirmed")
-    .gte("starts_at", windowStartUtc.toISOString())
-    .lt("starts_at", windowEndUtc.toISOString());
+    .lt("starts_at", windowEndUtc.toISOString())
+    .gt("blocked_ends_at", windowStartUtc.toISOString());
 
   // Each existing appointment occupies its protected interval
   // [starts_at, blocked_ends_at), where blocked_ends_at is
