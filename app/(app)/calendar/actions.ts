@@ -18,10 +18,13 @@ import {
   sendBookingNotificationToPractitioner,
   sendCancellationEmail,
 } from "@/lib/email/send-appointment";
+import { localDateString } from "@/lib/booking/tz";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
-type BookResult = { ok: true; appointmentId: string } | { ok: false; error: string };
+export type BookResult =
+  | { ok: true; appointmentId: string }
+  | { ok: false; error: string; code?: "slot_taken" };
 
 export async function bookAppointmentForClientAction(
   formData: FormData,
@@ -69,8 +72,10 @@ export async function bookAppointmentForClientAction(
   }
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
 
-  // Re-verify the slot is still available (race-safe).
-  const dateStr = start.toISOString().slice(0, 10);
+  // Re-verify the slot is still available (race-safe). Use the
+  // studio's local date, not the UTC date, so a late-evening booking
+  // does not look up the next day's slots.
+  const dateStr = localDateString(start, studio.timezone);
   const slots = await getAvailableSlots(
     supabase,
     {
@@ -106,6 +111,27 @@ export async function bookAppointmentForClientAction(
     .select("*")
     .single();
   if (insertErr || !created) {
+    // sqlstate 23P01 = exclusion_violation from the
+    // no_overlapping_active_appointments_per_studio constraint. The
+    // structured code lets the calendar UI surface a toast and
+    // refresh the grid without parsing the message string.
+    if (insertErr?.code === "23P01") {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_collision",
+          studioId: studio.id,
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          source: "in_app_calendar",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "That slot was just taken. Refresh and pick another time.",
+        code: "slot_taken",
+      };
+    }
     return { ok: false, error: insertErr?.message ?? "Insert failed." };
   }
 

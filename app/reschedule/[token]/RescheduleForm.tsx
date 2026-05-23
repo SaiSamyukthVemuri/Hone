@@ -14,13 +14,20 @@ type Props = {
   studioTimezone: string;
 };
 
-function todayLocal(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+// Today in the studio's local calendar, not the visitor's UTC date.
+// A reschedule page opened at 10pm Toronto must default to today's
+// remaining slots, not tomorrow's.
+function todayInStudio(tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
-export function RescheduleForm({ token }: Props) {
-  const [date, setDate] = useState(todayLocal());
+export function RescheduleForm({ token, studioTimezone }: Props) {
+  const [date, setDate] = useState(() => todayInStudio(studioTimezone));
   const [slots, setSlots] = useState<Slot[]>([]);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [error, setError] = useState<string | null>(null);

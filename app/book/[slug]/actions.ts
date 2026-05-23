@@ -6,6 +6,7 @@ import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import { localDateString } from "@/lib/booking/tz";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -57,7 +58,7 @@ export async function fetchPublicSlotsAction(params: {
 
 export type PublicBookResult =
   | { ok: true; appointmentId: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: "slot_taken" };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
   const slug = trimmed(formData.get("slug"));
@@ -93,8 +94,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .maybeSingle();
   if (!service) return { ok: false, error: "Service no longer available." };
 
-  // Re-verify slot is free.
-  const dateStr = start.toISOString().slice(0, 10);
+  // Re-verify slot is free. Use the studio's local date, not the
+  // UTC date: a 10pm Toronto booking would otherwise look up slots
+  // for the next calendar day.
+  const dateStr = localDateString(start, studio.timezone);
   const slots = await getAvailableSlots(
     admin,
     {
@@ -178,6 +181,28 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .select("*")
     .single();
   if (insertErr || !created) {
+    // sqlstate 23P01 = exclusion_violation. Fires when the
+    // no_overlapping_active_appointments_per_studio constraint
+    // catches a race the UI-layer slot check could not. A rejected
+    // booking must NOT trigger a confirmation email, so we return
+    // before any send path.
+    if (insertErr?.code === "23P01") {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_collision",
+          studioId: studio.id,
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          source: "public_booking",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "This slot was just booked by someone else. Please pick another time.",
+        code: "slot_taken",
+      };
+    }
     return { ok: false, error: insertErr?.message ?? "Failed to book." };
   }
 

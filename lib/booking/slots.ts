@@ -35,7 +35,11 @@ type OverrideRow = {
 
 type AppointmentRow = {
   starts_at: string;
-  ends_at: string;
+  // Migration 0029: trailing-only buffered end stored on each row by
+  // the snapshot_appointment_buffer trigger. We read this directly
+  // instead of expanding starts_at/ends_at in JS so the UI conflict
+  // rule matches the DB exclusion constraint exactly.
+  blocked_ends_at: string;
 };
 
 type BlockoutRow = {
@@ -107,21 +111,28 @@ export async function getAvailableSlots(
 
   if (!isOpen || !openTime || !closeTime) return [];
 
-  // Load same-day confirmed appointments. Filter by a generous UTC window
-  // (the studio could span across UTC midnight).
+  // Load every confirmed appointment whose protected interval
+  // [starts_at, blocked_ends_at) overlaps the day's availability
+  // window. Filtering only on starts_at would miss a late
+  // previous-day appointment whose buffer extends into the day we
+  // are searching, leaving its trailing buffer unenforced in the UI.
   const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
   const { data: appts } = await supabase
     .from("appointments")
-    .select("starts_at, ends_at")
+    .select("starts_at, blocked_ends_at")
     .eq("studio_id", studio.id)
     .eq("status", "confirmed")
-    .gte("starts_at", windowStartUtc.toISOString())
-    .lt("starts_at", windowEndUtc.toISOString());
+    .lt("starts_at", windowEndUtc.toISOString())
+    .gt("blocked_ends_at", windowStartUtc.toISOString());
 
+  // Each existing appointment occupies its protected interval
+  // [starts_at, blocked_ends_at), where blocked_ends_at is
+  // ends_at + the studio's buffer at booking time (snapshotted by
+  // the DB trigger in migration 0029).
   const conflicts = ((appts ?? []) as AppointmentRow[]).map((a) => ({
-    start: new Date(a.starts_at).getTime() - buffer * 60_000,
-    end: new Date(a.ends_at).getTime() + buffer * 60_000,
+    start: new Date(a.starts_at).getTime(),
+    end: new Date(a.blocked_ends_at).getTime(),
   }));
 
   const openMin = localMinutesSinceMidnight(openTime);
@@ -133,10 +144,14 @@ export async function getAvailableSlots(
     const slotStart = utcInstantFromLocal(dateStr, startLabel, tz);
     const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
     const slotStartMs = slotStart.getTime();
-    const slotEndMs = slotEnd.getTime();
+    // If this slot were booked now, its protected interval would be
+    // [slotStart, slotEnd + currentBuffer). Match the DB exclusion
+    // rule: candidate's protected interval must not overlap any
+    // existing protected interval. Half-open touching is allowed.
+    const slotProtectedEndMs = slotEnd.getTime() + buffer * 60_000;
 
     const overlap = conflicts.some(
-      (c) => slotStartMs < c.end && slotEndMs > c.start,
+      (c) => slotStartMs < c.end && slotProtectedEndMs > c.start,
     );
     if (overlap) continue;
 
