@@ -22,20 +22,19 @@
 -- now so Phase 2 can begin inserting occurrences without a schema
 -- change. No occurrences are generated in this migration.
 --
--- TWO ADMIN OPERATIONS retroactively touch existing reservations:
+-- ONE ADMIN OPERATION retroactively touches existing reservations:
 --   - studios.timezone change rebuilds full_day_blockout reservation
 --     rows. Appointment- and timed-block-derived reservations are
 --     not touched because their stored intervals are absolute UTC.
---   - studios.buffer_minutes change recomputes appointment-derived
---     buffer snapshots and blocked_ends_at, which cascades through
---     the appointment AFTER trigger and re-mirrors the shadow rows.
--- Either operation aborts the studios UPDATE entirely if a
--- recomputed reservation would collide with another row.
+-- The operation aborts the studios UPDATE entirely if a recomputed
+-- reservation would collide with another row.
 --
--- The 0029 snapshot trigger gains an additive bypass: when a
--- session-scoped flag is set, the trigger trusts NEW's explicit
--- buffer_minutes_snapshot and blocked_ends_at values rather than
--- preserving OLD. Default behavior with no flag is unchanged.
+-- studios.buffer_minutes changes apply to NEW BOOKINGS ONLY. Migration
+-- 0029's snapshot trigger preserves each existing appointment's
+-- buffer_minutes_snapshot and blocked_ends_at across non-time edits,
+-- which this migration does not weaken or rewrite. The studios
+-- buffer setting is a default for future appointments; existing
+-- rows keep the buffer they were booked under.
 --
 -- Install procedure:
 --   1. Outside the txn, run Block 0 read-only diagnostics. ALL three
@@ -194,54 +193,14 @@ create policy "studio_calendar_reservations_member_select"
 -- Step 3: trigger functions. All SECURITY DEFINER, hardened
 -- search_path = pg_catalog, pg_temp, with every non-pg_catalog
 -- reference schema-qualified as public.* .
+--
+-- Migration 0029's public.snapshot_appointment_buffer() is NOT
+-- redefined here. Existing appointments retain the
+-- buffer_minutes_snapshot they were booked with; studios.buffer_minutes
+-- changes apply to new bookings only.
 -- ---------------------------------------------------------------------------
 
--- 3a. Re-define the 0029 snapshot trigger with an ADDITIVE bypass
--- branch. When app.bypass_appointment_buffer_snapshot = 'on',
--- the trigger trusts NEW's explicit values instead of preserving
--- OLD. This lets the studios buffer-change trigger (3e) issue
--- direct UPDATE on appointments to retroactively resync snapshots.
--- Default behavior (flag unset) is UNCHANGED from migration 0029.
-create or replace function public.snapshot_appointment_buffer()
-returns trigger
-language plpgsql
-security definer
-set search_path = pg_catalog, pg_temp
-as $$
-declare
-  v_buffer integer;
-begin
-  if current_setting('app.bypass_appointment_buffer_snapshot', true) = 'on' then
-    return new;
-  end if;
-
-  if tg_op = 'UPDATE'
-     and new.studio_id = old.studio_id
-     and new.starts_at = old.starts_at
-     and new.ends_at   = old.ends_at
-     and old.buffer_minutes_snapshot is not null
-     and old.blocked_ends_at is not null
-  then
-    new.buffer_minutes_snapshot := old.buffer_minutes_snapshot;
-    new.blocked_ends_at := old.blocked_ends_at;
-    return new;
-  end if;
-
-  select coalesce(s.buffer_minutes, 0) into v_buffer
-  from public.studios s
-  where s.id = new.studio_id;
-
-  if v_buffer is null then
-    v_buffer := 0;
-  end if;
-
-  new.buffer_minutes_snapshot := v_buffer;
-  new.blocked_ends_at := new.ends_at + make_interval(mins => v_buffer);
-  return new;
-end;
-$$;
-
--- 3b. Appointments -> reservations mirror.
+-- 3a. Appointments -> reservations mirror.
 create or replace function public.sync_appointment_to_calendar_reservation()
 returns trigger
 language plpgsql
@@ -274,7 +233,7 @@ begin
 end;
 $$;
 
--- 3c. Timed blocks -> reservations mirror.
+-- 3b. Timed blocks -> reservations mirror.
 create or replace function public.sync_timed_block_to_calendar_reservation()
 returns trigger
 language plpgsql
@@ -302,7 +261,7 @@ begin
 end;
 $$;
 
--- 3d. Full-day blockouts -> reservations mirror. UTC instants
+-- 3c. Full-day blockouts -> reservations mirror. UTC instants
 -- derived from studio.timezone at write time.
 create or replace function public.sync_blockout_to_calendar_reservation()
 returns trigger
@@ -342,7 +301,7 @@ begin
 end;
 $$;
 
--- 3e. Studio timezone change -> rebuild full_day_blockout
+-- 3d. Studio timezone change -> rebuild full_day_blockout
 -- reservations only. Appointment- and timed-block-derived
 -- reservation rows store absolute UTC instants and are NOT touched.
 create or replace function public.rebuild_blockout_reservations_for_studio_tz()
@@ -366,47 +325,6 @@ begin
     and r.source_id = b.id
     and r.studio_id = new.id;
 
-  return new;
-end;
-$$;
-
--- 3f. Studio buffer_minutes change -> retroactively resync confirmed
--- appointments' buffer_minutes_snapshot and blocked_ends_at. Cascades
--- through the appointments AFTER trigger (3b) which re-upserts each
--- shadow row with the new interval. If any new interval collides with
--- another reservation, the shadow's exclusion raises sqlstate 23P01
--- and the entire studios UPDATE rolls back.
---
--- The bypass flag is set with is_local=true so it lives only for
--- this transaction; commit or rollback resets it.
-create or replace function public.resync_appointments_on_studio_buffer_change()
-returns trigger
-language plpgsql
-security definer
-set search_path = pg_catalog, pg_temp
-as $$
-declare
-  v_new_buffer integer := coalesce(new.buffer_minutes, 0);
-begin
-  if new.buffer_minutes is not distinct from old.buffer_minutes then
-    return new;
-  end if;
-
-  perform set_config('app.bypass_appointment_buffer_snapshot', 'on', true);
-
-  begin
-    update public.appointments
-    set buffer_minutes_snapshot = v_new_buffer,
-        blocked_ends_at = ends_at + make_interval(mins => v_new_buffer),
-        updated_at = now()
-    where studio_id = new.id
-      and status = 'confirmed';
-  exception when others then
-    perform set_config('app.bypass_appointment_buffer_snapshot', 'off', true);
-    raise;
-  end;
-
-  perform set_config('app.bypass_appointment_buffer_snapshot', 'off', true);
   return new;
 end;
 $$;
@@ -435,6 +353,20 @@ select b.studio_id,
        ((b.ends_on + 1)::timestamp) at time zone coalesce(s.timezone, 'America/Toronto')
 from public.studio_blockouts b
 join public.studios s on s.id = b.studio_id
+on conflict on constraint studio_calendar_reservations_source_unique
+do update set
+  studio_id = excluded.studio_id,
+  starts_at = excluded.starts_at,
+  ends_at   = excluded.ends_at;
+
+-- studio_timed_blocks is new in this migration and is empty on first
+-- install. This INSERT is a no-op the first time and a self-repair
+-- on reruns: any row that exists in studio_timed_blocks but is
+-- missing from or stale in studio_calendar_reservations gets fixed.
+insert into public.studio_calendar_reservations
+  (studio_id, source_kind, source_id, starts_at, ends_at)
+select tb.studio_id, 'timed_block', tb.id, tb.starts_at, tb.ends_at
+from public.studio_timed_blocks tb
 on conflict on constraint studio_calendar_reservations_source_unique
 do update set
   studio_id = excluded.studio_id,
@@ -578,6 +510,35 @@ begin
   ) then
     raise exception 'Backfill parity failed: full_day_blockout reservation interval drift';
   end if;
+
+  -- Timed blocks: reservation must equal raw (starts_at, ends_at).
+  -- No-op on first install (table empty). On reruns, catches any
+  -- drift between studio_timed_blocks and its mirrored shadow rows.
+  if exists (
+    select 1
+    from public.studio_calendar_reservations r
+    join public.studio_timed_blocks tb on tb.id = r.source_id
+    where r.source_kind = 'timed_block'
+      and (r.starts_at <> tb.starts_at or r.ends_at <> tb.ends_at)
+  ) then
+    raise exception 'Backfill parity failed: timed_block reservation interval drift';
+  end if;
+end $$;
+
+-- 5h. Parity: every timed block has a reservation row. No-op on
+-- first install (table is empty). On reruns, catches missing
+-- mirrors and forces a re-run after manual repair.
+do $$
+begin
+  if exists (
+    select 1 from public.studio_timed_blocks tb
+    where not exists (
+      select 1 from public.studio_calendar_reservations r
+      where r.source_kind = 'timed_block' and r.source_id = tb.id
+    )
+  ) then
+    raise exception 'Backfill parity failed: timed_block missing reservation';
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -633,11 +594,9 @@ create or replace trigger studios_rebuild_blockout_reservations_on_tz_change_trg
   for each row
   execute function public.rebuild_blockout_reservations_for_studio_tz();
 
-create or replace trigger studios_resync_appointments_on_buffer_change_trg
-  after update of buffer_minutes
-  on public.studios
-  for each row
-  execute function public.resync_appointments_on_studio_buffer_change();
+-- studios.buffer_minutes has NO mirror trigger. Existing appointments
+-- keep their migration 0029 snapshot; the studio setting is the
+-- default for future bookings only.
 
 -- ---------------------------------------------------------------------------
 -- Step 8: revoke direct execute on every trigger function. They run
@@ -659,9 +618,5 @@ revoke execute on function public.sync_blockout_to_calendar_reservation() from a
 revoke execute on function public.rebuild_blockout_reservations_for_studio_tz() from public;
 revoke execute on function public.rebuild_blockout_reservations_for_studio_tz() from anon;
 revoke execute on function public.rebuild_blockout_reservations_for_studio_tz() from authenticated;
-
-revoke execute on function public.resync_appointments_on_studio_buffer_change() from public;
-revoke execute on function public.resync_appointments_on_studio_buffer_change() from anon;
-revoke execute on function public.resync_appointments_on_studio_buffer_change() from authenticated;
 
 commit;
