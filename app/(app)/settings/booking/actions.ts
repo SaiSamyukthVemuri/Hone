@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -56,8 +57,10 @@ export async function updateStudioBookingPrefsAction(
   if (defaultDuration < 5 || defaultDuration > 480) {
     throw new Error("Default duration must be between 5 and 480 minutes.");
   }
-  if (buffer < 0 || buffer > 240) {
-    throw new Error("Buffer must be between 0 and 240 minutes.");
+  if (!BUFFER_PRESET_MINUTES.includes(buffer)) {
+    throw new Error(
+      `Buffer must be one of: ${BUFFER_PRESET_MINUTES.join(", ")} minutes.`,
+    );
   }
 
   const supabase = await createClient();

@@ -1,6 +1,13 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { updateStudioBookingPrefsAction } from "./actions";
 import { BookingLinkCard } from "./BookingLinkCard";
+
+function bufferOptionLabel(minutes: number): string {
+  if (minutes === 0) return "No buffer";
+  if (minutes === 15) return "15 minutes (Recommended)";
+  return `${minutes} minutes`;
+}
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
@@ -76,16 +83,29 @@ export default async function BookingSettingsPage() {
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Buffer (min)</span>
-            <input
+            <span className="text-sm font-medium">
+              Time between appointments
+            </span>
+            <select
               name="buffer_minutes"
-              type="number"
-              min={0}
-              max={240}
-              step={5}
-              defaultValue={studio.buffer_minutes}
+              defaultValue={String(studio.buffer_minutes)}
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-            />
+            >
+              {!BUFFER_PRESET_MINUTES.includes(studio.buffer_minutes) && (
+                <option value={String(studio.buffer_minutes)}>
+                  {studio.buffer_minutes} minutes (current, not a preset)
+                </option>
+              )}
+              {BUFFER_PRESET_MINUTES.map((m) => (
+                <option key={m} value={String(m)}>
+                  {bufferOptionLabel(m)}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-neutral-500">
+              Automatically blocks time after each appointment for cleanup,
+              notes, and preparation. Changes apply to new bookings only.
+            </span>
           </label>
         </div>
 
