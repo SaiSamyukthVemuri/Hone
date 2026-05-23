@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import type { Practitioner, Studio } from "@/lib/types/database";
 
 function trimmed(value: FormDataEntryValue | null): string {
@@ -256,6 +256,14 @@ export async function createTimedBlockAction(
   if (!dateStr || !startLocal || !endLocal) {
     throw new Error("Date and start/end times are required.");
   }
+  // Server-side guard: the date-input min attribute can be bypassed
+  // by a tampered request. The /settings/availability list only
+  // surfaces current-and-future blocks, so a backdated row would
+  // disappear from view on save.
+  const todayLocal = todayInTz(studio.timezone);
+  if (dateStr < todayLocal) {
+    throw new Error("Blocked time cannot be created in the past.");
+  }
   if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
     throw new Error("Times must be in HH:MM format.");
   }
@@ -308,6 +316,14 @@ export async function updateTimedBlockAction(
   if (!id) throw new Error("Missing block id.");
   if (!dateStr || !startLocal || !endLocal) {
     throw new Error("Date and start/end times are required.");
+  }
+  // Server-side guard: the date-input min attribute can be bypassed
+  // by a tampered request. The /settings/availability list only
+  // surfaces current-and-future blocks, so a backdated row would
+  // disappear from view on save.
+  const todayLocal = todayInTz(studio.timezone);
+  if (dateStr < todayLocal) {
+    throw new Error("Blocked time cannot be created in the past.");
   }
   if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
     throw new Error("Times must be in HH:MM format.");
