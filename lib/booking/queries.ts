@@ -7,6 +7,8 @@ import type {
   StudioAvailabilityDefault,
   StudioAvailabilityOverride,
   StudioBlockout,
+  StudioRecurringBreakOccurrence,
+  StudioRecurringBreakRule,
   StudioTimedBlock,
 } from "@/lib/types/database";
 
@@ -118,6 +120,57 @@ export async function getUpcomingTimedBlocks(
   if (error)
     throw new Error(`Failed to load timed blocks: ${error.message}`);
   return (data ?? []) as StudioTimedBlock[];
+}
+
+// All recurring-break rules for a studio (active + inactive), ordered
+// by created_at. Used by /settings/availability to render the rule
+// list and the edit form. Member SELECT allowed by RLS; owner-only
+// writes flow through SECURITY DEFINER RPCs.
+export async function getRecurringBreakRules(
+  studioId: string,
+): Promise<StudioRecurringBreakRule[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_recurring_break_rules")
+    .select("*")
+    .eq("studio_id", studioId)
+    .order("created_at");
+  if (error)
+    throw new Error(`Failed to load recurring breaks: ${error.message}`);
+  return (data ?? []) as StudioRecurringBreakRule[];
+}
+
+// Recurring-break occurrences whose interval overlaps a UTC window.
+// Joins to the parent rule for the display label; orphan rows
+// (rule_id NULL after a rule delete) come back with rule = null and
+// the UI renders a generic "Break" label.
+export type RecurringBreakOccurrenceWithRule =
+  StudioRecurringBreakOccurrence & {
+    rule: { label: string } | null;
+  };
+
+export async function getRecurringBreakOccurrencesForRange(
+  studioId: string,
+  startIso: string,
+  endIso: string,
+): Promise<RecurringBreakOccurrenceWithRule[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_recurring_break_occurrences")
+    .select("*, rule:studio_recurring_break_rules(label)")
+    .eq("studio_id", studioId)
+    .lt("starts_at", endIso)
+    .gt("ends_at", startIso)
+    .order("starts_at");
+  if (error)
+    throw new Error(`Failed to load recurring break occurrences: ${error.message}`);
+  type Raw = StudioRecurringBreakOccurrence & {
+    rule: { label: string } | { label: string }[] | null;
+  };
+  return ((data ?? []) as Raw[]).map((row) => ({
+    ...row,
+    rule: Array.isArray(row.rule) ? (row.rule[0] ?? null) : row.rule,
+  }));
 }
 
 // Appointment shape returned by getAppointmentsForRange. Includes a small

@@ -3,8 +3,10 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getAppointmentsForRange,
   getBlockouts,
+  getRecurringBreakOccurrencesForRange,
   getTimedBlocksForRange,
   type AppointmentWithPractitionerColor,
+  type RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
@@ -43,11 +45,17 @@ export default async function CalendarPage({
   const startUtc = utcInstantFromLocal(weekStart, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(addDays(weekStart, 7), "00:00", studio.timezone);
 
-  const [appointments, blockouts, timedBlocks] = await Promise.all([
-    getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
-    getBlockouts(studio.id),
-    getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
-  ]);
+  const [appointments, blockouts, timedBlocks, recurringOccurrences] =
+    await Promise.all([
+      getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+      getBlockouts(studio.id),
+      getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+      getRecurringBreakOccurrencesForRange(
+        studio.id,
+        startUtc.toISOString(),
+        endUtc.toISOString(),
+      ),
+    ]);
 
   const prevWeek = addDays(weekStart, -7);
   const nextWeek = addDays(weekStart, 7);
@@ -80,6 +88,15 @@ export default async function CalendarPage({
     const arr = timedBlocksByDate.get(localDate) ?? [];
     arr.push(tb);
     timedBlocksByDate.set(localDate, arr);
+  }
+
+  // Same grouping for recurring break occurrences.
+  const recurringByDate = new Map<string, RecurringBreakOccurrenceWithRule[]>();
+  for (const occ of recurringOccurrences) {
+    const localDate = localDateString(new Date(occ.starts_at), studio.timezone);
+    const arr = recurringByDate.get(localDate) ?? [];
+    arr.push(occ);
+    recurringByDate.set(localDate, arr);
   }
 
   return (
@@ -150,6 +167,7 @@ export default async function CalendarPage({
                 key={date}
                 appts={byDate.get(date) ?? []}
                 timedBlocks={timedBlocksByDate.get(date) ?? []}
+                recurringBreaks={recurringByDate.get(date) ?? []}
                 blocked={blockoutDates.has(date)}
                 tz={studio.timezone}
               />
@@ -177,14 +195,23 @@ const TIMED_BLOCK_LABEL: Record<string, string> = {
   other: "Unavailable",
 };
 
+const RECURRING_BREAK_LABEL: Record<string, string> = {
+  lunch: "Lunch",
+  break: "Break",
+  admin: "Admin",
+  other: "Break",
+};
+
 function DayColumn({
   appts,
   timedBlocks,
+  recurringBreaks,
   blocked,
   tz,
 }: {
   appts: AppointmentWithPractitionerColor[];
   timedBlocks: StudioTimedBlock[];
+  recurringBreaks: RecurringBreakOccurrenceWithRule[];
   blocked: boolean;
   tz: string;
 }) {
@@ -219,6 +246,43 @@ function DayColumn({
           </div>
         </div>
       )}
+      {recurringBreaks.map((occ) => {
+        const start = new Date(occ.starts_at);
+        const end = new Date(occ.ends_at);
+        const localTime = localTimeString(start, tz);
+        const [h, m] = localTime.split(":").map(Number);
+        const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
+        if (
+          startMinutesFromGridTop < 0 ||
+          startMinutesFromGridTop >= VISIBLE_MINUTES
+        ) {
+          return null;
+        }
+        const durationMinutes = Math.max(
+          5,
+          Math.round((end.getTime() - start.getTime()) / 60_000),
+        );
+        const top = (startMinutesFromGridTop / ROW_MINUTES) * ROW_HEIGHT_PX;
+        const height = Math.max(
+          ROW_HEIGHT_PX - 2,
+          (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
+        );
+        const rawLabel = occ.rule?.label ?? "break";
+        const label = RECURRING_BREAK_LABEL[rawLabel] ?? "Break";
+        return (
+          <div
+            key={occ.id}
+            title={label}
+            style={{ top, height }}
+            className="absolute inset-x-1 z-[5] overflow-hidden rounded-md bg-neutral-200 px-2 py-1 text-[11px] text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+          >
+            <div className="truncate font-medium">{label}</div>
+            <div className="truncate text-[10px] opacity-80">
+              {localTime} · {durationMinutes}m
+            </div>
+          </div>
+        );
+      })}
       {timedBlocks.map((tb) => {
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);

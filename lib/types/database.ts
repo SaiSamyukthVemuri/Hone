@@ -104,6 +104,41 @@ export type StudioTimedBlock = {
   updated_at: string;
 };
 
+// Migration 0031: weekly recurring break rules + materialized
+// occurrences. Each occurrence mirrors into
+// studio_calendar_reservations with source_kind =
+// 'recurring_break_occurrence' so the unified gist exclusion
+// enforces it the same way it enforces appointments, one-off
+// blocks, and full-day blockouts.
+export type StudioRecurringBreakLabel =
+  | "lunch"
+  | "break"
+  | "admin"
+  | "other";
+
+export type StudioRecurringBreakRule = {
+  id: string;
+  studio_id: string;
+  label: StudioRecurringBreakLabel;
+  days_of_week: number[];
+  start_local_time: string;
+  end_local_time: string;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StudioRecurringBreakOccurrence = {
+  id: string;
+  rule_id: string | null;
+  studio_id: string;
+  occurrence_date: string;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+};
+
 // Migration 0030: unified shadow table. Source_kind covers
 // appointment, timed_block, full_day_blockout, and (Phase 2)
 // recurring_break_occurrence.
