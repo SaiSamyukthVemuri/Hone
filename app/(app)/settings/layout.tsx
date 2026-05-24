@@ -22,6 +22,9 @@ export default async function SettingsLayout({
             <SettingsTab href="/settings/availability" label="Availability" />
           )}
           {isOwner && (
+            <SettingsTab href="/settings/calendar" label="Calendar" />
+          )}
+          {isOwner && (
             <SettingsTab href="/settings/services" label="Services" />
           )}
           {isOwner && <SettingsTab href="/settings/data" label="Data" />}
