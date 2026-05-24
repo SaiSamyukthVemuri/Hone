@@ -3,11 +3,13 @@ import {
   getAvailabilityDefaults,
   getBlockouts,
   getOverridesForRange,
+  getRecurringBreakRules,
   getUpcomingTimedBlocks,
 } from "@/lib/booking/queries";
 import { addDays, todayInTz } from "@/lib/booking/tz";
 import { AvailabilityClient } from "./AvailabilityClient";
 import { TimedBlocksSection } from "./TimedBlocksSection";
+import { RecurringBreaksSection } from "./RecurringBreaksSection";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
@@ -30,12 +32,14 @@ export default async function AvailabilitySettingsPage() {
   // meeting six months out and we must surface it here.
   const nowIso = new Date().toISOString();
 
-  const [defaults, overrides, blockouts, timedBlocks] = await Promise.all([
-    getAvailabilityDefaults(studio.id),
-    getOverridesForRange(studio.id, today, ninetyDaysOut),
-    getBlockouts(studio.id),
-    getUpcomingTimedBlocks(studio.id, nowIso),
-  ]);
+  const [defaults, overrides, blockouts, timedBlocks, recurringRules] =
+    await Promise.all([
+      getAvailabilityDefaults(studio.id),
+      getOverridesForRange(studio.id, today, ninetyDaysOut),
+      getBlockouts(studio.id),
+      getUpcomingTimedBlocks(studio.id, nowIso),
+      getRecurringBreakRules(studio.id),
+    ]);
 
   return (
     <section className="flex flex-col gap-10">
@@ -59,6 +63,7 @@ export default async function AvailabilitySettingsPage() {
         todayLocal={today}
         blocks={timedBlocks}
       />
+      <RecurringBreaksSection rules={recurringRules} />
     </section>
   );
 }

@@ -496,3 +496,286 @@ export async function deleteTimedBlockAction(
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
 }
+
+// -------------------------------------------------------------------------
+// Recurring break rules (migration 0031). Owner-only via RLS. The
+// rule CRUD goes through SECURITY DEFINER RPCs so the rule update,
+// future-occurrence delete, and re-materialization happen in a
+// single transaction. A 23P01 from the shadow's exclusion is looked
+// up the same way createTimedBlockAction does, so the owner sees the
+// specific conflicting time.
+// -------------------------------------------------------------------------
+
+const RECURRING_BREAK_LABELS = ["lunch", "break", "admin", "other"] as const;
+
+function parseDaysOfWeek(value: FormDataEntryValue | null): number[] {
+  // The form posts a single comma-separated string like "1,3,5".
+  const raw = trimmed(value);
+  if (!raw) return [];
+  const parts = raw.split(",").map((p) => Number(p.trim()));
+  const unique: number[] = [];
+  for (const n of parts) {
+    if (!Number.isFinite(n) || n < 0 || n > 6) return [];
+    if (!unique.includes(n)) unique.push(n);
+  }
+  unique.sort((a, b) => a - b);
+  return unique;
+}
+
+function horizonEndDateInStudioTz(tz: string): string {
+  // Mirrors lib/booking/horizon.ts BOOKING_HORIZON_DAYS = 90. Returns
+  // YYYY-MM-DD that the RPC parses as a date.
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const [y, m, d] = today.split("-").map(Number);
+  const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  noon.setUTCDate(noon.getUTCDate() + 90);
+  return `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
+}
+
+export async function createRecurringBreakRuleAction(
+  formData: FormData,
+): Promise<BlockActionResult> {
+  const { studio, practitioner } = await assertOwnerWithStudio();
+  const label = trimmed(formData.get("label")).toLowerCase();
+  const days = parseDaysOfWeek(formData.get("days_of_week"));
+  const startLocal = trimmed(formData.get("start_local"));
+  const endLocal = trimmed(formData.get("end_local"));
+  const active = trimmed(formData.get("active")) !== "false";
+
+  if (!(RECURRING_BREAK_LABELS as ReadonlyArray<string>).includes(label)) {
+    return { ok: false, error: "Invalid label." };
+  }
+  if (days.length === 0) {
+    return { ok: false, error: "Pick at least one weekday." };
+  }
+  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+    return { ok: false, error: "Times must be in HH:MM format." };
+  }
+  if (startLocal >= endLocal) {
+    return { ok: false, error: "End time must be after start time." };
+  }
+
+  const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc(
+    "create_recurring_break_rule_and_materialize",
+    {
+      p_studio_id: studio.id,
+      p_label: label,
+      p_days_of_week: days,
+      p_start_local_time: startLocal,
+      p_end_local_time: endLocal,
+      p_active: active,
+      p_created_by: practitioner.id,
+      p_horizon_end: horizonEnd,
+    },
+  );
+  if (error) {
+    if (error.code === "23P01") {
+      const message = await lookupRecurringBreakConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+      );
+      return { ok: false, error: message };
+    }
+    return { ok: false, error: `Failed to add recurring break: ${error.message}` };
+  }
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+export async function updateRecurringBreakRuleAction(
+  formData: FormData,
+): Promise<BlockActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const id = trimmed(formData.get("id"));
+  const label = trimmed(formData.get("label")).toLowerCase();
+  const days = parseDaysOfWeek(formData.get("days_of_week"));
+  const startLocal = trimmed(formData.get("start_local"));
+  const endLocal = trimmed(formData.get("end_local"));
+  const active = trimmed(formData.get("active")) !== "false";
+
+  if (!id) return { ok: false, error: "Missing rule id." };
+  if (!(RECURRING_BREAK_LABELS as ReadonlyArray<string>).includes(label)) {
+    return { ok: false, error: "Invalid label." };
+  }
+  if (days.length === 0) {
+    return { ok: false, error: "Pick at least one weekday." };
+  }
+  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+    return { ok: false, error: "Times must be in HH:MM format." };
+  }
+  if (startLocal >= endLocal) {
+    return { ok: false, error: "End time must be after start time." };
+  }
+
+  const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc(
+    "update_recurring_break_rule_and_rematerialize",
+    {
+      p_rule_id: id,
+      p_label: label,
+      p_days_of_week: days,
+      p_start_local_time: startLocal,
+      p_end_local_time: endLocal,
+      p_active: active,
+      p_horizon_end: horizonEnd,
+    },
+  );
+  if (error) {
+    if (error.code === "23P01") {
+      const message = await lookupRecurringBreakConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+      );
+      return { ok: false, error: message };
+    }
+    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+  }
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+export async function toggleRecurringBreakRuleActiveAction(
+  formData: FormData,
+): Promise<BlockActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const id = trimmed(formData.get("id"));
+  const active = trimmed(formData.get("active")) === "true";
+  if (!id) return { ok: false, error: "Missing rule id." };
+
+  const supabase = await createClient();
+  // Fetch current rule values so we can call the update RPC without
+  // re-typing them.
+  const { data: rule, error: lookupErr } = await supabase
+    .from("studio_recurring_break_rules")
+    .select("label, days_of_week, start_local_time, end_local_time")
+    .eq("id", id)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (lookupErr) return { ok: false, error: lookupErr.message };
+  if (!rule) return { ok: false, error: "Rule not found." };
+
+  const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
+  const { error } = await supabase.rpc(
+    "update_recurring_break_rule_and_rematerialize",
+    {
+      p_rule_id: id,
+      p_label: rule.label,
+      p_days_of_week: rule.days_of_week,
+      p_start_local_time: rule.start_local_time,
+      p_end_local_time: rule.end_local_time,
+      p_active: active,
+      p_horizon_end: horizonEnd,
+    },
+  );
+  if (error) {
+    if (error.code === "23P01") {
+      const message = await lookupRecurringBreakConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+      );
+      return { ok: false, error: message };
+    }
+    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+  }
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+export async function deleteRecurringBreakRuleAction(
+  formData: FormData,
+): Promise<BlockActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const id = trimmed(formData.get("id"));
+  if (!id) return { ok: false, error: "Missing rule id." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_recurring_break_rule", {
+    p_rule_id: id,
+  });
+  if (error) {
+    return { ok: false, error: `Failed to delete recurring break: ${error.message}` };
+  }
+  void studio.id;
+  revalidatePath("/settings/availability");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+// When a recurring-break RPC raises 23P01, the materialize loop
+// failed on some specific occurrence date. We don't have the
+// failing date directly (Postgres surfaces it inside the error
+// message but not always parseably), so we look up the first
+// reservation row inside the horizon that does NOT belong to this
+// studio's recurring breaks, and report it. The same source_kind
+// taxonomy from migration 0030 applies.
+async function lookupRecurringBreakConflictMessage(
+  supabase: SupabaseClient,
+  studioId: string,
+  studioTimezone: string,
+): Promise<string> {
+  const horizonEnd = horizonEndDateInStudioTz(studioTimezone);
+  const nowIso = new Date().toISOString();
+  const horizonEndUtc = new Date(`${horizonEnd}T00:00:00Z`).toISOString();
+
+  const { data } = await supabase
+    .from("studio_calendar_reservations")
+    .select("source_kind, source_id, starts_at, ends_at")
+    .eq("studio_id", studioId)
+    .gt("ends_at", nowIso)
+    .lt("starts_at", horizonEndUtc)
+    .order("starts_at")
+    .limit(20);
+
+  if (!data || data.length === 0) {
+    return "This recurring break overlaps an existing appointment or blocked period. Resolve the conflict first.";
+  }
+  // The conflict could be against any non-recurring-break source.
+  // Find the first non-self-source row.
+  const conflict = data.find(
+    (r) => r.source_kind !== "recurring_break_occurrence",
+  );
+  if (!conflict) {
+    return "This recurring break overlaps an existing appointment or blocked period. Resolve the conflict first.";
+  }
+
+  const startFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: studioTimezone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(conflict.starts_at));
+  const endFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: studioTimezone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(conflict.ends_at));
+
+  if (conflict.source_kind === "appointment") {
+    return `This recurring break overlaps an appointment on ${startFmt} to ${endFmt}, including turnaround time. Reschedule that appointment first or pick a different time.`;
+  }
+  if (conflict.source_kind === "timed_block") {
+    return `This recurring break overlaps an existing blocked period on ${startFmt} to ${endFmt}. Edit or remove that block first.`;
+  }
+  if (conflict.source_kind === "full_day_blockout") {
+    return `This recurring break overlaps a full-day blockout starting ${startFmt}. Remove the blockout or pick a different day.`;
+  }
+  return "This recurring break overlaps an existing calendar item. Resolve the conflict first.";
+}
