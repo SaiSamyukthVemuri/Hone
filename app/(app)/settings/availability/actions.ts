@@ -1,10 +1,84 @@
 "use server";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import type { Practitioner, Studio } from "@/lib/types/database";
+
+// Typed result used by every action that can hit the unified shadow's
+// gist exclusion (sqlstate 23P01). Owner-facing UI displays
+// result.error inline rather than relying on a thrown Server Action
+// exception, which Next.js production masks to a generic message.
+export type BlockActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+const FALLBACK_CONFLICT_MESSAGE =
+  "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
+
+function formatTimeInTz(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(iso));
+}
+
+// Looks up the soonest reservation row that overlaps the requested
+// interval and returns an owner-facing message. Does NOT expose
+// client names, service details, private notes, or block categories.
+async function lookupConflictMessage(
+  supabase: SupabaseClient,
+  studioId: string,
+  studioTimezone: string,
+  startsAtIso: string,
+  endsAtIso: string,
+  exclude?: { source_kind: string; source_id: string },
+): Promise<string> {
+  const { data } = await supabase
+    .from("studio_calendar_reservations")
+    .select("source_kind, source_id, starts_at, ends_at")
+    .eq("studio_id", studioId)
+    .lt("starts_at", endsAtIso)
+    .gt("ends_at", startsAtIso)
+    .order("starts_at")
+    .limit(5);
+
+  if (!data || data.length === 0) {
+    return FALLBACK_CONFLICT_MESSAGE;
+  }
+
+  const candidates = exclude
+    ? data.filter(
+        (r) =>
+          !(
+            r.source_kind === exclude.source_kind &&
+            r.source_id === exclude.source_id
+          ),
+      )
+    : data;
+
+  if (candidates.length === 0) {
+    return FALLBACK_CONFLICT_MESSAGE;
+  }
+
+  const conflict = candidates[0];
+  if (conflict.source_kind === "appointment") {
+    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
+    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
+    return `You can't block this time because an appointment already reserves ${startFmt} to ${endFmt}, including turnaround time. Choose a time after ${endFmt}.`;
+  }
+  if (conflict.source_kind === "timed_block") {
+    return "This time overlaps an existing blocked period. Edit or remove the existing block first.";
+  }
+  if (conflict.source_kind === "full_day_blockout") {
+    return "This date is already unavailable because of an existing full-day blockout.";
+  }
+  return FALLBACK_CONFLICT_MESSAGE;
+}
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -167,33 +241,57 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/availability");
 }
 
-export async function createBlockoutAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+export async function createBlockoutAction(
+  formData: FormData,
+): Promise<BlockActionResult> {
+  const { studio } = await assertOwnerWithStudio();
   const starts = trimmed(formData.get("starts_on"));
   const ends = trimmed(formData.get("ends_on"));
   const reason = nullable(formData.get("reason"));
-  if (!starts || !ends) throw new Error("Both start and end dates required.");
-  if (ends < starts)
-    throw new Error("End date must be on or after start date.");
+  if (!starts || !ends) {
+    return { ok: false, error: "Both start and end dates required." };
+  }
+  if (ends < starts) {
+    return { ok: false, error: "End date must be on or after start date." };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.from("studio_blockouts").insert({
-    studio_id: studioId,
+    studio_id: studio.id,
     starts_on: starts,
     ends_on: ends,
     reason,
   });
   if (error) {
-    // 23P01: the AFTER trigger upsert into studio_calendar_reservations
-    // collided with an existing appointment, timed block, or other
-    // blockout. The blockout insert was rolled back.
     if (error.code === "23P01") {
-      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+      // Recompute the UTC range the trigger used so the lookup
+      // matches exactly. Half-open: [local midnight starts, local
+      // midnight (ends + 1)) in the studio's tz.
+      const startUtc = utcInstantFromLocal(starts, "00:00", studio.timezone);
+      const endDateStr = addDaysToIso(ends, 1);
+      const endUtc = utcInstantFromLocal(endDateStr, "00:00", studio.timezone);
+      const message = await lookupConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+        startUtc.toISOString(),
+        endUtc.toISOString(),
+      );
+      return { ok: false, error: message };
     }
-    throw new Error(`Failed to add blockout: ${error.message}`);
+    return { ok: false, error: `Failed to add blockout: ${error.message}` };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
+  return { ok: true };
+}
+
+// Internal helper: adds N days to a YYYY-MM-DD string, returns
+// YYYY-MM-DD. Uses UTC arithmetic so DST does not introduce drift.
+function addDaysToIso(dateStr: string, n: number): string {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 export async function deleteBlockoutAction(formData: FormData): Promise<void> {
@@ -229,9 +327,6 @@ const TIMED_BLOCK_CATEGORIES = [
   "other",
 ] as const;
 
-const RESERVATION_CONFLICT_MESSAGE =
-  "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
-
 function buildBlockUtcRange(
   dateStr: string,
   startLocal: string,
@@ -245,7 +340,7 @@ function buildBlockUtcRange(
 
 export async function createTimedBlockAction(
   formData: FormData,
-): Promise<void> {
+): Promise<BlockActionResult> {
   const { studio, practitioner } = await assertOwnerWithStudio();
   const dateStr = trimmed(formData.get("date"));
   const startLocal = trimmed(formData.get("start_local"));
@@ -254,26 +349,22 @@ export async function createTimedBlockAction(
   const privateNote = nullable(formData.get("private_note"));
 
   if (!dateStr || !startLocal || !endLocal) {
-    throw new Error("Date and start/end times are required.");
+    return { ok: false, error: "Date and start/end times are required." };
   }
-  // Server-side guard: the date-input min attribute can be bypassed
-  // by a tampered request. The /settings/availability list only
-  // surfaces current-and-future blocks, so a backdated row would
-  // disappear from view on save.
   const todayLocal = todayInTz(studio.timezone);
   if (dateStr < todayLocal) {
-    throw new Error("Blocked time cannot be created in the past.");
+    return { ok: false, error: "Blocked time cannot be created in the past." };
   }
   if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
-    throw new Error("Times must be in HH:MM format.");
+    return { ok: false, error: "Times must be in HH:MM format." };
   }
   if (startLocal >= endLocal) {
-    throw new Error("End time must be after start time.");
+    return { ok: false, error: "End time must be after start time." };
   }
   if (
     !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
   ) {
-    throw new Error("Invalid category.");
+    return { ok: false, error: "Invalid category." };
   }
 
   const { startsAt, endsAt } = buildBlockUtcRange(
@@ -282,14 +373,8 @@ export async function createTimedBlockAction(
     endLocal,
     studio.timezone,
   );
-  // Reject blocks whose entire interval is in the past. The
-  // local-date guard above catches yesterday and earlier; this
-  // catches "today, but the end time already passed". A block
-  // whose start has passed but whose end is still in the future
-  // (e.g. blocking the remainder of an active meeting) is
-  // intentionally allowed.
   if (new Date(endsAt).getTime() <= Date.now()) {
-    throw new Error("Blocked time must end in the future.");
+    return { ok: false, error: "Blocked time must end in the future." };
   }
 
   const supabase = await createClient();
@@ -303,17 +388,25 @@ export async function createTimedBlockAction(
   });
   if (error) {
     if (error.code === "23P01") {
-      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+      const message = await lookupConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+        startsAt,
+        endsAt,
+      );
+      return { ok: false, error: message };
     }
-    throw new Error(`Failed to add block: ${error.message}`);
+    return { ok: false, error: `Failed to add block: ${error.message}` };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
+  return { ok: true };
 }
 
 export async function updateTimedBlockAction(
   formData: FormData,
-): Promise<void> {
+): Promise<BlockActionResult> {
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   const dateStr = trimmed(formData.get("date"));
@@ -322,28 +415,24 @@ export async function updateTimedBlockAction(
   const category = trimmed(formData.get("category")).toLowerCase();
   const privateNote = nullable(formData.get("private_note"));
 
-  if (!id) throw new Error("Missing block id.");
+  if (!id) return { ok: false, error: "Missing block id." };
   if (!dateStr || !startLocal || !endLocal) {
-    throw new Error("Date and start/end times are required.");
+    return { ok: false, error: "Date and start/end times are required." };
   }
-  // Server-side guard: the date-input min attribute can be bypassed
-  // by a tampered request. The /settings/availability list only
-  // surfaces current-and-future blocks, so a backdated row would
-  // disappear from view on save.
   const todayLocal = todayInTz(studio.timezone);
   if (dateStr < todayLocal) {
-    throw new Error("Blocked time cannot be created in the past.");
+    return { ok: false, error: "Blocked time cannot be created in the past." };
   }
   if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
-    throw new Error("Times must be in HH:MM format.");
+    return { ok: false, error: "Times must be in HH:MM format." };
   }
   if (startLocal >= endLocal) {
-    throw new Error("End time must be after start time.");
+    return { ok: false, error: "End time must be after start time." };
   }
   if (
     !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
   ) {
-    throw new Error("Invalid category.");
+    return { ok: false, error: "Invalid category." };
   }
 
   const { startsAt, endsAt } = buildBlockUtcRange(
@@ -352,14 +441,8 @@ export async function updateTimedBlockAction(
     endLocal,
     studio.timezone,
   );
-  // Reject blocks whose entire interval is in the past. The
-  // local-date guard above catches yesterday and earlier; this
-  // catches "today, but the end time already passed". A block
-  // whose start has passed but whose end is still in the future
-  // (e.g. blocking the remainder of an active meeting) is
-  // intentionally allowed.
   if (new Date(endsAt).getTime() <= Date.now()) {
-    throw new Error("Blocked time must end in the future.");
+    return { ok: false, error: "Blocked time must end in the future." };
   }
 
   const supabase = await createClient();
@@ -376,12 +459,25 @@ export async function updateTimedBlockAction(
     .eq("studio_id", studio.id);
   if (error) {
     if (error.code === "23P01") {
-      throw new Error(RESERVATION_CONFLICT_MESSAGE);
+      // Exclude the block we are editing from the conflict lookup
+      // so we don't report a self-conflict. The shadow still holds
+      // this row's pre-rollback values because the UPDATE was
+      // aborted by the exclusion check.
+      const message = await lookupConflictMessage(
+        supabase,
+        studio.id,
+        studio.timezone,
+        startsAt,
+        endsAt,
+        { source_kind: "timed_block", source_id: id },
+      );
+      return { ok: false, error: message };
     }
-    throw new Error(`Failed to update block: ${error.message}`);
+    return { ok: false, error: `Failed to update block: ${error.message}` };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
+  return { ok: true };
 }
 
 export async function deleteTimedBlockAction(

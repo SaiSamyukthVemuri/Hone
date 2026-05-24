@@ -1092,7 +1092,11 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
     if (reason) fd.set("reason", reason);
     startTransition(async () => {
       try {
-        await createBlockoutAction(fd);
+        const result = await createBlockoutAction(fd);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
         onDone();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Save failed.");

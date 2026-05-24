@@ -103,19 +103,28 @@ export function TimedBlocksSection({
     fd.set("category", category);
     fd.set("private_note", privateNote);
 
+    if (editingId) {
+      fd.set("id", editingId);
+    }
     startTransition(async () => {
       try {
-        if (editingId) {
-          fd.set("id", editingId);
-          await updateTimedBlockAction(fd);
-        } else {
-          await createTimedBlockAction(fd);
+        const result = editingId
+          ? await updateTimedBlockAction(fd)
+          : await createTimedBlockAction(fd);
+        if (!result.ok) {
+          // Typed-result path: the action returned a specific
+          // owner-facing message (e.g. the appointment-overlap
+          // explanation). Show it inline rather than relying on a
+          // thrown Server Action exception, which Next.js masks
+          // to a generic error in production.
+          setError(result.error);
+          return;
         }
         resetForm();
       } catch (e) {
-        // A 23P01 conflict leaves the original row unchanged because
-        // updateTimedBlockAction's failure aborts the UPDATE. We keep
-        // the form in edit mode so the user can adjust and retry.
+        // Unexpected exception (RLS, network, etc). The
+        // expected-error paths inside the action return typed
+        // results above; anything reaching here is a true crash.
         setError(
           e instanceof Error
             ? e.message
