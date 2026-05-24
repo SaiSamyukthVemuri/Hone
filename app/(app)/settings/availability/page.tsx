@@ -3,13 +3,9 @@ import {
   getAvailabilityDefaults,
   getBlockouts,
   getOverridesForRange,
-  getRecurringBreakRules,
-  getUpcomingTimedBlocks,
 } from "@/lib/booking/queries";
 import { addDays, todayInTz } from "@/lib/booking/tz";
 import { AvailabilityClient } from "./AvailabilityClient";
-import { TimedBlocksSection } from "./TimedBlocksSection";
-import { RecurringBreaksSection } from "./RecurringBreaksSection";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
@@ -26,29 +22,20 @@ export default async function AvailabilitySettingsPage() {
   const today = todayInTz(studio.timezone);
   const ninetyDaysOut = addDays(today, 90);
 
-  // Timed blocks: load every current-and-future block across the
-  // forward horizon, ordered soonest first. The 90-day public horizon
-  // does NOT apply to owner-managed time; the owner can block a
-  // meeting six months out and we must surface it here.
-  const nowIso = new Date().toISOString();
-
-  const [defaults, overrides, blockouts, timedBlocks, recurringRules] =
-    await Promise.all([
-      getAvailabilityDefaults(studio.id),
-      getOverridesForRange(studio.id, today, ninetyDaysOut),
-      getBlockouts(studio.id),
-      getUpcomingTimedBlocks(studio.id, nowIso),
-      getRecurringBreakRules(studio.id),
-    ]);
+  const [defaults, overrides, blockouts] = await Promise.all([
+    getAvailabilityDefaults(studio.id),
+    getOverridesForRange(studio.id, today, ninetyDaysOut),
+    getBlockouts(studio.id),
+  ]);
 
   return (
-    <section className="flex flex-col gap-10">
+    <section className="flex flex-col gap-6">
       <div>
         <h2 className="text-xl font-medium">Availability</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Your weekly hours, one-off overrides, blockout dates, and time
-          blocks for lunch, meetings, and other personal time. Booking
-          preferences (slug, timezone, address) live in the Booking tab.
+          Your weekly hours, one-off overrides, and blockout dates for
+          vacations and full days off. One-off blocks and repeating breaks
+          live in the Calendar tab.
         </p>
       </div>
       <AvailabilityClient
@@ -58,12 +45,6 @@ export default async function AvailabilitySettingsPage() {
         overrides={overrides}
         blockouts={blockouts}
       />
-      <TimedBlocksSection
-        studioTimezone={studio.timezone}
-        todayLocal={today}
-        blocks={timedBlocks}
-      />
-      <RecurringBreaksSection rules={recurringRules} />
     </section>
   );
 }
