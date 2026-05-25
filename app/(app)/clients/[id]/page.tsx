@@ -172,6 +172,8 @@ export default async function ClientCheatSheetPage({
 
       {activeTab === "overview" && (
         <>
+          {/* Every-visit priorities: pinned notes first, then anything
+              that could change how today's treatment is delivered. */}
           <ClientPinnedNotesCard
             clientId={client.id}
             notes={pinnedNotes}
@@ -197,78 +199,32 @@ export default async function ClientCheatSheetPage({
             removeAction={removeClientTagAction}
           />
 
-          <section className="grid gap-6 md:grid-cols-2">
-            <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-                Pricing
-              </h2>
-          {pricing.length === 0 ? (
-            <p className="text-sm text-neutral-500">
-              No custom pricing. Studio defaults apply.
-            </p>
-          ) : (
-            <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
-              {pricing.map((p) => (
-                <li
-                  key={p.id}
-                  className="flex items-start justify-between gap-3 py-2 text-sm"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="font-medium">{p.service_name}</span>
-                      <span className="tabular-nums">
-                        {formatPrice(p.price_cents)}
-                      </span>
-                    </div>
-                    {p.notes && (
-                      <div className="text-xs text-neutral-500">{p.notes}</div>
-                    )}
-                  </div>
-                  <form action={deleteClientPricingAction}>
-                    <input type="hidden" name="id" value={p.id} />
-                    <input type="hidden" name="client_id" value={client.id} />
-                    <button
-                      type="submit"
-                      aria-label={`Delete ${p.service_name} pricing`}
-                      className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-                    >
-                      ✕
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-            <AddPricingForm
-              clientId={client.id}
-              action={addClientPricingAction}
-            />
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Skin
-          </h2>
-          <dl className="mt-3 flex flex-col gap-2 text-sm">
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-neutral-500">Fitzpatrick</dt>
-              <dd className="font-medium">
-                {fitzpatrickLabel(client.fitzpatrick_type)}
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-neutral-500">Date of birth</dt>
-              <dd className="font-medium">{client.date_of_birth ?? "Not set"}</dd>
-            </div>
-          </dl>
-          {client.skin_notes && (
-            <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-              {client.skin_notes}
-            </p>
-          )}
-            </div>
+          {/* Skin is its own card now (was previously grid-paired with
+              Pricing). Skin context + Fitzpatrick belong with clinical
+              caution; billing rates belong in their own footer card. */}
+          <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Skin
+            </h2>
+            <dl className="mt-3 flex flex-col gap-2 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">Fitzpatrick</dt>
+                <dd className="font-medium">
+                  {fitzpatrickLabel(client.fitzpatrick_type)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">Date of birth</dt>
+                <dd className="font-medium">
+                  {client.date_of_birth ?? "Not set"}
+                </dd>
+              </div>
+            </dl>
+            {client.skin_notes && (
+              <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                {client.skin_notes}
+              </p>
+            )}
           </section>
 
           {hasEmergencyContact && (
@@ -297,6 +253,59 @@ export default async function ClientCheatSheetPage({
               </p>
             </section>
           )}
+
+          {/* Pricing moved to the end of Overview — it's billing, not
+              clinical caution. Same fields, same actions (unchanged),
+              same delete button; only the surrounding section markup
+              changed. */}
+          <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Pricing
+            </h2>
+            {pricing.length === 0 ? (
+              <p className="text-sm text-neutral-500">
+                No custom pricing. Studio defaults apply.
+              </p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
+                {pricing.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex items-start justify-between gap-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="font-medium">{p.service_name}</span>
+                        <span className="tabular-nums">
+                          {formatPrice(p.price_cents)}
+                        </span>
+                      </div>
+                      {p.notes && (
+                        <div className="text-xs text-neutral-500">{p.notes}</div>
+                      )}
+                    </div>
+                    <form action={deleteClientPricingAction}>
+                      <input type="hidden" name="id" value={p.id} />
+                      <input type="hidden" name="client_id" value={client.id} />
+                      <button
+                        type="submit"
+                        aria-label={`Delete ${p.service_name} pricing`}
+                        className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
+              <AddPricingForm
+                clientId={client.id}
+                action={addClientPricingAction}
+              />
+            </div>
+          </section>
         </>
       )}
 
@@ -362,22 +371,9 @@ export default async function ClientCheatSheetPage({
 
       {activeTab === "treatment" && (
         <>
-          <TreatmentTimeCard
-            clientId={client.id}
-            totals={treatmentTotals}
-            breakdown={treatmentByArea}
-            goal={treatmentGoal}
-            upsertGoalAction={upsertTreatmentGoalAction}
-          />
-
-          <TreatmentPlansCard
-            clientId={client.id}
-            plans={treatmentPlans}
-            createAction={createTreatmentPlanAction}
-            closeAction={closeTreatmentPlanAction}
-            practitionerNames={practitionerNames}
-          />
-
+          {/* 1. Last session — top of the tab. This is what the
+                practitioner reaches for between visits ("what did we
+                do last time?"). */}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">Last session</h2>
             {lastSession ? (
@@ -408,17 +404,33 @@ export default async function ClientCheatSheetPage({
                 />
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-12 text-center dark:border-neutral-700 dark:bg-neutral-900">
-                <p
-                  className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
-                  style={{ letterSpacing: "-0.01em" }}
-                >
-                  First session won&rsquo;t be long.
-                </p>
+              <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
+                No sessions logged yet for this client.
               </div>
             )}
           </section>
 
+          {/* 2. Active treatment plans — multi-session context for
+                what the next visit should focus on. */}
+          <TreatmentPlansCard
+            clientId={client.id}
+            plans={treatmentPlans}
+            createAction={createTreatmentPlanAction}
+            closeAction={closeTreatmentPlanAction}
+            practitionerNames={practitionerNames}
+          />
+
+          {/* 3. Treatment time totals + goal — progress-tracking,
+                lower priority than the immediate last-session memory. */}
+          <TreatmentTimeCard
+            clientId={client.id}
+            totals={treatmentTotals}
+            breakdown={treatmentByArea}
+            goal={treatmentGoal}
+            upsertGoalAction={upsertTreatmentGoalAction}
+          />
+
+          {/* 4. Full timeline last. */}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">All sessions</h2>
             <SessionTimeline
