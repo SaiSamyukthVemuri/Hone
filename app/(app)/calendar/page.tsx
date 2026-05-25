@@ -250,6 +250,7 @@ function DayColumn({
         const start = new Date(occ.starts_at);
         const end = new Date(occ.ends_at);
         const localTime = localTimeString(start, tz);
+        const localEndTime = localTimeString(end, tz);
         const [h, m] = localTime.split(":").map(Number);
         const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
         if (
@@ -270,23 +271,23 @@ function DayColumn({
         const rawLabel = occ.rule?.label ?? "break";
         const label = RECURRING_BREAK_LABEL[rawLabel] ?? "Break";
         return (
-          <div
+          <BlockoutCard
             key={occ.id}
+            label={label}
             title={label}
-            style={{ top, height }}
-            className="absolute inset-x-1 z-[5] overflow-hidden rounded-md bg-neutral-200 px-2 py-1 text-[11px] text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-          >
-            <div className="truncate font-medium">{label}</div>
-            <div className="truncate text-[10px] opacity-80">
-              {localTime} · {durationMinutes}m
-            </div>
-          </div>
+            startLocal={localTime}
+            endLocal={localEndTime}
+            durationMinutes={durationMinutes}
+            top={top}
+            height={height}
+          />
         );
       })}
       {timedBlocks.map((tb) => {
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);
         const localTime = localTimeString(start, tz);
+        const localEndTime = localTimeString(end, tz);
         const [h, m] = localTime.split(":").map(Number);
         const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
         if (
@@ -309,17 +310,16 @@ function DayColumn({
           ? `${label}: ${tb.private_note}`
           : label;
         return (
-          <div
+          <BlockoutCard
             key={tb.id}
+            label={label}
             title={titleNote}
-            style={{ top, height }}
-            className="absolute inset-x-1 z-[5] overflow-hidden rounded-md bg-neutral-200 px-2 py-1 text-[11px] text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-          >
-            <div className="truncate font-medium">{label}</div>
-            <div className="truncate text-[10px] opacity-80">
-              {localTime} · {durationMinutes}m
-            </div>
-          </div>
+            startLocal={localTime}
+            endLocal={localEndTime}
+            durationMinutes={durationMinutes}
+            top={top}
+            height={height}
+          />
         );
       })}
       {appts.map((a) => {
@@ -349,6 +349,54 @@ function DayColumn({
           </Link>
         );
       })}
+    </div>
+  );
+}
+
+// Gray blockout/break/timed-block card. The card always renders inside the
+// caller-computed (top, height) box so schedule positioning is unchanged.
+// Layout is height-adaptive: at 40px or more we can show label + time on
+// two lines with leading-tight; below that the box is too short for two
+// text-[11px] lines + px-2 py-1 padding, so a one-line compact form is
+// rendered instead ("Lunch · 12:15–12:30"). Without this branch a 15-
+// minute lunch ends up showing "Lunch" with its time clipped under the
+// card bottom — the bug this card fixes.
+function BlockoutCard({
+  label,
+  title,
+  startLocal,
+  endLocal,
+  durationMinutes,
+  top,
+  height,
+}: {
+  label: string;
+  title: string;
+  startLocal: string;
+  endLocal: string;
+  durationMinutes: number;
+  top: number;
+  height: number;
+}) {
+  const twoLine = height >= 40;
+  return (
+    <div
+      title={title}
+      style={{ top, height }}
+      className="absolute inset-x-1 z-[5] overflow-hidden rounded-md bg-neutral-200 px-2 py-1 text-[11px] leading-tight text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+    >
+      {twoLine ? (
+        <>
+          <div className="truncate font-medium">{label}</div>
+          <div className="truncate text-[10px] opacity-80">
+            {startLocal}–{endLocal} · {durationMinutes}m
+          </div>
+        </>
+      ) : (
+        <div className="truncate font-medium">
+          {label} <span className="opacity-70">· {startLocal}–{endLocal}</span>
+        </div>
+      )}
     </div>
   );
 }
