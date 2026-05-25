@@ -8,12 +8,12 @@ export default async function PaymentsSettingsPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
-      <main className="flex flex-col gap-4 p-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Payments</h1>
+      <section className="flex flex-col gap-2">
+        <h2 className="text-xl font-medium">Payments</h2>
         <p className="text-sm text-neutral-500">
           Only the studio owner can manage payments.
         </p>
-      </main>
+      </section>
     );
   }
 
@@ -47,15 +47,16 @@ export default async function PaymentsSettingsPage() {
   };
 
   return (
-    <main className="flex flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Payments</h1>
-        <p className="text-sm text-neutral-500">
-          Studio: <span className="font-medium">{studio.name}</span>
+    <section className="flex flex-col gap-8">
+      <div>
+        <h2 className="text-xl font-medium">Payments</h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Connect this studio to Stripe so it can accept payments later.
+          Public booking does not collect cards from clients yet.
         </p>
-      </header>
+      </div>
       <PaymentsSettings status={status} />
-    </main>
+    </section>
   );
 }
 
