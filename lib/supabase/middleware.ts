@@ -50,7 +50,12 @@ export async function updateSession(request: NextRequest) {
     // Cron endpoints authenticate via the CRON_SECRET Bearer header
     // checked inside each route handler; don't let middleware redirect
     // them to /login.
-    pathname.startsWith("/api/cron/");
+    pathname.startsWith("/api/cron/") ||
+    // Stripe webhook authenticates via Stripe-Signature header verified
+    // by stripe.webhooks.constructEvent inside the route handler. Exact
+    // path match — do NOT broaden to /api/stripe/* because future Stripe
+    // routes (refresh, dashboard link, etc.) should remain owner-only.
+    pathname === "/api/stripe/webhook";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
