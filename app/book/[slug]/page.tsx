@@ -66,6 +66,8 @@ export default async function PublicBookingPage({
 
           <PublicBookForm
             slug={studio.slug}
+            studioName={studio.name}
+            studioAddress={studio.address ?? null}
             services={services}
             defaultDate={today}
             minDate={horizon.minDateStr}
