@@ -175,71 +175,221 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
+  // P0-3: route the actual cancellation through the SECURITY DEFINER
+  // RPC practitioner_cancel_appointment. The RPC validates the
+  // (practitioner, studio) active-member predicate, locks the
+  // appointment row FOR UPDATE, refuses any source state other than
+  // 'confirmed' (terminal-safe), writes the audit row in the same
+  // transaction, and reads cancelled_by from the live practitioner
+  // role rather than trusting a browser-supplied value.
+  //
+  // We still need a couple of joined fields for the post-cancellation
+  // client-notification email, so we look them up AFTER the RPC has
+  // succeeded. We do NOT do any UPDATE on appointments here.
+  const { createAdminClient } = await import("@/lib/supabase/admin-server");
+  const admin = createAdminClient();
+  const { data: rpcResult, error: rpcErr } = await admin.rpc(
+    "practitioner_cancel_appointment",
+    {
+      p_appointment_id: appointmentId,
+      p_studio_id: studio.id,
+      p_practitioner_id: practitioner.id,
+      p_reason: reason,
+    },
+  );
+  if (rpcErr) {
+    console.error(
+      JSON.stringify({
+        event: "practitioner_cancel_rpc_error",
+        code: rpcErr.code,
+        message: rpcErr.message,
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not cancel this appointment." };
+  }
+  if (rpcResult === "already_cancelled") {
+    // Idempotent: the practitioner clicked twice or two tabs raced. UI
+    // refresh will show the cancelled state.
+    return { ok: true };
+  }
+  if (rpcResult === "not_authorized") {
+    return { ok: false, error: "You are not authorized to cancel this appointment." };
+  }
+  if (rpcResult !== "cancelled") {
+    // 'not_cancelable' covers terminal source states (completed,
+    // no_show) and missing rows. The UI must not present a Cancel
+    // action for those states; this is the structural backstop.
+    return {
+      ok: false,
+      error: "This appointment cannot be cancelled from its current state.",
+    };
+  }
+
+  // Look up enough data to send the client-notification email.
   const supabase = await createClient();
-  const { data: appt, error: lookupErr } = await supabase
+  const { data: appt } = await supabase
     .from("appointments")
-    .select("*")
+    .select("client_id, starts_at, service_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (lookupErr) return { ok: false, error: lookupErr.message };
-  if (!appt) return { ok: false, error: "Appointment not found." };
-  if (appt.status === "cancelled") return { ok: true };
+  if (appt) {
+    const { data: client } = await supabase
+      .from("clients")
+      .select("name, email")
+      .eq("id", appt.client_id)
+      .maybeSingle();
+    const { data: service } = appt.service_id
+      ? await supabase
+          .from("services")
+          .select("name")
+          .eq("id", appt.service_id)
+          .maybeSingle()
+      : { data: null };
 
-  const cancelledBy = practitioner.role === "owner" ? "owner" : "practitioner";
+    if (client?.email) {
+      try {
+        await sendCancellationEmail({
+          to: client.email,
+          recipientName: client.name,
+          studio,
+          serviceName: service?.name ?? "your appointment",
+          startsAt: new Date(appt.starts_at),
+          cancelledBy: practitioner.role === "owner" ? "owner" : "practitioner",
+          reason,
+          isClient: true,
+          rebookUrl: `${APP_ORIGIN}/book/${studio.slug}`,
+        });
+      } catch (err) {
+        console.error("client cancel notification email failed", err);
+      }
+    }
 
-  const { error: updateErr } = await supabase
-    .from("appointments")
-    .update({
-      status: "cancelled",
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: cancelledBy,
-      cancellation_reason: reason,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", appointmentId)
-    .eq("studio_id", studio.id);
-  if (updateErr) return { ok: false, error: updateErr.message };
+    revalidatePath(`/clients/${appt.client_id}`);
+  }
+  revalidatePath("/calendar");
+  revalidatePath("/calendar/upcoming");
+  revalidatePath(`/calendar/${appointmentId}`);
+  return { ok: true };
+}
 
-  await supabase.from("appointment_audit").insert({
-    appointment_id: appointmentId,
-    actor_type: "practitioner",
-    actor_id: practitioner.id,
-    action: "cancelled",
-    details: { reason, cancelled_by: cancelledBy },
+export type AppointmentStateActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+// P0-1 + P0-3: practitioner-initiated mark complete. Calls the
+// service-role-only RPC public.mark_appointment_complete (defined in
+// migration 0032) which:
+//   * verifies the practitioner is active in the studio,
+//   * locks the appointment FOR UPDATE,
+//   * refuses any source state other than 'confirmed',
+//   * refuses if ends_at is in the future,
+//   * writes the appointment_audit row atomically.
+export async function markAppointmentCompleteAction(
+  formData: FormData,
+): Promise<AppointmentStateActionResult> {
+  const appointmentId = formDataStr(formData, "appointment_id");
+  if (!appointmentId) return { ok: false, error: "Missing appointment id." };
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot mark appointments complete." };
+  }
+
+  const { createAdminClient } = await import("@/lib/supabase/admin-server");
+  const admin = createAdminClient();
+  const { error: rpcErr } = await admin.rpc("mark_appointment_complete", {
+    p_appointment_id: appointmentId,
+    p_studio_id: studio.id,
+    p_practitioner_id: practitioner.id,
   });
-
-  // Notify the client (with a rebook link). Best effort.
-  const { data: client } = await supabase
-    .from("clients")
-    .select("name, email")
-    .eq("id", appt.client_id)
-    .maybeSingle();
-  const { data: service } = appt.service_id
-    ? await supabase
-        .from("services")
-        .select("name")
-        .eq("id", appt.service_id)
-        .maybeSingle()
-    : { data: null };
-
-  if (client?.email) {
-    await sendCancellationEmail({
-      to: client.email,
-      recipientName: client.name,
-      studio,
-      serviceName: service?.name ?? "your appointment",
-      startsAt: new Date(appt.starts_at),
-      cancelledBy,
-      reason,
-      isClient: true,
-      rebookUrl: `${APP_ORIGIN}/book/${studio.slug}`,
-    });
+  if (rpcErr) {
+    console.error(
+      JSON.stringify({
+        event: "mark_complete_rpc_error",
+        code: rpcErr.code,
+        message: rpcErr.message,
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    // Map known structural failures to user-friendly messages.
+    if (rpcErr.message?.includes("not yet ended")) {
+      return { ok: false, error: "This appointment hasn't ended yet." };
+    }
+    if (rpcErr.message?.includes("not confirmed")) {
+      return {
+        ok: false,
+        error: "Only confirmed appointments can be marked complete.",
+      };
+    }
+    return { ok: false, error: "Could not mark this appointment complete." };
   }
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
-  revalidatePath(`/clients/${appt.client_id}`);
+  revalidatePath(`/calendar/${appointmentId}`);
+  return { ok: true };
+}
+
+// P0-1 + P0-3: practitioner-initiated manual mark no-show.
+// Replaces the previously-automatic cron flow. Calls the new
+// SECURITY DEFINER RPC public.mark_appointment_no_show (migration 0033)
+// which refuses any transition before ends_at has passed.
+export async function markAppointmentNoShowAction(
+  formData: FormData,
+): Promise<AppointmentStateActionResult> {
+  const appointmentId = formDataStr(formData, "appointment_id");
+  if (!appointmentId) return { ok: false, error: "Missing appointment id." };
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot mark no-shows." };
+  }
+
+  const { createAdminClient } = await import("@/lib/supabase/admin-server");
+  const admin = createAdminClient();
+  const { data: rpcResult, error: rpcErr } = await admin.rpc(
+    "mark_appointment_no_show",
+    {
+      p_appointment_id: appointmentId,
+      p_studio_id: studio.id,
+      p_practitioner_id: practitioner.id,
+    },
+  );
+  if (rpcErr) {
+    console.error(
+      JSON.stringify({
+        event: "mark_no_show_rpc_error",
+        code: rpcErr.code,
+        message: rpcErr.message,
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not mark this appointment as no-show." };
+  }
+  if (rpcResult === "too_early") {
+    return {
+      ok: false,
+      error: "You can only mark a no-show after the appointment end time.",
+    };
+  }
+  if (rpcResult === "not_authorized") {
+    return { ok: false, error: "You are not authorized to mark this appointment." };
+  }
+  if (rpcResult !== "marked") {
+    return {
+      ok: false,
+      error: "Only confirmed appointments can be marked as no-show.",
+    };
+  }
+
+  revalidatePath("/calendar");
+  revalidatePath("/calendar/upcoming");
+  revalidatePath(`/calendar/${appointmentId}`);
   return { ok: true };
 }
 

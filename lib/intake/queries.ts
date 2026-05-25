@@ -3,7 +3,24 @@ import { createClient } from "@/lib/supabase/server";
 import { generateIntakeToken } from "./tokens";
 import type { ClientIntakeForm } from "@/lib/types/database";
 
-const INTAKE_LINK_TTL_DAYS = 60;
+// P0-4: intake link lifetime. Reduced from 60 days to 14 days so a
+// stale link (e.g. one forwarded to a personal email and never
+// completed) cannot be reused indefinitely against the questionnaire.
+// 14 days comfortably covers the in-flight booking horizon (real
+// clients complete intake within 1-2 weeks of receiving the email),
+// and matches the cadence at which reminder emails would otherwise
+// have been sent.
+//
+// Token revocation: once the intake row's status transitions to
+// 'submitted' or 'reviewed', the public page (app/intake/[token]/page.tsx)
+// deliberately refuses to return saved responses, and
+// app/intake/[token]/actions.ts refuses any further save/submit. The
+// status itself is the revocation signal; we do not need a separate
+// token-version column in this phase. A future enhancement may add
+// client_intake_forms.token_version smallint and include it in the
+// HMAC payload so a forwarded link can be revoked individually before
+// submission.
+const INTAKE_LINK_TTL_DAYS = 14;
 
 // Returns the most recent non-deleted intake for the client, if any.
 export async function getLatestIntakeForClient(

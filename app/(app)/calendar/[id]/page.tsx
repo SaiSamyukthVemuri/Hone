@@ -6,7 +6,8 @@ import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
-import { cancelAppointmentAction } from "../actions";
+import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
+import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import type {
   Appointment,
   Client,
@@ -41,6 +42,25 @@ export default async function AppointmentDetailPage({
   if (!data) notFound();
 
   const isCancelled = data.status === "cancelled";
+  // P0-1 + P0-3: typed alias so the lifecycle component sees an exhaustive
+  // status union and not the raw `string` from the database row type.
+  const typedStatus = data.status as
+    | "confirmed"
+    | "completed"
+    | "cancelled"
+    | "no_show";
+
+  // Workflow fix 3: the Cancel surface must not be presented for an
+  // appointment whose start time has passed (in-progress OR ended).
+  // The practitioner_cancel_appointment RPC already refuses these,
+  // but the UI must not lead Chloe to click an action that can only
+  // fail. For started/past appointments the lifecycle outcome buttons
+  // (Mark complete / Mark no-show) are the only valid controls.
+  const startsAtMs = new Date(data.starts_at).getTime();
+  const isCancelable =
+    typedStatus === "confirmed"
+    && Number.isFinite(startsAtMs)
+    && startsAtMs > Date.now();
   const pinnedNotes = data.client
     ? await getPinnedNotesForClient(studio.id, data.client.id)
     : [];
@@ -104,6 +124,35 @@ export default async function AppointmentDetailPage({
 
       <EmailActivity appointment={data} />
 
+      {typedStatus === "confirmed" && (
+        <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Outcome
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Mark complete once the appointment finished. Mark no-show only if
+            the client did not arrive — available after the end time.
+          </p>
+          <AppointmentLifecycleActions
+            appointmentId={id}
+            status={typedStatus}
+            endsAt={data.ends_at}
+          />
+        </section>
+      )}
+
+      {typedStatus === "completed" && (
+        <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          Completed
+        </section>
+      )}
+
+      {typedStatus === "no_show" && (
+        <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          No-show
+        </section>
+      )}
+
       {isCancelled ? (
         <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
           Cancelled
@@ -120,34 +169,14 @@ export default async function AppointmentDetailPage({
             </p>
           )}
         </section>
-      ) : (
-        <form
-          action={async (fd: FormData) => {
-            "use server";
-            fd.set("appointment_id", id);
-            await cancelAppointmentAction(fd);
-          }}
-          className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
-        >
-          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Cancel
-          </h2>
-          <textarea
-            name="reason"
-            rows={2}
-            placeholder="Reason (optional)"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-          />
-          <div>
-            <button
-              type="submit"
-              className="rounded-md border border-red-500 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-950/40"
-            >
-              Cancel appointment
-            </button>
-          </div>
-        </form>
-      )}
+      ) : isCancelable ? (
+        // Workflow fix 3: Cancel surface is shown ONLY when the
+        // appointment is `confirmed` AND `starts_at > now()`. For
+        // started/past confirmed appointments the lifecycle outcome
+        // section above (Mark complete / Mark no-show) is the only
+        // legitimate path.
+        <PractitionerCancelForm appointmentId={id} />
+      ) : null}
     </div>
   );
 }

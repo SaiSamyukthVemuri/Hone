@@ -13,14 +13,30 @@ type Payload = {
   expires_at: string;
 };
 
+// P0-4: intake tokens REQUIRE a dedicated INTAKE_SIGNING_SECRET. The
+// previous fallback chain (APPOINTMENT_SIGNING_SECRET ->
+// SUPABASE_SERVICE_ROLE_KEY) was unsafe for two reasons:
+//
+//   1. Falling back to SUPABASE_SERVICE_ROLE_KEY means the secret used
+//      to sign clinical-data tokens is the same as the bypass-RLS
+//      service-role key. Any leak of the service role (e.g. via an
+//      accidental client-side import) would expose token signing
+//      power too.
+//   2. APPOINTMENT_SIGNING_SECRET is rotated on the booking cadence;
+//      intake tokens live longer (~weeks vs days) and must rotate on
+//      their own schedule.
+//
+// Deployment requirement: set INTAKE_SIGNING_SECRET to a high-entropy
+// random string (>= 32 bytes) in every environment before this branch
+// merges. Apps that fail to set it fail fast at startup.
 function getSecret(): string {
-  const secret =
-    process.env.INTAKE_SIGNING_SECRET ||
-    process.env.APPOINTMENT_SIGNING_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const secret = process.env.INTAKE_SIGNING_SECRET;
   if (!secret) {
     throw new Error(
-      "INTAKE_SIGNING_SECRET (or APPOINTMENT_SIGNING_SECRET / SUPABASE_SERVICE_ROLE_KEY fallback) is not set",
+      "INTAKE_SIGNING_SECRET is not set. " +
+        "Generate a fresh random secret (>= 32 bytes) and set it in env. " +
+        "The previous fallback to APPOINTMENT_SIGNING_SECRET / " +
+        "SUPABASE_SERVICE_ROLE_KEY has been removed.",
     );
   }
   return secret;

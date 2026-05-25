@@ -29,32 +29,77 @@ async function loadIntake(token: string): Promise<LoadResult> {
     };
   }
   const admin = createAdminClient();
-  const { data, error } = await admin
+
+  // P0-4: deliberately do NOT include `responses` in the initial
+  // SELECT. We do a two-step fetch: first determine the intake
+  // status, then only load responses when status is 'in_progress'.
+  // A submitted/reviewed intake's saved answers must never leave the
+  // server to the client, regardless of whether the same token is
+  // still cryptographically valid.
+  const { data: header, error: headerErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, current_step, responses, studio:studios(name)")
+    .select("id, status, current_step, studio:studios(name)")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: "Intake not found." };
+  if (headerErr) {
+    console.error(
+      JSON.stringify({
+        event: "intake_load_header_error",
+        code: headerErr.code,
+        message: headerErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "This intake link is no longer valid." };
+  }
+  if (!header) return { ok: false, error: "This intake link is no longer valid." };
 
-  type Joined = {
+  type JoinedHeader = {
     id: string;
     status: string;
     current_step: number;
-    responses: Record<string, unknown> | null;
     studio: { name: string } | { name: string }[] | null;
   };
-  const row = data as unknown as Joined;
-  const studio = Array.isArray(row.studio) ? row.studio[0] : row.studio;
+  const headerRow = header as unknown as JoinedHeader;
+  const studio = Array.isArray(headerRow.studio) ? headerRow.studio[0] : headerRow.studio;
+
+  const alreadySubmitted =
+    headerRow.status === "submitted" || headerRow.status === "reviewed";
+
+  // ONLY load saved responses for in_progress intake. For submitted /
+  // reviewed forms we serve the completion acknowledgement and pass an
+  // empty initialResponses payload; the client component branches on
+  // alreadySubmitted=true and does not render the questionnaire.
+  let initialResponses: Record<string, unknown> = {};
+  if (!alreadySubmitted) {
+    const { data: row, error: respErr } = await admin
+      .from("client_intake_forms")
+      .select("responses")
+      .eq("id", v.intake_id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (respErr) {
+      console.error(
+        JSON.stringify({
+          event: "intake_load_responses_error",
+          code: respErr.code,
+          message: respErr.message,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { ok: false, error: "This intake link is no longer valid." };
+    }
+    initialResponses = (row?.responses as Record<string, unknown> | null) ?? {};
+  }
 
   return {
     ok: true,
     token,
     studioName: studio?.name ?? "your studio",
-    initialStep: row.current_step,
-    initialResponses: row.responses ?? {},
-    alreadySubmitted: row.status === "submitted" || row.status === "reviewed",
+    initialStep: headerRow.current_step,
+    initialResponses,
+    alreadySubmitted,
   };
 }
 

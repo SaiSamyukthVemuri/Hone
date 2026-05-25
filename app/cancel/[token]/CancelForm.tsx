@@ -3,30 +3,27 @@
 import { useState, useTransition } from "react";
 import { publicCancelAppointmentAction } from "./actions";
 
+// The page-level fetch surface only renders this component when the
+// supplied token maps to a future appointment with status='confirmed'.
+// Every other state (cancelled / completed / no_show / past-start /
+// unknown token) is collapsed to a generic invalid-link message at the
+// fetch surface, so this component does NOT need to handle an
+// "already cancelled" branch and does NOT accept an alreadyCancelled
+// prop.
 type Props = {
   token: string;
-  alreadyCancelled: boolean;
 };
 
-export function CancelForm({ token, alreadyCancelled }: Props) {
+export function CancelForm({ token }: Props) {
   const [reason, setReason] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<"cancelled" | "already" | null>(
-    alreadyCancelled ? "already" : null,
-  );
+  const [done, setDone] = useState<"cancelled" | null>(null);
 
   if (done === "cancelled") {
     return (
       <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
         Your appointment is cancelled. We&rsquo;ve let the studio know.
-      </p>
-    );
-  }
-  if (done === "already") {
-    return (
-      <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-        This appointment was already cancelled. No further action needed.
       </p>
     );
   }
@@ -40,10 +37,13 @@ export function CancelForm({ token, alreadyCancelled }: Props) {
     startTransition(async () => {
       const r = await publicCancelAppointmentAction(fd);
       if (!r.ok) {
+        // The mutation surface uses the same generic collapse as the
+        // fetch surface. The error string is whatever the action
+        // chose to surface; the UI does not branch on it.
         setError(r.error);
         return;
       }
-      setDone(r.alreadyCancelled ? "already" : "cancelled");
+      setDone("cancelled");
     });
   }
 
