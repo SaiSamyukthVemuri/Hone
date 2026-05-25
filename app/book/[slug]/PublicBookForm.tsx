@@ -12,14 +12,44 @@ type Slot = { start: string; end: string; startLabel: string };
 
 type Props = {
   slug: string;
+  studioName: string;
+  studioAddress: string | null;
   services: Service[];
   defaultDate: string;
   minDate: string;
   maxDate: string;
 };
 
+type Confirmation = {
+  when: string;
+  dateLocal: string;
+  service: Service | null;
+  email: string;
+};
+
+// Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
+// if the date is not in the current year). Pure client-side formatting; no timezone
+// conversion since the input is already a studio-local date and we construct a Date
+// from explicit year/month/day so the runtime's local timezone offset does not shift it.
+function formatLocalDate(localDate: string): string {
+  const [y, m, d] = localDate.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return localDate;
+  }
+  const date = new Date(y, m - 1, d);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+}
+
 export function PublicBookForm({
   slug,
+  studioName,
+  studioAddress,
   services,
   defaultDate,
   minDate,
@@ -36,7 +66,7 @@ export function PublicBookForm({
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ when: string } | null>(null);
+  const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
 
@@ -93,25 +123,27 @@ export function PublicBookForm({
         setError(r.error);
         return;
       }
-      setDone({ when: picked.startLabel });
+      // Snapshot the selected service + date + email at success time so the
+      // confirmation card stays stable even if local form state is later
+      // cleared on unmount or a re-render.
+      const bookedService =
+        services.find((s) => s.id === serviceId) ?? null;
+      setDone({
+        when: picked.startLabel,
+        dateLocal: date,
+        service: bookedService,
+        email,
+      });
     });
   }
 
   if (done) {
     return (
-      <div className="flex flex-col gap-4">
-        <h2
-          className="font-[var(--font-fraunces)] text-[28px] font-bold leading-tight"
-          style={{ letterSpacing: "-0.02em" }}
-        >
-          You&rsquo;re booked.
-        </h2>
-        <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-          We sent a confirmation to <strong>{email}</strong>. Check your inbox
-          for the appointment details and a calendar invite. If you don&rsquo;t
-          see it, check spam.
-        </p>
-      </div>
+      <ConfirmationView
+        confirmation={done}
+        studioName={studioName}
+        studioAddress={studioAddress}
+      />
     );
   }
 
@@ -277,5 +309,125 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+// Public booking confirmation surface. Pure display — no actions, no
+// fetches, no side effects. The booking has already been created and
+// the confirmation email already dispatched by the server action by
+// the time this renders.
+function ConfirmationView({
+  confirmation,
+  studioName,
+  studioAddress,
+}: {
+  confirmation: Confirmation;
+  studioName: string;
+  studioAddress: string | null;
+}) {
+  const formattedDate = formatLocalDate(confirmation.dateLocal);
+  const serviceName = confirmation.service?.name ?? null;
+  const durationMinutes =
+    confirmation.service?.default_duration_minutes ?? null;
+  return (
+    <div className="flex flex-col gap-8">
+      <div>
+        <span
+          className="text-[12px] font-medium uppercase"
+          style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+        >
+          Confirmed
+        </span>
+        <h2
+          className="font-[var(--font-fraunces)] mt-3 text-[32px] font-bold leading-tight md:text-[40px]"
+          style={{ letterSpacing: "-0.025em" }}
+        >
+          Your appointment is booked
+        </h2>
+      </div>
+
+      {/* Appointment summary card. Service + date + time + studio, in
+          that scan order. */}
+      <dl
+        className="flex flex-col gap-3 p-6"
+        style={{
+          backgroundColor: "#FAFAF7",
+          border: "1px solid #E5E2D9",
+        }}
+      >
+        {serviceName && (
+          <ConfirmationRow label="Service">
+            {serviceName}
+            {durationMinutes != null && (
+              <span style={{ color: "#6B6B6B" }}> · {durationMinutes} min</span>
+            )}
+          </ConfirmationRow>
+        )}
+        <ConfirmationRow label="When">
+          <span className="font-medium">{formattedDate}</span>
+          <span style={{ color: "#6B6B6B" }}> · {confirmation.when}</span>
+        </ConfirmationRow>
+        <ConfirmationRow label="Where">
+          <span className="font-medium">{studioName}</span>
+          {studioAddress && (
+            <>
+              <br />
+              <span style={{ color: "#6B6B6B" }}>{studioAddress}</span>
+            </>
+          )}
+        </ConfirmationRow>
+      </dl>
+
+      {/* What happens next — three short lines. */}
+      <div className="flex flex-col gap-3">
+        <h3
+          className="text-[12px] font-medium uppercase"
+          style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+        >
+          What happens next
+        </h3>
+        <ul className="flex flex-col gap-2 text-[16px] leading-relaxed text-[#0A0A0A]">
+          <li>
+            We sent a confirmation to{" "}
+            <strong>{confirmation.email}</strong>, with a calendar invite.
+          </li>
+          <li>
+            The email includes links to cancel or reschedule if your plans
+            change.
+          </li>
+          <li>
+            If your studio asks for a health intake, you&rsquo;ll receive
+            that link too.
+          </li>
+        </ul>
+      </div>
+
+      {/* Subtle payment reassurance. Phase 1 booking does not collect
+          cards; making this explicit prevents the "did I miss a step?"
+          worry. Kept small + muted. */}
+      <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+        No payment was collected for this booking.
+      </p>
+    </div>
+  );
+}
+
+function ConfirmationRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-4">
+      <dt
+        className="flex-none text-[11px] font-medium uppercase sm:w-20"
+        style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+      >
+        {label}
+      </dt>
+      <dd className="text-[15px] text-[#0A0A0A]">{children}</dd>
+    </div>
   );
 }
