@@ -22,9 +22,17 @@ export function CancelForm({ token }: Props) {
 
   if (done === "cancelled") {
     return (
-      <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-        Your appointment is cancelled. We&rsquo;ve let the studio know.
-      </p>
+      <div className="flex flex-col gap-3">
+        <h2
+          className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          Your appointment is cancelled.
+        </h2>
+        <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
+          The studio has been notified.
+        </p>
+      </div>
     );
   }
 

@@ -21,6 +21,24 @@ import {
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
+// Public reschedule collapse string. Returned for every user-facing
+// outcome that depends on the appointment's existence or state —
+// token didn't resolve, appointment row missing post-resolve,
+// appointment data malformed, appointment in a non-reschedulable
+// status (cancelled / completed / no_show), or starts_at in the
+// past. ALL of these collapse to a single message so the public
+// surface cannot distinguish "valid token, appointment now in X
+// state" from "unknown token". Matches the page-layer copy in
+// app/reschedule/[token]/page.tsx so the visitor sees the same
+// generic string regardless of whether the leak path was the
+// initial GET (collapsed by the page render) or a mid-flow
+// fetch/submit (collapsed here). Internal infra errors and user-
+// input errors (slot conflicts, invalid time format, date out of
+// horizon) are NOT collapsed — they have actionable meaning and
+// don't expose appointment/token state.
+const PUBLIC_RESCHEDULE_GENERIC_ERROR =
+  "This reschedule link can't be used right now.";
+
 // Reschedule is column-token-only. The legacy HMAC token fallback
 // is intentionally NOT used here: migration 0025 backfilled an
 // opaque column token onto every confirmed appointment, and the
@@ -65,7 +83,7 @@ export async function fetchAppointmentForRescheduleAction(
 ): Promise<FetchRescheduleResult> {
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
-    return { ok: false, error: "This reschedule link is no longer valid." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -76,7 +94,7 @@ export async function fetchAppointmentForRescheduleAction(
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: "Appointment not found." };
+  if (!data) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
   type Joined = {
     id: string;
@@ -99,7 +117,7 @@ export async function fetchAppointmentForRescheduleAction(
   const service = pick(row.service);
   const studio = pick(row.studio);
   if (!service || !studio) {
-    return { ok: false, error: "Appointment is missing service or studio." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   return {
@@ -124,7 +142,7 @@ export async function fetchRescheduleSlotsAction(params: {
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
   const resolved = await resolveAppointmentIdFromToken(params.token);
   if (!resolved.ok) {
-    return { ok: false, error: "This reschedule link is no longer valid." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
   const admin = createAdminClient();
   const { data: appt } = await admin
@@ -134,7 +152,7 @@ export async function fetchRescheduleSlotsAction(params: {
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
-  if (!appt) return { ok: false, error: "Appointment not found." };
+  if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
   type J = {
     id: string;
@@ -199,7 +217,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
-    return { ok: false, error: "This reschedule link is no longer valid." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   const admin = createAdminClient();
@@ -211,12 +229,12 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (lookupErr) return { ok: false, error: lookupErr.message };
-  if (!existing) return { ok: false, error: "Appointment not found." };
+  if (!existing) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   if (existing.status !== "confirmed") {
-    return { ok: false, error: "This appointment can no longer be rescheduled." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
   if (new Date(existing.starts_at).getTime() < Date.now()) {
-    return { ok: false, error: "This appointment has already passed." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   const start = new Date(newStartsAt);
@@ -314,12 +332,9 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   if (row.result !== "success") {
     switch (row.result) {
       case "appointment_not_found":
-        return { ok: false, error: "Appointment not found." };
+        return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
       case "appointment_not_reschedulable":
-        return {
-          ok: false,
-          error: "This appointment can no longer be rescheduled.",
-        };
+        return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
       case "invalid_time_range":
         return { ok: false, error: "Invalid time." };
       default:

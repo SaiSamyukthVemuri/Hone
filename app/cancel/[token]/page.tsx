@@ -26,43 +26,106 @@ export default async function CancelAppointmentPage({
       <MarketingHeader />
       <section className="px-6 py-20 md:px-12 lg:px-16">
         <div className="mx-auto max-w-[640px] flex flex-col gap-10">
-          <div>
-            <EyebrowCaption>Cancel appointment</EyebrowCaption>
-            {result.ok ? (
-              <>
+          {result.ok ? (
+            // Valid future-confirmed appointment. Show heading +
+            // summary card + reassuring copy + the cancel form.
+            <>
+              <div>
+                <EyebrowCaption>Cancel appointment</EyebrowCaption>
                 <h1
                   className="font-[var(--font-fraunces)] mt-8 text-[36px] font-bold leading-tight md:text-[48px]"
                   style={{ letterSpacing: "-0.025em" }}
                 >
-                  {result.summary.serviceName}
+                  Cancel appointment
                 </h1>
-                <p className="mt-4 text-[15px] text-[#6B6B6B]">
-                  At {result.summary.studioName} ·{" "}
-                  <FormattedDateTime iso={result.summary.startsAt} />
+                <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                  If you cancel, the studio will be notified.
                 </p>
-              </>
-            ) : (
-              <h1
-                className="font-[var(--font-fraunces)] mt-8 text-[36px] font-bold leading-tight md:text-[40px]"
-                style={{ letterSpacing: "-0.025em" }}
+              </div>
+
+              {/* Appointment summary card. Same fields the action
+                  already returns; no address (security collapse
+                  intentionally omits address). */}
+              <dl
+                className="flex flex-col gap-3 p-6"
+                style={{
+                  backgroundColor: "#FAFAF7",
+                  border: "1px solid #E5E2D9",
+                }}
               >
-                Cancellation link unavailable.
-              </h1>
-            )}
-          </div>
-          {result.ok ? (
-            <CancelForm token={token} />
+                <SummaryRow label="Service">
+                  {result.summary.serviceName}
+                </SummaryRow>
+                <SummaryRow label="When">
+                  <FormattedDateTime iso={result.summary.startsAt} />
+                </SummaryRow>
+                <SummaryRow label="Where">
+                  {result.summary.studioName}
+                </SummaryRow>
+              </dl>
+
+              <CancelForm token={token} />
+            </>
           ) : (
             // Public collapse surface: a single generic message is
             // shown for unknown / expired / cancelled / completed /
             // no_show / past-start tokens. The fetch action collapses
             // all of these to PUBLIC_CANCEL_GENERIC_ERROR before this
-            // page renders.
-            <p className="text-[16px] text-[#0A0A0A]">{result.error}</p>
+            // page renders; we additionally restate that as warmer
+            // human copy so the visitor isn't left with a cold
+            // "unavailable" message.
+            <UnavailableMessage
+              eyebrow="Cancel appointment"
+              headline="This cancellation link can't be used right now."
+              body="If you already cancelled, rescheduled, or the appointment has passed, no action is needed. You can contact the studio if you still need help."
+            />
           )}
         </div>
       </section>
       <MarketingFooter />
     </main>
+  );
+}
+
+function SummaryRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-4">
+      <dt
+        className="flex-none text-[11px] font-medium uppercase sm:w-20"
+        style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+      >
+        {label}
+      </dt>
+      <dd className="text-[15px] text-[#0A0A0A]">{children}</dd>
+    </div>
+  );
+}
+
+function UnavailableMessage({
+  eyebrow,
+  headline,
+  body,
+}: {
+  eyebrow: string;
+  headline: string;
+  body: string;
+}) {
+  return (
+    <div>
+      <EyebrowCaption>{eyebrow}</EyebrowCaption>
+      <h1
+        className="font-[var(--font-fraunces)] mt-8 text-[28px] font-bold leading-tight md:text-[36px]"
+        style={{ letterSpacing: "-0.02em" }}
+      >
+        {headline}
+      </h1>
+      <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">{body}</p>
+    </div>
   );
 }
