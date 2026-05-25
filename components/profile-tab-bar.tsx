@@ -4,10 +4,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import type { ProfileTab } from "./profile-tab";
 
+// Label-only rename: the URL search-param value stays "treatment" so
+// existing /clients/[id]?tab=treatment links and the ProfileTab type
+// continue to work unchanged. Only the visible tab text flips to
+// "Sessions" — clearer because the tab is primarily about per-visit
+// history + treatment plans, not the broader treatment time/goal data.
 const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "overview", label: "Overview" },
   { value: "health", label: "Health" },
-  { value: "treatment", label: "Treatment" },
+  { value: "treatment", label: "Sessions" },
 ];
 
 type Props = {
