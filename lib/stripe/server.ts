@@ -165,4 +165,3 @@ export function getAppOrigin(): string {
       "Set it to https://hone.care (or the appropriate canonical hostname).",
   );
 }
-
