@@ -16,6 +16,15 @@ type Toggle = {
   >;
   label: string;
   helper?: string;
+  // P0-1: when set, the toggle is forced OFF in the UI and cannot be
+  // changed. The previous "auto no-show" implementation was unsafe
+  // (mutated status based on starts_at + 30min, not ends_at) and the
+  // backing cron has been replaced with a non-mutating informational
+  // endpoint. The control re-enables only after the lifecycle work in
+  // the next phase: ends_at + grace + atomic claim + duplicate-send
+  // protection.
+  forceOff?: boolean;
+  forceOffReason?: string;
 };
 
 const TOGGLES: ReadonlyArray<Toggle> = [
@@ -28,13 +37,20 @@ const TOGGLES: ReadonlyArray<Toggle> = [
   {
     key: "auto_mark_no_shows",
     label: "Automatically mark no-shows",
-    helper: "30 minutes after start time when the appointment was not cancelled.",
+    helper:
+      "Disabled while no-show lifecycle is being hardened. Use the Mark no-show button on the appointment after the end time instead.",
+    forceOff: true,
+    forceOffReason:
+      "Disabled while no-show lifecycle is being hardened. Use the Mark no-show button on the appointment after the end time instead.",
   },
   {
     key: "send_no_show_followup",
     label: "Send follow-up email to no-shows",
     helper:
-      "Sends a message to clients who didn't make it, inviting them to rebook.",
+      "Disabled until automatic no-show is re-enabled with end-time-aware lifecycle.",
+    forceOff: true,
+    forceOffReason:
+      "Disabled until automatic no-show is re-enabled with end-time-aware lifecycle.",
   },
   {
     key: "show_treatment_time_to_clients",
@@ -62,14 +78,30 @@ export function EmailSettingsForm({ initial }: Props) {
   const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function toggle(key: Toggle["key"]) {
+  function toggle(t: Toggle) {
+    if (t.forceOff) {
+      // P0-1: the no-show family of toggles is force-off in this build.
+      // Any attempt to flip them is a no-op surfaced as a hint.
+      setError(null);
+      setHint(t.forceOffReason ?? "This setting is currently disabled.");
+      window.setTimeout(() => setHint(null), 2500);
+      return;
+    }
+    const key = t.key;
     const next = { ...state, [key]: !state[key] };
     setState(next);
     setError(null);
     setHint(null);
     const fd = new FormData();
     for (const [k, v] of Object.entries(next)) {
-      fd.set(k, v ? "true" : "false");
+      // Force-off toggles are always submitted as false so the
+      // backing studios row cannot drift back to true via this form.
+      const matchingToggle = TOGGLES.find((tt) => tt.key === k);
+      if (matchingToggle?.forceOff) {
+        fd.set(k, "false");
+      } else {
+        fd.set(k, v ? "true" : "false");
+      }
     }
     startTransition(async () => {
       const res = await setStudioEmailSettingsAction(fd);
@@ -93,31 +125,40 @@ export function EmailSettingsForm({ initial }: Props) {
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-        {TOGGLES.map((t) => (
-          <li key={t.key} className="flex items-start justify-between gap-4 p-4">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{t.label}</p>
-              {t.helper && (
-                <p className="mt-1 text-xs text-neutral-500">{t.helper}</p>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => toggle(t.key)}
-              disabled={pending}
-              aria-pressed={state[t.key]}
-              className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${
-                state[t.key] ? "bg-neutral-900 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all dark:bg-neutral-950 ${
-                  state[t.key] ? "left-[1.375rem]" : "left-0.5"
+        {TOGGLES.map((t) => {
+          const isForceOff = t.forceOff === true;
+          // Force-off toggles always render in the OFF position
+          // regardless of the underlying studios row (which is also
+          // re-written to false by the form action).
+          const displayOn = isForceOff ? false : state[t.key];
+          return (
+            <li key={t.key} className="flex items-start justify-between gap-4 p-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{t.label}</p>
+                {t.helper && (
+                  <p className="mt-1 text-xs text-neutral-500">{t.helper}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => toggle(t)}
+                disabled={pending || isForceOff}
+                aria-pressed={displayOn}
+                aria-disabled={isForceOff}
+                title={isForceOff ? t.forceOffReason : undefined}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${
+                  displayOn ? "bg-neutral-900 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"
                 }`}
-              />
-            </button>
-          </li>
-        ))}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all dark:bg-neutral-950 ${
+                    displayOn ? "left-[1.375rem]" : "left-0.5"
+                  }`}
+                />
+              </button>
+            </li>
+          );
+        })}
       </ul>
       <div className="flex items-center gap-3 text-xs">
         {hint && (

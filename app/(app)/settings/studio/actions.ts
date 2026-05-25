@@ -56,6 +56,18 @@ export async function setStudioEmailSettingsAction(
     };
   }
 
+  // P0 (Blocker 1): the two no-show toggles are server-side force-off
+  // for the entire duration of the pre-Stripe hardening pass. A
+  // disabled checkbox in the UI is not a security boundary; a crafted
+  // server-action POST must not be able to re-enable the unsafe
+  // automatic no-show workflow. We literally ignore the submitted
+  // form values for these two fields and ALWAYS write `false`. The
+  // EmailSettingsForm.tsx UI is wired to match (force-OFF display).
+  //
+  // This branch removes the toggle's submit pathway entirely. The
+  // toggles can be re-enabled in a subsequent migration / branch
+  // only after the safe lifecycle redesign (ends_at + grace,
+  // claim-token, duplicate-send protection) ships and is approved.
   const supabase = await createClient();
   const { error } = await supabase
     .from("studios")
@@ -63,15 +75,26 @@ export async function setStudioEmailSettingsAction(
       send_confirmation_emails: readBool(formData, "send_confirmation_emails"),
       send_24h_reminders: readBool(formData, "send_24h_reminders"),
       send_2h_reminders: readBool(formData, "send_2h_reminders"),
-      auto_mark_no_shows: readBool(formData, "auto_mark_no_shows"),
-      send_no_show_followup: readBool(formData, "send_no_show_followup"),
+      auto_mark_no_shows: false,                  // FORCE-OFF (Blocker 1)
+      send_no_show_followup: false,               // FORCE-OFF (Blocker 1)
       show_treatment_time_to_clients: readBool(
         formData,
         "show_treatment_time_to_clients",
       ),
     })
     .eq("id", studio.id);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "studio_email_settings_update_failed",
+        code: error.code,
+        message: error.message,
+        studioId: studio.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
 
   revalidatePath("/settings/studio");
   return { ok: true };

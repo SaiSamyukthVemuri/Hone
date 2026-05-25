@@ -51,11 +51,13 @@ export default async function CancelAppointmentPage({
             )}
           </div>
           {result.ok ? (
-            <CancelForm
-              token={token}
-              alreadyCancelled={result.summary.alreadyCancelled}
-            />
+            <CancelForm token={token} />
           ) : (
+            // Public collapse surface: a single generic message is
+            // shown for unknown / expired / cancelled / completed /
+            // no_show / past-start tokens. The fetch action collapses
+            // all of these to PUBLIC_CANCEL_GENERIC_ERROR before this
+            // page renders.
             <p className="text-[16px] text-[#0A0A0A]">{result.error}</p>
           )}
         </div>

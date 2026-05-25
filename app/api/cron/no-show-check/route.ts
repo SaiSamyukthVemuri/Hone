@@ -1,18 +1,39 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
-import {
-  logEmailFailure,
-  recordEmailAttempt,
-  sendNoShowFollowupToClient,
-} from "@/lib/email/send-appointment";
-import type { Appointment, Studio } from "@/lib/types/database";
 
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
-const PER_RUN_LIMIT = 100;
-
-function pickRel<T>(v: T | T[] | null): T | null {
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
+// ---------------------------------------------------------------------------
+// /api/cron/no-show-check (DISABLED PRE-STRIPE HARDENING)
+// ---------------------------------------------------------------------------
+//
+// The previous implementation mutated appointments.status='no_show' for
+// any confirmed appointment whose `starts_at` was more than 30 minutes
+// in the past, gated only by `studios.auto_mark_no_shows`. That heuristic
+// has two defects:
+//
+//   1. starts_at + 30min can still be DURING the appointment. Treatment
+//      sessions can run long, and a real client may not show up on time
+//      but does show up. The cron flipped many such rows to no_show.
+//
+//   2. There was no application UI calling mark_appointment_complete(),
+//      so even a correctly-attended appointment ended its lifecycle as
+//      'confirmed' forever. The cron then promoted those to 'no_show'
+//      too.
+//
+// The first safe no-show path is the manual practitioner-initiated
+// mark_appointment_no_show() RPC (added in migration 0033). When that
+// path is in production and has been validated, auto no-show can be
+// re-enabled with the following non-negotiable design:
+//
+//   * cutoff = appointments.ends_at + studio-configurable grace period
+//     (default 60 min), NOT starts_at + 30min.
+//   * mutation goes through public.mark_appointment_no_show() so the
+//     state machine, terminal-safety and audit row are atomic.
+//   * duplicate-send protection: claim the row in a single UPDATE with
+//     a non-null no_show_email_send_attempts limit AND a row-level
+//     advisory lock keyed on appointment_id.
+//
+// Until then this endpoint is non-mutating. It still requires the
+// CRON_SECRET so probing the URL surface from outside is rejected.
+// ---------------------------------------------------------------------------
 
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization");
@@ -20,87 +41,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const now = Date.now();
-  const cutoff = new Date(now - 30 * 60 * 1000).toISOString(); // 30 min ago
-  const lookback = new Date(now - 24 * 60 * 60 * 1000).toISOString(); // 24h ago
-
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("appointments")
-    .select(
-      "*, studio:studios(*), client:clients(name, email)",
-    )
-    .eq("status", "confirmed")
-    .gte("starts_at", lookback)
-    .lt("starts_at", cutoff)
-    .order("starts_at", { ascending: true })
-    .limit(PER_RUN_LIMIT);
-  if (error) {
-    return NextResponse.json(
-      { ok: false, error: error.message },
-      { status: 500 },
-    );
-  }
-
-  type Joined = Appointment & {
-    studio: Studio | Studio[] | null;
-    client: { name: string; email: string | null } | { name: string; email: string | null }[] | null;
-  };
-
-  const rows = ((data ?? []) as unknown as Joined[]).map((r) => ({
-    ...(r as Appointment),
-    studio: pickRel(r.studio),
-    client: pickRel(r.client),
-  }));
-
-  const stats = { scanned: rows.length, marked: 0, followups_sent: 0 };
-
-  for (const appt of rows) {
-    if (!appt.studio) continue;
-    if (!appt.studio.auto_mark_no_shows) continue;
-
-    const { error: updateErr } = await admin
-      .from("appointments")
-      .update({
-        status: "no_show",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", appt.id)
-      .eq("status", "confirmed");
-    if (updateErr) {
-      console.error(`No-show update failed for ${appt.id}:`, updateErr);
-      continue;
-    }
-    stats.marked += 1;
-
-    if (appt.studio.send_no_show_followup && appt.client?.email) {
-      // Cron query intentionally untouched per the email-truthful refactor
-      // spec. recordEmailAttempt stamps no_show_email_sent_at only when
-      // the send actually succeeded, and increments
-      // no_show_email_send_attempts atomically in both branches.
-      const attemptNumber = appt.no_show_email_send_attempts + 1;
-      const result = await sendNoShowFollowupToClient({
-        clientName: appt.client.name,
-        clientEmail: appt.client.email,
-        studio: appt.studio,
-        rebookUrl: appt.studio.slug
-          ? `${APP_ORIGIN}/book/${appt.studio.slug}`
-          : null,
-      });
-      await recordEmailAttempt(admin, appt.id, "no_show", result.ok);
-      if (result.ok) {
-        stats.followups_sent += 1;
-      } else {
-        logEmailFailure({
-          appointmentId: appt.id,
-          emailType: "no_show",
-          error: result.error,
-          retryable: result.retryable,
-          attemptNumber,
-        });
-      }
-    }
-  }
-
-  return NextResponse.json({ ok: true, ...stats });
+  return NextResponse.json({
+    ok: true,
+    disabled: true,
+    reason:
+      "Auto no-show is intentionally disabled. Use the practitioner-initiated " +
+      "Mark no-show action on the appointment detail page, which calls the " +
+      "mark_appointment_no_show RPC and respects ends_at.",
+    scanned: 0,
+    marked: 0,
+    followups_sent: 0,
+  });
 }
