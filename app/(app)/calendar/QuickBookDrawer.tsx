@@ -1,21 +1,22 @@
 "use client";
 
-// Phase B calendar-first booking drawer.
+// Phase C calendar-first booking drawer.
 //
-// Drives an internal practitioner-side booking for an EXISTING client.
-// Reuses, without modification, two existing server actions:
-//   - bookAppointmentForClientAction (../calendar/actions.ts)
-//   - fetchSlotsForClientBookingAction (../clients/[id]/booking-actions.ts)
+// Drives an internal practitioner-side booking for an existing OR
+// newly-created client. Reuses three server actions:
+//   - bookAppointmentForClientAction       (./actions, unchanged)
+//   - fetchSlotsForClientBookingAction     (../clients/[id]/booking-actions, unchanged)
+//   - createClientForCalendarBookingAction (./actions, added in
+//     Phase C — narrow authenticated insert that mirrors the
+//     existing createClientAction but returns the new row instead
+//     of redirecting)
 //
 // The drawer does not touch slot computation, conflict detection,
 // reservation logic, public booking, Stripe, payment collection, or
-// require_card_on_file. It only assembles the same FormData the
-// existing client-profile booking form already submits and forwards
-// it to the same server action.
-//
-// New-client inline creation is intentionally out of scope. The
-// drawer renders a small hint pointing practitioners to /clients for
-// that case; Phase C will handle inline new-client creation.
+// require_card_on_file. The new-client action uses the user-scoped
+// Supabase client (RLS-enforced) — no createAdminClient. Only the
+// minimal name/email/phone/pronouns fields are collected; the full
+// client profile is filled in later from /clients/[id].
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -25,7 +26,10 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { fetchSlotsForClientBookingAction } from "../clients/[id]/booking-actions";
-import { bookAppointmentForClientAction } from "./actions";
+import {
+  bookAppointmentForClientAction,
+  createClientForCalendarBookingAction,
+} from "./actions";
 
 export type QuickBookDraft = {
   // YYYY-MM-DD in studio local time
@@ -112,9 +116,22 @@ export function QuickBookDrawer({
   );
   const firstServiceId = serviceGroups[0]?.services[0]?.id ?? "";
 
+  const [clientMode, setClientMode] = useState<"search" | "new">("search");
   const [clientQuery, setClientQuery] = useState("");
   const [selectedClient, setSelectedClient] =
     useState<QuickBookClient | null>(null);
+  // Clients created during this drawer session. The server-passed
+  // `clients` prop only updates after a full router.refresh(), which
+  // happens after booking. We merge `clients + extraClients` so a
+  // freshly-created client is immediately searchable + selectable
+  // without a page reload.
+  const [extraClients, setExtraClients] = useState<QuickBookClient[]>([]);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [newClientPronouns, setNewClientPronouns] = useState("");
+  const [newClientError, setNewClientError] = useState<string | null>(null);
+  const [creatingClient, startCreatingClient] = useTransition();
   const [serviceId, setServiceId] = useState(firstServiceId);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
@@ -128,8 +145,15 @@ export function QuickBookDrawer({
   // of "did the draft change?" checks scattered across handlers.
   useEffect(() => {
     if (!open) {
+      setClientMode("search");
       setClientQuery("");
       setSelectedClient(null);
+      setExtraClients([]);
+      setNewClientName("");
+      setNewClientEmail("");
+      setNewClientPhone("");
+      setNewClientPronouns("");
+      setNewClientError(null);
       setServiceId(firstServiceId);
       setSlots([]);
       setPickedSlot(null);
@@ -187,6 +211,15 @@ export function QuickBookDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft?.localDate, draft?.localTime, serviceId]);
 
+  // extraClients (created this drawer session) sort first so a
+  // just-added client lands at the top of the list before the user
+  // has typed anything. Hook is invoked unconditionally so its
+  // call-order is stable across open/closed states.
+  const allClients = useMemo(
+    () => [...extraClients, ...clients],
+    [extraClients, clients],
+  );
+
   if (!open || !draft) return null;
 
   const formattedDate = formatLocalDate(draft.localDate);
@@ -195,16 +228,46 @@ export function QuickBookDrawer({
   const queryLower = clientQuery.trim().toLowerCase();
   const clientMatches = selectedClient
     ? []
-    : clients.filter((c) => matchClient(c, queryLower)).slice(
+    : allClients.filter((c) => matchClient(c, queryLower)).slice(
         0,
         MAX_CLIENT_RESULTS,
       );
   const totalMatches = selectedClient
     ? 0
-    : clients.filter((c) => matchClient(c, queryLower)).length;
+    : allClients.filter((c) => matchClient(c, queryLower)).length;
 
   const canBook =
     !!selectedClient && !!serviceId && !!pickedSlot && !booking;
+
+  function handleCreateClient() {
+    const name = newClientName.trim();
+    if (!name) {
+      setNewClientError("Name is required.");
+      return;
+    }
+    setNewClientError(null);
+    const fd = new FormData();
+    fd.set("name", name);
+    if (newClientEmail.trim()) fd.set("email", newClientEmail.trim());
+    if (newClientPhone.trim()) fd.set("phone", newClientPhone.trim());
+    if (newClientPronouns.trim()) fd.set("pronouns", newClientPronouns.trim());
+    startCreatingClient(async () => {
+      const r = await createClientForCalendarBookingAction(fd);
+      if (!r.ok) {
+        setNewClientError(r.error);
+        return;
+      }
+      setExtraClients((prev) => [r.client, ...prev]);
+      setSelectedClient(r.client);
+      setClientMode("search");
+      setClientQuery("");
+      setNewClientName("");
+      setNewClientEmail("");
+      setNewClientPhone("");
+      setNewClientPronouns("");
+      setNewClientError(null);
+    });
+  }
 
   function handleSubmit() {
     if (!selectedClient || !serviceId || !pickedSlot) return;
@@ -304,52 +367,160 @@ export function QuickBookDrawer({
             </div>
           ) : (
             <>
-              <input
-                type="search"
-                value={clientQuery}
-                onChange={(e) => setClientQuery(e.target.value)}
-                placeholder="Find existing client"
-                autoComplete="off"
-                autoCapitalize="none"
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-              />
-              {clientMatches.length === 0 ? (
-                <p className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
-                  No clients match.
-                </p>
-              ) : (
-                <ul className="max-h-56 divide-y divide-neutral-200 overflow-y-auto rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-                  {clientMatches.map((c) => (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedClient(c)}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">{c.name}</div>
-                          {(c.email || c.phone) && (
-                            <div className="truncate text-xs text-neutral-500">
-                              {[c.email, c.phone].filter(Boolean).join(" · ")}
+              <div
+                role="tablist"
+                aria-label="Client source"
+                className="flex gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={clientMode === "search"}
+                  onClick={() => setClientMode("search")}
+                  className={`flex-1 rounded-[5px] px-3 py-1.5 transition ${
+                    clientMode === "search"
+                      ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
+                      : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                  }`}
+                >
+                  Search existing
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={clientMode === "new"}
+                  onClick={() => setClientMode("new")}
+                  className={`flex-1 rounded-[5px] px-3 py-1.5 transition ${
+                    clientMode === "new"
+                      ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
+                      : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                  }`}
+                >
+                  Add a new client
+                </button>
+              </div>
+
+              {clientMode === "search" ? (
+                <>
+                  <input
+                    type="search"
+                    value={clientQuery}
+                    onChange={(e) => setClientQuery(e.target.value)}
+                    placeholder="Find existing client"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                  />
+                  {clientMatches.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
+                      No clients match.
+                    </p>
+                  ) : (
+                    <ul className="max-h-56 divide-y divide-neutral-200 overflow-y-auto rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+                      {clientMatches.map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedClient(c)}
+                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium">{c.name}</div>
+                              {(c.email || c.phone) && (
+                                <div className="truncate text-xs text-neutral-500">
+                                  {[c.email, c.phone].filter(Boolean).join(" · ")}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <span className="text-xs text-neutral-400">›</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                            <span className="text-xs text-neutral-400">›</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {totalMatches > clientMatches.length && (
+                    <p className="text-[11px] text-neutral-500">
+                      Showing first {clientMatches.length} of {totalMatches}.
+                      Keep typing to narrow down.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-[11px] text-neutral-500">
+                    Create a basic client record now. You can finish their full
+                    profile later.
+                  </p>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+                      Name <span aria-hidden="true">*</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={newClientName}
+                      onChange={(e) => setNewClientName(e.target.value)}
+                      placeholder="Full name"
+                      autoComplete="off"
+                      required
+                      className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+                        Email
+                      </span>
+                      <input
+                        type="email"
+                        value={newClientEmail}
+                        onChange={(e) => setNewClientEmail(e.target.value)}
+                        placeholder="name@example.com"
+                        autoComplete="off"
+                        className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+                        Phone
+                      </span>
+                      <input
+                        type="tel"
+                        value={newClientPhone}
+                        onChange={(e) => setNewClientPhone(e.target.value)}
+                        placeholder="555-0100"
+                        autoComplete="off"
+                        className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                      />
+                    </label>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+                      Pronouns
+                    </span>
+                    <input
+                      type="text"
+                      value={newClientPronouns}
+                      onChange={(e) => setNewClientPronouns(e.target.value)}
+                      placeholder="she/her"
+                      autoComplete="off"
+                      className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                    />
+                  </label>
+                  {newClientError && (
+                    <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+                      {newClientError}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCreateClient}
+                    disabled={creatingClient || newClientName.trim().length === 0}
+                    className="self-start rounded-md border border-neutral-900 bg-white px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white dark:bg-neutral-950 dark:text-neutral-100 dark:hover:bg-neutral-900"
+                  >
+                    {creatingClient ? "Adding…" : "Add client"}
+                  </button>
+                </div>
               )}
-              {totalMatches > clientMatches.length && (
-                <p className="text-[11px] text-neutral-500">
-                  Showing first {clientMatches.length} of {totalMatches}. Keep
-                  typing to narrow down.
-                </p>
-              )}
-              <p className="text-[11px] text-neutral-500">
-                New clients can still be added from{" "}
-                <span className="font-medium">Clients</span> for now.
-              </p>
             </>
           )}
         </section>
