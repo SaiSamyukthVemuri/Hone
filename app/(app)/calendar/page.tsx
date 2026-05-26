@@ -336,16 +336,40 @@ function DayColumn({
           (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
         const color = resolvePractitionerColor(a.practitioner?.color);
+        const clientName = a.client?.name?.trim() || "Client";
+        const serviceName = a.service?.name?.trim() || null;
+        // Same height threshold idiom as BlockoutCard (PR #10): for
+        // short cards (~28-30px boxes) only the client name + time
+        // fit; for taller cards we add a secondary service/time line.
+        // Positioning math (top, height) is unchanged.
+        const twoLine = height >= 40;
         return (
           <Link
             key={a.id}
             href={`/calendar/${a.id}`}
             style={{ top, height }}
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-md ${color.bg} ${color.text} px-2 py-1 text-[11px] hover:opacity-90`}
+            title={
+              serviceName
+                ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
+                : `${clientName} · ${localTime} · ${a.duration_minutes}m`
+            }
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-md ${color.bg} ${color.text} px-2 py-1 text-[11px] leading-tight hover:opacity-90`}
           >
-            <div className="truncate font-medium">
-              {localTime} · {a.duration_minutes}m
-            </div>
+            {twoLine ? (
+              <>
+                <div className="truncate font-medium">{clientName}</div>
+                <div className="truncate text-[10px] opacity-80">
+                  {localTime}
+                  {serviceName ? ` · ${serviceName}` : ""}
+                  {` · ${a.duration_minutes}m`}
+                </div>
+              </>
+            ) : (
+              <div className="truncate font-medium">
+                {clientName}{" "}
+                <span className="opacity-70">· {localTime}</span>
+              </div>
+            )}
           </Link>
         );
       })}

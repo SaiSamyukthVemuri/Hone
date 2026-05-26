@@ -59,10 +59,14 @@ export default async function AppLayout({
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <div className="hidden text-right text-xs leading-tight md:block">
+            <Link
+              href="/settings/profile"
+              aria-label="Open your profile settings"
+              className="hidden rounded-md text-right text-xs leading-tight hover:opacity-80 md:block"
+            >
               <div className="font-medium">{practitioner.display_name}</div>
               <div className="text-neutral-500">{studio.name}</div>
-            </div>
+            </Link>
             <form action={signOut}>
               <button
                 type="submit"

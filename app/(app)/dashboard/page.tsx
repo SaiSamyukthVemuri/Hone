@@ -220,7 +220,7 @@ export default async function DashboardPage() {
         />
       </section>
 
-      <QuickLinks bookingUrl={bookingUrl} />
+      <QuickLinks />
     </div>
   );
 }
@@ -561,7 +561,15 @@ function EmptyDayState({
   );
 }
 
-function QuickLinks({ bookingUrl }: { bookingUrl: string }) {
+function QuickLinks() {
+  // The public booking page link used to live here and read peers
+  // with Calendar / Clients / Payments. Chloe flagged that it
+  // confused practitioners into clicking the client-facing booking
+  // page when they meant to use the internal book-client flow on
+  // the client profile. The public link is still available under
+  // Settings → Booking (which renders the studio's public URL with
+  // copy/share controls) and from the empty-day state above when
+  // there are no appointments today.
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-medium">Quick links</h2>
@@ -591,14 +599,12 @@ function QuickLinks({ bookingUrl }: { bookingUrl: string }) {
           </Link>
         </li>
         <li>
-          <a
-            href={bookingUrl}
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            href="/settings/booking"
             className="inline-flex rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            Booking page ↗
-          </a>
+            Booking settings
+          </Link>
         </li>
       </ul>
     </section>
