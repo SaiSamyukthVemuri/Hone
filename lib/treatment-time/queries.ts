@@ -171,6 +171,73 @@ export async function getSessionNumberForClient(
   return null;
 }
 
+// Phase D: actual logged treatment time aggregated per treatment plan.
+//
+// Single batched query keyed on the supplied plan ids. Filters mirror
+// the client-wide loadElectrolysisRows() helper exactly:
+//   - sessions.studio_id = studioId
+//   - sessions.treatment_plan_id IN planIds
+//   - sessions.deleted_at IS NULL
+//   - sessions.modality = 'electrolysis'        (same scope as TTT)
+//   - session_blocks.deleted_at IS NULL         (filtered in-app)
+//
+// Returns a Map keyed by plan_id. Plans with no attached electrolysis
+// sessions are present in the map with { minutes: 0, sessionCount: 0 }
+// so callers can do a simple Map.get() without branching for absent
+// keys.
+//
+// No createAdminClient; this is purely the user-scoped RLS path. The
+// per-plan visit count returned here is electrolysis-only; the
+// existing `attached_count` in lib/treatment-plans/queries.ts counts
+// sessions of any modality and remains the source of truth for the
+// legacy "visits" progress bar.
+export async function getActualMinutesForPlans(
+  studioId: string,
+  planIds: ReadonlyArray<string>,
+): Promise<Map<string, { minutes: number; sessionCount: number }>> {
+  const result = new Map<string, { minutes: number; sessionCount: number }>();
+  for (const id of planIds) {
+    result.set(id, { minutes: 0, sessionCount: 0 });
+  }
+  if (planIds.length === 0) return result;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("sessions")
+    .select(
+      "id, treatment_plan_id, blocks:session_blocks(minutes_performed, deleted_at)",
+    )
+    .eq("studio_id", studioId)
+    .in("treatment_plan_id", planIds as string[])
+    .eq("modality", "electrolysis")
+    .is("deleted_at", null);
+  if (error) {
+    throw new Error(
+      `Failed to load actual minutes for plans: ${error.message}`,
+    );
+  }
+
+  type Row = {
+    id: string;
+    treatment_plan_id: string | null;
+    blocks: Array<{
+      minutes_performed: number | null;
+      deleted_at: string | null;
+    }>;
+  };
+  for (const r of (data ?? []) as unknown as Row[]) {
+    if (!r.treatment_plan_id) continue;
+    const cur = result.get(r.treatment_plan_id);
+    if (!cur) continue;
+    cur.sessionCount += 1;
+    for (const b of r.blocks ?? []) {
+      if (b.deleted_at != null) continue;
+      cur.minutes += b.minutes_performed ?? 0;
+    }
+  }
+  return result;
+}
+
 // Admin-client variant used by the email pipeline (cron + booking action).
 // Returns the count of electrolysis sessions and the total minutes BEFORE
 // "now". Used for "This will be session N" / "Treatment time so far".

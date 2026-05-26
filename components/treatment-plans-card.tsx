@@ -7,6 +7,8 @@ import {
   TreatmentScheduleEditor,
   type TreatmentScheduleAction,
 } from "@/components/treatment-schedule-editor";
+import { computePlannedVsActual } from "@/lib/treatment-time/plans";
+import { formatMinutes } from "@/lib/treatment-time/format";
 
 type ActionFn = (formData: FormData) => Promise<
   { ok: true } | { ok: false; error: string }
@@ -335,6 +337,16 @@ function PlanCard({
         </div>
       </div>
 
+      {/* Phase D: planned vs actual treatment time. Sits between the
+          legacy attached-visits progress bar and the schedule editor.
+          Renders fully when an estimate exists (from stages or
+          override); falls back to a calm "actual logged only" view
+          for legacy/no-stage plans so practitioners still see how much
+          time they have logged against the plan. Never converts the
+          legacy suggested_visit_count into minutes — that would
+          fabricate data. */}
+      <PlannedVsActualBlock plan={plan} />
+
       {/* Phase C: treatment schedule (stages) + practitioner-only notes.
           The schedule editor renders for both active and closed plans —
           closed plans show stages read-only. The notes editor only
@@ -563,6 +575,128 @@ function PlanNotesEditor({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+// Phase D: planned vs actual treatment time, derived per-plan from
+// stages + override (planned side) and Σ session_blocks.minutes_performed
+// (actual side). Uses computePlannedVsActual() from
+// lib/treatment-time/plans so the same numbers appear here, in the
+// schedule editor's per-stage totals, and (later) on the session detail
+// banner.
+//
+// Display copy follows the practitioner-vocabulary rules from the audit:
+// "Estimated total", "Actual logged time", "Estimated remaining",
+// "Based on logged sessions", and the standing footnote "Estimates
+// change as treatment progresses." Avoids "guaranteed", "completion
+// date", "percent cleared", etc.
+//
+// This block does NOT render on any client-facing surface (public
+// booking, confirmation/reminder emails, intake, cancel, reschedule).
+function PlannedVsActualBlock({
+  plan,
+}: {
+  plan: TreatmentPlanWithStages;
+}) {
+  const pva = computePlannedVsActual(
+    plan,
+    plan.stages,
+    {
+      minutes: plan.actual_logged_minutes,
+      sessionCount: plan.actual_session_count,
+    },
+  );
+
+  const hasEstimate = pva.estimatedTotalMinutes != null;
+  const hasAnything =
+    hasEstimate || pva.actualLoggedMinutes > 0 || pva.actualSessionCount > 0;
+
+  // Nothing to show at all — no estimate, no logged time. Keep the card
+  // quiet rather than rendering an empty block.
+  if (!hasAnything) return null;
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Progress
+        </p>
+        {pva.actualSessionCount > 0 && (
+          <p className="text-[11px] text-neutral-500 tabular-nums">
+            {pva.actualSessionCount}{" "}
+            {pva.actualSessionCount === 1 ? "session" : "sessions"} logged
+          </p>
+        )}
+      </div>
+
+      {hasEstimate ? (
+        <>
+          <dl className="grid grid-cols-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
+            <div>
+              <dt className="text-neutral-500">Estimated total</dt>
+              <dd className="tabular-nums text-neutral-800 dark:text-neutral-200">
+                {pva.estimatedTotalVisits != null && (
+                  <>
+                    about {pva.estimatedTotalVisits}{" "}
+                    {pva.estimatedTotalVisits === 1 ? "visit" : "visits"} ·{" "}
+                  </>
+                )}
+                {formatMinutes(pva.estimatedTotalMinutes!)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-neutral-500">Actual logged time</dt>
+              <dd className="tabular-nums text-neutral-800 dark:text-neutral-200">
+                {formatMinutes(pva.actualLoggedMinutes)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-neutral-500">Estimated remaining</dt>
+              <dd className="tabular-nums text-neutral-800 dark:text-neutral-200">
+                about {formatMinutes(pva.estimatedRemainingMinutes!)}
+              </dd>
+            </div>
+          </dl>
+
+          {pva.plannedVsActualPercent != null && (
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800"
+              role="progressbar"
+              aria-valuenow={pva.plannedVsActualPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Estimated progress"
+            >
+              <div
+                className="h-full bg-emerald-500"
+                style={{ width: `${pva.plannedVsActualPercent}%` }}
+              />
+            </div>
+          )}
+
+          <p className="text-[11px] text-neutral-500">
+            Based on logged sessions. Estimates change as treatment
+            progresses.
+          </p>
+        </>
+      ) : (
+        <>
+          {/* No estimate yet — show the actual side alone so practitioners
+              can still see time invested. Avoid back-deriving an estimate
+              from suggested_visit_count: it has no per-visit duration,
+              and any conversion would be fabricated. */}
+          {pva.actualLoggedMinutes > 0 && (
+            <p className="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums">
+              <span className="text-neutral-500">Actual logged time:</span>{" "}
+              {formatMinutes(pva.actualLoggedMinutes)}
+            </p>
+          )}
+          <p className="text-[11px] text-neutral-500">
+            Add schedule stages to enable estimated progress.
+          </p>
+        </>
+      )}
     </div>
   );
 }

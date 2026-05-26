@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getActualMinutesForPlans } from "@/lib/treatment-time/queries";
 import type {
   TreatmentPlan,
   TreatmentPlanStage,
@@ -16,8 +17,18 @@ export type TreatmentPlanWithCount = TreatmentPlan & {
 // Legacy plans created before Phase C have an empty stages array — the UI
 // renders a calm empty state and the plan still works as a simple
 // suggested_visit_count target.
+//
+// Phase D additions:
+//   actual_logged_minutes — Σ session_blocks.minutes_performed for the
+//     plan's attached electrolysis sessions (non-deleted at both levels).
+//   actual_session_count  — count of those electrolysis sessions. Note
+//     this is electrolysis-only; the existing `attached_count` counts
+//     attached sessions of any modality and continues to power the
+//     legacy "X of Y visits" progress bar.
 export type TreatmentPlanWithStages = TreatmentPlanWithCount & {
   stages: TreatmentPlanStage[];
+  actual_logged_minutes: number;
+  actual_session_count: number;
 };
 
 export async function getTreatmentPlansForClient(
@@ -40,9 +51,11 @@ export async function getTreatmentPlansForClient(
 
   const ids = rows.map((p) => p.id);
 
-  // Two batched follow-up queries, both keyed on the plan ids. Avoids
-  // N+1 on the list view.
-  const [sessionsRes, stagesRes] = await Promise.all([
+  // Three batched follow-up queries, all keyed on the plan ids. Avoids
+  // N+1 on the list view. The actuals query (Phase D) lives in
+  // lib/treatment-time/queries.ts and follows the same electrolysis-
+  // only + deleted_at-aware filtering as the rest of the TTT pipeline.
+  const [sessionsRes, stagesRes, actualsByPlan] = await Promise.all([
     supabase
       .from("sessions")
       .select("treatment_plan_id")
@@ -56,6 +69,7 @@ export async function getTreatmentPlansForClient(
       .in("plan_id", ids)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true }),
+    getActualMinutesForPlans(studioId, ids),
   ]);
 
   if (sessionsRes.error) {
@@ -80,11 +94,16 @@ export async function getTreatmentPlansForClient(
     stagesByPlan.set(stage.plan_id, arr);
   }
 
-  return rows.map((p) => ({
-    ...p,
-    attached_count: counts.get(p.id) ?? 0,
-    stages: stagesByPlan.get(p.id) ?? [],
-  }));
+  return rows.map((p) => {
+    const actual = actualsByPlan.get(p.id) ?? { minutes: 0, sessionCount: 0 };
+    return {
+      ...p,
+      attached_count: counts.get(p.id) ?? 0,
+      stages: stagesByPlan.get(p.id) ?? [],
+      actual_logged_minutes: actual.minutes,
+      actual_session_count: actual.sessionCount,
+    };
+  });
 }
 
 // Active plans only for this client, used by the session detail attach

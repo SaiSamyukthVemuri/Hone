@@ -26,6 +26,13 @@ import type {
   TreatmentPlanStageHowOftenUnit,
   TreatmentPlanStageLengthUnit,
 } from "@/lib/types/database";
+import {
+  estimateStageMinutes,
+  estimateStageVisits,
+  estimatePlanTotalMinutes,
+  estimatePlanTotalVisits,
+} from "@/lib/treatment-time/plans";
+import { formatMinutes } from "@/lib/treatment-time/format";
 
 export type TreatmentScheduleAction = (
   formData: FormData,
@@ -62,61 +69,13 @@ const STAGE_LENGTH_UNIT_OPTIONS: ReadonlyArray<{
 
 const VISIT_LENGTH_PRESETS: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 
-// ---- Estimate helpers (local; do NOT touch lib/treatment-time) ----
-
-// Convert a stage's declared length into weeks. The factor 4 is the
-// rounded "weeks per month" used in plain-English schedule estimates
-// (a calendar month is actually ~4.345 weeks but practitioners think
-// in 4-week blocks; we keep it simple).
-function stageWeeks(stage: TreatmentPlanStage): number {
-  return stage.stage_length_unit === "weeks"
-    ? stage.stage_length_value
-    : stage.stage_length_value * 4;
-}
-
-export function estimateStageVisits(stage: TreatmentPlanStage): number {
-  const weeks = stageWeeks(stage);
-  switch (stage.how_often_unit) {
-    case "weekly":
-      return weeks;
-    case "every_2_weeks":
-      return Math.ceil(weeks / 2);
-    case "monthly":
-      // If the stage is declared in months use it directly; if in weeks
-      // approximate the month count from the weeks.
-      return stage.stage_length_unit === "months"
-        ? stage.stage_length_value
-        : Math.ceil(weeks / 4);
-  }
-}
-
-export function estimateStageMinutes(stage: TreatmentPlanStage): number {
-  return estimateStageVisits(stage) * stage.visit_length_minutes;
-}
-
-export function estimatePlanTotalVisits(
-  stages: ReadonlyArray<TreatmentPlanStage>,
-): number {
-  return stages.reduce((acc, s) => acc + estimateStageVisits(s), 0);
-}
-
-export function estimatePlanTotalMinutes(
-  stages: ReadonlyArray<TreatmentPlanStage>,
-): number {
-  return stages.reduce((acc, s) => acc + estimateStageMinutes(s), 0);
-}
-
-// Local minute formatter so this file does not depend on lib/treatment-time.
-// "0m", "45m", "2h", "2h 30m" — same shape as the TTT formatter but private
-// to the schedule editor.
-function formatMinutes(minutes: number): string {
-  if (minutes <= 0) return "0m";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+// ---- Display helpers (estimate helpers moved to lib/treatment-time/plans.ts) ----
+//
+// Phase D: the stages → estimate formula now lives in
+// lib/treatment-time/plans.ts so the same numbers appear here, in
+// TreatmentPlansCard's planned-vs-actual block, and in any future
+// surface. Same with formatMinutes — sourced from
+// lib/treatment-time/format.ts (already the canonical TTT formatter).
 
 function formatHowOften(unit: TreatmentPlanStageHowOftenUnit): string {
   return (
