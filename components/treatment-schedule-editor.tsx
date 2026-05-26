@@ -15,7 +15,7 @@
 //
 // Vocabulary (from product copy):
 //   "Treatment schedule" — the ordered list of stages on a plan
-//   "Stage"              — one segment with its own cadence and length
+//   "Stage"              — one segment with its own timing and length
 //   "How often"          — Weekly / Every 2 weeks / Monthly
 //   "Visit length"       — minutes per visit
 //   "Estimated total"    — derived from stages, displayed with "about"
@@ -522,7 +522,7 @@ function StageForm({
           rows={2}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="e.g. tighter cadence early to build momentum"
+          placeholder="e.g. weekly visits at first to build momentum"
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
       </label>
