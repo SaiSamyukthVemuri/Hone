@@ -19,6 +19,8 @@ const VISIT_LENGTH_MAX = 240;
 const STAGE_LENGTH_MIN = 1;
 const STAGE_LENGTH_MAX = 240;
 const GOAL_MINUTES_OVERRIDE_MAX = 60000;
+// Body Chart v1 Phase A — matches migration 0038's CHECK.
+const PRIMARY_AREA_MAX = 60;
 const HOW_OFTEN_VALUES: ReadonlyArray<TreatmentPlanStageHowOftenUnit> = [
   "weekly",
   "every_2_weeks",
@@ -63,6 +65,18 @@ export async function createTreatmentPlanAction(
     };
   }
 
+  // Body Chart v1: optional structured area. Empty → null. No value-set
+  // validation here — the DB accepts any 1..60 char string, and the UI
+  // uses AREA_REGIONS as the canonical picker.
+  const primaryAreaRaw = trimmed(formData.get("primary_area"));
+  if (primaryAreaRaw.length > PRIMARY_AREA_MAX) {
+    return {
+      ok: false,
+      error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+    };
+  }
+  const primaryArea = primaryAreaRaw.length === 0 ? null : primaryAreaRaw;
+
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
@@ -84,6 +98,7 @@ export async function createTreatmentPlanAction(
     suggested_visit_count: suggested,
     status: "active",
     created_by_practitioner_id: practitioner.id,
+    primary_area: primaryArea,
   });
   if (error) return { ok: false, error: `Failed to create plan: ${error.message}` };
 
@@ -295,14 +310,42 @@ export async function updateTreatmentPlanNotesAction(
     override = parsed;
   }
 
+  // Body Chart v1: optional primary area. The field is opt-in for this
+  // action — callers that don't include `primary_area` in FormData leave
+  // the column untouched. If the field is present, empty becomes null
+  // (so a practitioner can clear the area), otherwise the trimmed value
+  // is written. No value-set validation here; the canonical list is the
+  // UI's responsibility.
+  const primaryAreaEntry = formData.get("primary_area");
+  const updatePrimaryArea = primaryAreaEntry !== null;
+  let primaryArea: string | null = null;
+  if (updatePrimaryArea) {
+    const trimmedArea = trimmed(primaryAreaEntry);
+    if (trimmedArea.length > PRIMARY_AREA_MAX) {
+      return {
+        ok: false,
+        error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+      };
+    }
+    primaryArea = trimmedArea.length === 0 ? null : trimmedArea;
+  }
+
   const supabase = await createClient();
+  const update: {
+    budget_notes: string | null;
+    practitioner_notes: string | null;
+    treatment_goal_minutes_override: number | null;
+    primary_area?: string | null;
+  } = {
+    budget_notes: budget,
+    practitioner_notes: practitioner,
+    treatment_goal_minutes_override: override,
+  };
+  if (updatePrimaryArea) update.primary_area = primaryArea;
+
   const { error } = await supabase
     .from("treatment_plans")
-    .update({
-      budget_notes: budget,
-      practitioner_notes: practitioner,
-      treatment_goal_minutes_override: override,
-    })
+    .update(update)
     .eq("id", planId)
     .eq("studio_id", check.studioId);
   if (error) {
