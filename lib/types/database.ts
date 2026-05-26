@@ -28,6 +28,11 @@ export type Studio = {
   send_no_show_followup: boolean;
   // Migration 0026: opt-in display of client treatment time in emails.
   show_treatment_time_to_clients: boolean;
+  // Migration 0036: how many months ahead the public booking page shows
+  // available slots. Allowed values: 3, 4, 6. Default 3 (matches the
+  // previously-hardcoded BOOKING_HORIZON_DAYS). Internal practitioner
+  // booking is not subject to this limit.
+  public_booking_horizon_months: 3 | 4 | 6;
 };
 
 export type TreatmentGoalStatus = "active" | "reached" | "revised" | "archived";

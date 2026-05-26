@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
+import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -38,6 +39,22 @@ function parseBufferPreset(value: FormDataEntryValue | null): number {
   return Number(raw);
 }
 
+// Strict membership check for the booking-horizon select. Same idiom as
+// parseBufferPreset above: never coerce to a number until we've
+// confirmed the raw string matches one of the allowed literals.
+const HORIZON_MONTH_STRINGS = PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.map(String);
+function parsePublicBookingHorizonMonths(
+  value: FormDataEntryValue | null,
+): number {
+  const raw = trimmed(value);
+  if (!HORIZON_MONTH_STRINGS.includes(raw)) {
+    throw new Error(
+      `Booking horizon must be one of: ${PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.join(", ")} months.`,
+    );
+  }
+  return Number(raw);
+}
+
 async function assertOwner(): Promise<{ studioId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
@@ -59,6 +76,9 @@ export async function updateStudioBookingPrefsAction(
     60,
   );
   const buffer = parseBufferPreset(formData.get("buffer_minutes"));
+  const publicBookingHorizonMonths = parsePublicBookingHorizonMonths(
+    formData.get("public_booking_horizon_months"),
+  );
   const slugRaw = trimmed(formData.get("slug")).toLowerCase();
   const address = nullable(formData.get("address"));
   const bookingDescription = nullable(formData.get("booking_description"));
@@ -82,6 +102,7 @@ export async function updateStudioBookingPrefsAction(
       slug: slugRaw,
       address,
       booking_description: bookingDescription,
+      public_booking_horizon_months: publicBookingHorizonMonths,
     })
     .eq("id", studioId);
   if (error) {
@@ -105,4 +126,7 @@ export async function updateStudioBookingPrefsAction(
   revalidatePath("/settings/availability");
   revalidatePath("/settings/studio");
   revalidatePath("/calendar");
+  // Public booking page reads horizon at request time; revalidate so
+  // the cached render reflects the new window immediately.
+  if (slugRaw) revalidatePath(`/book/${slugRaw}`);
 }

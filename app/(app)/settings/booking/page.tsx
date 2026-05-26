@@ -1,5 +1,6 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
+import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 import { updateStudioBookingPrefsAction } from "./actions";
 import { BookingLinkCard } from "./BookingLinkCard";
 
@@ -108,6 +109,25 @@ export default async function BookingSettingsPage() {
             </span>
           </label>
         </div>
+
+        <label className="flex flex-col gap-1.5 max-w-xs">
+          <span className="text-sm font-medium">Booking horizon</span>
+          <select
+            name="public_booking_horizon_months"
+            defaultValue={String(studio.public_booking_horizon_months)}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          >
+            {PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.map((m) => (
+              <option key={m} value={String(m)}>
+                {m} months
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-neutral-500">
+            Choose how far ahead clients can book online. Internal
+            practitioner booking is not limited by this setting.
+          </span>
+        </label>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Address (shown to clients)</span>
