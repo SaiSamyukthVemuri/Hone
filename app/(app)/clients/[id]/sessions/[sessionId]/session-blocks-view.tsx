@@ -24,6 +24,29 @@ import { deleteElectrolysisEntryAction } from "./actions";
 // Single-block sessions hide the block name entirely. Multi-block sessions
 // render block_name if set, else "Treatment N" where N is sort_order.
 
+// Body Chart v1 Phase B: format the structured-area chip shown alongside
+// the block. Joins primary_area · side · custom_area_detail with " · ".
+// Pure presentation — never reads or mutates block_name. Returns null when
+// the block has no structured-area data, so legacy blocks render exactly
+// as before.
+function formatStructuredAreaChip(block: SessionBlock): string | null {
+  const parts: string[] = [];
+  if (block.primary_area && block.primary_area.trim().length > 0) {
+    parts.push(block.primary_area.trim());
+  }
+  if (block.side && block.side !== "n/a") {
+    parts.push(block.side);
+  }
+  if (
+    block.custom_area_detail &&
+    block.custom_area_detail.trim().length > 0
+  ) {
+    parts.push(block.custom_area_detail.trim());
+  }
+  if (parts.length === 0) return null;
+  return parts.join(" · ");
+}
+
 type Props = {
   sessionId: string;
   clientId: string;
@@ -141,6 +164,12 @@ function BlockSection({
     [block.electrolysis_entries],
   );
 
+  // Body Chart v1 Phase B: structured anatomical area badge. Renders for
+  // both single- and multi-block sessions (BlockHeader is hidden for
+  // single-block sessions). When all three columns are NULL the chip is
+  // omitted — legacy blocks render exactly like today.
+  const areaChip = formatStructuredAreaChip(block);
+
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       {showName && (
@@ -149,6 +178,16 @@ function BlockSection({
           clientId={clientId}
           sessionId={sessionId}
         />
+      )}
+      {areaChip && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+            title="Treatment area"
+          >
+            {areaChip}
+          </span>
+        </div>
       )}
       {paramsLine && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">

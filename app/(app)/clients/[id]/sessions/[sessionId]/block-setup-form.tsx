@@ -14,9 +14,25 @@ import type {
   MachineFrequency,
   ProbeType,
   SessionBlock,
+  SessionBlockSide,
 } from "@/lib/types/database";
 import { ChipSelector } from "@/components/chip-selector";
+import { AreaPicker } from "@/components/area-picker";
 import { createSessionBlockAction } from "./block-actions";
+
+const PRIMARY_AREA_MAX = 60;
+const CUSTOM_AREA_DETAIL_MAX = 60;
+
+// Side options for paired anatomy. The DB CHECK (migration 0039) enforces
+// the same five values plus NULL. UI displays a Title-case label but
+// stores the canonical lowercase value.
+const SIDE_OPTIONS: ReadonlyArray<{ value: SessionBlockSide; label: string }> = [
+  { value: "center", label: "Center" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+  { value: "bilateral", label: "Bilateral" },
+  { value: "n/a", label: "n/a" },
+];
 
 type Props = {
   sessionId: string;
@@ -33,6 +49,10 @@ type Draft = {
   probeType: string;
   probeSize: string;
   machineFrequency: string;
+  // Body Chart v1 Phase B fields. All optional; empty → null on save.
+  primaryArea: string;
+  side: string; // SessionBlockSide | ""
+  customAreaDetail: string;
 };
 
 const EMPTY: Draft = {
@@ -43,6 +63,9 @@ const EMPTY: Draft = {
   probeType: "",
   probeSize: "",
   machineFrequency: "",
+  primaryArea: "",
+  side: "",
+  customAreaDetail: "",
 };
 
 const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
@@ -57,6 +80,11 @@ function fromPrevious(prev: SessionBlock | null): Draft {
     probeType: prev.probe_type ?? "",
     probeSize: prev.probe_size ?? "",
     machineFrequency: prev.machine_frequency ?? "",
+    // Copy-from-previous-block carries structured area forward — same
+    // ergonomic shortcut Mode/Modality/Probe already get.
+    primaryArea: prev.primary_area ?? "",
+    side: prev.side ?? "",
+    customAreaDetail: prev.custom_area_detail ?? "",
   };
 }
 
@@ -87,6 +115,18 @@ export function BlockSetupForm({
       setError("Energy level must be a non-negative number.");
       return;
     }
+    // Body Chart v1 Phase B fields. The server action also validates;
+    // these client-side checks just surface friendlier errors earlier.
+    const trimmedArea = draft.primaryArea.trim();
+    if (trimmedArea.length > PRIMARY_AREA_MAX) {
+      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
+      return;
+    }
+    const trimmedDetail = draft.customAreaDetail.trim();
+    if (trimmedDetail.length > CUSTOM_AREA_DETAIL_MAX) {
+      setError(`Specifics must be ${CUSTOM_AREA_DETAIL_MAX} characters or fewer.`);
+      return;
+    }
     startTransition(async () => {
       const res = await createSessionBlockAction({
         clientId,
@@ -102,6 +142,9 @@ export function BlockSetupForm({
         machineFrequency: (draft.machineFrequency || null) as
           | MachineFrequency
           | null,
+        primaryArea: trimmedArea || null,
+        side: draft.side || null,
+        customAreaDetail: trimmedDetail || null,
       });
       if (!res.ok) {
         setError(res.error);
@@ -153,6 +196,84 @@ export function BlockSetupForm({
           plus its order.
         </span>
       </label>
+
+      {/* Body Chart v1 Phase B: optional structured anatomical area.
+          Independent of block_name — never derived from it. Side and
+          Specifics only surface once Area is picked so the form stays
+          calm for practitioners who skip this section. */}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">Treatment area</span>
+        <span className="text-xs text-neutral-500">
+          Optional. Used later for area-level progress. This does not change
+          the block name.
+        </span>
+        <AreaPicker
+          value={draft.primaryArea}
+          onChange={(next) => {
+            // Clearing the area also clears side + specifics to keep the
+            // saved row internally consistent (no orphan side without an
+            // area). DB allows it, but the UX is cleaner this way.
+            if (!next) {
+              setDraft((d) => ({
+                ...d,
+                primaryArea: "",
+                side: "",
+                customAreaDetail: "",
+              }));
+            } else {
+              update("primaryArea", next);
+            }
+          }}
+          idPrefix={`block-create-${sessionId}`}
+        />
+
+        {draft.primaryArea.trim().length > 0 && (
+          <>
+            <div className="flex flex-col gap-1.5 pt-1">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Side
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {SIDE_OPTIONS.map((opt) => {
+                  const selected = draft.side === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() =>
+                        update("side", selected ? "" : opt.value)
+                      }
+                      aria-pressed={selected}
+                      className={
+                        "rounded-full border px-2.5 py-1 text-xs " +
+                        (selected
+                          ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-1.5 pt-1">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Specifics
+              </span>
+              <input
+                type="text"
+                value={draft.customAreaDetail}
+                onChange={(e) => update("customAreaDetail", e.target.value)}
+                placeholder="midline, under-chin, knuckles, jawline edge…"
+                maxLength={CUSTOM_AREA_DETAIL_MAX}
+                className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
+          </>
+        )}
+      </div>
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>

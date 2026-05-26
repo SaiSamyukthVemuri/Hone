@@ -429,6 +429,17 @@ export type ElectrolysisEntry = {
 // existing ElectrolysisMode values (thermo / blend / galv).
 export type SessionMode = ElectrolysisMode;
 
+// Body Chart v1 Phase B (migration 0039): structured anatomical area
+// metadata for analytics. `side` is a small closed enum enforced by a DB
+// CHECK; the other two columns are length-bounded free text. All three
+// are nullable and additive — legacy blocks are unaffected.
+export type SessionBlockSide =
+  | "center"
+  | "left"
+  | "right"
+  | "bilateral"
+  | "n/a";
+
 export type SessionBlock = {
   id: string;
   studio_id: string;
@@ -450,6 +461,10 @@ export type SessionBlock = {
   delete_reason: string | null;
   created_at: string;
   updated_at: string;
+  // Migration 0039 additive columns (nullable; legacy rows are still valid).
+  primary_area: string | null;
+  side: SessionBlockSide | null;
+  custom_area_detail: string | null;
 };
 
 export type LaserEntry = {
