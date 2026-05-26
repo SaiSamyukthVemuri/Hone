@@ -45,6 +45,10 @@ import {
 import {
   closeTreatmentPlanAction,
   createTreatmentPlanAction,
+  createTreatmentPlanStageAction,
+  deleteTreatmentPlanStageAction,
+  updateTreatmentPlanNotesAction,
+  updateTreatmentPlanStageAction,
 } from "./treatment-plans-actions";
 
 function formatPrice(cents: number): string {
@@ -417,6 +421,10 @@ export default async function ClientCheatSheetPage({
             plans={treatmentPlans}
             createAction={createTreatmentPlanAction}
             closeAction={closeTreatmentPlanAction}
+            updateNotesAction={updateTreatmentPlanNotesAction}
+            createStageAction={createTreatmentPlanStageAction}
+            updateStageAction={updateTreatmentPlanStageAction}
+            deleteStageAction={deleteTreatmentPlanStageAction}
             practitionerNames={practitionerNames}
           />
 
