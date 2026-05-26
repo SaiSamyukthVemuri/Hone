@@ -403,6 +403,90 @@ function formDataStrOrNull(fd: FormData, key: string): string | null {
   return v.length === 0 ? null : v;
 }
 
+// Phase C calendar-first booking: narrow authenticated action that
+// creates a client from inside the calendar quick-book drawer and
+// returns the new client's id + display fields. The existing
+// createClientAction (app/(app)/clients/new/actions.ts) redirects on
+// success and therefore cannot be reused from a drawer that needs
+// to stay open and auto-select the new client.
+//
+// Boundaries observed (mirroring bookAppointmentForClientAction):
+//   * resolves practitioner + studio server-side via
+//     getCurrentPractitionerWithStudio — studio_id is NEVER trusted
+//     from the browser
+//   * uses the user-scoped Supabase client (createClient), not
+//     createAdminClient — RLS still applies
+//   * inactive practitioners are refused, same gate as booking
+//   * only the minimal name / email / phone / pronouns fields are
+//     accepted; the full client profile (DOB, fitzpatrick, allergies,
+//     emergency contact, intake) is filled in later from /clients/[id]
+//   * does NOT send emails, does NOT create appointments, does NOT
+//     touch intake, does NOT touch Stripe or payments
+export type CreateClientFromCalendarResult =
+  | {
+      ok: true;
+      client: {
+        id: string;
+        name: string;
+        email: string | null;
+        phone: string | null;
+        pronouns: string | null;
+      };
+    }
+  | { ok: false; error: string };
+
+export async function createClientForCalendarBookingAction(
+  formData: FormData,
+): Promise<CreateClientFromCalendarResult> {
+  const name = formDataStr(formData, "name");
+  if (!name) return { ok: false, error: "Name is required." };
+  const email = formDataStrOrNull(formData, "email");
+  const phone = formDataStrOrNull(formData, "phone");
+  const pronouns = formDataStrOrNull(formData, "pronouns");
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot add clients." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("clients")
+    .insert({
+      studio_id: studio.id,
+      name,
+      email,
+      phone,
+      pronouns,
+      created_by: practitioner.id,
+    })
+    .select("id, name, email, phone, pronouns")
+    .single();
+
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not create client." };
+  }
+
+  // Same pages that the existing createClientAction revalidates —
+  // keeps Clients list + Dashboard recent-clients in sync. We also
+  // revalidate /calendar so a follow-up booking sees the new client
+  // in the server-passed clients prop after router.refresh().
+  revalidatePath("/clients");
+  revalidatePath("/dashboard");
+  revalidatePath("/calendar");
+
+  return {
+    ok: true,
+    client: {
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      pronouns: data.pronouns,
+    },
+  };
+}
+
 type DispatchParams = {
   appointment: import("@/lib/types/database").Appointment;
   service: import("@/lib/types/database").Service;
