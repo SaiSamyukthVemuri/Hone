@@ -47,7 +47,7 @@ export function TreatmentPlansCard({
     }
     const visitsNum = parseInt(visits, 10);
     if (!Number.isFinite(visitsNum) || visitsNum < 1 || visitsNum > MAX_VISITS) {
-      setError(`Suggested visit count must be between 1 and ${MAX_VISITS}.`);
+      setError(`Visit count target must be between 1 and ${MAX_VISITS}.`);
       return;
     }
     const fd = new FormData();
@@ -83,6 +83,22 @@ export function TreatmentPlansCard({
       <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
         Treatment plans
       </h2>
+
+      {/* Informational callout: signals that the current plan model is a
+          simple target and that phased plans (cadence + visit length +
+          budget notes) are the next iteration. Calm neutral palette so
+          it does not read as a warning. UI/copy only — no field or
+          behavior change. */}
+      <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+        <p className="font-medium text-neutral-800 dark:text-neutral-200">
+          Phased treatment plans are coming
+        </p>
+        <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+          Soon you&rsquo;ll be able to plan stages like weekly 15-minute
+          visits for 3 months, then monthly maintenance visits. This current
+          plan is a simple target.
+        </p>
+      </div>
 
       {plans.length === 0 && !adding && (
         <p className="text-sm text-neutral-500">
@@ -149,8 +165,11 @@ export function TreatmentPlansCard({
           </label>
           <label className="flex flex-col gap-1.5 max-w-[12rem]">
             <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-              Suggested visit count
+              Visit count target
             </span>
+            {/* FormData field name (`suggested_visit_count`) is unchanged —
+                only the visible label is renamed. The server action and
+                schema column are untouched. */}
             <input
               type="number"
               min={1}
@@ -161,6 +180,10 @@ export function TreatmentPlansCard({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
           </label>
+          <p className="-mt-1 text-[11px] text-neutral-500">
+            Use this as a rough target for now. Phased plans with cadence,
+            visit length, and budget notes are coming next.
+          </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
