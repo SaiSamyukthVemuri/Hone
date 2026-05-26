@@ -57,12 +57,30 @@ const TIMED_BLOCK_LABEL: Record<string, string> = {
   other: "Unavailable",
 };
 
-const RECURRING_BREAK_LABEL: Record<string, string> = {
+// Migration 0037 (Breaks & blocks cleanup) widened the recurring-
+// break label column to free text. KNOWN_RECURRING_BREAK_LABELS keeps
+// the old enum values rendering with their pre-existing capitalized
+// display ("lunch" → "Lunch", etc.). Custom labels typed by the
+// practitioner ("Dinner", "School pickup") fall through to
+// displayRecurringBreakLabel which preserves their casing.
+const KNOWN_RECURRING_BREAK_LABELS: Record<string, string> = {
   lunch: "Lunch",
   break: "Break",
   admin: "Admin",
   other: "Break",
 };
+
+function displayRecurringBreakLabel(rawLabel: string | null | undefined): string {
+  if (!rawLabel) return "Break";
+  const t = rawLabel.trim();
+  if (t.length === 0) return "Break";
+  const known = KNOWN_RECURRING_BREAK_LABELS[t.toLowerCase()];
+  if (known) return known;
+  // Custom label: preserve practitioner-supplied casing (e.g. "Dinner"
+  // typed as-is), but capitalize the first letter for tidy display if
+  // the practitioner typed all-lowercase.
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 
 // PR #10 idiom: blockouts use a 40px height threshold to choose
 // between two-line and one-line layouts. Same threshold applied
@@ -194,8 +212,7 @@ export function DayColumn({
           ROW_HEIGHT_PX - 2,
           (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
-        const rawLabel = occ.rule?.label ?? "break";
-        const label = RECURRING_BREAK_LABEL[rawLabel] ?? "Break";
+        const label = displayRecurringBreakLabel(occ.rule?.label);
         return (
           <BlockoutCard
             key={occ.id}

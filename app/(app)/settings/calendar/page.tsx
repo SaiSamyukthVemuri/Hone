@@ -28,18 +28,23 @@ export default async function CalendarSettingsPage() {
   return (
     <section className="flex flex-col gap-10">
       <div>
-        <h2 className="text-xl font-medium">Calendar</h2>
+        <h2 className="text-xl font-medium">Breaks &amp; blocks</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          One-off blocks and repeating breaks. Block details and notes are
-          private; clients only see the slot as unavailable.
+          Use repeating breaks for regular lunch, dinner, admin, or
+          personal time. Use one-off block time for vacations, single
+          long lunches, or one-time interruptions. These times are
+          unavailable for public booking; labels and notes are private
+          to your studio.
         </p>
       </div>
+      {/* Order: repeating breaks first so first-time setup configures
+          weekly lunch/dinner/admin before reaching for one-off blocks. */}
+      <RecurringBreaksSection rules={recurringRules} />
       <TimedBlocksSection
         studioTimezone={studio.timezone}
         todayLocal={today}
         blocks={timedBlocks}
       />
-      <RecurringBreaksSection rules={recurringRules} />
     </section>
   );
 }
