@@ -85,13 +85,13 @@ export function TreatmentPlansCard({
       </h2>
 
       {/* Informational callout: signals that the current plan model is a
-          simple target and that phased plans (cadence + visit length +
-          budget notes) are the next iteration. Calm neutral palette so
-          it does not read as a warning. UI/copy only — no field or
-          behavior change. */}
+          simple target and that treatment schedules (stages + how often +
+          visit length + budget notes) are the next iteration. Calm
+          neutral palette so it does not read as a warning. UI/copy only
+          — no field or behavior change. */}
       <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs dark:border-neutral-800 dark:bg-neutral-900">
         <p className="font-medium text-neutral-800 dark:text-neutral-200">
-          Phased treatment plans are coming
+          Treatment schedules are coming
         </p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
           Soon you&rsquo;ll be able to plan stages like weekly 15-minute
@@ -181,8 +181,8 @@ export function TreatmentPlansCard({
             />
           </label>
           <p className="-mt-1 text-[11px] text-neutral-500">
-            Use this as a rough target for now. Phased plans with cadence,
-            visit length, and budget notes are coming next.
+            Use this as a rough target for now. Treatment schedules with
+            how often, visit length, and budget notes are coming next.
           </p>
           <div className="flex items-center gap-2">
             <button
