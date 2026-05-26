@@ -1,6 +1,10 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
+  getClientsForStudio,
+  getCurrentPractitionerWithStudio,
+} from "@/lib/supabase/queries";
+import {
+  getActiveServices,
   getAppointmentsForRange,
   getBlockouts,
   getRecurringBreakOccurrencesForRange,
@@ -44,17 +48,36 @@ export default async function CalendarPage({
   const startUtc = utcInstantFromLocal(weekStart, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(addDays(weekStart, 7), "00:00", studio.timezone);
 
-  const [appointments, blockouts, timedBlocks, recurringOccurrences] =
-    await Promise.all([
-      getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
-      getBlockouts(studio.id),
-      getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
-      getRecurringBreakOccurrencesForRange(
-        studio.id,
-        startUtc.toISOString(),
-        endUtc.toISOString(),
-      ),
-    ]);
+  const [
+    appointments,
+    blockouts,
+    timedBlocks,
+    recurringOccurrences,
+    services,
+    clients,
+  ] = await Promise.all([
+    getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+    getBlockouts(studio.id),
+    getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+    getRecurringBreakOccurrencesForRange(
+      studio.id,
+      startUtc.toISOString(),
+      endUtc.toISOString(),
+    ),
+    getActiveServices(studio.id),
+    getClientsForStudio(studio.id),
+  ]);
+
+  // The drawer only needs the small subset used for search + display. We
+  // strip out timestamps, intake fields, and notes so the RSC payload sent
+  // to the client tree stays compact even on studios with many clients.
+  const drawerClients = clients.map((c) => ({
+    id: c.id,
+    name: c.name,
+    email: c.email,
+    phone: c.phone,
+    pronouns: c.pronouns,
+  }));
 
   const prevWeek = addDays(weekStart, -7);
   const nextWeek = addDays(weekStart, 7);
@@ -173,6 +196,8 @@ export default async function CalendarPage({
                 recurringBreaks={recurringByDate.get(date) ?? []}
                 blocked={blockoutDates.has(date)}
                 tz={studio.timezone}
+                clients={drawerClients}
+                services={services}
               />
             ))}
           </div>

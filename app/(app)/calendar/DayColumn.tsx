@@ -14,14 +14,18 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import type { StudioTimedBlock } from "@/lib/types/database";
+import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import { localTimeString } from "@/lib/booking/tz";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
-import { QuickBookDrawer, type QuickBookDraft } from "./QuickBookDrawer";
+import {
+  QuickBookDrawer,
+  type QuickBookClient,
+  type QuickBookDraft,
+} from "./QuickBookDrawer";
 
 // Grid constants shared between the day column and the page-level
 // hour rail. Kept here so both surfaces import a single source of
@@ -89,6 +93,8 @@ type Props = {
   recurringBreaks: RecurringBreakOccurrenceWithRule[];
   blocked: boolean;
   tz: string;
+  clients: QuickBookClient[];
+  services: Service[];
 };
 
 export function DayColumn({
@@ -98,6 +104,8 @@ export function DayColumn({
   recurringBreaks,
   blocked,
   tz,
+  clients,
+  services,
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
 
@@ -296,6 +304,8 @@ export function DayColumn({
       <QuickBookDrawer
         open={draft !== null}
         draft={draft}
+        clients={clients}
+        services={services}
         onClose={() => setDraft(null)}
       />
     </div>
