@@ -234,22 +234,6 @@ export function TreatmentPlansCard({
         Treatment plans
       </h2>
 
-      {/* Informational callout: signals that the current plan model is a
-          simple target and that treatment schedules (stages + how often +
-          visit length + budget notes) are the next iteration. Calm
-          neutral palette so it does not read as a warning. UI/copy only
-          — no field or behavior change. */}
-      <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs dark:border-neutral-800 dark:bg-neutral-900">
-        <p className="font-medium text-neutral-800 dark:text-neutral-200">
-          Treatment schedules are coming
-        </p>
-        <p className="mt-1 text-neutral-600 dark:text-neutral-400">
-          Soon you&rsquo;ll be able to plan stages like weekly 15-minute
-          visits for 3 months, then monthly maintenance visits. For now,
-          just enter a rough estimate.
-        </p>
-      </div>
-
       {plans.length === 0 && !adding && (
         <p className="text-sm text-neutral-500">
           Track multi-session treatments with a plan. Helpful for arm or leg
@@ -355,8 +339,8 @@ export function TreatmentPlansCard({
             />
           </label>
           <p className="-mt-1 text-[11px] text-neutral-500">
-            A rough estimate for now. Treatment schedules with how often,
-            visit length, and budget notes are coming next.
+            A rough estimate. You can add a treatment schedule with stages
+            after creating the plan.
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -419,10 +403,6 @@ function PlanCard({
 }) {
   const isClosed = plan.status === "closed";
   const isComplete = plan.attached_count >= plan.suggested_visit_count;
-  const percent = Math.min(
-    100,
-    Math.round((plan.attached_count / plan.suggested_visit_count) * 100),
-  );
   const createdBy = plan.created_by_practitioner_id
     ? practitionerNames[plan.created_by_practitioner_id]
     : null;
@@ -475,23 +455,22 @@ function PlanCard({
         )}
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-baseline justify-between gap-3 text-sm">
-          <span className="tabular-nums">
-            {plan.attached_count} of {plan.suggested_visit_count} visits
+      {/* Legacy attached-visits readout. De-emphasized after Treatment
+          Plan v2: the planned-vs-actual block below now carries the
+          primary progress story when stages exist. The legacy
+          suggested_visit_count column is preserved (still part of plan
+          creation) and surfaced as a single muted line so historical
+          plans without stages still show their target. */}
+      <div className="flex items-baseline justify-between gap-3 text-xs text-neutral-500">
+        <span className="tabular-nums">
+          {plan.attached_count} of {plan.suggested_visit_count} estimated
+          visits
+        </span>
+        {isClosed && isComplete && (
+          <span className="text-emerald-700 dark:text-emerald-400">
+            Complete
           </span>
-          {isClosed && isComplete && (
-            <span className="text-xs text-emerald-700 dark:text-emerald-400">
-              Complete
-            </span>
-          )}
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
-          <div
-            className="h-full bg-amber-500"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
+        )}
       </div>
 
       {/* Phase D: planned vs actual treatment time. Sits between the
