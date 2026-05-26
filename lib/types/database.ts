@@ -353,6 +353,11 @@ export type TreatmentPlan = {
   budget_notes: string | null;
   practitioner_notes: string | null;
   treatment_goal_minutes_override: number | null;
+  // Migration 0038 (Body Chart v1 Phase A): optional structured primary
+  // area for this plan, e.g. "Chin" or "Underarms". Free-form 1..60
+  // chars; the practitioner UI uses lib/constants.ts AREA_REGIONS as
+  // the canonical picker but "Other" + custom strings are allowed.
+  primary_area: string | null;
 };
 
 // Migration 0034: one stage of a treatment plan. A plan can contain

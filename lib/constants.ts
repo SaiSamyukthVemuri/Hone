@@ -1,26 +1,72 @@
 // Hardcoded preset values used during entry. These will move to studio settings later.
 
+// Flat list retained for backwards compatibility with session-entry
+// chip pickers that already index into it. Body Chart v1 (migration
+// 0038) adds Jawline, Sideburns, and Eyebrows so practitioner-frequent
+// areas have first-class entries.
 export const AREAS: ReadonlyArray<string> = [
   "Upper lip",
   "Chin",
+  "Jawline",
   "Cheeks",
+  "Sideburns",
+  "Eyebrows",
   "Full face",
   "Neck",
+  "Ears",
   "Chest",
+  "Abdomen",
   "Back",
   "Underarms",
+  "Forearms",
+  "Hands",
+  "Thighs",
+  "Lower legs",
+  "Feet",
   "Bikini",
   "Brazilian",
   "Buttocks",
-  "Forearms",
-  "Thighs",
-  "Lower legs",
-  "Hands",
-  "Feet",
-  "Abdomen",
-  "Ears",
   "Other",
 ];
+
+// Region-grouped area taxonomy used by the treatment plan area picker
+// (Body Chart v1 Phase A). Same canonical strings as AREAS minus
+// "Full face" (which is a composite — practitioners should pick a
+// specific area for a treatment plan), grouped for picker navigation.
+// "Other" is a catch-all that unlocks a custom free-text value in the
+// UI; the DB column accepts any 1..60 char string.
+export const AREA_REGIONS: ReadonlyArray<{
+  region: string;
+  areas: ReadonlyArray<string>;
+}> = [
+  {
+    region: "Face & neck",
+    areas: [
+      "Upper lip",
+      "Chin",
+      "Jawline",
+      "Cheeks",
+      "Sideburns",
+      "Eyebrows",
+      "Neck",
+      "Ears",
+    ],
+  },
+  {
+    region: "Torso",
+    areas: ["Chest", "Abdomen", "Back", "Underarms"],
+  },
+  {
+    region: "Limbs",
+    areas: ["Forearms", "Hands", "Thighs", "Lower legs", "Feet"],
+  },
+  {
+    region: "Intimate",
+    areas: ["Bikini", "Brazilian", "Buttocks"],
+  },
+];
+
+export const OTHER_AREA = "Other";
 
 // Laser treatments use larger anatomical zones; overlap with AREAS but not identical.
 export const LASER_ZONES: ReadonlyArray<string> = [

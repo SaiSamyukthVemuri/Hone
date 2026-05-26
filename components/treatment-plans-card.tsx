@@ -9,6 +9,130 @@ import {
 } from "@/components/treatment-schedule-editor";
 import { computePlannedVsActual } from "@/lib/treatment-time/plans";
 import { formatMinutes } from "@/lib/treatment-time/format";
+import { AREA_REGIONS, OTHER_AREA } from "@/lib/constants";
+
+const PRIMARY_AREA_MAX = 60;
+
+// True when the value is one of the canonical chip strings (any region).
+function isCanonicalArea(value: string): boolean {
+  if (!value) return false;
+  for (const group of AREA_REGIONS) {
+    if (group.areas.includes(value)) return true;
+  }
+  return false;
+}
+
+// Region-grouped chip picker for a treatment plan's primary area.
+// Optional: an empty value persists as NULL on the row. Selecting "Other"
+// reveals a free-text input so practitioner-specific labels still flow
+// without polluting the canonical list. The value lives in component
+// state; the parent renders this inside a form and reads back the
+// resolved string via the controlled `value` + `onChange`.
+function AreaPicker({
+  value,
+  onChange,
+  idPrefix,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  idPrefix: string;
+}) {
+  const isCanonical = isCanonicalArea(value);
+  const startsAsOther = value.length > 0 && !isCanonical;
+  const [otherSelected, setOtherSelected] = useState(startsAsOther);
+  const [customValue, setCustomValue] = useState(startsAsOther ? value : "");
+
+  function pickCanonical(area: string) {
+    setOtherSelected(false);
+    onChange(area);
+  }
+
+  function pickOther() {
+    setOtherSelected(true);
+    onChange(customValue);
+  }
+
+  function clear() {
+    setOtherSelected(false);
+    setCustomValue("");
+    onChange("");
+  }
+
+  function setCustom(next: string) {
+    setCustomValue(next);
+    onChange(next);
+  }
+
+  const showOtherInput = otherSelected || startsAsOther;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {AREA_REGIONS.map((group) => (
+        <div key={group.region} className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-neutral-500">
+            {group.region}
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {group.areas.map((area) => {
+              const selected = !showOtherInput && value === area;
+              return (
+                <button
+                  key={area}
+                  type="button"
+                  onClick={() => pickCanonical(area)}
+                  aria-pressed={selected}
+                  className={
+                    "rounded-full border px-2.5 py-1 text-xs " +
+                    (selected
+                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+                  }
+                >
+                  {area}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={pickOther}
+          aria-pressed={showOtherInput}
+          className={
+            "rounded-full border px-2.5 py-1 text-xs " +
+            (showOtherInput
+              ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+              : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+          }
+        >
+          {OTHER_AREA}
+        </button>
+        {value && (
+          <button
+            type="button"
+            onClick={clear}
+            className="rounded-full border border-dashed border-neutral-300 px-2.5 py-1 text-xs text-neutral-500 hover:border-neutral-500 dark:border-neutral-700"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {showOtherInput && (
+        <input
+          id={`${idPrefix}-area-custom`}
+          type="text"
+          value={customValue}
+          onChange={(e) => setCustom(e.target.value)}
+          maxLength={PRIMARY_AREA_MAX}
+          placeholder="Custom area (e.g. midline glabella)"
+          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+      )}
+    </div>
+  );
+}
 
 type ActionFn = (formData: FormData) => Promise<
   { ok: true } | { ok: false; error: string }
@@ -47,6 +171,7 @@ export function TreatmentPlansCard({
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [visits, setVisits] = useState("12");
+  const [primaryArea, setPrimaryArea] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -68,10 +193,16 @@ export function TreatmentPlansCard({
       setError(`Estimated visits must be between 1 and ${MAX_VISITS}.`);
       return;
     }
+    const trimmedArea = primaryArea.trim();
+    if (trimmedArea.length > PRIMARY_AREA_MAX) {
+      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
+      return;
+    }
     const fd = new FormData();
     fd.set("client_id", clientId);
     fd.set("name", trimmedName);
     fd.set("suggested_visit_count", String(visitsNum));
+    fd.set("primary_area", trimmedArea);
     setError(null);
     startTransition(async () => {
       const res = await createAction(fd);
@@ -81,6 +212,7 @@ export function TreatmentPlansCard({
       }
       setName("");
       setVisits("12");
+      setPrimaryArea("");
       setAdding(false);
     });
   }
@@ -191,6 +323,20 @@ export function TreatmentPlansCard({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
           </label>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+              Primary area
+            </span>
+            <AreaPicker
+              value={primaryArea}
+              onChange={setPrimaryArea}
+              idPrefix="plan-create"
+            />
+            <span className="text-[11px] text-neutral-500">
+              Used to group treatment progress by area. You can leave this
+              blank.
+            </span>
+          </div>
           <label className="flex flex-col gap-1.5 max-w-[12rem]">
             <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
               Estimated visits
@@ -227,6 +373,7 @@ export function TreatmentPlansCard({
                 setAdding(false);
                 setName("");
                 setVisits("12");
+                setPrimaryArea("");
                 setError(null);
               }}
               disabled={pending}
@@ -292,9 +439,19 @@ function PlanCard({
       }`}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          {plan.name}
-        </p>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            {plan.name}
+          </p>
+          {plan.primary_area && (
+            <span
+              className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+              title="Primary area"
+            >
+              {plan.primary_area}
+            </span>
+          )}
+        </div>
         {isClosed ? (
           <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
             Closed
@@ -418,6 +575,9 @@ function PlanNotesEditor({
   const [practitioner, setPractitioner] = useState(
     plan.practitioner_notes ?? "",
   );
+  const [primaryAreaDraft, setPrimaryAreaDraft] = useState(
+    plan.primary_area ?? "",
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -431,11 +591,17 @@ function PlanNotesEditor({
 
   function submit() {
     setError(null);
+    const trimmedArea = primaryAreaDraft.trim();
+    if (trimmedArea.length > PRIMARY_AREA_MAX) {
+      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
+      return;
+    }
     const fd = new FormData();
     fd.set("plan_id", plan.id);
     fd.set("client_id", clientId);
     fd.set("budget_notes", budget);
     fd.set("practitioner_notes", practitioner);
+    fd.set("primary_area", trimmedArea);
     // Always re-send the existing override unchanged. The override
     // field is not edited from this form in Phase C; Phase D will wire
     // it to a derived computation. Preserve whatever is currently on
@@ -459,6 +625,7 @@ function PlanNotesEditor({
   function cancel() {
     setBudget(plan.budget_notes ?? "");
     setPractitioner(plan.practitioner_notes ?? "");
+    setPrimaryAreaDraft(plan.primary_area ?? "");
     setError(null);
     setEditing(false);
   }
@@ -517,6 +684,20 @@ function PlanNotesEditor({
       <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
         Edit plan notes
       </p>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+          Primary area
+        </span>
+        <AreaPicker
+          value={primaryAreaDraft}
+          onChange={setPrimaryAreaDraft}
+          idPrefix={`plan-${plan.id}`}
+        />
+        <span className="text-[11px] text-neutral-500">
+          Used to group treatment progress by area. Leave blank to clear.
+        </span>
+      </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
