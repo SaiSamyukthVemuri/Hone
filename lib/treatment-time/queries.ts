@@ -42,12 +42,21 @@ function bucketize(blockName: string | null): string {
 // Single round-trip: load all non-deleted electrolysis sessions for the
 // client (id + started_at) plus the associated non-deleted block minutes.
 // Sum + count in app code so the helpers below can reuse the same rows.
+//
+// Body Chart v1 Phase C: also selects session_blocks.primary_area so
+// getTreatmentTimeByArea can prefer the structured area when set, with
+// bucketize(block_name) as the fallback for legacy/unset blocks. Side
+// and custom_area_detail are NOT included here — this phase keeps the
+// breakdown bucket at the Area layer (e.g. "Chin", "Underarms") and
+// does not fragment by side. The total-minutes and session-number
+// helpers don't read primary_area, so the additional column is free.
 type Row = {
   id: string;
   started_at: string;
   studio_id: string;
   blocks: Array<{
     block_name: string | null;
+    primary_area: string | null;
     minutes_performed: number | null;
     deleted_at: string | null;
   }>;
@@ -61,7 +70,7 @@ async function loadElectrolysisRows(
   const { data, error } = await supabase
     .from("sessions")
     .select(
-      "id, started_at, studio_id, blocks:session_blocks(block_name, minutes_performed, deleted_at)",
+      "id, started_at, studio_id, blocks:session_blocks(block_name, primary_area, minutes_performed, deleted_at)",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -97,6 +106,22 @@ export async function getTotalTreatmentTime(
   };
 }
 
+// Body Chart v1 Phase C: structured area takes precedence; legacy blocks
+// continue to flow through bucketize(block_name). The result is a
+// single Area-layer breakdown (e.g. "Chin", "Underarms", "Other") with
+// no side fragmentation — `Underarms · left` rolls up into `Underarms`
+// for this PR. Returning side/custom-detail as separate buckets is
+// intentionally deferred so the v1 breakdown answers "what area did
+// they spend time on" before "what side of which area".
+function resolveAreaBucket(block: {
+  block_name: string | null;
+  primary_area: string | null;
+}): string {
+  const structured = block.primary_area?.trim();
+  if (structured && structured.length > 0) return structured;
+  return bucketize(block.block_name);
+}
+
 export async function getTreatmentTimeByArea(
   studioId: string,
   clientId: string,
@@ -108,7 +133,7 @@ export async function getTreatmentTimeByArea(
     for (const b of r.blocks) {
       const minutes = b.minutes_performed ?? 0;
       if (minutes === 0) continue;
-      const area = bucketize(b.block_name);
+      const area = resolveAreaBucket(b);
       minutesByArea.set(area, (minutesByArea.get(area) ?? 0) + minutes);
       total += minutes;
     }
