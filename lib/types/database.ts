@@ -327,6 +327,12 @@ export type TreatmentPlanStatus = "active" | "closed";
 
 // Migration 0024: tracks multi-session electrolysis work against a target
 // visit count. Sessions opt in via sessions.treatment_plan_id.
+//
+// Migration 0034 (Treatment Plan v2 schema, Phase B): adds three nullable
+// columns — budget_notes, practitioner_notes, treatment_goal_minutes_override.
+// suggested_visit_count is retained as NOT NULL; the legacy
+// "Estimated visits" UI keeps writing it. Stage data (cadence + visit
+// length + duration) lives on the child treatment_plan_stages table.
 export type TreatmentPlan = {
   id: string;
   client_id: string;
@@ -338,6 +344,35 @@ export type TreatmentPlan = {
   closed_by_practitioner_id: string | null;
   created_at: string;
   closed_at: string | null;
+  // Migration 0034 additive columns (nullable; legacy rows are still valid).
+  budget_notes: string | null;
+  practitioner_notes: string | null;
+  treatment_goal_minutes_override: number | null;
+};
+
+// Migration 0034: one stage of a treatment plan. A plan can contain
+// multiple stages (e.g. weekly 15-min visits for 3 months, then monthly
+// maintenance visits for 12 months). studio_id is denormalized for RLS
+// and is always derived from the parent plan by a BEFORE trigger.
+export type TreatmentPlanStageHowOftenUnit =
+  | "weekly"
+  | "every_2_weeks"
+  | "monthly";
+export type TreatmentPlanStageLengthUnit = "weeks" | "months";
+
+export type TreatmentPlanStage = {
+  id: string;
+  plan_id: string;
+  studio_id: string;
+  sort_order: number;
+  name: string | null;
+  how_often_unit: TreatmentPlanStageHowOftenUnit;
+  visit_length_minutes: number;
+  stage_length_value: number;
+  stage_length_unit: TreatmentPlanStageLengthUnit;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type SessionAudit = {
