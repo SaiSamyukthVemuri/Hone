@@ -58,7 +58,10 @@ export async function fetchPublicSlotsAction(params: {
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
 
-  const horizon = horizonRangeInStudioTz(studio.timezone);
+  const horizon = horizonRangeInStudioTz(
+    studio.timezone,
+    studio.public_booking_horizon_months,
+  );
   if (params.date < horizon.minDateStr || params.date > horizon.maxDateStr) {
     return { ok: false, error: "Date is outside the booking window." };
   }
@@ -124,7 +127,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (Number.isNaN(start.getTime())) {
     return { ok: false, error: "Invalid time." };
   }
-  if (!isWithinPublicBookingHorizon(start, studio.timezone)) {
+  if (
+    !isWithinPublicBookingHorizon(
+      start,
+      studio.timezone,
+      studio.public_booking_horizon_months,
+    )
+  ) {
     return { ok: false, error: "That date is outside the booking window." };
   }
 

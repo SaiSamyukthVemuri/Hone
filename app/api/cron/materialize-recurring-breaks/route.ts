@@ -4,9 +4,9 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
 // missing occurrences from today (in the studio's local tz)
-// through today + 90 days. The RPC's underlying ON CONFLICT DO
-// NOTHING on (rule_id, occurrence_date) makes repeated runs
-// idempotent.
+// through today + HORIZON_DAYS days. The RPC's underlying ON
+// CONFLICT DO NOTHING on (rule_id, occurrence_date) makes
+// repeated runs idempotent.
 //
 // If a rule's materialization fails (typically sqlstate 23P01: a
 // freshly-extended occurrence collides with a manually-scheduled
@@ -16,8 +16,18 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 // or "recurring_break_materialization_error", the run continues
 // to attempt the remaining rules, and the response body lists
 // every failure so monitoring sees it.
+//
+// Bumped from 90 → 186 in migration 0036 (Booking Horizon v1). The
+// public booking horizon is now per-studio (3, 4, or 6 months); the
+// maximum is 6 × 31 = 186 days. We pre-materialize for the maximum
+// regardless of each studio's choice so a studio that increases
+// their horizon does not get a coverage gap during the days between
+// the increase and the next cron run. Excess rows for studios on
+// shorter horizons are harmless — they sit in
+// studio_calendar_reservations and are simply never read by the
+// public booking page beyond that studio's selected window.
 
-const HORIZON_DAYS = 90;
+const HORIZON_DAYS = 186;
 
 type RuleRow = {
   id: string;

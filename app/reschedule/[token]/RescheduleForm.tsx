@@ -12,6 +12,10 @@ type Props = {
   token: string;
   durationMinutes: number;
   studioTimezone: string;
+  // Migration 0036: per-studio public booking horizon (3, 4, or 6
+  // months). The date picker max is computed from this so it mirrors
+  // the server-side check in fetchRescheduleSlotsAction.
+  studioPublicBookingHorizonMonths: number;
 };
 
 // Today in the studio's local calendar, not the visitor's UTC date.
@@ -26,20 +30,32 @@ function todayInStudio(tz: string): string {
   }).format(new Date());
 }
 
-// Today + 90 days in studio tz, matching BOOKING_HORIZON_DAYS in
-// lib/booking/horizon.ts. Computed here to avoid pulling a server
-// helper into a client component.
-function horizonInStudio(tz: string): { min: string; max: string } {
+// Today + (months × 31 days) in studio tz. Mirrors
+// horizonDaysForMonths() in lib/booking/horizon.ts; computed here to
+// avoid pulling a server helper into a client component. Unknown
+// horizon values fall back to 3 months so the picker still renders.
+function horizonInStudio(
+  tz: string,
+  months: number,
+): { min: string; max: string } {
+  const safeMonths = months === 3 || months === 4 || months === 6 ? months : 3;
   const min = todayInStudio(tz);
   const [y, m, d] = min.split("-").map(Number);
   const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  noon.setUTCDate(noon.getUTCDate() + 90);
+  noon.setUTCDate(noon.getUTCDate() + safeMonths * 31);
   const max = `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
   return { min, max };
 }
 
-export function RescheduleForm({ token, studioTimezone }: Props) {
-  const horizon = horizonInStudio(studioTimezone);
+export function RescheduleForm({
+  token,
+  studioTimezone,
+  studioPublicBookingHorizonMonths,
+}: Props) {
+  const horizon = horizonInStudio(
+    studioTimezone,
+    studioPublicBookingHorizonMonths,
+  );
   const [date, setDate] = useState(horizon.min);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [picked, setPicked] = useState<Slot | null>(null);

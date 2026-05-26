@@ -87,6 +87,9 @@ export default async function ReschedulePage({
                 token={token}
                 durationMinutes={result.summary.durationMinutes}
                 studioTimezone={result.summary.studioTimezone}
+                studioPublicBookingHorizonMonths={
+                  result.summary.studioPublicBookingHorizonMonths
+                }
               />
             </>
           ) : (

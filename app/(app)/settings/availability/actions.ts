@@ -524,8 +524,13 @@ function parseDaysOfWeek(value: FormDataEntryValue | null): number[] {
 }
 
 function horizonEndDateInStudioTz(tz: string): string {
-  // Mirrors lib/booking/horizon.ts BOOKING_HORIZON_DAYS = 90. Returns
-  // YYYY-MM-DD that the RPC parses as a date.
+  // When a recurring break rule is created or updated, materialize
+  // forward to today + 186 days (the maximum possible public booking
+  // horizon: 6 months × 31 days). The daily cron also uses 186; both
+  // were bumped from 90 in migration 0036 (Booking Horizon v1) so a
+  // studio raising its booking horizon never sees a coverage gap in
+  // the days before the next cron run. Returns YYYY-MM-DD that the
+  // RPC parses as a date.
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -534,7 +539,7 @@ function horizonEndDateInStudioTz(tz: string): string {
   }).format(new Date());
   const [y, m, d] = today.split("-").map(Number);
   const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  noon.setUTCDate(noon.getUTCDate() + 90);
+  noon.setUTCDate(noon.getUTCDate() + 186);
   return `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
 }
 

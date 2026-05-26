@@ -30,7 +30,10 @@ export default async function PublicBookingPage({
   const services = (servicesData ?? []) as Service[];
 
   const today = todayInTz(studio.timezone);
-  const horizon = horizonRangeInStudioTz(studio.timezone);
+  const horizon = horizonRangeInStudioTz(
+    studio.timezone,
+    studio.public_booking_horizon_months,
+  );
 
   return (
     <main

@@ -70,6 +70,10 @@ export type RescheduleSummary = {
   studioId: string;
   studioName: string;
   studioTimezone: string;
+  // Migration 0036: per-studio public booking horizon (3, 4, or 6
+  // months). The reschedule date picker uses this so it shows the same
+  // window the server-side check enforces.
+  studioPublicBookingHorizonMonths: number;
   startsAt: string;
   status: "confirmed" | "cancelled" | "completed" | "no_show";
 };
@@ -89,7 +93,7 @@ export async function fetchAppointmentForRescheduleAction(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, status, starts_at, duration_minutes, service_id, service:services(id, name, default_duration_minutes), studio:studios(id, name, timezone)",
+      "id, status, starts_at, duration_minutes, service_id, service:services(id, name, default_duration_minutes), studio:studios(id, name, timezone, public_booking_horizon_months)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -107,8 +111,18 @@ export async function fetchAppointmentForRescheduleAction(
       | Array<{ id: string; name: string; default_duration_minutes: number }>
       | null;
     studio:
-      | { id: string; name: string; timezone: string }
-      | Array<{ id: string; name: string; timezone: string }>
+      | {
+          id: string;
+          name: string;
+          timezone: string;
+          public_booking_horizon_months: number;
+        }
+      | Array<{
+          id: string;
+          name: string;
+          timezone: string;
+          public_booking_horizon_months: number;
+        }>
       | null;
   };
   const row = data as unknown as Joined;
@@ -130,6 +144,7 @@ export async function fetchAppointmentForRescheduleAction(
       studioId: studio.id,
       studioName: studio.name,
       studioTimezone: studio.timezone,
+      studioPublicBookingHorizonMonths: studio.public_booking_horizon_months,
       startsAt: row.starts_at,
       status: row.status,
     },
@@ -148,7 +163,7 @@ export async function fetchRescheduleSlotsAction(params: {
   const { data: appt } = await admin
     .from("appointments")
     .select(
-      "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes)",
+      "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -167,12 +182,14 @@ export async function fetchRescheduleSlotsAction(params: {
           timezone: string;
           default_appointment_duration_minutes: number;
           buffer_minutes: number;
+          public_booking_horizon_months: number;
         }
       | {
           id: string;
           timezone: string;
           default_appointment_duration_minutes: number;
           buffer_minutes: number;
+          public_booking_horizon_months: number;
         }[]
       | null;
   };
@@ -183,7 +200,10 @@ export async function fetchRescheduleSlotsAction(params: {
   const stu = pick(r.studio);
   if (!stu) return { ok: false, error: "Studio missing." };
 
-  const horizon = horizonRangeInStudioTz(stu.timezone);
+  const horizon = horizonRangeInStudioTz(
+    stu.timezone,
+    stu.public_booking_horizon_months,
+  );
   if (params.date < horizon.minDateStr || params.date > horizon.maxDateStr) {
     return { ok: false, error: "Date is outside the booking window." };
   }
@@ -247,13 +267,19 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   const { data: studioRow } = await admin
     .from("studios")
     .select(
-      "id, timezone, default_appointment_duration_minutes, buffer_minutes, name, send_confirmation_emails",
+      "id, timezone, default_appointment_duration_minutes, buffer_minutes, name, send_confirmation_emails, public_booking_horizon_months",
     )
     .eq("id", existing.studio_id)
     .maybeSingle();
   if (!studioRow) return { ok: false, error: "Studio missing." };
 
-  if (!isWithinPublicBookingHorizon(start, studioRow.timezone)) {
+  if (
+    !isWithinPublicBookingHorizon(
+      start,
+      studioRow.timezone,
+      studioRow.public_booking_horizon_months,
+    )
+  ) {
     return { ok: false, error: "That date is outside the booking window." };
   }
 
