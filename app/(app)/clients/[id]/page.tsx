@@ -50,6 +50,9 @@ import {
   updateTreatmentPlanNotesAction,
   updateTreatmentPlanStageAction,
 } from "./treatment-plans-actions";
+import { updateClientPersonalNotesAction } from "./personal-notes-actions";
+import { getClientPersonalNotes } from "@/lib/clients/personal-notes-queries";
+import { ClientPersonalNotesEditor } from "@/components/client-personal-notes-editor";
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -93,11 +96,15 @@ export default async function ClientCheatSheetPage({
   const tags = await getClientTags(studio.id, client.id);
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
   const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
-  const [treatmentTotals, treatmentByArea, treatmentGoal] = await Promise.all([
-    getTotalTreatmentTime(studio.id, client.id),
-    getTreatmentTimeByArea(studio.id, client.id),
-    getTreatmentGoal(studio.id, client.id),
-  ]);
+  const [treatmentTotals, treatmentByArea, treatmentGoal, personalNotes] =
+    await Promise.all([
+      getTotalTreatmentTime(studio.id, client.id),
+      getTreatmentTimeByArea(studio.id, client.id),
+      getTreatmentGoal(studio.id, client.id),
+      // Phase: personal notes (migration 0035). Returns null when the
+      // client has no row yet; the editor's defaultValues stay empty.
+      getClientPersonalNotes(studio.id, client.id),
+    ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
@@ -311,6 +318,17 @@ export default async function ClientCheatSheetPage({
             </div>
           </section>
         </>
+      )}
+
+      {activeTab === "personal" && (
+        <ClientPersonalNotesEditor
+          clientId={client.id}
+          initial={{
+            personal_notes: personalNotes?.personal_notes ?? "",
+            private_warnings: personalNotes?.private_warnings ?? "",
+          }}
+          action={updateClientPersonalNotesAction}
+        />
       )}
 
       {activeTab === "health" && (

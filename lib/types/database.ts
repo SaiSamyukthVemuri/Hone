@@ -511,6 +511,23 @@ export type ClientPinnedNote = {
   created_at: string;
 };
 
+// Migration 0035: practitioner-only relationship memory + sensitive
+// warnings. One row per client (UNIQUE on client_id). studio_id is
+// derived from the parent client by trigger; the row is created lazily
+// on first save. These fields are NEVER exposed to client/public/email
+// surfaces — see the privacy contract in the migration comment and the
+// import audit in PR #27.
+export type ClientPersonalNotes = {
+  id: string;
+  client_id: string;
+  studio_id: string;
+  personal_notes: string;
+  private_warnings: string;
+  updated_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ClientTag = {
   id: string;
   studio_id: string;

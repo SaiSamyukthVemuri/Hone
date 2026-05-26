@@ -4,8 +4,13 @@
 // error where a server component tries to call a function exported from a
 // client module.
 
-export type ProfileTab = "overview" | "health" | "treatment";
+export type ProfileTab = "overview" | "personal" | "health" | "treatment";
 
 export function isProfileTab(value: string | null | undefined): value is ProfileTab {
-  return value === "overview" || value === "health" || value === "treatment";
+  return (
+    value === "overview" ||
+    value === "personal" ||
+    value === "health" ||
+    value === "treatment"
+  );
 }

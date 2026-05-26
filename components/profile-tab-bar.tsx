@@ -9,8 +9,15 @@ import type { ProfileTab } from "./profile-tab";
 // continue to work unchanged. Only the visible tab text flips to
 // "Sessions" — clearer because the tab is primarily about per-visit
 // history + treatment plans, not the broader treatment time/goal data.
+// Order matters: Overview → Personal notes → Health → Sessions. Personal
+// notes sits between Overview and Health because it is practitioner
+// relationship memory the practitioner often reaches for BEFORE the
+// clinical/health tab (e.g., remembering kids' names ahead of small-talk
+// during a visit). The tab is practitioner-only; nothing on Personal
+// notes is exposed to client/public surfaces.
 const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "overview", label: "Overview" },
+  { value: "personal", label: "Personal notes" },
   { value: "health", label: "Health" },
   { value: "treatment", label: "Sessions" },
 ];
