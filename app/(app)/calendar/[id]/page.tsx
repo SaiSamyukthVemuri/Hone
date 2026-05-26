@@ -255,19 +255,26 @@ export default async function AppointmentDetailPage({
           Email activity
         </summary>
         <div className="mt-3 flex flex-col gap-1.5">
-          <EmailRow label="Confirmation sent" iso={data.confirmation_sent_at} />
           <EmailRow
-            label="24-hour reminder sent"
-            iso={data.reminder_24h_sent_at}
+            label="Confirmation"
+            iso={data.confirmation_sent_at}
+            attempts={data.confirmation_send_attempts}
           />
           <EmailRow
-            label="2-hour reminder sent"
+            label="24-hour reminder"
+            iso={data.reminder_24h_sent_at}
+            attempts={data.reminder_24h_send_attempts}
+          />
+          <EmailRow
+            label="2-hour reminder"
             iso={data.reminder_2h_sent_at}
+            attempts={data.reminder_2h_send_attempts}
           />
           {data.no_show_email_sent_at && (
             <EmailRow
-              label="No-show follow-up sent"
+              label="No-show follow-up"
               iso={data.no_show_email_sent_at}
+              attempts={data.no_show_email_send_attempts}
             />
           )}
         </div>
@@ -591,13 +598,33 @@ function TreatmentPlanCard({
   );
 }
 
-function EmailRow({ label, iso }: { label: string; iso: string | null }) {
+// Three-state row:
+//   * sent_at set         → "Sent <time>"
+//   * sent_at null, attempts > 0 → "Failed after N attempt(s)"
+//   * sent_at null, attempts = 0 → "Not sent"
+// Pure read-only from the appointment row. Attempt counts come from the
+// existing reminder_*_send_attempts / confirmation_send_attempts /
+// no_show_email_send_attempts columns the row already loaded. No retry
+// implied — this is just an honest status display.
+function EmailRow({
+  label,
+  iso,
+  attempts,
+}: {
+  label: string;
+  iso: string | null;
+  attempts: number;
+}) {
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
       <span className="text-neutral-500">{label}</span>
       {iso ? (
         <span className="text-neutral-700 dark:text-neutral-300">
-          <FormattedDateTime iso={iso} />
+          Sent <FormattedDateTime iso={iso} />
+        </span>
+      ) : attempts > 0 ? (
+        <span className="text-amber-700 dark:text-amber-400">
+          Failed after {attempts} attempt{attempts === 1 ? "" : "s"}
         </span>
       ) : (
         <span className="text-neutral-400">Not sent</span>
