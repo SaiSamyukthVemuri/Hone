@@ -173,10 +173,17 @@ export async function getRecurringBreakOccurrencesForRange(
   }));
 }
 
-// Appointment shape returned by getAppointmentsForRange. Includes a small
-// practitioner join so the calendar can color pills without an N+1 lookup.
+// Appointment shape returned by getAppointmentsForRange. Includes small
+// joins on practitioner (for color), client (for the calendar card
+// headline), and service (for the secondary modality/name line) so the
+// week view can render readable cards without an N+1 lookup. All three
+// joins are existing FK relationships with no new RLS exposure — every
+// row was already accessible to this studio's session via the
+// underlying appointments query.
 export type AppointmentWithPractitionerColor = Appointment & {
   practitioner: { id: string; color: string } | null;
+  client: { id: string; name: string } | null;
+  service: { id: string; name: string; modality: string | null } | null;
 };
 
 export async function getAppointmentsForRange(
@@ -187,7 +194,9 @@ export async function getAppointmentsForRange(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("appointments")
-    .select("*, practitioner:practitioners(id, color)")
+    .select(
+      "*, practitioner:practitioners(id, color), client:clients(id, name), service:services(id, name, modality)",
+    )
     .eq("studio_id", studioId)
     .gte("starts_at", startIso)
     .lt("starts_at", endIso)
@@ -195,18 +204,33 @@ export async function getAppointmentsForRange(
   if (error) throw new Error(`Failed to load appointments: ${error.message}`);
 
   // Supabase types joined relations as either a single row or an array.
-  // Normalize so the caller can do `a.practitioner?.color` without branching.
+  // Normalize so callers can use `a.practitioner?.color` without
+  // branching (same idiom for client and service).
   type Raw = Appointment & {
     practitioner:
       | { id: string; color: string }
       | { id: string; color: string }[]
+      | null;
+    client:
+      | { id: string; name: string }
+      | { id: string; name: string }[]
+      | null;
+    service:
+      | { id: string; name: string; modality: string | null }
+      | { id: string; name: string; modality: string | null }[]
       | null;
   };
   return ((data ?? []) as Raw[]).map((row) => {
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
-    return { ...row, practitioner: p };
+    const c = Array.isArray(row.client)
+      ? row.client[0] ?? null
+      : row.client;
+    const s = Array.isArray(row.service)
+      ? row.service[0] ?? null
+      : row.service;
+    return { ...row, practitioner: p, client: c, service: s };
   });
 }
 
