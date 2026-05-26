@@ -47,7 +47,7 @@ export function TreatmentPlansCard({
     }
     const visitsNum = parseInt(visits, 10);
     if (!Number.isFinite(visitsNum) || visitsNum < 1 || visitsNum > MAX_VISITS) {
-      setError(`Visit count target must be between 1 and ${MAX_VISITS}.`);
+      setError(`Estimated visits must be between 1 and ${MAX_VISITS}.`);
       return;
     }
     const fd = new FormData();
@@ -95,8 +95,8 @@ export function TreatmentPlansCard({
         </p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
           Soon you&rsquo;ll be able to plan stages like weekly 15-minute
-          visits for 3 months, then monthly maintenance visits. This current
-          plan is a simple target.
+          visits for 3 months, then monthly maintenance visits. For now,
+          just enter a rough estimate.
         </p>
       </div>
 
@@ -165,7 +165,7 @@ export function TreatmentPlansCard({
           </label>
           <label className="flex flex-col gap-1.5 max-w-[12rem]">
             <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-              Visit count target
+              Estimated visits
             </span>
             {/* FormData field name (`suggested_visit_count`) is unchanged —
                 only the visible label is renamed. The server action and
@@ -181,8 +181,8 @@ export function TreatmentPlansCard({
             />
           </label>
           <p className="-mt-1 text-[11px] text-neutral-500">
-            Use this as a rough target for now. Treatment schedules with
-            how often, visit length, and budget notes are coming next.
+            A rough estimate for now. Treatment schedules with how often,
+            visit length, and budget notes are coming next.
           </p>
           <div className="flex items-center gap-2">
             <button
