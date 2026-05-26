@@ -132,14 +132,20 @@ export function TreatmentScheduleEditor({
       </div>
 
       {stages.length === 0 ? (
-        <div className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
-          <p className="font-medium text-neutral-700 dark:text-neutral-300">
-            No schedule stages yet.
+        isClosed ? (
+          <p className="text-xs italic text-neutral-500">
+            No schedule was added.
           </p>
-          <p className="mt-0.5">
-            Add stages like weekly 15-minute visits for 3 months.
-          </p>
-        </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
+            <p className="font-medium text-neutral-700 dark:text-neutral-300">
+              No schedule stages yet.
+            </p>
+            <p className="mt-0.5">
+              Add stages like weekly 15-minute visits for 3 months.
+            </p>
+          </div>
+        )
       ) : (
         <ol className="flex flex-col gap-2">
           {stages.map((stage, index) => (
