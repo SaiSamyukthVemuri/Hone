@@ -7,6 +7,7 @@ import {
 } from "@/lib/supabase/queries";
 import { getActiveServices } from "@/lib/booking/queries";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
+import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import {
   addDays,
   localTimeString,
@@ -145,10 +146,15 @@ export default async function DashboardPage() {
     intakesAwaitingReviewCount,
     activeServicesCount,
     paymentStatus,
+    birthdaysThisMonth,
   ] = await Promise.all([
     countIntakesAwaitingReview(supabase, studio.id),
     countActiveServices(studio.id),
     isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
+    // Birthday reminders — month-of-year only, derived from
+    // clients.date_of_birth. Practitioner-facing only. Never sent as
+    // email/SMS or exposed to client/public surfaces.
+    getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
   ]);
 
   const bookingUrl = `${APP_ORIGIN.replace(/\/$/, "")}/book/${studio.slug}`;
@@ -173,6 +179,8 @@ export default async function DashboardPage() {
         activeServicesCount={activeServicesCount}
         paymentStatus={paymentStatus}
       />
+
+      <BirthdaysThisMonth birthdays={birthdaysThisMonth} today={todayLocal} />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -708,4 +716,78 @@ async function loadPaymentStatus(
     onboardingCompleted: row.onboarding_completed_at != null,
     payoutsEnabled: row.payouts_enabled === true,
   };
+}
+
+// Birthdays this month — practitioner-facing only. Renders nothing when
+// the studio has no clients with a birthday in the current month so the
+// dashboard stays quiet. Each row links to the client profile so the
+// practitioner can pull up context before wishing them a happy birth
+// month.
+//
+// Never sent as email/SMS. Never exposed to client/public surfaces.
+function BirthdaysThisMonth({
+  birthdays,
+  today,
+}: {
+  birthdays: ReadonlyArray<{ id: string; name: string; month: number; day: number }>;
+  // Studio-local YYYY-MM-DD for the "today" highlight.
+  today: string;
+}) {
+  if (birthdays.length === 0) return null;
+
+  const todayDay = parseInt(today.slice(8, 10), 10);
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-lg font-medium">Birthdays this month</h2>
+      <ul className="flex flex-col gap-2">
+        {birthdays.map((b) => {
+          const isToday = b.day === todayDay;
+          return (
+            <li
+              key={b.id}
+              className="flex flex-wrap items-baseline justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/50"
+            >
+              <div className="flex items-baseline gap-2">
+                <Link
+                  href={`/clients/${b.id}?tab=personal`}
+                  className="text-sm font-medium hover:underline"
+                >
+                  {b.name}
+                </Link>
+                <span className="text-xs text-neutral-500 tabular-nums">
+                  {formatMonthDay(b.month, b.day)}
+                </span>
+                {isToday && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                    Today
+                  </span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+const MONTH_NAMES: ReadonlyArray<string> = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+function formatMonthDay(month: number, day: number): string {
+  const name = MONTH_NAMES[month - 1] ?? "";
+  return `${name} ${day}`;
 }

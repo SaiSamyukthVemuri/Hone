@@ -53,6 +53,19 @@ import {
 import { updateClientPersonalNotesAction } from "./personal-notes-actions";
 import { getClientPersonalNotes } from "@/lib/clients/personal-notes-queries";
 import { ClientPersonalNotesEditor } from "@/components/client-personal-notes-editor";
+import { updateClientBirthdayAction } from "./birthday-actions";
+import { ClientBirthdayCard } from "@/components/client-birthday-card";
+
+// Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
+// month/day numbers for the Birthday card's "today" / "this month"
+// callouts.
+function parseStudioToday(yyyymmdd: string): { month: number; day: number } {
+  const parts = yyyymmdd.split("-");
+  return {
+    month: parseInt(parts[1] ?? "0", 10),
+    day: parseInt(parts[2] ?? "0", 10),
+  };
+}
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -190,6 +203,17 @@ export default async function ClientCheatSheetPage({
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
             removeAction={removeClientPinnedNoteAction}
+          />
+
+          {/* Birthday card. Compact; renders an explicit "Birthday today"
+              or "Birthday month" callout when relevant so the practitioner
+              sees the reminder at the top of the profile. Practitioner-
+              only; never exposed to client/public surfaces. */}
+          <ClientBirthdayCard
+            clientId={client.id}
+            dateOfBirth={client.date_of_birth}
+            studioToday={parseStudioToday(today)}
+            action={updateClientBirthdayAction}
           />
 
           {client.allergies && (
