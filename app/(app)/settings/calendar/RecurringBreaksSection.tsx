@@ -13,12 +13,18 @@ type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
 };
 
-const LABELS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "lunch", label: "Lunch" },
-  { value: "break", label: "Break" },
-  { value: "admin", label: "Admin" },
-  { value: "other", label: "Other" },
+// Migration 0037: the recurring-break label column accepts free text
+// now (1..60 chars). These preset suggestions are a UX nicety —
+// clicking a pill fills the text input — but the practitioner can type
+// any label they want ("Dinner", "School pickup", "Yoga", …).
+const LABEL_PRESETS: ReadonlyArray<string> = [
+  "Lunch",
+  "Dinner",
+  "Admin",
+  "Personal",
+  "Break",
 ];
+const LABEL_MAX_LENGTH = 60;
 
 const WEEKDAY_LABELS = [
   { value: 0, short: "Sun" },
@@ -30,8 +36,22 @@ const WEEKDAY_LABELS = [
   { value: 6, short: "Sat" },
 ];
 
+// Display helper: known legacy values keep their old display
+// capitalization; everything else renders with the practitioner's
+// supplied casing (with a tidy first-letter uppercase if it was typed
+// all-lowercase). Mirrors displayRecurringBreakLabel in DayColumn.tsx.
+const LEGACY_LABEL_DISPLAY: Record<string, string> = {
+  lunch: "Lunch",
+  break: "Break",
+  admin: "Admin",
+  other: "Other",
+};
 function formatLabel(v: string): string {
-  return LABELS.find((l) => l.value === v)?.label ?? v;
+  const t = v.trim();
+  if (t.length === 0) return "Break";
+  const known = LEGACY_LABEL_DISPLAY[t.toLowerCase()];
+  if (known) return known;
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function formatDays(days: number[]): string {
@@ -53,7 +73,7 @@ function trimSeconds(time: string): string {
   return time.slice(0, 5);
 }
 
-const DEFAULT_LABEL = "lunch";
+const DEFAULT_LABEL = "Lunch";
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const DEFAULT_START = "12:00";
 const DEFAULT_END = "12:30";
@@ -172,9 +192,10 @@ export function RecurringBreaksSection({ rules }: Props) {
       <div>
         <h2 className="text-xl font-medium">Repeating breaks</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Weekly recurring lunch, admin, or general breaks. Generated for the
-          next 90 days and refreshed daily. Block labels and reasons are
-          private to your studio; clients only see the slot as unavailable.
+          Set up the regular times you&rsquo;re unavailable each week —
+          lunch, dinner, admin, or personal time. Generated for the next
+          six months and refreshed daily. Labels are private to your
+          studio; clients only see the slot as unavailable.
         </p>
       </div>
 
@@ -184,23 +205,42 @@ export function RecurringBreaksSection({ rules }: Props) {
             Editing rule
           </div>
         )}
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr]">
+        <div className="flex flex-col gap-1.5">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
               Label
             </span>
-            <select
+            <input
+              type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-            >
-              {LABELS.map((l) => (
-                <option key={l.value} value={l.value}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
+              maxLength={LABEL_MAX_LENGTH}
+              placeholder="Lunch, Dinner, Admin, Personal…"
+              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            />
           </label>
+          <div className="flex flex-wrap gap-1.5">
+            {LABEL_PRESETS.map((preset) => {
+              const selected = label.trim().toLowerCase() === preset.toLowerCase();
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setLabel(preset)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] ${
+                    selected
+                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                      : "border-neutral-300 bg-white text-neutral-600 hover:border-neutral-500 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
+                  }`}
+                >
+                  {preset}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
               Start
@@ -231,7 +271,7 @@ export function RecurringBreaksSection({ rules }: Props) {
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Weekdays
           </span>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Weekdays">
             {WEEKDAY_LABELS.map((d) => {
               const checked = days.includes(d.value);
               return (
@@ -239,13 +279,23 @@ export function RecurringBreaksSection({ rules }: Props) {
                   key={d.value}
                   type="button"
                   onClick={() => toggleDay(d.value)}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                  aria-pressed={checked}
+                  // Selected uses a distinct emerald accent (not the
+                  // neutral black/white pair, which was visually
+                  // ambiguous in dark mode), plus a checkmark glyph so
+                  // selection state is unambiguous even without color.
+                  className={`flex min-w-[60px] items-center justify-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition ${
                     checked
-                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-900"
+                      ? "border-emerald-600 bg-emerald-600 text-white shadow-sm dark:border-emerald-500 dark:bg-emerald-600 dark:text-white"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:border-neutral-500 dark:hover:bg-neutral-900"
                   }`}
                 >
-                  {d.short}
+                  {checked && (
+                    <span aria-hidden="true" className="text-[10px]">
+                      ✓
+                    </span>
+                  )}
+                  <span>{d.short}</span>
                 </button>
               );
             })}

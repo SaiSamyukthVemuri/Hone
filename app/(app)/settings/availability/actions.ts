@@ -507,7 +507,13 @@ export async function deleteTimedBlockAction(
 // specific conflicting time.
 // -------------------------------------------------------------------------
 
-const RECURRING_BREAK_LABELS = ["lunch", "break", "admin", "other"] as const;
+// Migration 0037 (Breaks & blocks cleanup): the previous enum
+// whitelist (lunch/break/admin/other) was relaxed to a length-only
+// check on the column. The action validates length here so the
+// practitioner sees a friendly error rather than an opaque CHECK
+// violation. Labels are private to the studio — clients only see the
+// slot as unavailable on the booking page.
+const RECURRING_BREAK_LABEL_MAX_LENGTH = 60;
 
 function parseDaysOfWeek(value: FormDataEntryValue | null): number[] {
   // The form posts a single comma-separated string like "1,3,5".
@@ -561,14 +567,24 @@ export async function createRecurringBreakRuleAction(
   // is service_role only, so the actual RPC call goes through the
   // admin client below.
   const { studio, practitioner } = await assertOwnerWithStudio();
-  const label = trimmed(formData.get("label")).toLowerCase();
+  // Migration 0037: preserve practitioner-supplied capitalization
+  // (e.g. "Dinner") instead of lowercasing — the label is private,
+  // displayed verbatim on the practitioner calendar, and the DB
+  // CHECK is now length-based, not enum-based.
+  const label = trimmed(formData.get("label"));
   const days = parseDaysOfWeek(formData.get("days_of_week"));
   const startLocal = trimmed(formData.get("start_local"));
   const endLocal = trimmed(formData.get("end_local"));
   const active = trimmed(formData.get("active")) !== "false";
 
-  if (!(RECURRING_BREAK_LABELS as ReadonlyArray<string>).includes(label)) {
-    return { ok: false, error: "Invalid label." };
+  if (label.length === 0) {
+    return { ok: false, error: "Label is required." };
+  }
+  if (label.length > RECURRING_BREAK_LABEL_MAX_LENGTH) {
+    return {
+      ok: false,
+      error: `Label must be ${RECURRING_BREAK_LABEL_MAX_LENGTH} characters or fewer.`,
+    };
   }
   if (days.length === 0) {
     return { ok: false, error: "Pick at least one weekday." };
@@ -611,15 +627,23 @@ export async function updateRecurringBreakRuleAction(
 ): Promise<BlockActionResult> {
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
-  const label = trimmed(formData.get("label")).toLowerCase();
+  // Migration 0037: preserve practitioner-supplied capitalization,
+  // length-only validation; see createRecurringBreakRuleAction.
+  const label = trimmed(formData.get("label"));
   const days = parseDaysOfWeek(formData.get("days_of_week"));
   const startLocal = trimmed(formData.get("start_local"));
   const endLocal = trimmed(formData.get("end_local"));
   const active = trimmed(formData.get("active")) !== "false";
 
   if (!id) return { ok: false, error: "Missing rule id." };
-  if (!(RECURRING_BREAK_LABELS as ReadonlyArray<string>).includes(label)) {
-    return { ok: false, error: "Invalid label." };
+  if (label.length === 0) {
+    return { ok: false, error: "Label is required." };
+  }
+  if (label.length > RECURRING_BREAK_LABEL_MAX_LENGTH) {
+    return {
+      ok: false,
+      error: `Label must be ${RECURRING_BREAK_LABEL_MAX_LENGTH} characters or fewer.`,
+    };
   }
   if (days.length === 0) {
     return { ok: false, error: "Pick at least one weekday." };
