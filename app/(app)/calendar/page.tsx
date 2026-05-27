@@ -25,6 +25,7 @@ import type {
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
   DayColumn,
+  GRID_HEIGHT,
   HOUR_END,
   HOUR_START,
   ROW_HEIGHT_PX,
@@ -221,25 +222,30 @@ export default async function CalendarPage({
             })}
           </div>
 
-          {/* Body grid. The row height is driven by the DayColumns'
-              own GRID_HEIGHT — the container intentionally has NO height,
-              mirroring the working Settings → Weekly hours grid. The
-              previous version put the height on the container with a
-              no-height rail child, and the rail rendered blank in
-              production; matching the proven settings-grid structure
-              (border-b hour cells, right-aligned readable labels, no
-              container height) makes the labels render reliably. Row
-              math (HOUR_START/HOUR_END/ROW_HEIGHT_PX/ROW_MINUTES, the
-              per-cell 2 * ROW_HEIGHT_PX height, and DayColumn event
-              positioning) is unchanged. */}
+          {/* Body grid. Time rail uses the calendar's OWN positioning
+              model — a relative, explicit-height column with each hour
+              label absolutely positioned at its top offset — exactly how
+              DayColumn places its grid lines and event cards. The earlier
+              flow-based rail (block cells relying on grid-row stretch)
+              rendered blank in production three times despite correct
+              markup; absolute positioning removes the dependency on
+              grid-row stretch entirely. Row math is unchanged:
+              top = (h - HOUR_START) * 2 * ROW_HEIGHT_PX lines each label
+              up with the DayColumn hour boundaries. */}
           <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]">
-            <div className="border-r border-neutral-200 dark:border-neutral-800">
+            <div
+              className="relative border-r border-neutral-200 dark:border-neutral-800"
+              style={{ height: GRID_HEIGHT }}
+            >
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
                 (h) => (
                   <div
                     key={h}
-                    style={{ height: 2 * ROW_HEIGHT_PX }}
-                    className="border-b border-neutral-200 px-2 pt-1 text-right text-[11px] font-semibold uppercase tracking-wider text-neutral-700 dark:border-neutral-800 dark:text-neutral-200"
+                    style={{
+                      top: (h - HOUR_START) * 2 * ROW_HEIGHT_PX,
+                      height: 2 * ROW_HEIGHT_PX,
+                    }}
+                    className="absolute inset-x-0 border-b border-neutral-200 px-2 pt-1 text-right text-[11px] font-semibold uppercase tracking-wider text-neutral-700 dark:border-neutral-800 dark:text-neutral-200"
                   >
                     {formatHourLabel(h)}
                   </div>
