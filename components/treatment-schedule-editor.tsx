@@ -378,11 +378,32 @@ function StageForm({
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
           Stage name (optional)
         </span>
+        {/* Electrolysis-language presets. Clicking fills the existing name
+            field; free typing still works and no preset is required. The
+            FormData `name` field and the server action are unchanged. */}
+        <div className="flex flex-wrap gap-1.5">
+          {["Clearing", "Control", "Maintenance"].map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => setName(preset)}
+              aria-pressed={name.trim() === preset}
+              className={
+                "rounded-full border px-2.5 py-1 text-xs " +
+                (name.trim() === preset
+                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+              }
+            >
+              {preset}
+            </button>
+          ))}
+        </div>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Intensive"
+          placeholder="e.g. Clearing"
           maxLength={80}
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
