@@ -144,12 +144,21 @@ function BlockSection({
     if (block.apilus_modality) parts.push(block.apilus_modality);
     if (block.energy_level != null) parts.push(`EL ${block.energy_level}`);
     if (block.machine_frequency) parts.push(block.machine_frequency);
-    if (block.probe_type) parts.push(block.probe_type);
-    if (block.probe_size) parts.push(block.probe_size);
     if (block.minutes_performed != null) {
       parts.push(`${block.minutes_performed} min`);
     }
     return parts.join(" · ");
+  }, [block]);
+
+  // Probe display (Session Logging Phase B). Prefer the structured probe
+  // label (migration 0041); fall back to the legacy probe_type / probe_size
+  // free text so older blocks still show their probe.
+  const probeLine = useMemo(() => {
+    if (block.probe_label) return block.probe_label;
+    const legacy: string[] = [];
+    if (block.probe_type) legacy.push(block.probe_type);
+    if (block.probe_size) legacy.push(block.probe_size);
+    return legacy.length > 0 ? legacy.join(" · ") : null;
   }, [block]);
 
   const entriesSorted = useMemo(
@@ -197,6 +206,12 @@ function BlockSection({
           {paramsLine && (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
               {paramsLine}
+            </p>
+          )}
+
+          {probeLine && (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Probe: {probeLine}
             </p>
           )}
 

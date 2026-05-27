@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { findProbeOptionByKey } from "@/lib/probes";
 import type {
   ApilusModality,
   MachineFrequency,
@@ -71,6 +72,63 @@ function normalizeStructuredArea(input: {
   return { ok: true, value: { primary_area, side, custom_area_detail } };
 }
 
+// Session Logging Phase B: the eight structured probe columns
+// (migration 0041) are always written as a set, derived server-side from
+// a single catalog key. The lib/probes.ts catalog is the source of truth
+// — the action never trusts decomposed fields from the client. An empty/
+// null key clears the structured probe (all columns NULL). Legacy
+// probe_type / probe_size are NOT touched here.
+type ProbeColumns = {
+  probe_key: string | null;
+  probe_brand: string | null;
+  probe_material: string | null;
+  probe_piece_type: string | null;
+  probe_shank: string | null;
+  probe_size_value: string | null;
+  probe_length: string | null;
+  probe_label: string | null;
+};
+
+const EMPTY_PROBE_COLUMNS: ProbeColumns = {
+  probe_key: null,
+  probe_brand: null,
+  probe_material: null,
+  probe_piece_type: null,
+  probe_shank: null,
+  probe_size_value: null,
+  probe_length: null,
+  probe_label: null,
+};
+
+function resolveStructuredProbe(
+  key: string | null | undefined,
+): { ok: true; columns: ProbeColumns } | { ok: false; error: string } {
+  const trimmed = (key ?? "").trim();
+  if (trimmed.length === 0) {
+    return { ok: true, columns: { ...EMPTY_PROBE_COLUMNS } };
+  }
+  const option = findProbeOptionByKey(trimmed);
+  if (!option) {
+    return {
+      ok: false,
+      error: "That probe is not a recognized option. Pick one from the list.",
+    };
+  }
+  return {
+    ok: true,
+    columns: {
+      probe_key: option.key,
+      probe_brand: option.brand,
+      probe_material: option.material,
+      probe_piece_type: option.pieceType,
+      probe_shank: option.shank,
+      probe_size_value: option.size,
+      probe_length: option.length,
+      probe_label: option.displayLabel,
+    },
+  };
+}
+
 // Server actions for session blocks. Defined now so 17.5b.2 can wire them
 // directly to UI without re-architecting. They are NOT called from any UI
 // in 17.5b.1; entry creation still flows through addElectrolysisEntryAction,
@@ -96,6 +154,9 @@ export type CreateBlockInput = {
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
+  // Session Logging Phase B — optional structured probe (catalog key).
+  // Validated + decomposed server-side. Empty/absent → no structured probe.
+  probeOptionKey?: string | null;
 };
 
 async function assertSessionInStudio(
@@ -134,6 +195,12 @@ export async function createSessionBlockAction(
   });
   if (!areaCheck.ok) return areaCheck;
 
+  // Structured probe is validated against the catalog server-side. Legacy
+  // probe_type / probe_size below are written independently (and remain
+  // null in the area-first flow, which no longer collects them).
+  const probeCheck = resolveStructuredProbe(input.probeOptionKey);
+  if (!probeCheck.ok) return probeCheck;
+
   const supabase = await createClient();
 
   // Compute next sort_order in the session.
@@ -166,6 +233,7 @@ export async function createSessionBlockAction(
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
+      ...probeCheck.columns,
     })
     .select("*")
     .single();
@@ -201,6 +269,15 @@ export type UpdateBlockInput = {
       | "custom_area_detail"
     >
   >;
+  // Session Logging Phase B — structured probe. Separate from `patch`
+  // because the eight columns are derived server-side from this single
+  // catalog key (never trusted from the client). Semantics:
+  //   - undefined  → leave the structured probe columns untouched
+  //   - null / ""  → clear the structured probe (all columns NULL)
+  //   - "<key>"    → validate against the catalog and set all columns
+  // Legacy probe_type / probe_size remain patchable via `patch` above and
+  // are never altered by this field.
+  probeOptionKey?: string | null;
 };
 
 export async function updateSessionBlockAction(
@@ -220,7 +297,7 @@ export async function updateSessionBlockAction(
     "primary_area" in patch ||
     "side" in patch ||
     "custom_area_detail" in patch;
-  let normalizedPatch = patch;
+  let normalizedPatch: Partial<SessionBlock> = patch;
   if (wantsArea) {
     const areaCheck = normalizeStructuredArea({
       primaryArea: patch.primary_area ?? null,
@@ -238,6 +315,14 @@ export async function updateSessionBlockAction(
         ? { custom_area_detail: areaCheck.value.custom_area_detail }
         : {}),
     };
+  }
+
+  // Structured probe: only managed when probeOptionKey is explicitly
+  // provided (string or null). undefined leaves the columns untouched.
+  if (input.probeOptionKey !== undefined) {
+    const probeCheck = resolveStructuredProbe(input.probeOptionKey);
+    if (!probeCheck.ok) return probeCheck;
+    normalizedPatch = { ...normalizedPatch, ...probeCheck.columns };
   }
 
   const supabase = await createClient();
