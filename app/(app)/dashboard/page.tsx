@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
-  getClientsForStudio,
   getCurrentPractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
@@ -14,7 +13,6 @@ import {
   todayInTz,
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
-import { ClientSearch } from "@/components/client-search";
 import { FormattedToday } from "@/components/formatted-date-time";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
@@ -27,6 +25,23 @@ import type {
 import { DashboardGreeting } from "./DashboardGreeting";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+
+// ---------------------------------------------------------------------------
+// Color convention (Chloe P0 feedback). Kept here as the canonical note
+// because the dashboard is where the hierarchy is most visible; the
+// appointment briefing and client profile follow the same rules.
+//
+//   Allergies / cautions ........ RED   (rose-*)   — never amber
+//   Pinned notes ................. AMBER (amber-*)  — distinct from allergies
+//   Intake incomplete / awaiting . AMBER (amber-*)  — easy-to-miss → visible
+//   Intake reviewed / complete ... GREEN (emerald-*) / neutral — calm/good
+//   Needs attention (urgent) ..... AMBER accent (amber-* left border + tint)
+//   Needs attention (soft/info) .. NEUTRAL (no Phase-1-blocking urgency)
+//   Birthdays .................... WARM  (rose-* tint)
+//   Empty / good states .......... GREEN / NEUTRAL
+//
+// This is a local convention, not a design-system refactor.
+// ---------------------------------------------------------------------------
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -128,13 +143,11 @@ export default async function DashboardPage() {
 
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
-  const [clients, practitioners, pinnedByClient, intakeByClient] =
-    await Promise.all([
-      getClientsForStudio(studio.id),
-      getPractitionersForStudio(studio.id),
-      getLatestPinnedNoteByClient(studio.id, todayClientIds),
-      loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
-    ]);
+  const [practitioners, pinnedByClient, intakeByClient] = await Promise.all([
+    getPractitionersForStudio(studio.id),
+    getLatestPinnedNoteByClient(studio.id, todayClientIds),
+    loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
+  ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
   // may surface here without paying an extra round-trip.
@@ -215,20 +228,6 @@ export default async function DashboardPage() {
           </ul>
         )}
       </section>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Find a client</h2>
-        <ClientSearch
-          clients={clients}
-          excludeIds={todayClientIds}
-          searchOnly
-          placeholder="Find client"
-          promptLabel="Type to search clients."
-          emptyLabel="No clients match."
-        />
-      </section>
-
-      <QuickLinks />
     </div>
   );
 }
@@ -380,9 +379,12 @@ function IntakePill({
 }: {
   status: ClientIntakeForm["status"] | null;
 }) {
+  // Intake color convention (see top of file): reviewed → green/calm;
+  // every not-ready state (none on file, in progress, awaiting review) →
+  // amber so it's visible rather than easy to miss in quiet grey.
   if (!status) {
     return (
-      <span className="text-neutral-400 dark:text-neutral-500">
+      <span className="font-medium text-amber-700 dark:text-amber-400">
         No intake on file
       </span>
     );
@@ -396,14 +398,14 @@ function IntakePill({
   }
   if (status === "submitted") {
     return (
-      <span className="text-blue-700 dark:text-blue-400">
+      <span className="font-medium text-amber-700 dark:text-amber-400">
         Intake awaiting review
       </span>
     );
   }
   if (status === "in_progress") {
     return (
-      <span className="text-neutral-500 dark:text-neutral-400">
+      <span className="font-medium text-amber-700 dark:text-amber-400">
         Intake in progress
       </span>
     );
@@ -432,10 +434,14 @@ function NeedsAttention({
   activeServicesCount: number;
   paymentStatus: PaymentStatusForDashboard | null;
 }) {
+  // tone drives the color accent. "urgent" items block or interrupt the
+  // daily workflow (unreviewed intakes, no bookable services) → amber.
+  // "soft" items are optional Phase-1 nudges (Stripe) → calm neutral.
   const items: Array<{
     key: string;
     title: string;
     body: string;
+    tone: "urgent" | "soft";
     href?: string;
     cta?: string;
   }> = [];
@@ -447,6 +453,7 @@ function NeedsAttention({
         intakesAwaitingReviewCount === 1 ? "intake" : "intakes"
       } awaiting review`,
       body: "Open the client to read the submitted answers and mark reviewed.",
+      tone: "urgent",
       href: "/clients",
       cta: "Open clients",
     });
@@ -457,6 +464,7 @@ function NeedsAttention({
       key: "no-services",
       title: "No services yet",
       body: "Clients can't book until at least one active service exists.",
+      tone: "urgent",
       href: "/settings/services",
       cta: "Add a service",
     });
@@ -470,6 +478,7 @@ function NeedsAttention({
         key: "stripe-not-connected",
         title: "Stripe not connected yet",
         body: "Public booking still works without it. Connect when you're ready to accept payments later.",
+        tone: "soft",
         href: "/settings/payments",
         cta: "Open Payments",
       });
@@ -478,6 +487,7 @@ function NeedsAttention({
         key: "stripe-incomplete",
         title: "Stripe setup not finished",
         body: "A few details are still needed. Continue setup when you have a minute.",
+        tone: "soft",
         href: "/settings/payments",
         cta: "Continue setup",
       });
@@ -486,6 +496,7 @@ function NeedsAttention({
         key: "stripe-payouts",
         title: "Payout setup needs attention",
         body: "Stripe is connected, but payouts aren't ready yet.",
+        tone: "soft",
         href: "/settings/payments",
         cta: "Open Payments",
       });
@@ -494,38 +505,73 @@ function NeedsAttention({
 
   if (items.length === 0) return null;
 
+  const hasUrgent = items.some((i) => i.tone === "urgent");
+
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-medium">Needs attention</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-medium">Needs attention</h2>
+        {hasUrgent && (
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-full bg-amber-500"
+          />
+        )}
+      </div>
       <ul className="flex flex-col gap-2">
-        {items.map((item) => (
-          <li
-            key={item.key}
-            className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/50"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{item.title}</p>
-              <p className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">
-                {item.body}
-              </p>
-            </div>
-            {item.href && item.cta && (
-              <Link
-                href={item.href}
-                className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
-                {item.cta}
-              </Link>
-            )}
-          </li>
-        ))}
+        {items.map((item) => {
+          const urgent = item.tone === "urgent";
+          return (
+            <li
+              key={item.key}
+              className={
+                urgent
+                  ? "flex flex-wrap items-start justify-between gap-3 rounded-lg border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:border-l-amber-500 dark:bg-amber-950/30"
+                  : "flex flex-wrap items-start justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/50"
+              }
+            >
+              <div className="min-w-0 flex-1">
+                <p
+                  className={
+                    urgent
+                      ? "text-sm font-medium text-amber-900 dark:text-amber-200"
+                      : "text-sm font-medium"
+                  }
+                >
+                  {item.title}
+                </p>
+                <p
+                  className={
+                    urgent
+                      ? "mt-0.5 text-xs text-amber-800 dark:text-amber-300/80"
+                      : "mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+                  }
+                >
+                  {item.body}
+                </p>
+              </div>
+              {item.href && item.cta && (
+                <Link
+                  href={item.href}
+                  className={
+                    urgent
+                      ? "rounded-md border border-amber-400 bg-white/70 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-white dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-950/50"
+                      : "rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
+                  }
+                >
+                  {item.cta}
+                </Link>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Empty state + quick links
+// Empty state
 // ---------------------------------------------------------------------------
 function EmptyDayState({
   bookingUrl,
@@ -566,56 +612,6 @@ function EmptyDayState({
         )}
       </div>
     </div>
-  );
-}
-
-function QuickLinks() {
-  // The public booking page link used to live here and read peers
-  // with Calendar / Clients / Payments. Chloe flagged that it
-  // confused practitioners into clicking the client-facing booking
-  // page when they meant to use the internal book-client flow on
-  // the client profile. The public link is still available under
-  // Settings → Booking (which renders the studio's public URL with
-  // copy/share controls) and from the empty-day state above when
-  // there are no appointments today.
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-medium">Quick links</h2>
-      <ul className="flex flex-wrap gap-2 text-sm">
-        <li>
-          <Link
-            href="/calendar"
-            className="inline-flex rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Calendar
-          </Link>
-        </li>
-        <li>
-          <Link
-            href="/clients"
-            className="inline-flex rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Clients
-          </Link>
-        </li>
-        <li>
-          <Link
-            href="/settings/payments"
-            className="inline-flex rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Payments
-          </Link>
-        </li>
-        <li>
-          <Link
-            href="/settings/booking"
-            className="inline-flex rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Booking settings
-          </Link>
-        </li>
-      </ul>
-    </section>
   );
 }
 
@@ -746,7 +742,7 @@ function BirthdaysThisMonth({
           return (
             <li
               key={b.id}
-              className="flex flex-wrap items-baseline justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/50"
+              className="flex flex-wrap items-baseline justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/60 dark:bg-rose-950/20"
             >
               <div className="flex items-baseline gap-2">
                 <Link
@@ -755,11 +751,11 @@ function BirthdaysThisMonth({
                 >
                   {b.name}
                 </Link>
-                <span className="text-xs text-neutral-500 tabular-nums">
+                <span className="text-xs text-rose-700/80 tabular-nums dark:text-rose-300/80">
                   {formatMonthDay(b.month, b.day)}
                 </span>
                 {isToday && (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white dark:bg-rose-500">
                     Today
                   </span>
                 )}

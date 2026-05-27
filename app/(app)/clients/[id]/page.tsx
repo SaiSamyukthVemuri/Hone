@@ -216,12 +216,16 @@ export default async function ClientCheatSheetPage({
             action={updateClientBirthdayAction}
           />
 
+          {/* Allergies/cautions are RED everywhere (see color convention
+              in app/(app)/dashboard/page.tsx). Previously amber here,
+              which collided with amber pinned notes and was inconsistent
+              with the rose allergy banner on the appointment briefing. */}
           {client.allergies && (
-            <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-700 dark:bg-amber-950/30">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+            <section className="rounded-lg border border-rose-300 bg-rose-50 p-5 dark:border-rose-700 dark:bg-rose-950/30">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">
                 Allergies
               </h2>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">
+              <p className="mt-2 whitespace-pre-wrap text-sm text-rose-900 dark:text-rose-100">
                 {client.allergies}
               </p>
             </section>

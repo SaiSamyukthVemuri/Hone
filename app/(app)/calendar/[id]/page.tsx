@@ -463,9 +463,14 @@ function IntakeStatusLine({
   intake: ClientIntakeForm | null;
   clientId: string;
 }) {
+  // Intake color convention (see app/(app)/dashboard/page.tsx):
+  //   reviewed → green/calm (good state)
+  //   everything else (no form, in progress, awaiting review) → amber,
+  //   because each is a "needs attention before this appointment" state
+  //   Chloe said was too easy to miss when rendered as quiet grey.
   if (!intake) {
     return (
-      <p className="mt-3 text-xs text-neutral-500">
+      <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400">
         Intake: no form on file.
       </p>
     );
@@ -491,7 +496,7 @@ function IntakeStatusLine({
     return (
       <p className="mt-3 text-xs">
         <span className="text-neutral-500">Intake:</span>{" "}
-        <span className="font-medium text-blue-700 dark:text-blue-400">
+        <span className="font-medium text-amber-700 dark:text-amber-400">
           Awaiting review
         </span>{" "}
         ·{" "}
@@ -506,7 +511,7 @@ function IntakeStatusLine({
   }
   if (intake.status === "in_progress") {
     return (
-      <p className="mt-3 text-xs text-neutral-500">
+      <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400">
         Intake: started, not yet submitted.
       </p>
     );

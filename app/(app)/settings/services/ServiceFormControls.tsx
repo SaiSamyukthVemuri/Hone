@@ -110,3 +110,26 @@ export function ServiceSubmitButton({
     </button>
   );
 }
+
+// Hide-from-booking / Show-in-booking toggle submit. Lives in its OWN
+// <form action={toggleServiceActiveAction}> in the card header — NOT
+// nested inside the edit form (a nested <form> is invalid HTML; the
+// browser drops the inner one, which is why this toggle previously
+// "did nothing": the click submitted the outer edit form instead of the
+// toggle action). useFormStatus gives clear in-flight feedback, and the
+// revalidatePath() in the action re-renders the card with the flipped
+// state. No server-action change.
+export function ToggleActiveSubmitButton({ active }: { active: boolean }) {
+  const { pending } = useFormStatus();
+  const idle = active ? "Hide from booking" : "Show in booking";
+  const busy = active ? "Hiding…" : "Showing…";
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+    >
+      {pending ? busy : idle}
+    </button>
+  );
+}
