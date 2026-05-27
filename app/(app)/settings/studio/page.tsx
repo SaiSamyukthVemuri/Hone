@@ -25,6 +25,7 @@ export default async function StudioSettingsPage() {
         initialName={studio.name}
         initialLegalEntity={studio.legal_entity_name ?? ""}
         ownerEmail={studio.owner_email}
+        initialBirthdayColor={studio.birthday_reminder_color}
       />
       <EmailSettingsForm
         initial={{

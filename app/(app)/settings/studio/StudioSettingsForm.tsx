@@ -2,20 +2,29 @@
 
 import { useState, useTransition } from "react";
 import { updateStudioAction } from "./actions";
+import {
+  BIRTHDAY_REMINDER_COLORS,
+  resolveBirthdayColor,
+} from "@/lib/birthday-colors";
+import type { BirthdayReminderColor } from "@/lib/types/database";
 
 type Props = {
   initialName: string;
   initialLegalEntity: string;
   ownerEmail: string;
+  initialBirthdayColor: BirthdayReminderColor;
 };
 
 export function StudioSettingsForm({
   initialName,
   initialLegalEntity,
   ownerEmail,
+  initialBirthdayColor,
 }: Props) {
   const [name, setName] = useState(initialName);
   const [legalEntity, setLegalEntity] = useState(initialLegalEntity);
+  const [birthdayColor, setBirthdayColor] =
+    useState<BirthdayReminderColor>(initialBirthdayColor);
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
     { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
@@ -31,6 +40,7 @@ export function StudioSettingsForm({
     const fd = new FormData();
     fd.set("name", name);
     fd.set("legal_entity_name", legalEntity);
+    fd.set("birthday_reminder_color", birthdayColor);
 
     startTransition(async () => {
       try {
@@ -75,6 +85,39 @@ export function StudioSettingsForm({
         <p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-3 text-base text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
           {ownerEmail}
         </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Birthday reminder color</span>
+        <p className="text-xs text-neutral-500">
+          Choose the accent color used for birthday reminders. Red is
+          reserved for allergies and cautions.
+        </p>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {BIRTHDAY_REMINDER_COLORS.map((opt) => {
+            const selected = birthdayColor === opt.value;
+            const classes = resolveBirthdayColor(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setBirthdayColor(opt.value)}
+                aria-pressed={selected}
+                className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition ${
+                  selected
+                    ? "border-neutral-900 dark:border-neutral-100"
+                    : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`inline-block h-3.5 w-3.5 rounded-full ${classes.swatch}`}
+                />
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-2 flex items-center gap-3">

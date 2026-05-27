@@ -3,11 +3,31 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import type { BirthdayReminderColor } from "@/lib/types/database";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+// Migration 0040: closed preset list for the birthday reminder accent.
+// Validated server-side; an unknown/absent value falls back to 'purple'
+// (the column default), never an arbitrary string.
+const BIRTHDAY_COLOR_VALUES: ReadonlyArray<BirthdayReminderColor> = [
+  "purple",
+  "orange",
+  "blue",
+  "green",
+  "neutral",
+];
+function parseBirthdayColor(
+  value: FormDataEntryValue | null,
+): BirthdayReminderColor {
+  const t = typeof value === "string" ? value.trim() : "";
+  return (BIRTHDAY_COLOR_VALUES as ReadonlyArray<string>).includes(t)
+    ? (t as BirthdayReminderColor)
+    : "purple";
 }
 
 export async function updateStudioAction(formData: FormData): Promise<void> {
@@ -27,6 +47,9 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     .update({
       name,
       legal_entity_name: nullableString(formData.get("legal_entity_name")),
+      birthday_reminder_color: parseBirthdayColor(
+        formData.get("birthday_reminder_color"),
+      ),
     })
     .eq("id", studio.id);
 

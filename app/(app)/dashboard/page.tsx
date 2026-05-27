@@ -7,6 +7,8 @@ import {
 import { getActiveServices } from "@/lib/booking/queries";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
+import { resolveBirthdayColor } from "@/lib/birthday-colors";
+import type { BirthdayReminderColor } from "@/lib/types/database";
 import {
   addDays,
   localTimeString,
@@ -193,7 +195,11 @@ export default async function DashboardPage() {
         paymentStatus={paymentStatus}
       />
 
-      <BirthdaysThisMonth birthdays={birthdaysThisMonth} today={todayLocal} />
+      <BirthdaysThisMonth
+        birthdays={birthdaysThisMonth}
+        today={todayLocal}
+        accentColor={studio.birthday_reminder_color}
+      />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -724,14 +730,19 @@ async function loadPaymentStatus(
 function BirthdaysThisMonth({
   birthdays,
   today,
+  accentColor,
 }: {
   birthdays: ReadonlyArray<{ id: string; name: string; month: number; day: number }>;
   // Studio-local YYYY-MM-DD for the "today" highlight.
   today: string;
+  // Studio-chosen accent (migration 0040). Never red/rose — that's
+  // reserved for allergies/cautions. Falls back to purple if unset.
+  accentColor: BirthdayReminderColor;
 }) {
   if (birthdays.length === 0) return null;
 
   const todayDay = parseInt(today.slice(8, 10), 10);
+  const accent = resolveBirthdayColor(accentColor);
 
   return (
     <section className="flex flex-col gap-3">
@@ -742,7 +753,7 @@ function BirthdaysThisMonth({
           return (
             <li
               key={b.id}
-              className="flex flex-wrap items-baseline justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/60 dark:bg-rose-950/20"
+              className={`flex flex-wrap items-baseline justify-between gap-3 rounded-lg border px-4 py-3 ${accent.card}`}
             >
               <div className="flex items-baseline gap-2">
                 <Link
@@ -751,11 +762,13 @@ function BirthdaysThisMonth({
                 >
                   {b.name}
                 </Link>
-                <span className="text-xs text-rose-700/80 tabular-nums dark:text-rose-300/80">
+                <span className={`text-xs tabular-nums ${accent.mutedText}`}>
                   {formatMonthDay(b.month, b.day)}
                 </span>
                 {isToday && (
-                  <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white dark:bg-rose-500">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
+                  >
                     Today
                   </span>
                 )}
