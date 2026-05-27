@@ -226,13 +226,25 @@ export default async function CalendarPage({
             className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]"
             style={{ height: GRID_HEIGHT }}
           >
-            <div className="border-r border-neutral-100 dark:border-neutral-800/60">
+            {/* Left time rail. Each hour cell is exactly one hour tall
+                (2 * ROW_HEIGHT_PX) so the labels line up with the day
+                columns' hour boundaries — row math is unchanged. The
+                visual-polish pass made these labels too faint to find;
+                they are now clearly readable (larger, higher contrast)
+                and each hour gets a faint top rule so the time anchors
+                to its row. The rail keeps its reserved 60px width. */}
+            <div className="border-r border-neutral-200 bg-neutral-50/40 dark:border-neutral-800 dark:bg-neutral-900/20">
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
                 (h) => (
                   <div
                     key={h}
                     style={{ height: 2 * ROW_HEIGHT_PX }}
-                    className="px-2 pt-1 text-[11px] font-medium tabular-nums text-neutral-600 dark:text-neutral-300"
+                    className={
+                      "px-2 pt-1 text-xs font-semibold tabular-nums text-neutral-700 dark:text-neutral-200 " +
+                      (h !== HOUR_START
+                        ? "border-t border-neutral-200/70 dark:border-neutral-800/60"
+                        : "")
+                    }
                   >
                     {formatHourLabel(h)}
                   </div>
