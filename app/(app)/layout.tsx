@@ -17,12 +17,14 @@ export default async function AppLayout({
       <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/90 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/90">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3 md:px-8">
           <div className="flex items-center gap-6">
-            <Link
-              href="/dashboard"
-              className="text-xl font-semibold tracking-tight"
-            >
+            {/* Brand wordmark is intentionally non-interactive in the
+                authenticated app. Chloe flagged that a clickable "Hone"
+                competed with "Today" as the dashboard link. "Today" is
+                the dashboard link; this is a plain label (no href, no
+                onClick, no pointer cursor). */}
+            <span className="select-none text-xl font-semibold tracking-tight">
               Hone
-            </Link>
+            </span>
             <nav className="flex items-center gap-1 text-sm">
               <Link
                 href="/dashboard"

@@ -10,6 +10,7 @@ import {
 import {
   DurationField,
   ServiceSubmitButton,
+  ToggleActiveSubmitButton,
 } from "./ServiceFormControls";
 
 function formatPrice(cents: number | null): string {
@@ -117,7 +118,15 @@ function ServiceCard({ service }: { service: Service }) {
               : "Clients won't see this service when booking."}
           </p>
         </div>
-        <StatusPill active={service.active} />
+        {/* Status pill + visibility toggle. The toggle lives here in its
+            OWN form — deliberately OUTSIDE the edit form below. A nested
+            <form> is invalid HTML and was the reason the toggle appeared
+            to do nothing (the click hit the outer edit form, which never
+            touches `active`). */}
+        <div className="flex flex-shrink-0 items-center gap-3">
+          <StatusPill active={service.active} />
+          <ToggleActiveButton id={service.id} active={service.active} />
+        </div>
       </header>
 
       <form
@@ -219,13 +228,10 @@ function ServiceCard({ service }: { service: Service }) {
             {service.default_duration_minutes} min ·{" "}
             {formatPrice(service.price_cents)}
           </span>
-          <div className="flex items-center gap-2">
-            <ToggleActiveButton id={service.id} active={service.active} />
-            <ServiceSubmitButton
-              idleLabel="Save changes"
-              pendingLabel="Saving…"
-            />
-          </div>
+          <ServiceSubmitButton
+            idleLabel="Save changes"
+            pendingLabel="Saving…"
+          />
         </div>
       </form>
     </article>
@@ -329,6 +335,10 @@ function StatusPill({ active }: { active: boolean }) {
   );
 }
 
+// Standalone visibility-toggle form. Rendered in the card header, never
+// nested inside the edit form. Submits toggleServiceActiveAction with the
+// flipped `active` value; the action's revalidatePath re-renders the card
+// in the new state. The submit button shows in-flight feedback.
 function ToggleActiveButton({
   id,
   active,
@@ -340,12 +350,7 @@ function ToggleActiveButton({
     <form action={toggleServiceActiveAction}>
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="active" value={active ? "false" : "true"} />
-      <button
-        type="submit"
-        className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-      >
-        {active ? "Hide from booking" : "Show in booking"}
-      </button>
+      <ToggleActiveSubmitButton active={active} />
     </form>
   );
 }
