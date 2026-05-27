@@ -29,7 +29,19 @@ import { fetchSlotsForClientBookingAction } from "../clients/[id]/booking-action
 import {
   bookAppointmentForClientAction,
   createClientForCalendarBookingAction,
+  fetchLastServiceForClientAction,
 } from "./actions";
+
+// Rebook shortcut: a client's "last service" (lazy-fetched when an
+// existing client is selected). serviceName/durationMinutes describe the
+// last appointment; serviceId is validated against the active service
+// list before the "Use this service" button is offered.
+type LastService = {
+  serviceId: string;
+  serviceName: string;
+  durationMinutes: number;
+  lastLocalDate: string;
+};
 
 export type QuickBookDraft = {
   // YYYY-MM-DD in studio local time
@@ -133,6 +145,8 @@ export function QuickBookDrawer({
   const [newClientError, setNewClientError] = useState<string | null>(null);
   const [creatingClient, startCreatingClient] = useTransition();
   const [serviceId, setServiceId] = useState(firstServiceId);
+  const [lastService, setLastService] = useState<LastService | null>(null);
+  const [loadingLastService, startLoadingLastService] = useTransition();
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
@@ -155,12 +169,38 @@ export function QuickBookDrawer({
       setNewClientPronouns("");
       setNewClientError(null);
       setServiceId(firstServiceId);
+      setLastService(null);
       setSlots([]);
       setPickedSlot(null);
       setNotes("");
       setError(null);
     }
   }, [open, firstServiceId]);
+
+  // Lazy rebook lookup: fetch the selected client's last service only
+  // when a client is selected (never prefetched for the whole list).
+  // Brand-new inline-created clients have no history, so this returns
+  // null and the rebook card stays hidden. Runs on client change only;
+  // does not touch slot fetching, availability, or booking.
+  useEffect(() => {
+    if (!open || !selectedClient) {
+      setLastService(null);
+      return;
+    }
+    let cancelled = false;
+    setLastService(null);
+    const clientId = selectedClient.id;
+    startLoadingLastService(async () => {
+      const r = await fetchLastServiceForClientAction(clientId);
+      if (cancelled) return;
+      setLastService(r.ok ? r.lastService : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // startLoadingLastService is a stable transition starter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedClient?.id]);
 
   // Close on Esc.
   useEffect(() => {
@@ -530,6 +570,39 @@ export function QuickBookDrawer({
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Service
           </span>
+
+          {/* Rebook shortcut. Only for an existing selected client with a
+              last service that is still active (present in `services`).
+              "Use this service" just selects it — the same path as picking
+              it manually, which re-triggers slot loading. Never auto-books,
+              never bypasses availability. Hidden entirely (no placeholder)
+              when there's no eligible last service. */}
+          {selectedClient && loadingLastService && (
+            <p className="text-xs text-neutral-500">Loading last service…</p>
+          )}
+          {selectedClient &&
+            !loadingLastService &&
+            lastService &&
+            services.some((s) => s.id === lastService.serviceId) && (
+              <div className="flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 dark:border-neutral-800 dark:bg-neutral-900">
+                <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                  Rebook last service?
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  Last time: {lastService.durationMinutes} min{" "}
+                  {lastService.serviceName} ·{" "}
+                  {formatLocalDate(lastService.lastLocalDate)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setServiceId(lastService.serviceId)}
+                  className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
+                >
+                  Use this service
+                </button>
+              </div>
+            )}
+
           {services.length === 0 ? (
             <p className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
               No active services. Add one in Settings → Services.

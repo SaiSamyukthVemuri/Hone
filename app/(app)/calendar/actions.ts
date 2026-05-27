@@ -487,6 +487,95 @@ export async function createClientForCalendarBookingAction(
   };
 }
 
+// Calendar rebook shortcut: read-only lookup of a client's "last
+// service" so the quick-book drawer can offer a one-tap rebook. Lazy —
+// called only when an existing client is selected in the drawer, never
+// prefetched for the whole client list.
+//
+// "Last service" priority (cancelled and no-show are ALWAYS excluded):
+//   1. Most recent `completed` appointment with a service_id.
+//   2. Else the most recent `confirmed` (booked, not cancelled/no-show)
+//      appointment with a service_id.
+// Completed is the strongest signal and wins even if an upcoming
+// confirmed booking is more recent.
+//
+// Boundaries: user-scoped createClient() (RLS applies) — no
+// createAdminClient; studio resolved server-side (studio_id never
+// trusted from the browser); read-only SELECTs, no writes, no emails,
+// no booking creation, no slot/availability computation.
+export type LastServiceResult =
+  | {
+      ok: true;
+      lastService: {
+        serviceId: string;
+        serviceName: string;
+        durationMinutes: number;
+        // Studio-local YYYY-MM-DD of the last appointment.
+        lastLocalDate: string;
+      } | null;
+    }
+  | { ok: false; error: string };
+
+export async function fetchLastServiceForClientAction(
+  clientId: string,
+): Promise<LastServiceResult> {
+  const id = (clientId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing client id." };
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  const supabase = await createClient();
+
+  type Row = {
+    service_id: string | null;
+    starts_at: string;
+    duration_minutes: number;
+    service:
+      | { name: string | null }
+      | { name: string | null }[]
+      | null;
+  };
+
+  async function mostRecentWithStatus(status: string): Promise<Row | null> {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("service_id, starts_at, duration_minutes, service:services(name)")
+      .eq("studio_id", studio.id)
+      .eq("client_id", id)
+      .eq("status", status)
+      .not("service_id", "is", null)
+      .order("starts_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data as Row | null) ?? null;
+  }
+
+  try {
+    // Priority 1: most recent completed. Priority 2: most recent confirmed.
+    const row =
+      (await mostRecentWithStatus("completed")) ??
+      (await mostRecentWithStatus("confirmed"));
+    if (!row || !row.service_id) return { ok: true, lastService: null };
+
+    const svc = Array.isArray(row.service) ? row.service[0] : row.service;
+    const serviceName = svc?.name?.trim() || "Service";
+    return {
+      ok: true,
+      lastService: {
+        serviceId: row.service_id,
+        serviceName,
+        durationMinutes: row.duration_minutes,
+        lastLocalDate: localDateString(new Date(row.starts_at), studio.timezone),
+      },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not load last service.",
+    };
+  }
+}
+
 type DispatchParams = {
   appointment: import("@/lib/types/database").Appointment;
   service: import("@/lib/types/database").Service;
