@@ -25,14 +25,15 @@ import type {
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
   DayColumn,
-  formatDayHeader,
-  formatHourLabel,
   GRID_HEIGHT,
   HOUR_END,
   HOUR_START,
   ROW_HEIGHT_PX,
   type DayAvailability,
 } from "./DayColumn";
+// Server-safe formatters: must come from a plain module, not the
+// "use client" DayColumn — see calendar-format.ts header.
+import { formatDayHeader, formatHourLabel } from "./calendar-format";
 
 type Search = Promise<{ week?: string }>;
 
