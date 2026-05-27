@@ -235,6 +235,31 @@ export async function getLaserTreatmentCountsForClient(
   return counts;
 }
 
+// Read-only: count of the client's non-deleted LASER sessions that
+// started before `beforeIso` (the current session's start). Used only to
+// add modality context to the electrolysis session heading
+// ("· N laser sessions previously"). Does not touch treatment-time
+// calculations — it's a plain session count, separate from TTT.
+export async function getPriorLaserSessionCount(
+  studioId: string,
+  clientId: string,
+  beforeIso: string,
+): Promise<number> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("modality", "laser")
+    .is("deleted_at", null)
+    .lt("started_at", beforeIso);
+  if (error) {
+    throw new Error(`Failed to count prior laser sessions: ${error.message}`);
+  }
+  return count ?? 0;
+}
+
 export async function getSessionAudit(
   sessionId: string,
 ): Promise<import("@/lib/types/database").SessionAudit[]> {
