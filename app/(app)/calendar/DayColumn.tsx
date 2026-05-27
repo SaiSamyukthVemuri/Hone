@@ -20,7 +20,6 @@ import type {
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import { localTimeString } from "@/lib/booking/tz";
-import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import {
   QuickBookDrawer,
   type QuickBookClient,
@@ -41,6 +40,34 @@ export const GRID_HEIGHT = (VISIBLE_MINUTES / ROW_MINUTES) * ROW_HEIGHT_PX;
 // server component calendar/page.tsx CALLS them during render and a
 // client-boundary function reference would throw there. This client
 // component doesn't need them.
+
+// Soft (Fresha-style) appointment-card styling per practitioner color
+// token. The shared resolvePractitionerColor() returns saturated
+// bg-*-700 + white text used for small dots elsewhere; here on the
+// calendar we want calm pastel cards with a colored left accent and dark
+// readable text instead of intense solid blocks. Keyed by the same
+// practitioner color tokens (lib/practitioner-colors.ts) so identity is
+// preserved. Full literal class strings so Tailwind keeps them; falls
+// back to neutral for any unknown token.
+const SOFT_CARD_BY_TOKEN: Record<string, string> = {
+  neutral:
+    "bg-neutral-100 text-neutral-800 border-l-neutral-400 dark:bg-neutral-800/60 dark:text-neutral-100 dark:border-l-neutral-500",
+  rose: "bg-rose-50 text-rose-900 border-l-rose-400 dark:bg-rose-950/40 dark:text-rose-100 dark:border-l-rose-500",
+  amber:
+    "bg-amber-50 text-amber-900 border-l-amber-400 dark:bg-amber-950/40 dark:text-amber-100 dark:border-l-amber-500",
+  emerald:
+    "bg-emerald-50 text-emerald-900 border-l-emerald-400 dark:bg-emerald-950/40 dark:text-emerald-100 dark:border-l-emerald-500",
+  teal: "bg-teal-50 text-teal-900 border-l-teal-400 dark:bg-teal-950/40 dark:text-teal-100 dark:border-l-teal-500",
+  sky: "bg-sky-50 text-sky-900 border-l-sky-400 dark:bg-sky-950/40 dark:text-sky-100 dark:border-l-sky-500",
+  indigo:
+    "bg-indigo-50 text-indigo-900 border-l-indigo-400 dark:bg-indigo-950/40 dark:text-indigo-100 dark:border-l-indigo-500",
+  violet:
+    "bg-violet-50 text-violet-900 border-l-violet-400 dark:bg-violet-950/40 dark:text-violet-100 dark:border-l-violet-500",
+};
+
+function softCardClasses(token: string | null | undefined): string {
+  return SOFT_CARD_BY_TOKEN[token ?? "neutral"] ?? SOFT_CARD_BY_TOKEN.neutral;
+}
 
 // "HH:MM:SS" (studio-local availability time) → minutes from midnight,
 // or null when unparseable. Visual-only: used to position the neutral
@@ -194,32 +221,35 @@ export function DayColumn({
 
   return (
     <div
-      className="relative border-l border-neutral-200 dark:border-neutral-800"
+      className="relative border-l border-neutral-100 dark:border-neutral-800/60"
       style={{ height: GRID_HEIGHT }}
     >
-      {/* Neutral availability tint (visual guidance only). pointer-events-
-          none so the empty-slot click overlay below still receives clicks
-          everywhere in the visible range — booking behavior is unchanged. */}
+      {/* Today's column gets a very faint neutral wash (Google-style),
+          sitting at the very bottom so the availability tint and events
+          read on top of it. pointer-events-none — never blocks clicks. */}
+      {isToday && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 bg-neutral-50/60 dark:bg-neutral-900/30"
+        />
+      )}
+
+      {/* Neutral availability tint (visual guidance only). Very subtle so
+          available hours stay the main canvas. pointer-events-none so the
+          empty-slot click overlay below still receives clicks everywhere
+          in the visible range — booking behavior is unchanged. */}
       {tintRegions.map((r, i) => (
         <div
           key={`tint-${i}`}
           aria-hidden
           style={{ top: r.top, height: r.height }}
-          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/70 dark:bg-neutral-800/40"
+          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/50 dark:bg-neutral-800/30"
         />
       ))}
 
-      {/* Today highlight — a subtle inset ring, not a fill, so it coexists
-          with the gray availability tint without competing. Neutral, no
-          status hue. pointer-events-none. */}
-      {isToday && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 z-[1] ring-2 ring-inset ring-neutral-400/60 dark:ring-neutral-500/50"
-        />
-      )}
-
-      {/* Half-hour grid lines (decorative). */}
+      {/* Hour / half-hour grid lines — soft and low-contrast (Google-like).
+          Hour boundaries (even rows) are faintly visible; the :30 lines are
+          nearly invisible. */}
       {Array.from(
         { length: VISIBLE_MINUTES / ROW_MINUTES },
         (_, i) => i,
@@ -233,8 +263,8 @@ export function DayColumn({
           className={
             "absolute inset-x-0 border-b " +
             (i % 2 === 1
-              ? "border-neutral-200/60 dark:border-neutral-800/60"
-              : "border-neutral-200 dark:border-neutral-800")
+              ? "border-neutral-100/70 dark:border-neutral-800/30"
+              : "border-neutral-200/70 dark:border-neutral-800/60")
           }
         />
       ))}
@@ -246,16 +276,17 @@ export function DayColumn({
           per-day cells; pressing Enter does the same thing as
           clicking at the top of the visible range (kept simple in
           Phase A — Phase B will replace this with a focused
-          control). The button is intentionally invisible. */}
+          control). The button is invisible except for a subtle hover
+          wash that signals the empty space is clickable. */}
       <button
         type="button"
         aria-label={`Open quick-book draft for ${date}`}
         onClick={handleEmptyClick}
-        className="absolute inset-0 z-0 cursor-pointer rounded-none"
+        className="absolute inset-0 z-0 cursor-pointer rounded-none transition-colors hover:bg-neutral-100/40 dark:hover:bg-neutral-800/30"
       />
 
       {blocked && (
-        <div className="absolute inset-0 z-[3] bg-neutral-100/80 dark:bg-neutral-800/40">
+        <div className="absolute inset-0 z-[3] bg-neutral-50/80 dark:bg-neutral-900/40">
           <div className="px-2 pt-2 text-[11px] uppercase tracking-wider text-neutral-500">
             Blocked
           </div>
@@ -355,7 +386,6 @@ export function DayColumn({
           ROW_HEIGHT_PX - 2,
           (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
-        const color = resolvePractitionerColor(a.practitioner?.color);
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
@@ -369,12 +399,12 @@ export function DayColumn({
                 ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
                 : `${clientName} · ${localTime} · ${a.duration_minutes}m`
             }
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-md ${color.bg} ${color.text} px-2 py-1 text-[11px] leading-tight hover:opacity-90`}
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${softCardClasses(a.practitioner?.color)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110`}
           >
             {twoLine ? (
               <>
-                <div className="truncate font-medium">{clientName}</div>
-                <div className="truncate text-[10px] opacity-80">
+                <div className="truncate font-semibold">{clientName}</div>
+                <div className="truncate text-[10px] opacity-70">
                   {localTime}
                   {serviceName ? ` · ${serviceName}` : ""}
                   {` · ${a.duration_minutes}m`}
@@ -383,7 +413,7 @@ export function DayColumn({
             ) : (
               <div className="truncate font-medium">
                 {clientName}{" "}
-                <span className="opacity-70">· {localTime}</span>
+                <span className="opacity-60">· {localTime}</span>
               </div>
             )}
           </Link>
@@ -427,7 +457,7 @@ function BlockoutCard({
     <div
       title={title}
       style={{ top, height }}
-      className="absolute inset-x-1 z-[5] overflow-hidden rounded-md bg-neutral-200 px-2 py-1 text-[11px] leading-tight text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+      className="absolute inset-x-1 z-[5] overflow-hidden rounded-lg border-l-[3px] border-l-neutral-300 bg-neutral-100 px-2 py-1 text-[11px] leading-tight text-neutral-600 dark:border-l-neutral-600 dark:bg-neutral-800/70 dark:text-neutral-300"
     >
       {twoLine ? (
         <>

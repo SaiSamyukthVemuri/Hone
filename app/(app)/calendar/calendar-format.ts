@@ -33,14 +33,19 @@ const MONTHS_SHORT = [
   "Dec",
 ] as const;
 
-// "Mon · May 26" from a "YYYY-MM-DD" studio-local date + its weekday
-// index. Pure string formatting — no Date construction, so it can't drift
-// across timezones. Used by the calendar week header.
-export function formatDayHeader(date: string, dowIndex: number): string {
+// Two-line day header (Google/Fresha style): "Tue" on line 1, "May 26"
+// on line 2. Split into two formatters so the header can stack them.
+// Pure string formatting — no Date construction, so it can't drift across
+// timezones.
+export function weekdayLabel(dowIndex: number): string {
+  return DAY_LABELS[dowIndex] ?? "";
+}
+
+export function monthDayLabel(date: string): string {
   const month = parseInt(date.slice(5, 7), 10);
   const day = parseInt(date.slice(8, 10), 10);
   const monthLabel = MONTHS_SHORT[month - 1] ?? "";
-  return `${DAY_LABELS[dowIndex]} · ${monthLabel} ${day}`;
+  return `${monthLabel} ${day}`;
 }
 
 // Hour-of-day → "8 AM" / "12 PM" / "1 PM". Used by the left time rail.
