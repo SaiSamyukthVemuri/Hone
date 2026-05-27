@@ -25,21 +25,24 @@ import {
   type QuickBookClient,
   type QuickBookDraft,
 } from "./QuickBookDrawer";
+// Grid constants live in a plain (non-"use client") module. The server
+// component calendar/page.tsx must import them from there, NOT from this
+// client module — a client-module value imported by a Server Component
+// becomes a client-reference proxy, not the real number, which silently
+// broke the rail's hour loop. This client component imports them too so
+// there is a single source of truth.
+import {
+  GRID_HEIGHT,
+  HOUR_END,
+  HOUR_START,
+  ROW_HEIGHT_PX,
+  ROW_MINUTES,
+  VISIBLE_MINUTES,
+} from "./calendar-constants";
 
-// Grid constants shared between the day column and the page-level
-// hour rail. Kept here so both surfaces import a single source of
-// truth.
-export const HOUR_START = 8;
-export const HOUR_END = 20;
-export const ROW_HEIGHT_PX = 30; // 30 minutes per row → 1 px per minute
-export const ROW_MINUTES = 30;
-export const VISIBLE_MINUTES = (HOUR_END - HOUR_START) * 60;
-export const GRID_HEIGHT = (VISIBLE_MINUTES / ROW_MINUTES) * ROW_HEIGHT_PX;
 // Day-of-week labels + the "Mon · May 26" / "8 AM" formatters live in
-// ./calendar-format (a plain, non-"use client" module) because the
-// server component calendar/page.tsx CALLS them during render and a
-// client-boundary function reference would throw there. This client
-// component doesn't need them.
+// ./calendar-format (also a plain, non-"use client" module) for the same
+// server/client-boundary reason. This client component doesn't need them.
 
 // Soft (Fresha-style) appointment-card styling per practitioner color
 // token. The shared resolvePractitionerColor() returns saturated
