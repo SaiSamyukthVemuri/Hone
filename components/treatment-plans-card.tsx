@@ -49,10 +49,26 @@ export function TreatmentPlansCard({
 }: Props) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  // Tracks whether the practitioner has manually edited the plan name.
+  // While false, the name auto-fills from the chosen area ("Chin
+  // treatment plan"). Once the practitioner types in the name field we
+  // stop overwriting it. Purely client-side; the FormData `name` field
+  // and the server action are unchanged.
+  const [nameTouched, setNameTouched] = useState(false);
   const [visits, setVisits] = useState("12");
   const [primaryArea, setPrimaryArea] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // Area-first: choosing/clearing the area auto-generates the plan name
+  // until the practitioner edits the name themselves.
+  function handleAreaChange(next: string) {
+    setPrimaryArea(next);
+    if (!nameTouched) {
+      const a = next.trim();
+      setName(a.length > 0 ? `${a} treatment plan` : "");
+    }
+  }
 
   const active = plans.filter((p) => p.status === "active");
   const closed = plans.filter((p) => p.status === "closed");
@@ -90,6 +106,7 @@ export function TreatmentPlansCard({
         return;
       }
       setName("");
+      setNameTouched(false);
       setVisits("12");
       setPrimaryArea("");
       setAdding(false);
@@ -172,36 +189,48 @@ export function TreatmentPlansCard({
       {adding ? (
         <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-sm font-medium">Create treatment plan</p>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-              Plan name
-            </span>
-            <input
-              autoFocus
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={MAX_NAME}
-              placeholder="e.g. Lower legs electrolysis"
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-          </label>
+
+          {/* Area-first: the treatment area is the primary choice. Most
+              plans are total-clearance work on one area, so picking the
+              area auto-names the plan and the name/visits below become
+              secondary. */}
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-              Primary area
+            <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              Treatment area
             </span>
             <AreaPicker
               value={primaryArea}
-              onChange={setPrimaryArea}
+              onChange={handleAreaChange}
               idPrefix="plan-create"
             />
             <span className="text-[11px] text-neutral-500">
-              Used to group treatment progress by area. You can leave this
-              blank.
+              The area this plan treats (e.g. total clearance of the chin).
+              You can leave this blank.
             </span>
           </div>
-          <label className="flex flex-col gap-1.5 max-w-[12rem]">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Plan name
+            </span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameTouched(true);
+              }}
+              maxLength={MAX_NAME}
+              placeholder="e.g. Chin treatment plan"
+              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+            <span className="text-[11px] text-neutral-500">
+              Auto-filled from the area — edit it if you like.
+            </span>
+          </label>
+
+          <label className="flex flex-col gap-1 max-w-[12rem]">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
               Estimated visits
             </span>
             {/* FormData field name (`suggested_visit_count`) is unchanged —
@@ -216,11 +245,11 @@ export function TreatmentPlansCard({
               onChange={(e) => setVisits(e.target.value)}
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
+            <span className="text-[11px] text-neutral-500">
+              A rough estimate. You can add a treatment schedule with stages
+              after creating the plan.
+            </span>
           </label>
-          <p className="-mt-1 text-[11px] text-neutral-500">
-            A rough estimate. You can add a treatment schedule with stages
-            after creating the plan.
-          </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -235,6 +264,7 @@ export function TreatmentPlansCard({
               onClick={() => {
                 setAdding(false);
                 setName("");
+                setNameTouched(false);
                 setVisits("12");
                 setPrimaryArea("");
                 setError(null);
@@ -510,7 +540,7 @@ function PlanNotesEditor({
             {plan.budget_notes && (
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-neutral-500">
-                  Budget notes
+                  Client budget notes
                 </p>
                 <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
                   {plan.budget_notes}
@@ -559,18 +589,18 @@ function PlanNotesEditor({
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Budget notes
+          Client budget notes
         </span>
         <textarea
           rows={2}
           value={budget}
           onChange={(e) => setBudget(e.target.value)}
-          placeholder="e.g. if weekly is unaffordable, move to every 2 weeks; timeline ~3 months longer."
+          placeholder="e.g. $50/week; unlimited budget; tighten schedule if cost is a concern."
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
         <span className="text-[11px] text-neutral-500">
-          Notes about what to adjust if the client needs a lower-cost
-          schedule.
+          What the client says they can spend or tolerate financially, like
+          &ldquo;$50/week&rdquo; or &ldquo;unlimited budget.&rdquo;
         </span>
       </label>
 
