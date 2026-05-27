@@ -25,19 +25,23 @@ import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
   MACHINE_FREQUENCIES,
-  PROBE_SIZES,
-  PROBE_TYPES,
 } from "@/lib/constants";
+import {
+  PROBE_BRANDS,
+  findProbeOptionByKey,
+  getMaterialsForBrand,
+  getProbeOptionsFor,
+  type ProbeBrand,
+  type ProbeMaterial,
+} from "@/lib/probes";
 import type {
   ApilusModality,
   ElectrolysisMode,
   MachineFrequency,
-  ProbeType,
   SessionBlock,
   SessionBlockSide,
   SessionMode,
 } from "@/lib/types/database";
-import { ChipSelector } from "@/components/chip-selector";
 import { AreaPicker } from "@/components/area-picker";
 import {
   createSessionBlockAction,
@@ -73,8 +77,10 @@ type Draft = {
   mode: string;
   apilusModality: string;
   energyLevel: string;
-  probeType: string;
-  probeSize: string;
+  // Session Logging Phase B: a single structured probe catalog key
+  // (lib/probes.ts). Empty string = no probe. Replaces the old flat
+  // probeType / probeSize dropdowns.
+  probeKey: string;
   machineFrequency: string;
   minutes: string;
   // Treatment area (0039). All optional; empty → null on save.
@@ -87,8 +93,7 @@ const EMPTY: Draft = {
   mode: "",
   apilusModality: "",
   energyLevel: "",
-  probeType: "",
-  probeSize: "",
+  probeKey: "",
   machineFrequency: "",
   minutes: "",
   primaryArea: "",
@@ -96,15 +101,12 @@ const EMPTY: Draft = {
   customAreaDetail: "",
 };
 
-const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
-
 function fromBlock(b: SessionBlock): Draft {
   return {
     mode: b.mode ?? "",
     apilusModality: b.apilus_modality ?? "",
     energyLevel: b.energy_level != null ? String(b.energy_level) : "",
-    probeType: b.probe_type ?? "",
-    probeSize: b.probe_size ?? "",
+    probeKey: b.probe_key ?? "",
     machineFrequency: b.machine_frequency ?? "",
     minutes: b.minutes_performed != null ? String(b.minutes_performed) : "",
     primaryArea: b.primary_area ?? "",
@@ -143,8 +145,7 @@ export function BlockSetupForm({
         previousBlock.energy_level != null
           ? String(previousBlock.energy_level)
           : "",
-      probeType: previousBlock.probe_type ?? "",
-      probeSize: previousBlock.probe_size ?? "",
+      probeKey: previousBlock.probe_key ?? "",
       machineFrequency: previousBlock.machine_frequency ?? "",
     }));
   }
@@ -187,14 +188,16 @@ export function BlockSetupForm({
           clientId,
           sessionId,
           blockId: block.id,
+          // Legacy probe_type / probe_size are intentionally omitted so
+          // any value on an existing row is preserved. The structured
+          // probe is sent separately via probeOptionKey.
+          probeOptionKey: draft.probeKey || null,
           patch: {
             mode: (draft.mode || null) as SessionMode | null,
             apilus_modality: (draft.apilusModality || null) as
               | ApilusModality
               | null,
             energy_level: elNum,
-            probe_type: (draft.probeType || null) as ProbeType | null,
-            probe_size: draft.probeSize.trim() || null,
             machine_frequency: (draft.machineFrequency || null) as
               | MachineFrequency
               | null,
@@ -220,8 +223,7 @@ export function BlockSetupForm({
         apilusModality: (draft.apilusModality || null) as ApilusModality | null,
         energyLevel: elNum,
         minutesPerformed: minutesNum,
-        probeType: (draft.probeType || null) as ProbeType | null,
-        probeSize: draft.probeSize.trim() || null,
+        probeOptionKey: draft.probeKey || null,
         machineFrequency: (draft.machineFrequency || null) as
           | MachineFrequency
           | null,
@@ -391,29 +393,14 @@ export function BlockSetupForm({
         />
       </label>
 
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Probe type</span>
-        <select
-          value={draft.probeType}
-          onChange={(e) => update("probeType", e.target.value)}
-          className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        >
-          <option value="">Select…</option>
-          {PROBE_TYPES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </label>
-
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Probe size</span>
-        <ChipSelector
-          options={PROBE_SIZE_OPTIONS}
-          value={draft.probeSize}
-          onChange={(v) => update("probeSize", v)}
-          otherPlaceholder="Describe probe size"
+        <span className="text-sm font-medium">Probe</span>
+        <span className="text-xs text-neutral-500">
+          Optional. Used for accurate electrolysis charting.
+        </span>
+        <ProbePicker
+          value={draft.probeKey}
+          onChange={(key) => update("probeKey", key)}
         />
       </div>
 
@@ -483,6 +470,158 @@ export function BlockSetupForm({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+// Cascading probe picker (Session Logging Phase B). Brand → material →
+// valid option chips. Only combinations present in the lib/probes.ts
+// catalog are ever offered, so impossible probes can't be selected. The
+// value is a single catalog key (or "" for none); the server re-validates
+// it. Probe is optional — leaving it blank is fine.
+const CHIP_BASE =
+  "rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-50";
+const CHIP_OFF =
+  "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300";
+const CHIP_ON =
+  "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900";
+
+function ProbePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (key: string) => void;
+}) {
+  const selected = findProbeOptionByKey(value);
+
+  // Drill-down state. Seeded from the selected option so "Change" reopens
+  // on the right brand/material. Editing is true while the practitioner is
+  // actively choosing (no selection yet, or they tapped "Change").
+  const [editing, setEditing] = useState(!selected);
+  const [brand, setBrand] = useState<ProbeBrand | "">(selected?.brand ?? "");
+  const [material, setMaterial] = useState<ProbeMaterial | "">(
+    selected?.material ?? "",
+  );
+
+  // Collapsed summary once a probe is chosen.
+  if (selected && !editing) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+          {selected.displayLabel}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setBrand(selected.brand);
+            setMaterial(selected.material);
+            setEditing(true);
+          }}
+          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          Change
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onChange("");
+            setBrand("");
+            setMaterial("");
+            setEditing(true);
+          }}
+          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          Clear
+        </button>
+      </div>
+    );
+  }
+
+  const materials = brand ? getMaterialsForBrand(brand) : [];
+  const options = brand && material ? getProbeOptionsFor(brand, material) : [];
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+      {/* Brand */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Brand
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {PROBE_BRANDS.map((b) => (
+            <button
+              key={b}
+              type="button"
+              aria-pressed={brand === b}
+              onClick={() => {
+                setBrand(b);
+                setMaterial("");
+              }}
+              className={`${CHIP_BASE} ${brand === b ? CHIP_ON : CHIP_OFF}`}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Material / type family */}
+      {brand && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Material
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {materials.map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={material === m}
+                onClick={() => setMaterial(m)}
+                className={`${CHIP_BASE} ${material === m ? CHIP_ON : CHIP_OFF}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Valid options */}
+      {brand && material && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Probe
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                aria-pressed={value === o.key}
+                onClick={() => {
+                  onChange(o.key);
+                  setEditing(false);
+                }}
+                className={`${CHIP_BASE} ${value === o.key ? CHIP_ON : CHIP_OFF}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selected && (
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="self-start text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          Done
+        </button>
+      )}
     </div>
   );
 }

@@ -478,6 +478,18 @@ export type SessionBlock = {
   primary_area: string | null;
   side: SessionBlockSide | null;
   custom_area_detail: string | null;
+  // Migration 0041 (Session Logging Phase B): structured probe taxonomy.
+  // A single validated probe choice from the lib/probes.ts catalog,
+  // decomposed for analytics. All nullable and additive; legacy rows
+  // (and the legacy probe_type / probe_size above) are unaffected.
+  probe_key: string | null;
+  probe_brand: string | null;
+  probe_material: string | null;
+  probe_piece_type: string | null;
+  probe_shank: string | null;
+  probe_size_value: string | null;
+  probe_length: string | null;
+  probe_label: string | null;
 };
 
 export type LaserEntry = {
