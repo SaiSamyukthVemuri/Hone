@@ -25,7 +25,6 @@ import type {
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
   DayColumn,
-  GRID_HEIGHT,
   HOUR_END,
   HOUR_START,
   ROW_HEIGHT_PX,
@@ -222,31 +221,25 @@ export default async function CalendarPage({
             })}
           </div>
 
-          <div
-            className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]"
-            style={{ height: GRID_HEIGHT }}
-          >
-            {/* Left time rail. Each hour cell is exactly one hour tall
-                (2 * ROW_HEIGHT_PX) so the labels line up with the day
-                columns' hour boundaries — row math is unchanged. Labels
-                use a SOLID rail background, a high-contrast bold color
-                (no opacity, no muted neutral), and a clear per-hour rule
-                so the times are unmistakable in both light and dark
-                mode. The earlier fix relied on translucent backgrounds +
-                mid-tone text, which read as a blank rail in production
-                dark mode. The rail keeps its reserved 60px width. */}
-            <div className="border-r border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900">
+          {/* Body grid. The row height is driven by the DayColumns'
+              own GRID_HEIGHT — the container intentionally has NO height,
+              mirroring the working Settings → Weekly hours grid. The
+              previous version put the height on the container with a
+              no-height rail child, and the rail rendered blank in
+              production; matching the proven settings-grid structure
+              (border-b hour cells, right-aligned readable labels, no
+              container height) makes the labels render reliably. Row
+              math (HOUR_START/HOUR_END/ROW_HEIGHT_PX/ROW_MINUTES, the
+              per-cell 2 * ROW_HEIGHT_PX height, and DayColumn event
+              positioning) is unchanged. */}
+          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]">
+            <div className="border-r border-neutral-200 dark:border-neutral-800">
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
                 (h) => (
                   <div
                     key={h}
                     style={{ height: 2 * ROW_HEIGHT_PX }}
-                    className={
-                      "px-2 pt-1 text-sm font-semibold tabular-nums text-neutral-800 dark:text-white " +
-                      (h !== HOUR_START
-                        ? "border-t border-neutral-200 dark:border-neutral-800"
-                        : "")
-                    }
+                    className="border-b border-neutral-200 px-2 pt-1 text-right text-[11px] font-semibold uppercase tracking-wider text-neutral-700 dark:border-neutral-800 dark:text-neutral-200"
                   >
                     {formatHourLabel(h)}
                   </div>
