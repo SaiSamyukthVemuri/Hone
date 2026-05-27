@@ -23,16 +23,18 @@ import type {
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import type { StudioTimedBlock } from "@/lib/types/database";
+import { DayColumn, type DayAvailability } from "./DayColumn";
+// Grid constants + formatters MUST come from plain (non-"use client")
+// modules. Importing them from the "use client" DayColumn turned them
+// into client-reference proxies in this Server Component, so the rail's
+// `Array.from({ length: HOUR_END - HOUR_START })` produced 0 children
+// and the time labels never rendered. See calendar-constants.ts.
 import {
-  DayColumn,
   GRID_HEIGHT,
   HOUR_END,
   HOUR_START,
   ROW_HEIGHT_PX,
-  type DayAvailability,
-} from "./DayColumn";
-// Server-safe formatters: must come from a plain module, not the
-// "use client" DayColumn — see calendar-format.ts header.
+} from "./calendar-constants";
 import {
   formatHourLabel,
   monthDayLabel,
