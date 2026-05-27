@@ -1,10 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import type {
-  ElectrolysisEntry,
-  SessionBlock,
-} from "@/lib/types/database";
+import { useMemo, useState } from "react";
+import type { ElectrolysisEntry, SessionBlock } from "@/lib/types/database";
 import type {
   SessionBlockWithEntries,
   TreatmentParams,
@@ -13,38 +10,33 @@ import { ELECTROLYSIS_MODES } from "@/lib/constants";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
-import { updateSessionBlockAction } from "./block-actions";
 import { deleteElectrolysisEntryAction } from "./actions";
 
-// Renders the block-grouped view of a session. Treatment params are computed
-// once per (entry, block) pair and passed to ElectrolysisEntryRow as props so
-// the row itself does not call the resolver. The override badge is wired by
-// passing the block alongside.
-//
-// Single-block sessions hide the block name entirely. Multi-block sessions
-// render block_name if set, else "Treatment N" where N is sort_order.
+// Area-first view of an electrolysis session (Session Logging Phase A).
+// Each session_blocks row renders as a "treatment area" section; the word
+// "block" is not shown to practitioners. The section title is the chosen
+// area; settings + entries follow. The underlying schema and the
+// create/update actions are unchanged.
 
-// Body Chart v1 Phase B: format the structured-area chip shown alongside
-// the block. Joins primary_area · side · custom_area_detail with " · ".
-// Pure presentation — never reads or mutates block_name. Returns null when
-// the block has no structured-area data, so legacy blocks render exactly
-// as before.
-function formatStructuredAreaChip(block: SessionBlock): string | null {
-  const parts: string[] = [];
-  if (block.primary_area && block.primary_area.trim().length > 0) {
-    parts.push(block.primary_area.trim());
+// Section title precedence (presentation only — never mutates schema):
+//   1. primary_area (+ side / specifics)   — the structured area
+//   2. block_name                          — legacy free-text label
+//   3. "Treatment area N" placeholder      — muted; no area chosen yet
+function areaTitle(block: SessionBlock): { text: string; placeholder: boolean } {
+  const area = block.primary_area?.trim();
+  if (area && area.length > 0) {
+    const extras: string[] = [];
+    if (block.side && block.side !== "n/a") extras.push(block.side);
+    const detail = block.custom_area_detail?.trim();
+    if (detail && detail.length > 0) extras.push(detail);
+    return {
+      text: extras.length > 0 ? `${area} · ${extras.join(" · ")}` : area,
+      placeholder: false,
+    };
   }
-  if (block.side && block.side !== "n/a") {
-    parts.push(block.side);
-  }
-  if (
-    block.custom_area_detail &&
-    block.custom_area_detail.trim().length > 0
-  ) {
-    parts.push(block.custom_area_detail.trim());
-  }
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
+  const name = block.block_name?.trim();
+  if (name && name.length > 0) return { text: name, placeholder: false };
+  return { text: `Treatment area ${block.sort_order}`, placeholder: true };
 }
 
 type Props = {
@@ -62,8 +54,10 @@ export function SessionBlocksView({
   orphanEntries,
   clientTagLabels = [],
 }: Props) {
-  const [setupOpen, setSetupOpen] = useState(false);
-  const isMulti = blocks.length > 1;
+  // First empty treatment-area editor: when a session has no areas yet,
+  // open the editor immediately so logging starts without an extra click.
+  // No DB row is created until the practitioner saves.
+  const [adding, setAdding] = useState(blocks.length === 0);
   const previousBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
 
   return (
@@ -72,7 +66,6 @@ export function SessionBlocksView({
         <BlockSection
           key={block.id}
           block={block}
-          showName={isMulti}
           sessionId={sessionId}
           clientId={clientId}
           clientTagLabels={clientTagLabels}
@@ -85,7 +78,8 @@ export function SessionBlocksView({
             Unassigned entries
           </h3>
           <p className="mt-1 text-xs text-amber-900 dark:text-amber-100">
-            These entries do not belong to a block. Edit each to assign it.
+            These entries do not belong to a treatment area. Edit each to
+            assign it.
           </p>
           <ul className="mt-3 flex flex-col gap-2">
             {orphanEntries.map((e) => (
@@ -97,20 +91,20 @@ export function SessionBlocksView({
         </section>
       )}
 
-      {setupOpen ? (
+      {adding ? (
         <BlockSetupForm
           sessionId={sessionId}
           clientId={clientId}
           previousBlock={previousBlock}
-          onCancel={() => setSetupOpen(false)}
+          onCancel={() => setAdding(false)}
         />
       ) : (
         <button
           type="button"
-          onClick={() => setSetupOpen(true)}
+          onClick={() => setAdding(true)}
           className="self-start rounded-md border border-dashed border-neutral-300 px-4 py-3 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
         >
-          + Start new block
+          {blocks.length > 0 ? "+ Add another treatment area" : "+ Add treatment area"}
         </button>
       )}
     </div>
@@ -119,17 +113,17 @@ export function SessionBlocksView({
 
 function BlockSection({
   block,
-  showName,
   sessionId,
   clientId,
   clientTagLabels,
 }: {
   block: SessionBlockWithEntries;
-  showName: boolean;
   sessionId: string;
   clientId: string;
   clientTagLabels: ReadonlyArray<string>;
 }) {
+  const [editing, setEditing] = useState(false);
+
   const params: TreatmentParams = useMemo(
     () => ({
       mode: block.mode,
@@ -152,6 +146,9 @@ function BlockSection({
     if (block.machine_frequency) parts.push(block.machine_frequency);
     if (block.probe_type) parts.push(block.probe_type);
     if (block.probe_size) parts.push(block.probe_size);
+    if (block.minutes_performed != null) {
+      parts.push(`${block.minutes_performed} min`);
+    }
     return parts.join(" · ");
   }, [block]);
 
@@ -164,173 +161,83 @@ function BlockSection({
     [block.electrolysis_entries],
   );
 
-  // Body Chart v1 Phase B: structured anatomical area badge. Renders for
-  // both single- and multi-block sessions (BlockHeader is hidden for
-  // single-block sessions). When all three columns are NULL the chip is
-  // omitted — legacy blocks render exactly like today.
-  const areaChip = formatStructuredAreaChip(block);
+  const title = areaTitle(block);
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-      {showName && (
-        <BlockHeader
-          block={block}
-          clientId={clientId}
+      {editing ? (
+        <BlockSetupForm
           sessionId={sessionId}
+          clientId={clientId}
+          previousBlock={null}
+          block={block}
+          onCancel={() => setEditing(false)}
         />
-      )}
-      {areaChip && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
-            title="Treatment area"
-          >
-            {areaChip}
-          </span>
-        </div>
-      )}
-      {paramsLine && (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {paramsLine}
-        </p>
-      )}
-
-      {entriesSorted.length === 0 ? (
-        <p className="text-xs text-neutral-500">No entries yet.</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {entriesSorted.map((e) => (
-            <li key={e.id}>
-              <ElectrolysisEntryRow
-                entry={e}
-                treatmentParams={params}
-                block={block}
-                action={
-                  <form action={deleteElectrolysisEntryAction}>
-                    <input type="hidden" name="id" value={e.id} />
-                    <input type="hidden" name="session_id" value={sessionId} />
-                    <input type="hidden" name="client_id" value={clientId} />
-                    <button
-                      type="submit"
-                      aria-label="Delete entry"
-                      className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                    >
-                      ✕
-                    </button>
-                  </form>
-                }
-              />
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3
+              className={
+                title.placeholder
+                  ? "text-base font-normal text-neutral-400 dark:text-neutral-500"
+                  : "text-lg font-medium"
+              }
+            >
+              {title.text}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              Edit
+            </button>
+          </div>
+
+          {paramsLine && (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {paramsLine}
+            </p>
+          )}
+
+          {entriesSorted.length === 0 ? (
+            <p className="text-xs text-neutral-500">No entries yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {entriesSorted.map((e) => (
+                <li key={e.id}>
+                  <ElectrolysisEntryRow
+                    entry={e}
+                    treatmentParams={params}
+                    block={block}
+                    action={
+                      <form action={deleteElectrolysisEntryAction}>
+                        <input type="hidden" name="id" value={e.id} />
+                        <input type="hidden" name="session_id" value={sessionId} />
+                        <input type="hidden" name="client_id" value={clientId} />
+                        <button
+                          type="submit"
+                          aria-label="Delete entry"
+                          className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                        >
+                          ✕
+                        </button>
+                      </form>
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <SimplifiedEntryForm
+            block={block}
+            sessionId={sessionId}
+            clientId={clientId}
+            clientTagLabels={clientTagLabels}
+          />
+        </>
       )}
-
-      <SimplifiedEntryForm
-        block={block}
-        sessionId={sessionId}
-        clientId={clientId}
-        clientTagLabels={clientTagLabels}
-      />
     </section>
-  );
-}
-
-function BlockHeader({
-  block,
-  clientId,
-  sessionId,
-}: {
-  block: SessionBlock;
-  clientId: string;
-  sessionId: string;
-}) {
-  const fallback = `Treatment ${block.sort_order}`;
-  const displayName =
-    block.block_name && block.block_name.trim().length > 0
-      ? block.block_name
-      : fallback;
-
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(block.block_name ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function save() {
-    const next = draft.trim();
-    setError(null);
-    startTransition(async () => {
-      const res = await updateSessionBlockAction({
-        clientId,
-        sessionId,
-        blockId: block.id,
-        patch: { block_name: next.length === 0 ? null : next },
-      });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      setEditing(false);
-    });
-  }
-
-  if (editing) {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          autoFocus
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              save();
-            }
-            if (e.key === "Escape") {
-              setEditing(false);
-              setDraft(block.block_name ?? "");
-              setError(null);
-            }
-          }}
-          placeholder={fallback}
-          maxLength={60}
-          className="flex-1 min-w-[12rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-        <button
-          type="button"
-          onClick={save}
-          disabled={pending}
-          className="rounded-md bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditing(false);
-            setDraft(block.block_name ?? "");
-            setError(null);
-          }}
-          disabled={pending}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-xs text-neutral-700 dark:border-neutral-700"
-        >
-          Cancel
-        </button>
-        {error && <p className="w-full text-xs text-red-700">{error}</p>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap items-baseline justify-between gap-3">
-      <h3 className="text-lg font-medium">{displayName}</h3>
-      <button
-        type="button"
-        onClick={() => setEditing(true)}
-        className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-      >
-        Edit name
-      </button>
-    </div>
   );
 }
