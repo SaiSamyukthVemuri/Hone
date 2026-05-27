@@ -1,5 +1,25 @@
 "use client";
 
+// Treatment-area editor for an electrolysis session.
+//
+// Session Logging Phase A: practitioner-facing language is "treatment
+// area," not "block." The underlying schema (session_blocks) and the
+// create/update server actions are unchanged — this is an area-first UI
+// over the existing fields:
+//   - Treatment area (primary_area / side / custom_area_detail, 0039) is
+//     the section identity and comes first.
+//   - block_name is NOT collected in this flow. New areas save with a
+//     null block_name; legacy rows keep their block_name (we never send
+//     it in the edit patch, so it's preserved).
+//   - Minutes performed is optional: session_blocks.minutes_performed is
+//     nullable and createSessionBlockAction defaults blank → null, so a
+//     blank field saves as null (not 0).
+//
+// Dual mode: with `block` it edits that row via updateSessionBlockAction;
+// without, it creates a new row via createSessionBlockAction. Both
+// actions already accept every field used here — no action behavior
+// change.
+
 import { useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
@@ -15,13 +35,18 @@ import type {
   ProbeType,
   SessionBlock,
   SessionBlockSide,
+  SessionMode,
 } from "@/lib/types/database";
 import { ChipSelector } from "@/components/chip-selector";
 import { AreaPicker } from "@/components/area-picker";
-import { createSessionBlockAction } from "./block-actions";
+import {
+  createSessionBlockAction,
+  updateSessionBlockAction,
+} from "./block-actions";
 
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
+const MINUTES_MAX = 1440;
 
 // Side options for paired anatomy. The DB CHECK (migration 0039) enforces
 // the same five values plus NULL. UI displays a Title-case label but
@@ -37,32 +62,35 @@ const SIDE_OPTIONS: ReadonlyArray<{ value: SessionBlockSide; label: string }> = 
 type Props = {
   sessionId: string;
   clientId: string;
+  // For "Copy settings from last treatment area" (create mode only).
   previousBlock: SessionBlock | null;
+  // When present, the form edits this existing area instead of creating.
+  block?: SessionBlock | null;
   onCancel: () => void;
 };
 
 type Draft = {
-  blockName: string;
   mode: string;
   apilusModality: string;
   energyLevel: string;
   probeType: string;
   probeSize: string;
   machineFrequency: string;
-  // Body Chart v1 Phase B fields. All optional; empty → null on save.
+  minutes: string;
+  // Treatment area (0039). All optional; empty → null on save.
   primaryArea: string;
   side: string; // SessionBlockSide | ""
   customAreaDetail: string;
 };
 
 const EMPTY: Draft = {
-  blockName: "",
   mode: "",
   apilusModality: "",
   energyLevel: "",
   probeType: "",
   probeSize: "",
   machineFrequency: "",
+  minutes: "",
   primaryArea: "",
   side: "",
   customAreaDetail: "",
@@ -70,21 +98,18 @@ const EMPTY: Draft = {
 
 const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
 
-function fromPrevious(prev: SessionBlock | null): Draft {
-  if (!prev) return EMPTY;
+function fromBlock(b: SessionBlock): Draft {
   return {
-    blockName: "",
-    mode: prev.mode ?? "",
-    apilusModality: prev.apilus_modality ?? "",
-    energyLevel: prev.energy_level != null ? String(prev.energy_level) : "",
-    probeType: prev.probe_type ?? "",
-    probeSize: prev.probe_size ?? "",
-    machineFrequency: prev.machine_frequency ?? "",
-    // Copy-from-previous-block carries structured area forward — same
-    // ergonomic shortcut Mode/Modality/Probe already get.
-    primaryArea: prev.primary_area ?? "",
-    side: prev.side ?? "",
-    customAreaDetail: prev.custom_area_detail ?? "",
+    mode: b.mode ?? "",
+    apilusModality: b.apilus_modality ?? "",
+    energyLevel: b.energy_level != null ? String(b.energy_level) : "",
+    probeType: b.probe_type ?? "",
+    probeSize: b.probe_size ?? "",
+    machineFrequency: b.machine_frequency ?? "",
+    minutes: b.minutes_performed != null ? String(b.minutes_performed) : "",
+    primaryArea: b.primary_area ?? "",
+    side: b.side ?? "",
+    customAreaDetail: b.custom_area_detail ?? "",
   };
 }
 
@@ -92,9 +117,11 @@ export function BlockSetupForm({
   sessionId,
   clientId,
   previousBlock,
+  block,
   onCancel,
 }: Props) {
-  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const isEdit = !!block;
+  const [draft, setDraft] = useState<Draft>(block ? fromBlock(block) : EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -102,9 +129,24 @@ export function BlockSetupForm({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
-  function copyFromPrevious() {
+  // "Copy settings from last treatment area" copies machine configuration
+  // only — never the area identity (primary_area / side / specifics) or
+  // minutes. The practitioner chooses the new area fresh. Local UI state
+  // only; no server/action change.
+  function copySettings() {
     if (!previousBlock) return;
-    setDraft(fromPrevious(previousBlock));
+    setDraft((d) => ({
+      ...d,
+      mode: previousBlock.mode ?? "",
+      apilusModality: previousBlock.apilus_modality ?? "",
+      energyLevel:
+        previousBlock.energy_level != null
+          ? String(previousBlock.energy_level)
+          : "",
+      probeType: previousBlock.probe_type ?? "",
+      probeSize: previousBlock.probe_size ?? "",
+      machineFrequency: previousBlock.machine_frequency ?? "",
+    }));
   }
 
   function submit() {
@@ -115,11 +157,20 @@ export function BlockSetupForm({
       setError("Energy level must be a non-negative number.");
       return;
     }
-    // Body Chart v1 Phase B fields. The server action also validates;
-    // these client-side checks just surface friendlier errors earlier.
+    const min = draft.minutes.trim();
+    const minutesNum = min === "" ? null : parseInt(min, 10);
+    if (
+      min !== "" &&
+      (!Number.isFinite(minutesNum) ||
+        (minutesNum as number) < 0 ||
+        (minutesNum as number) > MINUTES_MAX)
+    ) {
+      setError(`Minutes must be between 0 and ${MINUTES_MAX}.`);
+      return;
+    }
     const trimmedArea = draft.primaryArea.trim();
     if (trimmedArea.length > PRIMARY_AREA_MAX) {
-      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
+      setError(`Treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
       return;
     }
     const trimmedDetail = draft.customAreaDetail.trim();
@@ -127,16 +178,48 @@ export function BlockSetupForm({
       setError(`Specifics must be ${CUSTOM_AREA_DETAIL_MAX} characters or fewer.`);
       return;
     }
+
     startTransition(async () => {
+      if (block) {
+        // Edit: patch the existing row. block_name is intentionally NOT
+        // included so any legacy value is preserved.
+        const res = await updateSessionBlockAction({
+          clientId,
+          sessionId,
+          blockId: block.id,
+          patch: {
+            mode: (draft.mode || null) as SessionMode | null,
+            apilus_modality: (draft.apilusModality || null) as
+              | ApilusModality
+              | null,
+            energy_level: elNum,
+            probe_type: (draft.probeType || null) as ProbeType | null,
+            probe_size: draft.probeSize.trim() || null,
+            machine_frequency: (draft.machineFrequency || null) as
+              | MachineFrequency
+              | null,
+            minutes_performed: minutesNum,
+            primary_area: trimmedArea || null,
+            side: (draft.side || null) as SessionBlockSide | null,
+            custom_area_detail: trimmedDetail || null,
+          },
+        });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        onCancel();
+        return;
+      }
+      // Create: new treatment area. block_name omitted (null) — the
+      // section title falls back to the area, then a muted placeholder.
       const res = await createSessionBlockAction({
         clientId,
         sessionId,
-        blockName: draft.blockName.trim() || null,
         mode: (draft.mode || null) as ElectrolysisMode | null,
-        apilusModality: (draft.apilusModality || null) as
-          | ApilusModality
-          | null,
+        apilusModality: (draft.apilusModality || null) as ApilusModality | null,
         energyLevel: elNum,
+        minutesPerformed: minutesNum,
         probeType: (draft.probeType || null) as ProbeType | null,
         probeSize: draft.probeSize.trim() || null,
         machineFrequency: (draft.machineFrequency || null) as
@@ -150,8 +233,6 @@ export function BlockSetupForm({
         setError(res.error);
         return;
       }
-      // Page re-renders via revalidatePath; the new block + its simplified
-      // entry form appear automatically.
       onCancel();
     });
   }
@@ -168,51 +249,33 @@ export function BlockSetupForm({
   return (
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-medium">New block</h3>
-        {previousBlock && (
+        <h3 className="text-base font-medium">
+          {isEdit ? "Edit treatment area" : "New treatment area"}
+        </h3>
+        {!isEdit && previousBlock && (
           <button
             type="button"
-            onClick={copyFromPrevious}
+            onClick={copySettings}
             disabled={pending}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            Copy from previous block
+            Copy settings from last treatment area
           </button>
         )}
       </div>
 
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Block name</span>
-        <input
-          type="text"
-          value={draft.blockName}
-          onChange={(e) => update("blockName", e.target.value)}
-          placeholder="e.g. Face, Big toe, Underarms"
-          maxLength={60}
-          className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-        <span className="text-xs text-neutral-500">
-          Optional. If left blank, this will display as &ldquo;Treatment&rdquo;
-          plus its order.
-        </span>
-      </label>
-
-      {/* Body Chart v1 Phase B: optional structured anatomical area.
-          Independent of block_name — never derived from it. Side and
-          Specifics only surface once Area is picked so the form stays
-          calm for practitioners who skip this section. */}
+      {/* Treatment area first — it's the identity of this section. */}
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Treatment area</span>
         <span className="text-xs text-neutral-500">
-          Optional. Used later for area-level progress. This does not change
-          the block name.
+          Optional — the area this section treats. Side and specifics appear
+          once an area is chosen.
         </span>
         <AreaPicker
           value={draft.primaryArea}
           onChange={(next) => {
-            // Clearing the area also clears side + specifics to keep the
-            // saved row internally consistent (no orphan side without an
-            // area). DB allows it, but the UX is cleaner this way.
+            // Clearing the area also clears side + specifics so the saved
+            // row stays internally consistent (no orphan side).
             if (!next) {
               setDraft((d) => ({
                 ...d,
@@ -224,7 +287,7 @@ export function BlockSetupForm({
               update("primaryArea", next);
             }
           }}
-          idPrefix={`block-create-${sessionId}`}
+          idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
         />
 
         {draft.primaryArea.trim().length > 0 && (
@@ -240,9 +303,7 @@ export function BlockSetupForm({
                     <button
                       key={opt.value}
                       type="button"
-                      onClick={() =>
-                        update("side", selected ? "" : opt.value)
-                      }
+                      onClick={() => update("side", selected ? "" : opt.value)}
                       aria-pressed={selected}
                       className={
                         "rounded-full border px-2.5 py-1 text-xs " +
@@ -275,6 +336,7 @@ export function BlockSetupForm({
         )}
       </div>
 
+      {/* Settings come after the area. */}
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
@@ -380,6 +442,23 @@ export function BlockSetupForm({
         </div>
       </div>
 
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Minutes performed (optional)</span>
+        <input
+          type="number"
+          inputMode="numeric"
+          step="1"
+          min={0}
+          max={MINUTES_MAX}
+          value={draft.minutes}
+          onChange={(e) => update("minutes", e.target.value)}
+          className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+        <span className="text-xs text-neutral-500">
+          Used for total treatment time if you track it.
+        </span>
+      </label>
+
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
           {error}
@@ -393,7 +472,7 @@ export function BlockSetupForm({
           disabled={pending}
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Creating…" : "Create block"}
+          {pending ? "Saving…" : "Save treatment area"}
         </button>
         <button
           type="button"
