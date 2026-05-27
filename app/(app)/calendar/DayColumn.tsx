@@ -46,6 +46,60 @@ export const DAY_LABELS = [
   "Sat",
 ] as const;
 
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+// "Mon · May 26" from a "YYYY-MM-DD" studio-local date + its weekday
+// index. Pure string formatting — no Date construction, so it can't drift
+// across timezones. Used by the calendar week header.
+export function formatDayHeader(date: string, dowIndex: number): string {
+  const month = parseInt(date.slice(5, 7), 10);
+  const day = parseInt(date.slice(8, 10), 10);
+  const monthLabel = MONTHS_SHORT[month - 1] ?? "";
+  return `${DAY_LABELS[dowIndex]} · ${monthLabel} ${day}`;
+}
+
+// Hour-of-day → "8 AM" / "12 PM" / "1 PM". Used by the left time rail.
+export function formatHourLabel(hour24: number): string {
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const h12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${h12} ${period}`;
+}
+
+// "HH:MM:SS" (studio-local availability time) → minutes from midnight,
+// or null when unparseable. Visual-only: used to position the neutral
+// availability tint. Never feeds booking math.
+function timeToMinutes(hhmmss: string | null): number | null {
+  if (!hhmmss) return null;
+  const parts = hhmmss.split(":");
+  if (parts.length < 2) return null;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+// Read-only weekly availability for one weekday, passed from the page.
+// `null` means "no default configured" → render no tint (keep the
+// existing blank look rather than fabricating a closed/open state).
+export type DayAvailability = {
+  isOpen: boolean;
+  openTime: string | null; // "HH:MM:SS"
+  closeTime: string | null;
+};
+
 const TIMED_BLOCK_LABEL: Record<string, string> = {
   lunch: "Lunch",
   break: "Break",
@@ -113,6 +167,11 @@ type Props = {
   tz: string;
   clients: QuickBookClient[];
   services: Service[];
+  // Calendar Readability Repair: read-only visual context. Neither
+  // affects booking — empty-slot clicks still open the drawer at any
+  // time in the visible range, exactly as before.
+  isToday: boolean;
+  availability: DayAvailability | null;
 };
 
 export function DayColumn({
@@ -124,8 +183,35 @@ export function DayColumn({
   tz,
   clients,
   services,
+  isToday,
+  availability,
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
+
+  // Neutral availability tint regions (visual guidance only; gray, never
+  // a status color). A closed weekday tints the whole grid; an open day
+  // tints only the out-of-hours portions (before open, after close),
+  // leaving the working window clear so it reads as clickable. `null`
+  // availability → no tint.
+  const gridTopMinutes = HOUR_START * 60;
+  const tintRegions: Array<{ top: number; height: number }> = [];
+  if (availability) {
+    if (!availability.isOpen) {
+      tintRegions.push({ top: 0, height: GRID_HEIGHT });
+    } else {
+      const open = timeToMinutes(availability.openTime);
+      const close = timeToMinutes(availability.closeTime);
+      if (open != null && open > gridTopMinutes) {
+        const h = Math.min(GRID_HEIGHT, open - gridTopMinutes);
+        if (h > 0) tintRegions.push({ top: 0, height: h });
+      }
+      if (close != null && close < HOUR_END * 60) {
+        const topPx = Math.max(0, close - gridTopMinutes);
+        const h = GRID_HEIGHT - topPx;
+        if (h > 0) tintRegions.push({ top: topPx, height: h });
+      }
+    }
+  }
 
   function handleEmptyClick(e: React.MouseEvent<HTMLButtonElement>) {
     // Only fires on truly empty space. Appointment Links (z-10) and
@@ -147,6 +233,28 @@ export function DayColumn({
       className="relative border-l border-neutral-200 dark:border-neutral-800"
       style={{ height: GRID_HEIGHT }}
     >
+      {/* Neutral availability tint (visual guidance only). pointer-events-
+          none so the empty-slot click overlay below still receives clicks
+          everywhere in the visible range — booking behavior is unchanged. */}
+      {tintRegions.map((r, i) => (
+        <div
+          key={`tint-${i}`}
+          aria-hidden
+          style={{ top: r.top, height: r.height }}
+          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/70 dark:bg-neutral-800/40"
+        />
+      ))}
+
+      {/* Today highlight — a subtle inset ring, not a fill, so it coexists
+          with the gray availability tint without competing. Neutral, no
+          status hue. pointer-events-none. */}
+      {isToday && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-[1] ring-2 ring-inset ring-neutral-400/60 dark:ring-neutral-500/50"
+        />
+      )}
+
       {/* Half-hour grid lines (decorative). */}
       {Array.from(
         { length: VISIBLE_MINUTES / ROW_MINUTES },

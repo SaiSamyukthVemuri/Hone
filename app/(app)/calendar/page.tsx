@@ -6,6 +6,7 @@ import {
 import {
   getActiveServices,
   getAppointmentsForRange,
+  getAvailabilityDefaults,
   getBlockouts,
   getRecurringBreakOccurrencesForRange,
   getTimedBlocksForRange,
@@ -23,12 +24,14 @@ import type {
 } from "@/lib/booking/queries";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
-  DAY_LABELS,
   DayColumn,
+  formatDayHeader,
+  formatHourLabel,
   GRID_HEIGHT,
   HOUR_END,
   HOUR_START,
   ROW_HEIGHT_PX,
+  type DayAvailability,
 } from "./DayColumn";
 
 type Search = Promise<{ week?: string }>;
@@ -55,6 +58,7 @@ export default async function CalendarPage({
     recurringOccurrences,
     services,
     clients,
+    availabilityDefaults,
   ] = await Promise.all([
     getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
     getBlockouts(studio.id),
@@ -66,7 +70,23 @@ export default async function CalendarPage({
     ),
     getActiveServices(studio.id),
     getClientsForStudio(studio.id),
+    // Read-only weekly availability for the calendar's neutral
+    // open/closed tint. One small query (≤7 rows), parallel with the
+    // rest; never feeds booking math. Visual guidance only.
+    getAvailabilityDefaults(studio.id),
   ]);
+
+  // Index weekly availability by day_of_week (0=Sun..6=Sat), matching the
+  // Sunday-start `days` array below. Days with no configured default map
+  // to null → no tint.
+  const availabilityByDow = new Map<number, DayAvailability>();
+  for (const d of availabilityDefaults) {
+    availabilityByDow.set(d.day_of_week, {
+      isOpen: d.is_open,
+      openTime: d.open_time,
+      closeTime: d.close_time,
+    });
+  }
 
   // The drawer only needs the small subset used for search + display. We
   // strip out timestamps, intake fields, and notes so the RSC payload sent
@@ -162,12 +182,32 @@ export default async function CalendarPage({
         <div className="min-w-[840px]">
           <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
             <div />
-            {days.map((date, i) => (
-              <div key={date} className="border-l border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
-                <div className="font-medium">{DAY_LABELS[i]}</div>
-                <div className="text-neutral-500">{date.slice(5)}</div>
-              </div>
-            ))}
+            {days.map((date, i) => {
+              const isToday = date === today;
+              return (
+                <div
+                  key={date}
+                  className={
+                    "border-l border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800 " +
+                    (isToday
+                      ? "border-b-2 border-b-neutral-800 dark:border-b-neutral-200"
+                      : "")
+                  }
+                >
+                  {/* "Mon · May 26" on one line. Today: bolder + dark
+                      underline (no bulky badge, no extra vertical space). */}
+                  <div
+                    className={
+                      isToday
+                        ? "font-semibold text-neutral-900 dark:text-neutral-100"
+                        : "font-medium text-neutral-700 dark:text-neutral-300"
+                    }
+                  >
+                    {formatDayHeader(date, i)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div
@@ -180,14 +220,14 @@ export default async function CalendarPage({
                   <div
                     key={h}
                     style={{ height: 2 * ROW_HEIGHT_PX }}
-                    className="border-b border-neutral-200 px-2 pt-1 text-[10px] uppercase tracking-wider text-neutral-500 dark:border-neutral-800"
+                    className="border-b border-neutral-200 px-2 pt-1 text-[10px] font-medium tabular-nums text-neutral-500 dark:border-neutral-800"
                   >
-                    {h}:00
+                    {formatHourLabel(h)}
                   </div>
                 ),
               )}
             </div>
-            {days.map((date) => (
+            {days.map((date, i) => (
               <DayColumn
                 key={date}
                 date={date}
@@ -198,6 +238,8 @@ export default async function CalendarPage({
                 tz={studio.timezone}
                 clients={drawerClients}
                 services={services}
+                isToday={date === today}
+                availability={availabilityByDow.get(i) ?? null}
               />
             ))}
           </div>
