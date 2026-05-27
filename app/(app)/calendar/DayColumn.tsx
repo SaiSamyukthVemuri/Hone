@@ -36,47 +36,11 @@ export const ROW_HEIGHT_PX = 30; // 30 minutes per row → 1 px per minute
 export const ROW_MINUTES = 30;
 export const VISIBLE_MINUTES = (HOUR_END - HOUR_START) * 60;
 export const GRID_HEIGHT = (VISIBLE_MINUTES / ROW_MINUTES) * ROW_HEIGHT_PX;
-export const DAY_LABELS = [
-  "Sun",
-  "Mon",
-  "Tue",
-  "Wed",
-  "Thu",
-  "Fri",
-  "Sat",
-] as const;
-
-const MONTHS_SHORT = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
-// "Mon · May 26" from a "YYYY-MM-DD" studio-local date + its weekday
-// index. Pure string formatting — no Date construction, so it can't drift
-// across timezones. Used by the calendar week header.
-export function formatDayHeader(date: string, dowIndex: number): string {
-  const month = parseInt(date.slice(5, 7), 10);
-  const day = parseInt(date.slice(8, 10), 10);
-  const monthLabel = MONTHS_SHORT[month - 1] ?? "";
-  return `${DAY_LABELS[dowIndex]} · ${monthLabel} ${day}`;
-}
-
-// Hour-of-day → "8 AM" / "12 PM" / "1 PM". Used by the left time rail.
-export function formatHourLabel(hour24: number): string {
-  const period = hour24 >= 12 ? "PM" : "AM";
-  const h12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  return `${h12} ${period}`;
-}
+// Day-of-week labels + the "Mon · May 26" / "8 AM" formatters live in
+// ./calendar-format (a plain, non-"use client" module) because the
+// server component calendar/page.tsx CALLS them during render and a
+// client-boundary function reference would throw there. This client
+// component doesn't need them.
 
 // "HH:MM:SS" (studio-local availability time) → minutes from midnight,
 // or null when unparseable. Visual-only: used to position the neutral
