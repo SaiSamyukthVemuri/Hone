@@ -12,6 +12,8 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { resolveBirthdayColor } from "@/lib/birthday-colors";
+import type { BirthdayReminderColor } from "@/lib/types/database";
 
 type Props = {
   clientId: string;
@@ -20,6 +22,9 @@ type Props = {
   // Studio-local today, used to compute the "today" and "this month"
   // callouts. Computed by the server component from todayInTz().
   studioToday: { month: number; day: number };
+  // Studio-chosen birthday accent (migration 0040). Never red/rose.
+  // Falls back to purple if unset.
+  accentColor: BirthdayReminderColor;
   action: (formData: FormData) => Promise<
     { ok: true } | { ok: false; error: string }
   >;
@@ -63,9 +68,11 @@ export function ClientBirthdayCard({
   clientId,
   dateOfBirth,
   studioToday,
+  accentColor,
   action,
 }: Props) {
   const md = parseMonthDay(dateOfBirth);
+  const accent = resolveBirthdayColor(accentColor);
   const [editing, setEditing] = useState(false);
 
   const [state, formAction] = useActionState(
@@ -109,19 +116,28 @@ export function ClientBirthdayCard({
         </p>
       </header>
 
+      {/* Birthday callouts use the studio's chosen accent (migration
+          0040), never red/rose. The "today" callout adds the filled
+          badge for extra emphasis; the "this month" callout is the
+          calmer tinted card. */}
       {isToday && (
-        <div className="rounded-md border-l-4 border-amber-400 bg-amber-50 px-3 py-2 dark:border-amber-500 dark:bg-amber-950/30">
-          <p className="text-xs font-semibold uppercase tracking-wider text-amber-900 dark:text-amber-200">
+        <div className={`flex items-center gap-2 rounded-md border px-3 py-2 ${accent.card}`}>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
+          >
+            Today
+          </span>
+          <p className={`text-xs font-semibold uppercase tracking-wider ${accent.strongText}`}>
             Birthday today
           </p>
         </div>
       )}
       {isThisMonth && (
-        <div className="rounded-md border-l-4 border-emerald-400 bg-emerald-50 px-3 py-2 dark:border-emerald-500 dark:bg-emerald-950/30">
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
+        <div className={`rounded-md border px-3 py-2 ${accent.card}`}>
+          <p className={`text-xs font-semibold uppercase tracking-wider ${accent.strongText}`}>
             Birthday month
           </p>
-          <p className="mt-0.5 text-xs text-emerald-900 dark:text-emerald-100">
+          <p className={`mt-0.5 text-xs ${accent.strongText}`}>
             Wish them a happy birth month.
           </p>
         </div>

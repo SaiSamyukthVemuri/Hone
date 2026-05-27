@@ -33,7 +33,20 @@ export type Studio = {
   // previously-hardcoded BOOKING_HORIZON_DAYS). Internal practitioner
   // booking is not subject to this limit.
   public_booking_horizon_months: 3 | 4 | 6;
+  // Migration 0040: practitioner-chosen accent color for birthday
+  // reminders (dashboard + client profile). Default 'purple'. Red/rose
+  // is intentionally NOT an option — it's reserved for allergies/cautions.
+  birthday_reminder_color: BirthdayReminderColor;
 };
+
+// Migration 0040: closed preset list for the birthday reminder accent.
+// Maps to vetted Tailwind class bundles in lib/birthday-colors.ts.
+export type BirthdayReminderColor =
+  | "purple"
+  | "orange"
+  | "blue"
+  | "green"
+  | "neutral";
 
 export type TreatmentGoalStatus = "active" | "reached" | "revised" | "archived";
 

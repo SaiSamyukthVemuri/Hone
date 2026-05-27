@@ -213,6 +213,7 @@ export default async function ClientCheatSheetPage({
             clientId={client.id}
             dateOfBirth={client.date_of_birth}
             studioToday={parseStudioToday(today)}
+            accentColor={studio.birthday_reminder_color}
             action={updateClientBirthdayAction}
           />
 
