@@ -228,21 +228,23 @@ export default async function CalendarPage({
           >
             {/* Left time rail. Each hour cell is exactly one hour tall
                 (2 * ROW_HEIGHT_PX) so the labels line up with the day
-                columns' hour boundaries — row math is unchanged. The
-                visual-polish pass made these labels too faint to find;
-                they are now clearly readable (larger, higher contrast)
-                and each hour gets a faint top rule so the time anchors
-                to its row. The rail keeps its reserved 60px width. */}
-            <div className="border-r border-neutral-200 bg-neutral-50/40 dark:border-neutral-800 dark:bg-neutral-900/20">
+                columns' hour boundaries — row math is unchanged. Labels
+                use a SOLID rail background, a high-contrast bold color
+                (no opacity, no muted neutral), and a clear per-hour rule
+                so the times are unmistakable in both light and dark
+                mode. The earlier fix relied on translucent backgrounds +
+                mid-tone text, which read as a blank rail in production
+                dark mode. The rail keeps its reserved 60px width. */}
+            <div className="border-r border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900">
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
                 (h) => (
                   <div
                     key={h}
                     style={{ height: 2 * ROW_HEIGHT_PX }}
                     className={
-                      "px-2 pt-1 text-xs font-semibold tabular-nums text-neutral-700 dark:text-neutral-200 " +
+                      "px-2 pt-1 text-sm font-semibold tabular-nums text-neutral-800 dark:text-white " +
                       (h !== HOUR_START
-                        ? "border-t border-neutral-200/70 dark:border-neutral-800/60"
+                        ? "border-t border-neutral-200 dark:border-neutral-800"
                         : "")
                     }
                   >
