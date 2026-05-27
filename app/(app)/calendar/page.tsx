@@ -33,7 +33,11 @@ import {
 } from "./DayColumn";
 // Server-safe formatters: must come from a plain module, not the
 // "use client" DayColumn — see calendar-format.ts header.
-import { formatDayHeader, formatHourLabel } from "./calendar-format";
+import {
+  formatHourLabel,
+  monthDayLabel,
+  weekdayLabel,
+} from "./calendar-format";
 
 type Search = Promise<{ week?: string }>;
 
@@ -179,32 +183,39 @@ export default async function CalendarPage({
         </div>
       </header>
 
-      <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
         <div className="min-w-[840px]">
-          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
             <div />
             {days.map((date, i) => {
               const isToday = date === today;
               return (
                 <div
                   key={date}
-                  className={
-                    "border-l border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800 " +
-                    (isToday
-                      ? "border-b-2 border-b-neutral-800 dark:border-b-neutral-200"
-                      : "")
-                  }
+                  className="border-l border-neutral-100 px-3 py-2.5 dark:border-neutral-800/60"
                 >
-                  {/* "Mon · May 26" on one line. Today: bolder + dark
-                      underline (no bulky badge, no extra vertical space). */}
+                  {/* Two-line Google/Fresha header: weekday over date.
+                      Today gets a subtle text accent only — no ring, no
+                      badge, no extra height. */}
                   <div
                     className={
-                      isToday
+                      "text-[11px] uppercase tracking-wide " +
+                      (isToday
                         ? "font-semibold text-neutral-900 dark:text-neutral-100"
-                        : "font-medium text-neutral-700 dark:text-neutral-300"
+                        : "font-medium text-neutral-500 dark:text-neutral-400")
                     }
                   >
-                    {formatDayHeader(date, i)}
+                    {weekdayLabel(i)}
+                  </div>
+                  <div
+                    className={
+                      "text-sm " +
+                      (isToday
+                        ? "font-semibold text-neutral-900 dark:text-neutral-100"
+                        : "font-normal text-neutral-700 dark:text-neutral-300")
+                    }
+                  >
+                    {monthDayLabel(date)}
                   </div>
                 </div>
               );
@@ -215,13 +226,13 @@ export default async function CalendarPage({
             className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]"
             style={{ height: GRID_HEIGHT }}
           >
-            <div className="border-r border-neutral-200 dark:border-neutral-800">
+            <div className="border-r border-neutral-100 dark:border-neutral-800/60">
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
                 (h) => (
                   <div
                     key={h}
                     style={{ height: 2 * ROW_HEIGHT_PX }}
-                    className="border-b border-neutral-200 px-2 pt-1 text-[10px] font-medium tabular-nums text-neutral-500 dark:border-neutral-800"
+                    className="px-2 pt-1 text-[11px] font-medium tabular-nums text-neutral-600 dark:text-neutral-300"
                   >
                     {formatHourLabel(h)}
                   </div>
