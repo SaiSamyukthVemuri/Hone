@@ -13,6 +13,104 @@ import { useFormStatus } from "react-dom";
 
 const DURATION_PRESETS_MINUTES: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 
+// Status pill shown in the collapsed service row. Copy is booking-centric
+// ("Visible in booking" / "Hidden from booking") so the effect of the
+// Hide/Show toggle is unambiguous. Emerald = visible (positive), neutral =
+// hidden. Presentational only.
+function StatusPill({ active }: { active: boolean }) {
+  if (active) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">
+        <span
+          aria-hidden
+          className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+        />
+        Visible in booking
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      <span
+        aria-hidden
+        className="inline-block h-1.5 w-1.5 rounded-full bg-neutral-500"
+      />
+      Hidden from booking
+    </span>
+  );
+}
+
+// Collapsible service row. Collapsed by default: a compact summary
+// (name · duration · price · status pill) with the Hide/Show toggle and an
+// Edit control on the right. Expanding reveals the edit form (passed as
+// children). Each row owns its own open state, so multiple rows can be open
+// at once and toggling one never affects another. The `toggle` slot is the
+// standalone visibility form (its own <form>, never nested in the edit form
+// — preserves the PR #35 fix). No server-action or FormData changes.
+export function ServiceAccordionItem({
+  name,
+  durationLabel,
+  priceLabel,
+  active,
+  toggle,
+  children,
+}: {
+  name: string;
+  durationLabel: string;
+  priceLabel: string;
+  active: boolean;
+  toggle: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <article
+      className={`rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 ${
+        active ? "" : "opacity-90"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left"
+        >
+          <span aria-hidden className="text-neutral-400">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="truncate font-medium text-neutral-900 dark:text-neutral-100">
+            {name}
+          </span>
+          <span className="text-xs tabular-nums text-neutral-500">
+            {durationLabel}
+          </span>
+          <span className="text-xs tabular-nums text-neutral-500">
+            {priceLabel}
+          </span>
+          <StatusPill active={active} />
+        </button>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {toggle}
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            {open ? "Close" : "Edit"}
+          </button>
+        </div>
+      </div>
+      {open && (
+        <div className="border-t border-neutral-200 px-4 py-4 dark:border-neutral-800">
+          {children}
+        </div>
+      )}
+    </article>
+  );
+}
+
 // Duration field. The presets sit as a tight pill row directly above
 // the number input. Clicking a preset sets the input value (and
 // dispatches an input event so any controlled-input watchers see the

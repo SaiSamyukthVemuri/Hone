@@ -1,6 +1,5 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices } from "@/lib/booking/queries";
-import { groupServicesByModality } from "@/lib/booking/format";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
 import {
   createServiceAction,
@@ -9,6 +8,7 @@ import {
 } from "./actions";
 import {
   DurationField,
+  ServiceAccordionItem,
   ServiceSubmitButton,
   ToggleActiveSubmitButton,
 } from "./ServiceFormControls";
@@ -29,8 +29,17 @@ export default async function ServicesSettingsPage() {
   }
 
   const services = await getAllServices(studio.id);
-  const activeGroups = groupServicesByModality(services.filter((s) => s.active));
-  const inactiveServices = services.filter((s) => !s.active);
+  // One list, active services first (then hidden), each as a collapsed row.
+  // Keeping hidden services inline (rather than in a separate section) means
+  // the Hide/Show toggle flips the row's status pill in place instead of
+  // relocating the card — clearer feedback. Booking-page modality grouping
+  // is unaffected (separate surface).
+  const orderedServices = [...services].sort(
+    (a, b) =>
+      Number(b.active) - Number(a.active) ||
+      a.sort_order - b.sort_order ||
+      a.name.localeCompare(b.name),
+  );
 
   return (
     <div className="flex flex-col gap-10">
@@ -48,48 +57,31 @@ export default async function ServicesSettingsPage() {
         </p>
       </section>
 
-      {activeGroups.length === 0 ? (
-        <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-          No services shown to clients yet. Add one below.
-        </p>
-      ) : (
-        activeGroups.map((group) => (
-          <section
-            key={group.modality ?? "_other"}
-            className="flex flex-col gap-3"
-          >
-            <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-              {group.label}
-            </h3>
-            <div className="flex flex-col gap-4">
-              {group.services.map((s) => (
-                <ServiceCard key={s.id} service={s} />
-              ))}
-            </div>
-          </section>
-        ))
-      )}
-
-      {inactiveServices.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <div>
-            <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-              Hidden from booking
-            </h3>
-            <p className="mt-1 text-xs text-neutral-500">
-              Clients won&rsquo;t see these services when booking. Past
-              appointments still reference them. Tap{" "}
-              <span className="font-medium">Show in booking</span> to bring
-              one back.
-            </p>
-          </div>
-          <div className="flex flex-col gap-4 opacity-80">
-            {inactiveServices.map((s) => (
-              <ServiceCard key={s.id} service={s} />
+      <section className="flex flex-col gap-3">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Existing services
+        </h3>
+        {orderedServices.length === 0 ? (
+          <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
+            No services yet. Add one below.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {orderedServices.map((s) => (
+              <ServiceAccordionItem
+                key={s.id}
+                name={s.name}
+                durationLabel={`${s.default_duration_minutes} min`}
+                priceLabel={formatPrice(s.price_cents)}
+                active={s.active}
+                toggle={<ToggleActiveButton id={s.id} active={s.active} />}
+              >
+                <ServiceEditForm service={s} />
+              </ServiceAccordionItem>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       <AddServiceCard />
     </div>
@@ -97,37 +89,20 @@ export default async function ServicesSettingsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// One service = one card. Inside the card:
-//   1. Header: service name + status pill
-//   2. Main fields: 2-col grid — Name | Modality, then Duration | Price
-//   3. Full-width: Description, then Pre-care instructions
-//   4. Advanced (collapsed <details>): Display order
-//   5. Footer: Hide/Show on left, Save changes on right
-// All form field names are byte-preserved so the unchanged
-// updateServiceAction parses identically.
+// Edit form for one service — rendered inside the (collapsed-by-default)
+// ServiceAccordionItem. The row chrome (name, duration, price, status pill,
+// Hide/Show toggle, Edit/Close) lives in the accordion header; this is just
+// the form body that appears when the row is expanded. All form field names
+// are byte-preserved so the unchanged updateServiceAction parses identically.
 // ---------------------------------------------------------------------------
-function ServiceCard({ service }: { service: Service }) {
+function ServiceEditForm({ service }: { service: Service }) {
   return (
-    <article className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h4 className="text-base font-medium">{service.name}</h4>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            {service.active
-              ? "Changes apply to future bookings."
-              : "Clients won't see this service when booking."}
-          </p>
-        </div>
-        {/* Status pill + visibility toggle. The toggle lives here in its
-            OWN form — deliberately OUTSIDE the edit form below. A nested
-            <form> is invalid HTML and was the reason the toggle appeared
-            to do nothing (the click hit the outer edit form, which never
-            touches `active`). */}
-        <div className="flex flex-shrink-0 items-center gap-3">
-          <StatusPill active={service.active} />
-          <ToggleActiveButton id={service.id} active={service.active} />
-        </div>
-      </header>
+    <div className="flex flex-col gap-5">
+      <p className="text-xs text-neutral-500">
+        {service.active
+          ? "Changes apply to future bookings."
+          : "Clients won't see this service when booking."}
+      </p>
 
       <form
         action={updateServiceAction}
@@ -222,19 +197,15 @@ function ServiceCard({ service }: { service: Service }) {
           </div>
         </details>
 
-        {/* Footer actions */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-          <span className="text-xs text-neutral-500">
-            {service.default_duration_minutes} min ·{" "}
-            {formatPrice(service.price_cents)}
-          </span>
+        {/* Footer actions — duration/price already shown in the row summary. */}
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
           <ServiceSubmitButton
             idleLabel="Save changes"
             pendingLabel="Saving…"
           />
         </div>
       </form>
-    </article>
+    </div>
   );
 }
 
@@ -312,33 +283,12 @@ function AddServiceCard() {
 // Small presentational pieces
 // ---------------------------------------------------------------------------
 
-function StatusPill({ active }: { active: boolean }) {
-  if (active) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">
-        <span
-          aria-hidden
-          className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
-        />
-        Live service
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-      <span
-        aria-hidden
-        className="inline-block h-1.5 w-1.5 rounded-full bg-neutral-500"
-      />
-      Hidden from booking
-    </span>
-  );
-}
-
-// Standalone visibility-toggle form. Rendered in the card header, never
-// nested inside the edit form. Submits toggleServiceActiveAction with the
-// flipped `active` value; the action's revalidatePath re-renders the card
-// in the new state. The submit button shows in-flight feedback.
+// Standalone visibility-toggle form. Rendered in the accordion row header
+// (passed as the `toggle` slot), never nested inside the edit form — this
+// preserves the PR #35 fix (a nested <form> is invalid HTML and made the
+// toggle "do nothing"). Submits toggleServiceActiveAction with the flipped
+// `active` value; the action's revalidatePath re-renders the row with the
+// status pill flipped in place. The submit button shows in-flight feedback.
 function ToggleActiveButton({
   id,
   active,
