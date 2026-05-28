@@ -49,20 +49,27 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     // we never override a plan the practitioner already chose or detached.
     sessionId = existing.id;
   } else {
-    // Auto-attach (Session Logging Phase 2): if the client has exactly one
-    // active treatment plan, attach this new session to it so the
-    // practitioner doesn't have to do it by hand. Zero or multiple active
-    // plans → leave unattached (the session page's TreatmentPlanAttachment
-    // widget shows a chooser for the multiple case). Closed plans are never
-    // auto-attached — getActiveTreatmentPlansForClient filters to
-    // status='active', and it scopes by studio_id + client_id so a foreign
-    // client simply yields no plans. No new query/action; reuses the
-    // existing helper. treatment_plan_id is the only added insert field.
-    const activePlans = await getActiveTreatmentPlansForClient(
-      studio.id,
-      clientId,
-    );
-    const autoPlanId = activePlans.length === 1 ? activePlans[0].id : null;
+    // Auto-attach (Session Logging Phase 2), electrolysis-only: treatment
+    // plans, schedules, and planned-vs-actual TTT are electrolysis-centered,
+    // so auto-attaching a laser session to an active electrolysis plan would
+    // be confusing. Laser sessions are therefore never auto-attached (they
+    // can still be attached manually on the session page). For an
+    // electrolysis session, attach only when the client has exactly one
+    // active plan; zero or multiple active plans → leave unattached (the
+    // session page's TreatmentPlanAttachment widget shows a chooser for the
+    // multiple case). Closed plans never qualify —
+    // getActiveTreatmentPlansForClient filters to status='active' and scopes
+    // by studio_id + client_id (a foreign client simply yields no plans).
+    // No new query/action; reuses the existing helper. treatment_plan_id is
+    // the only added insert field.
+    let autoPlanId: string | null = null;
+    if (modality === "electrolysis") {
+      const activePlans = await getActiveTreatmentPlansForClient(
+        studio.id,
+        clientId,
+      );
+      if (activePlans.length === 1) autoPlanId = activePlans[0].id;
+    }
 
     const { data, error } = await supabase
       .from("sessions")
