@@ -105,7 +105,7 @@ export function AppointmentLifecycleActions({
     if (typeof window !== "undefined") {
       const ok = window.confirm(NO_SHOW_CONFIRM_MESSAGE);
       if (!ok) {
-        setHint("Cancelled — no change made.");
+        setHint("Cancelled, no change made.");
         window.setTimeout(() => setHint(null), 2000);
         return;
       }

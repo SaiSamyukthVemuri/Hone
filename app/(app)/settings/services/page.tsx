@@ -174,7 +174,7 @@ function ServiceCard({ service }: { service: Service }) {
         {/* Full-width fields */}
         <FieldLabel
           label="Description"
-          hint="Optional — short copy shown on the booking page."
+          hint="Optional. Short copy shown on the booking page."
         >
           <input
             name="description"
@@ -186,7 +186,7 @@ function ServiceCard({ service }: { service: Service }) {
 
         <FieldLabel
           label="Pre-care instructions"
-          hint="Optional — included in confirmation and reminder emails."
+          hint="Optional. Included in confirmation and reminder emails."
         >
           <textarea
             name="pre_care_instructions"
@@ -286,7 +286,7 @@ function AddServiceCard() {
 
           <FieldLabel
             label="Description"
-            hint="Optional — short copy shown on the booking page."
+            hint="Optional. Short copy shown on the booking page."
           >
             <input
               name="description"
@@ -374,7 +374,7 @@ function PriceInput({
         min={0}
         step={1}
         defaultValue={defaultValue ?? ""}
-        placeholder="—"
+        placeholder="-"
         className="w-full rounded-md border border-neutral-300 bg-white py-2 pl-7 pr-3 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
       />
     </div>

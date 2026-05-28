@@ -270,7 +270,7 @@ export function BlockSetupForm({
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Treatment area</span>
         <span className="text-xs text-neutral-500">
-          Optional — the area this section treats. Side and specifics appear
+          Optional. The area this section treats. Side and specifics appear
           once an area is chosen.
         </span>
         <AreaPicker

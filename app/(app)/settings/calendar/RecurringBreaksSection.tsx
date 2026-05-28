@@ -192,7 +192,7 @@ export function RecurringBreaksSection({ rules }: Props) {
       <div>
         <h2 className="text-xl font-medium">Repeating breaks</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Set up the regular times you&rsquo;re unavailable each week —
+          Set up the regular times you&rsquo;re unavailable each week:
           lunch, dinner, admin, or personal time. Generated for the next
           six months and refreshed daily. Labels are private to your
           studio; clients only see the slot as unavailable.
