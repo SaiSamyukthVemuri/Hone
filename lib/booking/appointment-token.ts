@@ -1,18 +1,26 @@
 import { randomBytes } from "crypto";
 
-// Random opaque token used in cancellation and reschedule URLs sent in
-// confirmation + reminder emails. Stored in appointments.cancellation_token.
-// The token itself is the only auth required: clients clicking from email
-// don't have to log in. Defense in depth: server actions verify the token
-// is for an appointment that's still cancellable/reschedulable, and the
-// token's 24 random bytes (32 url-safe base64 chars) make enumeration
-// impractical.
+// High-entropy opaque bearer token used in cancellation and reschedule URLs
+// (confirmation + reminder emails). Stored in appointments.cancellation_token.
+// 24 random bytes (32 url-safe base64 chars) make enumeration impractical.
 //
-// Rate limiting: the public BOOKING surfaces (slot fetch + booking submit)
-// are rate-limited when Upstash is configured (lib/rate-limit/public.ts,
-// fail-open). Rate limiting of the token routes themselves (cancel /
-// reschedule / intake) is deferred to a later phase; today they rely on
-// token entropy + the per-action state checks above.
+// Possession of a valid token is the only credential required (clients
+// clicking from email don't log in); it authorizes cancel/reschedule while
+// the appointment is still eligible. Replay AFTER a successful
+// cancel/reschedule is blocked by the appointment status transitions, the
+// SELECT ... FOR UPDATE row locks in the mutation RPCs, and reschedule token
+// rotation — so there is intentionally no explicit single-use (used_at /
+// token-uses) schema; mutation replay is handled by the appointment state
+// machine.
+//
+// The public token-route actions (cancel / reschedule / intake) apply rate
+// limiting via lib/rate-limit/public.ts (that file is the single source of
+// truth for limiter behavior).
+//
+// Note: first use by whoever holds a forwarded/leaked but still-eligible link
+// is an inherent bearer-link property that token entropy and rate limiting do
+// not address; reducing it would require a shorter token TTL or step-up
+// verification, addressed separately if product/security requires it.
 export function generateAppointmentToken(): string {
   return randomBytes(24)
     .toString("base64")
