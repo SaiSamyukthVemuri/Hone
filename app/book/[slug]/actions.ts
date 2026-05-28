@@ -98,7 +98,15 @@ export async function fetchPublicSlotsAction(params: {
     params.date,
     service.default_duration_minutes,
   );
-  return { ok: true, slots };
+  // Public-only past-time guard: never offer a slot whose start instant is
+  // already in the past (today's earlier hours). Absolute UTC comparison —
+  // slot.start is an ISO instant — so a slot starting even a minute from now
+  // still shows; only start <= now is dropped. No lead-time buffer here.
+  // The shared getAvailableSlots() is untouched, so the internal calendar
+  // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
+  const nowMs = Date.now();
+  const futureSlots = slots.filter((s) => new Date(s.start).getTime() > nowMs);
+  return { ok: true, slots: futureSlots };
 }
 
 export type PublicBookResult =
@@ -135,6 +143,18 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     )
   ) {
     return { ok: false, error: "That date is outside the booking window." };
+  }
+
+  // Public-only past-time guard: reject a start instant at or before now,
+  // before any DB write or email. Absolute UTC comparison (start is parsed
+  // from the submitted ISO). The horizon check above allows "today", so a
+  // today-but-already-passed slot is caught here. Existing slot
+  // re-verification and DB conflict handling below are unchanged.
+  if (start.getTime() <= Date.now()) {
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+    };
   }
 
   const admin = createAdminClient();
