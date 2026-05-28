@@ -1,7 +1,9 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { localDateString } from "@/lib/booking/tz";
 import {
@@ -85,6 +87,14 @@ export type FetchRescheduleResult =
 export async function fetchAppointmentForRescheduleAction(
   token: string,
 ): Promise<FetchRescheduleResult> {
+  // Rate limit the view fetch (looser than submit). Token never consumed.
+  const gate = await limitTokenRoute({
+    routeClass: "reschedule_view",
+    token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -155,6 +165,15 @@ export async function fetchRescheduleSlotsAction(params: {
   token: string;
   date: string;
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
+  // Rate limit the slot fetch (generous; date-switching is bursty). Runs
+  // before resolve + the heavy getAvailableSlots. Token never consumed.
+  const gate = await limitTokenRoute({
+    routeClass: "reschedule_slots",
+    token: params.token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const resolved = await resolveAppointmentIdFromToken(params.token);
   if (!resolved.ok) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -234,6 +253,16 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   const newStartsAt = stringOrEmpty(formData.get("starts_at"));
   if (!token) return { ok: false, error: "Missing token." };
   if (!newStartsAt) return { ok: false, error: "Pick a time." };
+
+  // Rate limit before token verification, the reschedule RPC, and the
+  // confirmation email. Independent of token validity, fails open. No
+  // reschedule/email occurs when limited.
+  const gate = await limitTokenRoute({
+    routeClass: "reschedule_submit",
+    token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
