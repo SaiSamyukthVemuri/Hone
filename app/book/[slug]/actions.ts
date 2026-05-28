@@ -1,7 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  limitPublicSlots,
+  limitPublicBooking,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
@@ -55,6 +61,16 @@ export async function fetchPublicSlotsAction(params: {
   serviceId: string;
   date: string;
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
+  // Rate limit (v1) before any DB read or the heavy getAvailableSlots call.
+  // Generous per (IP, slug). Fails open when Upstash is unconfigured or down.
+  const slotGate = await limitPublicSlots({
+    headers: await headers(),
+    slug: params.slug,
+  });
+  if (!slotGate.allowed) {
+    return { ok: false, error: RATE_LIMIT_MESSAGE };
+  }
+
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
 
@@ -127,6 +143,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!name) return { ok: false, error: "Your name is required." };
   if (!EMAIL_RE.test(email))
     return { ok: false, error: "Enter a valid email address." };
+
+  // Rate limit (v1) BEFORE any DB read/write or email send. Stricter than
+  // slot fetch: 5/10min per (IP, slug) + 3/hour per (email, slug). Fails
+  // open when Upstash is unconfigured or down — a limiter outage must never
+  // block a real booking. No appointment is created and no email is sent
+  // when limited.
+  const bookGate = await limitPublicBooking({
+    headers: await headers(),
+    slug,
+    email,
+  });
+  if (!bookGate.allowed) {
+    return { ok: false, error: RATE_LIMIT_MESSAGE };
+  }
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
