@@ -56,7 +56,7 @@ export default async function DataSettingsPage() {
           {entryCount === 1 ? "entry" : "entries"} in Hone.
         </p>
         <p className="max-w-[680px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-          All client records, session notes, and pricing belong to you. Saltkiln
+          All client records, session notes, and pricing belong to you. Hone
           stores this data in Canada on your behalf. You can export everything
           at any time, import existing records from CSV (coming soon), or delete
           everything permanently (coming soon).
@@ -74,15 +74,15 @@ export default async function DataSettingsPage() {
             </p>
             <ul className="mt-1.5 flex max-w-[600px] list-disc flex-col gap-1 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               <li>
-                Clients — contact info, allergies, skin notes, Fitzpatrick
+                Clients: contact info, allergies, skin notes, Fitzpatrick
                 type, emergency contacts
               </li>
               <li>
-                Electrolysis &amp; laser sessions — notes, times, price, who
+                Electrolysis &amp; laser sessions: notes, times, price, who
                 performed them
               </li>
               <li>
-                Electrolysis charting — treatment area, machine settings,
+                Electrolysis charting: treatment area, machine settings,
                 blend/galvanic &amp; thermolysis readings, probe details, pulse
                 count, hairs treated, comments
               </li>
@@ -90,11 +90,11 @@ export default async function DataSettingsPage() {
               <li>Practitioners</li>
               <li>Per-client custom pricing</li>
               <li>
-                Appointments — client, practitioner, service, start/end
+                Appointments: client, practitioner, service, start/end
                 times, status, and appointment notes
               </li>
               <li>
-                Treatment plans — primary area, status, estimated visits,
+                Treatment plans: primary area, status, estimated visits,
                 and plan notes
               </li>
               <li>Treatment plan schedule stages</li>
