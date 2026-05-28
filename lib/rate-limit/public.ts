@@ -53,15 +53,45 @@ export function clientIpFromHeaders(h: Headers): string {
   return "unknown_ip";
 }
 
+// Environment label for log payloads (no identifiers). VERCEL_ENV is
+// "production" | "preview" | "development" on Vercel; falls back to NODE_ENV
+// locally.
+function currentEnvironment(): string {
+  return process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown";
+}
+function isProduction(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
+// Once-per-cold-start guard (module-level) for the "limiter disabled because
+// Upstash env is missing" signal. A disabled limiter silently fails open, so
+// we surface it exactly once per warm instance rather than once per request.
+// Alarm-level (console.error) only in production, where a missing limiter is
+// a real exposure; quieter (console.warn) in preview/local where it's
+// expected but still inspectable.
+let loggedEnvMissing = false;
+function logEnvMissingOnce(): void {
+  if (loggedEnvMissing) return;
+  loggedEnvMissing = true;
+  const payload = JSON.stringify({
+    event: "ratelimit_disabled_env_missing",
+    environment: currentEnvironment(),
+    timestamp: new Date().toISOString(),
+  });
+  if (isProduction()) console.error(payload);
+  else console.warn(payload);
+}
+
 // Lazily-built Redis client. `undefined` = not yet resolved; `null` =
 // resolved-but-unconfigured (env missing). Cached so we don't rebuild per
-// request.
+// request. The first null resolution logs the env-missing signal once.
 let cachedRedis: Redis | null | undefined;
 function getRedis(): Redis | null {
   if (cachedRedis !== undefined) return cachedRedis;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   cachedRedis = url && token ? new Redis({ url, token }) : null;
+  if (cachedRedis === null) logEnvMissingOnce();
   return cachedRedis;
 }
 
@@ -116,15 +146,29 @@ function retryAfterSeconds(resetUnixMs: number): number {
   return Math.max(1, Math.ceil((resetUnixMs - Date.now()) / 1000));
 }
 
-// Structured fail-open log. Records only the route class and the error
-// class/message (network-level) — never the IP, email, token, key, or
-// secret. Caller always proceeds (allowed) after this fires.
+// Module-level throttle state (per warm instance): last log time per route
+// class for the backend-unavailable alarm. During an Upstash outage every
+// request hits the catch path; without throttling that is one log line per
+// request. We emit at most once per BACKEND_LOG_THROTTLE_MS per route class.
+// Throttling is best-effort per warm instance, not globally across instances.
+const BACKEND_LOG_THROTTLE_MS = 60_000;
+const lastBackendLogAt = new Map<string, number>();
+
+// Structured fail-open alarm. Records only the route class, environment, and
+// the error class/message (network-level) — never the IP, email, token, key,
+// hash, or secret. Throttled per route class. Caller always proceeds
+// (allowed) after this fires.
 function logBackendUnavailable(routeClass: string, err: unknown): void {
+  const now = Date.now();
+  const last = lastBackendLogAt.get(routeClass) ?? 0;
+  if (now - last < BACKEND_LOG_THROTTLE_MS) return; // throttled (warm instance)
+  lastBackendLogAt.set(routeClass, now);
   try {
     console.error(
       JSON.stringify({
         event: "ratelimit_backend_unavailable",
         routeClass,
+        environment: currentEnvironment(),
         error: err instanceof Error ? err.message : "unknown",
         timestamp: new Date().toISOString(),
       }),
@@ -132,6 +176,27 @@ function logBackendUnavailable(routeClass: string, err: unknown): void {
   } catch {
     console.error("ratelimit_backend_unavailable", routeClass);
   }
+}
+
+// Structured metric/search log (NOT an alarm): the limiter is working and
+// blocked a request. Only non-identifying fields — route class, optional
+// limit dimension, retry-after, environment. Never logs the IP/email/token,
+// the hash, a hash prefix, or the Redis key.
+function logRateLimitExceeded(
+  routeClass: string,
+  retry: number,
+  limitType?: string,
+): void {
+  console.warn(
+    JSON.stringify({
+      event: "ratelimit_exceeded",
+      routeClass,
+      ...(limitType ? { limitType } : {}),
+      retryAfterSeconds: retry,
+      environment: currentEnvironment(),
+      timestamp: new Date().toISOString(),
+    }),
+  );
 }
 
 // Public slot fetch: 60 req / 60 s per (IP, slug). Generous — normal
@@ -145,9 +210,10 @@ export async function limitPublicSlots(args: {
   const ip = clientIpFromHeaders(args.headers);
   try {
     const { success, reset } = await limiter.limit(`${hashId(ip)}:${args.slug}`);
-    return success
-      ? { allowed: true }
-      : { allowed: false, retryAfterSeconds: retryAfterSeconds(reset) };
+    if (success) return { allowed: true };
+    const retry = retryAfterSeconds(reset);
+    logRateLimitExceeded("public_slots", retry);
+    return { allowed: false, retryAfterSeconds: retry };
   } catch (err) {
     logBackendUnavailable("public_slots", err);
     return { allowed: true }; // fail open
@@ -171,17 +237,18 @@ export async function limitPublicBooking(args: {
   try {
     const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.slug}`);
     if (!ipRes.success) {
-      return { allowed: false, retryAfterSeconds: retryAfterSeconds(ipRes.reset) };
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded("public_book", retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
     }
     if (args.email) {
       const emailRes = await emailLimiter.limit(
         `${hashId(args.email)}:${args.slug}`,
       );
       if (!emailRes.success) {
-        return {
-          allowed: false,
-          retryAfterSeconds: retryAfterSeconds(emailRes.reset),
-        };
+        const retry = retryAfterSeconds(emailRes.reset);
+        logRateLimitExceeded("public_book", retry, "email");
+        return { allowed: false, retryAfterSeconds: retry };
       }
     }
     return { allowed: true };
@@ -247,9 +314,10 @@ export async function limitTokenRoute(args: {
     const { success, reset } = await limiter.limit(
       `${hashId(args.token)}:${hashId(ip)}`,
     );
-    return success
-      ? { allowed: true }
-      : { allowed: false, retryAfterSeconds: retryAfterSeconds(reset) };
+    if (success) return { allowed: true };
+    const retry = retryAfterSeconds(reset);
+    logRateLimitExceeded(args.routeClass, retry);
+    return { allowed: false, retryAfterSeconds: retry };
   } catch (err) {
     logBackendUnavailable(args.routeClass, err);
     return { allowed: true }; // fail open
