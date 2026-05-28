@@ -166,6 +166,10 @@ type Props = {
   // time in the visible range, exactly as before.
   isToday: boolean;
   availability: DayAvailability | null;
+  // True when this date resolves to closed (override-aware, same precedence
+  // as public booking). Display-only: used to hide auto-materialized
+  // recurring breaks on closed dates. Does not affect booking or data.
+  closedDay: boolean;
 };
 
 export function DayColumn({
@@ -179,6 +183,7 @@ export function DayColumn({
   services,
   isToday,
   availability,
+  closedDay,
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
 
@@ -298,7 +303,14 @@ export function DayColumn({
         </div>
       )}
 
-      {recurringBreaks.map((occ) => {
+      {/* Auto-materialized recurring breaks are hidden on closed dates:
+          recurring break rules materialize for every matching weekday
+          regardless of availability, so a standing Dinner/Lunch break would
+          otherwise show on a day the studio isn't open. Closed days are kept
+          unbookable by availability logic (lib/booking/slots.ts), not by
+          these reservations, so hiding them is display-safe. One-off timed
+          blocks below are NOT hidden — those are intentional. */}
+      {!closedDay && recurringBreaks.map((occ) => {
         const start = new Date(occ.starts_at);
         const end = new Date(occ.ends_at);
         const localTime = localTimeString(start, tz);
