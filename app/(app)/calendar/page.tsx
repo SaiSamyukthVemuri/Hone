@@ -8,6 +8,7 @@ import {
   getAppointmentsForRange,
   getAvailabilityDefaults,
   getBlockouts,
+  getOverridesForRange,
   getRecurringBreakOccurrencesForRange,
   getTimedBlocksForRange,
 } from "@/lib/booking/queries";
@@ -66,6 +67,7 @@ export default async function CalendarPage({
     services,
     clients,
     availabilityDefaults,
+    availabilityOverrides,
   ] = await Promise.all([
     getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
     getBlockouts(studio.id),
@@ -81,6 +83,11 @@ export default async function CalendarPage({
     // open/closed tint. One small query (≤7 rows), parallel with the
     // rest; never feeds booking math. Visual guidance only.
     getAvailabilityDefaults(studio.id),
+    // Read-only per-date availability overrides for the visible week,
+    // used (with the weekday defaults) to resolve each date's open/closed
+    // status the SAME way public booking does: override wins, else default,
+    // else closed. Display-only; never feeds booking math.
+    getOverridesForRange(studio.id, weekStart, weekEnd),
   ]);
 
   // Index weekly availability by day_of_week (0=Sun..6=Sat), matching the
@@ -93,6 +100,25 @@ export default async function CalendarPage({
       openTime: d.open_time,
       closeTime: d.close_time,
     });
+  }
+
+  // Per-date availability overrides keyed by effective_date ("YYYY-MM-DD").
+  const overrideByDate = new Map<string, boolean>();
+  for (const o of availabilityOverrides) {
+    overrideByDate.set(o.effective_date, o.is_open);
+  }
+
+  // Resolve whether a given visible date (Sunday-start index i = day_of_week)
+  // is closed, using the SAME precedence as public booking's slot generation
+  // (lib/booking/slots.ts): a date override wins; else the weekday default;
+  // else (no default configured) the day is closed. Display-only — used to
+  // hide auto-materialized recurring breaks on closed dates.
+  function isClosedDate(date: string, dow: number): boolean {
+    const override = overrideByDate.get(date);
+    if (override !== undefined) return !override;
+    const def = availabilityByDow.get(dow);
+    if (def) return !def.isOpen;
+    return true;
   }
 
   // The drawer only needs the small subset used for search + display. We
@@ -273,6 +299,7 @@ export default async function CalendarPage({
                 services={services}
                 isToday={date === today}
                 availability={availabilityByDow.get(i) ?? null}
+                closedDay={isClosedDate(date, i)}
               />
             ))}
           </div>
