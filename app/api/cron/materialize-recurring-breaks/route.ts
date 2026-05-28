@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
@@ -56,8 +57,7 @@ function horizonEndInTz(tz: string): string {
 }
 
 export async function GET(req: Request) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

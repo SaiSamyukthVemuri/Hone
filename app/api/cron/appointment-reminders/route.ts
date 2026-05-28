@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
   logEmailFailure,
   recordEmailAttempt,
@@ -173,8 +174,7 @@ async function sendReminderPass(opts: {
 }
 
 export async function GET(req: Request) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

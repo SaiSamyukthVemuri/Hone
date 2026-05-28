@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 
 // ---------------------------------------------------------------------------
 // /api/cron/no-show-check (DISABLED PRE-STRIPE HARDENING)
@@ -36,8 +37,7 @@ import { NextResponse } from "next/server";
 // ---------------------------------------------------------------------------
 
 export async function GET(req: Request) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
