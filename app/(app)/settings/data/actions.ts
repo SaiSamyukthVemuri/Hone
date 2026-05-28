@@ -66,6 +66,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     laserRes,
     practitionersRes,
     pricingRes,
+    blocksRes,
   ] = await Promise.all([
     supabase
       .from("clients")
@@ -85,7 +86,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     supabase
       .from("electrolysis_entries")
       .select(
-        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, comments, created_at",
+        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, comments, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -105,6 +106,17 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       .select("id, client_id, service_name, price_cents, notes, effective_from")
       .eq("studio_id", studio.id)
       .order("effective_from", { ascending: false }),
+    // Read-only lookup of the structured area + probe metadata that lives on
+    // session_blocks (migrations 0039 / 0041). Merged onto each electrolysis
+    // entry by block_id below so the export carries the structured probe and
+    // area now collected by the one-page charting form. Includes deleted
+    // blocks so any entry's block_id still resolves.
+    supabase
+      .from("session_blocks")
+      .select(
+        "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label",
+      )
+      .eq("studio_id", studio.id),
   ]);
 
   for (const r of [
@@ -114,6 +126,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     laserRes,
     practitionersRes,
     pricingRes,
+    blocksRes,
   ]) {
     if (r.error) {
       return {
@@ -206,24 +219,63 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // Block-level structured area + probe metadata, keyed by id for an
+  // in-app merge onto each entry via block_id (no SQL join needed).
+  type BlockExportRow = {
+    id: string;
+    primary_area: string | null;
+    side: string | null;
+    custom_area_detail: string | null;
+    probe_key: string | null;
+    probe_brand: string | null;
+    probe_material: string | null;
+    probe_piece_type: string | null;
+    probe_shank: string | null;
+    probe_size_value: string | null;
+    probe_length: string | null;
+    probe_label: string | null;
+  };
+  const blocksById = new Map<string, BlockExportRow>();
+  for (const b of (blocksRes.data ?? []) as BlockExportRow[]) {
+    blocksById.set(b.id, b);
+  }
+
   // Flatten the `areas` text[] to a semicolon-separated string so it renders
-  // cleanly in spreadsheets (CSV's own delimiter is a comma).
+  // cleanly in spreadsheets (CSV's own delimiter is a comma), and merge the
+  // structured area + probe columns from the entry's block. Null/missing
+  // values render as blank cells via csvCell.
   type ElectRow = {
     id: string;
     session_id: string;
     area: string | null;
     areas: string[] | null;
+    block_id: string | null;
     [k: string]: unknown;
   };
-  const electRows = (filteredElectrolysis as unknown as ElectRow[]).map((e) => ({
-    ...e,
-    areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
-  }));
+  const electRows = (filteredElectrolysis as unknown as ElectRow[]).map((e) => {
+    const b = e.block_id ? blocksById.get(e.block_id) : undefined;
+    return {
+      ...e,
+      areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
+      block_primary_area: b?.primary_area ?? null,
+      block_side: b?.side ?? null,
+      block_custom_area_detail: b?.custom_area_detail ?? null,
+      probe_key: b?.probe_key ?? null,
+      probe_brand: b?.probe_brand ?? null,
+      probe_material: b?.probe_material ?? null,
+      probe_piece_type: b?.probe_piece_type ?? null,
+      probe_shank: b?.probe_shank ?? null,
+      probe_size_value: b?.probe_size_value ?? null,
+      probe_length: b?.probe_length ?? null,
+      probe_label: b?.probe_label ?? null,
+    };
+  });
 
   zip.file(
     "electrolysis_entries.csv",
     rowsToCsv(
       [
+        // Existing columns kept in their original order for compatibility.
         "id",
         "session_id",
         "area",
@@ -236,6 +288,34 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "pulse_count",
         "comments",
         "created_at",
+        // Appended: existing entry-level charting fields that weren't exported.
+        "block_id",
+        "energy_level",
+        "apilus_modality",
+        "machine_frequency",
+        "minutes_performed",
+        "probe_type",
+        "hairs_treated",
+        // Appended: blend / galvanic readings (migration 0042).
+        "galvanic_ma",
+        "galvanic_duration_seconds",
+        "galvanic_intensity_percent",
+        "thermolysis_intensity_percent",
+        "thermolysis_duration_seconds",
+        "units_of_lye",
+        // Appended: structured area + probe from the entry's session block
+        // (migrations 0039 / 0041).
+        "block_primary_area",
+        "block_side",
+        "block_custom_area_detail",
+        "probe_key",
+        "probe_brand",
+        "probe_material",
+        "probe_piece_type",
+        "probe_shank",
+        "probe_size_value",
+        "probe_length",
+        "probe_label",
       ],
       electRows,
     ),
@@ -285,7 +365,7 @@ This export contains all client records, sessions, and entries for your studio.
 Files included:
 - clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
 - sessions.csv: One row per session: client, performer, started_at, ended_at, price_paid_cents, session_notes.
-- electrolysis_entries.csv: Every electrolysis entry with probe, mode, intensity, duration, pulse count, area, comments.
+- electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), and comments.
 - laser_entries.csv: Every laser entry with zone, fluence, pulse width, treatment number, observations.
 - practitioners.csv: Active practitioners at your studio.
 - client_pricing.csv: Per-client custom pricing.
