@@ -436,6 +436,15 @@ export type ElectrolysisEntry = {
   // new inserts get a block_id via ensureEntryHasBlock().
   block_id: string | null;
   created_at: string;
+  // Migration 0042 (Session Logging Phase 3): structured blend / galvanic
+  // readings. All nullable and additive; legacy rows are unaffected and the
+  // generic intensity / duration_seconds above are kept for them.
+  galvanic_ma: number | null;
+  galvanic_duration_seconds: number | null;
+  galvanic_intensity_percent: number | null;
+  thermolysis_intensity_percent: number | null;
+  thermolysis_duration_seconds: number | null;
+  units_of_lye: number | null;
 };
 
 // Migration 0019: block-level treatment params. SessionMode mirrors the

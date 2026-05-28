@@ -39,19 +39,51 @@ export function ElectrolysisEntryRow({
     machine_frequency: entry.machine_frequency,
   };
 
+  // Migration 0042: structured blend/galvanic readings. When any are
+  // present, show grouped Galvanic / Thermolysis lines instead of the
+  // legacy intensity/duration/pulse in the meta line (avoids duplication).
+  // Legacy entries (no structured readings) keep the original display.
+  const galvanicParts: string[] = [];
+  if (entry.galvanic_ma != null) galvanicParts.push(`${entry.galvanic_ma} mA`);
+  if (entry.galvanic_duration_seconds != null) {
+    galvanicParts.push(`${entry.galvanic_duration_seconds}s`);
+  }
+  if (entry.galvanic_intensity_percent != null) {
+    galvanicParts.push(`${entry.galvanic_intensity_percent}%`);
+  }
+  if (entry.units_of_lye != null) galvanicParts.push(`${entry.units_of_lye} UL`);
+
+  const isThermoish = entry.mode === "thermo" || entry.mode === "blend";
+  const thermoParts: string[] = [];
+  if (entry.thermolysis_intensity_percent != null) {
+    thermoParts.push(`${entry.thermolysis_intensity_percent}%`);
+  }
+  if (entry.thermolysis_duration_seconds != null) {
+    thermoParts.push(`${entry.thermolysis_duration_seconds}s`);
+  }
+  if (isThermoish && entry.pulse_count != null) {
+    thermoParts.push(
+      `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+    );
+  }
+
+  const hasStructured = galvanicParts.length > 0 || thermoParts.length > 0;
+
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
   if (params.probe_size) meta.push(params.probe_size);
   const mLabel = modeLabel(params.mode);
   if (mLabel) meta.push(mLabel);
   if (params.apilus_modality) meta.push(apilusModalityLabel(params.apilus_modality));
-  if (entry.pulse_count != null) {
-    meta.push(
-      `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
-    );
+  if (!hasStructured) {
+    if (entry.pulse_count != null) {
+      meta.push(
+        `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+      );
+    }
+    if (entry.intensity != null) meta.push(`${entry.intensity}%`);
+    if (entry.duration_seconds != null) meta.push(`${entry.duration_seconds}s`);
   }
-  if (entry.intensity != null) meta.push(`${entry.intensity}%`);
-  if (entry.duration_seconds != null) meta.push(`${entry.duration_seconds}s`);
 
   // Secondary meta line: EL · probe type · machine frequency · minutes · hairs
   const sub: string[] = [];
@@ -61,7 +93,11 @@ export function ElectrolysisEntryRow({
   if (params.minutes_performed != null) {
     sub.push(`${params.minutes_performed} min`);
   }
-  if (entry.hairs_treated != null) sub.push(`${entry.hairs_treated} hairs`);
+  // Hairs move to their own line for structured entries; legacy entries keep
+  // it in the sub line.
+  if (!hasStructured && entry.hairs_treated != null) {
+    sub.push(`${entry.hairs_treated} hairs`);
+  }
 
   // Override badge: the entry's own mode differs from its block's mode.
   // Only renders when BOTH are non-null. Backfilled blocks with null mode
@@ -99,6 +135,27 @@ export function ElectrolysisEntryRow({
         )}
         {sub.length > 0 && (
           <div className="text-xs text-neutral-500">{sub.join(" · ")}</div>
+        )}
+        {galvanicParts.length > 0 && (
+          <div className="text-xs text-neutral-500">
+            <span className="font-medium text-neutral-600 dark:text-neutral-400">
+              Galvanic:
+            </span>{" "}
+            {galvanicParts.join(" · ")}
+          </div>
+        )}
+        {thermoParts.length > 0 && (
+          <div className="text-xs text-neutral-500">
+            <span className="font-medium text-neutral-600 dark:text-neutral-400">
+              Thermolysis:
+            </span>{" "}
+            {thermoParts.join(" · ")}
+          </div>
+        )}
+        {hasStructured && entry.hairs_treated != null && (
+          <div className="text-xs text-neutral-500">
+            Hairs treated: {entry.hairs_treated}
+          </div>
         )}
         {entry.comments && (
           <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">

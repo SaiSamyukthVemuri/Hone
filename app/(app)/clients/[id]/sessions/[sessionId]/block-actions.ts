@@ -409,12 +409,20 @@ export async function softDeleteSessionBlockAction(
 // create and untouched on update.
 // =====================================================================
 
+// Session Logging Phase 3: structured blend / galvanic readings. The legacy
+// generic intensity / duration_seconds are no longer written by the one-page
+// flow (they stay on old rows for display); thermolysis and galvanic readings
+// now have their own fields. pulse_count and hairs_treated are unchanged.
 export type EntryReadingsInput = {
-  intensity?: number | null;
-  durationSeconds?: number | null;
   pulseCount?: number | null;
   hairsTreated?: number | null;
   comments?: string | null;
+  galvanicMa?: number | null;
+  galvanicDurationSeconds?: number | null;
+  galvanicIntensityPercent?: number | null;
+  thermolysisIntensityPercent?: number | null;
+  thermolysisDurationSeconds?: number | null;
+  unitsOfLye?: number | null;
 };
 
 function clampPulseCount(n: number | null | undefined): number {
@@ -427,9 +435,13 @@ function clampPulseCount(n: number | null | undefined): number {
 // a first entry must be created for a previously empty block.
 function readingsPresent(r: EntryReadingsInput): boolean {
   return (
-    r.intensity != null ||
-    r.durationSeconds != null ||
     r.hairsTreated != null ||
+    r.galvanicMa != null ||
+    r.galvanicDurationSeconds != null ||
+    r.galvanicIntensityPercent != null ||
+    r.thermolysisIntensityPercent != null ||
+    r.thermolysisDurationSeconds != null ||
+    r.unitsOfLye != null ||
     (typeof r.comments === "string" && r.comments.trim().length > 0)
   );
 }
@@ -438,6 +450,71 @@ function normalizedComments(r: EntryReadingsInput): string | null {
   return typeof r.comments === "string" && r.comments.trim().length > 0
     ? r.comments.trim()
     : null;
+}
+
+// Server-side range validation mirroring the DB CHECK (migration 0042) so
+// the practitioner gets a clean message instead of an opaque constraint
+// violation. Empty/null values are always allowed.
+function validateReadings(
+  r: EntryReadingsInput,
+): { ok: true } | { ok: false; error: string } {
+  const nonNeg: ReadonlyArray<[number | null | undefined, string]> = [
+    [r.galvanicMa, "Galvanic mA"],
+    [r.galvanicDurationSeconds, "Galvanic duration"],
+    [r.thermolysisDurationSeconds, "Thermolysis duration"],
+    [r.unitsOfLye, "Units of lye"],
+  ];
+  for (const [v, label] of nonNeg) {
+    if (v != null && (!Number.isFinite(v) || v < 0)) {
+      return { ok: false, error: `${label} must be a non-negative number.` };
+    }
+  }
+  const percent: ReadonlyArray<[number | null | undefined, string]> = [
+    [r.galvanicIntensityPercent, "Galvanic intensity"],
+    [r.thermolysisIntensityPercent, "Thermolysis intensity"],
+  ];
+  for (const [v, label] of percent) {
+    if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) {
+      return { ok: false, error: `${label} must be between 0 and 100.` };
+    }
+  }
+  return { ok: true };
+}
+
+// Mode-aware structured reading columns: galvanic fields apply to galvanic
+// and blend; thermolysis fields apply to thermolysis and blend. Anything
+// outside the mode is stored as null so a thermolysis entry never carries
+// stray galvanic numbers (and vice versa), regardless of leftover draft
+// state in the form.
+function structuredReadingColumns(
+  mode: SessionMode | null,
+  r: EntryReadingsInput,
+): {
+  galvanic_ma: number | null;
+  galvanic_duration_seconds: number | null;
+  galvanic_intensity_percent: number | null;
+  thermolysis_intensity_percent: number | null;
+  thermolysis_duration_seconds: number | null;
+  units_of_lye: number | null;
+} {
+  const wantGalv = mode === "galv" || mode === "blend";
+  const wantThermo = mode === "thermo" || mode === "blend";
+  return {
+    galvanic_ma: wantGalv ? (r.galvanicMa ?? null) : null,
+    galvanic_duration_seconds: wantGalv
+      ? (r.galvanicDurationSeconds ?? null)
+      : null,
+    galvanic_intensity_percent: wantGalv
+      ? (r.galvanicIntensityPercent ?? null)
+      : null,
+    thermolysis_intensity_percent: wantThermo
+      ? (r.thermolysisIntensityPercent ?? null)
+      : null,
+    thermolysis_duration_seconds: wantThermo
+      ? (r.thermolysisDurationSeconds ?? null)
+      : null,
+    units_of_lye: wantGalv ? (r.unitsOfLye ?? null) : null,
+  };
 }
 
 // Entry-level machine snapshot, mirroring addElectrolysisEntryAction.
@@ -504,6 +581,9 @@ export async function createTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = areaCheck.value.primary_area;
 
+  const readingsCheck = validateReadings(readings);
+  if (!readingsCheck.ok) return readingsCheck;
+
   // The first entry's area is the treatment area. An entry needs a (NOT
   // NULL) area, so readings can't be saved without one.
   if (!area && readingsPresent(readings)) {
@@ -568,11 +648,12 @@ export async function createTreatmentAreaWithEntryAction(
         area,
         areas: [area],
         probe_lot_id: null,
-        intensity: readings.intensity ?? null,
-        duration_seconds: readings.durationSeconds ?? null,
+        // Legacy generic intensity / duration_seconds are intentionally not
+        // written; thermolysis / galvanic readings live in their own columns.
         pulse_count: clampPulseCount(readings.pulseCount),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
+        ...structuredReadingColumns((input.mode ?? null) as SessionMode | null, readings),
         ...snap,
       });
     if (entryErr) {
@@ -639,6 +720,9 @@ export async function updateTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = areaCheck.value.primary_area;
 
+  const readingsCheck = validateReadings(readings);
+  if (!readingsCheck.ok) return readingsCheck;
+
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when
   // the treatment area is cleared — we never null an existing entry's area.
@@ -689,12 +773,17 @@ export async function updateTreatmentAreaWithEntryAction(
     // Update the first/primary entry only — entries 2..N stay exactly as-is.
     // The entry's area is re-keyed only when a treatment area is set; it is
     // never nulled (preserves a NOT NULL area if the block area was cleared).
+    // Legacy intensity / duration_seconds are intentionally NOT in this
+    // patch, so any value an old entry carries is preserved. Thermolysis /
+    // galvanic readings are written to their own columns.
     const entryUpdate: Record<string, unknown> = {
-      intensity: readings.intensity ?? null,
-      duration_seconds: readings.durationSeconds ?? null,
       pulse_count: clampPulseCount(readings.pulseCount),
       hairs_treated: readings.hairsTreated ?? null,
       comments: normalizedComments(readings),
+      ...structuredReadingColumns(
+        (input.mode ?? null) as SessionMode | null,
+        readings,
+      ),
       ...snap,
     };
     if (area) {
@@ -723,11 +812,13 @@ export async function updateTreatmentAreaWithEntryAction(
         area,
         areas: [area],
         probe_lot_id: null,
-        intensity: readings.intensity ?? null,
-        duration_seconds: readings.durationSeconds ?? null,
         pulse_count: clampPulseCount(readings.pulseCount),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
+        ...structuredReadingColumns(
+          (input.mode ?? null) as SessionMode | null,
+          readings,
+        ),
         ...snap,
       });
     if (entryErr) {

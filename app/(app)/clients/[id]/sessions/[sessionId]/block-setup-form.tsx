@@ -59,6 +59,30 @@ const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
 
+const READING_INPUT_CLS =
+  "rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950";
+
+// Parses an optional numeric reading with range checks. Empty → null.
+// Mirrors the server-side validation; the action re-validates regardless.
+function parseOptionalNumber(
+  raw: string,
+  opts: { int?: boolean; min?: number; max?: number; label: string },
+): { ok: true; value: number | null } | { ok: false; error: string } {
+  const s = raw.trim();
+  if (s === "") return { ok: true, value: null };
+  const n = opts.int ? parseInt(s, 10) : Number(s);
+  if (!Number.isFinite(n)) {
+    return { ok: false, error: `${opts.label} must be a number.` };
+  }
+  if (opts.min != null && n < opts.min) {
+    return { ok: false, error: `${opts.label} must be ${opts.min} or more.` };
+  }
+  if (opts.max != null && n > opts.max) {
+    return { ok: false, error: `${opts.label} must be ${opts.max} or less.` };
+  }
+  return { ok: true, value: n };
+}
+
 // Side options for paired anatomy. The DB CHECK (migration 0039) enforces
 // the same five values plus NULL. UI displays a Title-case label but
 // stores the canonical lowercase value.
@@ -98,9 +122,14 @@ type Draft = {
   side: string; // SessionBlockSide | ""
   customAreaDetail: string;
   // One-page charting: the first entry's readings, captured on the same
-  // page and saved with the treatment area (no second form).
-  intensity: string;
-  durationSeconds: string;
+  // page and saved with the treatment area (no second form). Phase 3 splits
+  // the readings into thermolysis and galvanic so blend records both.
+  thermolysisIntensityPercent: string;
+  thermolysisDurationSeconds: string;
+  galvanicMa: string;
+  galvanicDurationSeconds: string;
+  galvanicIntensityPercent: string;
+  unitsOfLye: string;
   pulseCount: string;
   hairsTreated: string;
   comments: string;
@@ -116,8 +145,12 @@ const EMPTY: Draft = {
   primaryArea: "",
   side: "",
   customAreaDetail: "",
-  intensity: "",
-  durationSeconds: "",
+  thermolysisIntensityPercent: "",
+  thermolysisDurationSeconds: "",
+  galvanicMa: "",
+  galvanicDurationSeconds: "",
+  galvanicIntensityPercent: "",
+  unitsOfLye: "",
   pulseCount: String(PULSE_COUNT_DEFAULT),
   hairsTreated: "",
   comments: "",
@@ -141,12 +174,26 @@ function initialDraft(
     customAreaDetail: block.custom_area_detail ?? "",
     // Seed readings from the first entry if present; otherwise blank (and
     // pulse defaults to 1, matching a fresh pass).
-    intensity:
-      firstEntry?.intensity != null ? String(firstEntry.intensity) : "",
-    durationSeconds:
-      firstEntry?.duration_seconds != null
-        ? String(firstEntry.duration_seconds)
+    thermolysisIntensityPercent:
+      firstEntry?.thermolysis_intensity_percent != null
+        ? String(firstEntry.thermolysis_intensity_percent)
         : "",
+    thermolysisDurationSeconds:
+      firstEntry?.thermolysis_duration_seconds != null
+        ? String(firstEntry.thermolysis_duration_seconds)
+        : "",
+    galvanicMa:
+      firstEntry?.galvanic_ma != null ? String(firstEntry.galvanic_ma) : "",
+    galvanicDurationSeconds:
+      firstEntry?.galvanic_duration_seconds != null
+        ? String(firstEntry.galvanic_duration_seconds)
+        : "",
+    galvanicIntensityPercent:
+      firstEntry?.galvanic_intensity_percent != null
+        ? String(firstEntry.galvanic_intensity_percent)
+        : "",
+    unitsOfLye:
+      firstEntry?.units_of_lye != null ? String(firstEntry.units_of_lye) : "",
     pulseCount:
       firstEntry?.pulse_count != null
         ? String(firstEntry.pulse_count)
@@ -228,44 +275,62 @@ export function BlockSetupForm({
     }
 
     // Readings (the first pass). All optional except pulse, which defaults
-    // to 1. Light client-side range checks; the action re-validates.
-    const intensityStr = draft.intensity.trim();
-    const intensity = intensityStr === "" ? null : Number(intensityStr);
-    if (
-      intensityStr !== "" &&
-      (!Number.isFinite(intensity) ||
-        (intensity as number) < 0 ||
-        (intensity as number) > 100)
-    ) {
-      setError("Intensity must be between 0 and 100.");
-      return;
-    }
-    const durationStr = draft.durationSeconds.trim();
-    const durationSeconds = durationStr === "" ? null : Number(durationStr);
-    if (
-      durationStr !== "" &&
-      (!Number.isFinite(durationSeconds) || (durationSeconds as number) < 0)
-    ) {
-      setError("Duration must be a non-negative number.");
-      return;
-    }
-    const hairsStr = draft.hairsTreated.trim();
-    const hairsTreated = hairsStr === "" ? null : parseInt(hairsStr, 10);
-    if (
-      hairsStr !== "" &&
-      (!Number.isFinite(hairsTreated) || (hairsTreated as number) < 0)
-    ) {
-      setError("Total hairs treated must be a non-negative whole number.");
-      return;
-    }
+    // to 1. Light client-side range checks; the action re-validates and
+    // also nulls fields that don't apply to the chosen mode.
+    const tInt = parseOptionalNumber(draft.thermolysisIntensityPercent, {
+      int: true,
+      min: 0,
+      max: 100,
+      label: "Thermolysis intensity",
+    });
+    if (!tInt.ok) return setError(tInt.error);
+    const tDur = parseOptionalNumber(draft.thermolysisDurationSeconds, {
+      int: true,
+      min: 0,
+      label: "Thermolysis duration",
+    });
+    if (!tDur.ok) return setError(tDur.error);
+    const gMa = parseOptionalNumber(draft.galvanicMa, {
+      min: 0,
+      label: "Galvanic mA",
+    });
+    if (!gMa.ok) return setError(gMa.error);
+    const gDur = parseOptionalNumber(draft.galvanicDurationSeconds, {
+      int: true,
+      min: 0,
+      label: "Galvanic duration",
+    });
+    if (!gDur.ok) return setError(gDur.error);
+    const gInt = parseOptionalNumber(draft.galvanicIntensityPercent, {
+      int: true,
+      min: 0,
+      max: 100,
+      label: "Galvanic intensity",
+    });
+    if (!gInt.ok) return setError(gInt.error);
+    const ul = parseOptionalNumber(draft.unitsOfLye, {
+      min: 0,
+      label: "Units of lye",
+    });
+    if (!ul.ok) return setError(ul.error);
+    const hairs = parseOptionalNumber(draft.hairsTreated, {
+      int: true,
+      min: 0,
+      label: "Total hairs treated",
+    });
+    if (!hairs.ok) return setError(hairs.error);
     const pulseStr = draft.pulseCount.trim();
     const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
 
     const readings = {
-      intensity,
-      durationSeconds,
+      thermolysisIntensityPercent: tInt.value,
+      thermolysisDurationSeconds: tDur.value,
+      galvanicMa: gMa.value,
+      galvanicDurationSeconds: gDur.value,
+      galvanicIntensityPercent: gInt.value,
+      unitsOfLye: ul.value,
       pulseCount,
-      hairsTreated,
+      hairsTreated: hairs.value,
       comments: draft.comments,
     };
 
@@ -547,76 +612,159 @@ export function BlockSetupForm({
       </label>
 
       {/* Treatment readings — the first pass, captured on this same page so
-          there is no second form after saving. All optional (pulse defaults
-          to 1). Saved as the treatment area's first entry, keyed to the
-          chosen area. */}
+          there is no second form after saving. Mode-aware: thermolysis
+          fields for thermolysis/blend, galvanic fields for galvanic/blend.
+          All optional (pulse defaults to 1). Saved as the treatment area's
+          first entry, keyed to the chosen area. */}
       <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Intensity (%)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.1"
-              min={0}
-              max={100}
-              value={draft.intensity}
-              onChange={(e) => update("intensity", e.target.value)}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Duration (s)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.001"
-              min={0}
-              value={draft.durationSeconds}
-              onChange={(e) => update("durationSeconds", e.target.value)}
-              placeholder="0.0"
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-          </label>
-        </div>
 
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Pulse count</span>
-          <div className="flex items-stretch gap-2">
-            <button
-              type="button"
-              onClick={() => bumpPulse(-1)}
-              aria-label="Decrease pulse count"
-              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              −
-            </button>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={PULSE_COUNT_MIN}
-              max={PULSE_COUNT_MAX}
-              value={draft.pulseCount}
-              onChange={(e) => update("pulseCount", e.target.value)}
-              className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-            <button
-              type="button"
-              onClick={() => bumpPulse(1)}
-              aria-label="Increase pulse count"
-              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              +
-            </button>
-            <span className="self-center text-xs text-neutral-500">
-              Pulses per hair (1 to {PULSE_COUNT_MAX}).
-            </span>
+        {(mode === "thermo" || mode === "blend") && (
+          <div className="flex flex-col gap-3">
+            {mode === "blend" && (
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Thermolysis
+              </span>
+            )}
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Thermolysis intensity %</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min={0}
+                  max={100}
+                  value={draft.thermolysisIntensityPercent}
+                  onChange={(e) =>
+                    update("thermolysisIntensityPercent", e.target.value)
+                  }
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Thermolysis duration (s)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min={0}
+                  value={draft.thermolysisDurationSeconds}
+                  onChange={(e) =>
+                    update("thermolysisDurationSeconds", e.target.value)
+                  }
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+            </div>
           </div>
-        </div>
+        )}
+
+        {(mode === "galv" || mode === "blend") && (
+          <div className="flex flex-col gap-3">
+            {mode === "blend" && (
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Galvanic
+              </span>
+            )}
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Galvanic mA</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  min={0}
+                  value={draft.galvanicMa}
+                  onChange={(e) => update("galvanicMa", e.target.value)}
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Galvanic duration (s)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min={0}
+                  value={draft.galvanicDurationSeconds}
+                  onChange={(e) =>
+                    update("galvanicDurationSeconds", e.target.value)
+                  }
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Galvanic intensity %</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min={0}
+                  max={100}
+                  value={draft.galvanicIntensityPercent}
+                  onChange={(e) =>
+                    update("galvanicIntensityPercent", e.target.value)
+                  }
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Units of lye (UL)</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  min={0}
+                  value={draft.unitsOfLye}
+                  onChange={(e) => update("unitsOfLye", e.target.value)}
+                  className={READING_INPUT_CLS}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Pulse count is a thermolysis concept — shown for thermolysis,
+            blend, and when no mode is chosen yet; hidden for galvanic. */}
+        {mode !== "galv" && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Pulse count</span>
+            <div className="flex items-stretch gap-2">
+              <button
+                type="button"
+                onClick={() => bumpPulse(-1)}
+                aria-label="Decrease pulse count"
+                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={PULSE_COUNT_MIN}
+                max={PULSE_COUNT_MAX}
+                value={draft.pulseCount}
+                onChange={(e) => update("pulseCount", e.target.value)}
+                className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+              <button
+                type="button"
+                onClick={() => bumpPulse(1)}
+                aria-label="Increase pulse count"
+                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                +
+              </button>
+              <span className="self-center text-xs text-neutral-500">
+                Pulses per hair (1 to {PULSE_COUNT_MAX}).
+              </span>
+            </div>
+          </div>
+        )}
 
         <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
-          <span className="text-sm font-medium">Total hairs treated</span>
+          <span className="text-sm font-medium">Hairs treated</span>
           <input
             type="number"
             inputMode="numeric"
@@ -625,7 +773,7 @@ export function BlockSetupForm({
             value={draft.hairsTreated}
             onChange={(e) => update("hairsTreated", e.target.value)}
             placeholder="500"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className={READING_INPUT_CLS}
           />
         </label>
       </div>

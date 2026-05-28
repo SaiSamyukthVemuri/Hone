@@ -32,6 +32,13 @@ function nullableNumber(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Non-negative numeric (fractional ok). Out-of-range / invalid → null, matching
+// the lenient pickInteger pattern. Used for galvanic_ma and units_of_lye.
+function nonNegNumber(value: FormDataEntryValue | null): number | null {
+  const n = nullableNumber(value);
+  return n != null && n >= 0 ? n : null;
+}
+
 // Parses a JSON array of strings from form data and returns trimmed,
 // deduplicated, non-empty entries. Falls back to [] for any malformed input.
 function parseAreasJson(value: FormDataEntryValue | null): string[] {
@@ -178,6 +185,30 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   const hairsTreated = pickInteger(formData.get("hairs_treated"), { min: 0 });
   const probeSize = nullableString(formData.get("probe_size"));
 
+  // Migration 0042: structured blend / galvanic readings, mode-gated so a
+  // thermolysis entry never carries galvanic numbers (and vice versa).
+  // Out-of-range values are coerced to null (lenient, like the other
+  // numeric fields); the DB CHECK is the final guard.
+  const wantGalv = mode === "galv" || mode === "blend";
+  const wantThermo = mode === "thermo" || mode === "blend";
+  const galvanicMa = wantGalv ? nonNegNumber(formData.get("galvanic_ma")) : null;
+  const galvanicDurationSeconds = wantGalv
+    ? pickInteger(formData.get("galvanic_duration_seconds"), { min: 0 })
+    : null;
+  const galvanicIntensityPercent = wantGalv
+    ? pickInteger(formData.get("galvanic_intensity_percent"), { min: 0, max: 100 })
+    : null;
+  const thermolysisIntensityPercent = wantThermo
+    ? pickInteger(formData.get("thermolysis_intensity_percent"), {
+        min: 0,
+        max: 100,
+      })
+    : null;
+  const thermolysisDurationSeconds = wantThermo
+    ? pickInteger(formData.get("thermolysis_duration_seconds"), { min: 0 })
+    : null;
+  const unitsOfLye = wantGalv ? nonNegNumber(formData.get("units_of_lye")) : null;
+
   // The simplified entry form passes block_id explicitly so multi-block
   // sessions target the correct block. Legacy form callers omit this; for
   // them we look up (or create) the primary block via ensureBlockForSession.
@@ -215,6 +246,12 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     probe_type: probeType,
     machine_frequency: machineFrequency,
     hairs_treated: hairsTreated,
+    galvanic_ma: galvanicMa,
+    galvanic_duration_seconds: galvanicDurationSeconds,
+    galvanic_intensity_percent: galvanicIntensityPercent,
+    thermolysis_intensity_percent: thermolysisIntensityPercent,
+    thermolysis_duration_seconds: thermolysisDurationSeconds,
+    units_of_lye: unitsOfLye,
   });
 
   if (error) throw new Error(`Failed to add entry: ${error.message}`);
