@@ -104,6 +104,10 @@ type Props = {
   // The block's first/primary entry, if any. In edit mode its readings seed
   // the form and are updated on save; entries 2..N are never touched here.
   firstEntry?: ElectrolysisEntry | null;
+  // Create-mode only: initial value for the treatment area, seeded from the
+  // attached treatment plan's primary_area. UI defaulting only — fully
+  // editable; never overrides the practitioner's choice on save.
+  defaultPrimaryArea?: string | null;
   onCancel: () => void;
 };
 
@@ -159,8 +163,13 @@ const EMPTY: Draft = {
 function initialDraft(
   block: SessionBlock | null | undefined,
   firstEntry: ElectrolysisEntry | null | undefined,
+  defaultPrimaryArea: string | null | undefined,
 ): Draft {
-  if (!block) return EMPTY;
+  // Create mode: start blank, but seed the treatment area from the attached
+  // plan when provided. Editable; never forced.
+  if (!block) {
+    return { ...EMPTY, primaryArea: defaultPrimaryArea?.trim() || "" };
+  }
   return {
     mode: block.mode ?? "",
     apilusModality: block.apilus_modality ?? "",
@@ -212,14 +221,22 @@ export function BlockSetupForm({
   previousBlock,
   block,
   firstEntry,
+  defaultPrimaryArea,
   onCancel,
 }: Props) {
   const isEdit = !!block;
   const [draft, setDraft] = useState<Draft>(() =>
-    initialDraft(block, firstEntry),
+    initialDraft(block, firstEntry, defaultPrimaryArea),
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Treatment-area picker is collapsed to a compact summary when an area is
+  // already selected (e.g. seeded from the plan, or in edit mode); the full
+  // region-grouped picker only expands when there's no area yet or the
+  // practitioner taps "Change".
+  const [editingArea, setEditingArea] = useState(
+    () => !(draft.primaryArea.trim().length > 0),
+  );
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -430,74 +447,109 @@ export function BlockSetupForm({
         )}
       </div>
 
-      {/* Treatment area first — it's the identity of this section. */}
+      {/* Treatment area first — it's the identity of this section. When an
+          area is already selected it collapses to a compact summary with a
+          "Change" affordance; the full region-grouped picker only expands
+          when there's no area yet or the practitioner taps Change. */}
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Treatment area</span>
-        <span className="text-xs text-neutral-500">
-          Optional. The area this section treats. Side and specifics appear
-          once an area is chosen.
-        </span>
-        <AreaPicker
-          value={draft.primaryArea}
-          onChange={(next) => {
-            // Clearing the area also clears side + specifics so the saved
-            // row stays internally consistent (no orphan side).
-            if (!next) {
-              setDraft((d) => ({
-                ...d,
-                primaryArea: "",
-                side: "",
-                customAreaDetail: "",
-              }));
-            } else {
-              update("primaryArea", next);
-            }
-          }}
-          idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
-        />
 
-        {draft.primaryArea.trim().length > 0 && (
+        {draft.primaryArea.trim().length > 0 && !editingArea ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+              {draft.primaryArea}
+              {draft.side && draft.side !== "n/a"
+                ? ` · ${SIDE_OPTIONS.find((o) => o.value === draft.side)?.label ?? draft.side}`
+                : ""}
+              {draft.customAreaDetail.trim()
+                ? ` · ${draft.customAreaDetail.trim()}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditingArea(true)}
+              className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              Change
+            </button>
+          </div>
+        ) : (
           <>
-            <div className="flex flex-col gap-1.5 pt-1">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Side
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {SIDE_OPTIONS.map((opt) => {
-                  const selected = draft.side === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => update("side", selected ? "" : opt.value)}
-                      aria-pressed={selected}
-                      className={
-                        "rounded-full border px-2.5 py-1 text-xs " +
-                        (selected
-                          ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
-                      }
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <span className="text-xs text-neutral-500">
+              Optional. The area this section treats. Side and specifics appear
+              once an area is chosen.
+            </span>
+            <AreaPicker
+              value={draft.primaryArea}
+              onChange={(next) => {
+                // Clearing the area also clears side + specifics so the saved
+                // row stays internally consistent (no orphan side).
+                if (!next) {
+                  setDraft((d) => ({
+                    ...d,
+                    primaryArea: "",
+                    side: "",
+                    customAreaDetail: "",
+                  }));
+                } else {
+                  update("primaryArea", next);
+                }
+              }}
+              idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
+            />
 
-            <label className="flex flex-col gap-1.5 pt-1">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Specifics
-              </span>
-              <input
-                type="text"
-                value={draft.customAreaDetail}
-                onChange={(e) => update("customAreaDetail", e.target.value)}
-                placeholder="midline, under-chin, knuckles, jawline edge…"
-                maxLength={CUSTOM_AREA_DETAIL_MAX}
-                className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
+            {draft.primaryArea.trim().length > 0 && (
+              <>
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    Side
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SIDE_OPTIONS.map((opt) => {
+                      const selected = draft.side === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => update("side", selected ? "" : opt.value)}
+                          aria-pressed={selected}
+                          className={
+                            "rounded-full border px-2.5 py-1 text-xs " +
+                            (selected
+                              ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                              : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+                          }
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <label className="flex flex-col gap-1.5 pt-1">
+                  <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    Specifics
+                  </span>
+                  <input
+                    type="text"
+                    value={draft.customAreaDetail}
+                    onChange={(e) => update("customAreaDetail", e.target.value)}
+                    placeholder="midline, under-chin, knuckles, jawline edge…"
+                    maxLength={CUSTOM_AREA_DETAIL_MAX}
+                    className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => setEditingArea(false)}
+                  className="self-start text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  Done
+                </button>
+              </>
+            )}
           </>
         )}
       </div>

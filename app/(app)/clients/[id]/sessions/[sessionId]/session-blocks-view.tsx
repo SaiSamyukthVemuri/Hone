@@ -45,6 +45,10 @@ type Props = {
   blocks: SessionBlockWithEntries[];
   orphanEntries: ElectrolysisEntry[];
   clientTagLabels?: ReadonlyArray<string>;
+  // UI defaulting only: when creating a NEW treatment area, seed the area
+  // picker with the attached treatment plan's primary_area (if any). The
+  // practitioner can change it; never overrides their choice or saved data.
+  defaultPrimaryArea?: string | null;
 };
 
 export function SessionBlocksView({
@@ -53,6 +57,7 @@ export function SessionBlocksView({
   blocks,
   orphanEntries,
   clientTagLabels = [],
+  defaultPrimaryArea = null,
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -96,6 +101,7 @@ export function SessionBlocksView({
           sessionId={sessionId}
           clientId={clientId}
           previousBlock={previousBlock}
+          defaultPrimaryArea={defaultPrimaryArea}
           onCancel={() => setAdding(false)}
         />
       ) : (
@@ -176,6 +182,11 @@ function BlockSection({
 
   const title = areaTitle(block);
 
+  // New-flow (structured-area) blocks render entries flat (readings-only),
+  // because the card header already shows the area + machine/probe summary.
+  // Legacy blocks without a primary_area keep the full per-entry render.
+  const flat = Boolean(block.primary_area && block.primary_area.trim().length > 0);
+
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       {editing ? (
@@ -224,29 +235,48 @@ function BlockSection({
             <p className="text-xs text-neutral-500">No entries yet.</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {entriesSorted.map((e) => (
-                <li key={e.id}>
-                  <ElectrolysisEntryRow
-                    entry={e}
-                    treatmentParams={params}
-                    block={block}
-                    action={
-                      <form action={deleteElectrolysisEntryAction}>
-                        <input type="hidden" name="id" value={e.id} />
-                        <input type="hidden" name="session_id" value={sessionId} />
-                        <input type="hidden" name="client_id" value={clientId} />
-                        <button
-                          type="submit"
-                          aria-label="Delete entry"
-                          className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                        >
-                          ✕
-                        </button>
-                      </form>
-                    }
-                  />
-                </li>
-              ))}
+              {entriesSorted.map((e, idx) => {
+                // Flatten: for structured-area (new-flow) blocks, the card
+                // header already shows the area + machine/probe summary, so
+                // render entries as readings-only and suppress the area when
+                // it just repeats the header. Legacy blocks (no primary_area,
+                // e.g. backfilled "Main") keep the full row so their distinct
+                // per-entry areas/params still show.
+                const entryArea =
+                  e.areas && e.areas.length > 0 ? e.areas.join(" · ") : e.area;
+                const hideArea =
+                  flat && entryArea === block.primary_area;
+                return (
+                  <li key={e.id}>
+                    <ElectrolysisEntryRow
+                      entry={e}
+                      treatmentParams={params}
+                      block={block}
+                      variant={flat ? "readings" : "full"}
+                      hideArea={hideArea}
+                      label={
+                        flat && entriesSorted.length > 1
+                          ? `Pass ${idx + 1}`
+                          : undefined
+                      }
+                      action={
+                        <form action={deleteElectrolysisEntryAction}>
+                          <input type="hidden" name="id" value={e.id} />
+                          <input type="hidden" name="session_id" value={sessionId} />
+                          <input type="hidden" name="client_id" value={clientId} />
+                          <button
+                            type="submit"
+                            aria-label="Delete entry"
+                            className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                          >
+                            ✕
+                          </button>
+                        </form>
+                      }
+                    />
+                  </li>
+                );
+              })}
             </ul>
           )}
 

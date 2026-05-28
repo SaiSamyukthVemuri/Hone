@@ -113,8 +113,6 @@ export default async function SessionDetailPage({
 
   return (
     <div className="flex flex-col gap-8">
-      {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
-
       <div className="flex flex-col gap-3">
         <Link
           href={`/clients/${id}`}
@@ -144,6 +142,9 @@ export default async function SessionDetailPage({
               : `Electrolysis session ${runningTotal.sessionNumber} for ${clientFirstName}${priorLaserClause}`}
           </p>
         )}
+        {/* Treatment plan sits directly under the session title/context,
+            not as a disconnected top banner. */}
+        {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
         <SessionEditHistory
           startedAtOriginal={session.started_at_original}
           audit={audit}
@@ -189,6 +190,10 @@ export default async function SessionDetailPage({
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
+          // UI defaulting only: seed a NEW treatment area with the attached
+          // plan's structured area (if any). Never overrides practitioner
+          // choice or mutates plan/saved data.
+          defaultPrimaryArea={attachedPlan?.primary_area ?? null}
         />
       ) : (
         <>
