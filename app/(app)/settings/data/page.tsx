@@ -64,10 +64,55 @@ export default async function DataSettingsPage() {
       </section>
 
       <DataCard
-        title="Export all data"
-        body="Download a ZIP of every client, session, and entry in your studio."
+        title="Export your data"
+        body="Download a ZIP of your studio data. During the pilot, use this as a backup after a real charting day."
       >
-        <ExportButton />
+        <div className="flex flex-col gap-5">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Included
+            </p>
+            <ul className="mt-1.5 flex max-w-[600px] list-disc flex-col gap-1 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              <li>
+                Clients — contact info, allergies, skin notes, Fitzpatrick
+                type, emergency contacts
+              </li>
+              <li>
+                Electrolysis &amp; laser sessions — notes, times, price, who
+                performed them
+              </li>
+              <li>
+                Electrolysis charting — treatment area, machine settings,
+                blend/galvanic &amp; thermolysis readings, probe details, pulse
+                count, hairs treated, comments
+              </li>
+              <li>Laser entries</li>
+              <li>Practitioners</li>
+              <li>Per-client custom pricing</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Not included
+            </p>
+            <p className="mt-1.5 max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Private warnings and personal notes are intentionally excluded
+              from this general export. Calendar appointments and treatment
+              plans aren&rsquo;t part of this export yet.
+            </p>
+          </div>
+
+          <p className="max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">
+              Pilot tip:
+            </span>{" "}
+            after your first real charting day, download an export and keep it
+            as a backup.
+          </p>
+
+          <ExportButton />
+        </div>
       </DataCard>
 
       <DataCard

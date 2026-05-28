@@ -49,7 +49,7 @@ export function ExportButton() {
         className="px-6 py-3 text-[13px] font-medium uppercase tracking-[0.15em] text-[#FAFAF7] transition-opacity hover:opacity-90 disabled:opacity-50"
         style={{ backgroundColor: "#0A0A0A" }}
       >
-        {pending ? "Preparing" : "Export ZIP"}
+        {pending ? "Preparing export…" : "Export data"}
       </button>
       {doneAt && (
         <span className="text-sm text-green-700 dark:text-green-400">
