@@ -22,12 +22,27 @@ export function ElectrolysisEntryRow({
   block,
   density = "comfortable",
   action,
+  variant = "full",
+  hideArea = false,
+  label,
 }: {
   entry: ElectrolysisEntry;
   treatmentParams?: TreatmentParams;
   block?: SessionBlock | null;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
+  // "readings": compact render for entries shown INSIDE a treatment-area
+  // card whose header already shows the area + machine/probe summary. It
+  // shows only the per-pass readings + notes (no repeated area/mode/probe),
+  // which flattens the saved view. "full" (default) keeps the standalone
+  // render used by SessionTimeline and the client "last session" preview.
+  variant?: "full" | "readings";
+  // In "readings", suppress the area title when it duplicates the card
+  // header's area (the one-page first entry). A pass with a different area
+  // still shows it.
+  hideArea?: boolean;
+  // Optional small label for extra passes ("Pass 2").
+  label?: string;
 }) {
   const params: TreatmentParams = treatmentParams ?? {
     mode: entry.mode,
@@ -105,6 +120,99 @@ export function ElectrolysisEntryRow({
   const isOverride = Boolean(
     block && block.mode && entry.mode && block.mode !== entry.mode,
   );
+
+  // Flattened render for entries inside a treatment-area card: readings +
+  // notes only, no repeated area/mode/modality/probe (the card header shows
+  // those). Avoids the "section inside a section" duplication.
+  if (variant === "readings") {
+    const areaText =
+      entry.areas && entry.areas.length > 0
+        ? entry.areas.join(" · ")
+        : entry.area;
+    const legacyReadings: string[] = [];
+    if (!hasStructured) {
+      if (entry.pulse_count != null) {
+        legacyReadings.push(
+          `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+        );
+      }
+      if (entry.intensity != null) legacyReadings.push(`${entry.intensity}%`);
+      if (entry.duration_seconds != null) {
+        legacyReadings.push(`${entry.duration_seconds}s`);
+      }
+    }
+    const showTop = Boolean(label) || (!hideArea && Boolean(areaText)) || isOverride;
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-50/60 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/40 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0 flex-1">
+          {showTop && (
+            <div className="flex flex-wrap items-baseline gap-2">
+              {label && (
+                <span className="text-xs font-medium text-neutral-500">
+                  {label}
+                </span>
+              )}
+              {!hideArea && areaText && (
+                <span className="font-medium">{areaText}</span>
+              )}
+              {isOverride && (
+                <span
+                  className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                  title="This entry's mode differs from its treatment area's mode."
+                >
+                  Override
+                </span>
+              )}
+            </div>
+          )}
+          {!hasStructured && legacyReadings.length > 0 && (
+            <div className="text-xs text-neutral-500">
+              {legacyReadings.join(" · ")}
+            </div>
+          )}
+          {!hasStructured && entry.hairs_treated != null && (
+            <div className="text-xs text-neutral-500">
+              Hairs treated: {entry.hairs_treated}
+            </div>
+          )}
+          {galvanicParts.length > 0 && (
+            <div className="text-xs text-neutral-500">
+              <span className="font-medium text-neutral-600 dark:text-neutral-400">
+                Galvanic:
+              </span>{" "}
+              {galvanicParts.join(" · ")}
+            </div>
+          )}
+          {thermoParts.length > 0 && (
+            <div className="text-xs text-neutral-500">
+              <span className="font-medium text-neutral-600 dark:text-neutral-400">
+                Thermolysis:
+              </span>{" "}
+              {thermoParts.join(" · ")}
+            </div>
+          )}
+          {hasStructured && entry.hairs_treated != null && (
+            <div className="text-xs text-neutral-500">
+              Hairs treated: {entry.hairs_treated}
+            </div>
+          )}
+          {entry.comments && (
+            <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+              {entry.comments}
+            </div>
+          )}
+          {!showTop &&
+            !hasStructured &&
+            legacyReadings.length === 0 &&
+            entry.hairs_treated == null &&
+            !entry.comments && (
+              <div className="text-xs text-neutral-400">No readings recorded.</div>
+            )}
+        </div>
+        {action}
+      </div>
+    );
+  }
 
   return (
     <div
