@@ -88,7 +88,7 @@ export function buildInvitationEmail(params: {
             </tr>
             <tr>
               <td style="padding-top:8px; font-family:-apple-system, system-ui, sans-serif; font-size:11px; line-height:1.6; color:#6B6B6B;">
-                hone.care &middot; A Saltkiln product.
+                hone.care
               </td>
             </tr>
           </table>
@@ -107,7 +107,7 @@ To join the team, sign in at hone.care using ${inviteeEmail}. You'll be added to
 Sign in: ${SIGN_IN_URL}
 
 Hone. Charting software for electrolysis and laser practitioners.
-hone.care. A Saltkiln product.
+hone.care
 `;
 
   return { subject, html, text };

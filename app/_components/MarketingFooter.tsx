@@ -24,7 +24,7 @@ export function MarketingFooter() {
           className="text-[10px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
         >
-          The practice memory system for permanent hair removal. A Saltkiln product.
+          The practice memory system for permanent hair removal.
         </p>
         <p
           className="text-[12px] font-medium uppercase"

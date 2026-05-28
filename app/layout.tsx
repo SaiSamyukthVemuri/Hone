@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     "Never wonder what you did last session. Type a name, see exactly what worked last time: settings, areas, what they tolerated, what to avoid. Practice software for electrolysis and laser.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
-  authors: [{ name: "Saltkiln" }],
+  authors: [{ name: "Hone" }],
   keywords: [
     "electrolysis charting",
     "laser hair removal software",

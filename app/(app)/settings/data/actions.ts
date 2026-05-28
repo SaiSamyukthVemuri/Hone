@@ -581,7 +581,7 @@ Files included:
 
 Your data is yours. This export can be opened in Excel, Numbers, Google Sheets, or any spreadsheet tool. If you ever leave Hone, your records leave with you.
 
-Saltkiln Inc.
+Hone
 hone.care
 hello@hone.care
 `;
