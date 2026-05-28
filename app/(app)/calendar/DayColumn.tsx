@@ -227,13 +227,15 @@ export function DayColumn({
       className="relative border-l border-neutral-100 dark:border-neutral-800/60"
       style={{ height: GRID_HEIGHT }}
     >
-      {/* Today's column gets a very faint neutral wash (Google-style),
-          sitting at the very bottom so the availability tint and events
-          read on top of it. pointer-events-none — never blocks clicks. */}
+      {/* Today's column gets a faint cool (sky) wash, Google-style, so the
+          current day is easy to spot at a glance and reads as distinct from
+          the neutral-gray "unavailable" tint. Sits at the very bottom so the
+          availability tint and events read on top. pointer-events-none —
+          never blocks clicks; no ring / badge / extra height. */}
       {isToday && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-0 bg-neutral-50/60 dark:bg-neutral-900/30"
+          className="pointer-events-none absolute inset-0 z-0 bg-sky-50/70 dark:bg-sky-950/25"
         />
       )}
 
@@ -246,7 +248,7 @@ export function DayColumn({
           key={`tint-${i}`}
           aria-hidden
           style={{ top: r.top, height: r.height }}
-          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/50 dark:bg-neutral-800/30"
+          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/80 dark:bg-neutral-800/50"
         />
       ))}
 
@@ -285,7 +287,7 @@ export function DayColumn({
         type="button"
         aria-label={`Open quick-book draft for ${date}`}
         onClick={handleEmptyClick}
-        className="absolute inset-0 z-0 cursor-pointer rounded-none transition-colors hover:bg-neutral-100/40 dark:hover:bg-neutral-800/30"
+        className="absolute inset-0 z-0 cursor-pointer rounded-none outline-none transition-colors hover:bg-sky-100/40 focus-visible:bg-sky-100/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300 dark:hover:bg-sky-900/20 dark:focus-visible:bg-sky-900/20 dark:focus-visible:ring-sky-700"
       />
 
       {blocked && (
