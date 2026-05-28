@@ -2,10 +2,17 @@
 // across all studios via the service-role client.
 //
 // Source of truth is the ADMIN_EMAILS env var (comma-separated). When it
-// is unset or empty the built-in default below is used, so admin access
-// never breaks before ADMIN_EMAILS is configured in an environment. Set
-// ADMIN_EMAILS in prod to manage the allowlist without a code change, e.g.
+// is unset or empty the built-in default below is used. Set ADMIN_EMAILS
+// in prod to manage the allowlist without a code change, e.g.
 //   ADMIN_EMAILS=samyukth.ssv@gmail.com,other@example.com
+//
+// Fallback semantics (intentional):
+//   * The default applies ONLY when ADMIN_EMAILS is unset or empty.
+//   * This is deliberate lockout prevention for the current single-admin
+//     phase: admin access must not break before ADMIN_EMAILS is set in an
+//     environment.
+//   * Future cleanup: once ADMIN_EMAILS is confirmed present in production
+//     env, the default can be dropped and ADMIN_EMAILS made required.
 // (DB-backed admin roles are intentionally out of scope here.)
 
 const DEFAULT_ADMIN_EMAILS: ReadonlyArray<string> = ["samyukth.ssv@gmail.com"];
