@@ -123,6 +123,10 @@ function BlockSection({
   clientTagLabels: ReadonlyArray<string>;
 }) {
   const [editing, setEditing] = useState(false);
+  // Extra passes are optional and collapsed by default — the first reading
+  // is captured on the one-page treatment-area form, so this is only for
+  // additional passes on the same area.
+  const [addingPass, setAddingPass] = useState(false);
 
   const params: TreatmentParams = useMemo(
     () => ({
@@ -180,6 +184,7 @@ function BlockSection({
           clientId={clientId}
           previousBlock={null}
           block={block}
+          firstEntry={entriesSorted[0] ?? null}
           onCancel={() => setEditing(false)}
         />
       ) : (
@@ -245,12 +250,31 @@ function BlockSection({
             </ul>
           )}
 
-          <SimplifiedEntryForm
-            block={block}
-            sessionId={sessionId}
-            clientId={clientId}
-            clientTagLabels={clientTagLabels}
-          />
+          {addingPass ? (
+            <div className="flex flex-col gap-2">
+              <SimplifiedEntryForm
+                block={block}
+                sessionId={sessionId}
+                clientId={clientId}
+                clientTagLabels={clientTagLabels}
+              />
+              <button
+                type="button"
+                onClick={() => setAddingPass(false)}
+                className="self-start text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAddingPass(true)}
+              className="self-start rounded-md border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              + Add another pass
+            </button>
+          )}
         </>
       )}
     </section>
