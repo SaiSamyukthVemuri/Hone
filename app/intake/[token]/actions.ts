@@ -1,8 +1,10 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import { ALL_QUESTION_KEYS, TOTAL_STEPS } from "@/lib/intake/questions";
+import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
 
@@ -19,10 +21,12 @@ function logInternalIntakeError(event: string, detail: unknown) {
   }
 }
 
-function tokenError(kind: "expired" | "malformed" | "bad_signature"): string {
-  if (kind === "expired") return "This intake link has expired.";
-  return "This intake link is no longer valid.";
-}
+// Collapse ALL token-validation failures (expired / malformed / bad
+// signature) into ONE message so the response can't be used to learn
+// whether a token was a real-but-aged HMAC vs random garbage. Matches the
+// generic-collapse pattern the cancel / reschedule flows already use.
+const INTAKE_TOKEN_INVALID =
+  "This intake link is no longer valid. Please contact the studio if you need a new one.";
 
 // Whitelist responses to known question keys (or their `_notes` siblings) so
 // a client-side tamper can't inject arbitrary JSON fields.
@@ -42,8 +46,18 @@ export async function saveIntakeStepAction(payload: {
   responses: Record<string, unknown>;
 }): Promise<SaveResult> {
   if (!payload.token) return { ok: false, error: "Missing token." };
+
+  // Rate limit before token verification + DB work. Independent of token
+  // validity, fails open when Upstash is unconfigured or down.
+  const gate = await limitTokenRoute({
+    routeClass: "intake_save",
+    token: payload.token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const v = verifyIntakeToken(payload.token);
-  if (!v.ok) return { ok: false, error: tokenError(v.error) };
+  if (!v.ok) return { ok: false, error: INTAKE_TOKEN_INVALID };
 
   const step = Math.floor(Number(payload.step));
   if (!Number.isFinite(step) || step < 1 || step > TOTAL_STEPS) {
@@ -105,8 +119,18 @@ export async function submitIntakeAction(payload: {
   responses: Record<string, unknown>;
 }): Promise<SaveResult> {
   if (!payload.token) return { ok: false, error: "Missing token." };
+
+  // Rate limit before token verification + DB write. Independent of token
+  // validity, fails open. No submit occurs when limited.
+  const gate = await limitTokenRoute({
+    routeClass: "intake_submit",
+    token: payload.token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const v = verifyIntakeToken(payload.token);
-  if (!v.ok) return { ok: false, error: tokenError(v.error) };
+  if (!v.ok) return { ok: false, error: INTAKE_TOKEN_INVALID };
 
   const responses = sanitizeResponses(payload.responses);
 

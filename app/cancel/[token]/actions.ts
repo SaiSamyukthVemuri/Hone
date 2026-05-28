@@ -1,8 +1,10 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
+import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 // Generic public-facing message. Returned for any non-success outcome
 // on BOTH the mutation surface (`publicCancelAppointmentAction`) AND
@@ -72,6 +74,17 @@ export async function publicCancelAppointmentAction(
   if (!token) {
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
+
+  // Rate limit before token verification, the cancel RPC, and the owner
+  // email. Runs independent of token validity, so a 429 reveals nothing.
+  // Fails open when Upstash is unconfigured or down. No cancel/email occurs
+  // when limited.
+  const gate = await limitTokenRoute({
+    routeClass: "cancel_submit",
+    token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
@@ -203,6 +216,14 @@ export type AppointmentSummary = {
 export async function fetchAppointmentForCancelAction(
   token: string,
 ): Promise<{ ok: true; summary: AppointmentSummary } | { ok: false; error: string }> {
+  // Rate limit the view fetch (looser than submit). Token never consumed.
+  const gate = await limitTokenRoute({
+    routeClass: "cancel_view",
+    token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
     // Public collapse rule (Blocker 2): ALL token-resolution failures
