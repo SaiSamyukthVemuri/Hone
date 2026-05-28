@@ -194,11 +194,17 @@ export default async function CalendarPage({
               return (
                 <div
                   key={date}
-                  className="border-l border-neutral-100 px-3 py-2.5 dark:border-neutral-800/60"
+                  className={
+                    "border-l border-neutral-100 px-3 py-2.5 dark:border-neutral-800/60" +
+                    // Today's header cell carries the same faint sky tint as
+                    // its column body, so the current day reads as one band
+                    // from the header down. No ring, badge, or extra height.
+                    (isToday ? " bg-sky-50/70 dark:bg-sky-950/25" : "")
+                  }
                 >
                   {/* Two-line Google/Fresha header: weekday over date.
-                      Today gets a subtle text accent only — no ring, no
-                      badge, no extra height. */}
+                      Today gets a subtle text accent + faint sky tint — no
+                      ring, no badge, no extra height. */}
                   <div
                     className={
                       "text-[11px] uppercase tracking-wide " +
