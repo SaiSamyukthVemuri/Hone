@@ -6,7 +6,7 @@ import type {
   SessionBlockWithEntries,
   TreatmentParams,
 } from "@/lib/supabase/queries";
-import { ELECTROLYSIS_MODES } from "@/lib/constants";
+import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
@@ -141,7 +141,7 @@ function BlockSection({
     const parts: string[] = [];
     const mLabel = ELECTROLYSIS_MODES.find((m) => m.value === block.mode)?.label;
     if (mLabel) parts.push(mLabel);
-    if (block.apilus_modality) parts.push(block.apilus_modality);
+    if (block.apilus_modality) parts.push(apilusModalityLabel(block.apilus_modality));
     if (block.energy_level != null) parts.push(`EL ${block.energy_level}`);
     if (block.machine_frequency) parts.push(block.machine_frequency);
     if (block.minutes_performed != null) {

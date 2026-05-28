@@ -23,6 +23,7 @@ import {
   MACHINE_FREQUENCIES,
   PROBE_SIZES,
   PROBE_TYPES,
+  apilusModalityLabel,
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
@@ -343,7 +344,7 @@ export function LogElectrolysisEntryForm({
               <option value="">Select…</option>
               {modalityOptions.map((opt) => (
                 <option key={opt} value={opt}>
-                  {opt}
+                  {apilusModalityLabel(opt)}
                 </option>
               ))}
             </select>
