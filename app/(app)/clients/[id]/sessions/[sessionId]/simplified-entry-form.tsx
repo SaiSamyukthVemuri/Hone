@@ -123,7 +123,7 @@ export function SimplifiedEntryForm({
       className="flex flex-col gap-4 rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
     >
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">Add entry</h4>
+        <h4 className="text-sm font-medium">Add another pass</h4>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -269,7 +269,7 @@ export function SimplifiedEntryForm({
           disabled={pending}
           className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Adding…" : "Add entry"}
+          {pending ? "Adding…" : "Add pass"}
         </button>
         {savedLabel && (
           <span

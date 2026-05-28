@@ -23,8 +23,12 @@
 import { useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
+  COMMON_COMMENTS,
   ELECTROLYSIS_MODES,
   MACHINE_FREQUENCIES,
+  PULSE_COUNT_DEFAULT,
+  PULSE_COUNT_MAX,
+  PULSE_COUNT_MIN,
   apilusModalityLabel,
 } from "@/lib/constants";
 import {
@@ -37,16 +41,18 @@ import {
 } from "@/lib/probes";
 import type {
   ApilusModality,
+  ElectrolysisEntry,
   ElectrolysisMode,
   MachineFrequency,
   SessionBlock,
   SessionBlockSide,
   SessionMode,
 } from "@/lib/types/database";
+import { appendComment } from "@/lib/comments";
 import { AreaPicker } from "@/components/area-picker";
 import {
-  createSessionBlockAction,
-  updateSessionBlockAction,
+  createTreatmentAreaWithEntryAction,
+  updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
 
 const PRIMARY_AREA_MAX = 60;
@@ -71,6 +77,9 @@ type Props = {
   previousBlock: SessionBlock | null;
   // When present, the form edits this existing area instead of creating.
   block?: SessionBlock | null;
+  // The block's first/primary entry, if any. In edit mode its readings seed
+  // the form and are updated on save; entries 2..N are never touched here.
+  firstEntry?: ElectrolysisEntry | null;
   onCancel: () => void;
 };
 
@@ -88,6 +97,13 @@ type Draft = {
   primaryArea: string;
   side: string; // SessionBlockSide | ""
   customAreaDetail: string;
+  // One-page charting: the first entry's readings, captured on the same
+  // page and saved with the treatment area (no second form).
+  intensity: string;
+  durationSeconds: string;
+  pulseCount: string;
+  hairsTreated: string;
+  comments: string;
 };
 
 const EMPTY: Draft = {
@@ -100,19 +116,46 @@ const EMPTY: Draft = {
   primaryArea: "",
   side: "",
   customAreaDetail: "",
+  intensity: "",
+  durationSeconds: "",
+  pulseCount: String(PULSE_COUNT_DEFAULT),
+  hairsTreated: "",
+  comments: "",
 };
 
-function fromBlock(b: SessionBlock): Draft {
+function initialDraft(
+  block: SessionBlock | null | undefined,
+  firstEntry: ElectrolysisEntry | null | undefined,
+): Draft {
+  if (!block) return EMPTY;
   return {
-    mode: b.mode ?? "",
-    apilusModality: b.apilus_modality ?? "",
-    energyLevel: b.energy_level != null ? String(b.energy_level) : "",
-    probeKey: b.probe_key ?? "",
-    machineFrequency: b.machine_frequency ?? "",
-    minutes: b.minutes_performed != null ? String(b.minutes_performed) : "",
-    primaryArea: b.primary_area ?? "",
-    side: b.side ?? "",
-    customAreaDetail: b.custom_area_detail ?? "",
+    mode: block.mode ?? "",
+    apilusModality: block.apilus_modality ?? "",
+    energyLevel: block.energy_level != null ? String(block.energy_level) : "",
+    probeKey: block.probe_key ?? "",
+    machineFrequency: block.machine_frequency ?? "",
+    minutes:
+      block.minutes_performed != null ? String(block.minutes_performed) : "",
+    primaryArea: block.primary_area ?? "",
+    side: block.side ?? "",
+    customAreaDetail: block.custom_area_detail ?? "",
+    // Seed readings from the first entry if present; otherwise blank (and
+    // pulse defaults to 1, matching a fresh pass).
+    intensity:
+      firstEntry?.intensity != null ? String(firstEntry.intensity) : "",
+    durationSeconds:
+      firstEntry?.duration_seconds != null
+        ? String(firstEntry.duration_seconds)
+        : "",
+    pulseCount:
+      firstEntry?.pulse_count != null
+        ? String(firstEntry.pulse_count)
+        : String(PULSE_COUNT_DEFAULT),
+    hairsTreated:
+      firstEntry?.hairs_treated != null
+        ? String(firstEntry.hairs_treated)
+        : "",
+    comments: firstEntry?.comments ?? "",
   };
 }
 
@@ -121,10 +164,13 @@ export function BlockSetupForm({
   clientId,
   previousBlock,
   block,
+  firstEntry,
   onCancel,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraft] = useState<Draft>(block ? fromBlock(block) : EMPTY);
+  const [draft, setDraft] = useState<Draft>(() =>
+    initialDraft(block, firstEntry),
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -181,32 +227,72 @@ export function BlockSetupForm({
       return;
     }
 
+    // Readings (the first pass). All optional except pulse, which defaults
+    // to 1. Light client-side range checks; the action re-validates.
+    const intensityStr = draft.intensity.trim();
+    const intensity = intensityStr === "" ? null : Number(intensityStr);
+    if (
+      intensityStr !== "" &&
+      (!Number.isFinite(intensity) ||
+        (intensity as number) < 0 ||
+        (intensity as number) > 100)
+    ) {
+      setError("Intensity must be between 0 and 100.");
+      return;
+    }
+    const durationStr = draft.durationSeconds.trim();
+    const durationSeconds = durationStr === "" ? null : Number(durationStr);
+    if (
+      durationStr !== "" &&
+      (!Number.isFinite(durationSeconds) || (durationSeconds as number) < 0)
+    ) {
+      setError("Duration must be a non-negative number.");
+      return;
+    }
+    const hairsStr = draft.hairsTreated.trim();
+    const hairsTreated = hairsStr === "" ? null : parseInt(hairsStr, 10);
+    if (
+      hairsStr !== "" &&
+      (!Number.isFinite(hairsTreated) || (hairsTreated as number) < 0)
+    ) {
+      setError("Total hairs treated must be a non-negative whole number.");
+      return;
+    }
+    const pulseStr = draft.pulseCount.trim();
+    const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
+
+    const readings = {
+      intensity,
+      durationSeconds,
+      pulseCount,
+      hairsTreated,
+      comments: draft.comments,
+    };
+
     startTransition(async () => {
       if (block) {
-        // Edit: patch the existing row. block_name is intentionally NOT
-        // included so any legacy value is preserved.
-        const res = await updateSessionBlockAction({
+        // Edit: update the treatment area + its first entry's readings.
+        // block_name/block_notes are preserved (the combined action never
+        // writes them); entries 2..N are untouched.
+        const res = await updateTreatmentAreaWithEntryAction({
           clientId,
           sessionId,
           blockId: block.id,
-          // Legacy probe_type / probe_size are intentionally omitted so
-          // any value on an existing row is preserved. The structured
-          // probe is sent separately via probeOptionKey.
+          firstEntryId: firstEntry?.id ?? null,
+          mode: (draft.mode || null) as SessionMode | null,
+          apilusModality: (draft.apilusModality || null) as
+            | ApilusModality
+            | null,
+          energyLevel: elNum,
+          minutesPerformed: minutesNum,
           probeOptionKey: draft.probeKey || null,
-          patch: {
-            mode: (draft.mode || null) as SessionMode | null,
-            apilus_modality: (draft.apilusModality || null) as
-              | ApilusModality
-              | null,
-            energy_level: elNum,
-            machine_frequency: (draft.machineFrequency || null) as
-              | MachineFrequency
-              | null,
-            minutes_performed: minutesNum,
-            primary_area: trimmedArea || null,
-            side: (draft.side || null) as SessionBlockSide | null,
-            custom_area_detail: trimmedDetail || null,
-          },
+          machineFrequency: (draft.machineFrequency || null) as
+            | MachineFrequency
+            | null,
+          primaryArea: trimmedArea || null,
+          side: draft.side || null,
+          customAreaDetail: trimmedDetail || null,
+          readings,
         });
         if (!res.ok) {
           setError(res.error);
@@ -215,9 +301,10 @@ export function BlockSetupForm({
         onCancel();
         return;
       }
-      // Create: new treatment area. block_name omitted (null) — the
-      // section title falls back to the area, then a muted placeholder.
-      const res = await createSessionBlockAction({
+      // Create: one save → treatment area + first entry. block_name omitted
+      // (null) — the section title falls back to the area, then a muted
+      // placeholder.
+      const res = await createTreatmentAreaWithEntryAction({
         clientId,
         sessionId,
         mode: (draft.mode || null) as ElectrolysisMode | null,
@@ -231,6 +318,7 @@ export function BlockSetupForm({
         primaryArea: trimmedArea || null,
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
+        readings,
       });
       if (!res.ok) {
         setError(res.error);
@@ -238,6 +326,16 @@ export function BlockSetupForm({
       }
       onCancel();
     });
+  }
+
+  function bumpPulse(delta: number) {
+    const current = parseInt(draft.pulseCount, 10);
+    const base = Number.isFinite(current) ? current : PULSE_COUNT_DEFAULT;
+    const next = Math.min(
+      PULSE_COUNT_MAX,
+      Math.max(PULSE_COUNT_MIN, base + delta),
+    );
+    update("pulseCount", String(next));
   }
 
   const mode = draft.mode;
@@ -447,6 +545,117 @@ export function BlockSetupForm({
           Used for total treatment time if you track it.
         </span>
       </label>
+
+      {/* Treatment readings — the first pass, captured on this same page so
+          there is no second form after saving. All optional (pulse defaults
+          to 1). Saved as the treatment area's first entry, keyed to the
+          chosen area. */}
+      <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <span className="text-sm font-medium">Treatment readings</span>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Intensity (%)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              max={100}
+              value={draft.intensity}
+              onChange={(e) => update("intensity", e.target.value)}
+              className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Duration (s)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.001"
+              min={0}
+              value={draft.durationSeconds}
+              onChange={(e) => update("durationSeconds", e.target.value)}
+              placeholder="0.0"
+              className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Pulse count</span>
+          <div className="flex items-stretch gap-2">
+            <button
+              type="button"
+              onClick={() => bumpPulse(-1)}
+              aria-label="Decrease pulse count"
+              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              −
+            </button>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={PULSE_COUNT_MIN}
+              max={PULSE_COUNT_MAX}
+              value={draft.pulseCount}
+              onChange={(e) => update("pulseCount", e.target.value)}
+              className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+            <button
+              type="button"
+              onClick={() => bumpPulse(1)}
+              aria-label="Increase pulse count"
+              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              +
+            </button>
+            <span className="self-center text-xs text-neutral-500">
+              Pulses per hair (1 to {PULSE_COUNT_MAX}).
+            </span>
+          </div>
+        </div>
+
+        <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
+          <span className="text-sm font-medium">Total hairs treated</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            step="1"
+            min={0}
+            value={draft.hairsTreated}
+            onChange={(e) => update("hairsTreated", e.target.value)}
+            placeholder="500"
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+        </label>
+      </div>
+
+      {/* Notes — quick-tap comment chips + free text, same controls as the
+          add-another-pass form. */}
+      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <span className="text-sm font-medium">Notes</span>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_COMMENTS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() =>
+                update("comments", appendComment(draft.comments, c))
+              }
+              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              + {c}
+            </button>
+          ))}
+        </div>
+        <textarea
+          rows={2}
+          value={draft.comments}
+          onChange={(e) => update("comments", e.target.value)}
+          placeholder="Tap a chip or type a note"
+          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+      </div>
 
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
