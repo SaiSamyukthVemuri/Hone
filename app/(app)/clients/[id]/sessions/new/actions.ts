@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { getActiveTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import type { Modality } from "@/lib/types/database";
 
 // Two "+ Log session" taps within this window for the same client +
@@ -43,8 +44,33 @@ export async function startSessionAction(formData: FormData): Promise<void> {
 
   let sessionId: string;
   if (existing) {
+    // Reusing a recent session (coalesce window): leave its treatment_plan_id
+    // exactly as-is. Auto-attach only applies to genuinely new sessions, so
+    // we never override a plan the practitioner already chose or detached.
     sessionId = existing.id;
   } else {
+    // Auto-attach (Session Logging Phase 2), electrolysis-only: treatment
+    // plans, schedules, and planned-vs-actual TTT are electrolysis-centered,
+    // so auto-attaching a laser session to an active electrolysis plan would
+    // be confusing. Laser sessions are therefore never auto-attached (they
+    // can still be attached manually on the session page). For an
+    // electrolysis session, attach only when the client has exactly one
+    // active plan; zero or multiple active plans → leave unattached (the
+    // session page's TreatmentPlanAttachment widget shows a chooser for the
+    // multiple case). Closed plans never qualify —
+    // getActiveTreatmentPlansForClient filters to status='active' and scopes
+    // by studio_id + client_id (a foreign client simply yields no plans).
+    // No new query/action; reuses the existing helper. treatment_plan_id is
+    // the only added insert field.
+    let autoPlanId: string | null = null;
+    if (modality === "electrolysis") {
+      const activePlans = await getActiveTreatmentPlansForClient(
+        studio.id,
+        clientId,
+      );
+      if (activePlans.length === 1) autoPlanId = activePlans[0].id;
+    }
+
     const { data, error } = await supabase
       .from("sessions")
       .insert({
@@ -53,6 +79,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
         practitioner_id: practitioner.id,
         performed_by_practitioner_id: practitioner.id,
         modality: modality as Modality,
+        treatment_plan_id: autoPlanId,
       })
       .select("id")
       .single();
