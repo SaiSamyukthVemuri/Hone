@@ -10,13 +10,22 @@ type Payload = {
   expires_at: string; // ISO timestamp
 };
 
+// Booking tokens REQUIRE a dedicated APPOINTMENT_SIGNING_SECRET. The
+// previous fallback to the Supabase service-role key was unsafe: signing
+// cancellation/reschedule tokens with the bypass-RLS service-role key
+// means any leak of that key (e.g. an accidental client-side import)
+// would also hand over token-signing power. Mirrors lib/intake/tokens.ts.
+//
+// Deployment requirement: set APPOINTMENT_SIGNING_SECRET to a high-entropy
+// random string (>= 32 bytes) in every environment. Apps that fail to set
+// it fail fast server-side rather than silently signing with a fallback.
 function getSecret(): string {
-  const secret =
-    process.env.APPOINTMENT_SIGNING_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const secret = process.env.APPOINTMENT_SIGNING_SECRET;
   if (!secret) {
     throw new Error(
-      "APPOINTMENT_SIGNING_SECRET (or SUPABASE_SERVICE_ROLE_KEY fallback) is not set",
+      "APPOINTMENT_SIGNING_SECRET is not set. " +
+        "Generate a fresh random secret (>= 32 bytes) and set it in env. " +
+        "The previous service-role-key fallback has been removed.",
     );
   }
   return secret;
