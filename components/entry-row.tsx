@@ -4,7 +4,7 @@ import type {
   SessionBlock,
 } from "@/lib/types/database";
 import type { TreatmentParams } from "@/lib/supabase/queries";
-import { ELECTROLYSIS_MODES } from "@/lib/constants";
+import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
@@ -44,7 +44,7 @@ export function ElectrolysisEntryRow({
   if (params.probe_size) meta.push(params.probe_size);
   const mLabel = modeLabel(params.mode);
   if (mLabel) meta.push(mLabel);
-  if (params.apilus_modality) meta.push(params.apilus_modality);
+  if (params.apilus_modality) meta.push(apilusModalityLabel(params.apilus_modality));
   if (entry.pulse_count != null) {
     meta.push(
       `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,

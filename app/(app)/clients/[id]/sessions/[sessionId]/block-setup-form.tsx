@@ -25,6 +25,7 @@ import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
   MACHINE_FREQUENCIES,
+  apilusModalityLabel,
 } from "@/lib/constants";
 import {
   PROBE_BRANDS,
@@ -338,7 +339,33 @@ export function BlockSetupForm({
         )}
       </div>
 
-      {/* Settings come after the area. */}
+      {/* Machine settings come after the area. Frequency first (it's a
+          property of the machine), then mode and the mode-specific modality. */}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">Machine frequency</span>
+        <div className="flex flex-wrap gap-2">
+          {MACHINE_FREQUENCIES.map((f) => {
+            const selected = draft.machineFrequency === f;
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() =>
+                  update("machineFrequency", selected ? "" : (f as string))
+                }
+                className={`rounded-full border px-4 py-2 text-sm transition ${
+                  selected
+                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                }`}
+              >
+                {f}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
@@ -373,7 +400,7 @@ export function BlockSetupForm({
             <option value="">Select…</option>
             {modalityOptions.map((opt) => (
               <option key={opt} value={opt}>
-                {opt}
+                {apilusModalityLabel(opt)}
               </option>
             ))}
           </select>
@@ -402,31 +429,6 @@ export function BlockSetupForm({
           value={draft.probeKey}
           onChange={(key) => update("probeKey", key)}
         />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Machine frequency</span>
-        <div className="flex flex-wrap gap-2">
-          {MACHINE_FREQUENCIES.map((f) => {
-            const selected = draft.machineFrequency === f;
-            return (
-              <button
-                key={f}
-                type="button"
-                onClick={() =>
-                  update("machineFrequency", selected ? "" : (f as string))
-                }
-                className={`rounded-full border px-4 py-2 text-sm transition ${
-                  selected
-                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-                }`}
-              >
-                {f}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       <label className="flex flex-col gap-1.5">

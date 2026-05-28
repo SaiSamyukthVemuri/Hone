@@ -145,20 +145,25 @@ export const APILUS_MODALITIES_BY_MODE: Record<
   "thermo" | "blend",
   ReadonlyArray<string>
 > = {
+  // Order is practitioner-preferred (Chloe), not alphabetical. Values are
+  // the stored/canonical strings (unchanged); see APILUS_MODALITY_LABELS
+  // for the clean display names. ThermoFlash sits last as older tech;
+  // MicroFlash (not in the requested shortlist) is kept selectable just
+  // above it so existing entries that use it still have an option.
   thermo: [
-    "Multiplex",
-    "Microflash",
     "Picoflash",
-    "Synchro",
-    "Thermoflash",
     "Meloflash",
+    "Multiplex",
+    "Synchro",
+    "Microflash",
+    "Thermoflash",
   ],
   blend: [
-    "Evolublend",
-    "Omniblend",
     "Picoblend",
-    "Synchroblend",
+    "Omniblend",
     "Multiblend",
+    "Evolublend",
+    "Synchroblend",
   ],
 };
 
@@ -166,6 +171,31 @@ export const ALL_APILUS_MODALITIES: ReadonlyArray<string> = [
   ...APILUS_MODALITIES_BY_MODE.thermo,
   ...APILUS_MODALITIES_BY_MODE.blend,
 ];
+
+// Display-only labels for Apilus modalities. The stored/canonical values
+// (the ApilusModality union and existing electrolysis_entries /
+// session_blocks rows) keep their original casing for backward
+// compatibility — this map only changes what practitioners see. Unknown or
+// legacy values fall through to the raw value so historical entries always
+// render. No data migration.
+export const APILUS_MODALITY_LABELS: Readonly<Record<string, string>> = {
+  Picoflash: "PicoFlash",
+  Meloflash: "MeloFlash",
+  Multiplex: "MultiPlex",
+  Synchro: "Synchro",
+  Microflash: "MicroFlash",
+  Thermoflash: "ThermoFlash",
+  Picoblend: "PicoBlend",
+  Omniblend: "OmniBlend",
+  Multiblend: "MultiBlend",
+  Evolublend: "Evolution Blend",
+  Synchroblend: "SynchroBlend",
+};
+
+export function apilusModalityLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  return APILUS_MODALITY_LABELS[value] ?? value;
+}
 
 export const PROBE_TYPES: ReadonlyArray<string> = [
   "Stainless steel regular",
