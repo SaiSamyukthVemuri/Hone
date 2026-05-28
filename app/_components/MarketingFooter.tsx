@@ -30,7 +30,7 @@ export function MarketingFooter() {
           className="text-[12px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
         >
-          © 2026 Sam Vemuri (operating as Hone).{" "}
+          © 2026 Hone.{" "}
           <Link href="/privacy" className="hover:underline">
             Privacy
           </Link>

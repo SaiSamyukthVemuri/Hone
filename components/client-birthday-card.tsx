@@ -176,7 +176,7 @@ export function ClientBirthdayCard({
                   defaultValue={md?.month ?? ""}
                   className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {MONTHS.map((m, i) => (
                     <option key={i + 1} value={i + 1}>
                       {m}
@@ -193,7 +193,7 @@ export function ClientBirthdayCard({
                   defaultValue={md?.day ?? ""}
                   className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {Array.from({ length: 31 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
                       {i + 1}

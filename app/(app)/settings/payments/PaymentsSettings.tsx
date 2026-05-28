@@ -59,7 +59,7 @@ function statusCopy(status: StripeStatusView): {
       return {
         headline: "Connected to Stripe",
         detail:
-          "Your studio is set up in Stripe. Public booking still doesn't ask clients for a card — we'll let you know before that changes.",
+          "Your studio is set up in Stripe. Public booking still doesn't ask clients for a card. We'll let you know before that changes.",
       };
     case "rejected":
       return {
@@ -148,7 +148,7 @@ export function PaymentsSettings({ status }: PaymentsSettingsProps) {
       {showTestBanner && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
           <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-            Test mode — not collecting payments from clients yet
+            Test mode: not collecting payments from clients yet
           </p>
           <p className="mt-1 text-sm text-amber-900/80 dark:text-amber-100/80">
             Stripe setup here is for testing. Public booking still does
@@ -292,7 +292,7 @@ export function PaymentsSettings({ status }: PaymentsSettingsProps) {
             <code className="font-mono">
               {status.onboardingCompletedAt
                 ? new Date(status.onboardingCompletedAt).toLocaleString()
-                : "—"}
+                : "-"}
             </code>
           </Field>
         </dl>

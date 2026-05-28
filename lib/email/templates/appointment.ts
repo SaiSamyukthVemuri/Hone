@@ -251,7 +251,7 @@ export function buildCancellationEmail(p: CancellationEmail): {
   const timeStr = localTimeString(p.startsAt, p.timezone);
   const subject = p.isClient
     ? `Appointment cancelled: ${p.serviceName} at ${p.studioName}`
-    : `Appointment cancelled: ${p.recipientName === p.studioName ? "" : `${p.recipientName} — `}${p.serviceName} on ${dayStr}`;
+    : `Appointment cancelled: ${p.recipientName === p.studioName ? "" : `${p.recipientName}, `}${p.serviceName} on ${dayStr}`;
   const safeName = escapeHtml(p.recipientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);

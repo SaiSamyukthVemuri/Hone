@@ -225,7 +225,7 @@ export function TreatmentPlansCard({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
             <span className="text-[11px] text-neutral-500">
-              Auto-filled from the area — edit it if you like.
+              Auto-filled from the area. Edit it if you like.
             </span>
           </label>
 
