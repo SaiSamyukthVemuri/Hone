@@ -67,6 +67,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     practitionersRes,
     pricingRes,
     blocksRes,
+    appointmentsRes,
+    treatmentPlansRes,
+    treatmentPlanStagesRes,
+    servicesRes,
+    allPractitionersRes,
   ] = await Promise.all([
     supabase
       .from("clients")
@@ -117,6 +122,49 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label",
       )
       .eq("studio_id", studio.id),
+    // Appointments (read-only). Studio-scoped. cancellation_token and the
+    // internal scheduling snapshots (buffer_minutes_snapshot,
+    // blocked_ends_at) are deliberately NOT selected — backup of human
+    // booking data only, never opaque tokens or trigger-managed mechanics.
+    supabase
+      .from("appointments")
+      .select(
+        "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
+      )
+      .eq("studio_id", studio.id)
+      .order("starts_at", { ascending: false }),
+    // Treatment plans (read-only). Studio-scoped. budget_notes /
+    // practitioner_notes live on this table and ARE plan data; private
+    // warnings + personal notes live on the separate client_personal_notes
+    // table and are never read here.
+    supabase
+      .from("treatment_plans")
+      .select(
+        "id, client_id, name, primary_area, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
+      )
+      .eq("studio_id", studio.id)
+      .order("created_at", { ascending: false }),
+    // Treatment plan stages (read-only). studio_id is denormalized on this
+    // child table (migration 0034), so a direct studio-scoped read is safe.
+    supabase
+      .from("treatment_plan_stages")
+      .select(
+        "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
+      )
+      .eq("studio_id", studio.id)
+      .order("plan_id", { ascending: true })
+      .order("sort_order", { ascending: true }),
+    // Name-resolution maps (read-only). All services and ALL practitioners
+    // (including inactive) so appointment/plan rows can show a readable
+    // name beside the stored ID even when the referenced row is inactive.
+    supabase
+      .from("services")
+      .select("id, name")
+      .eq("studio_id", studio.id),
+    supabase
+      .from("practitioners")
+      .select("id, display_name")
+      .eq("studio_id", studio.id),
   ]);
 
   for (const r of [
@@ -127,6 +175,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     practitionersRes,
     pricingRes,
     blocksRes,
+    appointmentsRes,
+    treatmentPlansRes,
+    treatmentPlanStagesRes,
+    servicesRes,
+    allPractitionersRes,
   ]) {
     if (r.error) {
       return {
@@ -355,12 +408,165 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // ---------------------------------------------------------------------
+  // Appointments + treatment plans + stages (export/backup readiness).
+  // Human-readable name fields are resolved from in-memory maps built from
+  // the studio-scoped reads above — no per-row (N+1) queries. A missing or
+  // deleted reference keeps the ID and leaves the name blank (never errors).
+  // ---------------------------------------------------------------------
+  const clientNameById = new Map<string, string>();
+  for (const c of (clientsRes.data ?? []) as { id: string; name: string }[]) {
+    clientNameById.set(c.id, c.name);
+  }
+  const practitionerNameById = new Map<string, string>();
+  for (const p of (allPractitionersRes.data ?? []) as {
+    id: string;
+    display_name: string;
+  }[]) {
+    practitionerNameById.set(p.id, p.display_name);
+  }
+  const serviceNameById = new Map<string, string>();
+  for (const s of (servicesRes.data ?? []) as { id: string; name: string }[]) {
+    serviceNameById.set(s.id, s.name);
+  }
+
+  type AppointmentExportRow = {
+    id: string;
+    client_id: string | null;
+    practitioner_id: string | null;
+    service_id: string | null;
+    [k: string]: unknown;
+  };
+  const appointmentRows = (
+    (appointmentsRes.data ?? []) as AppointmentExportRow[]
+  ).map((a) => ({
+    ...a,
+    client_name: a.client_id ? clientNameById.get(a.client_id) ?? null : null,
+    practitioner_name: a.practitioner_id
+      ? practitionerNameById.get(a.practitioner_id) ?? null
+      : null,
+    service_name: a.service_id
+      ? serviceNameById.get(a.service_id) ?? null
+      : null,
+  }));
+
+  zip.file(
+    "appointments.csv",
+    rowsToCsv(
+      [
+        "id",
+        "client_id",
+        "client_name",
+        "practitioner_id",
+        "practitioner_name",
+        "service_id",
+        "service_name",
+        "starts_at",
+        "ends_at",
+        "duration_minutes",
+        "status",
+        "notes",
+        "cancellation_reason",
+        "cancelled_at",
+        "cancelled_by",
+        "created_at",
+        "updated_at",
+      ],
+      appointmentRows,
+    ),
+  );
+
+  // Plan lookup for the stages file (plan_name + client_id/client_name).
+  type PlanExportRow = {
+    id: string;
+    client_id: string | null;
+    name: string;
+    [k: string]: unknown;
+  };
+  const plansById = new Map<string, PlanExportRow>();
+  for (const p of (treatmentPlansRes.data ?? []) as PlanExportRow[]) {
+    plansById.set(p.id, p);
+  }
+
+  const treatmentPlanRows = (
+    (treatmentPlansRes.data ?? []) as PlanExportRow[]
+  ).map((p) => ({
+    ...p,
+    client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+  }));
+
+  zip.file(
+    "treatment_plans.csv",
+    rowsToCsv(
+      [
+        "id",
+        "client_id",
+        "client_name",
+        "name",
+        "primary_area",
+        "status",
+        "suggested_visit_count",
+        "treatment_goal_minutes_override",
+        "budget_notes",
+        "practitioner_notes",
+        "created_by_practitioner_id",
+        "closed_by_practitioner_id",
+        "created_at",
+        "closed_at",
+      ],
+      treatmentPlanRows,
+    ),
+  );
+
+  type StageExportRow = {
+    id: string;
+    plan_id: string;
+    [k: string]: unknown;
+  };
+  const treatmentPlanStageRows = (
+    (treatmentPlanStagesRes.data ?? []) as StageExportRow[]
+  ).map((st) => {
+    const plan = plansById.get(st.plan_id);
+    const planClientId = plan?.client_id ?? null;
+    return {
+      ...st,
+      plan_name: plan?.name ?? null,
+      client_id: planClientId,
+      client_name: planClientId
+        ? clientNameById.get(planClientId) ?? null
+        : null,
+    };
+  });
+
+  zip.file(
+    "treatment_plan_stages.csv",
+    rowsToCsv(
+      [
+        "id",
+        "plan_id",
+        "plan_name",
+        "client_id",
+        "client_name",
+        "sort_order",
+        "name",
+        "how_often_unit",
+        "visit_length_minutes",
+        "stage_length_value",
+        "stage_length_unit",
+        "notes",
+        "created_at",
+        "updated_at",
+      ],
+      treatmentPlanStageRows,
+    ),
+  );
+
   const generatedAt = new Date().toISOString();
   const readme = `Hone Data Export
 Generated: ${generatedAt}
 Studio: ${studio.name}
 
-This export contains all client records, sessions, and entries for your studio.
+This export contains all client records, sessions, entries, appointments, and treatment plans for your studio.
 
 Files included:
 - clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
@@ -369,6 +575,9 @@ Files included:
 - laser_entries.csv: Every laser entry with zone, fluence, pulse width, treatment number, observations.
 - practitioners.csv: Active practitioners at your studio.
 - client_pricing.csv: Per-client custom pricing.
+- appointments.csv: One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.
+- treatment_plans.csv: One row per treatment plan with client, name, primary area, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
+- treatment_plan_stages.csv: Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.
 
 Your data is yours. This export can be opened in Excel, Numbers, Google Sheets, or any spreadsheet tool. If you ever leave Hone, your records leave with you.
 

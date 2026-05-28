@@ -89,6 +89,15 @@ export default async function DataSettingsPage() {
               <li>Laser entries</li>
               <li>Practitioners</li>
               <li>Per-client custom pricing</li>
+              <li>
+                Appointments — client, practitioner, service, start/end
+                times, status, and appointment notes
+              </li>
+              <li>
+                Treatment plans — primary area, status, estimated visits,
+                and plan notes
+              </li>
+              <li>Treatment plan schedule stages</li>
             </ul>
           </div>
 
@@ -98,8 +107,7 @@ export default async function DataSettingsPage() {
             </p>
             <p className="mt-1.5 max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               Private warnings and personal notes are intentionally excluded
-              from this general export. Calendar appointments and treatment
-              plans aren&rsquo;t part of this export yet.
+              from this general export.
             </p>
           </div>
 
