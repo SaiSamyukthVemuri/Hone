@@ -142,8 +142,11 @@ export function ElectrolysisEntryRow({
       }
     }
     const showTop = Boolean(label) || (!hideArea && Boolean(areaText)) || isOverride;
+    // Flattened: no bordered/gray wrapper. The readings sit directly inside
+    // the treatment-area card (the card itself is the only box), which
+    // removes the "section inside a section" nesting.
     return (
-      <div className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-50/60 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/40 md:flex-row md:items-start md:justify-between">
+      <div className="flex flex-col gap-1 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0 flex-1">
           {showTop && (
             <div className="flex flex-wrap items-baseline gap-2">
@@ -197,8 +200,11 @@ export function ElectrolysisEntryRow({
             </div>
           )}
           {entry.comments && (
-            <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-              {entry.comments}
+            <div className="mt-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+              <span className="text-xs font-medium text-neutral-500">
+                Notes:
+              </span>{" "}
+              <span className="whitespace-pre-wrap">{entry.comments}</span>
             </div>
           )}
           {!showTop &&

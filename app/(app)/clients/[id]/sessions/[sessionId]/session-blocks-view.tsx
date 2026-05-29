@@ -247,7 +247,16 @@ function BlockSection({
                 const hideArea =
                   flat && entryArea === block.primary_area;
                 return (
-                  <li key={e.id}>
+                  <li
+                    key={e.id}
+                    className={
+                      // Light divider only BETWEEN stacked passes; the single
+                      // (first) pass sits flush in the card with no rule.
+                      idx > 0
+                        ? "border-t border-neutral-100 pt-3 dark:border-neutral-800"
+                        : undefined
+                    }
+                  >
                     <ElectrolysisEntryRow
                       entry={e}
                       treatmentParams={params}
