@@ -18,25 +18,26 @@ type Plan = {
 const PLANS: ReadonlyArray<Plan> = [
   {
     name: "Solo",
-    price: "$25",
-    cadence: "/ month",
+    price: "Early access",
+    cadence: null,
     pitch: "For the single-practitioner studio.",
     features: [
       "Unlimited clients and sessions",
-      "Full charting for electrolysis and laser",
-      "Public booking page with your studio link",
-      "Calendar with services, availability, and blockouts",
-      "Automated booking confirmations and cancellations",
-      "Per-client pricing and packages",
-      "Export anytime",
+      "One-page electrolysis charting with structured probe picker",
+      "Blend, galvanic, and thermolysis readings, plus laser charting",
+      "Treatment plans, schedules, and progress tracking",
+      "Client memory with practitioner-only private warnings",
+      "Public booking, calendar, services, availability, and blockouts",
+      "Self-serve cancel and reschedule with email confirmations",
+      "Per-client pricing and data export any time",
     ],
     cta: { label: "Request access", href: "/#request-access" },
     emphasized: false,
   },
   {
     name: "Studio",
-    price: "$49",
-    cadence: "/ month",
+    price: "Early access",
+    cadence: null,
     pitch: "For studios with up to five practitioners.",
     features: [
       "All Solo features, plus:",
@@ -67,12 +68,12 @@ const PLANS: ReadonlyArray<Plan> = [
 
 const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
-    q: "Is there a free trial?",
-    a: "First month free for every plan. If it's not right for your clinic, cancel and you owe nothing.",
+    q: "What does early access cost?",
+    a: "Hone is in a controlled pilot and we're finalizing pricing with early practitioners. We'll share plan pricing when you request access, and there's no obligation to continue.",
   },
   {
-    q: "How does billing work?",
-    a: "Monthly, charged on the day you start. Stripe handles payments. No setup fees, no contracts, cancel anytime.",
+    q: "How will billing work?",
+    a: "We're still finalizing plans during early access. No setup fees, no contracts, and you can cancel anytime. We'll confirm billing details with you during onboarding.",
   },
   {
     q: "Does Hone include booking, or do I need a separate tool?",
@@ -120,18 +121,22 @@ function PricingHero() {
   return (
     <Reveal as="section" className="px-6 pb-12 pt-24 md:px-12 md:pb-16 md:pt-32 lg:px-16">
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Pricing</EyebrowCaption>
+        <EyebrowCaption>Early access pricing</EyebrowCaption>
         <h1
           className="font-[var(--font-fraunces)] mt-10 max-w-[800px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
           style={{ letterSpacing: "-0.045em" }}
         >
-          Honest pricing.
+          Pricing, set
           <br />
-          No seat creep.
+          with you.
         </h1>
         <p className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
-          Three plans. Charged per studio, not per click. Cancel anytime. Your
-          data is yours, always.
+          Hone is in a controlled pilot with electrologists, and we are
+          finalizing pricing with early practitioners. Plans are shown without
+          final numbers for now. Cancel anytime, and your data is always yours.
+        </p>
+        <p className="mt-5 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Early practitioners help shape pricing alongside the product.
         </p>
       </div>
     </Reveal>
@@ -230,8 +235,9 @@ function AllPlansInclude() {
         </p>
         <p className="mt-5 text-[18px] leading-[1.65] md:text-[21px]">
           Magic link sign in. iPad, laptop, and phone support. Booking,
-          calendar, and cancellation built in. Your data exportable any time.
-          No setup fees. No contracts.
+          calendar, charting, treatment plans, and self-serve cancel and
+          reschedule built in. Your data exportable any time. No setup fees.
+          No contracts.
         </p>
       </div>
     </Reveal>

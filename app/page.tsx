@@ -24,7 +24,12 @@ export default function HomePage() {
       <EditorialObservation />
       <HowItWorks />
       <CheatSheetPreview />
+      <OnePageCharting />
+      <PlansAndProgress />
+      <BookingAndCalendar />
+      <DataExportAndBackup />
       <BuiltForTheWork />
+      <TrustLine />
       <CaseForTryingIt />
       <MarketingFooter />
     </main>
@@ -61,7 +66,8 @@ function Hero() {
         >
           Type a name. See exactly what worked last time: settings, areas, what
           they tolerated, what to avoid. Log this session in under a minute.
-          Move on.
+          Booking, calendar, treatment plans, and charting, all in one place
+          built for electrolysis.
         </p>
 
         <div id="request-access" className="mt-[72px] max-w-[700px]">
@@ -97,6 +103,11 @@ function PracticeMemory() {
           thing every practitioner needs but no software has given them: a
           faithful, fast, structured memory of what you did with each client,
           across every session, for as long as you treat them.
+        </p>
+        <p className="mt-6 max-w-[680px] text-[18px] leading-[1.65] md:text-[21px]">
+          In practice that means electrolysis software for booking, treatment
+          plans, and clinical charting, built around that memory rather than
+          bolted on beside it.
         </p>
       </div>
     </Reveal>
@@ -165,7 +176,7 @@ const HOW_STEPS: ReadonlyArray<{
   {
     numeral: "03",
     title: "Move on",
-    body: "Saved. Treatment counts increment. Audit history grows. You're already with the next client.",
+    body: "Saved. Treatment plan progress updates, total treatment time recalculates, audit history grows. You're already with the next client.",
   },
   {
     numeral: "04",
@@ -269,7 +280,7 @@ function CheatSheetMockup() {
             Jane Doe
           </h3>
           <p className="mt-3 text-[14px]" style={{ color: PALETTE.muted }}>
-            she/her  ·  416 897 8711  ·  jane@example.com
+            she/her  ·  416 897 8711  ·  jane@example.com  ·  Birthday Apr 3
           </p>
         </div>
         <button
@@ -291,6 +302,13 @@ function CheatSheetMockup() {
       <SectionLabel>Allergies</SectionLabel>
       <p className="mt-3 text-[15px]">
         Nickel  ·  Topical anesthetic (lidocaine, benzocaine)
+      </p>
+
+      <Hairline className="my-10" />
+
+      <SectionLabel>Private warnings (practitioner-only)</SectionLabel>
+      <p className="mt-3 text-[15px]">
+        Tends to run about ten minutes late. Confirm the day before.
       </p>
 
       <Hairline className="my-10" />
@@ -363,7 +381,7 @@ function CheatSheetMockup() {
           className="not-italic font-medium text-[12px] uppercase align-middle ml-2"
           style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
         >
-          May 14 · Electrolysis · Sam
+          May 14 · Electrolysis · Maya
         </span>
       </h3>
 
@@ -431,52 +449,56 @@ function SkinRow({ label, value }: { label: string; value: string }) {
 
 const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
   {
-    title: "Areas as taps, not menus",
-    body: "Upper lip, chin, full face, Brazilian. Visible at a glance, one tap to select.",
+    title: "Designed for permanent hair removal",
+    body: "Electrolysis first, laser too. Probe sizes, pulse counts, modes, and treatment plans built around hair-by-hair work, not generic appointments.",
   },
   {
-    title: "Match your machine",
-    body: "Thermolysis, Blend, Galvanic, ordered the way your machine is. Probe sizes you actually use. Laser parameters that match what's on your screen.",
+    title: "One-page electrolysis charting",
+    body: "Treatment area, machine settings, probe, minutes, and the pass readings on a single screen. One save, no second form.",
   },
   {
-    title: "Pulse counts and probe lots",
-    body: "Track exactly what was used on whom. Audit-ready when the health unit asks.",
+    title: "Structured probe picker",
+    body: "Pick brand, material, piece type, shank, and size from a real catalog instead of retyping it. Consistent every session.",
   },
   {
-    title: "Copy from last session",
-    body: "Same client, same approach. Pre-fill, edit, save. Under five seconds.",
+    title: "Blend, galvanic, and thermolysis fields",
+    body: "Mode-aware readings: intensity and duration, galvanic mA and units of lye, pulse count, hairs treated. The numbers you actually record.",
+  },
+  {
+    title: "Treatment plans and schedules",
+    body: "Lay out the stages: how often, how long per visit, for how many weeks. Hone estimates the visit count from the schedule.",
+  },
+  {
+    title: "Total treatment time and progress",
+    body: "See the time logged against a plan and what's estimated to remain, so you and the client both know where things stand.",
+  },
+  {
+    title: "Client memory and private warnings",
+    body: "Allergies, skin notes, intake, and practitioner-only personal notes and private warnings that never go out in a client-facing export.",
+  },
+  {
+    title: "Birthday reminders",
+    body: "See whose birthday is coming up this month, surfaced on the dashboard. A small touch that clients remember.",
+  },
+  {
+    title: "Public booking and calendar",
+    body: "Share your studio link. Clients pick a service and a slot. Your calendar respects services, hours, breaks, and blockouts.",
+  },
+  {
+    title: "Self-serve cancel and reschedule",
+    body: "Every confirmation has a link to cancel or reschedule. Clients handle it themselves, you get notified, the slot reopens.",
+  },
+  {
+    title: "Data export and backup",
+    body: "Download a ZIP of clients, sessions, charting, appointments, and treatment plans any time. Your records are yours.",
   },
   {
     title: "Built for both modalities",
-    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number. One tool for studios that do both.",
-  },
-  {
-    title: "Multi-practitioner studios",
-    body: "Owner sees everything. Practitioners see the studio's clients and their own work.",
-  },
-  {
-    title: "Your data, your studio",
-    body: "Export anytime. Cancel anytime. Your client records are yours.",
+    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number.",
   },
   {
     title: "Works on what you have",
     body: "iPad in the treatment room. Laptop at the front desk. Phone for the solo practitioner. No app to install.",
-  },
-  {
-    title: "Book directly from your studio link",
-    body: "Clients book themselves. Share hone.care/book/your-studio. They pick a service, pick a time, get an email. You get the calendar entry.",
-  },
-  {
-    title: "Calendar that knows your hours",
-    body: "Set Tuesday 10 to 6 once. Override one Wednesday for a long day. Block out vacation. Slots respect everything, automatically.",
-  },
-  {
-    title: "Email confirmations that import to their calendar",
-    body: "Every booking sends a confirmation with a calendar file. Apple, Google, Outlook. They click once, it's in their calendar.",
-  },
-  {
-    title: "One-click cancellation",
-    body: "Every confirmation email has a cancel link. Clients can cancel themselves. You get a notification. The slot opens up.",
   },
 ];
 
@@ -566,6 +588,179 @@ function CaseForTryingIt() {
             request access at the top of this page or see pricing below.
           </p>
         </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/* One-page charting ────────────────────────────────────────────────────── */
+
+const CHARTING_FIELDS: ReadonlyArray<string> = [
+  "Treatment area",
+  "Machine frequency",
+  "Mode and modality",
+  "Structured probe",
+  "Minutes",
+  "Thermolysis / galvanic / blend readings",
+  "Pulse count",
+  "Hairs treated",
+  "Units of lye",
+  "Notes",
+];
+
+function OnePageCharting() {
+  return (
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>One-page charting</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Chart a full session
+          <br />
+          on one screen.
+        </h2>
+        <p className="mt-8 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Treatment area, machine frequency, mode and modality, probe, and
+          minutes, then the readings for the pass, captured on a single page.
+          One save. No second form opening after you start. The probe is a
+          structured picker, and the readings follow the mode: thermolysis,
+          galvanic, or blend.
+        </p>
+        <div className="mt-12 flex flex-wrap gap-2">
+          {CHARTING_FIELDS.map((field) => (
+            <Chip key={field}>{field}</Chip>
+          ))}
+        </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Treatment plans and progress ─────────────────────────────────────────── */
+
+const PLAN_FIELDS: ReadonlyArray<string> = [
+  "Treatment plans",
+  "Schedule stages",
+  "Estimated visits",
+  "Visit cadence",
+  "Actual logged time",
+  "Estimated remaining",
+  "Area linked to the plan",
+];
+
+function PlansAndProgress() {
+  return (
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Plans and progress</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          See where each client
+          <br />
+          is headed.
+        </h2>
+        <p className="mt-8 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Build a treatment plan from schedule stages: how often, how long per
+          visit, for how many weeks. Hone estimates the visits from the
+          schedule, tracks the time you have actually logged against the plan,
+          and shows what is estimated to remain. New sessions link to the plan
+          area automatically, so progress keeps itself current.
+        </p>
+        <div className="mt-12 flex flex-wrap gap-2">
+          {PLAN_FIELDS.map((field) => (
+            <Chip key={field}>{field}</Chip>
+          ))}
+        </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Booking and calendar ─────────────────────────────────────────────────── */
+
+function BookingAndCalendar() {
+  return (
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Booking and calendar</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Run your schedule
+          <br />
+          from one place.
+        </h2>
+        <p className="mt-8 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Share your studio booking link. Clients pick a service and a time,
+          get a confirmation with a calendar file, and can cancel or reschedule
+          themselves. Your calendar respects your services, hours, breaks, and
+          blockouts, so the slots offered are always slots you can actually
+          work.
+        </p>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Data export and backup ───────────────────────────────────────────────── */
+
+function DataExportAndBackup() {
+  return (
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Your data, exportable</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Download a backup
+          <br />
+          any time.
+        </h2>
+        <p className="mt-8 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Export a ZIP of your studio: clients, sessions, electrolysis and
+          laser charting, appointments, treatment plans, and schedule stages.
+          Personal notes and private warnings are intentionally left out of
+          this general export. If you ever leave, your records leave with you.
+        </p>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Trust line (measured) ────────────────────────────────────────────────── */
+
+const TRUST_POINTS: ReadonlyArray<string> = [
+  "Secure sign-in for every studio account.",
+  "The public booking page is rate-limited to curb abuse.",
+  "Personal notes and private warnings are practitioner-only and are left out of the general data export.",
+  "You can export your full studio data any time.",
+  "No card collection or payments unless you explicitly turn them on later.",
+];
+
+function TrustLine() {
+  return (
+    <Reveal as="section" className="px-6 py-32 md:px-12 md:py-48 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Handled with care</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Your data,
+          <br />
+          in plain terms.
+        </h2>
+        <ul className="mt-10 flex max-w-[680px] list-disc flex-col gap-3 pl-5 text-[16px] leading-[1.6]">
+          {TRUST_POINTS.map((point) => (
+            <li key={point}>{point}</li>
+          ))}
+        </ul>
       </div>
     </Reveal>
   );
