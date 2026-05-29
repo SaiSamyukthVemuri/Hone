@@ -449,6 +449,10 @@ function SkinRow({ label, value }: { label: string; value: string }) {
 
 const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
   {
+    title: "Designed for permanent hair removal",
+    body: "Electrolysis first, laser too. Probe sizes, pulse counts, modes, and treatment plans built around hair-by-hair work, not generic appointments.",
+  },
+  {
     title: "One-page electrolysis charting",
     body: "Treatment area, machine settings, probe, minutes, and the pass readings on a single screen. One save, no second form.",
   },
@@ -737,7 +741,6 @@ const TRUST_POINTS: ReadonlyArray<string> = [
   "Personal notes and private warnings are practitioner-only and are left out of the general data export.",
   "You can export your full studio data any time.",
   "No card collection or payments unless you explicitly turn them on later.",
-  "Your records are stored in Canada.",
 ];
 
 function TrustLine() {
@@ -749,9 +752,9 @@ function TrustLine() {
           className="font-[var(--font-fraunces)] mt-10 max-w-[820px] text-[40px] font-bold leading-[0.95] md:text-[56px]"
           style={{ letterSpacing: "-0.03em" }}
         >
-          Built to be trusted
+          Your data,
           <br />
-          with clinical work.
+          in plain terms.
         </h2>
         <ul className="mt-10 flex max-w-[680px] list-disc flex-col gap-3 pl-5 text-[16px] leading-[1.6]">
           {TRUST_POINTS.map((point) => (
