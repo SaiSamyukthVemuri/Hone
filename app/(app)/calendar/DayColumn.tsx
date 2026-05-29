@@ -406,6 +406,16 @@ export function DayColumn({
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
+        // Terminal (completed / no-show) appointments stay on the grid but
+        // read as past: muted opacity + a short status tag. Cancelled ones
+        // are filtered out upstream, so this only covers completed/no_show.
+        const terminal = a.status !== "confirmed";
+        const statusTag =
+          a.status === "completed"
+            ? "Done"
+            : a.status === "no_show"
+              ? "No-show"
+              : null;
         return (
           <Link
             key={a.id}
@@ -416,7 +426,7 @@ export function DayColumn({
                 ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
                 : `${clientName} · ${localTime} · ${a.duration_minutes}m`
             }
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${softCardClasses(a.practitioner?.color)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110`}
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${softCardClasses(a.practitioner?.color)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
               <>
@@ -425,12 +435,16 @@ export function DayColumn({
                   {localTime}
                   {serviceName ? ` · ${serviceName}` : ""}
                   {` · ${a.duration_minutes}m`}
+                  {statusTag ? ` · ${statusTag}` : ""}
                 </div>
               </>
             ) : (
               <div className="truncate font-medium">
                 {clientName}{" "}
-                <span className="opacity-60">· {localTime}</span>
+                <span className="opacity-60">
+                  · {localTime}
+                  {statusTag ? ` · ${statusTag}` : ""}
+                </span>
               </div>
             )}
           </Link>

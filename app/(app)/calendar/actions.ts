@@ -70,6 +70,13 @@ export async function bookAppointmentForClientAction(
   if (Number.isNaN(start.getTime())) {
     return { ok: false, error: "Invalid start time." };
   }
+  // Internal past-time guard: reject a start at or before now. Absolute UTC
+  // comparison (start is an ISO instant), so a future slot later today still
+  // books while an already-passed time is refused. Mirrors the public guard;
+  // the shared slot engine / public booking are not touched.
+  if (start.getTime() <= Date.now()) {
+    return { ok: false, error: "That time is in the past. Please choose a future time." };
+  }
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
 
   // Re-verify the slot is still available (race-safe). Use the

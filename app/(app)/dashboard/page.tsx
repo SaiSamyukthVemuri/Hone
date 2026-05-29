@@ -582,18 +582,15 @@ function EmptyDayState() {
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Use the quiet time to review the week or book an appointment.
       </p>
+      {/* Single CTA: the "Book appointment" primary action already lives in
+          the Appointments section header, so the empty state only offers the
+          calendar view to avoid a duplicate Book appointment button. */}
       <div className="flex flex-wrap gap-2">
         <Link
           href="/calendar"
           className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           View calendar
-        </Link>
-        <Link
-          href="/calendar"
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          Book appointment
         </Link>
       </div>
     </div>

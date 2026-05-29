@@ -239,8 +239,17 @@ export function QuickBookDrawer({
         return;
       }
       setError(null);
-      setSlots(r.slots);
-      const exact = r.slots.find((s) => s.startLabel === targetHint);
+      // Display-only past-time guard for the internal calendar: never offer a
+      // slot whose start instant is already in the past (today's earlier
+      // hours). Absolute UTC comparison on the ISO slot.start. The shared
+      // slot fetcher and public booking are untouched; the server action
+      // re-checks this on submit.
+      const nowMs = Date.now();
+      const futureSlots = r.slots.filter(
+        (s) => new Date(s.start).getTime() > nowMs,
+      );
+      setSlots(futureSlots);
+      const exact = futureSlots.find((s) => s.startLabel === targetHint);
       setPickedSlot(exact ?? null);
     });
     return () => {

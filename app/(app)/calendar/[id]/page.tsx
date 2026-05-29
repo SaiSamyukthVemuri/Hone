@@ -191,8 +191,8 @@ export default async function AppointmentDetailPage({
             Outcome
           </h2>
           <p className="text-xs text-neutral-500">
-            Mark complete once the appointment finished. Mark no-show only if
-            the client did not arrive (available after the end time).
+            Mark no-show only if the client did not arrive (available after the
+            end time).
           </p>
           <AppointmentLifecycleActions
             appointmentId={id}
