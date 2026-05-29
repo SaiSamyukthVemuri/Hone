@@ -23,12 +23,13 @@ const PLANS: ReadonlyArray<Plan> = [
     pitch: "For the single-practitioner studio.",
     features: [
       "Unlimited clients and sessions",
-      "Full charting for electrolysis and laser",
-      "Public booking page with your studio link",
-      "Calendar with services, availability, and blockouts",
-      "Automated booking confirmations and cancellations",
-      "Per-client pricing and packages",
-      "Export anytime",
+      "One-page electrolysis charting with structured probe picker",
+      "Blend, galvanic, and thermolysis readings, plus laser charting",
+      "Treatment plans, schedules, and progress tracking",
+      "Client memory with practitioner-only private warnings",
+      "Public booking, calendar, services, availability, and blockouts",
+      "Self-serve cancel and reschedule with email confirmations",
+      "Per-client pricing and data export any time",
     ],
     cta: { label: "Request access", href: "/#request-access" },
     emphasized: false,
@@ -230,8 +231,9 @@ function AllPlansInclude() {
         </p>
         <p className="mt-5 text-[18px] leading-[1.65] md:text-[21px]">
           Magic link sign in. iPad, laptop, and phone support. Booking,
-          calendar, and cancellation built in. Your data exportable any time.
-          No setup fees. No contracts.
+          calendar, charting, treatment plans, and self-serve cancel and
+          reschedule built in. Your data exportable any time. No setup fees.
+          No contracts.
         </p>
       </div>
     </Reveal>
