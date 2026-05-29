@@ -18,8 +18,8 @@ type Plan = {
 const PLANS: ReadonlyArray<Plan> = [
   {
     name: "Solo",
-    price: "$25",
-    cadence: "/ month",
+    price: "Early access",
+    cadence: null,
     pitch: "For the single-practitioner studio.",
     features: [
       "Unlimited clients and sessions",
@@ -36,8 +36,8 @@ const PLANS: ReadonlyArray<Plan> = [
   },
   {
     name: "Studio",
-    price: "$49",
-    cadence: "/ month",
+    price: "Early access",
+    cadence: null,
     pitch: "For studios with up to five practitioners.",
     features: [
       "All Solo features, plus:",
@@ -68,12 +68,12 @@ const PLANS: ReadonlyArray<Plan> = [
 
 const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
-    q: "Is there a free trial?",
-    a: "First month free for every plan. If it's not right for your clinic, cancel and you owe nothing.",
+    q: "What does early access cost?",
+    a: "Hone is in a controlled pilot and we're finalizing pricing with early practitioners. We'll share plan pricing when you request access, and there's no obligation to continue.",
   },
   {
-    q: "How does billing work?",
-    a: "Monthly, charged on the day you start. Stripe handles payments. No setup fees, no contracts, cancel anytime.",
+    q: "How will billing work?",
+    a: "We're still finalizing plans during early access. No setup fees, no contracts, and you can cancel anytime. We'll confirm billing details with you during onboarding.",
   },
   {
     q: "Does Hone include booking, or do I need a separate tool?",
@@ -121,18 +121,22 @@ function PricingHero() {
   return (
     <Reveal as="section" className="px-6 pb-12 pt-24 md:px-12 md:pb-16 md:pt-32 lg:px-16">
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Pricing</EyebrowCaption>
+        <EyebrowCaption>Early access pricing</EyebrowCaption>
         <h1
           className="font-[var(--font-fraunces)] mt-10 max-w-[800px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
           style={{ letterSpacing: "-0.045em" }}
         >
-          Honest pricing.
+          Pricing, set
           <br />
-          No seat creep.
+          with you.
         </h1>
         <p className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
-          Three plans. Charged per studio, not per click. Cancel anytime. Your
-          data is yours, always.
+          Hone is in a controlled pilot with electrologists, and we are
+          finalizing pricing with early practitioners. Plans are shown without
+          final numbers for now. Cancel anytime, and your data is always yours.
+        </p>
+        <p className="mt-5 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
+          Early practitioners help shape pricing alongside the product.
         </p>
       </div>
     </Reveal>
