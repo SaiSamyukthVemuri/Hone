@@ -140,7 +140,12 @@ export default async function CalendarPage({
   // Group appointments by their local date in the studio timezone.
   const byDate = new Map<string, AppointmentWithPractitionerColor[]>();
   for (const a of appointments) {
-    if (a.status !== "confirmed") continue;
+    // Show confirmed, completed, and no-show appointments on the grid.
+    // Only cancelled appointments are hidden (their slot is freed). Previously
+    // every non-confirmed status was dropped, which made completed and
+    // no-show appointments disappear from the calendar. Display-only: slot
+    // availability still gates on confirmed via the booking engine.
+    if (a.status === "cancelled") continue;
     const localDate = localDateString(new Date(a.starts_at), studio.timezone);
     const arr = byDate.get(localDate) ?? [];
     arr.push(a);

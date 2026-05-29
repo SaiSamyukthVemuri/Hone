@@ -4,17 +4,19 @@
 //
 // Mount this component on the appointment detail / drawer surface so a
 // practitioner can:
-//   * Mark complete — only available after the appointment end time.
 //   * Mark no-show — only available after the appointment end time,
 //                    AND requires an explicit confirmation step before
 //                    invoking the server action.
 //
-// Both actions route through SECURITY DEFINER RPCs
-// (`public.mark_appointment_complete` from migration 0032 and
-// `public.mark_appointment_no_show` from migration 0033) via the
-// server actions `markAppointmentCompleteAction` /
-// `markAppointmentNoShowAction` in `./actions.ts`. Terminal-state
-// appointments do not present any functional action.
+// Manual "Mark complete" was removed from the UI per practitioner feedback
+// (Chloe did not want to mark each appointment complete by hand). The
+// completion action and its RPC still exist server-side
+// (`markAppointmentCompleteAction` / `public.mark_appointment_complete`,
+// migration 0032) for the data model and any future automation; this
+// component just no longer surfaces a button for it. No-show routes through
+// the SECURITY DEFINER RPC `public.mark_appointment_no_show` (migration 0033)
+// via `markAppointmentNoShowAction`. Terminal-state appointments present no
+// functional action.
 //
 // On success, the component calls router.refresh() so the appointment
 // detail page re-fetches and reflects the new terminal status. The
@@ -23,10 +25,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  markAppointmentCompleteAction,
-  markAppointmentNoShowAction,
-} from "./actions";
+import { markAppointmentNoShowAction } from "./actions";
 
 export type AppointmentLifecycleActionsProps = {
   appointmentId: string;
@@ -77,24 +76,6 @@ export function AppointmentLifecycleActions({
 
   const hasEnded = Number.isFinite(endsAtMs) && endsAtMs <= nowTick;
 
-  function runComplete() {
-    setError(null);
-    setHint(null);
-    const fd = new FormData();
-    fd.set("appointment_id", appointmentId);
-    startTransition(async () => {
-      const res = await markAppointmentCompleteAction(fd);
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      setHint("Marked complete");
-      // Refresh so the detail page's server-fetched status reflects
-      // the new terminal state on the same client navigation.
-      router.refresh();
-    });
-  }
-
   function runNoShow() {
     setError(null);
     setHint(null);
@@ -126,19 +107,6 @@ export function AppointmentLifecycleActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={pending || !hasEnded}
-          onClick={runComplete}
-          title={
-            hasEnded
-              ? "Mark this appointment complete."
-              : "Available after the appointment end time."
-          }
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-        >
-          Mark complete
-        </button>
         <button
           type="button"
           disabled={pending || !hasEnded}
