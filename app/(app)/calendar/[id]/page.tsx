@@ -12,6 +12,10 @@ import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
+import {
+  appointmentDisplayStatus,
+  type AppointmentDisplayStatus,
+} from "../appointment-display-status";
 import type {
   Appointment,
   Client,
@@ -85,6 +89,11 @@ export default async function AppointmentDetailPage({
     && Number.isFinite(startsAtMs)
     && startsAtMs > Date.now();
 
+  // Display-derived status (DB row unchanged). A past confirmed appointment
+  // reads as "Done"; the stored status stays confirmed so Mark no-show stays
+  // available. Computed at render time; no timer.
+  const displayStatus = appointmentDisplayStatus(data.status, data.ends_at);
+
   // Briefing reads — every additional fetch below is read-only,
   // scoped to the authenticated practitioner's studio via RLS, and
   // already used elsewhere in the app. No new RPCs, no mutations.
@@ -155,7 +164,7 @@ export default async function AppointmentDetailPage({
         startsAt={data.starts_at}
         durationMinutes={data.duration_minutes}
         practitioner={data.practitioner}
-        status={typedStatus}
+        displayStatus={displayStatus}
       />
 
       <PinnedNotesReadonly notes={pinnedNotes} />
@@ -191,8 +200,9 @@ export default async function AppointmentDetailPage({
             Outcome
           </h2>
           <p className="text-xs text-neutral-500">
-            Mark no-show only if the client did not arrive (available after the
-            end time).
+            {displayStatus === "done"
+              ? "This appointment's time has passed, so it shows as Done. Its status stays confirmed, so mark no-show if the client did not arrive."
+              : "Mark no-show only if the client did not arrive (available after the end time)."}
           </p>
           <AppointmentLifecycleActions
             appointmentId={id}
@@ -292,17 +302,17 @@ function StatusHeader({
   startsAt,
   durationMinutes,
   practitioner,
-  status,
+  displayStatus,
 }: {
   serviceName: string;
   startsAt: string;
   durationMinutes: number;
   practitioner: Pick<Practitioner, "id" | "display_name" | "color"> | null;
-  status: "confirmed" | "completed" | "cancelled" | "no_show";
+  displayStatus: AppointmentDisplayStatus;
 }) {
   return (
     <header className="flex flex-col gap-2">
-      <StatusPill status={status} />
+      <StatusPill status={displayStatus} />
       <h1 className="text-3xl font-semibold tracking-tight">{serviceName}</h1>
       <p className="text-sm text-neutral-500">
         <FormattedDateTime iso={startsAt} /> · {durationMinutes} min
@@ -312,16 +322,22 @@ function StatusHeader({
   );
 }
 
-function StatusPill({
-  status,
-}: {
-  status: "confirmed" | "completed" | "cancelled" | "no_show";
-}) {
-  const variant: Record<typeof status, { label: string; classes: string }> = {
-    confirmed: {
+function StatusPill({ status }: { status: AppointmentDisplayStatus }) {
+  const variant: Record<
+    AppointmentDisplayStatus,
+    { label: string; classes: string }
+  > = {
+    upcoming: {
       label: "Confirmed",
       classes:
         "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200",
+    },
+    // Display-derived: a past confirmed appointment. Distinct from DB
+    // "Completed" (neutral) so the two never read as the same thing.
+    done: {
+      label: "Done",
+      classes:
+        "bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200",
     },
     completed: {
       label: "Completed",

@@ -20,6 +20,7 @@ import type {
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import { localTimeString } from "@/lib/booking/tz";
+import { appointmentDisplayStatus } from "./appointment-display-status";
 import {
   QuickBookDrawer,
   type QuickBookClient,
@@ -406,16 +407,21 @@ export function DayColumn({
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
-        // Terminal (completed / no-show) appointments stay on the grid but
-        // read as past: muted opacity + a short status tag. Cancelled ones
-        // are filtered out upstream, so this only covers completed/no_show.
-        const terminal = a.status !== "confirmed";
+        // Display-derived status (DB row unchanged). A past confirmed
+        // appointment reads as "Done" (muted), a DB-completed row as
+        // "Completed", a no-show as "No-show". Upcoming confirmed stays
+        // full-strength with no tag. Cancelled is filtered out upstream.
+        // Computed at render time; no timer.
+        const ds = appointmentDisplayStatus(a.status, a.ends_at);
+        const terminal = ds !== "upcoming";
         const statusTag =
-          a.status === "completed"
+          ds === "done"
             ? "Done"
-            : a.status === "no_show"
-              ? "No-show"
-              : null;
+            : ds === "completed"
+              ? "Completed"
+              : ds === "no_show"
+                ? "No-show"
+                : null;
         return (
           <Link
             key={a.id}
