@@ -1,16 +1,14 @@
 import { MARKETING_PALETTE } from "./marketingNav";
 
-// Caption with a leading 32px x 1px hairline bar. CSS uppercases the text,
-// so pass title-case strings.
+// Uppercase, letter-spaced caption label. CSS uppercases the text, so pass
+// title-case strings.
 export function EyebrowCaption({ children }: { children: React.ReactNode }) {
   return (
-    <p className="flex items-center text-[12px] font-medium uppercase">
-      <span
-        aria-hidden="true"
-        className="mr-4 inline-block h-px w-8"
-        style={{ backgroundColor: MARKETING_PALETTE.ink }}
-      />
-      <span style={{ letterSpacing: "0.2em" }}>{children}</span>
+    <p
+      className="text-[12px] font-medium uppercase"
+      style={{ letterSpacing: "0.2em" }}
+    >
+      {children}
     </p>
   );
 }
