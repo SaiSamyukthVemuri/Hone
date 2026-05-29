@@ -7,6 +7,7 @@ import type {
   TreatmentPlanStageHowOftenUnit,
   TreatmentPlanStageLengthUnit,
 } from "@/lib/types/database";
+import { DEFAULT_PLAN_STAGES } from "@/lib/treatment-plans/stage-defaults";
 
 const MAX_NAME = 100;
 const MAX_VISITS = 200;
@@ -91,16 +92,54 @@ export async function createTreatmentPlanAction(
   if (clientErr) return { ok: false, error: clientErr.message };
   if (!client) return { ok: false, error: "Client not found." };
 
-  const { error } = await supabase.from("treatment_plans").insert({
-    client_id: clientId,
+  const { data: createdPlan, error } = await supabase
+    .from("treatment_plans")
+    .insert({
+      client_id: clientId,
+      studio_id: studio.id,
+      name,
+      suggested_visit_count: suggested,
+      status: "active",
+      created_by_practitioner_id: practitioner.id,
+      primary_area: primaryArea,
+    })
+    .select("id")
+    .single();
+  if (error || !createdPlan) {
+    return {
+      ok: false,
+      error: `Failed to create plan: ${error?.message ?? "unknown error"}`,
+    };
+  }
+
+  // Seed the fixed clinical stages every new plan starts with: Clearing,
+  // Control, Maintenance (sort_order 1/2/3), with generic, fully-editable
+  // defaults. The schedule editor renders these as locked-label cards. The
+  // child table's BEFORE trigger derives studio_id from the parent plan; we
+  // pass it explicitly to match the existing stage-insert pattern.
+  const stageRows = DEFAULT_PLAN_STAGES.map((s, i) => ({
+    plan_id: createdPlan.id,
     studio_id: studio.id,
-    name,
-    suggested_visit_count: suggested,
-    status: "active",
-    created_by_practitioner_id: practitioner.id,
-    primary_area: primaryArea,
-  });
-  if (error) return { ok: false, error: `Failed to create plan: ${error.message}` };
+    sort_order: i + 1,
+    name: s.name,
+    how_often_unit: s.howOftenUnit,
+    visit_length_minutes: s.visitLengthMinutes,
+    stage_length_value: s.stageLengthValue,
+    stage_length_unit: s.stageLengthUnit,
+    notes: null,
+  }));
+  const { error: stagesErr } = await supabase
+    .from("treatment_plan_stages")
+    .insert(stageRows);
+  if (stagesErr) {
+    // Best-effort cleanup so a stage-insert failure doesn't leave a confusing
+    // stageless plan behind. Same user-scoped client + RLS; no admin/RPC.
+    await supabase.from("treatment_plans").delete().eq("id", createdPlan.id);
+    return {
+      ok: false,
+      error: `Failed to set up plan stages: ${stagesErr.message}`,
+    };
+  }
 
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };

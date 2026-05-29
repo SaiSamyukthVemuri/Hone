@@ -33,6 +33,10 @@ import {
   estimatePlanTotalVisits,
 } from "@/lib/treatment-time/plans";
 import { formatMinutes } from "@/lib/treatment-time/format";
+import {
+  descriptionForStage,
+  isFixedStageSet,
+} from "@/lib/treatment-plans/stage-defaults";
 
 export type TreatmentScheduleAction = (
   formData: FormData,
@@ -116,6 +120,12 @@ export function TreatmentScheduleEditor({
   const totalVisits = estimatePlanTotalVisits(stages);
   const totalMinutes = estimatePlanTotalMinutes(stages);
 
+  // Fixed-stage mode: a plan whose stages are exactly Clearing / Control /
+  // Maintenance in order (new plans). Names are read-only and there is no
+  // add / remove / reorder. Legacy plans (zero or custom stages) keep the
+  // free-form editor below.
+  const fixedMode = isFixedStageSet(stages);
+
   return (
     <div className="flex flex-col gap-3 border-t border-neutral-200 pt-3 dark:border-neutral-800">
       <div className="flex items-baseline justify-between gap-2">
@@ -156,6 +166,7 @@ export function TreatmentScheduleEditor({
                   planId={planId}
                   clientId={clientId}
                   stage={stage}
+                  lockName={fixedMode}
                   action={updateStageAction}
                   onDone={() => setOpenMode({ kind: "closed" })}
                   onCancel={() => setOpenMode({ kind: "closed" })}
@@ -165,6 +176,7 @@ export function TreatmentScheduleEditor({
                   index={index}
                   stage={stage}
                   isClosed={isClosed}
+                  fixedMode={fixedMode}
                   planId={planId}
                   clientId={clientId}
                   deleteAction={deleteStageAction}
@@ -176,7 +188,9 @@ export function TreatmentScheduleEditor({
         </ol>
       )}
 
-      {!isClosed && openMode.kind === "add" && (
+      {/* Add stage / add form are hidden in fixed-stage mode: the three
+          clinical stages are not user-managed. Legacy plans keep them. */}
+      {!isClosed && !fixedMode && openMode.kind === "add" && (
         <StageForm
           mode="create"
           planId={planId}
@@ -188,15 +202,18 @@ export function TreatmentScheduleEditor({
         />
       )}
 
-      {!isClosed && openMode.kind !== "add" && openMode.kind !== "edit" && (
-        <button
-          type="button"
-          onClick={() => setOpenMode({ kind: "add" })}
-          className="self-start rounded-md border border-dashed border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-        >
-          + Add stage
-        </button>
-      )}
+      {!isClosed &&
+        !fixedMode &&
+        openMode.kind !== "add" &&
+        openMode.kind !== "edit" && (
+          <button
+            type="button"
+            onClick={() => setOpenMode({ kind: "add" })}
+            className="self-start rounded-md border border-dashed border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            + Add stage
+          </button>
+        )}
     </div>
   );
 }
@@ -207,6 +224,7 @@ function StageRow({
   index,
   stage,
   isClosed,
+  fixedMode,
   planId,
   clientId,
   deleteAction,
@@ -215,6 +233,7 @@ function StageRow({
   index: number;
   stage: TreatmentPlanStage;
   isClosed: boolean;
+  fixedMode: boolean;
   planId: string;
   clientId: string;
   deleteAction: TreatmentScheduleAction;
@@ -260,17 +279,26 @@ function StageRow({
             >
               Edit
             </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={pending}
-              className="rounded px-1.5 py-0.5 text-neutral-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:hover:bg-red-950 dark:hover:text-red-300"
-            >
-              Remove
-            </button>
+            {/* No Remove in fixed-stage mode: the three clinical stages are
+                not user-removable. Legacy plans keep Remove. */}
+            {!fixedMode && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={pending}
+                className="rounded px-1.5 py-0.5 text-neutral-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:hover:bg-red-950 dark:hover:text-red-300"
+              >
+                Remove
+              </button>
+            )}
           </div>
         )}
       </div>
+      {fixedMode && descriptionForStage(stage.name) && (
+        <p className="text-[11px] text-neutral-500">
+          {descriptionForStage(stage.name)}
+        </p>
+      )}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[12px] text-neutral-600 dark:text-neutral-400">
         <div>
           <dt className="inline text-neutral-500">How often: </dt>
@@ -315,6 +343,7 @@ function StageForm({
   planId,
   clientId,
   stage,
+  lockName = false,
   action,
   onDone,
   onCancel,
@@ -323,6 +352,10 @@ function StageForm({
   planId: string;
   clientId: string;
   stage: TreatmentPlanStage | null;
+  // Fixed-stage mode: the stage name is a read-only clinical label. The name
+  // input + presets are hidden; the existing canonical name is still
+  // submitted unchanged, so the server action is untouched.
+  lockName?: boolean;
   action: TreatmentScheduleAction;
   onDone: () => void;
   onCancel: () => void;
@@ -374,40 +407,55 @@ function StageForm({
       <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
         {mode === "create" ? "Add stage" : "Edit stage"}
       </p>
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Stage name (optional)
-        </span>
-        {/* Electrolysis-language presets. Clicking fills the existing name
-            field; free typing still works and no preset is required. The
-            FormData `name` field and the server action are unchanged. */}
-        <div className="flex flex-wrap gap-1.5">
-          {["Clearing", "Control", "Maintenance"].map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => setName(preset)}
-              aria-pressed={name.trim() === preset}
-              className={
-                "rounded-full border px-2.5 py-1 text-xs " +
-                (name.trim() === preset
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
-              }
-            >
-              {preset}
-            </button>
-          ))}
+      {lockName ? (
+        // Fixed-stage mode: name is a read-only clinical label. `name` state
+        // keeps the stage's canonical name and is still submitted unchanged.
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            {name || stage?.name}
+          </span>
+          {descriptionForStage(stage?.name ?? null) && (
+            <span className="text-[11px] text-neutral-500">
+              {descriptionForStage(stage?.name ?? null)}
+            </span>
+          )}
         </div>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Clearing"
-          maxLength={80}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-      </label>
+      ) : (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+            Stage name (optional)
+          </span>
+          {/* Electrolysis-language presets. Clicking fills the existing name
+              field; free typing still works and no preset is required. The
+              FormData `name` field and the server action are unchanged. */}
+          <div className="flex flex-wrap gap-1.5">
+            {["Clearing", "Control", "Maintenance"].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setName(preset)}
+                aria-pressed={name.trim() === preset}
+                className={
+                  "rounded-full border px-2.5 py-1 text-xs " +
+                  (name.trim() === preset
+                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
+                }
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Clearing"
+            maxLength={80}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+        </label>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
