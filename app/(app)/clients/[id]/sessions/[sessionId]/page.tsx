@@ -91,6 +91,20 @@ export default async function SessionDetailPage({
       : Promise.resolve(null),
   ]);
 
+  // UI defaulting (NOT attachment): the new-treatment-area picker is seeded
+  // from a plan's structured primary_area. Prefer the attached plan; if the
+  // session isn't attached — auto-attach only fires at session creation, and
+  // only when the client has exactly one active electrolysis plan
+  // (app/(app)/clients/[id]/sessions/new/actions.ts) — fall back to the
+  // client's single active plan's primary_area. This is a starting value
+  // only: fully editable, never forced, and it does NOT attach the session,
+  // change charting, or mutate any plan/saved data.
+  const defaultPrimaryArea: string | null =
+    attachedPlan?.primary_area ??
+    (activePlansForClient.length === 1
+      ? (activePlansForClient[0]?.primary_area ?? null)
+      : null);
+
   // Running total: only shown for electrolysis sessions (the modality the
   // treatment-time system tracks). Laser sessions skip the line.
   const runningTotal =
@@ -190,10 +204,10 @@ export default async function SessionDetailPage({
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
-          // UI defaulting only: seed a NEW treatment area with the attached
-          // plan's structured area (if any). Never overrides practitioner
-          // choice or mutates plan/saved data.
-          defaultPrimaryArea={attachedPlan?.primary_area ?? null}
+          // UI defaulting only: seed a NEW treatment area from the attached
+          // plan, or the client's single active plan when unattached (see
+          // above). Never overrides practitioner choice or mutates data.
+          defaultPrimaryArea={defaultPrimaryArea}
         />
       ) : (
         <>
