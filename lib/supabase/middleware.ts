@@ -40,6 +40,14 @@ export async function updateSession(request: NextRequest) {
     pathname === "/demo" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // Metadata image routes (Next file conventions: opengraph-image, icon,
+    // apple-icon). Social scrapers and browsers fetch these while logged out;
+    // they are generated, public, branded images with no sensitive data, so
+    // the middleware must not redirect them to /login (or social/OG cards and
+    // the favicon break for anonymous visitors).
+    pathname === "/opengraph-image" ||
+    pathname === "/icon" ||
+    pathname === "/apple-icon" ||
     pathname.startsWith("/book/") ||
     pathname.startsWith("/cancel/") ||
     // Token-authenticated public flows: clients click links from email
