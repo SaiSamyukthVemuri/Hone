@@ -7,6 +7,11 @@ import {
   Hairline,
 } from "./_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
+import {
+  ChartingPreview,
+  PlanProgressPreview,
+  CalendarPreview,
+} from "./_components/ProductPreview";
 
 export default function HomePage() {
   return (
@@ -240,6 +245,9 @@ function CheatSheetPreview() {
         >
           <CheatSheetMockup />
         </div>
+        <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
+          Product preview with demo data, not a real client.
+        </p>
       </div>
     </Reveal>
   );
@@ -261,10 +269,10 @@ function CheatSheetMockup() {
             className="font-[var(--font-fraunces)] text-[36px] font-bold leading-[0.95]"
             style={{ letterSpacing: "-0.025em" }}
           >
-            Jane Doe
+            Demo Client Alpha
           </h3>
           <p className="mt-3 text-[14px]" style={{ color: PALETTE.muted }}>
-            she/her  ·  416 897 8711  ·  jane@example.com  ·  Birthday Apr 3
+            she/her  ·  Birthday Apr 3
           </p>
         </div>
         <button
@@ -291,8 +299,8 @@ function CheatSheetMockup() {
       <Hairline className="my-10" />
 
       <SectionLabel>Private warnings (practitioner-only)</SectionLabel>
-      <p className="mt-3 text-[15px]">
-        Tends to run about ten minutes late. Confirm the day before.
+      <p className="mt-3 text-[15px]" style={{ color: PALETTE.muted }}>
+        Practitioner-only. Hidden on the public site.
       </p>
 
       <Hairline className="my-10" />
@@ -354,7 +362,7 @@ function CheatSheetMockup() {
 
       <SectionLabel>Emergency contact</SectionLabel>
       <p className="mt-3 text-[15px]">
-        Alex Doe (sister)  ·  416 555 0192
+        Demo Contact
       </p>
 
       <Hairline className="my-10" />
@@ -365,20 +373,20 @@ function CheatSheetMockup() {
           className="not-italic font-medium text-[12px] uppercase align-middle ml-2"
           style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
         >
-          May 14 · Electrolysis · Maya
+          Electrolysis · Demo Electrologist
         </span>
       </h3>
 
       <div className="mt-5">
-        <p className="text-[18px] font-medium">Chin · Upper lip</p>
+        <p className="text-[18px] font-medium">Upper lip</p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          Thermolysis  ·  Microflash  ·  13.56 MHz  ·  Stainless steel regular  ·  F3
+          Thermolysis  ·  MeloFlash  ·  27.12 MHz  ·  Ballet · Gold · One-piece · F4
         </p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          Pulse count 2  ·  Intensity 40  ·  Duration 0.08s  ·  15 hairs treated
+          120 hairs treated
         </p>
         <p className="font-[var(--font-fraunces)] mt-3 text-[16px] italic">
-          Dehydrated follicles, hyperpigmentation. Client tolerated well.
+          Demo note only.
         </p>
       </div>
     </div>
@@ -498,6 +506,20 @@ function InsideHone() {
               </ul>
             </div>
           ))}
+        </div>
+
+        {/* Coded product previews (illustrations with demo data, not
+            screenshots). One per pillar; honest label on each card. */}
+        <p
+          className="mt-12 text-[11px] font-medium uppercase"
+          style={{ letterSpacing: "0.18em", color: PALETTE.muted }}
+        >
+          A glimpse inside Hone · product preview, demo data
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <ChartingPreview />
+          <PlanProgressPreview />
+          <CalendarPreview />
         </div>
       </div>
     </Reveal>
