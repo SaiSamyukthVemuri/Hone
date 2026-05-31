@@ -35,6 +35,20 @@ type Confirmation = {
 // if the date is not in the current year). Pure client-side formatting; no timezone
 // conversion since the input is already a studio-local date and we construct a Date
 // from explicit year/month/day so the runtime's local timezone offset does not shift it.
+// Merge the optional "areas wanted treated" answer with the catch-all
+// "anything else" notes into the single appointments.notes column the
+// server already accepts. Both prefixes are labeled so the practitioner
+// can see which line came from which field in the saved note. Either
+// side may be blank.
+function combineAreasAndNotes(areas: string, notes: string): string {
+  const trimmedAreas = areas.trim();
+  const trimmedNotes = notes.trim();
+  const parts: string[] = [];
+  if (trimmedAreas) parts.push(`Areas: ${trimmedAreas}`);
+  if (trimmedNotes) parts.push(`Notes: ${trimmedNotes}`);
+  return parts.join("\n");
+}
+
 // Add one calendar day to a YYYY-MM-DD studio-local date string. Used to
 // advance the next-available scan past the date the user already saw as
 // empty. Stays in local-date space (no UTC conversion) so DST has no
@@ -86,6 +100,12 @@ export function PublicBookForm({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  // Separate fields client-side; combined into the single `notes` form
+  // value at submit time. `areasWanted` answers "what areas are you
+  // wanting treated?", primarily for consultation context. `notes` is
+  // the catch-all "anything else?" line. Both stored in
+  // appointments.notes (no schema change).
+  const [areasWanted, setAreasWanted] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Confirmation | null>(null);
@@ -183,7 +203,7 @@ export function PublicBookForm({
     fd.set("name", name);
     fd.set("email", email);
     fd.set("phone", phone);
-    fd.set("notes", notes);
+    fd.set("notes", combineAreasAndNotes(areasWanted, notes));
     startSubmitting(async () => {
       const r = await publicBookAppointmentAction(fd);
       if (!r.ok) {
@@ -226,7 +246,7 @@ export function PublicBookForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-8">
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Service">
+        <Field label="Service" required>
           <select
             value={serviceId}
             onChange={(e) => onService(e.target.value)}
@@ -254,7 +274,7 @@ export function PublicBookForm({
             )}
           </select>
         </Field>
-        <Field label="Date">
+        <Field label="Date" required>
           <input
             type="date"
             value={date}
@@ -272,14 +292,14 @@ export function PublicBookForm({
           className="text-[12px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
         >
-          Available times
+          {`Available times for ${formatLocalDate(date)}`}
         </span>
         {loadingSlots ? (
           <p className="text-sm text-[#6B6B6B]">Loading slots…</p>
         ) : slots.length === 0 ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-[#6B6B6B]">
-              No availability on this date.
+              {`No availability on ${formatLocalDate(date)}.`}
             </p>
             {noneInHorizon ? (
               <p className="text-sm text-[#6B6B6B]">
@@ -335,7 +355,7 @@ export function PublicBookForm({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Your name">
+        <Field label="Your name" required>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -344,7 +364,7 @@ export function PublicBookForm({
             style={{ borderBottom: "1px solid #0A0A0A" }}
           />
         </Field>
-        <Field label="Email">
+        <Field label="Email" required>
           <input
             type="email"
             value={email}
@@ -356,13 +376,26 @@ export function PublicBookForm({
         </Field>
       </div>
 
-      <Field label="Phone">
+      <Field label="Phone" required>
         <input
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           required
           className="w-full bg-transparent py-2 text-[16px] outline-none"
+          style={{ borderBottom: "1px solid #0A0A0A" }}
+        />
+      </Field>
+
+      <Field
+        label="What areas are you wanting treated?"
+        helperText="For example: upper lip, chin, underarms, bikini line."
+      >
+        <textarea
+          rows={2}
+          value={areasWanted}
+          onChange={(e) => setAreasWanted(e.target.value)}
+          className="w-full resize-none bg-transparent py-2 text-[16px] outline-none"
           style={{ borderBottom: "1px solid #0A0A0A" }}
         />
       </Field>
@@ -398,7 +431,17 @@ export function PublicBookForm({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  helperText,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  helperText?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="flex flex-col gap-2">
       <span
@@ -406,8 +449,20 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
         style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
       >
         {label}
+        {required && (
+          <span
+            aria-hidden
+            className="ml-1 text-red-600 normal-case"
+            style={{ letterSpacing: "0" }}
+          >
+            *
+          </span>
+        )}
       </span>
       {children}
+      {helperText && (
+        <span className="text-xs text-[#6B6B6B]">{helperText}</span>
+      )}
     </label>
   );
 }

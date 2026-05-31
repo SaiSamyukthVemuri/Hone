@@ -73,6 +73,21 @@ export function localTimeString(d: Date, tz: string): string {
   return f.format(d);
 }
 
+// 12-hour public-facing time formatter (e.g. "9:00 AM" / "1:30 PM").
+// Kept separate from localTimeString (which the internal practitioner
+// calendar + dashboard + email templates rely on at 24h) so flipping
+// the public booking surfaces does NOT silently change owner-facing
+// formats. Use ONLY on client-facing booking/reschedule slot labels.
+export function localTimeString12h(d: Date, tz: string): string {
+  const f = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return f.format(d);
+}
+
 // 0 = Sunday, 6 = Saturday — matches JS Date getDay() in UTC, but evaluated
 // against the studio's local clock.
 export function localDayOfWeek(d: Date, tz: string): number {

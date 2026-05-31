@@ -2,9 +2,44 @@
 
 import { useEffect, useState, useTransition } from "react";
 import {
+  fetchNextAvailableDateForRescheduleAction,
   fetchRescheduleSlotsAction,
   rescheduleAppointmentViaTokenAction,
 } from "./actions";
+
+// Pretty-print a local YYYY-MM-DD as "Monday, June 1" (with year only
+// when not the current calendar year). Pure client-side formatting; no
+// timezone math since the input is already studio-local.
+function formatLocalDate(localDate: string): string {
+  const [y, m, d] = localDate.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return localDate;
+  }
+  const date = new Date(y, m - 1, d);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+}
+
+// Add one local calendar day to YYYY-MM-DD. Used to advance the next-
+// available scan past the date the user already saw as empty. DST-safe:
+// pure local-date arithmetic, no UTC conversion.
+function addOneDayLocal(localDate: string): string {
+  const [y, m, d] = localDate.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return localDate;
+  }
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + 1);
+  const yy = String(date.getFullYear()).padStart(4, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -63,11 +98,20 @@ export function RescheduleForm({
   const [done, setDone] = useState<{ when: string } | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
+  // Next-available lookup (mirrors PublicBookForm). One server roundtrip
+  // per click; bounded server-side scan from the day AFTER the date the
+  // user already saw as empty.
+  const [findingNext, startFindingNext] = useTransition();
+  const [noneInHorizon, setNoneInHorizon] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setPicked(null);
+    // Reset next-available state on any service/date change so an old
+    // "no availability in horizon" verdict from a stale probe doesn't
+    // linger after the user picks a different date.
+    setNoneInHorizon(false);
     startLoading(async () => {
       const r = await fetchRescheduleSlotsAction({ token, date });
       if (cancelled) return;
@@ -82,6 +126,29 @@ export function RescheduleForm({
       cancelled = true;
     };
   }, [token, date]);
+
+  function onFindNext() {
+    setError(null);
+    setNoneInHorizon(false);
+    // Skip the day we already know is empty (that's why this button
+    // showed up). The server clamps to today.
+    const startFrom = addOneDayLocal(date);
+    startFindingNext(async () => {
+      const r = await fetchNextAvailableDateForRescheduleAction({
+        token,
+        fromDate: startFrom,
+      });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      if (r.date == null) {
+        setNoneInHorizon(true);
+        return;
+      }
+      setDate(r.date);
+    });
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -144,14 +211,39 @@ export function RescheduleForm({
           className="text-[12px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
         >
-          Available times
+          {`Available times for ${formatLocalDate(date)}`}
         </span>
         {loadingSlots ? (
           <p className="text-sm text-[#6B6B6B]">Loading slots…</p>
         ) : slots.length === 0 ? (
-          <p className="text-sm text-[#6B6B6B]">
-            No availability on that date.
-          </p>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-[#6B6B6B]">
+              {`No availability on ${formatLocalDate(date)}.`}
+            </p>
+            {noneInHorizon ? (
+              <p className="text-sm text-[#6B6B6B]">
+                No availability within the current booking window. Please
+                check back later or contact the studio.
+              </p>
+            ) : (
+              <div>
+                <button
+                  type="button"
+                  onClick={onFindNext}
+                  disabled={findingNext}
+                  className="px-3 py-1.5 text-xs font-medium uppercase disabled:opacity-50"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    backgroundColor: "transparent",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  {findingNext ? "Finding…" : "Next available"}
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="flex flex-wrap gap-2">
             {slots.map((slot) => {
