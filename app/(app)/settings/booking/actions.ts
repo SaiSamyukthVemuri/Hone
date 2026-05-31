@@ -55,20 +55,49 @@ function parsePublicBookingHorizonMonths(
   return Number(raw);
 }
 
-async function assertOwner(): Promise<{ studioId: string }> {
+async function assertOwner(): Promise<{
+  studioId: string;
+  currentSlug: string | null;
+}> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     throw new Error("Only studio owners can change booking preferences.");
   }
-  return { studioId: studio.id };
+  return {
+    studioId: studio.id,
+    currentSlug: typeof studio.slug === "string" ? studio.slug : null,
+  };
 }
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
+// Reserved booking slugs. Block new submissions only — owners with an
+// existing slug that happens to match (unlikely; the list is the routes
+// the marketing/app surface uses) keep working because the check is
+// skipped when the submitted slug is byte-identical to the studio's
+// current slug. No slug redirect/history is added in this PR.
+const RESERVED_SLUGS: ReadonlySet<string> = new Set([
+  "admin",
+  "api",
+  "auth",
+  "book",
+  "calendar",
+  "clients",
+  "dashboard",
+  "data",
+  "intake",
+  "login",
+  "pricing",
+  "privacy",
+  "reschedule",
+  "settings",
+  "terms",
+]);
+
 export async function updateStudioBookingPrefsAction(
   formData: FormData,
 ): Promise<void> {
-  const { studioId } = await assertOwner();
+  const { studioId, currentSlug } = await assertOwner();
 
   const tz = trimmed(formData.get("timezone")) || "America/Toronto";
   const defaultDuration = parseInteger(
@@ -87,6 +116,14 @@ export async function updateStudioBookingPrefsAction(
     throw new Error(
       "Slug must be lowercase letters, numbers, and dashes (1–64 chars).",
     );
+  }
+  // Reserved-word check: only block when the submission actually changes
+  // the slug to a reserved word. Owners re-saving an existing slug that
+  // happens to match the list (extremely unlikely; the list mirrors app
+  // routes) keep working — this PR doesn't retroactively invalidate
+  // valid existing slugs.
+  if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
+    throw new Error("That booking link is reserved. Please choose another.");
   }
   if (defaultDuration < 5 || defaultDuration > 480) {
     throw new Error("Default duration must be between 5 and 480 minutes.");

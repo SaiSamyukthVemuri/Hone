@@ -4,7 +4,12 @@ import {
   getCurrentPractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
-import { getActiveServices } from "@/lib/booking/queries";
+import {
+  getActiveServices,
+  getAvailabilityDefaults,
+} from "@/lib/booking/queries";
+import { computeBookingReadiness } from "@/lib/booking/readiness";
+import { BookingSetupCard } from "./BookingSetupCard";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
@@ -25,6 +30,12 @@ import type {
   Service,
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
+
+// Public origin used to build the owner-facing booking link surface. Same
+// resolution as the other settings pages: explicit override wins, otherwise
+// the production canonical host. Never used to send anything to clients.
+const DASHBOARD_APP_ORIGIN =
+  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -160,6 +171,7 @@ export default async function DashboardPage() {
     activeServicesCount,
     paymentStatus,
     birthdaysThisMonth,
+    availabilityDefaults,
   ] = await Promise.all([
     countIntakesAwaitingReview(supabase, studio.id),
     countActiveServices(studio.id),
@@ -168,7 +180,36 @@ export default async function DashboardPage() {
     // clients.date_of_birth. Practitioner-facing only. Never sent as
     // email/SMS or exposed to client/public surfaces.
     getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
+    // Booking setup readiness (owner-only card). Loaded for everyone since
+    // the studio_availability_default table is RLS-scoped to the studio
+    // and the read is cheap (≤7 rows). The readiness compute + render is
+    // gated on isOwner below.
+    isOwner
+      ? getAvailabilityDefaults(studio.id)
+      : Promise.resolve(
+          [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
+        ),
   ]);
+
+  // Booking readiness for the owner card. Derived only; no schema flag.
+  // The card itself is owner-only (rendered below). Public booking is
+  // soft-gated independently in app/book/[slug]/page.tsx.
+  const openAvailabilityDaysCount = isOwner
+    ? availabilityDefaults.filter(
+        (d) =>
+          d.is_open === true &&
+          typeof d.open_time === "string" &&
+          typeof d.close_time === "string",
+      ).length
+    : 0;
+  const bookingReadiness = isOwner
+    ? computeBookingReadiness({
+        studio,
+        activeServicesCount,
+        openAvailabilityDaysCount,
+        appOrigin: DASHBOARD_APP_ORIGIN,
+      })
+    : null;
 
   return (
     <div className="flex flex-col gap-10">
@@ -190,6 +231,14 @@ export default async function DashboardPage() {
         activeServicesCount={activeServicesCount}
         paymentStatus={paymentStatus}
       />
+
+      {isOwner && bookingReadiness && (
+        <BookingSetupCard
+          readiness={bookingReadiness}
+          studioSlug={studio.slug}
+          appOrigin={DASHBOARD_APP_ORIGIN}
+        />
+      )}
 
       <BirthdaysThisMonth
         birthdays={birthdaysThisMonth}

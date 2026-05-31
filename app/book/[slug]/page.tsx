@@ -9,6 +9,10 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { PublicBookForm } from "./PublicBookForm";
 import type { Service } from "@/lib/types/database";
+import {
+  isPubliclyBookable,
+  UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
+} from "@/lib/booking/readiness";
 
 export default async function PublicBookingPage({
   params,
@@ -21,13 +25,38 @@ export default async function PublicBookingPage({
 
   // Service-role read since this is public.
   const admin = createAdminClient();
-  const { data: servicesData } = await admin
-    .from("services")
-    .select("*")
-    .eq("studio_id", studio.id)
-    .eq("active", true)
-    .order("name");
+  const [{ data: servicesData }, { data: availabilityData }] =
+    await Promise.all([
+      admin
+        .from("services")
+        .select("*")
+        .eq("studio_id", studio.id)
+        .eq("active", true)
+        .order("name"),
+      // Soft-gate input: at least one open weekly default day. Cheap (≤7
+      // rows). Selecting only the columns we need keeps the wire small.
+      admin
+        .from("studio_availability_default")
+        .select("day_of_week,is_open,open_time,close_time")
+        .eq("studio_id", studio.id)
+        .eq("is_open", true),
+    ]);
   const services = (servicesData ?? []) as Service[];
+  const openAvailabilityDaysCount = (availabilityData ?? []).filter(
+    (d) =>
+      d.is_open === true &&
+      typeof d.open_time === "string" &&
+      typeof d.close_time === "string",
+  ).length;
+
+  // Public soft-gate: render the same calm copy for any incomplete
+  // studio (no active services OR no open availability day). Identical
+  // wording is intentional — never disclose which piece is missing to
+  // a public visitor. The booking actions enforce the same gate.
+  const bookable = isPubliclyBookable({
+    activeServicesCount: services.length,
+    openAvailabilityDaysCount,
+  });
 
   const today = todayInTz(studio.timezone);
   const horizon = horizonRangeInStudioTz(
@@ -67,15 +96,21 @@ export default async function PublicBookingPage({
             )}
           </div>
 
-          <PublicBookForm
-            slug={studio.slug}
-            studioName={studio.name}
-            studioAddress={studio.address ?? null}
-            services={services}
-            defaultDate={today}
-            minDate={horizon.minDateStr}
-            maxDate={horizon.maxDateStr}
-          />
+          {bookable ? (
+            <PublicBookForm
+              slug={studio.slug}
+              studioName={studio.name}
+              studioAddress={studio.address ?? null}
+              services={services}
+              defaultDate={today}
+              minDate={horizon.minDateStr}
+              maxDate={horizon.maxDateStr}
+            />
+          ) : (
+            <p className="text-[15px] leading-[1.6]" style={{ color: PALETTE.muted }}>
+              {UNAVAILABLE_PUBLIC_BOOKING_MESSAGE}
+            </p>
+          )}
         </div>
       </section>
       <MarketingFooter />

@@ -10,6 +10,10 @@ import {
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
+import {
+  isPubliclyBookable,
+  UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
+} from "@/lib/booking/readiness";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { localDateString } from "@/lib/booking/tz";
 import {
@@ -83,6 +87,17 @@ export async function fetchPublicSlotsAction(params: {
   }
 
   const admin = createAdminClient();
+
+  // Self-serve publish soft-gate: refuse slot probes for studios that
+  // aren't publicly bookable yet (no active services OR no open
+  // availability day). Identical sanitized message regardless of which
+  // piece is missing — never disclose internal setup state to a public
+  // caller. Public page renders the same copy in app/book/[slug]/page.tsx.
+  const ready = await loadPublicReadiness(admin, studio.id);
+  if (!ready.bookable) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
+
   const { data: service, error } = await admin
     .from("services")
     .select("default_duration_minutes")
@@ -188,6 +203,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   }
 
   const admin = createAdminClient();
+
+  // Self-serve publish soft-gate (defense in depth): refuse booking
+  // submissions to studios that aren't publicly bookable yet. The
+  // /book/[slug] page renders a calm equivalent message when this is
+  // true, so a UI submission only reaches here if the caller bypassed
+  // the rendered surface. Same sanitized copy as the slot probe.
+  const ready = await loadPublicReadiness(admin, studio.id);
+  if (!ready.bookable) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
 
   const { data: service } = await admin
     .from("services")
@@ -478,4 +503,40 @@ function trimmed(value: FormDataEntryValue | null): string {
 function nullable(value: FormDataEntryValue | null): string | null {
   const t = trimmed(value);
   return t.length === 0 ? null : t;
+}
+
+// Public booking readiness probe. Two small admin-scoped reads:
+//   * head:true exact count on services where active=true
+//   * the day-of-week defaults marked is_open with both times present
+// Mirrors the dashboard checklist and the /book/[slug] page gate, so
+// every public surface enforces the same predicate.
+async function loadPublicReadiness(
+  admin: ReturnType<typeof createAdminClient>,
+  studioId: string,
+): Promise<{ bookable: boolean }> {
+  const [{ count: activeServicesCount }, { data: availabilityRows }] =
+    await Promise.all([
+      admin
+        .from("services")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studioId)
+        .eq("active", true),
+      admin
+        .from("studio_availability_default")
+        .select("is_open,open_time,close_time")
+        .eq("studio_id", studioId)
+        .eq("is_open", true),
+    ]);
+  const openAvailabilityDaysCount = (availabilityRows ?? []).filter(
+    (d) =>
+      d.is_open === true &&
+      typeof d.open_time === "string" &&
+      typeof d.close_time === "string",
+  ).length;
+  return {
+    bookable: isPubliclyBookable({
+      activeServicesCount: activeServicesCount ?? 0,
+      openAvailabilityDaysCount,
+    }),
+  };
 }
