@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
-import { localDateString } from "@/lib/booking/tz";
+import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
   isWithinPublicBookingHorizon,
@@ -240,6 +240,126 @@ export async function fetchRescheduleSlotsAction(params: {
     svc?.default_duration_minutes ?? r.duration_minutes,
   );
   return { ok: true, slots };
+}
+
+// ---------------------------------------------------------------------------
+// fetchNextAvailableDateForRescheduleAction
+// ---------------------------------------------------------------------------
+// "Next available" lookup for the reschedule page. Mirrors the public-
+// booking action in app/book/[slug]/actions.ts: one server roundtrip,
+// bounded linear scan from `fromDate` (clamped to today) through the
+// studio's public booking horizon, returns the first date with a
+// non-empty future-slot list for the appointment's service. Same past-
+// time filter, same MAX_NEXT_AVAILABLE_SCAN_DAYS cap, same rate-limit
+// class as the existing reschedule slot fetch. No booking engine or
+// conflict logic changes; just reuses getAvailableSlots.
+//
+// Worst case: O(N) getAvailableSlots calls where N = horizon days
+// (~92 for 3-month, ~123 for 4-month, ~184 for 6-month), hard-capped
+// at MAX_NEXT_AVAILABLE_SCAN_DAYS = 200. The original token is never
+// consumed; reschedule only consumes a token on confirm.
+// ---------------------------------------------------------------------------
+
+const MAX_NEXT_AVAILABLE_SCAN_DAYS = 200;
+
+export async function fetchNextAvailableDateForRescheduleAction(params: {
+  token: string;
+  fromDate: string;
+}): Promise<
+  { ok: true; date: string | null } | { ok: false; error: string }
+> {
+  const gate = await limitTokenRoute({
+    routeClass: "reschedule_slots",
+    token: params.token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
+  const resolved = await resolveAppointmentIdFromToken(params.token);
+  if (!resolved.ok) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  const admin = createAdminClient();
+  const { data: appt } = await admin
+    .from("appointments")
+    .select(
+      "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
+    )
+    .eq("id", resolved.appointment_id)
+    .maybeSingle();
+  if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+
+  type J = {
+    id: string;
+    duration_minutes: number;
+    service:
+      | { default_duration_minutes: number }
+      | { default_duration_minutes: number }[]
+      | null;
+    studio:
+      | {
+          id: string;
+          timezone: string;
+          default_appointment_duration_minutes: number;
+          buffer_minutes: number;
+          public_booking_horizon_months: number;
+        }
+      | {
+          id: string;
+          timezone: string;
+          default_appointment_duration_minutes: number;
+          buffer_minutes: number;
+          public_booking_horizon_months: number;
+        }[]
+      | null;
+  };
+  const r = appt as unknown as J;
+  const pick = <T>(v: T | T[] | null): T | null =>
+    Array.isArray(v) ? (v[0] ?? null) : v;
+  const svc = pick(r.service);
+  const stu = pick(r.studio);
+  if (!stu) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+
+  const today = todayInTz(stu.timezone);
+  const horizon = horizonRangeInStudioTz(
+    stu.timezone,
+    stu.public_booking_horizon_months,
+  );
+
+  // Start at max(fromDate, today). A past fromDate from a stale client
+  // is already rejected upstream by the horizon check.
+  const startDate = params.fromDate < today ? today : params.fromDate;
+  if (startDate > horizon.maxDateStr) {
+    return { ok: true, date: null };
+  }
+
+  const durationMinutes = svc?.default_duration_minutes ?? r.duration_minutes;
+  const nowMs = Date.now();
+  let cursor = startDate;
+  let scans = 0;
+  while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
+    scans += 1;
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: stu.id,
+        timezone: stu.timezone,
+        default_appointment_duration_minutes:
+          stu.default_appointment_duration_minutes,
+        buffer_minutes: stu.buffer_minutes,
+      },
+      cursor,
+      durationMinutes,
+    );
+    const futureSlots = slots.filter(
+      (s) => new Date(s.start).getTime() > nowMs,
+    );
+    if (futureSlots.length > 0) {
+      return { ok: true, date: cursor };
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return { ok: true, date: null };
 }
 
 export type RescheduleResult =

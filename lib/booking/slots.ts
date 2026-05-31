@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   localDayOfWeek,
   localMinutesSinceMidnight,
-  localTimeString,
+  localTimeString12h,
   minutesToHHMM,
   utcInstantFromLocal,
 } from "./tz";
@@ -10,7 +10,12 @@ import {
 export type Slot = {
   start: string; // ISO UTC
   end: string; // ISO UTC
-  startLabel: string; // local "HH:MM" in studio tz
+  // Client-facing 12-hour label (e.g. "9:00 AM"). Built with the
+  // localTimeString12h formatter so public booking + reschedule slot
+  // buttons read in the format clients expect. Internal practitioner
+  // surfaces don't consume this field; they format their own labels
+  // via localTimeString (24-hour) directly.
+  startLabel: string;
 };
 
 type StudioRow = {
@@ -164,7 +169,7 @@ export async function getAvailableSlots(
     slots.push({
       start: slotStart.toISOString(),
       end: slotEnd.toISOString(),
-      startLabel: localTimeString(slotStart, tz),
+      startLabel: localTimeString12h(slotStart, tz),
     });
   }
 
