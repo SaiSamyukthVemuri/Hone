@@ -44,7 +44,7 @@ const PLANS: ReadonlyArray<Plan> = [
       "Up to 5 practitioner seats",
       "Multi-practitioner studio management",
       "Multiple practitioners on the booking page (clients pick who they want)",
-      "Audit-ready export for inspections",
+      "Full data export for your own record-keeping",
       "Priority email support",
     ],
     cta: { label: "Request access", href: "/#request-access" },
@@ -93,7 +93,7 @@ const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Is Hone HIPAA compliant?",
-    a: "Hone stores client charting data in a Canadian cloud region with strong access controls. We are not currently a HIPAA covered entity. For US clinics that require HIPAA compliance, contact us before signing up.",
+    a: "Hone is operated from Canada. Data is stored on infrastructure in AWS US-East-1, as described in the Privacy Policy. Hone is not currently a HIPAA covered entity. For US clinics that require HIPAA compliance, contact us before signing up.",
   },
 ];
 

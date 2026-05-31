@@ -82,10 +82,6 @@ export default function TermsOfServicePage() {
           (privacy@hone.care)
         </li>
       </UL>
-      <P>
-        We recommend enabling multi-factor authentication on your account.
-      </P>
-
       <H2 id="acceptable-use">5. Acceptable use</H2>
       <P>You may not:</P>
       <UL>
@@ -176,10 +172,9 @@ export default function TermsOfServicePage() {
       </P>
       <UL>
         <li>TLS encryption in transit</li>
-        <li>Encryption at rest for sensitive credentials</li>
         <li>Row-level security to isolate each studio&rsquo;s data</li>
         <li>Access controls and audit logging</li>
-        <li>Regular security reviews</li>
+        <li>We review security-sensitive changes before deployment</li>
       </UL>
 
       <H3 id="dpa-subprocessors">7.4 Sub-processors</H3>

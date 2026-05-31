@@ -10,7 +10,7 @@ import {
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "How Hone collects, uses, stores, shares, and protects personal information. PIPEDA-compliant policy for the practice memory system for permanent hair removal.",
+    "How Hone collects, uses, stores, shares, and protects personal information.",
 };
 
 export default function PrivacyPolicyPage() {
@@ -305,14 +305,15 @@ export default function PrivacyPolicyPage() {
       <P>We protect personal information with:</P>
       <UL>
         <li>TLS encryption for data in transit</li>
-        <li>Encryption at rest for sensitive credentials (passwords, API tokens)</li>
         <li>
-          Row-level security to ensure practitioners only access their own
+          Row-level security so practitioners only access their own
           studio&rsquo;s data
         </li>
-        <li>Authentication via secure password hashing (bcrypt) and OAuth</li>
-        <li>Multi-factor authentication available for all accounts</li>
-        <li>Regular security reviews and updates</li>
+        <li>
+          Authentication via Supabase Auth using Google OAuth and email magic
+          links. Hone does not collect or store account passwords directly.
+        </li>
+        <li>We review security-sensitive changes before deployment</li>
       </UL>
       <P>
         No system is completely secure. If we become aware of a security breach
