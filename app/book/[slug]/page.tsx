@@ -3,7 +3,6 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
-import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -13,6 +12,15 @@ import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
+
+// Public booking portal: deliberately renders WITHOUT the shared
+// MarketingHeader. A client landing here from the studio's own website
+// (e.g. willowelectrolysis.com -> hone.care/book/<slug>) should feel
+// like the studio's booking page, not Hone marketing. The marketing
+// header's nav (How it works / Pricing / Demo / Sign in) pulled
+// visitors out of the booking flow. The MarketingFooter is kept for
+// required legal links (Privacy, Terms, contact). The studio name is
+// the page's primary heading so brand identity is preserved.
 
 export default async function PublicBookingPage({
   params,
@@ -73,7 +81,6 @@ export default async function PublicBookingPage({
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
-      <MarketingHeader />
       <section className="px-6 py-20 md:px-12 lg:px-16">
         <div className="mx-auto max-w-[760px] flex flex-col gap-10">
           <div>

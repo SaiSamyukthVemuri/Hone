@@ -15,7 +15,7 @@ import {
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
-import { localDateString } from "@/lib/booking/tz";
+import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
   isWithinPublicBookingHorizon,
@@ -140,6 +140,120 @@ export async function fetchPublicSlotsAction(params: {
   return { ok: true, slots: futureSlots };
 }
 
+// ---------------------------------------------------------------------------
+// fetchNextAvailableDateAction
+// ---------------------------------------------------------------------------
+// Server-side "Next available" lookup for the public booking page. Walks
+// forward from `fromDate` (inclusive, clamped to today) through the studio's
+// public booking horizon and returns the first date that has at least one
+// future-instant slot for the requested service.
+//
+// Why server-side: avoids 90 sequential client roundtrips for a 3-month
+// horizon. One client call -> one server action -> bounded server loop.
+//
+// Algorithm: linear day-by-day scan from `from` to horizon.maxDateStr,
+// calling getAvailableSlots per day and applying the same past-time filter
+// fetchPublicSlotsAction uses. Returns the first date with a non-empty
+// future-slot list, or `date: null` if the horizon is exhausted.
+//
+// Worst case: horizon days (3-month = ~92, 4-month = ~123, 6-month = ~184)
+// getAvailableSlots calls, hard-capped by MAX_NEXT_AVAILABLE_SCAN_DAYS as a
+// belt-and-braces safety. Each getAvailableSlots is a single bounded
+// admin-scoped read of the day's overrides/blockouts/appointments; total
+// cost is O(N) cheap queries within one server roundtrip.
+//
+// Boundaries preserved: same rate limiter as fetchPublicSlotsAction;
+// same soft-gate (loadPublicReadiness); same past-time filter; no booking
+// engine / conflict logic changes.
+// ---------------------------------------------------------------------------
+
+const MAX_NEXT_AVAILABLE_SCAN_DAYS = 200;
+
+export async function fetchNextAvailableDateAction(params: {
+  slug: string;
+  serviceId: string;
+  fromDate: string;
+}): Promise<
+  { ok: true; date: string | null } | { ok: false; error: string }
+> {
+  const slotGate = await limitPublicSlots({
+    headers: await headers(),
+    slug: params.slug,
+  });
+  if (!slotGate.allowed) {
+    return { ok: false, error: RATE_LIMIT_MESSAGE };
+  }
+
+  const studio = await getStudioBySlug(params.slug);
+  if (!studio) return { ok: false, error: "Studio not found." };
+
+  const admin = createAdminClient();
+
+  // Soft-gate: same predicate the page + other actions use.
+  const ready = await loadPublicReadiness(admin, studio.id);
+  if (!ready.bookable) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
+
+  const { data: service, error: svcErr } = await admin
+    .from("services")
+    .select("default_duration_minutes")
+    .eq("id", params.serviceId)
+    .eq("studio_id", studio.id)
+    .eq("active", true)
+    .maybeSingle();
+  if (svcErr) {
+    logInternalBookingError("public_next_available_service_lookup_failed", {
+      code: svcErr.code,
+      message: svcErr.message,
+    });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+  if (!service) return { ok: false, error: "Service not found." };
+
+  const today = todayInTz(studio.timezone);
+  const horizon = horizonRangeInStudioTz(
+    studio.timezone,
+    studio.public_booking_horizon_months,
+  );
+
+  // Start at max(fromDate, today). A past fromDate (e.g. from a stale
+  // client) would otherwise scan dates that fetchPublicSlotsAction
+  // already rejects via the horizon check.
+  const startDate =
+    params.fromDate < today ? today : params.fromDate;
+  if (startDate > horizon.maxDateStr) {
+    return { ok: true, date: null };
+  }
+
+  const nowMs = Date.now();
+  let cursor = startDate;
+  let scans = 0;
+  while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
+    scans += 1;
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      cursor,
+      service.default_duration_minutes,
+    );
+    const futureSlots = slots.filter(
+      (s) => new Date(s.start).getTime() > nowMs,
+    );
+    if (futureSlots.length > 0) {
+      return { ok: true, date: cursor };
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return { ok: true, date: null };
+}
+
 export type PublicBookResult =
   | { ok: true; appointmentId: string }
   | { ok: false; error: string; code?: "slot_taken" };
@@ -158,6 +272,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!name) return { ok: false, error: "Your name is required." };
   if (!EMAIL_RE.test(email))
     return { ok: false, error: "Enter a valid email address." };
+  // Phone required for new public booking submissions. The existing-
+  // client lookup below intentionally never writes the submitted phone
+  // back onto an existing clients row (security: prevents a public
+  // booker from injecting a phone into someone else's record), so this
+  // requirement does NOT retroactively break legacy clients whose
+  // stored phone is null. Internal practitioner booking goes through a
+  // separate code path and is not affected.
+  if (!phone) {
+    return { ok: false, error: "Please enter a phone number." };
+  }
 
   // Rate limit (v1) BEFORE any DB read/write or email send. Stricter than
   // slot fetch: 5/10min per (IP, slug) + 3/hour per (email, slug). Fails
