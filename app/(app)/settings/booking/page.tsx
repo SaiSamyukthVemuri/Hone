@@ -130,13 +130,19 @@ export default async function BookingSettingsPage() {
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Address (shown to clients)</span>
+          <span className="text-sm font-medium">
+            Public address (shown on your booking page)
+          </span>
           <input
             name="address"
             defaultValue={studio.address ?? ""}
             placeholder="123 Main St, City"
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
+          <span className="text-xs text-neutral-500">
+            For home-based studios, leave this blank and share the address
+            after booking.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1.5">
