@@ -1,4 +1,3 @@
-import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -23,7 +22,6 @@ export default async function CancelAppointmentPage({
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
-      <MarketingHeader />
       <section className="px-6 py-20 md:px-12 lg:px-16">
         <div className="mx-auto max-w-[640px] flex flex-col gap-10">
           {result.ok ? (

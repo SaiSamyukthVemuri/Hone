@@ -1,4 +1,3 @@
-import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -120,7 +119,6 @@ export default async function IntakePage({
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
-      <MarketingHeader />
       <section className="px-6 py-12 md:px-12 md:py-20 lg:px-16">
         <div className="mx-auto flex max-w-[640px] flex-col gap-10">
           <div>
