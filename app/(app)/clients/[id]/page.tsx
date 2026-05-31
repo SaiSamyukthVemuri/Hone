@@ -267,6 +267,17 @@ export default async function ClientCheatSheetPage({
             )}
           </section>
 
+          {client.address && (
+            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+                Address
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
+                {client.address}
+              </p>
+            </section>
+          )}
+
           {hasEmergencyContact && (
             <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
               <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
