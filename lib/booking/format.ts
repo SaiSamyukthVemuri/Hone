@@ -21,14 +21,30 @@ export type ServiceModalityGroup = {
 };
 
 const OTHER_KEY = "__other__";
+// Render order: consultation first (new clients should land on the
+// consultation option before paid treatment options), then electrolysis,
+// then laser, then any custom modalities (alpha), then "Other" last.
+// Generic across studios; no per-studio special casing.
 const PREFERRED_ORDER: ReadonlyArray<string> = [
+  "consultation",
   "electrolysis",
   "laser",
-  "consultation",
 ];
 
 function modalityKey(s: Service): string {
-  return s.modality && s.modality.trim().length > 0 ? s.modality : OTHER_KEY;
+  if (s.modality && s.modality.trim().length > 0) return s.modality;
+  // Fallback: a service named like a consultation (e.g. "New Client
+  // Consultation") is routed into the consultation bucket even when the
+  // studio hasn't set the modality field. Keeps consultation-first
+  // ordering generic for studios that name-only their consultation
+  // service. Case-insensitive substring match.
+  if (
+    typeof s.name === "string" &&
+    s.name.toLowerCase().includes("consultation")
+  ) {
+    return "consultation";
+  }
+  return OTHER_KEY;
 }
 
 function labelFor(modality: string): string {

@@ -6,7 +6,11 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
-import { fetchPublicSlotsAction, publicBookAppointmentAction } from "./actions";
+import {
+  fetchNextAvailableDateAction,
+  fetchPublicSlotsAction,
+  publicBookAppointmentAction,
+} from "./actions";
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -31,6 +35,24 @@ type Confirmation = {
 // if the date is not in the current year). Pure client-side formatting; no timezone
 // conversion since the input is already a studio-local date and we construct a Date
 // from explicit year/month/day so the runtime's local timezone offset does not shift it.
+// Add one calendar day to a YYYY-MM-DD studio-local date string. Used to
+// advance the next-available scan past the date the user already saw as
+// empty. Stays in local-date space (no UTC conversion) so DST has no
+// effect: tomorrow's local-calendar date is the same regardless of time
+// of day or zone offsets.
+function addOneDayLocal(localDate: string): string {
+  const [y, m, d] = localDate.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return localDate;
+  }
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + 1);
+  const yy = String(date.getFullYear()).padStart(4, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 function formatLocalDate(localDate: string): string {
   const [y, m, d] = localDate.split("-").map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
@@ -69,6 +91,14 @@ export function PublicBookForm({
   const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
+  // Next-available lookup state. Distinct from loadingSlots so the slot
+  // panel can keep its existing "Loading slots…" message while the
+  // dedicated "Next available" button shows its own pending text. When
+  // the lookup resolves with date===null we surface a calm exhausted-
+  // horizon message.
+  const [findingNext, startFindingNext] = useTransition();
+  const [nextSearched, setNextSearched] = useState(false);
+  const [noneInHorizon, setNoneInHorizon] = useState(false);
 
   // Single source of truth for the slots fetch: re-runs only when slug,
   // serviceId, or date actually change. Race-safe via a cancellation flag.
@@ -80,6 +110,11 @@ export function PublicBookForm({
     let cancelled = false;
     setError(null);
     setPicked(null);
+    // Reset next-available state when the underlying query changes.
+    // A previous "no availability in horizon" verdict was specific to the
+    // old service/date pair; clear it so the new pair gets a fresh probe.
+    setNextSearched(false);
+    setNoneInHorizon(false);
     startLoading(async () => {
       const r = await fetchPublicSlotsAction({ slug, serviceId, date });
       if (cancelled) return;
@@ -100,6 +135,38 @@ export function PublicBookForm({
   }
   function onDate(v: string) {
     setDate(v);
+  }
+
+  // Server-side "Next available" jump. One server round-trip walks
+  // forward from today/selected-date through the booking horizon and
+  // returns the first date with bookable future slots. The slot-fetch
+  // useEffect above re-runs automatically when `date` changes.
+  function onFindNext() {
+    if (!serviceId) return;
+    setError(null);
+    setNextSearched(false);
+    setNoneInHorizon(false);
+    // Start the lookup from the day AFTER the currently-selected date,
+    // since we already know that date has no slots (that's why this
+    // button is visible). The server clamps to today.
+    const startFrom = addOneDayLocal(date);
+    startFindingNext(async () => {
+      const r = await fetchNextAvailableDateAction({
+        slug,
+        serviceId,
+        fromDate: startFrom,
+      });
+      setNextSearched(true);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      if (r.date == null) {
+        setNoneInHorizon(true);
+        return;
+      }
+      setDate(r.date);
+    });
   }
 
   function submit(e: React.FormEvent) {
@@ -210,7 +277,39 @@ export function PublicBookForm({
         {loadingSlots ? (
           <p className="text-sm text-[#6B6B6B]">Loading slots…</p>
         ) : slots.length === 0 ? (
-          <p className="text-sm text-[#6B6B6B]">No availability on that date.</p>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-[#6B6B6B]">
+              No availability on this date.
+            </p>
+            {noneInHorizon ? (
+              <p className="text-sm text-[#6B6B6B]">
+                No availability within the current booking window. Please
+                check back later or contact the studio.
+              </p>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={onFindNext}
+                  disabled={findingNext}
+                  className="px-3 py-1.5 text-xs font-medium uppercase disabled:opacity-50"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    backgroundColor: "transparent",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  {findingNext ? "Finding…" : "Next available"}
+                </button>
+                {nextSearched && (
+                  <span className="text-xs text-[#6B6B6B]">
+                    Tap a time to confirm.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <div className="flex flex-wrap gap-2">
             {slots.map((s) => {
@@ -257,11 +356,12 @@ export function PublicBookForm({
         </Field>
       </div>
 
-      <Field label="Phone (optional)">
+      <Field label="Phone">
         <input
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
+          required
           className="w-full bg-transparent py-2 text-[16px] outline-none"
           style={{ borderBottom: "1px solid #0A0A0A" }}
         />
