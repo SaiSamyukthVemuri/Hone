@@ -186,33 +186,70 @@ export async function submitIntakeAction(payload: {
     return { ok: true };
   }
 
-  // Fix 9: pull emergency contact from the intake into the client row so the
-  // practitioner does not have to retype it. Only writes to fields that are
-  // currently null: a practitioner who has already manually populated them
-  // takes precedence over what the client typed at intake.
-  await syncEmergencyContactToClient(merged, existing.client_id);
+  // Populate the client profile from the intake submission so the
+  // practitioner doesn't have to retype any of it. Field-by-field rules
+  // below preserve practitioner-entered values where present and never
+  // delete allergies. Failures inside the sync are logged and swallowed;
+  // the intake submit is the source of truth and is not rolled back.
+  await syncIntakeToClient(merged, existing.client_id);
 
   return { ok: true };
 }
 
-async function syncEmergencyContactToClient(
+// ---------------------------------------------------------------------------
+// syncIntakeToClient
+// ---------------------------------------------------------------------------
+// Field rules (Chloe feedback):
+//
+//   emergency_contact_name / _phone, date_of_birth, pronouns, address:
+//     FILL-ONLY-IF-NULL. A practitioner who has already manually populated
+//     a field takes precedence over the intake answer; we never overwrite.
+//
+//   allergies: APPEND-ONLY. Never overwrite, never delete. If the client
+//     row already has an allergies string, the intake's allergy summary
+//     is appended below a dated "From client intake" marker so the
+//     practitioner can see both the original record and the new intake
+//     answers without losing either. The EpiPen flag (requires_epipen)
+//     is the first line of the intake block so it stays prominent on
+//     append; the broader allergy display in the client profile already
+//     renders this in a red section, and the intake review page also
+//     keeps its own dedicated EpiPen banner.
+// ---------------------------------------------------------------------------
+async function syncIntakeToClient(
   responses: Record<string, unknown>,
   clientId: string,
 ): Promise<void> {
-  const name = stringOrNull(responses.emergency_contact_name);
-  const phone = stringOrNull(responses.emergency_contact_phone);
-  if (!name && !phone) return;
+  const emergencyName = stringOrNull(responses.emergency_contact_name);
+  const emergencyPhone = stringOrNull(responses.emergency_contact_phone);
+  const dob = stringOrNull(responses.date_of_birth);
+  const pronouns = stringOrNull(responses.pronouns);
+  const address = stringOrNull(responses.address);
+  const intakeAllergyText = buildIntakeAllergyText(responses);
+
+  // Bail early if the intake had nothing to contribute to the profile.
+  if (
+    !emergencyName &&
+    !emergencyPhone &&
+    !dob &&
+    !pronouns &&
+    !address &&
+    !intakeAllergyText
+  ) {
+    return;
+  }
 
   const admin = createAdminClient();
   const { data: client, error: lookupErr } = await admin
     .from("clients")
-    .select("emergency_contact_name, emergency_contact_phone")
+    .select(
+      "emergency_contact_name, emergency_contact_phone, date_of_birth, pronouns, address, allergies",
+    )
     .eq("id", clientId)
     .maybeSingle();
   if (lookupErr || !client) {
     if (lookupErr) {
       console.error(
-        "Failed to look up client for emergency contact sync:",
+        "Failed to look up client for intake sync:",
         lookupErr.message,
       );
     }
@@ -220,11 +257,35 @@ async function syncEmergencyContactToClient(
   }
 
   const patch: Record<string, string> = {};
-  if (name && !client.emergency_contact_name) {
-    patch.emergency_contact_name = name;
+  if (emergencyName && !client.emergency_contact_name) {
+    patch.emergency_contact_name = emergencyName;
   }
-  if (phone && !client.emergency_contact_phone) {
-    patch.emergency_contact_phone = phone;
+  if (emergencyPhone && !client.emergency_contact_phone) {
+    patch.emergency_contact_phone = emergencyPhone;
+  }
+  if (dob && !client.date_of_birth) {
+    patch.date_of_birth = dob;
+  }
+  if (pronouns && !client.pronouns) {
+    patch.pronouns = pronouns;
+  }
+  if (address && !client.address) {
+    patch.address = address;
+  }
+  if (intakeAllergyText) {
+    // Append-only merge. If existing.allergies is empty, write the intake
+    // summary alone. Otherwise concatenate beneath a dated marker so the
+    // practitioner can see "the original record said X, the intake added
+    // Y" and reconcile manually; we never auto-resolve.
+    const existingAllergies = typeof client.allergies === "string"
+      ? client.allergies.trim()
+      : "";
+    if (existingAllergies.length === 0) {
+      patch.allergies = intakeAllergyText;
+    } else {
+      const dateLabel = formatTodayLocal();
+      patch.allergies = `${existingAllergies}\n\nFrom client intake (${dateLabel}):\n${intakeAllergyText}`;
+    }
   }
   if (Object.keys(patch).length === 0) return;
 
@@ -233,11 +294,64 @@ async function syncEmergencyContactToClient(
     .update(patch)
     .eq("id", clientId);
   if (updateErr) {
-    console.error(
-      "Failed to sync emergency contact to client:",
-      updateErr.message,
+    console.error("Failed to sync intake to client:", updateErr.message);
+  }
+}
+
+// Builds a single human-readable allergy summary from the intake's allergy
+// answers. Returns null when the client reported no relevant allergies.
+// The EpiPen line is intentionally first so it stays prominent on append.
+function buildIntakeAllergyText(
+  responses: Record<string, unknown>,
+): string | null {
+  const lines: string[] = [];
+  const hasAllergies = responses.has_allergies === "yes";
+  const requiresEpipen = responses.requires_epipen === "yes";
+  const allergyNotes = stringOrNull(responses.has_allergies_notes);
+  const metalAllergy = responses.metal_allergy === "yes";
+  const metalTypes = Array.isArray(responses.metal_allergy_types)
+    ? (responses.metal_allergy_types as unknown[]).filter(
+        (v): v is string => typeof v === "string",
+      )
+    : [];
+  const metalOther = stringOrNull(responses.metal_allergy_other_text);
+  const latexAllergy = responses.latex_allergy === "yes";
+  const anestheticAllergy = responses.anesthetic_allergy === "yes";
+
+  if (requiresEpipen) {
+    lines.push("EpiPen required.");
+  }
+  if (hasAllergies && allergyNotes) {
+    lines.push(`Allergies: ${allergyNotes}`);
+  } else if (hasAllergies) {
+    lines.push("Allergies reported (no details provided).");
+  }
+  if (metalAllergy) {
+    const detail: string[] = [];
+    if (metalTypes.length > 0) detail.push(metalTypes.join(", "));
+    if (metalOther) detail.push(metalOther);
+    lines.push(
+      detail.length > 0
+        ? `Metal allergy: ${detail.join("; ")}`
+        : "Metal allergy.",
     );
   }
+  if (latexAllergy) lines.push("Latex allergy.");
+  if (anestheticAllergy) lines.push("Topical anesthetic allergy.");
+
+  if (lines.length === 0) return null;
+  return lines.join("\n");
+}
+
+// Format today as a calm "YYYY-MM-DD" marker for the appended allergy
+// block. Server-local; the precise zone doesn't matter for a readability
+// marker on a manually-curated text field.
+function formatTodayLocal(): string {
+  const d = new Date();
+  const yy = String(d.getFullYear()).padStart(4, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
 }
 
 function stringOrNull(value: unknown): string | null {

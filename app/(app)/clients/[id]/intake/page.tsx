@@ -144,6 +144,8 @@ export default async function ClientIntakePage({
         </div>
       )}
 
+      <AllergiesSummary responses={responses} />
+
       {intake.status === "in_progress" ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
           The client has not submitted their intake yet. Responses shown below
@@ -183,5 +185,85 @@ export default async function ClientIntakePage({
         alreadyReviewed={intake.status === "reviewed"}
       />
     </div>
+  );
+}
+
+// Prominent allergy summary surfaced near the top of the intake review
+// (separate from the per-question grid below). Sits below the EpiPen
+// banner so EpiPen stays the single most-urgent signal, then the full
+// list is right under it for scan-once review. Renders nothing when the
+// client reported no allergies; otherwise renders as a rose card with
+// each reported allergy on its own line.
+function AllergiesSummary({
+  responses,
+}: {
+  responses: Record<string, unknown>;
+}) {
+  const hasAllergies = responses.has_allergies === "yes";
+  const requiresEpipen = responses.requires_epipen === "yes";
+  const allergyNotes =
+    typeof responses.has_allergies_notes === "string"
+      ? responses.has_allergies_notes.trim()
+      : "";
+  const metalAllergy = responses.metal_allergy === "yes";
+  const metalTypes = Array.isArray(responses.metal_allergy_types)
+    ? (responses.metal_allergy_types as unknown[]).filter(
+        (v): v is string => typeof v === "string",
+      )
+    : [];
+  const metalOther =
+    typeof responses.metal_allergy_other_text === "string"
+      ? responses.metal_allergy_other_text.trim()
+      : "";
+  const latexAllergy = responses.latex_allergy === "yes";
+  const anestheticAllergy = responses.anesthetic_allergy === "yes";
+
+  if (
+    !hasAllergies &&
+    !metalAllergy &&
+    !latexAllergy &&
+    !anestheticAllergy
+  ) {
+    return null;
+  }
+
+  const metalDetail: string[] = [];
+  if (metalTypes.length > 0) metalDetail.push(metalTypes.join(", "));
+  if (metalOther) metalDetail.push(metalOther);
+
+  return (
+    <section className="rounded-lg border border-rose-300 bg-rose-50 p-5 dark:border-rose-700 dark:bg-rose-950/30">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">
+        Allergies summary
+      </h2>
+      <ul className="mt-3 flex flex-col gap-1.5 text-sm text-rose-900 dark:text-rose-100">
+        <li>
+          <span className="font-medium">Severe reaction / EpiPen:</span>{" "}
+          {requiresEpipen ? "Yes" : "No"}
+        </li>
+        {hasAllergies && (
+          <li>
+            <span className="font-medium">Allergies:</span>{" "}
+            {allergyNotes || "Yes (no details provided)"}
+          </li>
+        )}
+        {metalAllergy && (
+          <li>
+            <span className="font-medium">Metal allergy:</span>{" "}
+            {metalDetail.length > 0 ? metalDetail.join("; ") : "Yes"}
+          </li>
+        )}
+        {latexAllergy && (
+          <li>
+            <span className="font-medium">Latex allergy:</span> Yes
+          </li>
+        )}
+        {anestheticAllergy && (
+          <li>
+            <span className="font-medium">Topical anesthetic allergy:</span> Yes
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }

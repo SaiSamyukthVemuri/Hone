@@ -15,6 +15,7 @@ export type ClientFormValues = {
   date_of_birth: string;
   phone: string;
   email: string;
+  address: string;
   fitzpatrick_type: string;
   skin_notes: string;
   allergies: string;
@@ -28,6 +29,7 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
   date_of_birth: "",
   phone: "",
   email: "",
+  address: "",
   fitzpatrick_type: "",
   skin_notes: "",
   allergies: "",
@@ -152,6 +154,16 @@ export function ClientForm({
           onKeyDown={blockEnterSubmit}
         />
       </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Address</span>
+        <textarea
+          rows={2}
+          value={values.address}
+          onChange={(e) => update("address", e.target.value)}
+          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        />
+      </label>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Fitzpatrick type</span>

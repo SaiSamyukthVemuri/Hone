@@ -158,11 +158,18 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     title: "Personal information",
     questions: [
       { key: "legal_name", type: "short_text", label: "Full legal name", required: true },
-      { key: "preferred_name", type: "short_text", label: "Preferred name and pronouns" },
+      { key: "preferred_name", type: "short_text", label: "Preferred name" },
+      // Pronouns is its own field (was previously folded into "preferred
+      // name"). Separating it lets the intake submit sync this answer
+      // directly onto clients.pronouns, where the client profile reads it.
+      { key: "pronouns", type: "short_text", label: "Pronouns", helpText: "she/her, he/him, they/them, etc." },
       { key: "date_of_birth", type: "date", label: "Date of birth", required: true },
       { key: "phone", type: "short_text", label: "Phone", required: true },
       { key: "email", type: "short_text", label: "Email", required: true },
-      { key: "address", type: "long_text", label: "Address" },
+      // Address required for insurance / legal reasons per Chloe. The
+      // intake sync below populates clients.address (fill-only-if-null)
+      // so the practitioner doesn't have to retype it.
+      { key: "address", type: "long_text", label: "Address", required: true },
       {
         key: "emergency_contact_name",
         type: "short_text",

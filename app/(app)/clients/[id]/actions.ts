@@ -59,6 +59,7 @@ export async function updateClientAction(formData: FormData): Promise<void> {
       pronouns: nullableString(formData.get("pronouns")),
       phone: nullableString(formData.get("phone")),
       email: nullableString(formData.get("email")),
+      address: nullableString(formData.get("address")),
       date_of_birth: nullableString(formData.get("date_of_birth")),
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
       skin_notes: nullableString(formData.get("skin_notes")),

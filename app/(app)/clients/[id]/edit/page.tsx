@@ -24,6 +24,7 @@ export default async function EditClientPage({
     date_of_birth: c.date_of_birth ?? "",
     phone: c.phone ?? "",
     email: c.email ?? "",
+    address: c.address ?? "",
     fitzpatrick_type:
       c.fitzpatrick_type != null ? String(c.fitzpatrick_type) : "",
     skin_notes: c.skin_notes ?? "",
