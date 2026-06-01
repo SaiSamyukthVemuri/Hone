@@ -1,14 +1,21 @@
 import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { PostcareSettingsForm } from "../studio/PostcareSettingsForm";
 
-// Backend-only preview of the current health intake form. Server-
-// rendered, read-only, no `<form>` element, no submit handler, no DB
-// reads, no token. The page maps over INTAKE_STEPS (the same source of
-// truth the public intake wizard and the practitioner intake review
-// already consume) and renders each question as a disabled control.
+// Intake & Postcare settings page. Two surfaces:
 //
-// Inputs are disabled as a secondary defense; the primary guarantee is
-// the absence of any form element / server action / client component.
-// Nothing on this page can mutate state.
+//   1. Read-only preview of the current health intake form (the same
+//      INTAKE_STEPS the public wizard and the practitioner intake
+//      review consume). No `<form>`, no server action, no DB read.
+//      Inputs are disabled as a secondary defense; the primary
+//      guarantee is the absence of mutation primitives.
+//
+//   2. Owner-only Postcare email content editor. Previously lived
+//      under Settings → Studio; moved here so postcare content sits
+//      next to the intake form (Chloe expected to find it near the
+//      forms area, not under Studio). The form component itself is
+//      reused unchanged; no data, schema, action, send, or template
+//      behaviour was modified by this move.
 //
 // Conditional questions are shown in line with their step, annotated
 // with a "Shown when ..." caption resolved from the parent question's
@@ -16,19 +23,18 @@ import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
 // preview faithful to what a real intake feels like while making the
 // branching legible at a glance.
 //
-// Render mode: dynamic by default (the route lives inside the
+// Render mode: dynamic (default). The route lives inside the
 // authenticated (app)/settings layout, which loads the current
-// practitioner via cookies on every request). The previous
-// `force-static` directive made Next.js statically pre-render this
-// route at build time; with no cookies present at build, the parent
-// layout's getCurrentPractitionerWithStudio() redirected to /login,
-// and that redirect was baked into the static output. Every
-// subsequent request was served the baked redirect regardless of the
-// caller's real auth state. Removing the directive lets the route
-// render per-request alongside the layout's auth check.
-export const metadata = { title: "Intake form preview" };
+// practitioner via cookies on every request. The prior `force-static`
+// directive was removed in PR #90 because it caused Next.js to
+// pre-render the route at build time and bake a redirect to /login
+// into the static output.
+export const metadata = { title: "Intake & Postcare" };
 
-export default function IntakePreviewPage() {
+export default async function IntakeAndPostcarePage() {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const isOwner = practitioner.role === "owner";
+
   return (
     <section className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
@@ -70,6 +76,32 @@ export default function IntakePreviewPage() {
           </li>
         ))}
       </ol>
+
+      {isOwner && (
+        <div className="mt-4 flex flex-col gap-4">
+          <div className="border-t border-neutral-200 dark:border-neutral-800" />
+          <div className="flex flex-col gap-2">
+            <h2 className="text-xl font-medium">Postcare email content</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Used by the manual <em>Send postcare</em> button on an
+              appointment. You write the clinical content; Hone never
+              invents medical advice. Send is always manual; no
+              auto-send. Postcare data lives on the studio record and
+              is unchanged by moving this editor here.
+            </p>
+          </div>
+          <PostcareSettingsForm
+            initial={{
+              postcare_aftercare_text: studio.postcare_aftercare_text ?? "",
+              postcare_warning_signs_text:
+                studio.postcare_warning_signs_text ?? "",
+              postcare_product_recommendations_text:
+                studio.postcare_product_recommendations_text ?? "",
+              postcare_review_url: studio.postcare_review_url ?? "",
+            }}
+          />
+        </div>
+      )}
     </section>
   );
 }

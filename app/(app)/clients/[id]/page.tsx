@@ -263,6 +263,26 @@ export default async function ClientCheatSheetPage({
             removeAction={removeClientTagAction}
           />
 
+          {/* Details (non-clinical demographics). DOB lives here, not
+              in Skin: Chloe pointed out DOB sitting under Skin was
+              confusing because Skin is for Fitzpatrick / skin notes
+              / clinical context. The Birthday card above handles the
+              "today / this month" reminder UI; this row exposes the
+              raw stored date for reference. */}
+          <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Details
+            </h2>
+            <dl className="mt-3 flex flex-col gap-2 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">Date of birth</dt>
+                <dd className="font-medium">
+                  {client.date_of_birth ?? "Not set"}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
           {/* Skin is its own card now (was previously grid-paired with
               Pricing). Skin context + Fitzpatrick belong with clinical
               caution; billing rates belong in their own footer card.
@@ -291,12 +311,6 @@ export default async function ClientCheatSheetPage({
                   {selfReportedFitzpatrick
                     ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
                     : "Not completed"}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-neutral-500">Date of birth</dt>
-                <dd className="font-medium">
-                  {client.date_of_birth ?? "Not set"}
                 </dd>
               </div>
             </dl>
@@ -478,11 +492,14 @@ export default async function ClientCheatSheetPage({
         </section>
       )}
 
-      {activeTab === "treatment" && (
+      {activeTab === "sessions" && (
         <>
-          {/* 1. Last session — top of the tab. This is what the
-                practitioner reaches for between visits ("what did we
-                do last time?"). */}
+          {/* Sessions tab (split out from the prior combined "Sessions
+                & Treatment Plans" tab after Chloe's launch retest).
+                Holds per-visit memory + progress totals. Treatment
+                Plans is its own tab now.
+                1. Last session; top of the tab. What the practitioner reaches
+                for between visits. */}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">Last session</h2>
             {lastSession ? (
@@ -519,22 +536,10 @@ export default async function ClientCheatSheetPage({
             )}
           </section>
 
-          {/* 2. Active treatment plans — multi-session context for
-                what the next visit should focus on. */}
-          <TreatmentPlansCard
-            clientId={client.id}
-            plans={treatmentPlans}
-            createAction={createTreatmentPlanAction}
-            closeAction={closeTreatmentPlanAction}
-            updateNotesAction={updateTreatmentPlanNotesAction}
-            createStageAction={createTreatmentPlanStageAction}
-            updateStageAction={updateTreatmentPlanStageAction}
-            deleteStageAction={deleteTreatmentPlanStageAction}
-            practitionerNames={practitionerNames}
-          />
-
-          {/* 3. Treatment time totals + goal — progress-tracking,
-                lower priority than the immediate last-session memory. */}
+          {/* 2. Treatment time totals + goal: progress-tracking,
+                lower priority than immediate last-session memory.
+                Lives with Sessions because it summarises session time
+                over the course of treatment. */}
           <TreatmentTimeCard
             clientId={client.id}
             totals={treatmentTotals}
@@ -543,7 +548,7 @@ export default async function ClientCheatSheetPage({
             upsertGoalAction={upsertTreatmentGoalAction}
           />
 
-          {/* 4. Full timeline last. */}
+          {/* 3. Full timeline last. */}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">All sessions</h2>
             <SessionTimeline
@@ -553,6 +558,20 @@ export default async function ClientCheatSheetPage({
             />
           </section>
         </>
+      )}
+
+      {activeTab === "treatment" && (
+        <TreatmentPlansCard
+          clientId={client.id}
+          plans={treatmentPlans}
+          createAction={createTreatmentPlanAction}
+          closeAction={closeTreatmentPlanAction}
+          updateNotesAction={updateTreatmentPlanNotesAction}
+          createStageAction={createTreatmentPlanStageAction}
+          updateStageAction={updateTreatmentPlanStageAction}
+          deleteStageAction={deleteTreatmentPlanStageAction}
+          practitionerNames={practitionerNames}
+        />
       )}
     </div>
   );

@@ -19,6 +19,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
 import { IntakeReissueCard } from "./IntakeReissueCard";
 import { IntakeHistoryList } from "./IntakeHistoryList";
+import { NoneAnswerSummary } from "./NoneAnswerSummary";
 
 function optionLabel(q: Question, value: string): string {
   const match = q.options?.find((o) => o.value === value);
@@ -50,19 +51,11 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
       const others = (q.options ?? [])
         .filter((o) => o.value !== NONE_VALUE)
         .map((o) => o.label);
-      const shown = others.slice(0, 5).join(", ");
-      const extra = others.length > 5 ? `, +${others.length - 5} more` : "";
-      return (
-        <span>
-          <span className="font-medium">{noneLabel}</span>
-          {others.length > 0 && (
-            <span className="block text-xs text-neutral-500">
-              out of: {shown}
-              {extra}
-            </span>
-          )}
-        </span>
-      );
+      // The truncate/expand UI lives in a tiny client component so the
+      // practitioner can reveal the full negated list on demand
+      // without paging away. No data is fetched on expand; the option
+      // list is read from the current INTAKE_STEPS at render time.
+      return <NoneAnswerSummary noneLabel={noneLabel} options={others} />;
     }
     return (
       <span>{selected.map((v) => optionLabel(q, v)).join(", ")}</span>

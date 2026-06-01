@@ -16,7 +16,7 @@ export default async function SettingsLayout({
         <div className="mt-6 -mx-5 overflow-x-auto border-b border-neutral-200 px-5 dark:border-neutral-800 md:mx-0 md:px-0">
           <nav className="flex items-center gap-1">
             <SettingsTab href="/settings/profile" label="Profile" />
-            <SettingsTab href="/settings/intake" label="Intake form" />
+            <SettingsTab href="/settings/intake" label="Intake & Postcare" />
             {isOwner && <SettingsTab href="/settings/studio" label="Studio" />}
             {isOwner && <SettingsTab href="/settings/team" label="Team" />}
             {isOwner && <SettingsTab href="/settings/booking" label="Booking" />}
