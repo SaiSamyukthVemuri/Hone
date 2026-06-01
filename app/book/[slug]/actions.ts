@@ -600,7 +600,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       });
     }
   }
-  if (owner?.email) {
+  // Migration 0047: studio owners can opt out of the practitioner
+  // new-booking notification. Default true preserves existing
+  // behavior. Client confirmation email above is gated separately
+  // via send_confirmation_emails and is NOT affected by this toggle.
+  if (owner?.email && studio.notify_practitioner_on_new_booking !== false) {
     await sendBookingNotificationToPractitioner({
       appointment: created,
       service,

@@ -45,6 +45,11 @@ export type Studio = {
   postcare_warning_signs_text: string | null;
   postcare_product_recommendations_text: string | null;
   postcare_review_url: string | null;
+  // Migration 0047: practitioner/owner "New booking" notification
+  // toggle. Default true preserves existing behavior. Controls ONLY
+  // the operational practitioner notification; client confirmation
+  // (send_confirmation_emails) and all other emails are unaffected.
+  notify_practitioner_on_new_booking: boolean;
   // Migration 0045: cancellation / no-show policy text. Per-studio,
   // owner-authored. C2a-core only; not used to collect cards. When
   // card-on-file is enabled in a later release, this text is what
