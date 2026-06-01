@@ -46,6 +46,20 @@ export default async function PaymentsSettingsPage() {
     livemode: typeof row?.livemode === "boolean" ? row.livemode : null,
   };
 
+  // Paid-service count for the card-on-file readiness checklist
+  // (C1 read-only display only; not used to gate booking, not used
+  // to gate card collection, not exported as a reusable helper).
+  // Counts active services with a positive price_cents; free
+  // consultations (price_cents = 0 or null, or modality =
+  // 'consultation') do not count toward this number.
+  const { count: paidServiceCountRaw } = await supabase
+    .from("services")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studio.id)
+    .eq("active", true)
+    .gt("price_cents", 0);
+  const paidServiceCount = paidServiceCountRaw ?? 0;
+
   return (
     <section className="flex flex-col gap-8">
       <div>
@@ -55,7 +69,10 @@ export default async function PaymentsSettingsPage() {
           Public booking does not collect cards from clients yet.
         </p>
       </div>
-      <PaymentsSettings status={status} />
+      <PaymentsSettings
+        status={status}
+        paidServiceCount={paidServiceCount}
+      />
     </section>
   );
 }

@@ -27,6 +27,11 @@ export type StripeStatusView = {
 
 export type PaymentsSettingsProps = {
   status: StripeStatusView;
+  // Count of active services with positive price_cents. Used by the
+  // C1 readiness card only. Not a card-collection gate. Free
+  // consultations are intentionally not counted because the product
+  // rule is that they remain card-free.
+  paidServiceCount: number;
 };
 
 // Plain-English status headline + supporting note. Owners shouldn't
@@ -70,7 +75,7 @@ function statusCopy(status: StripeStatusView): {
   }
 }
 
-export function PaymentsSettings({ status }: PaymentsSettingsProps) {
+export function PaymentsSettings({ status, paidServiceCount }: PaymentsSettingsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -261,6 +266,14 @@ export function PaymentsSettings({ status }: PaymentsSettingsProps) {
         </p>
       </div>
 
+      <CardOnFileReadiness
+        connectComplete={
+          status.chargesEnabled && status.onboardingCompletedAt != null
+        }
+        paidServiceCount={paidServiceCount}
+        livemode={status.livemode}
+      />
+
       <details className="text-xs text-neutral-500">
         <summary className="cursor-pointer select-none">
           Technical details
@@ -343,5 +356,112 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </dt>
       <dd className="text-sm">{children}</dd>
     </div>
+  );
+}
+
+// Card-on-file readiness card (C1). Read-only. Purpose: make
+// prerequisites visible so studio owners can finish setup steps
+// they control while card collection itself remains off.
+//
+// This card does NOT collect cards, save cards, create SetupIntents
+// or PaymentIntents, open Checkout, or change require_card_on_file.
+// It exposes no enable toggle. Status is always "Not enabled".
+//
+// The CTAs are read-only / navigational: review services, or read
+// the Connect status above. No "Enable", no "Save card", no
+// "Require card".
+function CardOnFileReadiness({
+  connectComplete,
+  paidServiceCount,
+  livemode,
+}: {
+  connectComplete: boolean;
+  paidServiceCount: number;
+  livemode: boolean | null;
+}) {
+  const hasPaidService = paidServiceCount > 0;
+  // Mode display: anything other than explicit `true` is treated as
+  // test mode for this card. Phase 1 environments are unconditionally
+  // test mode for client booking; livemode === true would represent
+  // an unexpected configuration we do not currently support.
+  const isTestMode = livemode !== true;
+
+  return (
+    <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <header className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h3 className="text-base font-medium">Card-on-file readiness</h3>
+          <span className="rounded-full bg-neutral-200 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+            Not enabled
+          </span>
+        </div>
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+          Card collection is not enabled yet. No cards are being collected.
+          This checklist prepares your studio for a later test-mode
+          card-on-file flow.
+        </p>
+      </header>
+
+      <ul className="flex flex-col gap-2 text-sm">
+        <ReadinessItem
+          ok={connectComplete}
+          okLabel="Stripe Connect connected"
+          notYetLabel="Stripe Connect not finished; see Stripe connection above"
+        />
+        <ReadinessItem
+          ok={hasPaidService}
+          okLabel={
+            paidServiceCount === 1
+              ? "1 paid service exists"
+              : `${paidServiceCount} paid services exist`
+          }
+          notYetLabel="No paid services configured yet"
+        />
+        <ReadinessItem
+          ok={true}
+          okLabel="Free consultations remain card-free"
+          notYetLabel="Free consultations remain card-free"
+        />
+        <ReadinessItem
+          ok={false}
+          okLabel="Cancellation / no-show policy on file"
+          notYetLabel="Cancellation / no-show policy needed before collecting cards later"
+        />
+        <ReadinessItem
+          ok={isTestMode}
+          okLabel="Test mode only"
+          notYetLabel="Test mode only (live mode is not enabled)"
+        />
+        <ReadinessItem
+          ok={false}
+          okLabel="Card collection enabled"
+          notYetLabel="Card collection not enabled"
+        />
+      </ul>
+
+      <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+        <p>
+          When card-on-file becomes available, it will only apply to
+          paid services. Free consultations will keep working with no
+          card step. Hone will not charge clients at booking. No-show
+          or cancellation fee charging is not part of this release.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <a
+          href="/settings/services"
+          className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Review services
+        </a>
+        <a
+          href="mailto:support@hone.care?subject=Card-on-file%20questions"
+          className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Contact support
+        </a>
+      </div>
+    </section>
   );
 }
