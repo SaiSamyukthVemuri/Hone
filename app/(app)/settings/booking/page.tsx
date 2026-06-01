@@ -4,9 +4,13 @@ import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 import { updateStudioBookingPrefsAction } from "./actions";
 import { BookingLinkCard } from "./BookingLinkCard";
 
+// Plain option labels for the buffer select. The "Recommended" hint
+// is no longer inlined here because that crowded the select control
+// (especially on narrow widths, where the caret got cramped against
+// the parenthetical). The recommendation is now surfaced next to the
+// field label and in the helper text below the field.
 function bufferOptionLabel(minutes: number): string {
   if (minutes === 0) return "No buffer";
-  if (minutes === 15) return "15 minutes (Recommended)";
   return `${minutes} minutes`;
 }
 
@@ -84,9 +88,14 @@ export default async function BookingSettingsPage() {
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">
-              Time between appointments
-            </span>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+              <span className="text-sm font-medium">
+                Time between appointments
+              </span>
+              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                Recommended: 15 min
+              </span>
+            </div>
             <select
               name="buffer_minutes"
               defaultValue={String(studio.buffer_minutes)}
@@ -105,7 +114,8 @@ export default async function BookingSettingsPage() {
             </select>
             <span className="text-xs text-neutral-500">
               Automatically blocks time after each appointment for cleanup,
-              notes, and preparation. Changes apply to new bookings only.
+              notes, and preparation. 15 minutes is recommended. Changes
+              apply to new bookings only.
             </span>
           </label>
         </div>
