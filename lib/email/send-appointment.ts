@@ -10,6 +10,7 @@ import {
   build2hReminderEmail,
   buildNoShowFollowupEmail,
 } from "@/lib/email/templates/reminders";
+import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIcs } from "@/lib/booking/ical";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -406,6 +407,47 @@ export async function sendNoShowFollowupToClient(params: {
     clientName: params.clientName,
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
+  });
+  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+}
+
+
+// Postcare email sender (manual practitioner-triggered, v1). Pure
+// renderer-around-template: takes already-loaded studio + appointment
+// + service context and dispatches via Resend. Bookkeeping (sent_at +
+// send_attempts) is intentionally handled by the calling action via a
+// single conditional UPDATE that serves as both the first-send atomic
+// claim AND the attempts increment. record_email_attempt is NOT used
+// for postcare because its set-sent_at-only-on-success semantic cannot
+// be combined atomically with a first-send race-protection claim; see
+// the audit + commit message for the trade-off.
+export async function sendPostcareToClient(params: {
+  clientName: string;
+  clientEmail: string;
+  studio: Studio;
+  practitionerName: string | null;
+  serviceName: string | null;
+  startsAt: Date | null;
+  aftercareText: string | null;
+  warningSignsText: string | null;
+  productRecommendationsText: string | null;
+  reviewUrl: string | null;
+}): Promise<EmailSendResult> {
+  if (!params.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
+  const { subject, html, text } = buildPostcareEmail({
+    clientName: params.clientName,
+    studioName: params.studio.name,
+    studioEmail: params.studio.owner_email,
+    practitionerName: params.practitionerName,
+    serviceName: params.serviceName,
+    startsAt: params.startsAt,
+    timezone: params.studio.timezone,
+    aftercareText: params.aftercareText,
+    warningSignsText: params.warningSignsText,
+    productRecommendationsText: params.productRecommendationsText,
+    reviewUrl: params.reviewUrl,
   });
   return sendEmailSafely({ to: params.clientEmail, subject, html, text });
 }

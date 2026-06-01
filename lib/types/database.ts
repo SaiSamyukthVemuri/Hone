@@ -37,6 +37,14 @@ export type Studio = {
   // reminders (dashboard + client profile). Default 'purple'. Red/rose
   // is intentionally NOT an option — it's reserved for allergies/cautions.
   birthday_reminder_color: BirthdayReminderColor;
+  // Migration 0043: per-studio postcare email content. All nullable.
+  // The send action requires postcare_aftercare_text to be non-empty
+  // before allowing a send. postcare_review_url is optional; when set,
+  // the email renders a neutral review prompt (no discount logic).
+  postcare_aftercare_text: string | null;
+  postcare_warning_signs_text: string | null;
+  postcare_product_recommendations_text: string | null;
+  postcare_review_url: string | null;
 };
 
 // Migration 0040: closed preset list for the birthday reminder accent.
@@ -243,6 +251,13 @@ export type Appointment = {
   // Migration 0028: attempts counter for the no-show follow-up email,
   // added so the no-show path has the same 3-strike behavior as the others.
   no_show_email_send_attempts: number;
+  // Migration 0043: postcare send tracking. sent_at IS NULL means "no
+  // send has ever been attempted." The send action's first-send claim
+  // is a conditional UPDATE on sent_at IS NULL; the same UPDATE sets
+  // sent_at and increments attempts atomically. send_attempts is also
+  // incremented on resend.
+  postcare_email_sent_at: string | null;
+  postcare_email_send_attempts: number;
   cancellation_token: string | null;
   // Migration 0029: trailing-only protected interval
   // [starts_at, blocked_ends_at). buffer_minutes_snapshot is a copy
