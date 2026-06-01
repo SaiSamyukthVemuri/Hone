@@ -8,6 +8,7 @@ type Toggle = {
   key: keyof Pick<
     Studio,
     | "send_confirmation_emails"
+    | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
     | "auto_mark_no_shows"
@@ -31,6 +32,12 @@ const TOGGLES: ReadonlyArray<Toggle> = [
   {
     key: "send_confirmation_emails",
     label: "Send confirmation emails when appointments are booked",
+  },
+  {
+    key: "notify_practitioner_on_new_booking",
+    label: "Email me when a new booking is created",
+    helper:
+      "Send the studio owner a notification when a client books online. Client confirmation emails are separate and stay unchanged.",
   },
   { key: "send_24h_reminders", label: "Send 24-hour reminders" },
   { key: "send_2h_reminders", label: "Send 2-hour reminders" },
@@ -64,6 +71,7 @@ type Props = {
   initial: Pick<
     Studio,
     | "send_confirmation_emails"
+    | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
     | "auto_mark_no_shows"

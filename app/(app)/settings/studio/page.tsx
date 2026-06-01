@@ -34,6 +34,8 @@ export default async function StudioSettingsPage() {
       <EmailSettingsForm
         initial={{
           send_confirmation_emails: studio.send_confirmation_emails,
+          notify_practitioner_on_new_booking:
+            studio.notify_practitioner_on_new_booking,
           send_24h_reminders: studio.send_24h_reminders,
           send_2h_reminders: studio.send_2h_reminders,
           auto_mark_no_shows: studio.auto_mark_no_shows,

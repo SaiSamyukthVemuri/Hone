@@ -96,6 +96,14 @@ export async function setStudioEmailSettingsAction(
     .from("studios")
     .update({
       send_confirmation_emails: readBool(formData, "send_confirmation_emails"),
+      // Migration 0047: practitioner new-booking notification toggle.
+      // Default at the DB level is true; this form always writes the
+      // explicit value the practitioner toggled, so a missing key here
+      // would persist false (which is the intended off behavior).
+      notify_practitioner_on_new_booking: readBool(
+        formData,
+        "notify_practitioner_on_new_booking",
+      ),
       send_24h_reminders: readBool(formData, "send_24h_reminders"),
       send_2h_reminders: readBool(formData, "send_2h_reminders"),
       auto_mark_no_shows: false,                  // FORCE-OFF (Blocker 1)
