@@ -1,6 +1,7 @@
 import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { PostcareSettingsForm } from "../studio/PostcareSettingsForm";
+import { PolicySettingsForm } from "../studio/PolicySettingsForm";
 
 // Intake & Postcare settings page. Two surfaces:
 //
@@ -98,6 +99,17 @@ export default async function IntakeAndPostcarePage() {
               postcare_product_recommendations_text:
                 studio.postcare_product_recommendations_text ?? "",
               postcare_review_url: studio.postcare_review_url ?? "",
+            }}
+          />
+
+          <div className="border-t border-neutral-200 dark:border-neutral-800" />
+
+          <PolicySettingsForm
+            initial={{
+              cancellation_policy_text: studio.cancellation_policy_text ?? "",
+              no_show_policy_text: studio.no_show_policy_text ?? "",
+              policy_version: studio.policy_version,
+              policy_updated_at: studio.policy_updated_at,
             }}
           />
         </div>

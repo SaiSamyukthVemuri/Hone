@@ -60,6 +60,15 @@ export default async function PaymentsSettingsPage() {
     .gt("price_cents", 0);
   const paidServiceCount = paidServiceCountRaw ?? 0;
 
+  // C2a-core: readiness checklist flips the policy row green only
+  // when BOTH cancellation and no-show policy texts are non-empty.
+  // The values themselves are never sent to the client; only the
+  // boolean readiness signal is.
+  const hasCancellationPolicy =
+    (studio.cancellation_policy_text ?? "").trim().length > 0;
+  const hasNoShowPolicy =
+    (studio.no_show_policy_text ?? "").trim().length > 0;
+
   return (
     <section className="flex flex-col gap-8">
       <div>
@@ -72,6 +81,8 @@ export default async function PaymentsSettingsPage() {
       <PaymentsSettings
         status={status}
         paidServiceCount={paidServiceCount}
+        hasCancellationPolicy={hasCancellationPolicy}
+        hasNoShowPolicy={hasNoShowPolicy}
       />
     </section>
   );

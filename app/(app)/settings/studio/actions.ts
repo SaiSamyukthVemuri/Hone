@@ -173,3 +173,76 @@ export async function updateStudioPostcareAction(
 
   revalidatePath("/settings/studio");
 }
+
+// ---------------------------------------------------------------------------
+// updateStudioPolicyAction (C2a-core)
+// ---------------------------------------------------------------------------
+// Saves the studio's cancellation / no-show policy text. Owner-only.
+// Both text fields are nullable; blank input persists as NULL.
+//
+// Version bookkeeping: policy_version + policy_updated_at are bumped
+// ONLY when the saved text actually differs from what's currently on
+// the row. A no-op save (e.g. owner clicks Save without editing) does
+// not advance the version, which keeps version stable as the future
+// `payment_consents.policy_version` reference.
+//
+// Does NOT:
+//   - enable card-on-file or write to require_card_on_file
+//   - touch studio_payment_settings
+//   - write payment_consents rows (no consent collection exists yet)
+//   - change booking, appointment, or session behavior
+//   - send any email
+// ---------------------------------------------------------------------------
+export async function updateStudioPolicyAction(
+  formData: FormData,
+): Promise<void> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    throw new Error("Only studio owners can change studio policies.");
+  }
+
+  const cancellation = nullableString(
+    formData.get("cancellation_policy_text"),
+  );
+  const noShow = nullableString(formData.get("no_show_policy_text"));
+
+  const supabase = await createClient();
+
+  // Read the current values to decide whether to bump policy_version.
+  // Same-text saves leave version + timestamp untouched.
+  const { data: current, error: readErr } = await supabase
+    .from("studios")
+    .select("cancellation_policy_text, no_show_policy_text, policy_version, policy_updated_at")
+    .eq("id", studio.id)
+    .maybeSingle();
+  if (readErr || !current) {
+    throw new Error(
+      `Could not load studio for policy update: ${readErr?.message ?? "not found"}`,
+    );
+  }
+
+  const changed =
+    (current.cancellation_policy_text ?? null) !== (cancellation ?? null) ||
+    (current.no_show_policy_text ?? null) !== (noShow ?? null);
+
+  const nowIso = new Date().toISOString();
+  const updates: Record<string, string | null> = {
+    cancellation_policy_text: cancellation,
+    no_show_policy_text: noShow,
+  };
+  if (changed) {
+    updates.policy_version = nowIso;
+    updates.policy_updated_at = nowIso;
+  }
+
+  const { error } = await supabase
+    .from("studios")
+    .update(updates)
+    .eq("id", studio.id);
+  if (error) {
+    throw new Error(`Failed to update studio policy: ${error.message}`);
+  }
+
+  revalidatePath("/settings/intake");
+  revalidatePath("/settings/payments");
+}

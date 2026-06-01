@@ -32,6 +32,11 @@ export type PaymentsSettingsProps = {
   // consultations are intentionally not counted because the product
   // rule is that they remain card-free.
   paidServiceCount: number;
+  // C2a-core: readiness booleans for the cancellation / no-show
+  // policy row. Only the booleans cross the wire; the policy text
+  // itself is rendered in Settings → Intake & Postcare.
+  hasCancellationPolicy: boolean;
+  hasNoShowPolicy: boolean;
 };
 
 // Plain-English status headline + supporting note. Owners shouldn't
@@ -75,7 +80,12 @@ function statusCopy(status: StripeStatusView): {
   }
 }
 
-export function PaymentsSettings({ status, paidServiceCount }: PaymentsSettingsProps) {
+export function PaymentsSettings({
+  status,
+  paidServiceCount,
+  hasCancellationPolicy,
+  hasNoShowPolicy,
+}: PaymentsSettingsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -272,6 +282,8 @@ export function PaymentsSettings({ status, paidServiceCount }: PaymentsSettingsP
         }
         paidServiceCount={paidServiceCount}
         livemode={status.livemode}
+        hasCancellationPolicy={hasCancellationPolicy}
+        hasNoShowPolicy={hasNoShowPolicy}
       />
 
       <details className="text-xs text-neutral-500">
@@ -374,12 +386,17 @@ function CardOnFileReadiness({
   connectComplete,
   paidServiceCount,
   livemode,
+  hasCancellationPolicy,
+  hasNoShowPolicy,
 }: {
   connectComplete: boolean;
   paidServiceCount: number;
   livemode: boolean | null;
+  hasCancellationPolicy: boolean;
+  hasNoShowPolicy: boolean;
 }) {
   const hasPaidService = paidServiceCount > 0;
+  const hasBothPolicies = hasCancellationPolicy && hasNoShowPolicy;
   // Mode display: anything other than explicit `true` is treated as
   // test mode for this card. Phase 1 environments are unconditionally
   // test mode for client booking; livemode === true would represent
@@ -423,9 +440,15 @@ function CardOnFileReadiness({
           notYetLabel="Free consultations remain card-free"
         />
         <ReadinessItem
-          ok={false}
-          okLabel="Cancellation / no-show policy on file"
-          notYetLabel="Cancellation / no-show policy needed before collecting cards later"
+          ok={hasBothPolicies}
+          okLabel="Cancellation and no-show policy on file"
+          notYetLabel={
+            !hasCancellationPolicy && !hasNoShowPolicy
+              ? "Cancellation and no-show policy needed before collecting cards later"
+              : !hasCancellationPolicy
+                ? "Cancellation policy still missing; no-show policy on file"
+                : "No-show policy still missing; cancellation policy on file"
+          }
         />
         <ReadinessItem
           ok={isTestMode}
@@ -454,6 +477,12 @@ function CardOnFileReadiness({
           className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Review services
+        </a>
+        <a
+          href="/settings/intake"
+          className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Edit cancellation / no-show policy
         </a>
         <a
           href="mailto:support@hone.care?subject=Card-on-file%20questions"
