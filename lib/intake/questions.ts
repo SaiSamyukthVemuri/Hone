@@ -486,7 +486,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     shortLabel: "Skin",
     title: "Skin and treatment area",
     description:
-      "First, a few questions about your skin and treatment area. The Fitzpatrick questions further down help your electrologist understand how your skin tends to react to sun exposure.",
+      "First, a few questions about your skin and treatment area. The Fitzpatrick questions further down help your electrologist understand which settings and modalities may be appropriate for your skin.",
     questions: [
       {
         key: "skin_sensitivity",
@@ -505,7 +505,12 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
       {
         key: "recent_sun",
         type: "yes_no",
-        label: "Recent sun exposure (within the last 2 weeks)?",
+        // Label clarified to flag the cases that actually affect
+        // treatment safety (burns, tans, peeling skin) rather than
+        // generic "any sun exposure". Stored key is unchanged so
+        // older intakes still display the same answer.
+        label:
+          "Recent intense sun exposure, sunburn, or tanning (within the last 2 weeks)?",
         required: true,
       },
       {

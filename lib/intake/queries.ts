@@ -41,6 +41,35 @@ export async function getLatestIntakeForClient(
   return (data ?? null) as ClientIntakeForm | null;
 }
 
+// Returns the most recent submitted-or-reviewed intake for the client.
+// Intentionally ignores in_progress rows so a newer reissue that the
+// client has not yet completed does not erase the previously
+// submitted answers from derived surfaces (e.g. self-reported
+// Fitzpatrick on the client profile). Returns null when the client
+// has never submitted an intake.
+export async function getLatestSubmittedOrReviewedIntakeForClient(
+  studioId: string,
+  clientId: string,
+): Promise<ClientIntakeForm | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("client_intake_forms")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .in("status", ["submitted", "reviewed"])
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(
+      `Failed to load submitted intake: ${error.message}`,
+    );
+  }
+  return (data ?? null) as ClientIntakeForm | null;
+}
+
 export async function getIntakeById(
   studioId: string,
   intakeId: string,

@@ -9,7 +9,11 @@ import {
   getIntakeById,
   getIntakeHistoryForClient,
 } from "@/lib/intake/queries";
-import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
+import {
+  INTAKE_STEPS,
+  NONE_VALUE,
+  type Question,
+} from "@/lib/intake/questions";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
@@ -29,13 +33,39 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
     if (!Array.isArray(value) || value.length === 0) {
       return <span className="text-neutral-400">None selected</span>;
     }
+    const selected = (value as unknown[]).filter(
+      (v): v is string => typeof v === "string",
+    );
+    // When the client selected the exclusive "None" sentinel, the
+    // raw answer alone reads as a vague "None of these apply to me"
+    // with no context for the practitioner about WHAT was negated.
+    // We surface the negated option set inline so the review is
+    // self-contained: e.g. "None of these apply to me (out of:
+    // pregnancy, diabetes, thyroid disorder, ...)". First five
+    // non-None options shown; the remainder collapses to "+N more"
+    // so very long lists (e.g. medical_conditions has 14) don't
+    // dominate the review grid.
+    if (selected.length === 1 && selected[0] === NONE_VALUE) {
+      const noneLabel = optionLabel(q, NONE_VALUE);
+      const others = (q.options ?? [])
+        .filter((o) => o.value !== NONE_VALUE)
+        .map((o) => o.label);
+      const shown = others.slice(0, 5).join(", ");
+      const extra = others.length > 5 ? `, +${others.length - 5} more` : "";
+      return (
+        <span>
+          <span className="font-medium">{noneLabel}</span>
+          {others.length > 0 && (
+            <span className="block text-xs text-neutral-500">
+              out of: {shown}
+              {extra}
+            </span>
+          )}
+        </span>
+      );
+    }
     return (
-      <span>
-        {(value as unknown[])
-          .filter((v): v is string => typeof v === "string")
-          .map((v) => optionLabel(q, v))
-          .join(", ")}
-      </span>
+      <span>{selected.map((v) => optionLabel(q, v)).join(", ")}</span>
     );
   }
   if (q.type === "single_select" && typeof value === "string") {

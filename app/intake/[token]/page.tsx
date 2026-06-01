@@ -132,8 +132,9 @@ export default async function IntakePage({
                   Before your appointment at {result.studioName}
                 </h1>
                 <p className="mt-4 text-[15px] leading-relaxed text-[#6B6B6B]">
-                  This takes about 5 minutes. Your electrologist will review it
-                  before your session. Your answers are kept confidential.
+                  This takes about 7 to 10 minutes. Your electrologist will
+                  review it before your session. Your answers are kept
+                  confidential.
                 </p>
               </>
             ) : (
