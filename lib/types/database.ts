@@ -45,6 +45,17 @@ export type Studio = {
   postcare_warning_signs_text: string | null;
   postcare_product_recommendations_text: string | null;
   postcare_review_url: string | null;
+  // Migration 0045: cancellation / no-show policy text. Per-studio,
+  // owner-authored. C2a-core only; not used to collect cards. When
+  // card-on-file is enabled in a later release, this text is what
+  // gets rendered above the consent block and hashed into
+  // payment_consents.rendered_consent_text_hash. policy_version is a
+  // stable identifier (ISO timestamp) bumped only when the text
+  // content changes.
+  cancellation_policy_text: string | null;
+  no_show_policy_text: string | null;
+  policy_version: string | null;
+  policy_updated_at: string | null;
 };
 
 // Migration 0040: closed preset list for the birthday reminder accent.
