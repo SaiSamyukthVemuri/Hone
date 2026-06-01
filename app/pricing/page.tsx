@@ -1,9 +1,30 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Reveal } from "../_components/Reveal";
 import { MarketingHeader } from "../_components/MarketingHeader";
 import { MarketingFooter } from "../_components/MarketingFooter";
 import { EyebrowCaption } from "../_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "../_components/marketingNav";
+
+// Page-specific metadata for /pricing. "absolute" skips the
+// "%s · Hone" template since the title already contains the brand.
+export const metadata: Metadata = {
+  title: {
+    absolute: "Hone Pricing | Early Access for Electrologists",
+  },
+  description:
+    "Simple early-access pricing for Hone, electrolysis practice software for booking, intake, treatment plans, charting, and postcare.",
+  openGraph: {
+    title: "Hone Pricing | Early Access for Electrologists",
+    description:
+      "Simple early-access pricing for Hone, electrolysis practice software for booking, intake, treatment plans, charting, and postcare.",
+  },
+  twitter: {
+    title: "Hone Pricing | Early Access for Electrologists",
+    description:
+      "Simple early-access pricing for Hone, electrolysis practice software for booking, intake, treatment plans, charting, and postcare.",
+  },
+};
 
 type Plan = {
   name: string;
@@ -40,7 +61,7 @@ const PLANS: ReadonlyArray<Plan> = [
       "Self-serve cancel and reschedule with email confirmations",
       "Full data export any time",
     ],
-    cta: { label: "Request access", href: "/#request-access" },
+    cta: { label: "Get early access", href: "/#early-access" },
     emphasized: true,
   },
 ];
