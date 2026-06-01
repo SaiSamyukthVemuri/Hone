@@ -1,5 +1,10 @@
-import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
+
+// Settings layout. The tab list is computed server-side based on
+// role; the nav itself is a small client component so it can read
+// usePathname for the active tab and drive a mobile <select> change
+// handler. Routes are unchanged.
 
 export default async function SettingsLayout({
   children,
@@ -9,46 +14,31 @@ export default async function SettingsLayout({
   const { practitioner } = await getCurrentPractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
 
+  const items: SettingsNavItem[] = [
+    { href: "/settings/profile", label: "Profile" },
+    { href: "/settings/launch", label: "Launch" },
+    { href: "/settings/intake", label: "Intake & Postcare" },
+    ...(isOwner
+      ? [
+          { href: "/settings/studio", label: "Studio" },
+          { href: "/settings/team", label: "Team" },
+          { href: "/settings/booking", label: "Booking" },
+          { href: "/settings/availability", label: "Availability" },
+          { href: "/settings/calendar", label: "Breaks & blocks" },
+          { href: "/settings/services", label: "Services" },
+          { href: "/settings/payments", label: "Payments" },
+          { href: "/settings/data", label: "Data" },
+        ]
+      : []),
+  ];
+
   return (
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <div className="mt-6 -mx-5 overflow-x-auto border-b border-neutral-200 px-5 dark:border-neutral-800 md:mx-0 md:px-0">
-          <nav className="flex items-center gap-1">
-            <SettingsTab href="/settings/profile" label="Profile" />
-            <SettingsTab href="/settings/launch" label="Launch" />
-            <SettingsTab href="/settings/intake" label="Intake & Postcare" />
-            {isOwner && <SettingsTab href="/settings/studio" label="Studio" />}
-            {isOwner && <SettingsTab href="/settings/team" label="Team" />}
-            {isOwner && <SettingsTab href="/settings/booking" label="Booking" />}
-            {isOwner && (
-              <SettingsTab href="/settings/availability" label="Availability" />
-            )}
-            {isOwner && (
-              <SettingsTab href="/settings/calendar" label="Breaks & blocks" />
-            )}
-            {isOwner && (
-              <SettingsTab href="/settings/services" label="Services" />
-            )}
-            {isOwner && (
-              <SettingsTab href="/settings/payments" label="Payments" />
-            )}
-            {isOwner && <SettingsTab href="/settings/data" label="Data" />}
-          </nav>
-        </div>
+        <SettingsNav items={items} />
       </div>
       {children}
     </div>
-  );
-}
-
-function SettingsTab({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="-mb-px whitespace-nowrap border-b-2 border-transparent px-4 py-3 text-sm font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-    >
-      {label}
-    </Link>
   );
 }
