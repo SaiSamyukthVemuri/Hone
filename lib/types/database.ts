@@ -630,6 +630,10 @@ export type ClientIntakeForm = {
   reviewed_by: string | null;
   practitioner_notes: string | null;
   deleted_at: string | null;
+  // Practitioner-triggered reissue audit (migration 0044). Both null
+  // when the row was created by the booking-confirmation flow.
+  requested_at: string | null;
+  requested_by: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -11,6 +11,7 @@ import {
   buildNoShowFollowupEmail,
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
+import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
 import { buildIcs } from "@/lib/booking/ical";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -448,6 +449,28 @@ export async function sendPostcareToClient(params: {
     warningSignsText: params.warningSignsText,
     productRecommendationsText: params.productRecommendationsText,
     reviewUrl: params.reviewUrl,
+  });
+  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+}
+
+// Practitioner-triggered intake reissue email. Sent when the
+// practitioner clicks "Request intake update" (or "Resend email" on
+// an existing in-progress row) from the client profile. Independent
+// of the booking-confirmation flow; carries only the secure tokenized
+// link plus a neutral one-line ask. Failure is surfaced to the
+// practitioner UI; no DB bookkeeping (no record_email_attempt
+// equivalent for this surface today).
+export async function sendIntakeUpdateRequestToClient(params: {
+  clientEmail: string;
+  studioName: string;
+  intakeUrl: string;
+}): Promise<EmailSendResult> {
+  if (!params.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
+  const { subject, html, text } = buildIntakeRequestEmail({
+    studioName: params.studioName,
+    intakeUrl: params.intakeUrl,
   });
   return sendEmailSafely({ to: params.clientEmail, subject, html, text });
 }

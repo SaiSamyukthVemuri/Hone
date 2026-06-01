@@ -10,6 +10,10 @@ type Props = {
   alreadyReviewed: boolean;
 };
 
+// Notes + Mark reviewed only. The prior toast-only "Request update
+// from client" button has been replaced by the dedicated
+// IntakeReissueCard surface, which actually creates a new intake row
+// and produces a fresh tokenized link.
 export function IntakeReviewForm({
   intakeId,
   clientId,
@@ -20,7 +24,6 @@ export function IntakeReviewForm({
   const [error, setError] = useState<string | null>(null);
   const [savedHint, setSavedHint] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [requestToast, setRequestToast] = useState<string | null>(null);
 
   function submit(action: "review" | "save") {
     const fd = new FormData();
@@ -61,9 +64,6 @@ export function IntakeReviewForm({
         </p>
       )}
       {savedHint && <p className="text-xs text-neutral-500">{savedHint}</p>}
-      {requestToast && (
-        <p className="text-xs text-neutral-500">{requestToast}</p>
-      )}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -83,16 +83,6 @@ export function IntakeReviewForm({
             {isPending ? "Saving..." : "Mark reviewed"}
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => {
-            setRequestToast("Update request feature coming soon.");
-            setTimeout(() => setRequestToast(null), 3000);
-          }}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-950"
-        >
-          Request update from client
-        </button>
       </div>
     </div>
   );
