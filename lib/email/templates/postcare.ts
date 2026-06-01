@@ -1,4 +1,5 @@
 import { localTimeString } from "@/lib/booking/tz";
+import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
 
 // Postcare email template (v1).
 //
@@ -34,12 +35,14 @@ function dayLabel(d: Date, tz: string): string {
   }).format(d);
 }
 
-// Convert plain-text studio content to escaped HTML with line breaks
-// preserved. Studios paste plain prose into Settings; the email renders
-// it safely. Blank input yields an empty string (caller filters).
+// Convert plain-text studio content to escaped HTML with safe
+// Markdown-lite formatting (**bold**, *italic*, "- " bullets, and
+// [label](https://example.com) links with allowed schemes only).
+// Studios paste prose into Settings; the email renders it safely.
+// Blank input yields an empty string (caller filters).
+// See lib/email/markdown-lite.ts for the security model.
 function textBlockToHtml(text: string | null | undefined): string {
-  if (!text || text.trim().length === 0) return "";
-  return escapeHtml(text).replace(/\n/g, "<br />");
+  return markdownLiteToHtml(text);
 }
 
 // First name extraction. Falls back to the full name when there's no
@@ -55,7 +58,12 @@ function firstNameOf(fullName: string): string {
 export type PostcareEmailInputs = {
   clientName: string;
   studioName: string;
-  studioEmail: string;
+  // The address rendered in the Contact line at the bottom of the
+  // email. Resolved by the caller using the priority:
+  //   postcare_contact_email -> owner_email -> null (omit line)
+  // Pass `null` to suppress the Contact line entirely (e.g. if no
+  // usable email is set at all). Never pass the client's email.
+  studioEmail: string | null;
   practitionerName: string | null;
   serviceName: string | null;
   startsAt: Date | null;
@@ -64,6 +72,10 @@ export type PostcareEmailInputs = {
   warningSignsText: string | null;
   productRecommendationsText: string | null;
   reviewUrl: string | null;
+  // Optional per-studio override for the review prompt wording.
+  // When null/empty, the existing neutral default is used. The
+  // prompt itself is rendered ONLY when reviewUrl is also set.
+  reviewPromptText?: string | null;
 };
 
 export type PostcareEmail = {
@@ -107,22 +119,25 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
       )}</p>`,
     );
   }
+  // markdownLiteToHtml returns its own <p> / <ul> blocks, so we no
+  // longer wrap the result in an outer <p> (which would produce
+  // invalid nested-paragraph HTML).
   if (aftercareHtml) {
     htmlSections.push(
       `<h3 style="margin-top:24px;">Aftercare</h3>`,
-      `<p>${aftercareHtml}</p>`,
+      aftercareHtml,
     );
   }
   if (warningHtml) {
     htmlSections.push(
       `<h3 style="margin-top:24px;">What's not normal</h3>`,
-      `<p>${warningHtml}</p>`,
+      warningHtml,
     );
   }
   if (productsHtml) {
     htmlSections.push(
       `<h3 style="margin-top:24px;">Product recommendations</h3>`,
-      `<p>${productsHtml}</p>`,
+      productsHtml,
     );
   }
   htmlSections.push(
@@ -130,16 +145,30 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
       studioLine,
     )} directly. This email is post-treatment care information, not a substitute for medical advice or emergency care.</p>`,
   );
-  htmlSections.push(
-    `<p style="margin-top:16px;color:#6B6B6B;font-size:14px;">Contact: <a href="mailto:${escapeHtml(
-      p.studioEmail,
-    )}">${escapeHtml(p.studioEmail)}</a></p>`,
-  );
-  if (p.reviewUrl) {
+  // Contact line is rendered only when a usable address was passed.
+  // Caller is responsible for the postcare_contact_email -> owner_email
+  // priority; if both are blank the line is omitted entirely so the
+  // email never reads "Contact: undefined" or similar.
+  if (p.studioEmail && p.studioEmail.trim().length > 0) {
     htmlSections.push(
-      `<p style="margin-top:24px;font-size:14px;">If you had a good experience, reviews help small businesses. <a href="${escapeHtml(
-        p.reviewUrl,
-      )}">Leave a review</a>.</p>`,
+      `<p style="margin-top:16px;color:#6B6B6B;font-size:14px;">Contact: <a href="mailto:${escapeHtml(
+        p.studioEmail,
+      )}">${escapeHtml(p.studioEmail)}</a></p>`,
+    );
+  }
+  if (p.reviewUrl) {
+    // Custom wording when the studio has authored one; the existing
+    // neutral default otherwise. Either way the prompt only renders
+    // when reviewUrl is set, and there is no discount / reward /
+    // completion-tracking attached.
+    const promptCopy =
+      p.reviewPromptText && p.reviewPromptText.trim().length > 0
+        ? p.reviewPromptText.trim()
+        : "If you had a good experience, reviews help small businesses.";
+    htmlSections.push(
+      `<p style="margin-top:24px;font-size:14px;">${escapeHtml(
+        promptCopy,
+      )} <a href="${escapeHtml(p.reviewUrl)}">Leave a review</a>.</p>`,
     );
   }
 
@@ -178,12 +207,15 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
     "",
     `If something feels unusual or excessive, contact ${studioLine} directly. This email is post-treatment care information, not a substitute for medical advice or emergency care.`,
   );
-  textSections.push(`Contact: ${p.studioEmail}`);
+  if (p.studioEmail && p.studioEmail.trim().length > 0) {
+    textSections.push(`Contact: ${p.studioEmail}`);
+  }
   if (p.reviewUrl) {
-    textSections.push(
-      "",
-      `If you had a good experience, reviews help small businesses: ${p.reviewUrl}`,
-    );
+    const promptCopy =
+      p.reviewPromptText && p.reviewPromptText.trim().length > 0
+        ? p.reviewPromptText.trim()
+        : "If you had a good experience, reviews help small businesses";
+    textSections.push("", `${promptCopy}: ${p.reviewUrl}`);
   }
   const text = textSections.join("\n");
 

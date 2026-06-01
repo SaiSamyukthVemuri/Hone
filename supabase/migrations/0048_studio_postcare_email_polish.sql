@@ -1,0 +1,42 @@
+-- ===========================================================================
+-- Migration 0048: postcare email polish (review prompt + contact email)
+-- ===========================================================================
+--
+-- Adds two nullable text columns to `studios` for postcare email
+-- polish. Both are studio-authored, optional, and have no effect on
+-- send timing, trigger, or auto-send behaviour.
+--
+--   1. postcare_review_prompt_text
+--      Per-studio override for the neutral review prompt wording
+--      rendered in the postcare email. Default neutral text (defined
+--      in lib/email/templates/postcare.ts) is used when this is null
+--      or empty. The prompt is rendered ONLY when postcare_review_url
+--      is also set. There is no discount, coupon, reward, or
+--      review-completion tracking; saving this text does not enable
+--      any of those.
+--
+--   2. postcare_contact_email
+--      Per-studio business contact email rendered in the Contact
+--      line at the bottom of postcare emails. When set, the postcare
+--      email uses this value; when null/empty, the existing fallback
+--      to studios.owner_email is preserved. The Settings UI labels
+--      the fallback explicitly so a practitioner who left this blank
+--      knows their account email is what shows up in the footer.
+--      owner_email itself is untouched.
+--
+-- This migration is ADDITIVE only:
+--   * studios gains TWO nullable text columns.
+--
+-- It does NOT:
+--   * change postcare send timing, trigger, or auto-send
+--   * touch Stripe / payment tables
+--   * touch require_card_on_file
+--   * change appointments / sessions / treatment / TTT
+--   * change RLS
+--
+-- Re-runnable: ADD COLUMN uses IF NOT EXISTS.
+-- ---------------------------------------------------------------------------
+
+alter table public.studios
+  add column if not exists postcare_review_prompt_text text,
+  add column if not exists postcare_contact_email      text;

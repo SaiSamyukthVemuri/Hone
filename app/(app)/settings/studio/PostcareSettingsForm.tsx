@@ -104,18 +104,30 @@ type Props = {
     postcare_warning_signs_text: string;
     postcare_product_recommendations_text: string;
     postcare_review_url: string;
+    postcare_review_prompt_text: string;
+    postcare_contact_email: string;
   };
+  // studios.owner_email; shown as the fallback address that appears
+  // in the postcare email Contact line when postcare_contact_email
+  // is blank.
+  studioOwnerEmail: string;
 };
 
 type SuggestKey = "aftercare" | "warnings" | "products";
 
-export function PostcareSettingsForm({ initial }: Props) {
+export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
   const [aftercare, setAftercare] = useState(initial.postcare_aftercare_text);
   const [warnings, setWarnings] = useState(initial.postcare_warning_signs_text);
   const [products, setProducts] = useState(
     initial.postcare_product_recommendations_text,
   );
   const [reviewUrl, setReviewUrl] = useState(initial.postcare_review_url);
+  const [reviewPrompt, setReviewPrompt] = useState(
+    initial.postcare_review_prompt_text,
+  );
+  const [contactEmail, setContactEmail] = useState(
+    initial.postcare_contact_email,
+  );
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
     { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
@@ -160,6 +172,8 @@ export function PostcareSettingsForm({ initial }: Props) {
     fd.set("postcare_warning_signs_text", warnings);
     fd.set("postcare_product_recommendations_text", products);
     fd.set("postcare_review_url", reviewUrl);
+    fd.set("postcare_review_prompt_text", reviewPrompt);
+    fd.set("postcare_contact_email", contactEmail);
     startTransition(async () => {
       try {
         await updateStudioPostcareAction(fd);
@@ -183,6 +197,17 @@ export function PostcareSettingsForm({ initial }: Props) {
           an appointment. You write the clinical content; Hone never invents
           medical advice. Send is always manual; no auto-send.
         </p>
+        <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+          <p className="font-medium text-neutral-800 dark:text-neutral-200">
+            Formatting
+          </p>
+          <p className="mt-1">
+            <code>**bold**</code>, <code>*italic*</code>, <code>- bullet</code>{" "}
+            points, and{" "}
+            <code>[label](https://example.com)</code> links are rendered
+            in the email. Other HTML is escaped.
+          </p>
+        </div>
       </div>
 
       <label className="flex flex-col gap-1.5">
@@ -261,6 +286,37 @@ export function PostcareSettingsForm({ initial }: Props) {
       </label>
 
       <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Postcare contact email</span>
+        <input
+          type="email"
+          value={contactEmail}
+          onChange={(e) => setContactEmail(e.target.value)}
+          placeholder={
+            studioOwnerEmail
+              ? `e.g. hello@yourstudio.com (fallback: ${studioOwnerEmail})`
+              : "e.g. hello@yourstudio.com"
+          }
+          autoComplete="off"
+          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        />
+        <span className="text-xs text-neutral-500">
+          This appears at the bottom of postcare emails so clients know
+          where to contact you. Leave blank to fall back to your account
+          email.
+        </span>
+        {contactEmail.trim().length === 0 && (
+          <span className="text-xs text-amber-700 dark:text-amber-300">
+            Currently using your account email{" "}
+            <code className="break-all">
+              {studioOwnerEmail || "(not set)"}
+            </code>{" "}
+            as the fallback. Set a business email above if you do not want
+            your account email shown to clients.
+          </span>
+        )}
+      </label>
+
+      <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">
           Review link (optional)
         </span>
@@ -272,10 +328,29 @@ export function PostcareSettingsForm({ initial }: Props) {
           className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
         <span className="text-xs text-neutral-500">
-          When set, the postcare email includes a neutral line: &ldquo;If you
-          had a good experience, reviews help small businesses.&rdquo; Hone
-          does not condition this on a positive review and does not run any
-          review-reward or discount logic.
+          When set, the postcare email includes a neutral review prompt
+          line (default: &ldquo;If you had a good experience, reviews help
+          small businesses.&rdquo;). Hone does not condition this on a
+          positive review and does not run any review-reward or discount
+          logic.
+        </span>
+      </label>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">
+          Review prompt wording (optional)
+        </span>
+        <textarea
+          rows={3}
+          value={reviewPrompt}
+          onChange={(e) => setReviewPrompt(e.target.value)}
+          placeholder="If you had a good experience, reviews help small businesses."
+          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        />
+        <span className="text-xs text-neutral-500">
+          This appears only when a review link is set. Keep it neutral.
+          Do not offer discounts or rewards for reviews. Leave blank to
+          use the default wording.
         </span>
       </label>
 
