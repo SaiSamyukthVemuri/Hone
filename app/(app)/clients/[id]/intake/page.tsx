@@ -5,11 +5,16 @@ import {
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
-import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import {
+  getIntakeById,
+  getIntakeHistoryForClient,
+} from "@/lib/intake/queries";
 import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
+import { IntakeReissueCard } from "./IntakeReissueCard";
+import { IntakeHistoryList } from "./IntakeHistoryList";
 
 function optionLabel(q: Question, value: string): string {
   const match = q.options?.find((o) => o.value === value);
@@ -61,23 +66,50 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
 
 export default async function ClientIntakePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ intake?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const requestedIntakeId =
+    typeof sp.intake === "string" && sp.intake ? sp.intake : null;
   const { studio } = await getCurrentPractitionerWithStudio();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, email")
     .eq("studio_id", studio.id)
     .eq("id", id)
     .maybeSingle();
   if (clientErr) throw new Error(clientErr.message);
   if (!client) notFound();
 
-  const intake = await getLatestIntakeForClient(studio.id, id);
+  // Full history powers the new IntakeHistoryList and the latest-vs-
+  // requested resolution below. Cheap: small per-client cardinality.
+  const history = await getIntakeHistoryForClient(studio.id, id);
+  const latest = history[0] ?? null;
+
+  // Default to latest; respect ?intake=<id> when the practitioner
+  // clicked a non-latest row in the history. Falls back to latest if
+  // the requested id is not in this client's history (deleted /
+  // wrong-studio / typo).
+  let intake = latest;
+  if (requestedIntakeId) {
+    const match = history.find((h) => h.id === requestedIntakeId);
+    if (match) {
+      intake = match;
+    } else {
+      // Best-effort lookup so a direct deep link still works as long
+      // as the row is in this studio and not deleted; otherwise stay
+      // on latest.
+      const looked = await getIntakeById(studio.id, requestedIntakeId);
+      if (looked && looked.client_id === id) intake = looked;
+    }
+  }
+
   if (!intake) {
     return (
       <div className="flex flex-col gap-6">
@@ -90,8 +122,13 @@ export default async function ClientIntakePage({
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-600">
           No intake on file for this client. An intake link is sent
-          automatically with each booking confirmation.
+          automatically with each booking confirmation, or you can request
+          one below.
         </p>
+        <IntakeReissueCard
+          clientId={id}
+          clientHasEmail={!!client.email}
+        />
       </div>
     );
   }
@@ -101,6 +138,25 @@ export default async function ClientIntakePage({
     ? practitioners.find((p) => p.id === intake.reviewed_by)
     : null;
   const responses = (intake.responses ?? {}) as Record<string, unknown>;
+  const viewingNonLatest = latest != null && intake.id !== latest.id;
+
+  // Pre-resolve per-row reviewer / requester display names for the
+  // history list so the client component can stay pure UI.
+  const historyRows = history.map((h) => ({
+    id: h.id,
+    status: h.status,
+    started_at: h.started_at,
+    submitted_at: h.submitted_at,
+    reviewed_at: h.reviewed_at,
+    reviewed_by_name: h.reviewed_by
+      ? practitionerName(practitioners, h.reviewed_by)
+      : null,
+    requested_at: h.requested_at,
+    requested_by_name: h.requested_by
+      ? practitionerName(practitioners, h.requested_by)
+      : null,
+    isLatest: latest != null && h.id === latest.id,
+  }));
 
   return (
     <div className="flex flex-col gap-8">
@@ -131,7 +187,29 @@ export default async function ClientIntakePage({
             </>
           )}
         </p>
+        {viewingNonLatest && (
+          <p className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+            You are viewing a previous intake.{" "}
+            <Link
+              href={`/clients/${id}/intake`}
+              className="font-medium underline"
+            >
+              View current intake
+            </Link>
+          </p>
+        )}
       </div>
+
+      <IntakeReissueCard
+        clientId={id}
+        clientHasEmail={!!client.email}
+      />
+
+      <IntakeHistoryList
+        clientId={id}
+        rows={historyRows}
+        clientHasEmail={!!client.email}
+      />
 
       {responses.requires_epipen === "yes" && (
         <div className="rounded-md border border-red-400 bg-red-50 p-4 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100">
@@ -189,6 +267,22 @@ export default async function ClientIntakePage({
       />
     </div>
   );
+}
+
+// Resolve practitioner display name from the prefetched list. Falls
+// back to email if no display_name; returns null when the id is not
+// in the studio's active practitioner set.
+function practitionerName(
+  practitioners: ReadonlyArray<{
+    id: string;
+    display_name: string | null;
+    email: string;
+  }>,
+  id: string,
+): string | null {
+  const match = practitioners.find((p) => p.id === id);
+  if (!match) return null;
+  return match.display_name?.trim() ? match.display_name : match.email;
 }
 
 // Prominent allergy summary surfaced near the top of the intake review

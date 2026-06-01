@@ -126,3 +126,76 @@ export async function ensureIntakeForClient(params: {
   const url = `${params.appOrigin}/intake/${token}`;
   return { id: intakeId, url };
 }
+
+// Practitioner-triggered intake reissue. Unlike ensureIntakeForClient
+// (which prefers reusing an in-progress row and refuses entirely when
+// the latest is submitted/reviewed), this helper ALWAYS inserts a new
+// client_intake_forms row in status='in_progress', leaving every
+// existing row untouched. The submitted/reviewed clinical record is
+// preserved verbatim; the new row is what the fresh token addresses.
+//
+// Booking and reschedule confirmation flows MUST NOT call this; they
+// continue to call ensureIntakeForClient so existing clients who book
+// a follow-up do not silently get a duplicate intake link.
+export async function createIntakeRequestForClient(params: {
+  studioId: string;
+  clientId: string;
+  requestedBy: string | null;
+  appOrigin: string;
+}): Promise<{ id: string; url: string } | null> {
+  const admin = createAdminClient();
+  const { data: created, error: insertErr } = await admin
+    .from("client_intake_forms")
+    .insert({
+      studio_id: params.studioId,
+      client_id: params.clientId,
+      // status, current_step, responses default to in_progress / 1 / {}.
+      requested_at: new Date().toISOString(),
+      requested_by: params.requestedBy,
+    })
+    .select("id")
+    .single();
+  if (insertErr || !created) {
+    console.error(
+      "Failed to create intake reissue row:",
+      insertErr?.message,
+    );
+    return null;
+  }
+  const url = generateIntakeLinkUrl(created.id, params.appOrigin);
+  return { id: created.id, url };
+}
+
+// All non-deleted intake forms for one client, newest first. Used by
+// the per-client intake history surface so the practitioner can see
+// every reissue and its outcome alongside the latest record.
+export async function getIntakeHistoryForClient(
+  studioId: string,
+  clientId: string,
+): Promise<ClientIntakeForm[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("client_intake_forms")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Failed to load intake history: ${error.message}`);
+  return (data ?? []) as ClientIntakeForm[];
+}
+
+// Mint a fresh tokenized /intake URL for an existing intake row id.
+// Used by the practitioner-side Copy link / Resend email actions; the
+// underlying row is unchanged. Token signature, TTL, and verification
+// path are identical to the booking-flow link. The intake page's own
+// status guard (submitted/reviewed → no responses returned, no save
+// accepted) remains the authoritative revocation primitive.
+export function generateIntakeLinkUrl(
+  intakeId: string,
+  appOrigin: string,
+): string {
+  const expires = new Date(Date.now() + INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const token = generateIntakeToken(intakeId, expires);
+  return `${appOrigin}/intake/${token}`;
+}
