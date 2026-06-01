@@ -7,6 +7,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
+import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
 
@@ -146,6 +147,8 @@ export default async function ClientIntakePage({
 
       <AllergiesSummary responses={responses} />
 
+      <FitzpatrickSummary responses={responses} />
+
       {intake.status === "in_progress" ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
           The client has not submitted their intake yet. Responses shown below
@@ -266,4 +269,85 @@ function AllergiesSummary({
       </ul>
     </section>
   );
+}
+
+// Fitzpatrick estimate summary. Renders nothing for older intakes that
+// pre-date this section (computeFitzpatrickEstimate returns null when
+// any of the ten Fitzpatrick answers are missing or malformed). Hair
+// colour / texture in the treatment area are resolved to their option
+// labels via the per-question option lookup the rest of the review
+// already uses. The card is intentionally muted vs the Allergies one
+// above: Fitzpatrick is context, not a clinical alert. The bottom line
+// reminds the practitioner this is a self-reported intake estimate,
+// not a clinical assessment.
+function FitzpatrickSummary({
+  responses,
+}: {
+  responses: Record<string, unknown>;
+}) {
+  const estimate = computeFitzpatrickEstimate(responses);
+  const hairColorRaw = responses.hair_color_in_treatment_area;
+  const hairTextureRaw = responses.hair_texture_in_treatment_area;
+  const hairColorLabel =
+    typeof hairColorRaw === "string"
+      ? resolveOptionLabel("hair_color_in_treatment_area", hairColorRaw)
+      : null;
+  const hairTextureLabel =
+    typeof hairTextureRaw === "string"
+      ? resolveOptionLabel("hair_texture_in_treatment_area", hairTextureRaw)
+      : null;
+
+  // Nothing to render: this intake pre-dates the Fitzpatrick section
+  // and has no hair colour/texture either. Keep silent rather than
+  // showing a "Not completed" stub for every older record.
+  if (!estimate && !hairColorLabel && !hairTextureLabel) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        Fitzpatrick skin typing
+      </h2>
+      <ul className="mt-3 flex flex-col gap-1.5 text-sm text-neutral-800 dark:text-neutral-200">
+        {estimate ? (
+          <>
+            <li>
+              <span className="font-medium">Estimated Fitzpatrick type:</span>{" "}
+              {estimate.type}
+            </li>
+            <li>
+              <span className="font-medium">Score:</span> {estimate.score} / 40
+            </li>
+          </>
+        ) : (
+          <li className="text-neutral-500">Fitzpatrick: not completed.</li>
+        )}
+        {(hairColorLabel || hairTextureLabel) && (
+          <li>
+            <span className="font-medium">Hair in treatment area:</span>{" "}
+            {[hairColorLabel, hairTextureLabel].filter(Boolean).join(", ")}
+          </li>
+        )}
+      </ul>
+      <p className="mt-3 text-xs text-neutral-500">
+        Self-reported intake estimate, not a clinical assessment.
+      </p>
+    </section>
+  );
+}
+
+// Look up the option label for a single_select / multi_select answer
+// by walking INTAKE_STEPS. Falls back to the raw value if the question
+// or option isn't found (e.g. an older intake whose key has since been
+// renamed). Pure, no React or I/O.
+function resolveOptionLabel(key: string, value: string): string {
+  for (const step of INTAKE_STEPS) {
+    const q = step.questions.find((qq) => qq.key === key);
+    if (q && q.options) {
+      const opt = q.options.find((o) => o.value === value);
+      return opt?.label ?? value;
+    }
+  }
+  return value;
 }

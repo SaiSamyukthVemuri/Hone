@@ -144,6 +144,111 @@ const SENSITIVITY: ReadonlyArray<Option> = [
   { value: "not", label: "Not sensitive" },
 ];
 
+// Fitzpatrick skin-typing answer scales. Each option's value is the
+// score (0..4) the source form assigns to that answer; computed at
+// review time by lib/intake/fitzpatrick.ts. Stored as a string so the
+// existing single_select machinery and review label-resolver work
+// without changes.
+const FITZ_EYE_COLOR: ReadonlyArray<Option> = [
+  { value: "0", label: "Light blue, gray, or green" },
+  { value: "1", label: "Blue, gray, or green" },
+  { value: "2", label: "Blue" },
+  { value: "3", label: "Dark brown" },
+  { value: "4", label: "Brown or black" },
+];
+
+const FITZ_NATURAL_HAIR_COLOR: ReadonlyArray<Option> = [
+  { value: "0", label: "Sandy red" },
+  { value: "1", label: "Blond" },
+  { value: "2", label: "Chestnut brown or dark blond" },
+  { value: "3", label: "Dark brown" },
+  { value: "4", label: "Black" },
+];
+
+const FITZ_SKIN_UNEXPOSED: ReadonlyArray<Option> = [
+  { value: "0", label: "Reddish" },
+  { value: "1", label: "Very pale" },
+  { value: "2", label: "Pale with beige tint" },
+  { value: "3", label: "Light brown" },
+  { value: "4", label: "Dark brown" },
+];
+
+const FITZ_FRECKLES: ReadonlyArray<Option> = [
+  { value: "0", label: "Many" },
+  { value: "1", label: "Several" },
+  { value: "2", label: "Few" },
+  { value: "3", label: "Incidental" },
+  { value: "4", label: "None" },
+];
+
+const FITZ_SUN_TOO_LONG: ReadonlyArray<Option> = [
+  { value: "0", label: "Painful redness, blistering, or peeling" },
+  { value: "1", label: "Burns followed by peeling" },
+  { value: "2", label: "Burns, sometimes followed by peeling" },
+  { value: "3", label: "Rarely burns" },
+  { value: "4", label: "Never burns" },
+];
+
+const FITZ_TAN_DEGREE: ReadonlyArray<Option> = [
+  { value: "0", label: "Hardly at all" },
+  { value: "1", label: "Light tan" },
+  { value: "2", label: "Moderate tan" },
+  { value: "3", label: "Tans very easily" },
+  { value: "4", label: "Turns dark brown" },
+];
+
+const FITZ_TAN_SPEED: ReadonlyArray<Option> = [
+  { value: "0", label: "Hardly or not at all" },
+  { value: "1", label: "Seldom" },
+  { value: "2", label: "Sometimes" },
+  { value: "3", label: "Often" },
+  { value: "4", label: "Always" },
+];
+
+const FITZ_FACE_REACTION: ReadonlyArray<Option> = [
+  { value: "0", label: "Very sensitive" },
+  { value: "1", label: "Sensitive" },
+  { value: "2", label: "Normal" },
+  { value: "3", label: "Very resistant" },
+  { value: "4", label: "Never had a problem" },
+];
+
+const FITZ_LAST_SUN: ReadonlyArray<Option> = [
+  { value: "0", label: "More than 3 months ago" },
+  { value: "1", label: "2 to 3 months ago" },
+  { value: "2", label: "1 to 2 months ago" },
+  { value: "3", label: "Less than 1 month ago" },
+  { value: "4", label: "Less than 2 weeks ago" },
+];
+
+const FITZ_AREA_SUN: ReadonlyArray<Option> = [
+  { value: "0", label: "Never" },
+  { value: "1", label: "Hardly ever" },
+  { value: "2", label: "Sometimes" },
+  { value: "3", label: "Often" },
+  { value: "4", label: "Always" },
+];
+
+// Hair colour + texture in the area to be treated (electrolysis context).
+// Stored alongside the Fitzpatrick block; not synced to clients schema
+// (no column for these today).
+const HAIR_COLOR_IN_AREA: ReadonlyArray<Option> = [
+  { value: "blond", label: "Blond" },
+  { value: "light_brown", label: "Light brown" },
+  { value: "brown", label: "Brown" },
+  { value: "dark_brown", label: "Dark brown" },
+  { value: "black", label: "Black" },
+  { value: "grey", label: "Grey" },
+  { value: "other", label: "Other / not sure" },
+];
+
+const HAIR_TEXTURE_IN_AREA: ReadonlyArray<Option> = [
+  { value: "fine", label: "Fine" },
+  { value: "medium", label: "Medium" },
+  { value: "coarse", label: "Coarse" },
+  { value: "not_sure", label: "Not sure" },
+];
+
 const SCARRING: ReadonlyArray<Option> = [
   { value: "easily", label: "Scars easily" },
   { value: "sometimes", label: "Sometimes" },
@@ -380,6 +485,8 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     id: 4,
     shortLabel: "Skin",
     title: "Skin and treatment area",
+    description:
+      "First, a few questions about your skin and treatment area. The Fitzpatrick questions further down help your electrologist understand how your skin tends to react to sun exposure.",
     questions: [
       {
         key: "skin_sensitivity",
@@ -445,6 +552,102 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         type: "yes_no",
         label: "Any current skin issues in the treatment area (acne, irritation, cuts)?",
         followUpNotesPrompt: "Describe.",
+        required: true,
+      },
+
+      // Fitzpatrick skin typing (10 scored questions). Each answer's
+      // value is the score (0..4); review-time scoring is in
+      // lib/intake/fitzpatrick.ts. Self-reported intake estimate; not a
+      // clinical diagnosis. Added to this step (vs a new step) because
+      // client_intake_forms.current_step has a CHECK between 1 and 5;
+      // adding a 6th step would need a migration we do not need here.
+      {
+        key: "fitz_eye_color",
+        type: "single_select",
+        label: "What is the colour of your eyes?",
+        options: FITZ_EYE_COLOR,
+        required: true,
+      },
+      {
+        key: "fitz_natural_hair_color",
+        type: "single_select",
+        label: "What is the natural colour of your hair?",
+        options: FITZ_NATURAL_HAIR_COLOR,
+        required: true,
+      },
+      {
+        key: "fitz_skin_color_unexposed",
+        type: "single_select",
+        label: "What is the colour of your skin in areas not exposed to the sun?",
+        options: FITZ_SKIN_UNEXPOSED,
+        required: true,
+      },
+      {
+        key: "fitz_freckles_unexposed",
+        type: "single_select",
+        label: "Do you have freckles in areas not exposed to the sun?",
+        options: FITZ_FRECKLES,
+        required: true,
+      },
+      {
+        key: "fitz_sun_too_long",
+        type: "single_select",
+        label: "What happens when you stay in the sun too long?",
+        options: FITZ_SUN_TOO_LONG,
+        required: true,
+      },
+      {
+        key: "fitz_tan_degree",
+        type: "single_select",
+        label: "To what degree do you tan?",
+        options: FITZ_TAN_DEGREE,
+        required: true,
+      },
+      {
+        key: "fitz_tan_speed",
+        type: "single_select",
+        label: "Do you tan within several hours after sun exposure?",
+        options: FITZ_TAN_SPEED,
+        required: true,
+      },
+      {
+        key: "fitz_face_sun_reaction",
+        type: "single_select",
+        label: "How does your face react to the sun?",
+        options: FITZ_FACE_REACTION,
+        required: true,
+      },
+      {
+        key: "fitz_last_sun_exposure",
+        type: "single_select",
+        label: "When did you last expose your body to the sun or a sun bed?",
+        options: FITZ_LAST_SUN,
+        required: true,
+      },
+      {
+        key: "fitz_area_sun_exposure",
+        type: "single_select",
+        label: "Did you expose the area you want treated to the sun?",
+        options: FITZ_AREA_SUN,
+        required: true,
+      },
+
+      // Hair characteristics in the treatment area (electrolysis
+      // context). Required: both inform consult/treatment planning.
+      // Stored in client_intake_forms.responses only; no clients.*
+      // schema column for these today.
+      {
+        key: "hair_color_in_treatment_area",
+        type: "single_select",
+        label: "Hair colour in the area you want treated",
+        options: HAIR_COLOR_IN_AREA,
+        required: true,
+      },
+      {
+        key: "hair_texture_in_treatment_area",
+        type: "single_select",
+        label: "Hair texture in the area you want treated",
+        options: HAIR_TEXTURE_IN_AREA,
         required: true,
       },
     ],
