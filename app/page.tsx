@@ -69,12 +69,23 @@ function Hero() {
           electrologists who need more than a generic calendar.
         </p>
 
-        {/* Primary CTA is the inline waitlist email; the submit button is
-            labelled "Request access" to match the spec. Secondary CTA is
-            a plain "See demo" link to /demo. No new route created; both
-            CTAs use existing surfaces (waitlist action + demo page). */}
-        <div id="request-access" className="mt-[56px] max-w-[700px]">
-          <EyebrowCaption>Request access</EyebrowCaption>
+        {/* Primary CTA is the inline waitlist email with submit button
+            labelled "Get early access". Secondary CTA is a "Request a
+            walkthrough" link to /demo, which is a founder-led
+            walkthrough request (not a recorded demo). Access-gate copy
+            explains why the form is gated, so the gate reads as
+            intentional rather than broken. Anchor name kept stable for
+            inbound links from the pricing page. */}
+        <div id="early-access" className="mt-[56px] max-w-[700px]">
+          <EyebrowCaption>Get early access</EyebrowCaption>
+          <p
+            className="mt-3 max-w-[620px] text-[15px] leading-[1.55]"
+            style={{ color: PALETTE.muted }}
+          >
+            We onboard a few studios at a time. Founder-led setup means
+            we help each studio configure booking, services, intake, and
+            postcare correctly before you send a real client through.
+          </p>
           <div className="mt-6">
             <WaitlistForm />
           </div>
@@ -84,7 +95,7 @@ function Hero() {
               className="text-[14px] font-medium uppercase hover:opacity-60"
               style={{ letterSpacing: "0.2em", color: PALETTE.ink }}
             >
-              See demo →
+              Request a walkthrough →
             </Link>
           </div>
           <div className="mt-10">
@@ -644,7 +655,7 @@ function ClosingNote() {
         </p>
         <p className="mt-6 text-[18px] leading-[1.65] md:text-[21px]">
           If you run an electrolysis or laser clinic and want to be among the
-          first to use it, request access at the top of this page or see
+          first to use it, get early access at the top of this page or see
           pricing.
         </p>
       </div>
