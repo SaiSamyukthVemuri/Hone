@@ -41,38 +41,19 @@ import {
   VISIBLE_MINUTES,
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
+import { serviceCardClasses } from "@/lib/calendar/service-colors";
 
 // Day-of-week labels + the "Mon · May 26" / "8 AM" formatters live in
 // ./calendar-format (also a plain, non-"use client" module) for the same
 // server/client-boundary reason. This client component doesn't need them.
 
-// Soft (Fresha-style) appointment-card styling per practitioner color
-// token. The shared resolvePractitionerColor() returns saturated
-// bg-*-700 + white text used for small dots elsewhere; here on the
-// calendar we want calm pastel cards with a colored left accent and dark
-// readable text instead of intense solid blocks. Keyed by the same
-// practitioner color tokens (lib/practitioner-colors.ts) so identity is
-// preserved. Full literal class strings so Tailwind keeps them; falls
-// back to neutral for any unknown token.
-const SOFT_CARD_BY_TOKEN: Record<string, string> = {
-  neutral:
-    "bg-neutral-100 text-neutral-800 border-l-neutral-400 dark:bg-neutral-800/60 dark:text-neutral-100 dark:border-l-neutral-500",
-  rose: "bg-rose-50 text-rose-900 border-l-rose-400 dark:bg-rose-950/40 dark:text-rose-100 dark:border-l-rose-500",
-  amber:
-    "bg-amber-50 text-amber-900 border-l-amber-400 dark:bg-amber-950/40 dark:text-amber-100 dark:border-l-amber-500",
-  emerald:
-    "bg-emerald-50 text-emerald-900 border-l-emerald-400 dark:bg-emerald-950/40 dark:text-emerald-100 dark:border-l-emerald-500",
-  teal: "bg-teal-50 text-teal-900 border-l-teal-400 dark:bg-teal-950/40 dark:text-teal-100 dark:border-l-teal-500",
-  sky: "bg-sky-50 text-sky-900 border-l-sky-400 dark:bg-sky-950/40 dark:text-sky-100 dark:border-l-sky-500",
-  indigo:
-    "bg-indigo-50 text-indigo-900 border-l-indigo-400 dark:bg-indigo-950/40 dark:text-indigo-100 dark:border-l-indigo-500",
-  violet:
-    "bg-violet-50 text-violet-900 border-l-violet-400 dark:bg-violet-950/40 dark:text-violet-100 dark:border-l-violet-500",
-};
-
-function softCardClasses(token: string | null | undefined): string {
-  return SOFT_CARD_BY_TOKEN[token ?? "neutral"] ?? SOFT_CARD_BY_TOKEN.neutral;
-}
+// Appointment-card colors are now keyed off SERVICE, not
+// practitioner. See lib/calendar/service-colors.ts. The prior
+// per-practitioner SOFT_CARD_BY_TOKEN / softCardClasses helper was
+// removed here when this card stopped reading practitioner color;
+// future multi-practitioner UIs can either re-introduce a left-
+// accent border in practitioner color or read directly from
+// lib/practitioner-colors.ts.
 
 // "HH:MM:SS" (studio-local availability time) → minutes from midnight,
 // or null when unparseable. Visual-only: used to position the neutral
@@ -440,7 +421,14 @@ export function DayColumn({
                 ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
                 : `${clientName} · ${localTime} · ${a.duration_minutes}m`
             }
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${softCardClasses(a.practitioner?.color)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            // Card color is service-based (Chloe feedback: "I want
+            // different colors on the calendar for different
+            // services"). Deterministic on service.id with name
+            // fallback; palette excludes rose to keep allergy/EpiPen
+            // red unique. softCardClasses still exists for any
+            // future practitioner-color surface but is not used on
+            // the per-appointment card any more.
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
               <>
