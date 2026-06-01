@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Reveal } from "./_components/Reveal";
 import { WaitlistForm } from "./_components/WaitlistForm";
 import { MarketingHeader } from "./_components/MarketingHeader";
@@ -47,35 +48,44 @@ function Hero() {
       className="px-6 pb-24 pt-20 md:px-12 md:pb-28 md:pt-24 lg:px-16"
     >
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>
-          Practice software for electrolysis and laser
-        </EyebrowCaption>
+        <EyebrowCaption>Electrolysis practice software</EyebrowCaption>
 
+        {/* YC-style positioning headline: category-led, no marketing
+            superlatives, no hedged tagline. The previous "Never wonder"
+            line still surfaces in the editorial section below; this slot
+            is now for the literal product category, indexed first. */}
         <h1
-          className="font-[var(--font-fraunces)] mt-10 max-w-[980px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
+          className="font-[var(--font-fraunces)] mt-10 max-w-[1100px] text-[56px] font-bold leading-[0.94] md:text-[92px]"
           style={{ letterSpacing: "-0.045em" }}
         >
-          Never wonder
-          <br />
-          what you did
-          <br />
-          last session.
+          Electrolysis practice software that remembers the treatment details.
         </h1>
 
         <p
-          className="mt-10 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]"
+          className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]"
           style={{ color: PALETTE.ink }}
         >
-          Type a name. See exactly what worked last time: settings, areas, what
-          they tolerated, what to avoid. Log this session in under a minute.
-          Booking, calendar, treatment plans, and charting, all in one place
-          built for electrolysis.
+          Booking, intake, treatment plans, charting, and postcare for
+          electrologists who need more than a generic calendar.
         </p>
 
+        {/* Primary CTA is the inline waitlist email; the submit button is
+            labelled "Request access" to match the spec. Secondary CTA is
+            a plain "See demo" link to /demo. No new route created; both
+            CTAs use existing surfaces (waitlist action + demo page). */}
         <div id="request-access" className="mt-[56px] max-w-[700px]">
           <EyebrowCaption>Request access</EyebrowCaption>
           <div className="mt-6">
             <WaitlistForm />
+          </div>
+          <div className="mt-6">
+            <Link
+              href="/demo"
+              className="text-[14px] font-medium uppercase hover:opacity-60"
+              style={{ letterSpacing: "0.2em", color: PALETTE.ink }}
+            >
+              See demo →
+            </Link>
           </div>
           <div className="mt-10">
             <EyebrowCaption>Works on iPad, laptop, and phone</EyebrowCaption>
