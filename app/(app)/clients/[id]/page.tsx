@@ -18,7 +18,11 @@ import { TreatmentPlansCard } from "@/components/treatment-plans-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { todayInTz } from "@/lib/booking/tz";
-import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import {
+  getLatestIntakeForClient,
+  getLatestSubmittedOrReviewedIntakeForClient,
+} from "@/lib/intake/queries";
+import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
@@ -106,6 +110,22 @@ export default async function ClientCheatSheetPage({
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
   const intake = await getLatestIntakeForClient(studio.id, client.id);
+  // Self-reported Fitzpatrick on the profile is derived from the
+  // latest submitted/reviewed intake only. A newer in_progress
+  // reissue (no answers yet) intentionally does NOT clear the prior
+  // estimate; we keep showing the most recent submitted reading.
+  // Practitioner-confirmed Fitzpatrick lives in client.fitzpatrick_type
+  // and is the canonical clinical value; it is never overwritten by
+  // this derived display.
+  const submittedIntake = await getLatestSubmittedOrReviewedIntakeForClient(
+    studio.id,
+    client.id,
+  );
+  const selfReportedFitzpatrick = submittedIntake
+    ? computeFitzpatrickEstimate(
+        (submittedIntake.responses ?? {}) as Record<string, unknown>,
+      )
+    : null;
   const tags = await getClientTags(studio.id, client.id);
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
   const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
@@ -245,16 +265,32 @@ export default async function ClientCheatSheetPage({
 
           {/* Skin is its own card now (was previously grid-paired with
               Pricing). Skin context + Fitzpatrick belong with clinical
-              caution; billing rates belong in their own footer card. */}
+              caution; billing rates belong in their own footer card.
+              Fitzpatrick is intentionally rendered as two separate
+              rows so the practitioner-confirmed clinical value
+              (client.fitzpatrick_type) is never visually conflated
+              with the client's self-reported intake estimate. */}
           <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
             <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
               Skin
             </h2>
             <dl className="mt-3 flex flex-col gap-2 text-sm">
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-neutral-500">Fitzpatrick</dt>
+                <dt className="text-neutral-500">
+                  Fitzpatrick · practitioner confirmed
+                </dt>
                 <dd className="font-medium">
                   {fitzpatrickLabel(client.fitzpatrick_type)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">
+                  Fitzpatrick · self-reported intake
+                </dt>
+                <dd className="font-medium text-neutral-700 dark:text-neutral-300">
+                  {selfReportedFitzpatrick
+                    ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
+                    : "Not completed"}
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
@@ -264,6 +300,13 @@ export default async function ClientCheatSheetPage({
                 </dd>
               </div>
             </dl>
+            {selfReportedFitzpatrick && (
+              <p className="mt-2 text-xs text-neutral-500">
+                Self-reported intake estimate. Not a clinical
+                assessment; the practitioner-confirmed value above is
+                the canonical record.
+              </p>
+            )}
             {client.skin_notes && (
               <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                 {client.skin_notes}

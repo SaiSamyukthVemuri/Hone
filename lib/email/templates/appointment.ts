@@ -111,7 +111,7 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
                 </a>
               </td></tr>
               <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
-                This takes about 5 minutes. Your electrologist will review it before your appointment.
+                This takes about 7 to 10 minutes. Your electrologist will review it before your appointment.
               </td></tr>`
             : ""
         }
@@ -146,7 +146,7 @@ ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${p.treatmentTimeLine ? `${p.treatmentTimeLine}\n` : ""}
 ${PREP_INSTRUCTIONS}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
-${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 5 minutes):\n${p.intakeUrl}\n` : ""}
+${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 7 to 10 minutes):\n${p.intakeUrl}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
 
