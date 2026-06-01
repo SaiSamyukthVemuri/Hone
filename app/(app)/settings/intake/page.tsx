@@ -48,34 +48,80 @@ export default async function IntakeAndPostcarePage() {
           open a booking confirmation or an intake update link.
         </p>
       </div>
-      <ol className="flex flex-col gap-6">
-        {INTAKE_STEPS.map((step) => (
-          <li
-            key={step.id}
-            className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
-          >
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Step {step.id} of {INTAKE_STEPS.length} &middot; {step.shortLabel}
-              </span>
-              <h3 className="text-lg font-medium tracking-tight">
-                {step.title}
-              </h3>
-              {step.description && (
-                <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                  {step.description}
-                </p>
-              )}
-            </div>
-            <ul className="mt-5 flex flex-col gap-5">
-              {step.questions.map((q) => (
-                <li key={q.key}>
-                  <QuestionPreview q={q} stepQuestions={step.questions} />
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
+      {/* Collapsible by intake step via native <details>/<summary>.
+          Step 1 (Personal information) is open by default because it
+          carries the fields a practitioner spot-checks most often
+          (DOB, contact, address). Steps 2-5 collapse so the page
+          stays short on mobile; the practitioner clicks a header to
+          inspect a clinical / skin / Fitzpatrick section.
+          Native <details> is keyboard-accessible (Space/Enter) and
+          announced as a disclosure region by screen readers without
+          any client-side JS. We deliberately do NOT wire expand-all
+          / collapse-all controls in v1: those would require a small
+          client component holding refs to every <details> element,
+          and one native disclosure click per step is the same cost
+          as one button + state update.
+          Submit / form action / DB write / token generation surfaces
+          remain absent from this page (same guarantees as before). */}
+      <ol className="flex flex-col gap-4">
+        {INTAKE_STEPS.map((step, idx) => {
+          const requiredCount = step.questions.filter(
+            (q) => q.required === true,
+          ).length;
+          return (
+            <li key={step.id}>
+              <details
+                open={idx === 0}
+                className="group rounded-lg border border-neutral-200 dark:border-neutral-800"
+              >
+                <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Step {step.id} of {INTAKE_STEPS.length} &middot;{" "}
+                      {step.shortLabel}
+                    </span>
+                    <h3 className="text-base font-medium tracking-tight">
+                      {step.title}
+                    </h3>
+                    <span className="text-xs text-neutral-500">
+                      {step.questions.length}{" "}
+                      {step.questions.length === 1 ? "question" : "questions"}
+                      {requiredCount > 0 && (
+                        <>
+                          {" "}
+                          &middot; {requiredCount} required
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <span
+                    aria-hidden
+                    className="mt-1 select-none text-neutral-500 transition-transform group-open:rotate-180"
+                  >
+                    ▾
+                  </span>
+                </summary>
+                <div className="border-t border-neutral-200 px-5 pb-5 pt-4 dark:border-neutral-800">
+                  {step.description && (
+                    <p className="mb-4 text-sm text-neutral-600 dark:text-neutral-400">
+                      {step.description}
+                    </p>
+                  )}
+                  <ul className="flex flex-col gap-5">
+                    {step.questions.map((q) => (
+                      <li key={q.key}>
+                        <QuestionPreview
+                          q={q}
+                          stepQuestions={step.questions}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            </li>
+          );
+        })}
       </ol>
 
       {isOwner && (
