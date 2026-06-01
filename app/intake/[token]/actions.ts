@@ -3,7 +3,11 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
-import { ALL_QUESTION_KEYS, TOTAL_STEPS } from "@/lib/intake/questions";
+import {
+  ALL_QUESTION_KEYS,
+  findMissingRequiredAnswers,
+  TOTAL_STEPS,
+} from "@/lib/intake/questions";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
@@ -154,6 +158,22 @@ export async function submitIntakeAction(payload: {
     ...((existing.responses as Record<string, unknown>) ?? {}),
     ...responses,
   };
+
+  // Server-side required-fields check. Runs ONLY on this submit/write
+  // path; already-submitted intakes (handled by the early-exit branch
+  // above) are not re-validated when viewed. A client that bypassed
+  // the wizard's per-step validateStep (or a future API caller) is
+  // blocked here. Conditionally-hidden questions don't count as
+  // missing; findMissingRequiredAnswers honors the same conditional
+  // predicate the wizard uses.
+  const missing = findMissingRequiredAnswers(merged);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error:
+        "Please answer all required questions before submitting your intake.",
+    };
+  }
 
   // Atomic status guard: only transition to 'submitted' if the row is
   // still 'in_progress'. Two concurrent submit clicks (e.g. browser

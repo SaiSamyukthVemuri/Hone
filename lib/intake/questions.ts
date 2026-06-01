@@ -201,6 +201,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         key: "areas_of_concern_other_text",
         type: "short_text",
         label: "Tell us about the area you'd like treated",
+        required: true,
         conditional: {
           whenKey: "areas_of_concern",
           whenEquals: ["other"],
@@ -211,18 +212,21 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         type: "single_select",
         label: "How long has hair growth been a concern?",
         options: HAIR_DURATION,
+        required: true,
       },
       {
         key: "had_electrolysis",
         type: "yes_no",
         label: "Have you had electrolysis before?",
         followUpNotesPrompt: "When and where? Any reactions?",
+        required: true,
       },
       {
         key: "other_methods",
         type: "multi_select",
         label: "Have you tried other hair removal methods?",
         options: REMOVAL_METHODS,
+        required: true,
       },
       {
         key: "most_recent_method",
@@ -278,23 +282,27 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         type: "yes_no",
         label: "Are you currently taking any prescription medications?",
         followUpNotesPrompt: "Please list them.",
+        required: true,
       },
       {
         key: "medications_list",
         type: "multi_select",
         label: "Are you taking any of the following?",
         options: MEDS,
+        required: true,
       },
       {
         key: "medical_conditions",
         type: "multi_select",
         label: "Do any of the following apply to you?",
         options: CONDITIONS,
+        required: true,
       },
       {
         key: "metal_implants_location",
         type: "long_text",
         label: "Where on your body are the metal implants, plates, or screws?",
+        required: true,
         conditional: {
           whenKey: "medical_conditions",
           whenEquals: ["metal_implants"],
@@ -304,6 +312,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         key: "recent_surgery_details",
         type: "long_text",
         label: "Where was the recent surgery and when?",
+        required: true,
         conditional: {
           whenKey: "medical_conditions",
           whenEquals: ["recent_surgery"],
@@ -313,6 +322,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         key: "medical_conditions_other_details",
         type: "long_text",
         label: "Tell us more about anything you marked 'Other' above.",
+        required: true,
         conditional: {
           whenKey: "medical_conditions",
           whenEquals: ["other"],
@@ -323,40 +333,46 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         type: "yes_no",
         label: "Do you have any known allergies?",
         followUpNotesPrompt: "Please list them.",
+        required: true,
       },
       {
         key: "requires_epipen",
         type: "yes_no",
         label: "Do you require an EpiPen?",
         helpText: "If yes, please bring it to your appointment.",
+        required: true,
         conditional: { whenKey: "has_allergies", whenEquals: ["yes"] },
       },
       {
         key: "metal_allergy",
         type: "yes_no",
         label: "Do you have a metal allergy?",
+        required: true,
       },
       {
         key: "metal_allergy_types",
         type: "multi_select",
         label: "Which metal are you allergic to?",
         options: METAL_ALLERGY_TYPES,
+        required: true,
         conditional: { whenKey: "metal_allergy", whenEquals: ["yes"] },
       },
       {
         key: "metal_allergy_other_text",
         type: "short_text",
         label: "If other, please describe",
+        required: true,
         conditional: {
           whenKey: "metal_allergy_types",
           whenEquals: ["other"],
         },
       },
-      { key: "latex_allergy", type: "yes_no", label: "Latex allergy?" },
+      { key: "latex_allergy", type: "yes_no", label: "Latex allergy?", required: true },
       {
         key: "anesthetic_allergy",
         type: "yes_no",
         label: "Topical anesthetic allergies?",
+        required: true,
       },
     ],
   },
@@ -370,38 +386,49 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         type: "single_select",
         label: "Skin sensitivity",
         options: SENSITIVITY,
+        required: true,
       },
       {
         key: "scarring_tendency",
         type: "single_select",
         label: "Tendency to scar or keloid",
         options: SCARRING,
+        required: true,
       },
       {
         key: "recent_sun",
         type: "yes_no",
         label: "Recent sun exposure (within the last 2 weeks)?",
+        required: true,
       },
       {
         key: "recent_self_tanner",
         type: "yes_no",
         label: "Recent self-tanner use (within the last 2 weeks)?",
+        required: true,
       },
       {
         key: "regular_spf_use",
         type: "yes_no",
         label: "Do you regularly wear SPF on the treatment area?",
         followUpNotesPrompt: "Any details?",
+        required: true,
       },
       {
         key: "cold_sore_tendency",
         type: "yes_no",
         label: "Cold sore tendency in treatment area (face or lip)?",
+        required: true,
       },
       {
         key: "active_cold_sore",
         type: "yes_no",
-        label: "Are you currently experiencing one?",
+        // Label rewritten to be self-contained for the practitioner
+        // review surface (which renders this label without the parent
+        // question right above it). "Are you currently experiencing
+        // one?" was ambiguous when read alone.
+        label: "Are you currently experiencing an active cold sore?",
+        required: true,
         conditional: { whenKey: "cold_sore_tendency", whenEquals: ["yes"] },
       },
       {
@@ -411,12 +438,14 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         helpText:
           "Examples: AHA, BHA, retinoids, prescription acne medications.",
         followUpNotesPrompt: "Which products?",
+        required: true,
       },
       {
         key: "current_skin_issues",
         type: "yes_no",
         label: "Any current skin issues in the treatment area (acne, irritation, cuts)?",
         followUpNotesPrompt: "Describe.",
+        required: true,
       },
     ],
   },
@@ -468,3 +497,67 @@ export function stepById(id: number): Step | undefined {
 export const ALL_QUESTION_KEYS: ReadonlyArray<string> = INTAKE_STEPS.flatMap(
   (s) => s.questions.flatMap((q) => [q.key, `${q.key}_notes`]),
 );
+
+// Whether a conditional question is "live" for a given response map. Pure
+// function; same predicate the wizard's visibleQuestions filter uses
+// client-side. Server-side required-validation uses this so a question
+// whose parent answer isn't satisfied is NOT considered missing.
+export function isConditionalSatisfied(
+  responses: Record<string, unknown>,
+  conditional: ConditionalRule | undefined,
+): boolean {
+  if (!conditional) return true;
+  const parent = responses[conditional.whenKey];
+  const allowed = conditional.whenEquals;
+  if (Array.isArray(parent)) {
+    return parent.some(
+      (v): v is string => typeof v === "string" && allowed.includes(v),
+    );
+  }
+  if (typeof parent === "string") {
+    return allowed.includes(parent);
+  }
+  return false;
+}
+
+// Returns true when the given answer value satisfies the question's
+// required predicate. Mirrors the wizard's client-side validateStep
+// rules: multi_select needs a non-empty array, checkbox needs `true`,
+// everything else needs a non-empty trimmed string.
+function isAnswerProvided(
+  q: Question,
+  value: unknown,
+): boolean {
+  if (q.type === "multi_select") {
+    return Array.isArray(value) && value.length > 0;
+  }
+  if (q.type === "checkbox") {
+    return value === true;
+  }
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+// Server-side required-fields check, used by submitIntakeAction. Walks
+// every step + question, skips conditionally-hidden ones (so e.g. the
+// "Which metal are you allergic to?" question only counts as missing
+// when metal_allergy === "yes"), and returns the list of missing
+// required keys. Empty list = ready to submit.
+//
+// Pure compute; no I/O. Safe to call from server actions. NEVER called
+// on the display/read path; already-submitted intakes are not
+// re-validated when the practitioner views them.
+export function findMissingRequiredAnswers(
+  responses: Record<string, unknown>,
+): string[] {
+  const missing: string[] = [];
+  for (const step of INTAKE_STEPS) {
+    for (const q of step.questions) {
+      if (!q.required) continue;
+      if (!isConditionalSatisfied(responses, q.conditional)) continue;
+      if (!isAnswerProvided(q, responses[q.key])) {
+        missing.push(q.key);
+      }
+    }
+  }
+  return missing;
+}

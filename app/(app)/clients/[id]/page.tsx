@@ -205,22 +205,13 @@ export default async function ClientCheatSheetPage({
             removeAction={removeClientPinnedNoteAction}
           />
 
-          {/* Birthday card. Compact; renders an explicit "Birthday today"
-              or "Birthday month" callout when relevant so the practitioner
-              sees the reminder at the top of the profile. Practitioner-
-              only; never exposed to client/public surfaces. */}
-          <ClientBirthdayCard
-            clientId={client.id}
-            dateOfBirth={client.date_of_birth}
-            studioToday={parseStudioToday(today)}
-            accentColor={studio.birthday_reminder_color}
-            action={updateClientBirthdayAction}
-          />
-
           {/* Allergies/cautions are RED everywhere (see color convention
               in app/(app)/dashboard/page.tsx). Previously amber here,
               which collided with amber pinned notes and was inconsistent
-              with the rose allergy banner on the appointment briefing. */}
+              with the rose allergy banner on the appointment briefing.
+              Allergies render above Birthday on the sidebar so the
+              first thing the practitioner scans on the profile is
+              clinical caution, not a birthday reminder. */}
           {client.allergies && (
             <section className="rounded-lg border border-rose-300 bg-rose-50 p-5 dark:border-rose-700 dark:bg-rose-950/30">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">
@@ -231,6 +222,19 @@ export default async function ClientCheatSheetPage({
               </p>
             </section>
           )}
+
+          {/* Birthday card. Compact; renders an explicit "Birthday today"
+              or "Birthday month" callout when relevant. Practitioner-only;
+              never exposed to client/public surfaces. Placed below
+              allergies so a clinical alert always wins the top scan
+              position when one exists. */}
+          <ClientBirthdayCard
+            clientId={client.id}
+            dateOfBirth={client.date_of_birth}
+            studioToday={parseStudioToday(today)}
+            accentColor={studio.birthday_reminder_color}
+            action={updateClientBirthdayAction}
+          />
 
           <ClientTagsCard
             clientId={client.id}
