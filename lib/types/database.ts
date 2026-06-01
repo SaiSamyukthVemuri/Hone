@@ -302,6 +302,10 @@ export type Practitioner = {
   // Migration 0023: token from lib/practitioner-colors PRACTITIONER_COLORS.
   // Free text in the DB; UI resolves via resolvePractitionerColor.
   color: string;
+  // Migration 0046: per-practitioner secret token for the private
+  // calendar feed at /calendar-feed/<token>.ics. Null until the
+  // practitioner generates one; UNIQUE among non-null values.
+  calendar_feed_token: string | null;
   created_at: string;
 };
 
