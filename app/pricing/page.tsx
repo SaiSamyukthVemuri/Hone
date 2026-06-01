@@ -29,6 +29,7 @@ const PLANS: ReadonlyArray<Plan> = [
     pitch:
       "Founding annual option: $149/year for the first 25 studios. No setup fees, no contracts, cancel anytime.",
     features: [
+      "Founder-led setup and onboarding",
       "Unlimited clients and sessions",
       "One-page electrolysis charting with structured probe picker",
       "Thermolysis, blend, and galvanic readings, plus laser charting",
@@ -52,6 +53,10 @@ const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: "How does billing work?",
     a: "Monthly by default. The founding annual option bills once for the year. We confirm billing details with you during onboarding, and you can cancel anytime.",
+  },
+  {
+    q: "Do I get help setting up?",
+    a: "Yes. Every Early Access studio gets founder-led setup and onboarding. We walk you through configuring your booking link, services, availability, intake, and postcare so you can run your first session on Hone without guesswork.",
   },
   {
     q: "Does Hone include booking, or do I need a separate tool?",
