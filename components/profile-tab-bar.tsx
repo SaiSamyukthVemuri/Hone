@@ -4,23 +4,20 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import type { ProfileTab } from "./profile-tab";
 
-// Label-only rename: the URL search-param value stays "treatment" so
-// existing /clients/[id]?tab=treatment links and the ProfileTab type
-// continue to work unchanged. Only the visible tab text changes to
-// "Sessions & Treatment Plans" — Chloe couldn't find treatment plans
-// under the old "Sessions" label, and the tab holds both per-visit
-// history and treatment plans.
-// Order matters: Overview → Personal notes → Health → Sessions. Personal
-// notes sits between Overview and Health because it is practitioner
-// relationship memory the practitioner often reaches for BEFORE the
-// clinical/health tab (e.g., remembering kids' names ahead of small-talk
-// during a visit). The tab is practitioner-only; nothing on Personal
-// notes is exposed to client/public surfaces.
+// Tab order matches Chloe's mental model after the launch retest:
+// Overview, Sessions, Treatment Plans, Health & Forms, Personal Notes.
+// "Sessions" and "Treatment Plans" were split out of the previous
+// combined tab; the new "sessions" URL value holds per-visit history
+// and the existing "treatment" URL value now holds plans only. Old
+// /clients/[id]?tab=treatment deep links still land on a valid tab
+// (Treatment Plans). "Health & Forms" is a rename of the prior
+// "Health" tab; URL value unchanged so deep links survive.
 const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "overview", label: "Overview" },
-  { value: "personal", label: "Personal notes" },
-  { value: "health", label: "Health" },
-  { value: "treatment", label: "Sessions & Treatment Plans" },
+  { value: "sessions", label: "Sessions" },
+  { value: "treatment", label: "Treatment Plans" },
+  { value: "health", label: "Health & Forms" },
+  { value: "personal", label: "Personal Notes" },
 ];
 
 type Props = {

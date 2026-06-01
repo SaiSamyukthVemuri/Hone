@@ -1,7 +1,10 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
-import { PostcareSettingsForm } from "./PostcareSettingsForm";
+// PostcareSettingsForm intentionally NOT imported here. Postcare
+// editing moved to /settings/intake (Intake & Postcare tab) after
+// Chloe's retest; the form component itself is unchanged and is
+// still owner-gated server-side via updateStudioPostcareAction.
 
 export default async function StudioSettingsPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -36,16 +39,6 @@ export default async function StudioSettingsPage() {
           auto_mark_no_shows: studio.auto_mark_no_shows,
           send_no_show_followup: studio.send_no_show_followup,
           show_treatment_time_to_clients: studio.show_treatment_time_to_clients,
-        }}
-      />
-      <PostcareSettingsForm
-        initial={{
-          postcare_aftercare_text: studio.postcare_aftercare_text ?? "",
-          postcare_warning_signs_text:
-            studio.postcare_warning_signs_text ?? "",
-          postcare_product_recommendations_text:
-            studio.postcare_product_recommendations_text ?? "",
-          postcare_review_url: studio.postcare_review_url ?? "",
         }}
       />
     </section>
