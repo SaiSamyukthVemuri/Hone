@@ -15,8 +15,17 @@ import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
 // label + the value-set the conditional fires on. This keeps the
 // preview faithful to what a real intake feels like while making the
 // branching legible at a glance.
-
-export const dynamic = "force-static";
+//
+// Render mode: dynamic by default (the route lives inside the
+// authenticated (app)/settings layout, which loads the current
+// practitioner via cookies on every request). The previous
+// `force-static` directive made Next.js statically pre-render this
+// route at build time; with no cookies present at build, the parent
+// layout's getCurrentPractitionerWithStudio() redirected to /login,
+// and that redirect was baked into the static output. Every
+// subsequent request was served the baked redirect regardless of the
+// caller's real auth state. Removing the directive lets the route
+// render per-request alongside the layout's auth check.
 export const metadata = { title: "Intake form preview" };
 
 export default function IntakePreviewPage() {
