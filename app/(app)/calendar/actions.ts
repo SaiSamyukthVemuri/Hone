@@ -17,6 +17,7 @@ import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
   sendCancellationEmail,
+  sendPostcareToClient,
 } from "@/lib/email/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 
@@ -664,4 +665,216 @@ async function dispatchBookingEmails(p: DispatchParams) {
     notes: p.notes,
     appointmentUrl,
   });
+}
+
+// ---------------------------------------------------------------------------
+// sendPostcareEmailAction (manual practitioner-triggered postcare v1)
+// ---------------------------------------------------------------------------
+//
+// Manual ONLY. No auto-send, no cron, no completion-event coupling.
+// Decoupled from appointment lifecycle: does NOT change appointment
+// status, does NOT call public.mark_appointment_complete (whose UI was
+// removed in PR #72), does NOT depend on display-derived "done", and
+// does NOT rely on payment.
+//
+// Race-safety on first send: the action does a single conditional
+// UPDATE WHERE postcare_email_sent_at IS NULL. Postgres serializes
+// per-row UPDATEs; one of N concurrent first-send clicks finds 1 row
+// updated and proceeds, the rest find 0 and short-circuit with
+// "Postcare has already been sent." sent_at is set + attempts is
+// incremented in the same statement so a race-loser cannot also send.
+//
+// Resend semantics: the practitioner has already confirmed via the
+// client-side modal; the resend path is an unconditional UPDATE that
+// increments attempts + bumps sent_at. A double-click on the modal's
+// Confirm Resend button is mitigated by the button's "Sending…"
+// disabled state during the in-flight transition; the spec accepts
+// this as the resend trade-off.
+//
+// Trade-off (documented): on a first-send Resend-API failure, sent_at
+// is still set to the claim timestamp. The practitioner sees the
+// appointment with a sent_at + a returned error and can use the
+// Resend path explicitly. We chose this over a two-step claim/commit
+// because (a) a separate "in-flight" column would expand the schema
+// surface for marginal benefit, and (b) Resend failures are rare; the
+// resend path is the recovery primitive.
+export async function sendPostcareEmailAction(
+  formData: FormData,
+): Promise<AppointmentStateActionResult> {
+  const appointmentId = formDataStr(formData, "appointment_id");
+  const isResend = formDataStr(formData, "is_resend") === "true";
+  if (!appointmentId) return { ok: false, error: "Missing appointment id." };
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot send postcare." };
+  }
+
+  // Use the admin client for the join + claim so we get the full studio
+  // postcare text + service modality + client email in one round-trip
+  // and so the conditional UPDATE writes through (RLS would also allow
+  // a member-scoped client, but the existing email-sending actions in
+  // this file all use the admin client and we keep the pattern).
+  const { createAdminClient } = await import("@/lib/supabase/admin-server");
+  const admin = createAdminClient();
+  const { data: appt, error: lookupErr } = await admin
+    .from("appointments")
+    .select(
+      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url), practitioner:practitioners(id, display_name)",
+    )
+    .eq("id", appointmentId)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (lookupErr) {
+    console.error(
+      JSON.stringify({
+        event: "send_postcare_lookup_failed",
+        code: lookupErr.code,
+        message: lookupErr.message,
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not send postcare. Please try again." };
+  }
+  if (!appt) return { ok: false, error: "Appointment not found." };
+
+  const client = pickPostcareRel(appt.client);
+  const service = pickPostcareRel(appt.service);
+  const studioRow = pickPostcareRel(appt.studio);
+  const performer = pickPostcareRel(appt.practitioner);
+
+  if (!client?.email) {
+    return {
+      ok: false,
+      error: "This client has no email on file. Add one to send postcare.",
+    };
+  }
+  if (service?.modality === "consultation") {
+    return {
+      ok: false,
+      error: "Postcare is not sent for consultation appointments.",
+    };
+  }
+  if (!studioRow) {
+    return { ok: false, error: "Could not send postcare. Please try again." };
+  }
+  if (
+    !studioRow.postcare_aftercare_text ||
+    studioRow.postcare_aftercare_text.trim().length === 0
+  ) {
+    return {
+      ok: false,
+      error:
+        "Add postcare aftercare text in Studio settings before sending postcare.",
+    };
+  }
+
+  const previousSentAt = appt.postcare_email_sent_at;
+  const previousAttempts = appt.postcare_email_send_attempts ?? 0;
+  const nowIso = new Date().toISOString();
+
+  // Atomic first-send claim OR unconditional resend bookkeeping.
+  if (!isResend) {
+    const { data: claimed, error: claimErr } = await admin
+      .from("appointments")
+      .update({
+        postcare_email_sent_at: nowIso,
+        postcare_email_send_attempts: previousAttempts + 1,
+      })
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
+      .is("postcare_email_sent_at", null)
+      .select("id");
+    if (claimErr) {
+      console.error(
+        JSON.stringify({
+          event: "send_postcare_claim_failed",
+          code: claimErr.code,
+          message: claimErr.message,
+          appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { ok: false, error: "Could not send postcare. Please try again." };
+    }
+    if (!claimed || claimed.length === 0) {
+      return {
+        ok: false,
+        error:
+          previousSentAt
+            ? "Postcare has already been sent. Open the page again to use Resend."
+            : "Postcare is being sent in another window. Refresh in a moment.",
+      };
+    }
+  } else {
+    // Resend: practitioner has confirmed via modal. Bump attempts +
+    // sent_at unconditionally. A concurrent resend race here can
+    // double-send; the in-flight button-disabled UI state is the
+    // mitigation per the audit's accepted trade-off.
+    const { error: resendErr } = await admin
+      .from("appointments")
+      .update({
+        postcare_email_sent_at: nowIso,
+        postcare_email_send_attempts: previousAttempts + 1,
+      })
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id);
+    if (resendErr) {
+      console.error(
+        JSON.stringify({
+          event: "send_postcare_resend_update_failed",
+          code: resendErr.code,
+          message: resendErr.message,
+          appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { ok: false, error: "Could not resend postcare. Please try again." };
+    }
+  }
+
+  const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
+  const result = await sendPostcareToClient({
+    clientName: client.name ?? "",
+    clientEmail: client.email,
+    studio: studioRow as unknown as import("@/lib/types/database").Studio,
+    practitionerName: performer?.display_name ?? null,
+    serviceName: service?.name ?? null,
+    startsAt,
+    aftercareText: studioRow.postcare_aftercare_text ?? null,
+    warningSignsText: studioRow.postcare_warning_signs_text ?? null,
+    productRecommendationsText:
+      studioRow.postcare_product_recommendations_text ?? null,
+    reviewUrl: studioRow.postcare_review_url ?? null,
+  });
+  if (!result.ok) {
+    // logEmailFailure's emailType union doesn't include "postcare" and
+    // we intentionally don't extend it (postcare bypasses
+    // record_email_attempt; see the helper's header comment). Log the
+    // failure inline with the postcare event tag so the audit trail
+    // names the right surface.
+    console.error(
+      JSON.stringify({
+        event: "send_postcare_email_failed",
+        appointmentId,
+        retryable: result.retryable,
+        error: result.error,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return {
+      ok: false,
+      error:
+        "Postcare email could not be sent. You can try resending it from the appointment page.",
+    };
+  }
+
+  revalidatePath(`/calendar/${appointmentId}`);
+  return { ok: true };
+}
+
+function pickPostcareRel<T>(v: T | T[] | null | undefined): T | null {
+  if (v == null) return null;
+  return Array.isArray(v) ? (v[0] ?? null) : v;
 }

@@ -122,3 +122,54 @@ export async function setStudioEmailSettingsAction(
   revalidatePath("/settings/studio");
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// updateStudioPostcareAction
+// ---------------------------------------------------------------------------
+// Saves per-studio postcare email content. Owner-only. All four fields
+// are nullable; blank input persists as NULL. Validates only that
+// review_url is a sane http(s) URL when set; the body text fields are
+// passed through verbatim (Hone never invents medical advice).
+//
+// Does NOT enable any auto-send behavior. The "Send postcare" button
+// on the appointment page is the only send trigger. See
+// app/(app)/calendar/actions.ts sendPostcareEmailAction.
+
+const POSTCARE_REVIEW_URL_RE = /^https?:\/\/[^\s]+$/;
+
+export async function updateStudioPostcareAction(
+  formData: FormData,
+): Promise<void> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    throw new Error("Only studio owners can change postcare settings.");
+  }
+
+  const aftercare = nullableString(formData.get("postcare_aftercare_text"));
+  const warnings = nullableString(
+    formData.get("postcare_warning_signs_text"),
+  );
+  const products = nullableString(
+    formData.get("postcare_product_recommendations_text"),
+  );
+  const reviewUrl = nullableString(formData.get("postcare_review_url"));
+  if (reviewUrl && !POSTCARE_REVIEW_URL_RE.test(reviewUrl)) {
+    throw new Error("Review link must be a full https:// URL.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studios")
+    .update({
+      postcare_aftercare_text: aftercare,
+      postcare_warning_signs_text: warnings,
+      postcare_product_recommendations_text: products,
+      postcare_review_url: reviewUrl,
+    })
+    .eq("id", studio.id);
+  if (error) {
+    throw new Error(`Failed to update postcare settings: ${error.message}`);
+  }
+
+  revalidatePath("/settings/studio");
+}

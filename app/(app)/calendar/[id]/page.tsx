@@ -12,6 +12,8 @@ import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
+import { PostcareSendButton } from "../PostcareSendButton";
+import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import {
   appointmentDisplayStatus,
   type AppointmentDisplayStatus,
@@ -41,7 +43,10 @@ type ClientBriefing = Pick<
 
 type Joined = Appointment & {
   client: ClientBriefing | null;
-  service: Pick<Service, "id" | "name" | "default_duration_minutes"> | null;
+  service: Pick<
+    Service,
+    "id" | "name" | "default_duration_minutes" | "modality"
+  > | null;
   practitioner: Pick<Practitioner, "id" | "display_name" | "color"> | null;
 };
 
@@ -63,7 +68,7 @@ export default async function AppointmentDetailPage({
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes), practitioner:practitioners(id, display_name, color)",
+      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners(id, display_name, color)",
     )
     .eq("id", id)
     .eq("studio_id", studio.id)
@@ -210,6 +215,36 @@ export default async function AppointmentDetailPage({
             endsAt={data.ends_at}
           />
         </section>
+      )}
+
+      {/* Postcare email (PR audit + spec). Manual, owner-driven, NOT a
+          completion event. Gate is intentionally narrow per spec: the
+          service must not be a consultation and the client must have an
+          email on file. Status is NOT a gate so this never depends on
+          display-derived "done"; the practitioner decides when to
+          send. Hidden entirely when gates fail; an empty postcare-
+          aftercare-text in studio settings produces an inline error at
+          send time rather than hiding the button (so the practitioner
+          discovers the missing setup intentionally). */}
+      {data.service?.modality !== "consultation" && data.client?.email && (
+        <PostcareSection
+          appointmentId={id}
+          studioName={studio.name}
+          studioEmail={studio.owner_email}
+          studioTimezone={studio.timezone}
+          aftercareText={studio.postcare_aftercare_text}
+          warningSignsText={studio.postcare_warning_signs_text}
+          productRecommendationsText={
+            studio.postcare_product_recommendations_text
+          }
+          reviewUrl={studio.postcare_review_url}
+          clientName={data.client.name}
+          serviceName={data.service?.name ?? null}
+          startsAt={data.starts_at}
+          practitionerName={data.practitioner?.display_name ?? null}
+          postcareEmailSentAt={data.postcare_email_sent_at}
+          postcareEmailSendAttempts={data.postcare_email_send_attempts}
+        />
       )}
 
       {typedStatus === "completed" && (
@@ -651,5 +686,71 @@ function EmailRow({
         <span className="text-neutral-400">Not sent</span>
       )}
     </div>
+  );
+}
+
+
+// Postcare section (manual practitioner-triggered email).
+//
+// Server-renders the preview text once via buildPostcareEmail and
+// passes it to the client-side PostcareSendButton, so the modal opens
+// instantly with the exact text the client will receive. No new fetch
+// at button-click time; no auto-send; no completion-event coupling.
+//
+// When postcare_aftercare_text is empty the button still renders but
+// the send action returns a friendly "Add postcare aftercare text in
+// Studio settings before sending postcare." error. Choosing "render
+// + late-error" over "hide on empty" matches the spec's intent that
+// the practitioner discovers the missing setup intentionally.
+function PostcareSection(props: {
+  appointmentId: string;
+  studioName: string;
+  studioEmail: string;
+  studioTimezone: string;
+  aftercareText: string | null;
+  warningSignsText: string | null;
+  productRecommendationsText: string | null;
+  reviewUrl: string | null;
+  clientName: string;
+  serviceName: string | null;
+  startsAt: string;
+  practitionerName: string | null;
+  postcareEmailSentAt: string | null;
+  postcareEmailSendAttempts: number;
+}) {
+  const preview = buildPostcareEmail({
+    clientName: props.clientName,
+    studioName: props.studioName,
+    studioEmail: props.studioEmail,
+    practitionerName: props.practitionerName,
+    serviceName: props.serviceName,
+    startsAt: props.startsAt ? new Date(props.startsAt) : null,
+    timezone: props.studioTimezone,
+    aftercareText: props.aftercareText,
+    warningSignsText: props.warningSignsText,
+    productRecommendationsText: props.productRecommendationsText,
+    reviewUrl: props.reviewUrl,
+  });
+
+  const aftercareConfigured =
+    !!props.aftercareText && props.aftercareText.trim().length > 0;
+
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
+      <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+        Postcare email
+      </h2>
+      <p className="text-xs text-neutral-500">
+        {aftercareConfigured
+          ? "Send the client your studio's aftercare information. Preview the email before sending."
+          : "Add postcare aftercare text in Studio settings before sending."}
+      </p>
+      <PostcareSendButton
+        appointmentId={props.appointmentId}
+        alreadySentAt={props.postcareEmailSentAt}
+        sendAttempts={props.postcareEmailSendAttempts}
+        previewText={preview.preview}
+      />
+    </section>
   );
 }
