@@ -33,6 +33,40 @@ export type IcsEvent = {
   attendeeName?: string;
 };
 
+// Build a multi-event VCALENDAR for the private subscription feed
+// (/calendar-feed/<token>.ics). Reuses the same escape + datetime
+// helpers as buildIcs so the encoded output is identical per event.
+// No ORGANIZER / ATTENDEE blocks here; the feed is read-only and the
+// practitioner is not an RSVP-able attendee on their own schedule.
+export function buildIcsFeed(events: ReadonlyArray<IcsEvent>): string {
+  const now = toIcsDateTime(new Date());
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Hone//hone.care//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+  ];
+  for (const event of events) {
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${event.uid}@hone.care`);
+    lines.push(`DTSTAMP:${now}`);
+    lines.push(`DTSTART:${toIcsDateTime(event.start)}`);
+    lines.push(`DTEND:${toIcsDateTime(event.end)}`);
+    lines.push(`SUMMARY:${escapeText(event.summary)}`);
+    if (event.location) {
+      lines.push(`LOCATION:${escapeText(event.location)}`);
+    }
+    if (event.description) {
+      lines.push(`DESCRIPTION:${escapeText(event.description)}`);
+    }
+    lines.push("STATUS:CONFIRMED");
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n") + "\r\n";
+}
+
 export function buildIcs(event: IcsEvent): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",

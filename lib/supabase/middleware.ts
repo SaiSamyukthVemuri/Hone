@@ -55,6 +55,12 @@ export async function updateSession(request: NextRequest) {
     // The route handlers verify the signed token themselves.
     pathname.startsWith("/intake/") ||
     pathname.startsWith("/reschedule/") ||
+    // Read-only iCal subscription feed at /calendar-feed/<token>.ics.
+    // Google Calendar / Apple Calendar fetch the feed server-side and
+    // are never logged in. The route handler looks up the practitioner
+    // by token via the admin client; any unknown / rotated-out token
+    // returns 404 from the handler itself.
+    pathname.startsWith("/calendar-feed/") ||
     // Cron endpoints authenticate via the CRON_SECRET Bearer header
     // checked inside each route handler; don't let middleware redirect
     // them to /login.
