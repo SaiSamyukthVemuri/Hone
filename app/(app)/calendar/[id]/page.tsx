@@ -196,9 +196,15 @@ export default async function AppointmentDetailPage({
         fitzpatrick={fitzpatrick}
       />
 
-      <LastSessionCard session={lastSession} />
+      <LastSessionCard
+        session={lastSession}
+        clientId={data.client?.id ?? null}
+      />
 
-      <TreatmentPlanCard plans={activePlans} />
+      <TreatmentPlanCard
+        plans={activePlans}
+        clientId={data.client?.id ?? null}
+      />
 
       {typedStatus === "confirmed" && (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
@@ -481,6 +487,44 @@ function ClientBriefingCard({
           <span className="text-sm text-neutral-500">{client.pronouns}</span>
         )}
       </div>
+      {/* Quick navigation row to the parts of the client record the
+          practitioner asked to be reachable directly from the
+          appointment view ("workable links"). Only links to routes
+          that exist today; no invented routes. Treatment plans
+          land on the Treatment Plans tab where the inline editor
+          lives; there is no standalone /clients/[id]/treatment-plans
+          route, so a separate "Create" / "Edit" link is intentionally
+          NOT added in this PR (would point to a non-existent route).
+          Targets are min-h-[44px] friendly for mobile tap. */}
+      <nav
+        aria-label="Client navigation"
+        className="mt-3 flex flex-wrap gap-2 text-xs"
+      >
+        <Link
+          href={`/clients/${client.id}`}
+          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          View profile
+        </Link>
+        <Link
+          href={`/clients/${client.id}/edit`}
+          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Edit client
+        </Link>
+        <Link
+          href={`/clients/${client.id}?tab=health`}
+          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Health &amp; Forms
+        </Link>
+        <Link
+          href={`/clients/${client.id}?tab=treatment`}
+          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          Treatment plans
+        </Link>
+      </nav>
       {contact && (
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           {contact}
@@ -583,15 +627,19 @@ function IntakeStatusLine({
 }
 
 // ---------------------------------------------------------------------------
-// Last session memory — one calm row pointing at the previous visit.
+// Last session memory; one calm row pointing at the previous visit.
+// Session id + client id link to the existing session detail route
+// at /clients/[clientId]/sessions/[sessionId].
 // ---------------------------------------------------------------------------
 function LastSessionCard({
   session,
+  clientId,
 }: {
   session: Pick<
     Session,
     "id" | "started_at" | "modality" | "session_notes"
   > | null;
+  clientId: string | null;
 }) {
   if (!session) {
     return (
@@ -603,16 +651,30 @@ function LastSessionCard({
       </section>
     );
   }
+  const sessionLine = (
+    <>
+      <span className="font-medium">
+        <FormattedDateTime iso={session.started_at} />
+      </span>
+      <span className="text-neutral-500"> · {session.modality}</span>
+    </>
+  );
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
         Last session
       </h2>
       <p className="mt-2 text-sm">
-        <span className="font-medium">
-          <FormattedDateTime iso={session.started_at} />
-        </span>
-        <span className="text-neutral-500"> · {session.modality}</span>
+        {clientId ? (
+          <Link
+            href={`/clients/${clientId}/sessions/${session.id}`}
+            className="hover:underline"
+          >
+            {sessionLine}
+          </Link>
+        ) : (
+          sessionLine
+        )}
       </p>
       {session.session_notes && (
         <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
@@ -629,8 +691,13 @@ function LastSessionCard({
 // ---------------------------------------------------------------------------
 function TreatmentPlanCard({
   plans,
+  clientId,
 }: {
   plans: ReadonlyArray<TreatmentPlan & { attached_count: number }>;
+  // When set, plan names link to the Treatment Plans tab where the
+  // inline editor lives. There is no standalone per-plan edit route
+  // today; linking to the tab is the closest existing target.
+  clientId: string | null;
 }) {
   if (plans.length === 0) {
     return (
@@ -639,6 +706,16 @@ function TreatmentPlanCard({
           Treatment plan
         </h2>
         <p className="mt-2">No active treatment plan yet.</p>
+        {clientId && (
+          <p className="mt-2 text-xs">
+            <Link
+              href={`/clients/${clientId}?tab=treatment`}
+              className="text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              Open Treatment Plans →
+            </Link>
+          </p>
+        )}
       </section>
     );
   }
@@ -653,7 +730,16 @@ function TreatmentPlanCard({
             key={p.id}
             className="flex flex-wrap items-baseline justify-between gap-3"
           >
-            <span className="font-medium">{p.name}</span>
+            {clientId ? (
+              <Link
+                href={`/clients/${clientId}?tab=treatment`}
+                className="font-medium hover:underline"
+              >
+                {p.name}
+              </Link>
+            ) : (
+              <span className="font-medium">{p.name}</span>
+            )}
             <span className="text-xs text-neutral-500">
               {p.attached_count}{" "}
               {p.attached_count === 1 ? "session" : "sessions"}
