@@ -40,6 +40,7 @@ import {
   ROW_MINUTES,
   VISIBLE_MINUTES,
 } from "./calendar-constants";
+import { NowLine } from "./NowLine";
 
 // Day-of-week labels + the "Mon · May 26" / "8 AM" formatters live in
 // ./calendar-format (also a plain, non-"use client" module) for the same
@@ -236,7 +237,7 @@ export function DayColumn({
       {/* Today's column gets a faint cool (sky) wash, Google-style, so the
           current day is easy to spot at a glance and reads as distinct from
           the neutral-gray "unavailable" tint. Sits at the very bottom so the
-          availability tint and events read on top. pointer-events-none —
+          availability tint and events read on top. pointer-events-none;
           never blocks clicks; no ring / badge / extra height. */}
       {isToday && (
         <div
@@ -244,6 +245,13 @@ export function DayColumn({
           className="pointer-events-none absolute inset-0 z-0 bg-sky-50/70 dark:bg-sky-950/25"
         />
       )}
+
+      {/* Horizontal "Now" line. Rendered only on today's column so
+          past/future columns never see it. Its position is computed
+          in the same studio timezone the grid uses; the line hides
+          when the current time falls outside HOUR_START..HOUR_END.
+          Updates every minute via a small client interval. */}
+      {isToday && <NowLine tz={tz} />}
 
       {/* Neutral availability tint (visual guidance only). Very subtle so
           available hours stay the main canvas. pointer-events-none so the
