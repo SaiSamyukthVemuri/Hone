@@ -232,7 +232,14 @@ export default async function AppointmentDetailPage({
         <PostcareSection
           appointmentId={id}
           studioName={studio.name}
-          studioEmail={studio.owner_email}
+          // Match the priority used by sendPostcareToClient
+          // (postcareContactEmail helper): postcare_contact_email
+          // overrides owner_email; the template omits the line when
+          // both are blank.
+          studioEmail={
+            (studio.postcare_contact_email?.trim() || studio.owner_email) ??
+            null
+          }
           studioTimezone={studio.timezone}
           aftercareText={studio.postcare_aftercare_text}
           warningSignsText={studio.postcare_warning_signs_text}
@@ -240,6 +247,7 @@ export default async function AppointmentDetailPage({
             studio.postcare_product_recommendations_text
           }
           reviewUrl={studio.postcare_review_url}
+          reviewPromptText={studio.postcare_review_prompt_text}
           clientName={data.client.name}
           serviceName={data.service?.name ?? null}
           serviceModality={data.service?.modality ?? null}
@@ -719,12 +727,13 @@ function EmailRow({
 function PostcareSection(props: {
   appointmentId: string;
   studioName: string;
-  studioEmail: string;
+  studioEmail: string | null;
   studioTimezone: string;
   aftercareText: string | null;
   warningSignsText: string | null;
   productRecommendationsText: string | null;
   reviewUrl: string | null;
+  reviewPromptText: string | null;
   clientName: string;
   serviceName: string | null;
   serviceModality: string | null;
@@ -746,6 +755,7 @@ function PostcareSection(props: {
     warningSignsText: props.warningSignsText,
     productRecommendationsText: props.productRecommendationsText,
     reviewUrl: props.reviewUrl,
+    reviewPromptText: props.reviewPromptText,
   });
 
   const aftercareConfigured =

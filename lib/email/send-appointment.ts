@@ -433,14 +433,21 @@ export async function sendPostcareToClient(params: {
   warningSignsText: string | null;
   productRecommendationsText: string | null;
   reviewUrl: string | null;
+  reviewPromptText: string | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
+  // Contact-line priority: studios.postcare_contact_email overrides
+  // studios.owner_email when set. Never the client's email; if
+  // neither is set we pass null and the template omits the line
+  // entirely (no "Contact: undefined"). The PostcareSettingsForm UI
+  // surfaces the same fallback to the practitioner.
+  const studioContactEmail = postcareContactEmail(params.studio);
   const { subject, html, text } = buildPostcareEmail({
     clientName: params.clientName,
     studioName: params.studio.name,
-    studioEmail: params.studio.owner_email,
+    studioEmail: studioContactEmail,
     practitionerName: params.practitionerName,
     serviceName: params.serviceName,
     startsAt: params.startsAt,
@@ -449,8 +456,23 @@ export async function sendPostcareToClient(params: {
     warningSignsText: params.warningSignsText,
     productRecommendationsText: params.productRecommendationsText,
     reviewUrl: params.reviewUrl,
+    reviewPromptText: params.reviewPromptText,
   });
   return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+}
+
+// Resolve which email to render in the postcare Contact line. The
+// preview and the real send share this helper so they never diverge.
+// Returns null when neither value is usable; the template suppresses
+// the Contact line in that case.
+export function postcareContactEmail(
+  studio: Pick<Studio, "postcare_contact_email" | "owner_email">,
+): string | null {
+  const override = studio.postcare_contact_email?.trim();
+  if (override && override.length > 0) return override;
+  const fallback = studio.owner_email?.trim();
+  if (fallback && fallback.length > 0) return fallback;
+  return null;
 }
 
 // Practitioner-triggered intake reissue email. Sent when the

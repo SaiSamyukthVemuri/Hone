@@ -164,6 +164,27 @@ export async function updateStudioPostcareAction(
   if (reviewUrl && !POSTCARE_REVIEW_URL_RE.test(reviewUrl)) {
     throw new Error("Review link must be a full https:// URL.");
   }
+  // Migration 0048: optional override for the review prompt wording.
+  // Stored verbatim; rendered only when reviewUrl is set; no discount /
+  // reward / completion tracking attached.
+  const reviewPromptText = nullableString(
+    formData.get("postcare_review_prompt_text"),
+  );
+  // Migration 0048: optional business contact email rendered in the
+  // postcare email Contact line. Blank → fall back to owner_email at
+  // render time (see lib/email/send-appointment.ts postcareContactEmail).
+  // Light validation only; requiring it to look like an email keeps
+  // common typos from silently shipping in client-facing copy without
+  // adding a heavy dependency.
+  const contactEmail = nullableString(formData.get("postcare_contact_email"));
+  if (contactEmail) {
+    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail);
+    if (!looksLikeEmail) {
+      throw new Error(
+        "Postcare contact email must be a valid email address (or blank).",
+      );
+    }
+  }
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -173,6 +194,8 @@ export async function updateStudioPostcareAction(
       postcare_warning_signs_text: warnings,
       postcare_product_recommendations_text: products,
       postcare_review_url: reviewUrl,
+      postcare_review_prompt_text: reviewPromptText,
+      postcare_contact_email: contactEmail,
     })
     .eq("id", studio.id);
   if (error) {

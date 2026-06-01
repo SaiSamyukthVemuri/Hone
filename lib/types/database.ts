@@ -45,6 +45,14 @@ export type Studio = {
   postcare_warning_signs_text: string | null;
   postcare_product_recommendations_text: string | null;
   postcare_review_url: string | null;
+  // Migration 0048: per-studio override for the postcare review
+  // prompt wording. Default neutral text is used when this is null.
+  // Rendered ONLY when postcare_review_url is also set.
+  postcare_review_prompt_text: string | null;
+  // Migration 0048: per-studio business contact email rendered in
+  // the postcare email footer. When null/empty, the postcare path
+  // falls back to owner_email.
+  postcare_contact_email: string | null;
   // Migration 0047: practitioner/owner "New booking" notification
   // toggle. Default true preserves existing behavior. Controls ONLY
   // the operational practitioner notification; client confirmation

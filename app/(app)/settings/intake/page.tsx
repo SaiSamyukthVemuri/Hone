@@ -101,7 +101,11 @@ export default async function IntakeAndPostcarePage() {
               postcare_product_recommendations_text:
                 studio.postcare_product_recommendations_text ?? "",
               postcare_review_url: studio.postcare_review_url ?? "",
+              postcare_review_prompt_text:
+                studio.postcare_review_prompt_text ?? "",
+              postcare_contact_email: studio.postcare_contact_email ?? "",
             }}
+            studioOwnerEmail={studio.owner_email}
           />
 
           <div className="border-t border-neutral-200 dark:border-neutral-800" />
