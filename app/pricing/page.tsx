@@ -15,69 +15,56 @@ type Plan = {
   emphasized: boolean;
 };
 
+// One simple early-access card. Previously we showed three hedged
+// "Early access" tiles (Solo / Studio / Clinic) with no number on
+// any of them; that made the pricing page read as a placeholder
+// instead of a decision. The single card states a concrete monthly
+// price and a founding-annual option for the first 25 studios, and
+// the larger-studio path moves into the FAQ rather than a card.
 const PLANS: ReadonlyArray<Plan> = [
   {
-    name: "Solo",
-    price: "Early access",
-    cadence: null,
-    pitch: "For the single-practitioner studio.",
+    name: "Early Access",
+    price: "$19",
+    cadence: "/month",
+    pitch:
+      "Founding annual option: $149/year for the first 25 studios. No setup fees, no contracts, cancel anytime.",
     features: [
+      "Founder-led setup and onboarding",
       "Unlimited clients and sessions",
       "One-page electrolysis charting with structured probe picker",
-      "Blend, galvanic, and thermolysis readings, plus laser charting",
+      "Thermolysis, blend, and galvanic readings, plus laser charting",
       "Treatment plans, schedules, and progress tracking",
       "Client memory with practitioner-only private warnings",
-      "Public booking, calendar, services, availability, and blockouts",
+      "Public booking page, calendar, services, availability, and blockouts",
+      "Health intake link, intake review, and postcare email",
       "Self-serve cancel and reschedule with email confirmations",
-      "Per-client pricing and data export any time",
-    ],
-    cta: { label: "Request access", href: "/#request-access" },
-    emphasized: false,
-  },
-  {
-    name: "Studio",
-    price: "Early access",
-    cadence: null,
-    pitch: "For studios with up to five practitioners.",
-    features: [
-      "All Solo features, plus:",
-      "Up to 5 practitioner seats",
-      "Multi-practitioner studio management",
-      "Multiple practitioners on the booking page (clients pick who they want)",
-      "Full data export for your own record-keeping",
-      "Priority email support",
+      "Full data export any time",
     ],
     cta: { label: "Request access", href: "/#request-access" },
     emphasized: true,
-  },
-  {
-    name: "Clinic",
-    price: "Contact us",
-    cadence: null,
-    pitch: "For larger studios and multi location clinics.",
-    features: [
-      "More than five practitioners",
-      "Custom onboarding",
-      "Custom data migration support",
-      "Dedicated contact",
-    ],
-    cta: { label: "Request a demo", href: "/demo" },
-    emphasized: false,
   },
 ];
 
 const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
-    q: "What does early access cost?",
-    a: "Hone is in a controlled pilot and we're finalizing pricing with early practitioners. We'll share plan pricing when you request access, and there's no obligation to continue.",
+    q: "What does Early Access cost?",
+    a: "$19/month. A founding annual option of $149/year is available for the first 25 studios. No setup fees, no contracts, and you can cancel anytime.",
   },
   {
-    q: "How will billing work?",
-    a: "We're still finalizing plans during early access. No setup fees, no contracts, and you can cancel anytime. We'll confirm billing details with you during onboarding.",
+    q: "How does billing work?",
+    a: "Monthly by default. The founding annual option bills once for the year. We confirm billing details with you during onboarding, and you can cancel anytime.",
+  },
+  {
+    q: "Do I get help setting up?",
+    a: "Yes. Every Early Access studio gets founder-led setup and onboarding. We walk you through configuring your booking link, services, availability, intake, and postcare so you can run your first session on Hone without guesswork.",
   },
   {
     q: "Does Hone include booking, or do I need a separate tool?",
     a: "Hone includes booking. Public booking page, calendar, services, availability management, automated confirmations, one-click cancellation. You don't need Calendly or Jane or Square Appointments on top.",
+  },
+  {
+    q: "Does Hone include intake and postcare?",
+    a: "Yes. Hone sends a health intake link with each booking, lets you review the response, and supports a manual postcare email you write once and send per appointment.",
   },
   {
     q: "Can I import my existing client list?",
@@ -85,15 +72,15 @@ const FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "What if I have more than five practitioners?",
-    a: "Contact us. We'll set up a plan that fits your studio.",
+    a: "Contact us at hello@hone.care. We'll set up a plan that fits a larger studio or multi location clinic.",
   },
   {
     q: "Is my data mine?",
     a: "Yes. Always. You can export the entire history of your studio at any time. If you cancel, your data goes with you.",
   },
   {
-    q: "Is Hone HIPAA compliant?",
-    a: "Hone is operated from Canada. Data is stored on infrastructure in AWS US-East-1, as described in the Privacy Policy. Hone is not currently a HIPAA covered entity. For US clinics that require HIPAA compliance, contact us before signing up.",
+    q: "Does Hone meet US health-record requirements?",
+    a: "Hone is operated from Canada. Data is stored on infrastructure in AWS US-East-1, as described in the Privacy Policy. Hone is not currently a US covered entity for health-record purposes. For US clinics with stricter health-record requirements, contact us before signing up.",
   },
 ];
 
@@ -126,28 +113,30 @@ function PricingHero() {
           className="font-[var(--font-fraunces)] mt-10 max-w-[800px] text-[56px] font-bold leading-[0.92] md:text-[92px]"
           style={{ letterSpacing: "-0.045em" }}
         >
-          Pricing, set
+          One plan,
           <br />
-          with you.
+          one number.
         </h1>
         <p className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
-          Hone is in a controlled pilot with electrologists, and we are
-          finalizing pricing with early practitioners. Plans are shown without
-          final numbers for now. Cancel anytime, and your data is always yours.
-        </p>
-        <p className="mt-5 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]">
-          Early practitioners help shape pricing alongside the product.
+          Hone is in early access for solo electrologists and small studios.
+          One plan with a clear monthly price, plus a founding annual option
+          for the first 25 studios. No setup fees, no contracts, and your
+          data is always yours.
         </p>
       </div>
     </Reveal>
   );
 }
 
+// Single card layout: the grid would visually advertise multiple
+// options when only one exists. A centered, capped-width card reads
+// as a clear pricing decision and stays balanced beside the wider
+// hero and FAQ sections.
 function PricingCards() {
   return (
     <Reveal as="section" className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
       <div className="mx-auto max-w-[1400px]">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mx-auto max-w-[520px]">
           {PLANS.map((plan) => (
             <PlanCard key={plan.name} plan={plan} />
           ))}

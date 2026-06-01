@@ -7,7 +7,7 @@ import { ImageResponse } from "next/og";
 
 export const runtime = "edge";
 export const alt =
-  "Hone. Electrolysis practice software for booking, treatment plans, and clinical charting.";
+  "Hone. Electrolysis practice software for booking, intake, treatment plans, charting, and postcare.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -50,8 +50,9 @@ export default function OpengraphImage() {
           >
             Hone
           </div>
-          <div style={{ display: "flex", fontSize: 42, marginTop: 18 }}>
-            Never wonder what you did last session.
+          <div style={{ display: "flex", fontSize: 40, marginTop: 18 }}>
+            Electrolysis practice software that remembers the treatment
+            details.
           </div>
         </div>
 
@@ -67,7 +68,7 @@ export default function OpengraphImage() {
           }}
         >
           <div style={{ display: "flex" }}>
-            Booking · Treatment plans · Clinical charting
+            Booking · Intake · Treatment plans · Charting · Postcare
           </div>
           <div style={{ display: "flex", color: "#0A0A0A" }}>hone.care</div>
         </div>

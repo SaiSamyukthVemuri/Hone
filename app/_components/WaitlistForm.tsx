@@ -70,7 +70,7 @@ export function WaitlistForm() {
           disabled={status.kind === "submitting" || isFading}
           className="font-[var(--font-inter)] text-[13px] font-medium uppercase tracking-[0.2em] text-[#0A0A0A] transition-opacity hover:opacity-60 disabled:opacity-40"
         >
-          {status.kind === "submitting" ? "Sending" : "Submit"}
+          {status.kind === "submitting" ? "Sending" : "Request access"}
         </button>
       </div>
       {status.kind === "error" && (

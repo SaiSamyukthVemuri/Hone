@@ -19,39 +19,47 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
+// Title and description tightened for early access positioning. The
+// homepage now leads with the category (Electrolysis Practice Software)
+// and the concrete surfaces the product covers, so the SERP snippet
+// reads like a YC company page rather than a product tagline. The
+// previous "practice memory" tagline still appears in the marketing
+// footer; this just clarifies what Hone is for crawlers and AI search.
 export const metadata: Metadata = {
   title: {
-    default: "Hone. The practice memory system for permanent hair removal.",
+    default: "Hone | Electrolysis Practice Software",
     template: "%s · Hone",
   },
   description:
-    "Never wonder what you did last session. Type a name, see exactly what worked last time: settings, areas, what they tolerated, what to avoid. Practice software for electrolysis and laser.",
+    "Booking, intake, treatment plans, charting, and postcare for solo electrologists and small electrolysis studios.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
   authors: [{ name: "Hone" }],
   keywords: [
-    "electrolysis charting",
-    "laser hair removal software",
-    "practitioner notes",
-    "hair removal charting",
+    "electrolysis practice software",
+    "electrolysis booking software",
+    "electrolysis charting software",
     "electrologist software",
-    "practice memory",
+    "electrolysis treatment plans",
+    "electrolysis intake form",
+    "electrolysis postcare",
+    "laser hair removal software",
     "permanent hair removal software",
   ],
   openGraph: {
     type: "website",
-    title: "Hone. The practice memory system for permanent hair removal.",
+    title: "Hone | Electrolysis Practice Software",
     description:
-      "Never wonder what you did last session. A faithful, fast, structured memory of what you did with each client, across every session.",
+      "Booking, intake, treatment plans, charting, and postcare for solo electrologists and small electrolysis studios.",
     url: "https://hone.care",
     siteName: "Hone",
     locale: "en_CA",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Hone. The practice memory system for permanent hair removal.",
+    title: "Hone | Electrolysis Practice Software",
     description:
-      "Never wonder what you did last session. Practice software for electrolysis and laser.",
+      "Booking, intake, treatment plans, charting, and postcare for solo electrologists and small electrolysis studios.",
   },
   robots: {
     index: true,
