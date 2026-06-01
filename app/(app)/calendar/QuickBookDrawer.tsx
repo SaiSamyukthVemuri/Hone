@@ -25,6 +25,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
+import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { fetchSlotsForClientBookingAction } from "../clients/[id]/booking-actions";
 import {
   bookAppointmentForClientAction,
@@ -68,6 +69,12 @@ type Props = {
   draft: QuickBookDraft | null;
   clients: QuickBookClient[];
   services: Service[];
+  // Studio IANA timezone. Required by the "Outside your regular
+  // availability" override path to interpret the free-form time
+  // input as studio-local before posting an ISO UTC instant. The
+  // standard slot picker does not need it (slots arrive pre-built
+  // with ISO start strings).
+  studioTimezone: string;
   onClose: () => void;
 };
 
@@ -119,6 +126,7 @@ export function QuickBookDrawer({
   draft,
   clients,
   services,
+  studioTimezone,
   onClose,
 }: Props) {
   const router = useRouter();
@@ -150,6 +158,16 @@ export function QuickBookDrawer({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
+  // Override toggle. Defaults off so the standard slot flow stays
+  // identical to today. When on:
+  //   - the slot picker is replaced by a free-form HH:MM input that
+  //     defaults to the drag-time the practitioner clicked.
+  //   - a confirmation checkbox must be ticked before Save enables.
+  //   - the form posts allow_outside_availability=true and a UTC
+  //     instant computed from the local time + studio timezone.
+  const [overrideEnabled, setOverrideEnabled] = useState(false);
+  const [overrideConfirmed, setOverrideConfirmed] = useState(false);
+  const [overrideLocalTime, setOverrideLocalTime] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoadingSlots] = useTransition();
   const [booking, startBooking] = useTransition();
@@ -174,8 +192,21 @@ export function QuickBookDrawer({
       setPickedSlot(null);
       setNotes("");
       setError(null);
+      setOverrideEnabled(false);
+      setOverrideConfirmed(false);
+      setOverrideLocalTime("");
     }
   }, [open, firstServiceId]);
+
+  // When the drawer opens (or the draft time changes), seed the
+  // override time field with the time the practitioner clicked on
+  // the grid. They can edit it freely before saving. Standard slot
+  // flow ignores this value.
+  useEffect(() => {
+    if (open && draft?.localTime) {
+      setOverrideLocalTime(draft.localTime);
+    }
+  }, [open, draft?.localTime]);
 
   // Lazy rebook lookup: fetch the selected client's last service only
   // when a client is selected (never prefetched for the whole list).
@@ -285,8 +316,16 @@ export function QuickBookDrawer({
     ? 0
     : allClients.filter((c) => matchClient(c, queryLower)).length;
 
-  const canBook =
-    !!selectedClient && !!serviceId && !!pickedSlot && !booking;
+  // Save-enabled rule: standard flow needs a picked slot; override
+  // flow needs a typed HH:MM AND the explicit confirmation
+  // checkbox. Override and standard cannot both be active because
+  // the slot picker is hidden when overrideEnabled is true.
+  const overrideTimeValid = /^\d{2}:\d{2}$/.test(overrideLocalTime);
+  const canBook = !booking && !!selectedClient && !!serviceId && (
+    overrideEnabled
+      ? overrideTimeValid && overrideConfirmed
+      : !!pickedSlot
+  );
 
   function handleCreateClient() {
     const name = newClientName.trim();
@@ -319,12 +358,31 @@ export function QuickBookDrawer({
   }
 
   function handleSubmit() {
-    if (!selectedClient || !serviceId || !pickedSlot) return;
+    if (!selectedClient || !serviceId) return;
+    if (overrideEnabled) {
+      if (!overrideTimeValid || !overrideConfirmed) return;
+    } else if (!pickedSlot) {
+      return;
+    }
     setError(null);
     const fd = new FormData();
     fd.set("client_id", selectedClient.id);
     fd.set("service_id", serviceId);
-    fd.set("starts_at", pickedSlot.start);
+    if (overrideEnabled) {
+      // Compute the UTC instant from the practitioner's typed time
+      // interpreted in the studio's timezone. DST-safe via the
+      // existing utcInstantFromLocal helper; we never use naive
+      // browser-local Date math.
+      const utc = utcInstantFromLocal(
+        draft!.localDate,
+        overrideLocalTime,
+        studioTimezone,
+      );
+      fd.set("starts_at", utc.toISOString());
+      fd.set("allow_outside_availability", "true");
+    } else {
+      fd.set("starts_at", pickedSlot!.start);
+    }
     if (notes.trim().length > 0) fd.set("notes", notes);
     const targetDate = draft!.localDate;
     startBooking(async () => {
@@ -333,14 +391,18 @@ export function QuickBookDrawer({
         setError(r.error);
         // Race-safe UX: if the booking server tells us the slot was
         // taken (or any failure), refetch slots so the picker reflects
-        // current availability without reloading the page.
-        const refetch = await fetchSlotsForClientBookingAction({
-          serviceId,
-          date: targetDate,
-        });
-        if (refetch.ok) {
-          setSlots(refetch.slots);
-          setPickedSlot(null);
+        // current availability without reloading the page. Skip the
+        // refetch when override was used; those slots are not the
+        // source of truth for the override flow.
+        if (!overrideEnabled) {
+          const refetch = await fetchSlotsForClientBookingAction({
+            serviceId,
+            date: targetDate,
+          });
+          if (refetch.ok) {
+            setSlots(refetch.slots);
+            setPickedSlot(null);
+          }
         }
         return;
       }
@@ -648,7 +710,66 @@ export function QuickBookDrawer({
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Available times
           </span>
-          {loadingSlots ? (
+          {/* Override toggle. Default off; when on, the slot picker
+              hides and a free-form time field appears below with a
+              confirmation checkbox. Public booking does not have or
+              read this flag. */}
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-neutral-200 p-3 text-xs dark:border-neutral-800">
+            <input
+              type="checkbox"
+              checked={overrideEnabled}
+              onChange={(e) => {
+                setOverrideEnabled(e.target.checked);
+                if (!e.target.checked) {
+                  setOverrideConfirmed(false);
+                }
+              }}
+              className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+            />
+            <span>
+              <span className="font-medium">
+                Outside your regular availability
+              </span>
+              <span className="block text-neutral-500">
+                Book at a time outside your published hours. Public booking
+                stays unchanged.
+              </span>
+            </span>
+          </label>
+
+          {overrideEnabled ? (
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="override-time"
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+              >
+                Start time (studio local)
+              </label>
+              <input
+                id="override-time"
+                type="time"
+                step={900}
+                value={overrideLocalTime}
+                onChange={(e) => setOverrideLocalTime(e.target.value)}
+                className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              />
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+                This appointment will be booked outside your published
+                availability. Public booking remains unchanged.
+              </div>
+              <label className="flex items-start gap-2 text-xs text-neutral-700 dark:text-neutral-300">
+                <input
+                  type="checkbox"
+                  checked={overrideConfirmed}
+                  onChange={(e) => setOverrideConfirmed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+                />
+                <span>
+                  I understand this is outside my normal availability.
+                </span>
+              </label>
+            </div>
+          ) : loadingSlots ? (
             <p className="text-sm text-neutral-500">Loading slots…</p>
           ) : !serviceId ? (
             <p className="text-sm text-neutral-500">

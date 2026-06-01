@@ -34,6 +34,19 @@ export async function bookAppointmentForClientAction(
   const serviceId = formDataStr(formData, "service_id");
   const startsAt = formDataStr(formData, "starts_at");
   const notes = formDataStrOrNull(formData, "notes");
+  // Internal-only override. Public booking lives in a separate file
+  // (app/book/[slug]/actions.ts) that does not read this flag, so a
+  // public caller cannot use it to bypass published availability.
+  // When true, this action SKIPS the JS-side getAvailableSlots
+  // membership check below; every other safety primitive remains:
+  //   * authenticated-practitioner gate
+  //   * past-time guard
+  //   * service / client / studio ownership checks
+  //   * DB exclusion constraints from migrations 0029 + 0030, which
+  //     unconditionally reject overlap, buffer violation, and any
+  //     overlap with a blockout / recurring-break reservation row.
+  const allowOutsideAvailability =
+    formDataStr(formData, "allow_outside_availability") === "true";
 
   if (!clientId || !serviceId || !startsAt) {
     return { ok: false, error: "Missing fields." };
@@ -83,25 +96,37 @@ export async function bookAppointmentForClientAction(
   // Re-verify the slot is still available (race-safe). Use the
   // studio's local date, not the UTC date, so a late-evening booking
   // does not look up the next day's slots.
-  const dateStr = localDateString(start, studio.timezone);
-  const slots = await getAvailableSlots(
-    supabase,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    dateStr,
-    service.default_duration_minutes,
-  );
-  const isFree = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!isFree) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
+  //
+  // Override branch: when the practitioner explicitly ticked the
+  // "Outside your regular availability" toggle on the drawer (and
+  // the confirmation checkbox), this membership check is skipped.
+  // The DB exclusion constraints from migrations 0029 + 0030 still
+  // run on the INSERT below, so conflict / buffer / blockout / break
+  // protection is preserved without any change to those rules.
+  if (!allowOutsideAvailability) {
+    const dateStr = localDateString(start, studio.timezone);
+    const slots = await getAvailableSlots(
+      supabase,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      dateStr,
+      service.default_duration_minutes,
+    );
+    const isFree = slots.some(
+      (s) => new Date(s.start).getTime() === start.getTime(),
+    );
+    if (!isFree) {
+      return {
+        ok: false,
+        error:
+          "That time is no longer available. Please choose another time.",
+      };
+    }
   }
 
   const appointmentToken = generateAppointmentToken();
@@ -151,7 +176,13 @@ export async function bookAppointmentForClientAction(
     actor_type: "practitioner",
     actor_id: practitioner.id,
     action: "created",
-    details: { source: "practitioner_ui", notes },
+    details: {
+      source: "practitioner_ui",
+      notes,
+      // Captured only when the override was used; absent otherwise so
+      // historical audit rows don't get noisy false negatives.
+      ...(allowOutsideAvailability ? { override: true } : {}),
+    },
   });
 
   await dispatchBookingEmails({
