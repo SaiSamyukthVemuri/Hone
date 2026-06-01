@@ -458,6 +458,7 @@ export function DayColumn({
         draft={draft}
         clients={clients}
         services={services}
+        studioTimezone={tz}
         onClose={() => setDraft(null)}
       />
     </div>
