@@ -3,36 +3,42 @@
 import { useState, useTransition } from "react";
 import { sendPostcareEmailAction } from "./actions";
 
-// Manual postcare send + preview modal. Mounted on the appointment
-// detail page when:
-//   - the appointment's service is NOT a consultation
-//   - the client has an email on file
-// The button is hidden entirely otherwise (the parent server component
-// makes that decision; this client component assumes it should render).
+// Manual postcare send + preview modal.
 //
-// The preview modal shows the rendered postcare email text (plain text
-// version is sufficient for review; the actual send uses HTML) so the
-// practitioner sees exactly what the client will receive before send.
-// Confirm fires the server action; Cancel dismisses.
+// Two render variants based on `requiresConsultationConfirmation`:
 //
-// First send vs Resend: the parent passes `alreadySentAt`. If null,
-// label is "Send postcare" and the server action runs the first-send
-// atomic claim. If non-null, label is "Resend postcare", the modal
-// surfaces the last-sent timestamp + total attempts, and the form
-// posts is_resend=true.
+//   - false (treatment / non-consultation services): existing behavior.
+//     Modal shows the preview and Confirm sends immediately.
 //
-// Race protection: the in-flight button uses startTransition + an
-// isPending flag to disable Confirm during the server roundtrip,
-// preventing a double-click double-submit on the same modal session.
+//   - true (consultation services): the modal additionally renders a
+//     "I performed electrolysis or a test treatment during this
+//     consultation" checkbox. The Confirm button is disabled until
+//     checked. On Confirm, the form posts
+//     treatment_performed_during_consultation=true; the server action
+//     gates on that flag (the checkbox alone is not the security
+//     boundary; the server is).
+//
+// First send vs Resend: parent passes `alreadySentAt`. If null, label
+// is "Send postcare" and the action runs the atomic first-send claim;
+// if non-null, label is "Resend postcare" and posts is_resend=true.
+//
+// Race protection: startTransition + isPending disables Confirm
+// during the server roundtrip so a fast double-click cannot double-
+// submit on the same modal session.
 
 type Props = {
   appointmentId: string;
   alreadySentAt: string | null;
   sendAttempts: number;
   // Pre-rendered preview text from the server (same composition the
-  // email will use). Rendered as monospace inside the modal so it reads
-  // as a literal preview, not a styled card.
+  // email will use). Rendered as monospace inside the modal so it
+  // reads as a literal preview, not a styled card.
   previewText: string;
+  // True when the appointment's service modality is "consultation".
+  // When true, the modal requires the practitioner to explicitly tick
+  // a checkbox that treatment was performed; the server validates the
+  // same boolean independently.
+  requiresConsultationConfirmation: boolean;
 };
 
 export function PostcareSendButton({
@@ -40,16 +46,22 @@ export function PostcareSendButton({
   alreadySentAt,
   sendAttempts,
   previewText,
+  requiresConsultationConfirmation,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [treatmentPerformed, setTreatmentPerformed] = useState(false);
 
   const isResend = alreadySentAt != null;
   const buttonLabel = isResend ? "Resend postcare" : "Send postcare";
+  const canConfirm =
+    !pending &&
+    (!requiresConsultationConfirmation || treatmentPerformed);
 
   function openModal() {
     setError(null);
+    setTreatmentPerformed(false);
     setOpen(true);
   }
   function closeModal() {
@@ -62,6 +74,15 @@ export function PostcareSendButton({
       const fd = new FormData();
       fd.set("appointment_id", appointmentId);
       fd.set("is_resend", isResend ? "true" : "false");
+      if (requiresConsultationConfirmation) {
+        // Posted only when the practitioner explicitly ticked the
+        // checkbox above. Server action independently verifies this
+        // flag is present + true for consultation services.
+        fd.set(
+          "treatment_performed_during_consultation",
+          treatmentPerformed ? "true" : "false",
+        );
+      }
       const r = await sendPostcareEmailAction(fd);
       if (!r.ok) {
         setError(r.error);
@@ -116,6 +137,20 @@ export function PostcareSendButton({
             <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-800 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
               {previewText}
             </pre>
+            {requiresConsultationConfirmation && (
+              <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+                <input
+                  type="checkbox"
+                  checked={treatmentPerformed}
+                  onChange={(e) => setTreatmentPerformed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 flex-none rounded border-amber-400"
+                />
+                <span>
+                  I performed electrolysis or a test treatment during this
+                  consultation.
+                </span>
+              </label>
+            )}
             {error && (
               <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
             )}
@@ -131,7 +166,7 @@ export function PostcareSendButton({
               <button
                 type="button"
                 onClick={confirm}
-                disabled={pending}
+                disabled={!canConfirm}
                 className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-950"
               >
                 {pending
