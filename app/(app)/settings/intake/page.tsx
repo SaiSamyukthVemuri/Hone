@@ -82,7 +82,9 @@ export default async function IntakeAndPostcarePage() {
         <div className="mt-4 flex flex-col gap-4">
           <div className="border-t border-neutral-200 dark:border-neutral-800" />
           <div className="flex flex-col gap-2">
-            <h2 className="text-xl font-medium">Postcare email content</h2>
+            <h2 id="postcare" className="scroll-mt-24 text-xl font-medium">
+              Postcare email content
+            </h2>
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
               Used by the manual <em>Send postcare</em> button on an
               appointment. You write the clinical content; Hone never

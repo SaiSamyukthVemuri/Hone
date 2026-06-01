@@ -703,6 +703,14 @@ export async function sendPostcareEmailAction(
 ): Promise<AppointmentStateActionResult> {
   const appointmentId = formDataStr(formData, "appointment_id");
   const isResend = formDataStr(formData, "is_resend") === "true";
+  // Consultation appointments may include a short electrolysis test
+  // treatment (per Chloe's clarification). When that happens, postcare
+  // is appropriate. To keep the action explicit, the caller MUST send
+  // treatment_performed_during_consultation=true for consultation
+  // services; a client-side checkbox alone is not the gate, the
+  // server checks this flag below.
+  const treatmentPerformedDuringConsultation =
+    formDataStr(formData, "treatment_performed_during_consultation") === "true";
   if (!appointmentId) return { ok: false, error: "Missing appointment id." };
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -750,10 +758,17 @@ export async function sendPostcareEmailAction(
       error: "This client has no email on file. Add one to send postcare.",
     };
   }
-  if (service?.modality === "consultation") {
+  if (
+    service?.modality === "consultation" &&
+    !treatmentPerformedDuringConsultation
+  ) {
+    // Consultations are gated behind an explicit practitioner-attested
+    // boolean. Missing or false means the appointment was consultation
+    // only (no electrolysis); postcare would not be appropriate.
     return {
       ok: false,
-      error: "Postcare is not sent for consultation appointments.",
+      error:
+        "Postcare for consultations can only be sent when treatment was performed.",
     };
   }
   if (!studioRow) {

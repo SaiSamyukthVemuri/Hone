@@ -62,7 +62,8 @@ export default async function AppointmentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -217,16 +218,17 @@ export default async function AppointmentDetailPage({
         </section>
       )}
 
-      {/* Postcare email (PR audit + spec). Manual, owner-driven, NOT a
-          completion event. Gate is intentionally narrow per spec: the
-          service must not be a consultation and the client must have an
-          email on file. Status is NOT a gate so this never depends on
-          display-derived "done"; the practitioner decides when to
-          send. Hidden entirely when gates fail; an empty postcare-
-          aftercare-text in studio settings produces an inline error at
-          send time rather than hiding the button (so the practitioner
-          discovers the missing setup intentionally). */}
-      {data.service?.modality !== "consultation" && data.client?.email && (
+      {/* Postcare email. Manual, practitioner-driven, NOT a completion
+          event. The previous version hard-hid this section for
+          consultations; per Chloe's clarification (consultations
+          sometimes include a short electrolysis test treatment), the
+          section now renders for consultations too, gated by an
+          explicit "treatment was performed" confirmation on send.
+          Status is NOT a gate. Empty postcare aftercare text is
+          surfaced as inline guidance, not a silent block. The section
+          is hidden entirely only when the client has no email on
+          file. */}
+      {data.client?.email && (
         <PostcareSection
           appointmentId={id}
           studioName={studio.name}
@@ -240,10 +242,12 @@ export default async function AppointmentDetailPage({
           reviewUrl={studio.postcare_review_url}
           clientName={data.client.name}
           serviceName={data.service?.name ?? null}
+          serviceModality={data.service?.modality ?? null}
           startsAt={data.starts_at}
           practitionerName={data.practitioner?.display_name ?? null}
           postcareEmailSentAt={data.postcare_email_sent_at}
           postcareEmailSendAttempts={data.postcare_email_send_attempts}
+          isOwner={isOwner}
         />
       )}
 
@@ -693,15 +697,25 @@ function EmailRow({
 // Postcare section (manual practitioner-triggered email).
 //
 // Server-renders the preview text once via buildPostcareEmail and
-// passes it to the client-side PostcareSendButton, so the modal opens
-// instantly with the exact text the client will receive. No new fetch
-// at button-click time; no auto-send; no completion-event coupling.
+// passes it to the client-side PostcareSendButton, so the modal
+// opens instantly with the exact text the client will receive. No
+// new fetch at button-click time; no auto-send; no completion-event
+// coupling.
 //
-// When postcare_aftercare_text is empty the button still renders but
-// the send action returns a friendly "Add postcare aftercare text in
-// Studio settings before sending postcare." error. Choosing "render
-// + late-error" over "hide on empty" matches the spec's intent that
-// the practitioner discovers the missing setup intentionally.
+// Consultation branch: when the appointment's service modality is
+// "consultation", the section adds explanatory copy ("consultations
+// sometimes include a short electrolysis test treatment") AND wires
+// the send modal to require an explicit "I performed electrolysis /
+// test treatment" checkbox. The server action verifies the same flag
+// independently; the checkbox is UX, not the security boundary.
+//
+// Missing-setup branch: when postcare_aftercare_text is empty, the
+// section renders a "Postcare email is not configured yet" notice
+// and a Configure postcare CTA (owner-only). Non-owners see "Ask the
+// studio owner to configure postcare instructions." instead. The
+// send button is not rendered in this state; the action would
+// reject anyway, and the missing-setup case is what the practitioner
+// actually needs to act on.
 function PostcareSection(props: {
   appointmentId: string;
   studioName: string;
@@ -713,10 +727,12 @@ function PostcareSection(props: {
   reviewUrl: string | null;
   clientName: string;
   serviceName: string | null;
+  serviceModality: string | null;
   startsAt: string;
   practitionerName: string | null;
   postcareEmailSentAt: string | null;
   postcareEmailSendAttempts: number;
+  isOwner: boolean;
 }) {
   const preview = buildPostcareEmail({
     clientName: props.clientName,
@@ -734,23 +750,53 @@ function PostcareSection(props: {
 
   const aftercareConfigured =
     !!props.aftercareText && props.aftercareText.trim().length > 0;
+  const isConsultation = props.serviceModality === "consultation";
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
       <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
         Postcare email
       </h2>
-      <p className="text-xs text-neutral-500">
-        {aftercareConfigured
-          ? "Send the client your studio's aftercare information. Preview the email before sending."
-          : "Add postcare aftercare text in Studio settings before sending."}
-      </p>
-      <PostcareSendButton
-        appointmentId={props.appointmentId}
-        alreadySentAt={props.postcareEmailSentAt}
-        sendAttempts={props.postcareEmailSendAttempts}
-        previewText={preview.preview}
-      />
+      {isConsultation && (
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+          Consultations sometimes include a short electrolysis test
+          treatment. Send postcare only if treatment was performed.
+        </p>
+      )}
+      {aftercareConfigured ? (
+        <>
+          <p className="text-xs text-neutral-500">
+            {isConsultation
+              ? "Preview the email before sending. You'll confirm that treatment was performed in the next step."
+              : "Send the client your studio's aftercare information. Preview the email before sending."}
+          </p>
+          <PostcareSendButton
+            appointmentId={props.appointmentId}
+            alreadySentAt={props.postcareEmailSentAt}
+            sendAttempts={props.postcareEmailSendAttempts}
+            previewText={preview.preview}
+            requiresConsultationConfirmation={isConsultation}
+          />
+        </>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-neutral-700 dark:text-neutral-300">
+            Postcare email is not configured yet.
+          </p>
+          {props.isOwner ? (
+            <a
+              href="/settings/intake#postcare"
+              className="self-start rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              Configure postcare
+            </a>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              Ask the studio owner to configure postcare instructions.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
