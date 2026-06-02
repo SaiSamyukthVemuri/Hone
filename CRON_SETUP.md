@@ -10,7 +10,13 @@
 The current scheduled endpoint is:
 
 - `GET /api/cron/appointment-reminders` — every hour (mutating: sends
-  reminder emails and stamps `reminder_*_sent_at`).
+  reminder emails and stamps `reminder_*_sent_at`). As of PR Twilio v1
+  the same endpoint also attempts SMS reminders when the per-studio
+  SMS toggles are on AND the client has an explicit `sms_consent_at`
+  AND the client is not opted out. SMS reminders use a separate
+  `claim_sms_send` RPC for per-row mutual exclusion, so even two
+  concurrent invocations of this endpoint cannot duplicate an SMS
+  send. Email reminders are unchanged.
 
 `GET /api/cron/no-show-check` remains deployed for manual testing and
 returns `{ ok: true, disabled: true, ... }`. It is INTENTIONALLY NOT
@@ -193,3 +199,63 @@ candidate fixes:
 Recommended: ship **inline claim columns** as the next migration
 (0034). Until that ships, do not schedule the reminder endpoint at
 sub-hourly cadence and do not run two schedulers simultaneously.
+
+## Twilio inbound SMS webhook (STOP opt-out)
+
+Inbound SMS is handled at:
+
+`POST /api/twilio/inbound-sms`
+
+This endpoint is intentionally NOT a cron endpoint and does NOT use
+`CRON_SECRET`. It authenticates via the standard Twilio `X-Twilio-Signature`
+header (HMAC-SHA1 over the full URL plus sorted POST fields) validated
+inside the route handler. The middleware allows the exact path
+`/api/twilio/inbound-sms` unauthenticated for the same reason
+`/api/stripe/webhook` is allowed: the route itself is the auth gate.
+
+Configure Twilio to POST inbound messages to:
+
+```
+https://hone.care/api/twilio/inbound-sms
+```
+
+Steps in the Twilio Console:
+
+1. Messaging -> Services -> (your service) -> Inbound Settings ->
+   Process inbound messages -> Send a webhook.
+2. Webhook URL: `https://hone.care/api/twilio/inbound-sms`.
+3. Method: `HTTP POST`.
+4. Save.
+
+Set `TWILIO_WEBHOOK_BASE_URL=https://hone.care` in Vercel env so the
+signature validator builds the canonical URL deterministically
+regardless of which internal Vercel hostname the runtime sees.
+
+STOP keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`,
+`QUIT`) opt out every Hone client whose stored phone normalizes to
+the inbound `From` digits and write one `audit_logs` row per matched
+client. Non-STOP inbound messages are acknowledged with an empty
+TwiML and not persisted (v1 is opt-out only, not conversational).
+
+After STOP, email reminders for the opted-out client continue; only
+SMS sends are blocked.
+
+## SMS send concurrency
+
+`claim_sms_send` and `record_sms_result` (migration 0049) wrap every
+SMS send in an atomic claim-then-send-then-record cycle:
+
+- `claim_sms_send` increments the matching `sms_*_send_attempts`
+  column and stamps `sms_*_claimed_at = now()` only if the matching
+  `_sent_at` is null, attempts are `< 3`, and either no other claim
+  is held or the existing claim is older than 5 minutes.
+- The send helper POSTs to Twilio only after a successful claim, with
+  a 15-second fetch timeout.
+- `record_sms_result` runs in a `finally` regardless of outcome: on
+  success it stamps `_sent_at` and clears `_claimed_at`; on failure
+  it clears `_claimed_at` so the next cron pass can retry up to the
+  3-attempts cap.
+
+Result: two concurrent invocations of `/api/cron/appointment-reminders`
+cannot both send the same SMS, and a crashed sender unblocks itself
+after 5 minutes without operator intervention.

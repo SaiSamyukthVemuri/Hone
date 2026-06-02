@@ -19,6 +19,7 @@ import {
   sendCancellationEmail,
   sendPostcareToClient,
 } from "@/lib/email/send-appointment";
+import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
@@ -70,10 +71,14 @@ export async function bookAppointmentForClientAction(
   if (serviceErr) return { ok: false, error: serviceErr.message };
   if (!service) return { ok: false, error: "Service not found." };
 
-  // Confirm the client belongs to the studio.
+  // Confirm the client belongs to the studio. SMS consent + opt-out
+  // selected so dispatchBookingEmails below can attempt SMS without a
+  // second lookup. Internal booking does NOT modify either of those
+  // fields; consent is established on the public booking surface or
+  // by a practitioner action that is out of scope for this PR.
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name, email, phone")
+    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -194,6 +199,8 @@ export async function bookAppointmentForClientAction(
     clientName: client.name,
     clientEmail: client.email,
     clientPhone: client.phone,
+    clientSmsConsentAt: client.sms_consent_at,
+    clientSmsOptedOutAt: client.sms_opted_out_at,
     notes,
   });
 
@@ -624,6 +631,11 @@ type DispatchParams = {
   clientName: string;
   clientEmail: string | null;
   clientPhone: string | null;
+  // PR Twilio v1: optional SMS consent fields. Defaulted to null in
+  // older callers; the SMS attempt fails the consent gate cleanly
+  // when missing or null.
+  clientSmsConsentAt?: string | null;
+  clientSmsOptedOutAt?: string | null;
   notes: string | null;
 };
 
@@ -683,6 +695,27 @@ async function dispatchBookingEmails(p: DispatchParams) {
         attemptNumber: 1,
       });
     }
+
+    // SMS confirmation for the internal booking surface. We deliberately
+    // do NOT modify SMS consent here (consent is collected on the
+    // public booking surface or by a practitioner action that this PR
+    // does not ship); we only attempt to send if the consent gate
+    // inside the helper passes. The helper handles toggle, opt-out,
+    // phone normalization, claim race, and timeouts; it never throws.
+    await sendBookingConfirmationSmsToClient({
+      admin,
+      appointmentId: p.appointment.id,
+      startsAt: new Date(p.appointment.starts_at),
+      timezone: p.studio.timezone,
+      studio: p.studio,
+      client: {
+        phone: p.clientPhone,
+        sms_consent_at: p.clientSmsConsentAt ?? null,
+        sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
+      },
+      intakeUrl: intake?.url ?? null,
+      rescheduleUrl,
+    });
   }
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves the previous

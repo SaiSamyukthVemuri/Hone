@@ -15,6 +15,7 @@ import {
   recordEmailAttempt,
   sendBookingConfirmationToClient,
 } from "@/lib/email/send-appointment";
+import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -533,10 +534,13 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     };
   }
 
-  // Send a fresh confirmation email for the new appointment.
+  // Send a fresh confirmation email for the new appointment. Phone +
+  // SMS consent fields are selected so the SMS attempt below has the
+  // data it needs without a second roundtrip; the SMS path does not
+  // modify either field.
   const { data: clientRow } = await admin
     .from("clients")
-    .select("name, email")
+    .select("name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("id", existing.client_id)
     .maybeSingle();
   const { data: serviceRow } = existing.service_id
@@ -606,6 +610,26 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
             attemptNumber: 1,
           });
         }
+
+        // SMS confirmation for the rescheduled appointment. The new
+        // appointment row is a fresh appointments.id so the SMS claim
+        // and tracking columns are clean (no carry-over from the
+        // cancelled prior row). All gates and timeouts live inside
+        // the helper; failure here cannot break reschedule.
+        await sendBookingConfirmationSmsToClient({
+          admin,
+          appointmentId: created.id,
+          startsAt: new Date(created.starts_at),
+          timezone: studioFull.timezone,
+          studio: studioFull,
+          client: {
+            phone: clientRow.phone,
+            sms_consent_at: clientRow.sms_consent_at ?? null,
+            sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
+          },
+          intakeUrl: intake?.url ?? null,
+          rescheduleUrl,
+        });
       }
     } catch (err) {
       console.error(

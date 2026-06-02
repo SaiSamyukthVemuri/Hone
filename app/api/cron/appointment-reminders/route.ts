@@ -9,10 +9,14 @@ import {
   type EmailType,
 } from "@/lib/email/send-appointment";
 import {
+  send24hReminderSmsToClient,
+  send2hReminderSmsToClient,
+} from "@/lib/sms/send-appointment";
+import {
   buildTreatmentTimeLine,
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
-import type { Appointment, Service, Studio } from "@/lib/types/database";
+import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const PER_RUN_LIMIT = 50;
@@ -21,7 +25,12 @@ const MAX_ATTEMPTS = 3;
 type Joined = Appointment & {
   service: Pick<Service, "name" | "default_duration_minutes" | "pre_care_instructions"> | null;
   studio: Studio | null;
-  client: { name: string; email: string | null } | null;
+  // PR Twilio v1: SMS pass needs phone + consent + opt-out alongside
+  // the existing email name/email. Selected in loadAppointmentsForWindow.
+  client: Pick<
+    Client,
+    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at"
+  > | null;
   practitioner: { display_name: string | null; email: string | null } | null;
 };
 
@@ -29,17 +38,31 @@ function pickRel<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+// Widened to accept SMS column names too. The same join shape works
+// for both email and SMS passes; the difference is purely which
+// _sent_at / _send_attempts columns we filter on.
+type SentColumn =
+  | "reminder_24h_sent_at"
+  | "reminder_2h_sent_at"
+  | "sms_reminder_24h_sent_at"
+  | "sms_reminder_2h_sent_at";
+type AttemptsColumn =
+  | "reminder_24h_send_attempts"
+  | "reminder_2h_send_attempts"
+  | "sms_reminder_24h_send_attempts"
+  | "sms_reminder_2h_send_attempts";
+
 async function loadAppointmentsForWindow(opts: {
   startIso: string;
   endIso: string;
-  notSentColumn: "reminder_24h_sent_at" | "reminder_2h_sent_at";
-  attemptsColumn: "reminder_24h_send_attempts" | "reminder_2h_send_attempts";
+  notSentColumn: SentColumn;
+  attemptsColumn: AttemptsColumn;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email), practitioner:practitioners(display_name, email)",
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners(display_name, email)",
     )
     .eq("status", "confirmed")
     .is(opts.notSentColumn, null)
@@ -67,6 +90,12 @@ async function loadAppointmentsForWindow(opts: {
 }
 
 type RunStats = { attempted: number; succeeded: number; failed: number };
+
+// SMS pass adds a "skipped" bucket so the operator can see how many
+// rows the consent/toggle/claim gates filtered out without sending,
+// which is the common case when SMS is enabled for a studio but most
+// clients have not opted in yet.
+type SmsRunStats = RunStats & { skipped: number };
 
 async function sendReminderPass(opts: {
   kind: "24h" | "2h";
@@ -173,6 +202,96 @@ async function sendReminderPass(opts: {
   return stats;
 }
 
+// SMS reminder pass (PR Twilio v1). Mirrors sendReminderPass above
+// but keys off the SMS columns and uses claim_sms_send +
+// record_sms_result via the helper. We deliberately keep this as a
+// separate pass with its own query so the SMS send-attempt state is
+// independent from email: an appointment with a successful email
+// reminder still gets an SMS reminder attempt (and vice versa), and
+// neither column blocks the other.
+async function sendSmsReminderPass(opts: {
+  kind: "24h" | "2h";
+  windowStartIso: string;
+  windowEndIso: string;
+}): Promise<SmsRunStats> {
+  const sentColumn: SentColumn =
+    opts.kind === "24h" ? "sms_reminder_24h_sent_at" : "sms_reminder_2h_sent_at";
+  const attemptsColumn: AttemptsColumn =
+    opts.kind === "24h"
+      ? "sms_reminder_24h_send_attempts"
+      : "sms_reminder_2h_send_attempts";
+  const studioToggle =
+    opts.kind === "24h" ? "send_24h_sms_reminders" : "send_2h_sms_reminders";
+
+  const appts = await loadAppointmentsForWindow({
+    startIso: opts.windowStartIso,
+    endIso: opts.windowEndIso,
+    notSentColumn: sentColumn,
+    attemptsColumn,
+  });
+
+  const admin = createAdminClient();
+  const stats: SmsRunStats = {
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const appt of appts) {
+    if (!appt.studio) continue;
+    if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
+      // Studio toggle is off: skip without an attempt counter bump.
+      // We do not call into the SMS helper because the gate inside it
+      // would just return skipped; saving the DB roundtrip on every
+      // pass is meaningful at scale.
+      continue;
+    }
+    if (!appt.client) continue;
+    // Hard prerequisites for the SMS helper. Skipping early avoids a
+    // claim roundtrip when there is no point.
+    if (!appt.client.phone) continue;
+    if (!appt.client.sms_consent_at) continue;
+    if (appt.client.sms_opted_out_at) continue;
+
+    const token = appt.cancellation_token;
+    const rescheduleUrl = token ? `${APP_ORIGIN}/reschedule/${token}` : null;
+
+    const sendFn =
+      opts.kind === "24h"
+        ? send24hReminderSmsToClient
+        : send2hReminderSmsToClient;
+    const result = await sendFn({
+      admin,
+      appointmentId: appt.id,
+      startsAt: new Date(appt.starts_at),
+      timezone: appt.studio.timezone,
+      studio: appt.studio,
+      client: {
+        phone: appt.client.phone,
+        sms_consent_at: appt.client.sms_consent_at,
+        sms_opted_out_at: appt.client.sms_opted_out_at,
+      },
+      rescheduleUrl,
+    });
+    if (result.ok) {
+      stats.attempted += 1;
+      stats.succeeded += 1;
+    } else if (result.skipped) {
+      // Helper-level skip (toggle race, claim collision, gate miss).
+      // We do not count these as attempted because no Twilio call
+      // was made; the operator wants attempted/succeeded/failed to
+      // reflect actual Twilio invocations.
+      stats.skipped += 1;
+    } else {
+      stats.attempted += 1;
+      stats.failed += 1;
+    }
+  }
+
+  return stats;
+}
+
 export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -197,5 +316,29 @@ export async function GET(req: Request) {
     windowEndIso: win2End,
   });
 
-  return NextResponse.json({ ok: true, reminder_24h, reminder_2h });
+  // SMS reminder passes run immediately after their email counterparts,
+  // sharing the same time windows. They use independent queries on the
+  // sms_* columns; an email reminder failure does not block the SMS
+  // reminder and vice versa. Stats are added to the response JSON as
+  // additional fields; existing email keys (reminder_24h /
+  // reminder_2h) are unchanged so downstream log parsing stays
+  // compatible.
+  const sms_reminder_24h = await sendSmsReminderPass({
+    kind: "24h",
+    windowStartIso: win24Start,
+    windowEndIso: win24End,
+  });
+  const sms_reminder_2h = await sendSmsReminderPass({
+    kind: "2h",
+    windowStartIso: win2Start,
+    windowEndIso: win2End,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    reminder_24h,
+    reminder_2h,
+    sms_reminder_24h,
+    sms_reminder_2h,
+  });
 }

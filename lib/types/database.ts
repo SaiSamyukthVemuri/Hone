@@ -69,6 +69,14 @@ export type Studio = {
   no_show_policy_text: string | null;
   policy_version: string | null;
   policy_updated_at: string | null;
+  // Migration 0049: per-studio SMS toggles. All default false. SMS
+  // only goes out when the matching toggle is on AND the client has
+  // explicit consent AND the client is not opted out AND Twilio is
+  // configured. Toggling on does nothing until Sam adds Twilio env
+  // vars and runs the studio-toggle SQL for that studio.
+  send_confirmation_sms: boolean;
+  send_24h_sms_reminders: boolean;
+  send_2h_sms_reminders: boolean;
 };
 
 // Migration 0040: closed preset list for the birthday reminder accent.
@@ -292,7 +300,26 @@ export type Appointment = {
   // enforces non-overlap on this interval per studio.
   buffer_minutes_snapshot: number;
   blocked_ends_at: string;
+  // Migration 0049: SMS tracking, parallel to the email tracking
+  // above plus an explicit _claimed_at per SMS type. Claim is held
+  // by public.claim_sms_send before the Twilio HTTP call; cleared by
+  // public.record_sms_result. Stale claims (>5 minutes) are
+  // reclaimable, so a crashed sender does not permanently block.
+  sms_confirmation_sent_at: string | null;
+  sms_confirmation_send_attempts: number;
+  sms_confirmation_claimed_at: string | null;
+  sms_reminder_24h_sent_at: string | null;
+  sms_reminder_24h_send_attempts: number;
+  sms_reminder_24h_claimed_at: string | null;
+  sms_reminder_2h_sent_at: string | null;
+  sms_reminder_2h_send_attempts: number;
+  sms_reminder_2h_claimed_at: string | null;
 };
+
+// Migration 0049: SMS types accepted by claim_sms_send and
+// record_sms_result. Exported so app code can name the type
+// statically instead of stringly-typed.
+export type SmsType = "confirmation" | "reminder_24h" | "reminder_2h";
 
 export type AppointmentAudit = {
   id: string;
@@ -341,6 +368,17 @@ export type Client = {
   notes: string | null;
   created_at: string;
   created_by: string | null;
+  // Migration 0049: SMS consent and opt-out. consent_at is stamped
+  // when the client explicitly opts in (public booking checkbox or a
+  // practitioner action); opt_out_at is stamped by the Twilio inbound
+  // STOP webhook or by a practitioner. opt_out takes precedence over
+  // consent: a client who has opted out gets no SMS regardless of
+  // consent_at. _source CHECK-constrained in migration 0049 to a
+  // small allowlist.
+  sms_consent_at: string | null;
+  sms_consent_source: "public_booking" | "practitioner" | "import" | null;
+  sms_opted_out_at: string | null;
+  sms_opt_out_source: "twilio_stop" | "practitioner" | null;
 };
 
 export type ApilusModality =

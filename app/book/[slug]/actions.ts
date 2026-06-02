@@ -31,6 +31,8 @@ import {
   sendBookingConfirmationToClient,
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
+import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -264,6 +266,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const startsAtRaw = trimmed(formData.get("starts_at"));
   const name = trimmed(formData.get("name"));
   const email = trimmed(formData.get("email")).toLowerCase();
+  // SMS consent checkbox (PR Twilio v1). Opt-in only; the field is
+  // absent on older form posts. False keeps the existing email-only
+  // flow intact. The server-side consent gate below decides whether
+  // a "true" here actually stamps sms_consent_at.
+  const smsConsent = formData.get("sms_consent") === "true";
   const phone = nullable(formData.get("phone"));
   const notes = nullable(formData.get("notes"));
 
@@ -386,7 +393,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const { data: existingClient, error: lookupErr } = await admin
     .from("clients")
-    .select("id, name, email, phone")
+    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("studio_id", studio.id)
     .eq("normalized_email", normalizedEmail)
     .maybeSingle();
@@ -401,6 +408,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   let clientId: string;
   let clientName: string;
   let clientPhone: string | null;
+  // SMS consent state used by the SMS confirmation attempt at the
+  // bottom. Tracked through both client branches so the dispatch
+  // logic below has a stable view regardless of whether the client
+  // was new or existing. Existing-client opt-out is preserved as-is;
+  // only consent_at can be stamped from this public surface.
+  let clientSmsConsentAt: string | null = null;
+  let clientSmsOptedOutAt: string | null = null;
   if (existingClient) {
     // P0 hardening: an unauthenticated public booking MUST NOT
     // modify the existing client's clinical/profile record. The
@@ -426,16 +440,74 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientId = existingClient.id;
     clientName = existingClient.name;
     clientPhone = existingClient.phone;
+    clientSmsConsentAt = existingClient.sms_consent_at ?? null;
+    clientSmsOptedOutAt = existingClient.sms_opted_out_at ?? null;
+
+    // SMS consent stamp for existing clients is gated by two rules:
+    //   1. The client must not already be opted out (STOP is sticky).
+    //   2. The submitted phone must normalize to the same digits as
+    //      the stored phone. Without this, anyone who knows a real
+    //      client's email could opt them into SMS by typing a
+    //      different phone number on the public form.
+    // We also do not overwrite an already-set sms_consent_at; the
+    // earlier source-of-truth wins.
+    if (
+      smsConsent &&
+      clientSmsOptedOutAt == null &&
+      clientSmsConsentAt == null
+    ) {
+      const submittedDigits = normalizePhoneForMatch(phone);
+      const storedDigits = normalizePhoneForMatch(existingClient.phone);
+      if (
+        submittedDigits.length > 0 &&
+        submittedDigits === storedDigits
+      ) {
+        const nowIso = new Date().toISOString();
+        const { error: consentErr } = await admin
+          .from("clients")
+          .update({
+            sms_consent_at: nowIso,
+            sms_consent_source: "public_booking",
+          })
+          .eq("id", clientId);
+        if (consentErr) {
+          // Soft fail. The booking and the email path must not break
+          // because of a consent-stamp error; future bookings can
+          // re-attempt. We log a sanitized error and proceed.
+          logInternalBookingError("public_booking_sms_consent_update_failed", {
+            code: consentErr.code,
+            message: consentErr.message,
+          });
+        } else {
+          clientSmsConsentAt = nowIso;
+        }
+      }
+    }
   } else {
+    // New client. If smsConsent is true, stamp consent_at immediately
+    // with source "public_booking" -- there is no prior phone to
+    // protect (this row is being created right now) so the gate is
+    // strictly the checkbox plus a normalizable phone, both of which
+    // were submitted by the same form post. Building the row with a
+    // base + conditional spread keeps Supabase's column-type inference
+    // happy across the two branches.
+    const nowIso = new Date().toISOString();
+    const newClientRow = {
+      studio_id: studio.id,
+      name,
+      email,
+      phone,
+      ...(smsConsent
+        ? {
+            sms_consent_at: nowIso,
+            sms_consent_source: "public_booking" as const,
+          }
+        : {}),
+    };
     const { data: createdClient, error: clientErr } = await admin
       .from("clients")
-      .insert({
-        studio_id: studio.id,
-        name,
-        email,
-        phone,
-      })
-      .select("id, name, email, phone")
+      .insert(newClientRow)
+      .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
       .single();
     if (clientErr || !createdClient) {
       // Race-safe path: a concurrent booking from the same email may
@@ -445,7 +517,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       if (clientErr?.code === "23505") {
         const { data: winner } = await admin
           .from("clients")
-          .select("id, name, email, phone")
+          .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
           .eq("studio_id", studio.id)
           .eq("normalized_email", normalizedEmail)
           .maybeSingle();
@@ -453,6 +525,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           clientId = winner.id;
           clientName = winner.name;
           clientPhone = winner.phone ?? phone;
+          clientSmsConsentAt = winner.sms_consent_at ?? null;
+          clientSmsOptedOutAt = winner.sms_opted_out_at ?? null;
         } else {
           logInternalBookingError("public_booking_unique_race_unresolved", {
             studioId: studio.id,
@@ -473,6 +547,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       clientId = createdClient.id;
       clientName = createdClient.name;
       clientPhone = createdClient.phone;
+      clientSmsConsentAt = createdClient.sms_consent_at ?? null;
+      clientSmsOptedOutAt = createdClient.sms_opted_out_at ?? null;
     }
   }
 
@@ -600,6 +676,30 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       });
     }
   }
+
+  // SMS confirmation attempt (PR Twilio v1). Strictly independent of
+  // the email flow above: every gate check happens inside
+  // sendBookingConfirmationSmsToClient, including the studio toggle,
+  // consent_at, opted_out_at, phone normalization, and the
+  // claim_sms_send race guard. The helper returns ok/skipped/error
+  // and never throws; the booking succeeds regardless of the SMS
+  // outcome and the email attempt tracking above is untouched. We
+  // await so the serverless function does not exit before the Twilio
+  // POST resolves; the helper bounds itself with a 15-second timeout.
+  await sendBookingConfirmationSmsToClient({
+    admin,
+    appointmentId: created.id,
+    startsAt: start,
+    timezone: studio.timezone,
+    studio,
+    client: {
+      phone: clientPhone,
+      sms_consent_at: clientSmsConsentAt,
+      sms_opted_out_at: clientSmsOptedOutAt,
+    },
+    intakeUrl: intake?.url ?? null,
+    rescheduleUrl,
+  });
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves existing
   // behavior. Client confirmation email above is gated separately

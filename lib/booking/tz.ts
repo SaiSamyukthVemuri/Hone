@@ -88,6 +88,24 @@ export function localTimeString12h(d: Date, tz: string): string {
   return f.format(d);
 }
 
+// "Tuesday, June 3, 2026"-style long date for transactional templates
+// (email day headers, SMS confirmation/reminder body). The email
+// templates in lib/email/templates/*.ts already render this exact
+// format via a private local helper; promoting it here so SMS
+// templates can reuse the same Intl recipe without duplication. The
+// locale is en-US to match the existing email day labels for
+// continuity (en-CA orders day-month identically here, but en-US is
+// the historical choice in the email path).
+export function localLongDate(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
+}
+
 // 0 = Sunday, 6 = Saturday — matches JS Date getDay() in UTC, but evaluated
 // against the studio's local clock.
 export function localDayOfWeek(d: Date, tz: string): number {
