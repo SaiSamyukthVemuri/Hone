@@ -629,6 +629,11 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
           },
           intakeUrl: intake?.url ?? null,
           rescheduleUrl,
+          // cancellationUrl was already built above for the email
+          // path on the rescheduled (new) appointment; SMS uses the
+          // same /cancel/<token> link so the client can cancel the
+          // new appointment directly from the SMS.
+          cancelUrl: cancellationUrl,
         });
       }
     } catch (err) {

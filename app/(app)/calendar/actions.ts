@@ -715,6 +715,9 @@ async function dispatchBookingEmails(p: DispatchParams) {
       },
       intakeUrl: intake?.url ?? null,
       rescheduleUrl,
+      // cancellationUrl was already built above for the email path;
+      // SMS uses the same token-based /cancel/<token> link.
+      cancelUrl: cancellationUrl,
     });
   }
   // Migration 0047: studio owners can opt out of the practitioner

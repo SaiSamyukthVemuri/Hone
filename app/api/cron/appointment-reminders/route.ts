@@ -256,6 +256,10 @@ async function sendSmsReminderPass(opts: {
 
     const token = appt.cancellation_token;
     const rescheduleUrl = token ? `${APP_ORIGIN}/reschedule/${token}` : null;
+    // Same token, different single-action page. Listed separately in
+    // the SMS body so the client does not have to guess which link
+    // does what.
+    const cancelUrl = token ? `${APP_ORIGIN}/cancel/${token}` : null;
 
     const sendFn =
       opts.kind === "24h"
@@ -273,6 +277,7 @@ async function sendSmsReminderPass(opts: {
         sms_opted_out_at: appt.client.sms_opted_out_at,
       },
       rescheduleUrl,
+      cancelUrl,
     });
     if (result.ok) {
       stats.attempted += 1;

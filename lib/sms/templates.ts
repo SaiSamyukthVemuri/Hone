@@ -6,8 +6,9 @@ import { localLongDate, localTimeString } from "@/lib/booking/tz";
 //   - reminder_2h  (sent by cron 2h before starts_at)
 //
 // All bodies share the same shape:
-//   {Studio}: <event>. <intake link if applicable>. <manage link if
-//   applicable>. Reply STOP to opt out.
+//   {Studio}: <event>. <intake link if applicable>. <reschedule link
+//   if applicable>. <cancel link if applicable>. Do not reply here
+//   except STOP to opt out.
 //
 // Constraints honored here:
 //   - Short. Each builder targets a single SMS segment whenever
@@ -19,9 +20,16 @@ import { localLongDate, localTimeString } from "@/lib/booking/tz";
 //   - Date / time formatting reuses lib/booking/tz.ts helpers; we do
 //     NOT invent a separate SMS formatter. The email day header and
 //     the SMS day phrase therefore stay in sync by construction.
-//   - Always ends with "Reply STOP to opt out." This is the disclosure
-//     Twilio expects on any transactional SMS even though the inbound
-//     webhook handles STOP server-side via Twilio's HMAC signature.
+//   - Labels are accurate: "Reschedule:" and "Cancel:" are listed
+//     separately because each links to a dedicated single-action page
+//     (/reschedule/<token> and /cancel/<token>). The previous "Manage:"
+//     label was misleading because it implied both actions were behind
+//     one link; the reschedule page does NOT cancel and vice versa.
+//   - Always ends with "Do not reply here except STOP to opt out."
+//     STOP is a real supported reply (handled server-side by the
+//     inbound webhook); anything else is not conversational, not
+//     parsed, and not persisted. The disclosure tells the client both
+//     facts in one line.
 
 export type BookingConfirmationSmsInput = {
   studioName: string;
@@ -29,6 +37,7 @@ export type BookingConfirmationSmsInput = {
   timezone: string;
   intakeUrl: string | null;
   rescheduleUrl: string | null;
+  cancelUrl: string | null;
 };
 
 export type ReminderSmsInput = {
@@ -36,6 +45,7 @@ export type ReminderSmsInput = {
   startsAt: Date;
   timezone: string;
   rescheduleUrl: string | null;
+  cancelUrl: string | null;
 };
 
 // Compact phrase for the appointment moment used by every template:
@@ -52,19 +62,21 @@ function appointmentMoment(startsAt: Date, timezone: string): string {
 }
 
 // Append a phrase only when its value is truthy; keeps the templates
-// from emitting "Intake: . Manage: ..." when intakeUrl is null. The
-// SMS body assembler joins parts with ". " and a trailing period.
+// from emitting "Intake: . Cancel:" when a URL is null. The SMS body
+// assembler joins parts with ". " and a trailing period. The closing
+// disclosure ("Do not reply here except STOP to opt out.") is added
+// by the caller so it always sits last.
 function joinParts(parts: ReadonlyArray<string | null>): string {
   const filtered = parts.filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
-  // Each part already ends without a period; we append the period
-  // separator. The final "Reply STOP to opt out." is added by the
-  // caller so the STOP disclosure always sits last.
   return filtered.join(". ");
 }
 
-const STOP_DISCLOSURE = "Reply STOP to opt out.";
+// STOP is the only inbound message the system reacts to; everything
+// else is ignored. The disclosure spells that out in one line so a
+// client who replies "thanks" understands no one will see it.
+const REPLY_DISCLOSURE = "Do not reply here except STOP to opt out.";
 
 export function buildBookingConfirmationSms(
   p: BookingConfirmationSmsInput,
@@ -72,31 +84,35 @@ export function buildBookingConfirmationSms(
   const moment = appointmentMoment(p.startsAt, p.timezone);
   const head = `${p.studioName}: confirmed for ${moment}`;
   const intake = p.intakeUrl ? `Intake: ${p.intakeUrl}` : null;
-  const manage = p.rescheduleUrl ? `Manage: ${p.rescheduleUrl}` : null;
-  const body = joinParts([head, intake, manage]);
-  return `${body}. ${STOP_DISCLOSURE}`;
+  const reschedule = p.rescheduleUrl
+    ? `Reschedule: ${p.rescheduleUrl}`
+    : null;
+  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
+  const body = joinParts([head, intake, reschedule, cancel]);
+  return `${body}. ${REPLY_DISCLOSURE}`;
 }
 
 export function build24hReminderSms(p: ReminderSmsInput): string {
   const moment = appointmentMoment(p.startsAt, p.timezone);
   const head = `Reminder from ${p.studioName}: appointment ${moment}`;
-  const manage = p.rescheduleUrl ? `Manage: ${p.rescheduleUrl}` : null;
-  const body = joinParts([head, manage]);
-  return `${body}. ${STOP_DISCLOSURE}`;
+  const reschedule = p.rescheduleUrl
+    ? `Reschedule: ${p.rescheduleUrl}`
+    : null;
+  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
+  const body = joinParts([head, reschedule, cancel]);
+  return `${body}. ${REPLY_DISCLOSURE}`;
 }
 
 export function build2hReminderSms(p: ReminderSmsInput): string {
-  const moment = appointmentMoment(p.startsAt, p.timezone);
-  // Same shape as 24h; the difference is purely the prefix so the
-  // client immediately understands which reminder they are reading.
+  // For the same-day reminder, the date is redundant; only the time
+  // matters. The 24h variant carries the full moment.
   const head = `Today's appointment with ${p.studioName} is at ${
     localTimeString(p.startsAt, p.timezone)
   }`;
-  const manage = p.rescheduleUrl ? `Manage: ${p.rescheduleUrl}` : null;
-  // moment is intentionally unused for the 2h variant; the date is
-  // redundant when the appointment is today. Keeping the import live
-  // for the helper above (and for the parallel 24h shape) is fine.
-  void moment;
-  const body = joinParts([head, manage]);
-  return `${body}. ${STOP_DISCLOSURE}`;
+  const reschedule = p.rescheduleUrl
+    ? `Reschedule: ${p.rescheduleUrl}`
+    : null;
+  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
+  const body = joinParts([head, reschedule, cancel]);
+  return `${body}. ${REPLY_DISCLOSURE}`;
 }
