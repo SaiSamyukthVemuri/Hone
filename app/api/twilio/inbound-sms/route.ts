@@ -194,16 +194,27 @@ export async function POST(req: Request): Promise<Response> {
   // scale (single-digit thousands of clients) makes the scan fine for
   // v1; the helper is isolated so a future indexed normalized_phone
   // column can replace this scan without touching the route.
+  //
+  // Retry-dedup: we also select sms_opted_out_at and skip rows that
+  // are already opted out. If Twilio retries this webhook (which it
+  // will on the 500 path below when a partial opt-out failure
+  // occurred), the second attempt only touches rows that were missed,
+  // never re-stamping or double-auditing already-opted-out clients.
   const matchedClients: Array<{ id: string; studio_id: string }> = [];
+  let alreadyOptedOutCount = 0;
   try {
     const { data: candidates, error: scanErr } = await admin
       .from("clients")
-      .select("id, studio_id, phone")
+      .select("id, studio_id, phone, sms_opted_out_at")
       .not("phone", "is", null);
     if (scanErr) throw scanErr;
     for (const row of candidates ?? []) {
       const digits = normalizePhoneForMatch(row.phone);
       if (digits.length > 0 && digits === fromDigits) {
+        if (row.sms_opted_out_at) {
+          alreadyOptedOutCount += 1;
+          continue;
+        }
         matchedClients.push({ id: row.id, studio_id: row.studio_id });
       }
     }
@@ -221,10 +232,21 @@ export async function POST(req: Request): Promise<Response> {
 
   const optedAt = new Date().toISOString();
 
-  // Stamp opt-out on every matched client. We update one at a time so
-  // a per-row failure does not block the others; the rare case where
-  // one studio's row update fails is logged and the rest still get
-  // the protection. The opt-out is the critical safety action.
+  // Stamp opt-out on every newly-matched client. Tracking successful
+  // rows separately from failed ones is the heart of the P1 fix: a
+  // partial failure must NOT be reported to Twilio as 200 (Twilio
+  // would not retry, and Hone would be left with an opted-in client
+  // who tried to STOP). We attempt every row first so a single bad
+  // row does not deny the protection to the others, then decide the
+  // HTTP status from the aggregate result.
+  //
+  // The update filter also adds `is("sms_opted_out_at", null)` as a
+  // belt-and-suspenders: if two retries race after the scan but
+  // before the updates, the second update is a no-op rather than a
+  // double stamp. We treat row-count == 0 in that case as a benign
+  // skip (the row was opted out between scan and update), not as an
+  // error.
+  const successfullyOptedOutClients: Array<{ id: string; studio_id: string }> = [];
   let optOutErrors = 0;
   for (const matched of matchedClients) {
     const { error: updateErr } = await admin
@@ -233,7 +255,8 @@ export async function POST(req: Request): Promise<Response> {
         sms_opted_out_at: optedAt,
         sms_opt_out_source: "twilio_stop",
       })
-      .eq("id", matched.id);
+      .eq("id", matched.id)
+      .is("sms_opted_out_at", null);
     if (updateErr) {
       optOutErrors += 1;
       logError("twilio_inbound_client_optout_failed", {
@@ -242,16 +265,37 @@ export async function POST(req: Request): Promise<Response> {
         message: updateErr.message,
         messageSid,
       });
+    } else {
+      // No driver error and we filtered to non-opted-out rows; the
+      // stamp either landed on this attempt or this row had been
+      // opted out concurrently (benign). Either way, only audit rows
+      // that we actually attempted to opt out so a retry that finds
+      // everything already opted out produces zero new audit rows.
+      successfullyOptedOutClients.push(matched);
     }
   }
 
-  // Audit one row per matched client. studio_id is required by the
-  // audit_logs table; we set it from the matched client's row. STOP
-  // success is NOT contingent on audit success; an audit failure logs
-  // but does not roll back the opt-out and does not change the
+  // If ANY matched-client update failed, return 500 so Twilio retries.
+  // The successful subset is already persisted and will not be retried
+  // (the scan above skips already-opted-out rows). The next attempt
+  // only sees the failed subset and either succeeds or 500s again.
+  if (optOutErrors > 0) {
+    logError("twilio_inbound_stop_partial_optout_failed", {
+      matchedCount: matchedClients.length,
+      successfulCount: successfullyOptedOutClients.length,
+      optOutErrors,
+      messageSid,
+    });
+    return NextResponse.json({ ok: false }, { status: 500 });
+  }
+
+  // Audit only successfully-opted-out clients. studio_id is required
+  // by the audit_logs table; we set it from the matched client's row.
+  // STOP success is NOT contingent on audit success; an audit failure
+  // logs but does not roll back the opt-out and does not change the
   // response status. Twilio still receives the STOP TwiML.
-  if (matchedClients.length > 0) {
-    const auditRows = matchedClients.map((m) => ({
+  if (successfullyOptedOutClients.length > 0) {
+    const auditRows = successfullyOptedOutClients.map((m) => ({
       studio_id: m.studio_id,
       actor_id: null,
       action: "sms_opt_out",
@@ -269,7 +313,7 @@ export async function POST(req: Request): Promise<Response> {
       .insert(auditRows);
     if (auditErr) {
       logError("twilio_inbound_audit_insert_failed", {
-        matchedCount: matchedClients.length,
+        successfulCount: successfullyOptedOutClients.length,
         code: auditErr.code,
         message: auditErr.message,
         messageSid,
@@ -280,7 +324,8 @@ export async function POST(req: Request): Promise<Response> {
   logEvent("twilio_inbound_stop_processed", {
     fromMasked: maskedPhone(from),
     matchedCount: matchedClients.length,
-    optOutErrors,
+    alreadyOptedOutCount,
+    successfulCount: successfullyOptedOutClients.length,
     messageSid,
   });
 
