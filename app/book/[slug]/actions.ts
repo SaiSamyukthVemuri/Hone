@@ -699,6 +699,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     },
     intakeUrl: intake?.url ?? null,
     rescheduleUrl,
+    // cancellationUrl was already built above for the email path;
+    // SMS now carries the same /cancel/<token> link so the client
+    // does not need to text us to cancel.
+    cancelUrl: cancellationUrl,
   });
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves existing

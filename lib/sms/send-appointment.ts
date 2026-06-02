@@ -194,6 +194,12 @@ type SendConfirmationInput = {
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   intakeUrl: string | null;
   rescheduleUrl: string | null;
+  // PR SMS link/copy cleanup: SMS now carries an explicit cancel link
+  // alongside the reschedule link. Email already includes both via
+  // /cancel/<token> and /reschedule/<token>; this brings SMS to
+  // parity. Null when the appointment has no cancellation_token (very
+  // old rows that pre-date PR 0025 token backfill).
+  cancelUrl: string | null;
 };
 
 export async function sendBookingConfirmationSmsToClient(
@@ -214,6 +220,7 @@ export async function sendBookingConfirmationSmsToClient(
         timezone: input.timezone,
         intakeUrl: input.intakeUrl,
         rescheduleUrl: input.rescheduleUrl,
+        cancelUrl: input.cancelUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -233,6 +240,9 @@ type SendReminderInput = {
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   rescheduleUrl: string | null;
+  // Same rationale as confirmation: reminder SMS now also offers a
+  // direct cancel link, matching the email reminder content.
+  cancelUrl: string | null;
 };
 
 export async function send24hReminderSmsToClient(
@@ -250,6 +260,7 @@ export async function send24hReminderSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         rescheduleUrl: input.rescheduleUrl,
+        cancelUrl: input.cancelUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -270,6 +281,7 @@ export async function send2hReminderSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         rescheduleUrl: input.rescheduleUrl,
+        cancelUrl: input.cancelUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
