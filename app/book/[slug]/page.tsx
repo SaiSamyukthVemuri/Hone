@@ -35,11 +35,19 @@ export default async function PublicBookingPage({
   const admin = createAdminClient();
   const [{ data: servicesData }, { data: availabilityData }] =
     await Promise.all([
+      // Order by sort_order first (the practitioner-controlled order
+      // set via the Move up / Move down buttons in
+      // Settings -> Services), then by name as the deterministic
+      // tiebreaker when two services share a sort_order. The public
+      // booking menu now reflects what the practitioner arranged on
+      // their settings page. No filtering, grouping, or availability
+      // change; same active services in a different order.
       admin
         .from("services")
         .select("*")
         .eq("studio_id", studio.id)
         .eq("active", true)
+        .order("sort_order", { ascending: true })
         .order("name"),
       // Soft-gate input: at least one open weekly default day. Cheap (≤7
       // rows). Selecting only the columns we need keeps the wire small.

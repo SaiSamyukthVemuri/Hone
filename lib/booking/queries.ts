@@ -12,7 +12,14 @@ import type {
   StudioTimedBlock,
 } from "@/lib/types/database";
 
-// Active services for the studio, ordered by name.
+// Active services for the studio, ordered by the practitioner-
+// controlled sort_order ascending and then by name as a deterministic
+// tiebreaker. sort_order is set via the Move up / Move down buttons
+// in Settings -> Services (PR #109); keeping this query in sync with
+// the public booking page means internal pickers (calendar quick-book,
+// client profile, dashboard) all show services in the same order the
+// practitioner arranged and the same order their clients see on the
+// public booking menu.
 export async function getActiveServices(studioId: string): Promise<Service[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -20,6 +27,7 @@ export async function getActiveServices(studioId: string): Promise<Service[]> {
     .select("*")
     .eq("studio_id", studioId)
     .eq("active", true)
+    .order("sort_order", { ascending: true })
     .order("name");
   if (error) throw new Error(`Failed to load services: ${error.message}`);
   return (data ?? []) as Service[];
