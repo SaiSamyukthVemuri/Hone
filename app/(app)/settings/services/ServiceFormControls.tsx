@@ -209,6 +209,36 @@ export function ServiceSubmitButton({
   );
 }
 
+// One arrow button inside a one-field form that posts to
+// reorderServiceAction. Showing a pending state is intentional: the
+// page re-renders after the action revalidates, and on a slow phone
+// connection a static "↑" would feel unresponsive. The parent decides
+// whether the button is disabled at the boundary (top of list cannot
+// move up, bottom cannot move down).
+export function MoveButton({
+  direction,
+  disabled,
+}: {
+  direction: "up" | "down";
+  disabled: boolean;
+}) {
+  const { pending } = useFormStatus();
+  const isUp = direction === "up";
+  const label = isUp ? "Move up" : "Move down";
+  const glyph = isUp ? "↑" : "↓";
+  return (
+    <button
+      type="submit"
+      disabled={disabled || pending}
+      aria-label={label}
+      title={label}
+      className="rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm leading-none text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+    >
+      {pending ? "…" : glyph}
+    </button>
+  );
+}
+
 // Hide-from-booking / Show-in-booking toggle submit. Lives in its OWN
 // <form action={toggleServiceActiveAction}> in the card header — NOT
 // nested inside the edit form (a nested <form> is invalid HTML; the

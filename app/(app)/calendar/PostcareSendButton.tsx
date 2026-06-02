@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { sendPostcareEmailAction } from "./actions";
 
 // Manual postcare send + preview modal.
@@ -52,21 +52,42 @@ export function PostcareSendButton({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [treatmentPerformed, setTreatmentPerformed] = useState(false);
+  // After a successful send the modal switches to a "Sent" confirmation
+  // state instead of closing instantly. The trigger button reload
+  // (parent server-component re-renders alreadySentAt) is the durable
+  // signal; this transient state is the immediate "yes, it went"
+  // feedback the practitioner asked for during the Willow retest.
+  const [justSent, setJustSent] = useState(false);
+
+  // Briefly stay on the "Sent" view so the practitioner reads it, then
+  // close the modal. The next page render shows the updated "Last sent"
+  // timestamp on the trigger.
+  useEffect(() => {
+    if (!justSent) return;
+    const handle = window.setTimeout(() => {
+      setOpen(false);
+      setJustSent(false);
+    }, 1800);
+    return () => window.clearTimeout(handle);
+  }, [justSent]);
 
   const isResend = alreadySentAt != null;
   const buttonLabel = isResend ? "Resend postcare" : "Send postcare";
   const canConfirm =
     !pending &&
+    !justSent &&
     (!requiresConsultationConfirmation || treatmentPerformed);
 
   function openModal() {
     setError(null);
     setTreatmentPerformed(false);
+    setJustSent(false);
     setOpen(true);
   }
   function closeModal() {
     if (pending) return;
     setOpen(false);
+    setJustSent(false);
   }
   function confirm() {
     setError(null);
@@ -88,7 +109,9 @@ export function PostcareSendButton({
         setError(r.error);
         return;
       }
-      setOpen(false);
+      // Stay in the modal in a confirmation state so the send does not
+      // look silent. The useEffect above closes it shortly after.
+      setJustSent(true);
     });
   }
 
@@ -137,7 +160,7 @@ export function PostcareSendButton({
             <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-800 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
               {previewText}
             </pre>
-            {requiresConsultationConfirmation && (
+            {requiresConsultationConfirmation && !justSent && (
               <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                 <input
                   type="checkbox"
@@ -151,8 +174,25 @@ export function PostcareSendButton({
                 </span>
               </label>
             )}
+            {/* Explicit success confirmation. Replaces the previous
+                silent close so the practitioner knows the email
+                actually went. The trigger button on the parent page
+                will re-render with the updated "Last sent" timestamp
+                on the next render. */}
+            {justSent && (
+              <div
+                role="status"
+                className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm font-medium text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-100"
+              >
+                Postcare sent. The client will receive it within a
+                minute. This window will close automatically.
+              </div>
+            )}
             {error && (
-              <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+              <p className="text-sm text-red-700 dark:text-red-300">
+                Could not send. {error} Try again, or check the
+                client&rsquo;s email on their profile.
+              </p>
             )}
             <footer className="flex flex-wrap items-center justify-end gap-2">
               <button
@@ -161,20 +201,22 @@ export function PostcareSendButton({
                 disabled={pending}
                 className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-neutral-700"
               >
-                Cancel
+                {justSent ? "Close" : "Cancel"}
               </button>
-              <button
-                type="button"
-                onClick={confirm}
-                disabled={!canConfirm}
-                className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-950"
-              >
-                {pending
-                  ? "Sending…"
-                  : isResend
-                    ? "Confirm resend"
-                    : "Send postcare"}
-              </button>
+              {!justSent && (
+                <button
+                  type="button"
+                  onClick={confirm}
+                  disabled={!canConfirm}
+                  className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-950"
+                >
+                  {pending
+                    ? "Sending..."
+                    : isResend
+                      ? "Confirm resend"
+                      : "Send postcare"}
+                </button>
+              )}
             </footer>
           </div>
         </div>

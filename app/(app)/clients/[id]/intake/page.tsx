@@ -257,28 +257,51 @@ export default async function ClientIntakePage({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-6">
+      {/* Step-by-step intake answers, wrapped in native
+          <details open> disclosures so a practitioner can collapse a
+          long step once they have read it. Default open: nothing is
+          hidden on first scan; the critical-answer cards above
+          (EpiPen, Allergies, Fitzpatrick) keep doing their job. Slightly
+          more breathing room (gap-y-4) and a bolder per-question label
+          improve scannability without restructuring the data. */}
+      <div className="flex flex-col gap-4">
         {INTAKE_STEPS.map((s) => (
-          <section
+          <details
             key={s.id}
-            className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+            open
+            className="group rounded-lg border border-neutral-200 dark:border-neutral-800"
           >
-            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-              {s.title}
-            </h2>
-            <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 text-sm md:grid-cols-2">
-              {s.questions.map((q) => (
-                <div key={q.key} className="flex flex-col gap-0.5">
-                  <dt className="text-xs uppercase tracking-wider text-neutral-500">
-                    {q.label}
-                  </dt>
-                  <dd className="text-neutral-800 dark:text-neutral-200">
-                    {renderResponse(q, responses[q.key], responses[`${q.key}_notes`])}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </section>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                  Step {s.id} of {INTAKE_STEPS.length}
+                </span>
+                <h2 className="text-base font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
+                  {s.title}
+                </h2>
+              </div>
+              <span
+                aria-hidden
+                className="select-none text-neutral-500 transition-transform group-open:rotate-180"
+              >
+                ▾
+              </span>
+            </summary>
+            <div className="border-t border-neutral-200 px-5 py-5 dark:border-neutral-800">
+              <dl className="grid grid-cols-1 gap-x-8 gap-y-5 text-sm md:grid-cols-2">
+                {s.questions.map((q) => (
+                  <div key={q.key} className="flex flex-col gap-1">
+                    <dt className="text-xs font-medium text-neutral-500">
+                      {q.label}
+                    </dt>
+                    <dd className="text-neutral-900 dark:text-neutral-100">
+                      {renderResponse(q, responses[q.key], responses[`${q.key}_notes`])}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </details>
         ))}
       </div>
 

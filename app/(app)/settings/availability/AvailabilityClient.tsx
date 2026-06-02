@@ -385,7 +385,7 @@ export function AvailabilityClient({
         kind: "blockout",
         when: b.starts_on,
         label: formatBlockoutRange(b.starts_on, b.ends_on),
-        detail: b.reason ?? "Blockout",
+        detail: b.reason ?? "Blocked time",
       });
     }
     items.sort((a, b) => a.when.localeCompare(b.when));
@@ -413,7 +413,7 @@ export function AvailabilityClient({
               >
                 <span className="flex items-baseline gap-3">
                   <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">
-                    {item.kind === "override" ? "Override" : "Blockout"}
+                    {item.kind === "override" ? "Special hours" : "Blocked time"}
                   </span>
                   <span className="font-medium">{item.label}</span>
                 </span>
@@ -824,6 +824,9 @@ function TimePicker({
   );
 }
 
+// "Special hours" reads more clearly than "Overrides" for a
+// practitioner who is not a SaaS power user. Internal field names
+// (effective_date, upsertOverrideAction, etc.) are unchanged.
 function OverridesSection({
   overrides,
 }: {
@@ -835,10 +838,10 @@ function OverridesSection({
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-xl font-medium">Overrides</h2>
+          <h2 className="text-xl font-medium">Special hours</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            Set different hours for a specific date (extra day open, shorter
-            day, etc.).
+            Use this when you are opening extra time or closing early on
+            a specific date.
           </p>
         </div>
         {!adding && (
@@ -847,7 +850,7 @@ function OverridesSection({
             onClick={() => setAdding(true)}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            + Add override
+            + Add special hours
           </button>
         )}
       </div>
@@ -856,7 +859,7 @@ function OverridesSection({
 
       {overrides.length === 0 ? (
         <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-          No overrides yet. Add one to handle a specific date.
+          No special hours yet. Add one to handle a specific date.
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -991,7 +994,7 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
           disabled={pending}
           className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save override"}
+          {pending ? "Saving…" : "Save special hours"}
         </button>
         <button
           type="button"
@@ -1006,6 +1009,9 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+// "Blocked time" reads more clearly than "Blockouts" for the same
+// reason as Special hours above. Internal field names and actions are
+// unchanged.
 function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
   const [adding, setAdding] = useState(false);
 
@@ -1013,9 +1019,10 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-xl font-medium">Blockouts</h2>
+          <h2 className="text-xl font-medium">Blocked time</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            Date ranges with no bookings (vacation, sick days, etc.).
+            Use this for a vacation, a sick day, a whole-day break, or
+            any date range where you do not want any bookings.
           </p>
         </div>
         {!adding && (
@@ -1024,7 +1031,7 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
             onClick={() => setAdding(true)}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            + Add blockout
+            + Add blocked time
           </button>
         )}
       </div>
@@ -1033,7 +1040,7 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
 
       {blockouts.length === 0 ? (
         <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-          No blockouts.
+          No blocked time.
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -1153,7 +1160,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
           disabled={pending}
           className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save blockout"}
+          {pending ? "Saving…" : "Save blocked time"}
         </button>
         <button
           type="button"

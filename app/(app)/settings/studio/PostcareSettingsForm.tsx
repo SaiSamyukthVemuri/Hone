@@ -2,6 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { updateStudioPostcareAction } from "./actions";
+import {
+  MarkdownLiteTextarea,
+  PostcarePreviewButton,
+} from "./PostcareEditingHelpers";
 
 // Per-studio postcare content. Saved values are sent verbatim into the
 // postcare email after the practitioner clicks "Send postcare" on the
@@ -191,7 +195,21 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
   return (
     <form onSubmit={handleSubmit} className="flex max-w-2xl flex-col gap-6">
       <div>
-        <h3 className="text-base font-medium">Postcare email</h3>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h3 className="text-base font-medium">Postcare email</h3>
+          {/* Renders the exact email body using the same markdown-lite
+              renderer as the real send. No email is sent. */}
+          <PostcarePreviewButton
+            studioName=""
+            contactEmail={contactEmail}
+            ownerFallbackEmail={studioOwnerEmail}
+            aftercareText={aftercare}
+            warningSignsText={warnings}
+            productRecommendationsText={products}
+            reviewUrl={reviewUrl}
+            reviewPromptText={reviewPrompt}
+          />
+        </div>
         <p className="mt-1 text-sm text-neutral-500">
           Content sent to the client when you click <em>Send postcare</em> on
           an appointment. You write the clinical content; Hone never invents
@@ -202,10 +220,10 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
             Formatting
           </p>
           <p className="mt-1">
-            <code>**bold**</code>, <code>*italic*</code>, <code>- bullet</code>{" "}
-            points, and{" "}
-            <code>[label](https://example.com)</code> links are rendered
-            in the email. Other HTML is escaped.
+            Use the toolbar buttons or keyboard shortcuts: Cmd+B / Ctrl+B
+            for bold, Cmd+I / Ctrl+I for italic. <code>- bullet</code> at
+            the start of a line makes a list. <code>[label](https://example.com)</code>{" "}
+            makes a link. All other HTML is escaped before sending.
           </p>
         </div>
       </div>
@@ -223,12 +241,12 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
             onCancel={() => setConfirming(null)}
           />
         </div>
-        <textarea
+        <MarkdownLiteTextarea
           rows={8}
           value={aftercare}
-          onChange={(e) => setAftercare(e.target.value)}
+          onChange={setAftercare}
           placeholder={AFTERCARE_PLACEHOLDER}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          ariaLabel="Aftercare instructions"
         />
         <span className="text-xs text-neutral-500">
           Required before postcare can be sent. Phrase cooling guidance
@@ -254,12 +272,12 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
             onCancel={() => setConfirming(null)}
           />
         </div>
-        <textarea
+        <MarkdownLiteTextarea
           rows={5}
           value={warnings}
-          onChange={(e) => setWarnings(e.target.value)}
+          onChange={setWarnings}
           placeholder={WARNINGS_PLACEHOLDER}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          ariaLabel="Warning signs and when to contact you"
         />
       </label>
 
@@ -276,12 +294,12 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
             onCancel={() => setConfirming(null)}
           />
         </div>
-        <textarea
+        <MarkdownLiteTextarea
           rows={4}
           value={products}
-          onChange={(e) => setProducts(e.target.value)}
+          onChange={setProducts}
           placeholder={PRODUCTS_PLACEHOLDER}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          ariaLabel="Product recommendations"
         />
       </label>
 

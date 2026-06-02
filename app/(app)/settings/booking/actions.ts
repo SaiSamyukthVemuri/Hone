@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
@@ -94,76 +95,92 @@ const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "terms",
 ]);
 
+// Save the studio booking preferences and surface the outcome inline
+// rather than via Next's error.tsx boundary. The action redirects back
+// to /settings/booking with one of two query params:
+//   ?saved=1               on success
+//   ?error=<urlencoded>    on a validated failure
+// The page reads these params and renders a calm green/red banner so
+// the practitioner sees feedback after every tap. The redirect signal
+// from next/navigation is itself thrown, so we collect the failure
+// message in a local string and only call redirect() once at the end.
 export async function updateStudioBookingPrefsAction(
   formData: FormData,
 ): Promise<void> {
-  const { studioId, currentSlug } = await assertOwner();
+  let failureMessage: string | null = null;
 
-  const tz = trimmed(formData.get("timezone")) || "America/Toronto";
-  const defaultDuration = parseInteger(
-    formData.get("default_appointment_duration_minutes"),
-    60,
-  );
-  const buffer = parseBufferPreset(formData.get("buffer_minutes"));
-  const publicBookingHorizonMonths = parsePublicBookingHorizonMonths(
-    formData.get("public_booking_horizon_months"),
-  );
-  const slugRaw = trimmed(formData.get("slug")).toLowerCase();
-  const address = nullable(formData.get("address"));
-  const bookingDescription = nullable(formData.get("booking_description"));
+  try {
+    const { studioId, currentSlug } = await assertOwner();
 
-  if (!SLUG_RE.test(slugRaw)) {
-    throw new Error(
-      "Slug must be lowercase letters, numbers, and dashes (1–64 chars).",
+    const tz = trimmed(formData.get("timezone")) || "America/Toronto";
+    const defaultDuration = parseInteger(
+      formData.get("default_appointment_duration_minutes"),
+      60,
     );
-  }
-  // Reserved-word check: only block when the submission actually changes
-  // the slug to a reserved word. Owners re-saving an existing slug that
-  // happens to match the list (extremely unlikely; the list mirrors app
-  // routes) keep working — this PR doesn't retroactively invalidate
-  // valid existing slugs.
-  if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
-    throw new Error("That booking link is reserved. Please choose another.");
-  }
-  if (defaultDuration < 5 || defaultDuration > 480) {
-    throw new Error("Default duration must be between 5 and 480 minutes.");
-  }
+    const buffer = parseBufferPreset(formData.get("buffer_minutes"));
+    const publicBookingHorizonMonths = parsePublicBookingHorizonMonths(
+      formData.get("public_booking_horizon_months"),
+    );
+    const slugRaw = trimmed(formData.get("slug")).toLowerCase();
+    const address = nullable(formData.get("address"));
+    const bookingDescription = nullable(formData.get("booking_description"));
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("studios")
-    .update({
-      timezone: tz,
-      default_appointment_duration_minutes: defaultDuration,
-      buffer_minutes: buffer,
-      slug: slugRaw,
-      address,
-      booking_description: bookingDescription,
-      public_booking_horizon_months: publicBookingHorizonMonths,
-    })
-    .eq("id", studioId);
-  if (error) {
-    if (error.code === "23505") {
-      throw new Error("That slug is already taken. Pick another.");
-    }
-    // 23P01: the timezone-change trigger rebuilt this studio's
-    // full_day_blockout reservation rows into UTC instants under the
-    // new timezone, and at least one recalculated interval collided
-    // with another reservation. The studios UPDATE rolled back.
-    // Buffer changes do NOT trigger retroactive resync; existing
-    // appointments keep their migration 0029 snapshot.
-    if (error.code === "23P01") {
+    if (!SLUG_RE.test(slugRaw)) {
       throw new Error(
-        "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
+        "Slug must be lowercase letters, numbers, and dashes (1-64 chars).",
       );
     }
-    throw new Error(`Failed to update booking settings: ${error.message}`);
+    if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
+      throw new Error("That booking link is reserved. Please choose another.");
+    }
+    if (defaultDuration < 5 || defaultDuration > 480) {
+      throw new Error("Default duration must be between 5 and 480 minutes.");
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("studios")
+      .update({
+        timezone: tz,
+        default_appointment_duration_minutes: defaultDuration,
+        buffer_minutes: buffer,
+        slug: slugRaw,
+        address,
+        booking_description: bookingDescription,
+        public_booking_horizon_months: publicBookingHorizonMonths,
+      })
+      .eq("id", studioId);
+    if (error) {
+      if (error.code === "23505") {
+        throw new Error("That slug is already taken. Pick another.");
+      }
+      // 23P01: the timezone-change trigger rebuilt this studio's
+      // full_day_blockout reservation rows into UTC instants under the
+      // new timezone, and at least one recalculated interval collided
+      // with another reservation. Buffer changes do NOT trigger
+      // retroactive resync; existing appointments keep their migration
+      // 0029 snapshot.
+      if (error.code === "23P01") {
+        throw new Error(
+          "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
+        );
+      }
+      throw new Error(`Failed to update booking settings: ${error.message}`);
+    }
+    revalidatePath("/settings/booking");
+    revalidatePath("/settings/availability");
+    revalidatePath("/settings/studio");
+    revalidatePath("/calendar");
+    if (slugRaw) revalidatePath(`/book/${slugRaw}`);
+  } catch (err) {
+    failureMessage =
+      err instanceof Error && err.message ? err.message : "Save failed.";
   }
-  revalidatePath("/settings/booking");
-  revalidatePath("/settings/availability");
-  revalidatePath("/settings/studio");
-  revalidatePath("/calendar");
-  // Public booking page reads horizon at request time; revalidate so
-  // the cached render reflects the new window immediately.
-  if (slugRaw) revalidatePath(`/book/${slugRaw}`);
+
+  if (failureMessage) {
+    redirect(
+      `/settings/booking?error=${encodeURIComponent(failureMessage)}`,
+    );
+  }
+  redirect("/settings/booking?saved=1");
 }
