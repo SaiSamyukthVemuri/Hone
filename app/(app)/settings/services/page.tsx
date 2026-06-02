@@ -3,11 +3,13 @@ import { getAllServices } from "@/lib/booking/queries";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
 import {
   createServiceAction,
+  reorderServiceAction,
   toggleServiceActiveAction,
   updateServiceAction,
 } from "./actions";
 import {
   DurationField,
+  MoveButton,
   ServiceAccordionItem,
   ServiceSubmitButton,
   ToggleActiveSubmitButton,
@@ -58,27 +60,59 @@ export default async function ServicesSettingsPage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Existing services
-        </h3>
+        <div className="flex flex-col gap-1">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Service menu order
+          </h3>
+          <p className="text-xs text-neutral-500">
+            Arrange how services appear on your public booking page.
+            Use the arrow buttons next to a visible service to move it
+            up or down.
+          </p>
+        </div>
         {orderedServices.length === 0 ? (
           <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
             No services yet. Add one below.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
-            {orderedServices.map((s) => (
-              <ServiceAccordionItem
-                key={s.id}
-                name={s.name}
-                durationLabel={`${s.default_duration_minutes} min`}
-                priceLabel={formatPrice(s.price_cents)}
-                active={s.active}
-                toggle={<ToggleActiveButton id={s.id} active={s.active} />}
-              >
-                <ServiceEditForm service={s} />
-              </ServiceAccordionItem>
-            ))}
+            {/* Visible-only positions for Move up/down. Hidden services
+                are not on the public booking menu, so they get no
+                reorder controls (matches reorderServiceAction's
+                active-only sort scope). */}
+            {(() => {
+              const visibleIds = orderedServices
+                .filter((s) => s.active)
+                .map((s) => s.id);
+              return orderedServices.map((s) => {
+                const pos = s.active ? visibleIds.indexOf(s.id) : -1;
+                const isFirstVisible = pos === 0;
+                const isLastVisible = pos === visibleIds.length - 1;
+                return (
+                  <ServiceAccordionItem
+                    key={s.id}
+                    name={s.name}
+                    durationLabel={`${s.default_duration_minutes} min`}
+                    priceLabel={formatPrice(s.price_cents)}
+                    active={s.active}
+                    toggle={
+                      <>
+                        {s.active && (
+                          <ReorderButtons
+                            id={s.id}
+                            disableUp={isFirstVisible}
+                            disableDown={isLastVisible}
+                          />
+                        )}
+                        <ToggleActiveButton id={s.id} active={s.active} />
+                      </>
+                    }
+                  >
+                    <ServiceEditForm service={s} />
+                  </ServiceAccordionItem>
+                );
+              });
+            })()}
           </div>
         )}
       </section>
@@ -172,17 +206,21 @@ function ServiceEditForm({ service }: { service: Service }) {
           />
         </FieldLabel>
 
-        {/* Advanced — hidden by default. Display order lives here so
-            the main form stays calm. Keeps the underlying field name
-            sort_order so the unchanged updateServiceAction parses it. */}
+        {/* Advanced - rarely needed. The Move up / Move down buttons
+            on the row header are the primary way to change ordering.
+            The raw sort_order field is kept inside this collapsed
+            <details> for the rare case a practitioner wants to pin a
+            specific number; it stays under "Advanced" so it never
+            crowds the normal edit flow. updateServiceAction still
+            reads `sort_order` if present. */}
         <details className="rounded-md border border-neutral-200 dark:border-neutral-800">
           <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
             Advanced
           </summary>
           <div className="border-t border-neutral-200 px-3 py-3 dark:border-neutral-800">
             <FieldLabel
-              label="Display order"
-              hint="Lower numbers show earlier on the booking page."
+              label="Position number"
+              hint="Most people use the Move up and Move down arrows on the row instead. This is here only for fine-grained control."
             >
               <input
                 name="sort_order"
@@ -206,6 +244,37 @@ function ServiceEditForm({ service }: { service: Service }) {
         </div>
       </form>
     </div>
+  );
+}
+
+// One small <form> per direction. Each posts to reorderServiceAction
+// with the service id and direction. Two separate forms (rather than
+// one with two submits) keeps useFormStatus scoped to the individual
+// button so only the clicked arrow shows the pending state. Server
+// action revalidates /settings/services so the list re-renders in
+// the new order.
+function ReorderButtons({
+  id,
+  disableUp,
+  disableDown,
+}: {
+  id: string;
+  disableUp: boolean;
+  disableDown: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <form action={reorderServiceAction}>
+        <input type="hidden" name="id" value={id} />
+        <input type="hidden" name="direction" value="up" />
+        <MoveButton direction="up" disabled={disableUp} />
+      </form>
+      <form action={reorderServiceAction}>
+        <input type="hidden" name="id" value={id} />
+        <input type="hidden" name="direction" value="down" />
+        <MoveButton direction="down" disabled={disableDown} />
+      </form>
+    </span>
   );
 }
 

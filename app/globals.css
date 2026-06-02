@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Force Tailwind 4's `dark:` variant to a class-based selector that is
+ * not currently applied anywhere. Without this, Tailwind v4's default
+ * `dark` variant uses prefers-color-scheme, so `dark:bg-neutral-900`
+ * etc. would still fire on a phone in night mode even after the
+ * @media block below was disabled. Switch this to `.dark` and apply
+ * `.dark` on <html> when a real System/Light/Dark toggle ships.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #0a0a0a;
@@ -14,12 +23,17 @@
   --font-inter: var(--font-inter);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Automatic dark mode disabled per pilot feedback (Chloe at Willow
+ * Electrolysis did not want the app switching to night mode based on
+ * the device's appearance setting). Hone now stays in light mode by
+ * default. The dark: utility classes still exist in component markup
+ * for a future opt-in toggle, but no media query enables them today.
+ *
+ * To re-enable a system-preference-aware theme later, either:
+ *   (a) restore this @media (prefers-color-scheme: dark) block, or
+ *   (b) add a class-based theme switcher (System/Light/Dark) on
+ *       <html> and configure Tailwind's dark variant to use it.
+ */
 
 html,
 body {

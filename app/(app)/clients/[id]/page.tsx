@@ -13,7 +13,10 @@ import {
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
 import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
-import { ClientTagsCard } from "@/components/client-tags-card";
+// ClientTagsCard import removed: Tags is hidden from the main profile
+// per pilot feedback (Chloe prefers Pinned notes as the practitioner
+// memory surface). Tag data and tag actions remain in the codebase
+// for possible re-surfacing in an admin/advanced area later.
 import { TreatmentPlansCard } from "@/components/treatment-plans-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
@@ -23,7 +26,9 @@ import {
   getLatestSubmittedOrReviewedIntakeForClient,
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
-import { getClientTags } from "@/lib/client-tags/queries";
+// getClientTags import removed: tags no longer render on the main
+// profile (see ClientTagsCard note above). Server actions for tags
+// are unchanged and the data is preserved.
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import {
@@ -38,10 +43,12 @@ import { isProfileTab, type ProfileTab } from "@/components/profile-tab";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
-  addClientTagAction,
   deleteClientPricingAction,
-  removeClientTagAction,
 } from "./actions";
+// addClientTagAction / removeClientTagAction are still exported by
+// actions.ts; not imported here because Tags no longer renders on
+// the main profile. Keep them available for the future admin/tags
+// surface.
 import {
   addClientPinnedNoteAction,
   removeClientPinnedNoteAction,
@@ -126,7 +133,7 @@ export default async function ClientCheatSheetPage({
         (submittedIntake.responses ?? {}) as Record<string, unknown>,
       )
     : null;
-  const tags = await getClientTags(studio.id, client.id);
+  // tags read removed: Tags no longer renders on the main profile.
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
   const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
   const [treatmentTotals, treatmentByArea, treatmentGoal, personalNotes] =
@@ -256,32 +263,51 @@ export default async function ClientCheatSheetPage({
             action={updateClientBirthdayAction}
           />
 
-          <ClientTagsCard
-            clientId={client.id}
-            tags={tags}
-            addAction={addClientTagAction}
-            removeAction={removeClientTagAction}
-          />
+          {/* Tags removed from the main profile per pilot feedback.
+              Chloe asked repeatedly for pinned notes over tags as the
+              practitioner-memory surface, so ClientTagsCard is no
+              longer rendered in Overview. The underlying tag data
+              and the addClientTagAction / removeClientTagAction
+              server actions are intentionally preserved (no
+              migration, no destructive change); they can be
+              re-surfaced behind an admin/advanced area later if
+              anyone asks. */}
 
-          {/* Details (non-clinical demographics). DOB lives here, not
-              in Skin: Chloe pointed out DOB sitting under Skin was
-              confusing because Skin is for Fitzpatrick / skin notes
-              / clinical context. The Birthday card above handles the
-              "today / this month" reminder UI; this row exposes the
-              raw stored date for reference. */}
-          <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-              Details
-            </h2>
-            <dl className="mt-3 flex flex-col gap-2 text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-neutral-500">Date of birth</dt>
-                <dd className="font-medium">
-                  {client.date_of_birth ?? "Not set"}
-                </dd>
-              </div>
-            </dl>
-          </section>
+          {/* "Details" section removed. Its only field was the raw
+              Date of birth row, which is already covered by the
+              ClientBirthdayCard above (it shows the date and renders
+              an explicit "Birthday today / this month" callout when
+              relevant). Removing the second surface keeps the
+              pre-appointment scan focused. The raw date_of_birth is
+              also available on the Edit client page if a practitioner
+              ever needs to change it. */}
+
+          {hasEmergencyContact && (
+            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+                Emergency contact
+              </h2>
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                {client.emergency_contact_name && (
+                  <span className="font-medium">
+                    {client.emergency_contact_name}
+                  </span>
+                )}
+                {client.emergency_contact_name &&
+                  client.emergency_contact_phone && (
+                    <span className="text-neutral-400">·</span>
+                  )}
+                {client.emergency_contact_phone && (
+                  <a
+                    href={telHref(client.emergency_contact_phone)}
+                    className="text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:text-neutral-300 dark:decoration-neutral-700"
+                  >
+                    {client.emergency_contact_phone}
+                  </a>
+                )}
+              </p>
+            </section>
+          )}
 
           {/* Skin is its own card now (was previously grid-paired with
               Pricing). Skin context + Fitzpatrick belong with clinical
@@ -335,33 +361,6 @@ export default async function ClientCheatSheetPage({
               </h2>
               <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
                 {client.address}
-              </p>
-            </section>
-          )}
-
-          {hasEmergencyContact && (
-            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-                Emergency contact
-              </h2>
-              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-                {client.emergency_contact_name && (
-                  <span className="font-medium">
-                    {client.emergency_contact_name}
-                  </span>
-                )}
-                {client.emergency_contact_name &&
-                  client.emergency_contact_phone && (
-                    <span className="text-neutral-400">·</span>
-                  )}
-                {client.emergency_contact_phone && (
-                  <a
-                    href={telHref(client.emergency_contact_phone)}
-                    className="text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:text-neutral-300 dark:decoration-neutral-700"
-                  >
-                    {client.emergency_contact_phone}
-                  </a>
-                )}
               </p>
             </section>
           )}

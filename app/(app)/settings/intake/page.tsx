@@ -41,11 +41,30 @@ export default async function IntakeAndPostcarePage() {
       <div className="flex flex-col gap-2">
         <h2 className="text-xl font-medium">Intake form preview</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Preview only. Nothing here is saved or sent.
+          This is the current health intake form. Inspect each step end
+          to end without creating a test client.
         </p>
-        <p className="text-xs text-neutral-500">
-          This is the current health intake form your clients see when they
-          open a booking confirmation or an intake update link.
+      </div>
+
+      {/* Standing banner. Makes it unambiguous that this page is read
+          only: tapping any input does nothing, the form has no submit
+          action, no client record is created, and no real intake row
+          is written. The banner also tells the practitioner what they
+          would do to actually send an intake (open a client and use
+          "Request intake update" there), so the absence of a primary
+          action does not feel broken. */}
+      <div
+        role="status"
+        className="flex flex-col gap-1 rounded-md border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-100"
+      >
+        <p className="font-medium">
+          Preview mode. No client record will be created.
+        </p>
+        <p className="text-xs">
+          This view shows exactly what a client sees when they open a
+          booking confirmation or an intake update link. To actually
+          send an intake to a client, open that client and use
+          &ldquo;Request intake update&rdquo; on their profile.
         </p>
       </div>
       {/* Collapsible by intake step via native <details>/<summary>.

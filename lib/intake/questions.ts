@@ -149,10 +149,17 @@ const SENSITIVITY: ReadonlyArray<Option> = [
 // review time by lib/intake/fitzpatrick.ts. Stored as a string so the
 // existing single_select machinery and review label-resolver work
 // without changes.
+// Fitzpatrick eye-color options. Each value is the score that
+// fitzpatrick.ts will use; scoring parses the value with parseInt
+// (lenient: it stops at the first non-digit). "Hazel" is requested
+// pilot feedback; it scores as 2 (medium) but keeps a unique value
+// ("2h") so the single_select UI and the intake review label resolver
+// can distinguish it from "Blue". parseInt("2h", 10) === 2.
 const FITZ_EYE_COLOR: ReadonlyArray<Option> = [
   { value: "0", label: "Light blue, gray, or green" },
   { value: "1", label: "Blue, gray, or green" },
   { value: "2", label: "Blue" },
+  { value: "2h", label: "Hazel" },
   { value: "3", label: "Dark brown" },
   { value: "4", label: "Brown or black" },
 ];

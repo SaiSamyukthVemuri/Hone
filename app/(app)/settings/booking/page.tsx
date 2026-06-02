@@ -3,6 +3,7 @@ import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 import { updateStudioBookingPrefsAction } from "./actions";
 import { BookingLinkCard } from "./BookingLinkCard";
+import { SaveButton } from "./SaveButton";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -16,7 +17,55 @@ function bufferOptionLabel(minutes: number): string {
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
-export default async function BookingSettingsPage() {
+// Renders a calm green/red banner above the form after the save
+// action redirected back with a status query param. Server-rendered;
+// no client component needed. The banner stays until the next
+// navigation so the practitioner can read it without it auto-hiding
+// while their thumb is somewhere else on a phone screen.
+function SaveBanner({
+  saved,
+  error,
+}: {
+  saved: boolean;
+  error: string | null;
+}) {
+  if (!saved && !error) return null;
+  if (error) {
+    return (
+      <div
+        role="status"
+        className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-700/50 dark:bg-red-950/30 dark:text-red-100"
+      >
+        <p className="font-medium">Could not save preferences.</p>
+        <p className="mt-1">{error}</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      role="status"
+      className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-100"
+    >
+      Preferences saved.
+    </div>
+  );
+}
+
+export default async function BookingSettingsPage({
+  searchParams,
+}: {
+  // Next 15 App Router: searchParams is async. We await it and read
+  // saved / error from the query string written by the redirect()s
+  // in updateStudioBookingPrefsAction.
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = (await searchParams) ?? {};
+  const savedParam = params.saved;
+  const errorParam = params.error;
+  const saved =
+    (Array.isArray(savedParam) ? savedParam[0] : savedParam) === "1";
+  const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
+
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
@@ -28,6 +77,8 @@ export default async function BookingSettingsPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <SaveBanner saved={saved} error={errorMessage ?? null} />
+
       <section>
         <h2 className="text-xl font-medium">Booking</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -167,12 +218,7 @@ export default async function BookingSettingsPage() {
         </label>
 
         <div>
-          <button
-            type="submit"
-            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            Save preferences
-          </button>
+          <SaveButton idleLabel="Save preferences" />
         </div>
       </form>
     </div>

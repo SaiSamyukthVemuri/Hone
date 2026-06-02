@@ -29,6 +29,12 @@ type Row = {
   status: Status;
   detail?: string;
   cta?: { label: string; href: string };
+  /**
+   * Optional second action. Used by the Public booking link row so the
+   * practitioner can open the live booking page in a new tab AND open
+   * the booking settings, without picking only one.
+   */
+  secondaryCta?: { label: string; href: string; newTab?: boolean };
 };
 
 function nonEmpty(s: string | null | undefined): boolean {
@@ -72,9 +78,12 @@ export default async function LaunchChecklistPage() {
       title: "Public booking link",
       status: hasSlug ? "ready" : "needs_setup",
       detail: bookingUrl ?? "Set a booking slug to enable the public link.",
-      cta: hasSlug
-        ? { label: "Open booking settings", href: "/settings/booking" }
+      cta: hasSlug && bookingUrl
+        ? { label: "Open public booking page", href: bookingUrl }
         : { label: "Open Studio settings", href: "/settings/studio" },
+      secondaryCta: hasSlug
+        ? { label: "Open booking settings", href: "/settings/booking" }
+        : undefined,
     },
     {
       title: "Consultation service",
@@ -161,13 +170,20 @@ export default async function LaunchChecklistPage() {
   return (
     <section className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">Launch checklist</h2>
+        <h2 className="text-xl font-medium">Ready for booking checklist</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Use this checklist before sending real clients through Hone. It
-          does not block booking.
+          Walk this once before sending your first real client through
+          Hone. Each item is a single plain-English requirement with a
+          direct link. Booking still works regardless of these statuses.
         </p>
         <p className="text-xs text-neutral-500">
-          {readyCount} ready · {needsSetupCount} needs setup
+          <span className="font-medium text-emerald-700 dark:text-emerald-300">
+            {readyCount} ready
+          </span>
+          {" · "}
+          <span className="font-medium text-amber-800 dark:text-amber-200">
+            {needsSetupCount} still to do
+          </span>
         </p>
       </header>
 
@@ -191,14 +207,22 @@ export default async function LaunchChecklistPage() {
   );
 }
 
+// External booking-page links open in a new tab; in-app settings
+// links stay in the current tab. We detect "external" by absolute URL
+// prefix; any href that starts with http(s):// is treated as external.
+function isExternalHref(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
 function ChecklistRow({ row }: { row: Row }) {
   return (
-    <li className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+    <li className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <StatusPill status={row.status} />
+        <StatusBox status={row.status} />
         <div className="flex flex-col gap-1 min-w-0">
-          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {row.title}
+          <p className="flex flex-wrap items-baseline gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            <span>{row.title}</span>
+            <StatusPill status={row.status} />
           </p>
           {row.detail && (
             <p className="break-words text-xs text-neutral-600 dark:text-neutral-400">
@@ -207,15 +231,62 @@ function ChecklistRow({ row }: { row: Row }) {
           )}
         </div>
       </div>
-      {row.cta && (
-        <Link
-          href={row.cta.href}
-          className="self-start whitespace-nowrap rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-        >
-          {row.cta.label}
-        </Link>
+      {(row.cta || row.secondaryCta) && (
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          {row.cta && (
+            <Link
+              href={row.cta.href}
+              target={isExternalHref(row.cta.href) ? "_blank" : undefined}
+              rel={isExternalHref(row.cta.href) ? "noreferrer" : undefined}
+              className="whitespace-nowrap rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            >
+              {row.cta.label}
+              {isExternalHref(row.cta.href) ? " ↗" : ""}
+            </Link>
+          )}
+          {row.secondaryCta && (
+            <Link
+              href={row.secondaryCta.href}
+              target={
+                row.secondaryCta.newTab || isExternalHref(row.secondaryCta.href)
+                  ? "_blank"
+                  : undefined
+              }
+              rel={
+                row.secondaryCta.newTab || isExternalHref(row.secondaryCta.href)
+                  ? "noreferrer"
+                  : undefined
+              }
+              className="whitespace-nowrap rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              {row.secondaryCta.label}
+            </Link>
+          )}
+        </div>
       )}
     </li>
+  );
+}
+
+// Checkbox-like box that visually reads as "done / to do / N/A". The
+// previous pill alone made the page feel like a status list; pairing
+// the row with a square mark makes it skim like an actual checklist.
+function StatusBox({ status }: { status: Status }) {
+  const isDone = status === "ready";
+  const isTodo = status === "needs_setup";
+  return (
+    <span
+      aria-hidden
+      className={`mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded border-2 text-xs font-bold ${
+        isDone
+          ? "border-emerald-600 bg-emerald-600 text-white dark:border-emerald-400 dark:bg-emerald-400 dark:text-neutral-900"
+          : isTodo
+            ? "border-amber-500 bg-amber-50 text-amber-700 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+            : "border-neutral-300 bg-white text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950"
+      }`}
+    >
+      {isDone ? "✓" : ""}
+    </span>
   );
 }
 
@@ -224,12 +295,12 @@ function StatusPill({ status }: { status: Status }) {
     switch (status) {
       case "ready":
         return {
-          label: "Ready",
+          label: "Done",
           cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
         };
       case "needs_setup":
         return {
-          label: "Needs setup",
+          label: "To do",
           cls: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
         };
       case "optional":
@@ -251,7 +322,7 @@ function StatusPill({ status }: { status: Status }) {
   })();
   return (
     <span
-      className={`mt-0.5 inline-flex h-fit flex-none items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
+      className={`inline-flex h-fit flex-none items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${cls}`}
     >
       {label}
     </span>
