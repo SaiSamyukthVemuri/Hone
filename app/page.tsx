@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Reveal } from "./_components/Reveal";
-import { WaitlistForm } from "./_components/WaitlistForm";
 import { MarketingHeader } from "./_components/MarketingHeader";
 import { MarketingFooter } from "./_components/MarketingFooter";
 import {
@@ -14,6 +13,15 @@ import {
   CalendarPreview,
 } from "./_components/ProductPreview";
 
+// Public marketing homepage. Rewritten as a 9-section buyer path
+// (Hero, How Hone fits, What generic booking misses, Product preview,
+// Features, Trust, Pilot, Pricing teaser, Final CTA). Primary CTA
+// across every page is "Book a 15-minute walkthrough" and routes to
+// /demo. Secondary CTA points to the in-page product preview anchor.
+// The previous waitlist email form has been removed from the hero on
+// purpose: the primary action is to book a walkthrough, not leave an
+// email; the WaitlistForm component and its server action are
+// preserved for possible future reuse.
 export default function HomePage() {
   return (
     <main
@@ -26,20 +34,20 @@ export default function HomePage() {
     >
       <MarketingHeader />
       <Hero />
-      <PracticeMemory />
-      <EditorialObservation />
-      <HowItWorks />
-      <CheatSheetPreview />
-      <InsideHone />
-      <BuiltForTheWork />
-      <TrustLine />
-      <ClosingNote />
+      <HowHoneFits />
+      <WhatGenericMisses />
+      <ProductPreviewSection />
+      <FeaturesByWorkflow />
+      <TrustSection />
+      <PilotSection />
+      <PricingTeaser />
+      <FinalCTA />
       <MarketingFooter />
     </main>
   );
 }
 
-/* Hero ─────────────────────────────────────────────────────────────────── */
+/* Section: Hero ────────────────────────────────────────────────────────── */
 
 function Hero() {
   return (
@@ -48,188 +56,93 @@ function Hero() {
       className="px-6 pb-24 pt-20 md:px-12 md:pb-28 md:pt-24 lg:px-16"
     >
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Electrolysis practice software</EyebrowCaption>
+        <EyebrowCaption>
+          Electrolysis practice software. Laser support included.
+        </EyebrowCaption>
 
-        {/* YC-style positioning headline: category-led, no marketing
-            superlatives, no hedged tagline. The previous "Never wonder"
-            line still surfaces in the editorial section below; this slot
-            is now for the literal product category, indexed first. */}
         <h1
-          className="font-[var(--font-fraunces)] mt-10 max-w-[1100px] text-[56px] font-bold leading-[0.94] md:text-[92px]"
+          className="font-[var(--font-fraunces)] mt-10 max-w-[1100px] text-[52px] font-bold leading-[0.96] md:text-[88px]"
           style={{ letterSpacing: "-0.045em" }}
         >
           Electrolysis practice software that remembers the treatment details.
         </h1>
 
         <p
-          className="mt-10 max-w-[640px] text-[18px] leading-[1.55] md:text-[21px]"
+          className="mt-10 max-w-[680px] text-[18px] leading-[1.55] md:text-[21px]"
           style={{ color: PALETTE.ink }}
         >
-          Booking, intake, treatment plans, charting, and postcare for
-          electrologists who need more than a generic calendar.
+          Booking, intake, treatment plans, session charting, client history,
+          and postcare in one calm workflow built for permanent hair removal
+          studios.
         </p>
 
-        {/* Primary CTA is the inline waitlist email with submit button
-            labelled "Get early access". Secondary CTA is a "Request a
-            walkthrough" link to /demo, which is a founder-led
-            walkthrough request (not a recorded demo). Access-gate copy
-            explains why the form is gated, so the gate reads as
-            intentional rather than broken. Anchor name kept stable for
-            inbound links from the pricing page. */}
-        <div id="early-access" className="mt-[56px] max-w-[700px]">
-          <EyebrowCaption>Get early access</EyebrowCaption>
-          <p
-            className="mt-3 max-w-[620px] text-[15px] leading-[1.55]"
-            style={{ color: PALETTE.muted }}
-          >
-            We onboard a few studios at a time. Founder-led setup means
-            we help each studio configure booking, services, intake, and
-            postcare correctly before you send a real client through.
-          </p>
-          <div className="mt-6">
-            <WaitlistForm />
-          </div>
-          <div className="mt-6">
-            <Link
-              href="/demo"
-              className="text-[14px] font-medium uppercase hover:opacity-60"
-              style={{ letterSpacing: "0.2em", color: PALETTE.ink }}
-            >
-              Request a walkthrough →
-            </Link>
-          </div>
-          <div className="mt-10">
-            <EyebrowCaption>Works on iPad, laptop, and phone</EyebrowCaption>
-          </div>
+        {/* Two consistent CTAs. Primary is a real link to /demo where
+            the walkthrough form lives. Secondary jumps to the in-page
+            charting workflow anchor below the fold. */}
+        <div className="mt-12 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
+          <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>
+          <SecondaryCta href="#charting-workflow">
+            See the charting workflow
+          </SecondaryCta>
         </div>
-      </div>
-    </Reveal>
-  );
-}
 
-/* Practice memory positioning ──────────────────────────────────────────── */
-
-function PracticeMemory() {
-  return (
-    <Reveal as="section" className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
-      <div className="mx-auto max-w-[1400px]">
         <p
-          className="font-[var(--font-fraunces)] max-w-[900px] text-[28px] font-bold leading-[1.15] md:text-[36px]"
-          style={{ letterSpacing: "-0.025em" }}
+          className="mt-8 max-w-[640px] text-[14px] leading-[1.6]"
+          style={{ color: PALETTE.muted }}
         >
-          Hone is the practice memory system for permanent hair removal.
-        </p>
-        <p className="mt-6 max-w-[680px] text-[18px] leading-[1.65] md:text-[21px]">
-          Booking and scheduling are table stakes. The real product is the
-          thing every practitioner needs but no software has given them: a
-          faithful, fast, structured memory of what you did with each client,
-          across every session. In practice that means electrolysis software
-          for booking, treatment plans, and clinical charting, built around
-          that memory rather than bolted on beside it.
+          Built with independent electrolysis studios. Early pilot
+          onboarding is limited so each studio gets founder-led setup.
         </p>
       </div>
     </Reveal>
   );
 }
 
-/* Editorial observation (the one big moment; folds in the closing essay) ── */
+/* Section: How Hone fits into your appointment ───────────────────────── */
 
-function EditorialObservation() {
-  return (
-    <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
-      <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-16 gap-y-10 md:grid-cols-12">
-        <div className="md:col-span-7">
-          <h2
-            className="font-[var(--font-fraunces)] text-[44px] font-bold leading-[0.95] md:text-[72px]"
-            style={{ letterSpacing: "-0.04em" }}
-          >
-            <span className="block">
-              Most <em>electrolysis</em>
-            </span>
-            <span className="block">and laser studios</span>
-            <em className="block">still</em>
-            <span className="block">chart on paper.</span>
-          </h2>
-        </div>
-        <div className="space-y-6 md:col-span-5">
-          <p className="text-[18px] leading-[1.55] md:text-[21px]">
-            Paper, because every software alternative is worse than paper.
-            Generic booking platforms don&rsquo;t understand probe sizes or
-            pulse counts. Medical records are built for doctors, not
-            practitioners working hair by hair. Spa software handles inventory
-            and retail, not the precise log of every needle and every reaction.
-          </p>
-          <p className="text-[18px] leading-[1.55] md:text-[21px]">
-            Charting is the hidden tax: the two or three minutes after every
-            client, multiplied across a year. Hone is the first tool that is
-            faster than paper instead of slower. It remembers what you did, runs
-            your booking and calendar, and does it in the two-minute window
-            between clients, because that&rsquo;s the only time you have.
-          </p>
-        </div>
-      </div>
-    </Reveal>
-  );
-}
-
-/* How it works ─────────────────────────────────────────────────────────── */
-
-const HOW_STEPS: ReadonlyArray<{
-  numeral: string;
-  title: string;
-  body: string;
-}> = [
+const FIT_STEPS: ReadonlyArray<{ kicker: string; title: string; body: string }> = [
   {
-    numeral: "01",
-    title: "Find your client and see their memory",
-    body: "Type the first three letters. The cheat sheet appears with pricing, skin notes, allergies, what they tolerated last time, and the exact settings that worked.",
+    kicker: "Before the appointment",
+    title: "Client books. Intake lands attached.",
+    body: "The client books online from your studio link, fills the health intake, and the appointment shows up on your calendar with the intake response attached.",
   },
   {
-    numeral: "02",
-    title: "Log this session",
-    body: "Tap copy from last, edit what changed. Areas as chip-taps. Modes ordered like your machine. Common comments preset. One-tap.",
+    kicker: "During the session",
+    title: "Open the client. Chart what changed.",
+    body: "The cheat sheet shows last settings, what they tolerated, what to avoid, and the active treatment plan. Chart what changed on one screen, including probe, mode, intensity, and reaction.",
   },
   {
-    numeral: "03",
-    title: "Move on",
-    body: "Saved. Treatment plan progress updates, total treatment time recalculates, audit history grows. You're already with the next client.",
-  },
-  {
-    numeral: "04",
-    title: "Or let them book themselves",
-    body: "Share your booking link. Clients pick a service, pick a slot, confirm. You see it on your calendar. They get an email with the date and a one-click cancel.",
+    kicker: "After the session",
+    title: "Save. Plan updates. Send postcare.",
+    body: "Treatment plan progress and total treatment time recalculate automatically. Send postcare with one click. You are already with the next client.",
   },
 ];
 
-function HowItWorks() {
+function HowHoneFits() {
   return (
     <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
-      <div id="how-it-works" className="mx-auto max-w-[1400px]">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>How Hone fits into your appointment</EyebrowCaption>
         <h2
-          className="font-[var(--font-fraunces)] max-w-[800px] text-[28px] font-bold leading-[1.05] md:text-[36px]"
-          style={{ letterSpacing: "-0.025em" }}
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+          style={{ letterSpacing: "-0.03em" }}
         >
-          Fast, because charting shouldn&rsquo;t be slow.
+          One calm flow, before, during, and after.
         </h2>
 
-        <div className="mt-12 grid grid-cols-1 gap-x-12 gap-y-12 md:grid-cols-2 lg:grid-cols-4">
-          {HOW_STEPS.map((step) => (
-            <div key={step.numeral}>
+        <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-12 md:grid-cols-3">
+          {FIT_STEPS.map((s) => (
+            <div key={s.kicker} className="flex flex-col">
               <p
-                className="font-[var(--font-fraunces)] mb-4 text-[72px] italic leading-none"
-                style={{ color: PALETTE.rule }}
+                className="text-[11px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
               >
-                {step.numeral}
+                {s.kicker}
               </p>
-              <h3 className="font-[var(--font-fraunces)] text-[22px] font-normal leading-[1.2]">
-                {step.title}
+              <h3 className="font-[var(--font-fraunces)] mt-3 text-[22px] font-normal leading-[1.25]">
+                {s.title}
               </h3>
-              <p
-                className="mt-3 text-[16px] leading-[1.6]"
-                style={{ color: PALETTE.ink }}
-              >
-                {step.body}
-              </p>
+              <p className="mt-3 text-[16px] leading-[1.6]">{s.body}</p>
             </div>
           ))}
         </div>
@@ -238,27 +151,93 @@ function HowItWorks() {
   );
 }
 
-/* Product preview, the cheat sheet (synthetic mock; real screenshot = PR B) */
+/* Section: The part generic booking tools miss ─────────────────────────── */
 
-function CheatSheetPreview() {
+const ELECTROLYSIS_DETAILS: ReadonlyArray<string> = [
+  "Treatment area, hair by hair",
+  "Modality: thermolysis, blend, galvanic, or laser",
+  "Probe brand, material, piece type, shank, and size",
+  "Timing and intensity settings, mode-aware",
+  "Reaction and tolerance notes from the chair",
+  "Contraindication and caution notes that follow the client",
+  "Progress over time, not just the last visit",
+  "Next-session instructions for your future self",
+];
+
+function WhatGenericMisses() {
   return (
     <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
+      <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-16 gap-y-10 md:grid-cols-12">
+        <div className="md:col-span-6">
+          <EyebrowCaption>Built for the work, not just the calendar</EyebrowCaption>
+          <h2
+            className="font-[var(--font-fraunces)] mt-8 text-[34px] font-bold leading-[1.05] md:text-[48px]"
+            style={{ letterSpacing: "-0.03em" }}
+          >
+            The part generic booking tools miss.
+          </h2>
+          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
+            General booking and scheduling tools handle appointments. They do
+            not remember what you did to a client&rsquo;s chin last September,
+            what intensity setting worked, what reaction you saw, and what you
+            planned to try next.
+          </p>
+          <p className="mt-5 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
+            That memory is the work, and it is where paper still beats most
+            software. Hone treats it as the product.
+          </p>
+        </div>
+        <div className="md:col-span-6">
+          <ul className="flex flex-col gap-3 text-[16px] leading-[1.55]">
+            {ELECTROLYSIS_DETAILS.map((d) => (
+              <li
+                key={d}
+                className="flex items-baseline gap-3 border-b pb-3"
+                style={{ borderColor: PALETTE.rule }}
+              >
+                <span
+                  aria-hidden
+                  className="text-[12px]"
+                  style={{ color: PALETTE.muted }}
+                >
+                  ·
+                </span>
+                <span>{d}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Section: Product preview ─────────────────────────────────────────────── */
+
+function ProductPreviewSection() {
+  return (
+    <Reveal
+      as="section"
+      id="charting-workflow"
+      className="scroll-mt-24 px-6 py-20 md:px-12 md:py-28 lg:px-16"
+    >
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>The client cheat sheet</EyebrowCaption>
+        <EyebrowCaption>A glimpse inside Hone</EyebrowCaption>
         <h2
-          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[28px] font-bold leading-[1.05] md:text-[36px]"
-          style={{ letterSpacing: "-0.025em" }}
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+          style={{ letterSpacing: "-0.03em" }}
         >
-          The memory practitioners actually need.
+          What one client looks like in Hone.
         </h2>
-        <p className="mt-6 max-w-[580px] text-[18px] leading-[1.55] md:text-[21px]">
-          One screen per client. Their full memory: pricing, skin notes,
-          allergies, every session, every setting, every reaction. Nothing to
-          dig for.
+        <p className="mt-5 max-w-[640px] text-[17px] leading-[1.65] md:text-[19px]">
+          Realistic anonymized example. No real client data. The cheat
+          sheet, treatment plan, and last-session readings show in one
+          place, the way an electrologist actually scans before a chair
+          appointment.
         </p>
 
         <div
-          className="mt-12 p-8"
+          className="mt-12 p-6 md:p-10"
           style={{
             backgroundColor: PALETTE.card,
             border: `1px solid ${PALETTE.rule}`,
@@ -267,13 +246,29 @@ function CheatSheetPreview() {
           <CheatSheetMockup />
         </div>
         <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
-          Product preview with demo data, not a real client.
+          Product preview with anonymized example data. Initials only.
+        </p>
+
+        {/* Three smaller surface previews so the reader sees more than
+            one screen. ChartingPreview / PlanProgressPreview /
+            CalendarPreview are the three coded illustrations in
+            ProductPreview.tsx, with anonymized demo values inside. */}
+        <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <ChartingPreview />
+          <PlanProgressPreview />
+          <CalendarPreview />
+        </div>
+        <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
+          Three more surface previews. Coded illustrations, not screenshots.
         </p>
       </div>
     </Reveal>
   );
 }
 
+// Anonymized client cheat sheet mockup. Realistic enough to read like
+// a working studio (probe, mode, area, plan progress, cautions) but
+// the client is initials only, has no DOB, no contact, no address.
 function CheatSheetMockup() {
   return (
     <div className="flex flex-col">
@@ -290,64 +285,56 @@ function CheatSheetMockup() {
             className="font-[var(--font-fraunces)] text-[36px] font-bold leading-[0.95]"
             style={{ letterSpacing: "-0.025em" }}
           >
-            Demo Client Alpha
+            Maya R.
           </h3>
           <p className="mt-3 text-[14px]" style={{ color: PALETTE.muted }}>
-            she/her  ·  Birthday Apr 3
+            she/her  ·  Pronouns saved on profile
           </p>
         </div>
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden="true"
+        <span
           className="px-[18px] py-[10px] text-[13px] font-medium"
+          aria-hidden
           style={{
             backgroundColor: PALETTE.ink,
             color: PALETTE.bg,
           }}
         >
           + Log session
-        </button>
+        </span>
       </div>
 
       <Hairline className="my-10" />
 
-      <SectionLabel>Allergies</SectionLabel>
+      <SectionLabel>Cautions and allergies</SectionLabel>
       <p className="mt-3 text-[15px]">
         Nickel  ·  Topical anesthetic (lidocaine, benzocaine)
       </p>
 
       <Hairline className="my-10" />
 
-      <SectionLabel>Private warnings (practitioner-only)</SectionLabel>
+      <SectionLabel>Practitioner-only notes</SectionLabel>
       <p className="mt-3 text-[15px]" style={{ color: PALETTE.muted }}>
-        Practitioner-only. Hidden on the public site.
+        Low pain tolerance. Sensitive on chin. Prefers afternoon sessions.
+        Practitioner-only; never visible to the client.
       </p>
-
-      <Hairline className="my-10" />
-
-      <SectionLabel>Tags</SectionLabel>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Chip>Low pain tolerance</Chip>
-        <Chip>Sensitive on chin</Chip>
-        <Chip>Afternoon appointments preferred</Chip>
-      </div>
 
       <Hairline className="my-10" />
 
       <div className="grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-16">
         <div>
-          <SectionLabel>Pricing</SectionLabel>
-          <div className="mt-4 flex flex-col gap-3">
-            <PriceRow label="Full face electrolysis (30 min)" amount="$45.00" />
-            <PriceRow label="Underarm laser" amount="$60.00" />
+          <SectionLabel>Treatment plan</SectionLabel>
+          <div className="mt-4 flex flex-col gap-3 text-[15px]">
+            <PlanRow label="Area" value="Upper lip and chin" />
+            <PlanRow label="Stage" value="Clearing, session 7 of 12" />
+            <PlanRow label="Logged" value="2h 15m" />
+            <PlanRow label="Est. remaining" value="~6h" />
           </div>
         </div>
         <div>
           <SectionLabel>Skin</SectionLabel>
-          <div className="mt-4 flex flex-col gap-3">
-            <SkinRow label="Fitzpatrick" value="III" />
-            <SkinRow label="Notes" value="Prone to follicular erythema" />
+          <div className="mt-4 flex flex-col gap-3 text-[15px]">
+            <PlanRow label="Fitzpatrick" value="III" />
+            <PlanRow label="Notes" value="Prone to follicular erythema" />
           </div>
         </div>
       </div>
@@ -367,9 +354,6 @@ function CheatSheetMockup() {
           >
             Reviewed
           </span>
-          <span className="text-[14px]" style={{ color: PALETTE.muted }}>
-            May 14, 2026  ·  11:08 PM
-          </span>
         </div>
         <span
           className="text-[13px] font-medium"
@@ -381,33 +365,26 @@ function CheatSheetMockup() {
 
       <Hairline className="my-10" />
 
-      <SectionLabel>Emergency contact</SectionLabel>
-      <p className="mt-3 text-[15px]">
-        Demo Contact
-      </p>
-
-      <Hairline className="my-10" />
-
       <h3 className="font-[var(--font-fraunces)] text-[20px] italic">
         Last session{" "}
         <span
           className="not-italic font-medium text-[12px] uppercase align-middle ml-2"
           style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
         >
-          Electrolysis · Demo Electrologist
+          Electrolysis
         </span>
       </h3>
 
       <div className="mt-5">
         <p className="text-[18px] font-medium">Upper lip</p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          Thermolysis  ·  MeloFlash  ·  27.12 MHz  ·  Ballet · Gold · One-piece · F4
+          Thermolysis  ·  27.12 MHz  ·  Ballet · Gold · One-piece · F4
         </p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          120 hairs treated
+          120 hairs treated  ·  cleared, mild redness, settled fast
         </p>
         <p className="font-[var(--font-fraunces)] mt-3 text-[16px] italic">
-          Demo note only.
+          Postcare sent same day.
         </p>
       </div>
     </div>
@@ -425,240 +402,296 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
+function PlanRow({ label, value }: { label: string; value: string }) {
   return (
-    <span
-      className="rounded-full px-3 py-1 text-[13px]"
-      style={{
-        backgroundColor: PALETTE.bg,
-        border: `1px solid ${PALETTE.rule}`,
-        color: PALETTE.ink,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function PriceRow({ label, amount }: { label: string; amount: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-6 text-[15px]">
-      <span>{label}</span>
-      <span className="tabular-nums">{amount}</span>
-    </div>
-  );
-}
-
-function SkinRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-6 text-[15px]">
+    <div className="flex items-baseline justify-between gap-6">
       <span style={{ color: PALETTE.muted }}>{label}</span>
       <span className="text-right">{value}</span>
     </div>
   );
 }
 
-/* Inside Hone: the four product pillars, consolidated into compact cards ── */
+/* Section: Features grouped by practitioner workflow ────────────────── */
 
-const INSIDE_CARDS: ReadonlyArray<{ title: string; bullets: ReadonlyArray<string> }> = [
+const FEATURE_GROUPS: ReadonlyArray<{ title: string; body: string }> = [
   {
-    title: "Chart faster",
-    bullets: [
-      "One-page charting: area, machine settings, probe, minutes, and the pass readings, one save",
-      "Structured probe picker (brand, material, piece type, shank, size)",
-      "Thermolysis, galvanic, and blend readings, mode-aware",
-      "Pulse count, hairs treated, units of lye",
-    ],
+    title: "Bookings and reminders",
+    body: "Public booking page on your studio link. Services, availability, breaks, blockouts. Email confirmations with a calendar file. Self-serve cancel and reschedule.",
   },
   {
-    title: "Plan the full treatment journey",
-    bullets: [
-      "Treatment plans with schedule stages",
-      "Estimated visits and visit cadence",
-      "Total treatment time logged versus estimated remaining",
-      "New sessions link to the plan's area automatically",
-    ],
+    title: "Intake and consent",
+    body: "Health intake link sent with every booking. Review responses in the practitioner view. Reissue intake before a new chapter of treatment.",
   },
   {
-    title: "Run booking and calendar",
-    bullets: [
-      "Public booking page on your studio link",
-      "Services, availability, breaks, and blockouts",
-      "Self-serve cancel and reschedule",
-      "Email confirmations with a calendar file",
-    ],
+    title: "Treatment plans",
+    body: "Plans with schedule stages (clearing, control, maintenance). Estimated visits, cadence, total treatment time logged versus remaining.",
   },
   {
-    title: "Keep your data portable",
-    bullets: [
-      "Export a ZIP of your studio any time",
-      "Clients, sessions, charting, appointments, plans, and stages",
-      "Private notes and warnings excluded from the general export",
-    ],
+    title: "Session charting",
+    body: "One-page charting per area. Probe brand, material, piece type, shank, size. Thermolysis, blend, and galvanic readings mode-aware. Pulse count, hairs treated.",
+  },
+  {
+    title: "Client history",
+    body: "Cheat sheet per client. Cautions, intake, every session, every reading, every reaction. Tags and pronouns. Skin and Fitzpatrick on the same screen.",
+  },
+  {
+    title: "Postcare and follow-up",
+    body: "Write postcare once in your voice. Send manually per appointment. Optional review-prompt wording. Never auto-sent.",
+  },
+  {
+    title: "Cautions and private warnings",
+    body: "Practitioner-only personal notes and private warnings. Visible in the cheat sheet, never in a client-facing export.",
+  },
+  {
+    title: "Export and ownership",
+    body: "Export a ZIP of your studio any time. Clients, sessions, charting, appointments, plans, stages. Private notes excluded from the general export.",
   },
 ];
 
-function InsideHone() {
+function FeaturesByWorkflow() {
   return (
     <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
       <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Inside Hone</EyebrowCaption>
+        <EyebrowCaption>What is inside Hone</EyebrowCaption>
         <h2
-          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[34px] font-bold leading-[1.02] md:text-[44px]"
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
           style={{ letterSpacing: "-0.03em" }}
         >
-          From booking to charting, in one place.
+          Built around how an electrologist actually works a session.
         </h2>
 
-        <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {INSIDE_CARDS.map((card) => (
-            <div
-              key={card.title}
-              className="flex flex-col gap-4 p-8"
-              style={{ border: `1px solid ${PALETTE.rule}` }}
-            >
-              <h3 className="font-[var(--font-fraunces)] text-[22px] font-normal leading-[1.2]">
-                {card.title}
+        <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 md:grid-cols-2 lg:grid-cols-4">
+          {FEATURE_GROUPS.map((f) => (
+            <div key={f.title} className="flex flex-col">
+              <h3 className="font-[var(--font-fraunces)] text-[18px] font-normal leading-[1.25]">
+                {f.title}
               </h3>
-              <ul className="flex flex-col gap-2 text-[15px] leading-[1.55]">
-                {card.bullets.map((b) => (
-                  <li key={b}>{b}</li>
-                ))}
-              </ul>
+              <p className="mt-3 text-[15px] leading-[1.6]">{f.body}</p>
             </div>
           ))}
-        </div>
-
-        {/* Coded product previews (illustrations with demo data, not
-            screenshots). One per pillar; honest label on each card. */}
-        <p
-          className="mt-12 text-[11px] font-medium uppercase"
-          style={{ letterSpacing: "0.18em", color: PALETTE.muted }}
-        >
-          A glimpse inside Hone · product preview, demo data
-        </p>
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-          <ChartingPreview />
-          <PlanProgressPreview />
-          <CalendarPreview />
         </div>
       </div>
     </Reveal>
   );
 }
 
-/* Built for the work: a prominent positioning lead + a tightened grid ───── */
+/* Section: Trust ───────────────────────────────────────────────────────── */
 
-const BUILT_FOR_ITEMS: ReadonlyArray<{ title: string; body: string }> = [
+const TRUST_POINTS: ReadonlyArray<{ headline: string; body: string }> = [
   {
-    title: "Client memory and private warnings",
-    body: "Allergies, skin notes, intake, and practitioner-only personal notes and private warnings that never go out in a client-facing export.",
+    headline: "Your client records stay yours.",
+    body: "Export the full history of your studio at any time. If you cancel, your data goes with you.",
   },
   {
-    title: "Birthday reminders",
-    body: "See whose birthday is coming up this month, surfaced on the dashboard. A small touch that clients remember.",
+    headline: "Hone does not sell client data.",
+    body: "Not to advertisers, not to anyone. The privacy policy spells this out in plain English.",
   },
   {
-    title: "Built for both modalities",
-    body: "Electrolysis charting with probe, mode, pulses, intensity. Laser charting with zone, fluence, pulse width, treatment number.",
+    headline: "No advertising use of health records.",
+    body: "Client health, intake, and treatment records are never used for advertising or behavioral tracking.",
   },
   {
-    title: "Works on what you have",
-    body: "iPad in the treatment room. Laptop at the front desk. Phone for the solo practitioner. No app to install.",
+    headline: "No AI training on your records.",
+    body: "Hone does not train machine learning models on practitioner or client records.",
+  },
+  {
+    headline: "Practitioner-only notes stay private.",
+    body: "Personal notes and private warnings are practitioner-only and excluded from the general export.",
+  },
+  {
+    headline: "Secure sign in. Studio data is isolated.",
+    body: "Magic link or Google sign in via Supabase Auth. Row-level security keeps each studio's data scoped to its own studio.",
   },
 ];
 
-function BuiltForTheWork() {
+function TrustSection() {
   return (
     <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
       <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>How your data is handled</EyebrowCaption>
         <h2
-          className="font-[var(--font-fraunces)] text-[28px] font-bold leading-[1.05] md:text-[36px]"
-          style={{ letterSpacing: "-0.025em" }}
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+          style={{ letterSpacing: "-0.03em" }}
         >
-          Built for the way you work.
+          Plain English, before anything else.
         </h2>
 
-        {/* Prominent positioning lead: the one differentiator that frames
-            everything else. Heavier ink border so the eye lands here first. */}
+        <div className="mt-12 grid grid-cols-1 gap-x-12 gap-y-10 md:grid-cols-2">
+          {TRUST_POINTS.map((t) => (
+            <div key={t.headline} className="flex flex-col">
+              <h3 className="text-[17px] font-medium leading-[1.35]">
+                {t.headline}
+              </h3>
+              <p
+                className="mt-2 text-[15px] leading-[1.6]"
+                style={{ color: PALETTE.muted }}
+              >
+                {t.body}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p
+          className="mt-10 text-[14px] leading-[1.55]"
+          style={{ color: PALETTE.muted }}
+        >
+          Full detail in the{" "}
+          <Link href="/privacy" className="underline">
+            privacy policy
+          </Link>
+          .
+        </p>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Section: Pilot ───────────────────────────────────────────────────────── */
+
+function PilotSection() {
+  return (
+    <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Pilot</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Built with working electrologists.
+        </h2>
+        <p className="mt-6 max-w-[680px] text-[18px] leading-[1.65] md:text-[21px]">
+          Hone is being shaped with independent electrolysis studios before
+          broader release. The early pilot is intentionally small so the
+          workflow stays practical, fast, and practitioner-led. Founder-led
+          setup. No agency, no implementation team, no slide deck.
+        </p>
+      </div>
+    </Reveal>
+  );
+}
+
+/* Section: Pricing teaser ──────────────────────────────────────────────── */
+
+function PricingTeaser() {
+  return (
+    <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
+      <div className="mx-auto max-w-[1400px]">
+        <EyebrowCaption>Founding pilot pricing</EyebrowCaption>
+        <h2
+          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          One price for the whole workflow.
+        </h2>
+
         <div
-          className="mt-10 p-8 md:p-10"
+          className="mt-12 grid grid-cols-1 gap-10 p-8 md:grid-cols-12 md:p-10"
           style={{ border: `2px solid ${PALETTE.ink}` }}
         >
-          <p
-            className="text-[11px] font-medium uppercase"
-            style={{ letterSpacing: "0.2em", color: PALETTE.muted }}
-          >
-            Designed for permanent hair removal
-          </p>
-          <p className="mt-4 max-w-[760px] text-[20px] leading-[1.4] md:text-[24px]">
-            Electrolysis first, laser too. Probe sizes, pulse counts, modes, and
-            treatment plans built around hair-by-hair work, not generic
-            appointments.
-          </p>
-        </div>
-
-        <div className="mt-12 grid grid-cols-1 gap-x-12 gap-y-12 md:grid-cols-2">
-          {BUILT_FOR_ITEMS.map((item) => (
-            <div key={item.title}>
-              <h3 className="text-[18px] font-medium leading-[1.3]">
-                {item.title}
-              </h3>
-              <p className="mt-3 text-[16px] leading-[1.6]">{item.body}</p>
+          <div className="md:col-span-5">
+            <p
+              className="font-[var(--font-fraunces)] text-[56px] font-bold leading-none"
+              style={{ letterSpacing: "-0.03em" }}
+            >
+              $19
+              <span
+                className="ml-2 align-baseline text-[18px] font-normal"
+                style={{ color: PALETTE.muted, letterSpacing: 0 }}
+              >
+                /month
+              </span>
+            </p>
+            <p className="mt-4 text-[15px] leading-[1.6]" style={{ color: PALETTE.muted }}>
+              Founding pilot pricing while we onboard the first wave of
+              studios. Regular pricing may increase after early access.
+              Cancel anytime.
+            </p>
+          </div>
+          <div className="md:col-span-7">
+            <p className="text-[17px] leading-[1.65]">
+              Booking, intake, treatment plans, session charting, client
+              history, and postcare. Founder-led setup and onboarding.
+              Full data export any time.
+            </p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>
+              <SecondaryCta href="/pricing">See pricing</SecondaryCta>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </Reveal>
   );
 }
 
-/* Trust line (measured) ────────────────────────────────────────────────── */
+/* Section: Final CTA ───────────────────────────────────────────────────── */
 
-const TRUST_POINTS: ReadonlyArray<string> = [
-  "Secure sign-in for every studio account.",
-  "The public booking page is rate-limited to curb abuse.",
-  "Personal notes and private warnings are practitioner-only and are left out of the general data export.",
-  "You can export your full studio data any time.",
-  "No card collection or payments unless you explicitly turn them on later.",
-];
-
-function TrustLine() {
+function FinalCTA() {
   return (
     <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
-      <div className="mx-auto max-w-[1400px]">
-        <EyebrowCaption>Handled with care</EyebrowCaption>
+      <div className="mx-auto max-w-[820px]">
         <h2
-          className="font-[var(--font-fraunces)] mt-8 max-w-[820px] text-[26px] font-bold leading-[1.1] md:text-[32px]"
-          style={{ letterSpacing: "-0.02em" }}
+          className="font-[var(--font-fraunces)] text-[34px] font-bold leading-[1.05] md:text-[48px]"
+          style={{ letterSpacing: "-0.03em" }}
         >
-          Your data, in plain terms.
+          See if Hone fits your practice.
         </h2>
-        <ul className="mt-8 flex max-w-[680px] list-disc flex-col gap-3 pl-5 text-[16px] leading-[1.6]">
-          {TRUST_POINTS.map((point) => (
-            <li key={point}>{point}</li>
-          ))}
-        </ul>
+        <p className="mt-6 text-[18px] leading-[1.65] md:text-[21px]">
+          Fifteen minutes on Zoom with a founder. Real app, no slides and
+          no recorded demo. We walk through your typical session and
+          decide together whether Hone is a good fit for your pilot.
+        </p>
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+          <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>
+          <SecondaryCta href="/pricing">See pricing</SecondaryCta>
+        </div>
       </div>
     </Reveal>
   );
 }
 
-/* Closing note (short; replaces the long essay) ────────────────────────── */
+/* Shared CTAs ──────────────────────────────────────────────────────────── */
 
-function ClosingNote() {
+function PrimaryCta({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
   return (
-    <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
-      <div className="mx-auto max-w-[680px]">
-        <p className="font-[var(--font-fraunces)] text-[24px] italic leading-[1.3] md:text-[28px]">
-          The first charting tool that is faster than paper, not slower.
-        </p>
-        <p className="mt-6 text-[18px] leading-[1.65] md:text-[21px]">
-          If you run an electrolysis or laser clinic and want to be among the
-          first to use it, get early access at the top of this page or see
-          pricing.
-        </p>
-      </div>
-    </Reveal>
+    <Link
+      href={href}
+      className="inline-flex items-center justify-center px-7 py-3.5 text-[14px] font-medium uppercase transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+      style={{
+        backgroundColor: PALETTE.ink,
+        color: PALETTE.bg,
+        letterSpacing: "0.18em",
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function SecondaryCta({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center justify-center px-1 py-3.5 text-[14px] font-medium uppercase hover:opacity-60 focus:outline-none focus-visible:underline"
+      style={{
+        color: PALETTE.ink,
+        letterSpacing: "0.18em",
+        borderBottom: `1px solid ${PALETTE.ink}`,
+      }}
+    >
+      {children}
+    </Link>
   );
 }

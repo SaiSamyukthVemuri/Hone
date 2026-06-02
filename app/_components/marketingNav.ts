@@ -1,12 +1,11 @@
-// Shared nav config for the marketing site.
-// "How it works" jumps to the homepage section anchor; everything else
-// is a normal route.
+// Shared nav config for the marketing site. Tight on purpose: a busy
+// solo practitioner reading the homepage needs Pricing, Walkthrough,
+// and a way to sign in. Privacy and Terms live in the footer.
 export type NavItem = { href: string; label: string };
 
 export const MARKETING_NAV: ReadonlyArray<NavItem> = [
-  { href: "/#how-it-works", label: "How it works" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/demo", label: "Demo" },
+  { href: "/demo", label: "Walkthrough" },
   { href: "/login", label: "Sign in" },
 ];
 

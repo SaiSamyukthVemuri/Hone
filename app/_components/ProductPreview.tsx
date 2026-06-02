@@ -2,11 +2,12 @@ import { MARKETING_PALETTE as PALETTE } from "./marketingNav";
 
 // Coded product-preview illustrations for the marketing site.
 //
-// These are NOT screenshots and NOT real client data. Every value is
-// obviously-fake demo content (Demo Electrolysis Studio / Demo Electrologist
-// / Demo Client *). They stand in as product-preview cards until safe,
-// seeded-demo screenshots are captured later. Static and presentational:
-// no hooks, no interactivity, no real PII.
+// These are NOT screenshots and NOT real client data. Names are
+// initials of plausible fictional clients (M. R., E. P., J. K.) so the
+// previews read like a real working studio without naming any real
+// person. Static and presentational: no hooks, no interactivity, no
+// real PII. The clinical values (machine, mode, probe, hairs) are
+// realistic for an electrolysis session but are illustrative only.
 
 function PreviewCard({
   label,
@@ -84,7 +85,7 @@ export function ChartingPreview() {
         <span className="font-medium" style={{ color: PALETTE.ink }}>
           Notes:{" "}
         </span>
-        Demo note only
+        Cleared. Mild redness, settled fast.
       </p>
     </PreviewCard>
   );
@@ -123,8 +124,8 @@ export function PlanProgressPreview() {
   );
 }
 
-// Calendar preview: one upcoming appointment, one past (Done), one break.
-// Obviously-fake demo client names; no contact details.
+// Calendar preview: one past, one upcoming, one break. Initials only,
+// no contact details, no surnames. Plausible fictional clients.
 export function CalendarPreview() {
   const items: ReadonlyArray<{
     time: string;
@@ -132,8 +133,8 @@ export function CalendarPreview() {
     tag: string;
     muted: boolean;
   }> = [
-    { time: "9:00", who: "Demo Client Charlie", tag: "Done", muted: true },
-    { time: "10:00", who: "Demo Client Bravo", tag: "Confirmed", muted: false },
+    { time: "9:00", who: "E. P.", tag: "Done", muted: true },
+    { time: "10:00", who: "M. R.", tag: "Confirmed", muted: false },
     { time: "12:00", who: "Lunch", tag: "Break", muted: true },
   ];
   return (

@@ -67,7 +67,8 @@ export function DemoForm() {
   if (status.kind === "done") {
     return (
       <p className="text-[18px] leading-[1.55] text-[#0A0A0A] md:text-[21px]">
-        Thanks. We&rsquo;ll be in touch within one business day to book a time.
+        Thanks. We will be in touch within one business day to book your
+        walkthrough.
       </p>
     );
   }
@@ -100,18 +101,19 @@ export function DemoForm() {
         onChange={(v) => update("email", v)}
       />
       <UnderlineField
-        label="Practice name"
+        label="Studio or practice name"
         value={values.practice_name}
         onChange={(v) => update("practice_name", v)}
       />
       <UnderlineField
-        label="City, country"
+        label="Where you practice"
+        placeholder="City, country"
         value={values.location}
         onChange={(v) => update("location", v)}
       />
 
       <RadioGroup
-        label="Type of practice"
+        label="What you offer"
         name="practice_type"
         value={values.practice_type}
         onChange={(v) => update("practice_type", v as DemoPayload["practice_type"])}
@@ -119,7 +121,7 @@ export function DemoForm() {
       />
 
       <RadioGroup
-        label="Number of practitioners"
+        label="Practitioners in the studio"
         name="practitioner_count"
         value={values.practitioner_count}
         onChange={(v) =>
@@ -129,14 +131,14 @@ export function DemoForm() {
       />
 
       <UnderlineField
-        label="What's your current charting tool?"
-        placeholder="Paper, Fresha notes, Google Sheets, etc."
+        label="How you chart today"
+        placeholder="Paper, Fresha notes, Google Sheets, another tool"
         value={values.current_tool}
         onChange={(v) => update("current_tool", v)}
       />
 
       <UnderlineTextarea
-        label="Anything else?"
+        label="Anything we should know before the walkthrough?"
         value={values.notes}
         onChange={(v) => update("notes", v)}
       />
@@ -148,7 +150,7 @@ export function DemoForm() {
           className="text-[14px] font-medium uppercase text-[#0A0A0A] transition-opacity hover:opacity-60 disabled:opacity-40"
           style={{ letterSpacing: "0.2em" }}
         >
-          {submitting ? "Sending" : "Submit request"}
+          {submitting ? "Sending" : "Book the walkthrough"}
         </button>
         {status.kind === "error" && (
           <p className="text-[13px] text-[#6B6B6B]">{status.message}</p>
