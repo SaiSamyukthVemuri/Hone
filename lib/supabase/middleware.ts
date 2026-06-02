@@ -69,7 +69,14 @@ export async function updateSession(request: NextRequest) {
     // by stripe.webhooks.constructEvent inside the route handler. Exact
     // path match — do NOT broaden to /api/stripe/* because future Stripe
     // routes (refresh, dashboard link, etc.) should remain owner-only.
-    pathname === "/api/stripe/webhook";
+    pathname === "/api/stripe/webhook" ||
+    // Twilio inbound SMS webhook authenticates via X-Twilio-Signature
+    // (HMAC-SHA1 over the full URL plus sorted POST fields, validated
+    // inside the route handler before any DB write). Exact path match
+    // for the same reason as Stripe: do NOT broaden to /api/twilio/*
+    // because any future Twilio endpoint (status callbacks, etc.)
+    // should remain explicitly gated.
+    pathname === "/api/twilio/inbound-sms";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

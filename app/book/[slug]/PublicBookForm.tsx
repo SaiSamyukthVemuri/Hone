@@ -107,6 +107,14 @@ export function PublicBookForm({
   // appointments.notes (no schema change).
   const [areasWanted, setAreasWanted] = useState("");
   const [notes, setNotes] = useState("");
+  // SMS consent (PR Twilio v1). Defaults to false; opt-in only. The
+  // checkbox is not required; phone stays required as before. Consent
+  // is only honored when the submitted phone normalizes equal to the
+  // stored phone for an existing client (server-side gate in
+  // publicBookAppointmentAction). New clients always accept the
+  // checkbox value verbatim. The helper copy below names STOP so the
+  // client knows how to opt out before they consent.
+  const [smsConsent, setSmsConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoading] = useTransition();
@@ -204,6 +212,7 @@ export function PublicBookForm({
     fd.set("email", email);
     fd.set("phone", phone);
     fd.set("notes", combineAreasAndNotes(areasWanted, notes));
+    fd.set("sms_consent", smsConsent ? "true" : "false");
     startSubmitting(async () => {
       const r = await publicBookAppointmentAction(fd);
       if (!r.ok) {
@@ -386,6 +395,32 @@ export function PublicBookForm({
           style={{ borderBottom: "1px solid #0A0A0A" }}
         />
       </Field>
+
+      {/* SMS consent. Opt-in only; not required. The server-side
+          consent rule only stamps sms_consent_at when this is true
+          AND (new client OR submitted phone normalizes to the stored
+          phone for an existing client). Helper line names STOP so the
+          client knows the exit before they consent. */}
+      <label className="flex items-start gap-3 text-[14px] leading-[1.5]">
+        <input
+          type="checkbox"
+          checked={smsConsent}
+          onChange={(e) => setSmsConsent(e.target.checked)}
+          className="mt-1 h-4 w-4 flex-none"
+        />
+        <span>
+          <span className="block">
+            Text me appointment confirmations and reminders.
+          </span>
+          <span
+            className="mt-1 block text-[12px]"
+            style={{ color: "#6B6B6B" }}
+          >
+            You can reply STOP at any time. Email will still be used
+            for appointment messages.
+          </span>
+        </span>
+      </label>
 
       <Field
         label="What areas are you wanting treated?"
