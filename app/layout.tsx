@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     template: "%s · Hone",
   },
   description:
-    "Booking, intake, treatment plans, charting, postcare, and calendar tools for solo electrologists and small electrolysis studios.",
+    "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
   authors: [{ name: "Hone" }],
@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     type: "website",
     title: "Hone | Electrolysis Practice Software",
     description:
-      "Booking, intake, treatment plans, charting, postcare, and calendar tools for solo electrologists and small electrolysis studios.",
+      "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
     url: "https://hone.care",
     siteName: "Hone",
     locale: "en_CA",
@@ -59,7 +59,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Hone | Electrolysis Practice Software",
     description:
-      "Booking, intake, treatment plans, charting, postcare, and calendar tools for solo electrologists and small electrolysis studios.",
+      "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
   },
   robots: {
     index: true,
