@@ -60,6 +60,15 @@ export async function updateSession(request: NextRequest) {
     // and must clear the same anonymous-visitor gate; without this
     // entry, every "Manage appointment:" SMS link bounces to /login.
     pathname.startsWith("/manage/") ||
+    // Client portal lives in a separate auth realm: email magic
+    // links + an httpOnly cookie session (client_portal_sessions,
+    // migration 0052). The /portal pages handle their own session
+    // checks server-side and redirect to /portal/login when no
+    // portal session is present; the practitioner Supabase auth
+    // guard here must never bounce a portal visitor to /login (the
+    // practitioner login). All /portal/* paths are public from
+    // middleware's perspective.
+    pathname.startsWith("/portal") ||
     pathname.startsWith("/reschedule/") ||
     // Read-only iCal subscription feed at /calendar-feed/<token>.ics.
     // Google Calendar / Apple Calendar fetch the feed server-side and

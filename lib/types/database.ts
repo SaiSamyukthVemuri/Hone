@@ -321,6 +321,35 @@ export type Appointment = {
 // statically instead of stringly-typed.
 export type SmsType = "confirmation" | "reminder_24h" | "reminder_2h";
 
+// Migration 0052: client portal foundation. Both tables store only
+// SHA-256 hex hashes of their raw tokens; the raw tokens never reach
+// the DB. Server actions interact with these tables via the
+// service-role admin client; RLS is enabled on both with no policies
+// so user-scoped clients see zero rows.
+export type ClientPortalMagicLink = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  token_hash: string;
+  email_normalized: string;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
+  created_ip_hash: string | null;
+  user_agent_hash: string | null;
+};
+
+export type ClientPortalSession = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  session_token_hash: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+};
+
 export type AppointmentAudit = {
   id: string;
   appointment_id: string;
