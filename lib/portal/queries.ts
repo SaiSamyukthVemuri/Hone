@@ -356,6 +356,49 @@ export async function getPortalMessagesForClient(
   return (data ?? []) as PortalMessageForClient[];
 }
 
+// Resolve an active non-archived client by normalized email scoped
+// to a single studio. Used by the studio-scoped /portal/login
+// surface (?studio=<slug>). Returns 0..N matches; the caller
+// (requestPortalMagicLinkAction) enforces the same single-match-
+// per-studio gate the unscoped path uses on the global pool. A
+// client who happens to belong to multiple studios is therefore
+// reachable through whichever studio their visitor reached the
+// login surface from, even when the same email exists on an
+// active row in another studio. Archived clients are filtered at
+// the lookup level so this function never reveals their existence.
+//
+// IMPORTANT: callers must treat an empty array the same as a
+// populated one from the visitor's perspective; the public-facing
+// success message is generic regardless of how many matches existed
+// (including zero).
+export async function findActiveClientsForStudioPortalLogin(
+  emailNormalized: string,
+  studioId: string,
+): Promise<Array<{ studioId: string; clientId: string }>> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("clients")
+    .select("id, studio_id")
+    .eq("normalized_email", emailNormalized)
+    .eq("studio_id", studioId)
+    .is("archived_at", null);
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_login_studio_scoped_lookup_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
+  return (data ?? []).map((row) => ({
+    studioId: row.studio_id as string,
+    clientId: row.id as string,
+  }));
+}
+
 // Resolve an active non-archived client by normalized email across
 // every studio. Returns the matching (studio_id, client_id) pairs so
 // the magic-link sender can fan out one email per pair. Archived
