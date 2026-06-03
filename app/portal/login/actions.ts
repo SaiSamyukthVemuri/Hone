@@ -120,12 +120,32 @@ export async function requestPortalMagicLinkAction(
     return { ok: true, message: GENERIC_SUCCESS };
   }
 
+  // Pilot safety: when the same normalized email matches multiple
+  // active clients (e.g. test data collisions, or a real client who
+  // exists in more than one studio's roster) we must NOT fan out a
+  // magic link per match. Sending several emails to one address is
+  // confusing and the visitor cannot tell which link belongs to
+  // which (studio, client) pair from the email body, which is
+  // intentionally generic for no-enumeration reasons. For the
+  // pilot we refuse the send, log a sanitized review signal, and
+  // return the same generic success so a visitor cannot probe the
+  // multi-match condition by timing or by observing inbox state.
+  // A future multi-studio claim flow can replace this branch with
+  // a chooser surface; that is out of scope here.
+  if (matches.length > 1) {
+    logSanitized("portal_login_multiple_matches_needs_review", {
+      emailHash: hashFingerprint(emailNormalized),
+      matchCount: matches.length,
+    });
+    await waitUntilMinimumElapsed(startedAt);
+    return { ok: true, message: GENERIC_SUCCESS };
+  }
+
   const admin = createAdminClient();
 
-  // One magic link per (studio, client). The same email matching
-  // multiple active studios produces one email per pair so the
-  // visitor lands in the correct portal for whichever link they
-  // click. Each link binds to one pair via the magic-link row.
+  // Single-match branch. The matches.length === 1 invariant is
+  // guaranteed by the early returns above; the for-loop shape is
+  // retained for diff cleanliness but executes exactly once.
   let successfulSends = 0;
   for (const match of matches) {
     const rawToken = generateRawToken();

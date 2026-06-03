@@ -1,25 +1,33 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
-import { createPortalSession } from "@/lib/portal/session";
+import { ContinueToPortalForm } from "./ContinueForm";
 
-// Magic-link exchange. The visitor lands on /portal/verify/<token>;
-// we hash the URL token, look up the matching client_portal_magic_links
-// row, verify it is unused and not expired, stamp consumed_at to
-// guarantee single-use, and create the portal session. On success we
-// redirect to /portal. On any failure the page renders a generic
-// "link unavailable" surface; the same string is shown whether the
-// token is unknown, expired, or already consumed so a probing
-// visitor cannot distinguish those states.
+// Magic-link verify page. The GET request that lands here is now
+// NON-CONSUMING: it validates the token shape, checks the row is
+// known + unconsumed + unexpired + linked to an active client, and
+// either renders the Continue form (POST consumes via the server
+// action) or the generic unavailable surface. This split exists
+// because email scanners, security gateways, and link-preview bots
+// commonly fetch the magic-link URL before the human clicks; the
+// previous one-step verify burned the visitor's single-use token
+// against those bots.
 //
-// Single-use guarantee: the consumed_at stamp uses a conditional
-// UPDATE keyed on consumed_at IS NULL. Postgres reports the affected
-// row count; if zero rows were updated, the token was already
-// consumed by a concurrent request and this verify must fail.
+// Single-use guarantee still holds: the POST action stamps
+// consumed_at via a conditional UPDATE keyed on consumed_at IS NULL,
+// so re-rendering this page (after a successful POST) sees the row
+// as consumed and renders the unavailable surface.
+//
+// What this page deliberately does NOT do:
+//   * No DB writes. No consumed_at stamp. No session creation. No
+//     cookie set. All three live in the POST action only.
+//   * No leaking of token state. Every failure branch renders the
+//     same generic surface; an attacker probing the URL space cannot
+//     distinguish "unknown token" from "expired" from "already
+//     consumed" from "client archived".
 
 const GENERIC_LINK_ERROR =
   "This secure link can't be used right now. Please request a new link.";
@@ -31,9 +39,9 @@ export default async function PortalVerifyPage({
 }) {
   const { token } = await params;
 
-  // Empty token: render the generic unavailable surface without any
-  // DB lookup; matches the public-collapse stance we use on cancel /
-  // reschedule / manage.
+  // Empty token: render the generic unavailable surface without
+  // any DB lookup; matches the public-collapse stance we use on
+  // cancel / reschedule / manage.
   if (!token || token.length === 0) {
     return <Unavailable />;
   }
@@ -41,18 +49,18 @@ export default async function PortalVerifyPage({
   const tokenHash = hashToken(token);
   const admin = createAdminClient();
 
-  // Lookup. The unique index on token_hash means at most one row.
+  // Read-only lookup. The unique index on token_hash means at
+  // most one row. NO conditional update; the consumed_at stamp
+  // lives on the POST action below.
   const { data: link, error: lookupErr } = await admin
     .from("client_portal_magic_links")
-    .select(
-      "id, studio_id, client_id, expires_at, consumed_at",
-    )
+    .select("id, studio_id, client_id, expires_at, consumed_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
   if (lookupErr) {
     console.error(
       JSON.stringify({
-        event: "portal_verify_lookup_failed",
+        event: "portal_verify_get_lookup_failed",
         code: lookupErr.code,
         message: lookupErr.message,
         timestamp: new Date().toISOString(),
@@ -68,10 +76,10 @@ export default async function PortalVerifyPage({
     return <Unavailable />;
   }
 
-  // Defense in depth: make sure the client is still active and
-  // belongs to the same studio the link was minted for. A token
-  // minted for an active client whose row was archived between
-  // request and verify must not establish a session.
+  // Defense in depth: confirm the client is still active and
+  // belongs to the same studio the link was minted for. An archive
+  // that happened between request and verify must not let the
+  // Continue button appear.
   const { data: clientRow } = await admin
     .from("clients")
     .select("id, studio_id, archived_at")
@@ -82,49 +90,43 @@ export default async function PortalVerifyPage({
     return <Unavailable />;
   }
 
-  // Atomic single-use stamp. The conditional .is("consumed_at", null)
-  // means a concurrent verify of the same token races on this UPDATE
-  // and only one side wins; the other observes a zero-row result via
-  // .select() and surfaces the generic unavailable surface.
-  const { data: consumedRows, error: consumeErr } = await admin
-    .from("client_portal_magic_links")
-    .update({ consumed_at: nowIso })
-    .eq("id", link.id)
-    .is("consumed_at", null)
-    .select("id");
-  if (consumeErr) {
-    console.error(
-      JSON.stringify({
-        event: "portal_verify_consume_failed",
-        code: consumeErr.code,
-        message: consumeErr.message,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return <Unavailable />;
-  }
-  if (!consumedRows || consumedRows.length === 0) {
-    // Lost the consume race; another verify already used this token.
-    return <Unavailable />;
-  }
-
-  try {
-    await createPortalSession({
-      studioId: link.studio_id,
-      clientId: link.client_id,
-    });
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        event: "portal_verify_session_create_failed",
-        message: err instanceof Error ? err.message : "unknown",
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return <Unavailable />;
-  }
-
-  redirect("/portal");
+  // Valid token. Render the Continue form. The form submits to the
+  // server action which re-runs every check above and atomically
+  // consumes the token before creating the portal session.
+  return (
+    <main
+      style={{
+        backgroundColor: PALETTE.bg,
+        color: PALETTE.ink,
+        fontFeatureSettings: '"cv11"',
+      }}
+      className="min-h-screen font-[var(--font-inter)]"
+    >
+      <section className="px-6 py-20 md:px-12 lg:px-16">
+        <div className="mx-auto max-w-[520px] flex flex-col gap-8">
+          <div>
+            <EyebrowCaption>Client portal</EyebrowCaption>
+            <h1
+              className="font-[var(--font-fraunces)] mt-8 text-[32px] font-bold leading-tight md:text-[40px]"
+              style={{ letterSpacing: "-0.025em" }}
+            >
+              Continue to your portal
+            </h1>
+            <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+              This secure link is ready. Continue to access your
+              appointments, forms, and policies.
+            </p>
+            <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
+              The link is single use; clicking Continue will sign you in
+              and the link can no longer be used.
+            </p>
+          </div>
+          <ContinueToPortalForm token={token} />
+        </div>
+      </section>
+      <MarketingFooter />
+    </main>
+  );
 }
 
 function Unavailable() {
