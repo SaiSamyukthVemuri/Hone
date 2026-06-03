@@ -18,9 +18,19 @@ const BODY_MAX = 5000;
 // payload; the column is for the practitioner UI to surface a
 // "send failed" badge, not for ops triage. A separate sanitized
 // console.error captures the operator-side detail.
-function shortError(message: string): string {
-  const trimmed = message.trim().replace(/\s+/g, " ");
-  return trimmed.length > 200 ? `${trimmed.slice(0, 197)}...` : trimmed;
+//
+// Invariant: this function ALWAYS returns a non-empty string when
+// called from a failure branch. The practitioner card distinguishes
+// "Email failed" from "Email not sent" by the truthiness of
+// notification_email_error, so a null / empty / whitespace-only
+// input must collapse to a stable fallback rather than write an
+// empty string to the row. A blank
+// notification_email_error would otherwise mis-render as
+// "Email not sent" and hide a real failure.
+function shortError(message: string | null | undefined): string {
+  const trimmed = (message ?? "").trim().replace(/\s+/g, " ");
+  const safe = trimmed.length > 0 ? trimmed : "Email send failed";
+  return safe.length > 200 ? `${safe.slice(0, 197)}...` : safe;
 }
 
 export type CreatePortalMessageResult =
