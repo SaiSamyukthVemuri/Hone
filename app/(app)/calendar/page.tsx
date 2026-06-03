@@ -41,8 +41,21 @@ import {
   monthDayLabel,
   weekdayLabel,
 } from "./calendar-format";
+import { CalendarViewToggle } from "./ViewToggle";
+import { MonthView, groupMonthAppointmentsByDate } from "./MonthView";
+import {
+  firstOfMonthString,
+  firstOfNextMonthString,
+  firstOfPreviousMonthString,
+  monthYearLabel,
+} from "@/lib/booking/month-grid";
+import { localTimeString } from "@/lib/booking/tz";
 
-type Search = Promise<{ week?: string }>;
+type Search = Promise<{ week?: string; view?: string; month?: string }>;
+
+function parseView(raw: string | undefined): "week" | "month" {
+  return raw === "month" ? "month" : "week";
+}
 
 export default async function CalendarPage({
   searchParams,
@@ -52,6 +65,24 @@ export default async function CalendarPage({
   const { studio } = await getCurrentPractitionerWithStudio();
   const params = await searchParams;
   const today = todayInTz(studio.timezone);
+  const view = parseView(params.view);
+
+  // The week view continues to default to the current week unless a
+  // ?week= is provided. The month view is gated on `view === "month"`
+  // and uses its own ?month= anchor; the two states are independent
+  // so a week-tab click never resets a month anchor and vice versa.
+  if (view === "month") {
+    return renderMonthView({
+      studio,
+      today,
+      monthParam: params.month,
+      // Pass the same week anchor through so the Week tab in the
+      // header carries the practitioner's last week context (or
+      // defaults to today when missing).
+      lastWeekParam: params.week,
+    });
+  }
+
   const weekStartParam = params.week ?? startOfWeek(today);
   const weekStart = startOfWeek(weekStartParam);
   const weekEnd = addDays(weekStart, 6);
@@ -188,7 +219,12 @@ export default async function CalendarPage({
             Week of {weekStart} → {weekEnd} · {studio.timezone}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <CalendarViewToggle
+            currentView="week"
+            weekHref={`/calendar?view=week&week=${weekStart}`}
+            monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
+          />
           <Link
             href={`/calendar?week=${prevWeek}`}
             className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
@@ -312,8 +348,144 @@ export default async function CalendarPage({
       </div>
 
       <p className="text-xs text-neutral-500">
-        Click an appointment for details, or click an empty time slot to draft
-        a new appointment.
+        Click an empty time slot to draft a new appointment, or drag to
+        select a duration. Click an appointment for details.
+      </p>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------
+// Month view path.
+// -----------------------------------------------------------------
+// Separate render function so the week-view code above stays a
+// straight-line render that mirrors the pre-PR shape. The month
+// view shares the same auth / studio resolution as the week view
+// (already done in the caller) but loads a different appointment
+// range and uses its own grouping helper.
+//
+// Closed-day resolution here uses the SAME precedence as the week
+// view (override wins → weekday default → no-default = closed). The
+// month view only renders the closed pill in-month so spillover
+// days don't get a distracting bottom-right "Closed" tag.
+
+async function renderMonthView(opts: {
+  studio: { id: string; timezone: string };
+  today: string;
+  monthParam: string | undefined;
+  lastWeekParam: string | undefined;
+}) {
+  const { studio, today, monthParam, lastWeekParam } = opts;
+  const monthAnchor = firstOfMonthString(monthParam ?? today);
+  const monthEnd = firstOfNextMonthString(monthAnchor);
+  const prevMonth = firstOfPreviousMonthString(monthAnchor);
+  const nextMonth = firstOfNextMonthString(monthAnchor);
+
+  // Visible appointment range: the 42-cell grid usually spans from a
+  // Sunday in the previous month to a Saturday in the next month. We
+  // load appointments for the whole month (not the spillover days)
+  // because the month view's main job is to surface "what's on this
+  // month"; the spillover days are shown for orientation and only
+  // get appointments when they happen to also be in the studio month
+  // we loaded. This is intentional; spillover counts come from the
+  // month load itself when applicable, not from extra queries.
+  const startUtc = utcInstantFromLocal(monthAnchor, "00:00", studio.timezone);
+  const endUtc = utcInstantFromLocal(monthEnd, "00:00", studio.timezone);
+
+  const [appointments, availabilityDefaults, availabilityOverrides] =
+    await Promise.all([
+      getAppointmentsForRange(
+        studio.id,
+        startUtc.toISOString(),
+        endUtc.toISOString(),
+      ),
+      getAvailabilityDefaults(studio.id),
+      // Read-only per-date overrides for the month so the muted
+      // "Closed" tint resolves the same way the week view does.
+      getOverridesForRange(studio.id, monthAnchor, monthEnd),
+    ]);
+
+  const availabilityByDow = new Map<number, boolean>();
+  for (const d of availabilityDefaults) {
+    availabilityByDow.set(d.day_of_week, d.is_open);
+  }
+  const overrideByDate = new Map<string, boolean>();
+  for (const o of availabilityOverrides) {
+    overrideByDate.set(o.effective_date, o.is_open);
+  }
+  function isClosedDate(dateStr: string): boolean {
+    const override = overrideByDate.get(dateStr);
+    if (override !== undefined) return !override;
+    // Sunday-start dow consistent with the week view's mapping.
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const def = availabilityByDow.get(dow);
+    if (def === undefined) return true;
+    return !def;
+  }
+
+  const appointmentsByDate = groupMonthAppointmentsByDate(
+    appointments,
+    studio.timezone,
+    (iso, tz) => localTimeString(new Date(iso), tz),
+  );
+
+  const lastWeekHref = `/calendar?view=week${
+    lastWeekParam ? `&week=${lastWeekParam}` : ""
+  }`;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Calendar</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            {monthYearLabel(monthAnchor)} · {studio.timezone}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <CalendarViewToggle
+            currentView="month"
+            weekHref={lastWeekHref}
+            monthHref={`/calendar?view=month&month=${monthAnchor}`}
+          />
+          <Link
+            href={`/calendar?view=month&month=${prevMonth}`}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            ← Prev
+          </Link>
+          <Link
+            href={`/calendar?view=month`}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Today
+          </Link>
+          <Link
+            href={`/calendar?view=month&month=${nextMonth}`}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Next →
+          </Link>
+          <Link
+            href="/calendar/upcoming"
+            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Upcoming
+          </Link>
+        </div>
+      </header>
+
+      <MonthView
+        monthAnchor={monthAnchor}
+        appointmentsByDate={appointmentsByDate}
+        today={today}
+        isClosedDate={isClosedDate}
+      />
+
+      <p className="text-xs text-neutral-500">
+        Click any day to open the week view for that date. The month
+        view is for orientation; bookings are made from the week view.
       </p>
     </div>
   );

@@ -49,6 +49,48 @@ export async function bookAppointmentForClientAction(
   const allowOutsideAvailability =
     formDataStr(formData, "allow_outside_availability") === "true";
 
+  // Internal-only duration override. The drag-to-create flow on the
+  // calendar passes the dragged range as duration_minutes_override so
+  // a 45-minute drag books a 45-minute appointment even when the
+  // service default is 30. Honoured ONLY when the override toggle is
+  // on (allow_outside_availability=true) so the standard slot flow
+  // keeps using service.default_duration_minutes and slot membership
+  // checks remain valid. 15..360 minute window, multiples of 5 minutes
+  // to match the rest of the booking surface.
+  const DURATION_OVERRIDE_MIN = 15;
+  const DURATION_OVERRIDE_MAX = 360;
+  function parseDurationOverride(raw: string | null): number | null {
+    if (!raw) return null;
+    const n = parseInt(raw.trim(), 10);
+    if (!Number.isFinite(n)) return null;
+    if (n < DURATION_OVERRIDE_MIN || n > DURATION_OVERRIDE_MAX) return null;
+    if (n % 5 !== 0) return null;
+    return n;
+  }
+  const rawDurationOverride = formDataStrOrNull(
+    formData,
+    "duration_minutes_override",
+  );
+  const durationOverride = parseDurationOverride(rawDurationOverride);
+  if (rawDurationOverride && durationOverride == null) {
+    return {
+      ok: false,
+      error: `Duration must be between ${DURATION_OVERRIDE_MIN} and ${DURATION_OVERRIDE_MAX} minutes.`,
+    };
+  }
+  if (durationOverride != null && !allowOutsideAvailability) {
+    // The drag-to-create path always pairs duration_minutes_override
+    // with allow_outside_availability=true so this branch never fires
+    // in practice; it's a defensive guard so a future caller cannot
+    // silently change the booked length while still flowing through
+    // the standard slot-membership check (which is built around the
+    // service default).
+    return {
+      ok: false,
+      error: "Custom duration requires the outside-availability override.",
+    };
+  }
+
   if (!clientId || !serviceId || !startsAt) {
     return { ok: false, error: "Missing fields." };
   }
@@ -96,7 +138,16 @@ export async function bookAppointmentForClientAction(
   if (start.getTime() <= Date.now()) {
     return { ok: false, error: "That time is in the past. Please choose a future time." };
   }
-  const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
+  // Effective duration: drag-derived override when present (only
+  // possible on the override path, gated above), otherwise the
+  // service default. Conflict + buffer + blockout enforcement still
+  // happens on the INSERT below via the DB exclusion constraints, so
+  // a longer-than-default appointment can still collide and be
+  // rejected by Postgres exactly the same way a default-length one
+  // would.
+  const effectiveDurationMinutes =
+    durationOverride ?? service.default_duration_minutes;
+  const end = new Date(start.getTime() + effectiveDurationMinutes * 60_000);
 
   // Re-verify the slot is still available (race-safe). Use the
   // studio's local date, not the UTC date, so a late-evening booking
@@ -144,7 +195,7 @@ export async function bookAppointmentForClientAction(
       service_id: serviceId,
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
-      duration_minutes: service.default_duration_minutes,
+      duration_minutes: effectiveDurationMinutes,
       status: "confirmed",
       notes,
       cancellation_token: appointmentToken,
@@ -187,6 +238,16 @@ export async function bookAppointmentForClientAction(
       // Captured only when the override was used; absent otherwise so
       // historical audit rows don't get noisy false negatives.
       ...(allowOutsideAvailability ? { override: true } : {}),
+      // Captured when a drag-to-create selection produced a duration
+      // different from the service default. Records both numbers so
+      // the audit row is self-describing without a second lookup.
+      ...(durationOverride != null
+        ? {
+            duration_minutes_override: durationOverride,
+            service_default_duration_minutes:
+              service.default_duration_minutes,
+          }
+        : {}),
     },
   });
 
