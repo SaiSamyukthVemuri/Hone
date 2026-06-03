@@ -376,6 +376,33 @@ export type ClientPortalMessage = {
   updated_at: string;
 };
 
+// Migration 0054: client replies to a specific secure portal message.
+// Replies hang off a single client_portal_messages row (message_id
+// FK). v1 constrains created_by to 'client'; a future practitioner-
+// threaded-reply PR (deferred) will widen the enum and CHECK. Reply
+// body is rendered exclusively inside Hone; the studio-side
+// notification email never includes it. All writes happen via server
+// actions on the admin client; the portal side is gated by
+// getCurrentPortalSession() + parent-message (studio_id, client_id,
+// message_id) match, and the practitioner side is gated by
+// getCurrentPractitionerWithStudio() + (studio_id, client_id).
+export type ClientPortalMessageReplyCreatedBy = "client";
+
+export type ClientPortalMessageReply = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  message_id: string;
+  body: string;
+  created_by: ClientPortalMessageReplyCreatedBy;
+  practitioner_seen_at: string | null;
+  notification_email_sent_at: string | null;
+  notification_email_error: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AppointmentAudit = {
   id: string;
   appointment_id: string;

@@ -10,11 +10,13 @@ import {
   getPortalIdentity,
   getPortalIntakeStatus,
   getPortalMessagesForClient,
+  getPortalRepliesForClient,
   getPortalUpcomingAppointments,
   getPortalUpcomingPreCare,
 } from "@/lib/portal/queries";
 import { portalLogoutAction } from "./logout/actions";
 import { markPortalMessageReviewedAction } from "./portal-message-actions";
+import { PortalReplyForm } from "./PortalReplyForm";
 
 // Authenticated client portal home.
 //
@@ -49,20 +51,37 @@ export default async function PortalHomePage() {
     redirect("/portal/login");
   }
 
-  const [upcoming, intake, preCareEntries, messages] = await Promise.all([
-    getPortalUpcomingAppointments(session.studioId, session.clientId),
-    getPortalIntakeStatus(session.studioId, session.clientId),
-    getPortalUpcomingPreCare(session.studioId, session.clientId),
-    // Migration 0053: secure portal messages from the studio.
-    // Scoped to this session's (studioId, clientId) at the query
-    // layer; the action that marks them reviewed is similarly
-    // scoped so a forged message id from another row cannot be
-    // acknowledged from this session.
-    getPortalMessagesForClient(session.studioId, session.clientId),
-  ]);
+  const [upcoming, intake, preCareEntries, messages, replies] =
+    await Promise.all([
+      getPortalUpcomingAppointments(session.studioId, session.clientId),
+      getPortalIntakeStatus(session.studioId, session.clientId),
+      getPortalUpcomingPreCare(session.studioId, session.clientId),
+      // Migration 0053: secure portal messages from the studio.
+      // Scoped to this session's (studioId, clientId) at the query
+      // layer; the action that marks them reviewed is similarly
+      // scoped so a forged message id from another row cannot be
+      // acknowledged from this session.
+      getPortalMessagesForClient(session.studioId, session.clientId),
+      // PR #129 (migration 0054): client replies to the visible
+      // messages above. Same scope guarantee at the query layer; the
+      // reply action additionally re-checks the parent message
+      // (studio_id, client_id, message_id) + the current client's
+      // archived_at IS NULL before inserting.
+      getPortalRepliesForClient(session.studioId, session.clientId),
+    ]);
   const unreviewedCount = messages.filter(
     (m) => m.client_reviewed_at == null,
   ).length;
+  // Group replies by parent message_id once so each <article> render
+  // does not re-filter the full array. We deliberately do NOT pass
+  // replies straight into the message render: an empty group is
+  // valid and equivalent to "no replies yet under this message".
+  const repliesByMessageId = new Map<string, typeof replies>();
+  for (const r of replies) {
+    const list = repliesByMessageId.get(r.message_id) ?? [];
+    list.push(r);
+    repliesByMessageId.set(r.message_id, list);
+  }
 
   const { client, studio } = identity;
 
@@ -214,6 +233,7 @@ export default async function PortalHomePage() {
               <ul className="flex flex-col gap-3">
                 {messages.map((m) => {
                   const reviewed = m.client_reviewed_at != null;
+                  const messageReplies = repliesByMessageId.get(m.id) ?? [];
                   return (
                     <li key={m.id}>
                       <article
@@ -276,6 +296,54 @@ export default async function PortalHomePage() {
                             </form>
                           )}
                         </div>
+
+                        {/* PR #129. Client replies under this parent
+                            message. We render the list above the
+                            reply textarea so the conversation reads
+                            top-down: studio's message, then client's
+                            posted replies in chronological order,
+                            then the input. Hidden when the message
+                            has no replies AND the input is also
+                            hidden (e.g. a future read-only state).
+                            For v1 the input is always rendered for
+                            non-archived parents. */}
+                        {messageReplies.length > 0 && (
+                          <ul
+                            className="flex flex-col gap-2 border-t pt-3"
+                            style={{ borderColor: "#E5E2D9" }}
+                          >
+                            {messageReplies.map((r) => (
+                              <li
+                                key={r.id}
+                                className="flex flex-col gap-1 p-3"
+                                style={{
+                                  backgroundColor: "#F4F1EA",
+                                  border: "1px solid #E5E2D9",
+                                }}
+                              >
+                                <p
+                                  className="text-[11px] font-medium uppercase"
+                                  style={{
+                                    letterSpacing: "0.18em",
+                                    color: "#6B6B6B",
+                                  }}
+                                >
+                                  Your reply
+                                  {" · "}
+                                  <FormattedDateTime iso={r.created_at} />
+                                </p>
+                                <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-[#0A0A0A]">
+                                  {r.body}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <PortalReplyForm
+                          messageId={m.id}
+                          studioName={studio.name}
+                        />
                       </article>
                     </li>
                   );
