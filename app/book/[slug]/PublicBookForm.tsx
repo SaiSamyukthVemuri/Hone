@@ -6,11 +6,27 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
+import { isConsultationService } from "@/lib/booking/consultation";
 import {
   fetchNextAvailableDateAction,
   fetchPublicSlotsAction,
   publicBookAppointmentAction,
 } from "./actions";
+
+// Public booking new/existing split. The first-step choice is
+// strictly local state and never hits the server: until the visitor
+// picks one, no slot lookup, no client lookup, no email lookup, and
+// no full booking form is rendered. The choice drives:
+//   * which services the picker offers (consultation only for new
+//     clients; all active services for existing clients),
+//   * which clinical/repeat fields are required (new clients still
+//     answer the existing intake/areas question; existing clients
+//     get a single optional "anything to know" note),
+//   * which value is posted to the server action as client_type so
+//     the matching guard rails run there too.
+// The server is the source of truth for both rules; this state only
+// shapes the surface the visitor sees.
+type ClientType = "new" | "existing" | null;
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -91,7 +107,35 @@ export function PublicBookForm({
   minDate,
   maxDate,
 }: Props) {
-  const groups = useMemo(() => groupServicesByModality(services), [services]);
+  // Pre-compute the service buckets each path needs. Done once at
+  // mount and re-runs only if `services` actually changes (which
+  // would only happen on a fresh server-rendered page load).
+  const consultationServices = useMemo(
+    () => services.filter((s) => isConsultationService(s)),
+    [services],
+  );
+  // Existing clients see the full active service list (consultations
+  // and treatments). Studios that want returning clients to skip
+  // consultation altogether can manage that by curating which
+  // services they mark active; the public path does not need to make
+  // that choice here.
+  const existingClientServices = services;
+
+  const [clientType, setClientType] = useState<ClientType>(null);
+  // The picker's option set is whichever bucket matches the current
+  // clientType. Until a type is chosen we still resolve a deterministic
+  // first-id so the standard "default to the first service" pattern
+  // works; the form is hidden in that state so the value is harmless.
+  const visibleServices =
+    clientType === "new"
+      ? consultationServices
+      : clientType === "existing"
+        ? existingClientServices
+        : services;
+  const groups = useMemo(
+    () => groupServicesByModality(visibleServices),
+    [visibleServices],
+  );
   const firstServiceId = groups[0]?.services[0]?.id ?? "";
   const [serviceId, setServiceId] = useState(firstServiceId);
   const [date, setDate] = useState(defaultDate);
@@ -128,11 +172,44 @@ export function PublicBookForm({
   const [nextSearched, setNextSearched] = useState(false);
   const [noneInHorizon, setNoneInHorizon] = useState(false);
 
-  // Single source of truth for the slots fetch: re-runs only when slug,
-  // serviceId, or date actually change. Race-safe via a cancellation flag.
+  // Keep the picker's selected serviceId pinned to the currently
+  // visible bucket. When clientType flips between new and existing,
+  // the visibleServices set changes; if the previously-selected id
+  // is no longer in that set, fall back to the first service in the
+  // new bucket (or the empty-string sentinel when the bucket is
+  // empty, which the form treats as "no service available"). Side
+  // effect of changing serviceId triggers the slot-fetch effect
+  // below, which clears the picked slot and refreshes the list.
   useEffect(() => {
-    if (!serviceId || !date) {
+    if (clientType == null) return;
+    const stillVisible = visibleServices.some((s) => s.id === serviceId);
+    if (stillVisible) return;
+    setServiceId(visibleServices[0]?.id ?? "");
+    // visibleServices is derived from `services` + `clientType` and is
+    // stable across renders that don't change either input, so this
+    // effect runs only on real clientType transitions or service-list
+    // refreshes.
+  }, [clientType, visibleServices, serviceId]);
+
+  // Single source of truth for the slots fetch: re-runs only when slug,
+  // serviceId, date, or clientType actually change. Race-safe via a
+  // cancellation flag.
+  //
+  // No-network-before-choice guard: while clientType === null the
+  // ClientTypeChooser is rendered, but this effect still runs because
+  // hooks must be called unconditionally. We short-circuit BEFORE
+  // calling fetchPublicSlotsAction so the first-step page load makes
+  // zero public booking API calls and any stale slot list / picked
+  // slot from a previous choice is cleared at the same time. The
+  // request-cancellation flag handles the unrelated race where slug,
+  // serviceId, or date change while a fetch is in flight.
+  useEffect(() => {
+    if (clientType == null || !serviceId || !date) {
       setSlots([]);
+      setPicked(null);
+      setError(null);
+      setNextSearched(false);
+      setNoneInHorizon(false);
       return;
     }
     let cancelled = false;
@@ -156,7 +233,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date]);
+  }, [slug, serviceId, date, clientType]);
 
   function onService(v: string) {
     setServiceId(v);
@@ -170,6 +247,12 @@ export function PublicBookForm({
   // returns the first date with bookable future slots. The slot-fetch
   // useEffect above re-runs automatically when `date` changes.
   function onFindNext() {
+    // Same no-network-before-choice guard as the slot-fetch effect:
+    // until the visitor picks a client type, the "Next available"
+    // button is not rendered, but a stale event handler or test
+    // harness could still invoke this. Bail before the action call
+    // so the public surface stays silent.
+    if (clientType == null) return;
     if (!serviceId) return;
     setError(null);
     setNextSearched(false);
@@ -199,6 +282,13 @@ export function PublicBookForm({
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (clientType == null) {
+      // Should be impossible from the rendered UI (the form is only
+      // shown after a choice), but guard anyway so a stale state
+      // never silently drops the client_type field on submit.
+      setError("Please choose new or existing client first.");
+      return;
+    }
     if (!picked) {
       setError("Pick a time first.");
       return;
@@ -206,12 +296,22 @@ export function PublicBookForm({
     setError(null);
     const fd = new FormData();
     fd.set("slug", slug);
+    fd.set("client_type", clientType);
     fd.set("service_id", serviceId);
     fd.set("starts_at", picked.start);
     fd.set("name", name);
     fd.set("email", email);
     fd.set("phone", phone);
-    fd.set("notes", combineAreasAndNotes(areasWanted, notes));
+    // Existing clients answer one optional "anything to know" note;
+    // new clients keep the existing two-field "areas wanted" + "notes"
+    // shape because consultations need that context up front. Both
+    // paths flatten into the single appointments.notes column.
+    fd.set(
+      "notes",
+      clientType === "existing"
+        ? notes.trim()
+        : combineAreasAndNotes(areasWanted, notes),
+    );
     fd.set("sms_consent", smsConsent ? "true" : "false");
     startSubmitting(async () => {
       const r = await publicBookAppointmentAction(fd);
@@ -252,8 +352,70 @@ export function PublicBookForm({
     );
   }
 
+  // First-step: client-side new/existing choice. Until a type is
+  // picked the full booking form (service + date + slots + identity)
+  // is NOT rendered, which means no slot fetch and no email lookup
+  // are triggered. Picking a button does not call the server. The
+  // identity-leak surface stays minimal: until submit, we never
+  // disclose whether an email exists.
+  if (clientType == null) {
+    return (
+      <ClientTypeChooser
+        studioName={studioName}
+        onChoose={setClientType}
+      />
+    );
+  }
+
+  // New-client + no consultation service published: surface a calm
+  // generic message and let the visitor switch back to existing. We
+  // do NOT fall through to showing every active service; the spec
+  // is explicit that new clients must not see non-consultation
+  // services. The studio name is interpolated only as the page
+  // anchor; the message itself does not expose service catalogue
+  // state beyond "consultation is not set up".
+  if (clientType === "new" && consultationServices.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-[15px] leading-[1.6]">
+          Online consultation booking is not set up yet. Please contact{" "}
+          {studioName}.
+        </p>
+        <button
+          type="button"
+          onClick={() => setClientType(null)}
+          className="self-start text-[13px] underline"
+          style={{ color: "#6B6B6B" }}
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={submit} className="flex flex-col gap-8">
+      {/* Small client-type bar so the visitor can see (and undo)
+          their choice. Plain underlined Change link rather than a
+          full segmented control so it does not compete with the
+          form. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+          Booking as a{" "}
+          <strong className="font-medium text-[#0A0A0A]">
+            {clientType === "new" ? "new client" : "existing client"}
+          </strong>
+          .
+        </p>
+        <button
+          type="button"
+          onClick={() => setClientType(null)}
+          className="text-[13px] underline"
+          style={{ color: "#6B6B6B" }}
+        >
+          Change
+        </button>
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Service" required>
           <select
@@ -422,20 +584,33 @@ export function PublicBookForm({
         </span>
       </label>
 
-      <Field
-        label="What areas are you wanting treated?"
-        helperText="For example: upper lip, chin, underarms, bikini line."
-      >
-        <textarea
-          rows={2}
-          value={areasWanted}
-          onChange={(e) => setAreasWanted(e.target.value)}
-          className="w-full resize-none bg-transparent py-2 text-[16px] outline-none"
-          style={{ borderBottom: "1px solid #0A0A0A" }}
-        />
-      </Field>
+      {/* Areas-wanted question is for new clients only. Existing
+          clients have already discussed treatment areas during their
+          consultation and intake, so a returning visitor sees just
+          one optional "anything to know" line. The submit handler
+          flattens both into the single appointments.notes column. */}
+      {clientType === "new" && (
+        <Field
+          label="What areas are you wanting treated?"
+          helperText="For example: upper lip, chin, underarms, bikini line."
+        >
+          <textarea
+            rows={2}
+            value={areasWanted}
+            onChange={(e) => setAreasWanted(e.target.value)}
+            className="w-full resize-none bg-transparent py-2 text-[16px] outline-none"
+            style={{ borderBottom: "1px solid #0A0A0A" }}
+          />
+        </Field>
+      )}
 
-      <Field label="Anything else?">
+      <Field
+        label={
+          clientType === "existing"
+            ? `Anything ${studioName} should know for this appointment?`
+            : "Anything else?"
+        }
+      >
         <textarea
           rows={3}
           value={notes}
@@ -463,6 +638,66 @@ export function PublicBookForm({
         )}
       </div>
     </form>
+  );
+}
+
+// First-step new/existing choice. Renders a heading, a short
+// explanation, and two buttons. No network call on click, no email
+// lookup, no slot fetch: the parent simply flips clientType and
+// re-renders into the full booking form. Studio name is the only
+// dynamic piece in the copy.
+function ClientTypeChooser({
+  studioName,
+  onChoose,
+}: {
+  studioName: string;
+  onChoose: (type: "new" | "existing") => void;
+}) {
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-4">
+        <h2
+          className="font-[var(--font-fraunces)] text-[28px] font-bold leading-tight md:text-[34px]"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          Are you new to {studioName}?
+        </h2>
+        <p className="text-[15px] leading-[1.6]" style={{ color: "#3F3F3F" }}>
+          New clients start with a consultation so {studioName} can review
+          your goals, health history, and treatment plan before booking
+          treatment time.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+        <button
+          type="button"
+          onClick={() => onChoose("new")}
+          className="flex flex-col items-start gap-1 px-6 py-4 text-left transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7]"
+          style={{ border: "1px solid #0A0A0A", backgroundColor: "#FAFAF7" }}
+        >
+          <span className="text-[15px] font-medium uppercase tracking-[0.1em]">
+            I&rsquo;m a new client
+          </span>
+          <span className="text-[12px] opacity-70">
+            Start with a consultation.
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChoose("existing")}
+          className="flex flex-col items-start gap-1 px-6 py-4 text-left transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7]"
+          style={{ border: "1px solid #0A0A0A", backgroundColor: "#FAFAF7" }}
+        >
+          <span className="text-[15px] font-medium uppercase tracking-[0.1em]">
+            I&rsquo;m an existing client
+          </span>
+          <span className="text-[12px] opacity-70">
+            For returning {studioName} clients. Use the email {studioName}{" "}
+            has on file.
+          </span>
+        </button>
+      </div>
+    </div>
   );
 }
 
