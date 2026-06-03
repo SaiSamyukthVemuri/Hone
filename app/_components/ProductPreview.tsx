@@ -78,7 +78,7 @@ export function ChartingPreview() {
       <Row label="Machine" value="27.12 MHz" />
       <Row label="Mode" value="Thermolysis" />
       <Row label="Modality" value="MeloFlash" />
-      <Row label="Probe" value="Ballet · Gold · One-piece · F4" />
+      <Row label="Probe" value="Ballet · Gold · One-piece · F2" />
       <Row label="Hairs treated" value="120" />
       <div style={{ borderTop: `1px solid ${PALETTE.rule}` }} className="my-1" />
       <p style={{ color: PALETTE.muted }}>
