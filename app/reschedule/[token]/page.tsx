@@ -3,6 +3,7 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
+import { hasAnyPolicy } from "@/lib/booking/policy-acknowledgement";
 import { fetchAppointmentForRescheduleAction } from "./actions";
 import { RescheduleForm } from "./RescheduleForm";
 
@@ -94,6 +95,15 @@ export default async function ReschedulePage({
                 studioName={result.summary.studioName}
               />
 
+              {/* PR #133. The acknowledgement checkbox + the server-
+                  side ack gate fire only when the studio has at
+                  least one policy configured. A studio with no
+                  policy text shows no policy card above, no
+                  checkbox below, and the reschedule action accepts
+                  the submit without acknowledgement and writes no
+                  acknowledgement row. The server action re-checks
+                  the same predicate against the resolved studio
+                  row. */}
               <RescheduleForm
                 token={token}
                 durationMinutes={result.summary.durationMinutes}
@@ -101,6 +111,11 @@ export default async function ReschedulePage({
                 studioPublicBookingHorizonMonths={
                   result.summary.studioPublicBookingHorizonMonths
                 }
+                requiresAcknowledgement={hasAnyPolicy({
+                  cancellationPolicyText:
+                    result.summary.cancellationPolicyText,
+                  noShowPolicyText: result.summary.noShowPolicyText,
+                })}
               />
             </>
           ) : (

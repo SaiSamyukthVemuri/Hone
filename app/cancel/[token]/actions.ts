@@ -5,7 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
-import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+import {
+  buildPolicySnapshot,
+  hasAnyPolicy,
+} from "@/lib/booking/policy-acknowledgement";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -75,17 +78,13 @@ export async function publicCancelAppointmentAction(
 ): Promise<PublicCancelResult> {
   const token = strOrEmpty(formData.get("token"));
   const reason = strOrNull(formData.get("reason"));
-  // PR #132. Policy acknowledgement is required before the RPC fires.
-  // The form posts 'acknowledged_policy=true' only when the checkbox
-  // was ticked; any other shape (missing field, 'false', other
-  // value) is treated as unacknowledged. The validation error is
-  // distinct from the generic public collapse error because this
-  // branch reveals nothing about appointment / token state (the
-  // form is the visitor's own input).
+  // PR #132 / #133. The acknowledgement field is read up front but
+  // the require / skip decision happens AFTER we resolve the studio
+  // because requiring an acknowledgement of a non-existent policy
+  // is confusing. A studio with no policy text on file can cancel
+  // without the field. The server-side decision is the source of
+  // truth; the page hint just keeps the UI honest.
   const acknowledged = strOrEmpty(formData.get("acknowledged_policy"));
-  if (acknowledged !== "true") {
-    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
-  }
   if (!token) {
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
@@ -113,6 +112,52 @@ export async function publicCancelAppointmentAction(
   }
 
   const admin = createAdminClient();
+
+  // PR #133. Cheap pre-RPC lookup of just the studio's policy text so
+  // we can decide whether to require acknowledgement. Studios with no
+  // policy text on file accept the cancel without the field and skip
+  // the acknowledgement row insert below. This lookup goes against
+  // the appointments + joined studios row by resolved appointment id;
+  // it does not consume any token, does not mutate, and is bounded.
+  // If the lookup fails we collapse to the generic public error
+  // because something is structurally off with the resolved row.
+  const { data: policyCheck, error: policyErr } = await admin
+    .from("appointments")
+    .select(
+      "studio:studios(cancellation_policy_text, no_show_policy_text)",
+    )
+    .eq("id", resolved.appointment_id)
+    .maybeSingle();
+  if (policyErr) {
+    logInternal("public_cancel_policy_lookup_failed", {
+      code: policyErr.code,
+      message: policyErr.message,
+    });
+    return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
+  type PolicyJoin = {
+    studio:
+      | {
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }
+      | Array<{
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }>
+      | null;
+  };
+  const policyRow = (policyCheck ?? null) as PolicyJoin | null;
+  const policyStudio = Array.isArray(policyRow?.studio)
+    ? (policyRow?.studio[0] ?? null)
+    : (policyRow?.studio ?? null);
+  const requiresAck = hasAnyPolicy({
+    cancellationPolicyText: policyStudio?.cancellation_policy_text,
+    noShowPolicyText: policyStudio?.no_show_policy_text,
+  });
+  if (requiresAck && acknowledged !== "true") {
+    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
 
   // P0-3: route the actual status mutation through the SECURITY DEFINER
   // RPC public_cancel_appointment_with_token. The RPC is terminal-safe
@@ -202,7 +247,12 @@ export async function publicCancelAppointmentAction(
     // audit_logs row the RPC stamped. Re-running the action with
     // the same token is a no-op (the RPC rejects non-confirmed
     // source state), so we cannot retry the ack here.
-    if (apptStudio) {
+    //
+    // PR #133. Acknowledgement is only written when the studio has
+    // policy text on file. A studio with no policy never produced
+    // an acknowledgement on the UI side either; we mirror that
+    // here so the table only carries meaningful rows.
+    if (apptStudio && requiresAck) {
       const snapshot = buildPolicySnapshot({
         cancellationPolicyText: apptStudio.cancellation_policy_text,
         noShowPolicyText: apptStudio.no_show_policy_text,

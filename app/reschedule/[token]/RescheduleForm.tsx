@@ -51,6 +51,13 @@ type Props = {
   // months). The date picker max is computed from this so it mirrors
   // the server-side check in fetchRescheduleSlotsAction.
   studioPublicBookingHorizonMonths: number;
+  // PR #133. True when the resolved studio has at least one of
+  // cancellation_policy_text or no_show_policy_text configured.
+  // False for studios with no policy text on file. When false we
+  // render no checkbox and post no acknowledged_policy field; the
+  // server-side action mirrors the same predicate against the
+  // resolved studio row.
+  requiresAcknowledgement: boolean;
 };
 
 // Today in the studio's local calendar, not the visitor's UTC date.
@@ -86,6 +93,7 @@ export function RescheduleForm({
   token,
   studioTimezone,
   studioPublicBookingHorizonMonths,
+  requiresAcknowledgement,
 }: Props) {
   const horizon = horizonInStudio(
     studioTimezone,
@@ -160,11 +168,12 @@ export function RescheduleForm({
       setError("Pick a time first.");
       return;
     }
-    if (!acknowledged) {
+    if (requiresAcknowledgement && !acknowledged) {
       // Client-side mirror of the server validation. The disabled
       // submit button blocks this from reaching the action in
       // practice, but a stale event handler or test harness could
-      // still send the FormData; the action re-checks.
+      // still send the FormData; the action re-checks. Only fires
+      // when the studio actually has policy text.
       setError(
         "Please review and acknowledge the appointment policies before rescheduling.",
       );
@@ -174,7 +183,12 @@ export function RescheduleForm({
     const fd = new FormData();
     fd.set("token", token);
     fd.set("starts_at", picked.start);
-    fd.set("acknowledged_policy", "true");
+    if (requiresAcknowledgement) {
+      // Only post the ack field when it is required. A studio with
+      // no policy on file accepts the submit without this field
+      // entirely; sending an unsolicited 'true' would be misleading.
+      fd.set("acknowledged_policy", "true");
+    }
     startSubmitting(async () => {
       const r = await rescheduleAppointmentViaTokenAction(fd);
       if (!r.ok) {
@@ -303,29 +317,38 @@ export function RescheduleForm({
           reads the studio's policies (rendered higher up the page in
           the shared PublicPolicyReminderCard) and ticks the box
           before they can submit. Server rejects any non-'true'
-          value. */}
-      <label
-        className="flex items-start gap-3 text-[14px] leading-[1.5]"
-        style={{ color: "#0A0A0A" }}
-      >
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          onChange={(e) => setAcknowledged(e.target.checked)}
-          className="mt-1 h-4 w-4 flex-none"
-        />
-        <span>
-          I have reviewed and understand the cancellation and no-show
-          policies.
-        </span>
-      </label>
+          value.
+          PR #133. The whole block renders only when the studio
+          actually has policy text; otherwise the reschedule
+          surface omits the checkbox entirely. */}
+      {requiresAcknowledgement && (
+        <label
+          className="flex items-start gap-3 text-[14px] leading-[1.5]"
+          style={{ color: "#0A0A0A" }}
+        >
+          <input
+            type="checkbox"
+            checked={acknowledged}
+            onChange={(e) => setAcknowledged(e.target.checked)}
+            className="mt-1 h-4 w-4 flex-none"
+          />
+          <span>
+            I have reviewed and understand the cancellation and no-show
+            policies.
+          </span>
+        </label>
+      )}
 
       {error && <p className="text-sm text-red-700">{error}</p>}
 
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={!picked || submitting || !acknowledged}
+          disabled={
+            !picked
+            || submitting
+            || (requiresAcknowledgement && !acknowledged)
+          }
           className="rounded-md bg-[#0A0A0A] px-5 py-3 text-base font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? "Rescheduling…" : "Confirm new time"}

@@ -3,6 +3,7 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
+import { hasAnyPolicy } from "@/lib/booking/policy-acknowledgement";
 import { fetchAppointmentForCancelAction } from "./actions";
 import { CancelForm } from "./CancelForm";
 
@@ -75,7 +76,24 @@ export default async function CancelAppointmentPage({
                 studioName={result.summary.studioName}
               />
 
-              <CancelForm token={token} />
+              {/* PR #133. The acknowledgement checkbox + the server-
+                  side ack gate fire only when the studio has at
+                  least one policy configured. A studio with no
+                  policy text shows no policy card above, no
+                  checkbox below, and the cancel action accepts the
+                  submit without acknowledgement and writes no
+                  acknowledgement row. The server action re-checks
+                  the same predicate against the resolved studio
+                  row; the prop here is the page hint that keeps the
+                  UI honest. */}
+              <CancelForm
+                token={token}
+                requiresAcknowledgement={hasAnyPolicy({
+                  cancellationPolicyText:
+                    result.summary.cancellationPolicyText,
+                  noShowPolicyText: result.summary.noShowPolicyText,
+                })}
+              />
             </>
           ) : (
             // Public collapse surface: a single generic message is
