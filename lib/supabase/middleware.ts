@@ -60,6 +60,27 @@ export async function updateSession(request: NextRequest) {
     // and must clear the same anonymous-visitor gate; without this
     // entry, every "Manage appointment:" SMS link bounces to /login.
     pathname.startsWith("/manage/") ||
+    // Client portal lives in a separate auth realm: email magic
+    // links + an httpOnly cookie session (client_portal_sessions,
+    // migration 0052). The portal pages handle their own session
+    // checks server-side and redirect to /portal/login when no
+    // portal session is present; the practitioner Supabase auth
+    // guard here must never bounce a portal visitor to /login (the
+    // practitioner login).
+    //
+    // Important: this allowlist is INTENTIONALLY narrow. We list
+    // only the three known portal-public routes by exact match (or
+    // by /portal/verify/ prefix so the [token] segment is honored)
+    // rather than blanket-allowlisting /portal/*. A future /portal
+    // route MUST add its own portal-session check (via
+    // getCurrentPortalSession from lib/portal/session.ts) AND its
+    // own entry here. A typo or a forgotten entry should fall back
+    // to the practitioner /login redirect, which is loud and easy
+    // to spot, rather than silently exposing a new portal surface
+    // to anonymous visitors.
+    pathname === "/portal" ||
+    pathname === "/portal/login" ||
+    pathname.startsWith("/portal/verify/") ||
     pathname.startsWith("/reschedule/") ||
     // Read-only iCal subscription feed at /calendar-feed/<token>.ics.
     // Google Calendar / Apple Calendar fetch the feed server-side and

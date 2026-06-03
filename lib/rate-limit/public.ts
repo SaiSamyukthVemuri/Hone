@@ -323,3 +323,77 @@ export async function limitTokenRoute(args: {
     return { allowed: true }; // fail open
   }
 }
+
+// ---------------------------------------------------------------------------
+// Client portal magic-link request.
+//
+// Two independent windows, mirroring the public booking shape so abuse
+// is bounded per network source AND per recipient address. IP is
+// checked first; if it's already over the limit we return without
+// consuming the email budget. Both keys are hashed before storage.
+//
+//   * 5 / 10 min per IP
+//   * 3 / hour  per email (always present on this route)
+//
+// Fails open when Upstash is unconfigured or down, same posture as
+// the rest of this file.
+// ---------------------------------------------------------------------------
+
+let cachedPortalIp: Ratelimit | null | undefined;
+let cachedPortalEmail: Ratelimit | null | undefined;
+
+function portalIpLimiter(): Ratelimit | null {
+  if (cachedPortalIp !== undefined) return cachedPortalIp;
+  const redis = getRedis();
+  cachedPortalIp = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(5, "10 m"),
+        prefix: "rl:portal_login_ip",
+        analytics: false,
+      })
+    : null;
+  return cachedPortalIp;
+}
+
+function portalEmailLimiter(): Ratelimit | null {
+  if (cachedPortalEmail !== undefined) return cachedPortalEmail;
+  const redis = getRedis();
+  cachedPortalEmail = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(3, "1 h"),
+        prefix: "rl:portal_login_email",
+        analytics: false,
+      })
+    : null;
+  return cachedPortalEmail;
+}
+
+export async function limitPortalMagicLink(args: {
+  headers: Headers;
+  email: string;
+}): Promise<RateLimitResult> {
+  const ipLimiter = portalIpLimiter();
+  const emailLimiter = portalEmailLimiter();
+  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
+  const ip = clientIpFromHeaders(args.headers);
+  try {
+    const ipRes = await ipLimiter.limit(hashId(ip));
+    if (!ipRes.success) {
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded("portal_login", retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    const emailRes = await emailLimiter.limit(hashId(args.email));
+    if (!emailRes.success) {
+      const retry = retryAfterSeconds(emailRes.reset);
+      logRateLimitExceeded("portal_login", retry, "email");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable("portal_login", err);
+    return { allowed: true }; // fail open
+  }
+}
