@@ -211,15 +211,30 @@ export function PublicPolicyReminderCard({
   if (!hasCancellation && !hasNoShow) return null;
 
   return (
+    // Heading promotion (PR #127). The previous lead was a plain
+    // 14px paragraph that read like body copy, which made the card
+    // easy to mistake for aftercare instructions when scanning. The
+    // lead is now a proper section heading rendered in the same
+    // Fraunces-serif style the public pages use for their own h1, at
+    // a size that is visually heavier than the policy body without
+    // dominating the page. The copy is explicit about "appointment
+    // policies" so clients understand they are looking at
+    // cancellation / no-show rules, not pre/post-care content.
+    // aria-labelledby points at the heading id so screen readers
+    // pick up the same explicit label.
     <section
-      aria-label="Studio policies"
+      aria-labelledby="public-policy-heading"
       className="flex flex-col gap-5 p-6"
       style={{ backgroundColor: "#FAFAF7", border: "1px solid #E5E2D9" }}
     >
-      <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
-        Please review {studioName}&rsquo;s policies before changing your
-        appointment.
-      </p>
+      <h2
+        id="public-policy-heading"
+        className="font-[var(--font-fraunces)] text-[20px] font-bold leading-snug md:text-[22px]"
+        style={{ letterSpacing: "-0.02em", color: "#0A0A0A" }}
+      >
+        Please review {studioName}&rsquo;s appointment policies before
+        making changes
+      </h2>
       {hasCancellation && (
         <div className="flex flex-col gap-2">
           <h3
