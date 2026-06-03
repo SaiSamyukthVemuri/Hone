@@ -1,14 +1,13 @@
 import { localLongDate, localTimeString } from "@/lib/booking/tz";
 
-// Transactional SMS bodies for the three SMS types this PR ships:
+// Transactional SMS bodies for the three SMS types this codebase ships:
 //   - confirmation (sent inline from a successful booking)
 //   - reminder_24h (sent by cron 24h before starts_at)
 //   - reminder_2h  (sent by cron 2h before starts_at)
 //
 // All bodies share the same shape:
-//   {Studio}: <event>. <intake link if applicable>. <reschedule link
-//   if applicable>. <cancel link if applicable>. Do not reply here
-//   except STOP to opt out.
+//   {Studio}: <event>. <intake link if applicable>. <manage link if
+//   applicable>. Do not reply here except STOP to opt out.
 //
 // Constraints honored here:
 //   - Short. Each builder targets a single SMS segment whenever
@@ -20,32 +19,31 @@ import { localLongDate, localTimeString } from "@/lib/booking/tz";
 //   - Date / time formatting reuses lib/booking/tz.ts helpers; we do
 //     NOT invent a separate SMS formatter. The email day header and
 //     the SMS day phrase therefore stay in sync by construction.
-//   - Labels are accurate: "Reschedule:" and "Cancel:" are listed
-//     separately because each links to a dedicated single-action page
-//     (/reschedule/<token> and /cancel/<token>). The previous "Manage:"
-//     label was misleading because it implied both actions were behind
-//     one link; the reschedule page does NOT cancel and vice versa.
+//   - One neutral "Manage appointment:" link only. Earlier copy split
+//     this into separate "Reschedule:" and "Cancel:" lines, which the
+//     pilot review found felt like an active invitation to cancel.
+//     The manage URL resolves to /manage/<token>, a public landing
+//     page that surfaces both options after reminding the client of
+//     the studio's cancellation and no-show policies. SMS still
+//     carries an explicit intake link when one is outstanding.
 //   - Always ends with "Do not reply here except STOP to opt out."
 //     STOP is a real supported reply (handled server-side by the
 //     inbound webhook); anything else is not conversational, not
-//     parsed, and not persisted. The disclosure tells the client both
-//     facts in one line.
+//     parsed, and not persisted.
 
 export type BookingConfirmationSmsInput = {
   studioName: string;
   startsAt: Date;
   timezone: string;
   intakeUrl: string | null;
-  rescheduleUrl: string | null;
-  cancelUrl: string | null;
+  manageUrl: string | null;
 };
 
 export type ReminderSmsInput = {
   studioName: string;
   startsAt: Date;
   timezone: string;
-  rescheduleUrl: string | null;
-  cancelUrl: string | null;
+  manageUrl: string | null;
 };
 
 // Compact phrase for the appointment moment used by every template:
@@ -62,10 +60,10 @@ function appointmentMoment(startsAt: Date, timezone: string): string {
 }
 
 // Append a phrase only when its value is truthy; keeps the templates
-// from emitting "Intake: . Cancel:" when a URL is null. The SMS body
-// assembler joins parts with ". " and a trailing period. The closing
-// disclosure ("Do not reply here except STOP to opt out.") is added
-// by the caller so it always sits last.
+// from emitting "Intake: . Manage appointment:" when a URL is null.
+// The SMS body assembler joins parts with ". " and a trailing period.
+// The closing disclosure ("Do not reply here except STOP to opt
+// out.") is added by the caller so it always sits last.
 function joinParts(parts: ReadonlyArray<string | null>): string {
   const filtered = parts.filter(
     (p): p is string => typeof p === "string" && p.length > 0,
@@ -84,22 +82,16 @@ export function buildBookingConfirmationSms(
   const moment = appointmentMoment(p.startsAt, p.timezone);
   const head = `${p.studioName}: confirmed for ${moment}`;
   const intake = p.intakeUrl ? `Intake: ${p.intakeUrl}` : null;
-  const reschedule = p.rescheduleUrl
-    ? `Reschedule: ${p.rescheduleUrl}`
-    : null;
-  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
-  const body = joinParts([head, intake, reschedule, cancel]);
+  const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
+  const body = joinParts([head, intake, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
 }
 
 export function build24hReminderSms(p: ReminderSmsInput): string {
   const moment = appointmentMoment(p.startsAt, p.timezone);
   const head = `Reminder from ${p.studioName}: appointment ${moment}`;
-  const reschedule = p.rescheduleUrl
-    ? `Reschedule: ${p.rescheduleUrl}`
-    : null;
-  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
-  const body = joinParts([head, reschedule, cancel]);
+  const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
+  const body = joinParts([head, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
 }
 
@@ -109,10 +101,7 @@ export function build2hReminderSms(p: ReminderSmsInput): string {
   const head = `Today's appointment with ${p.studioName} is at ${
     localTimeString(p.startsAt, p.timezone)
   }`;
-  const reschedule = p.rescheduleUrl
-    ? `Reschedule: ${p.rescheduleUrl}`
-    : null;
-  const cancel = p.cancelUrl ? `Cancel: ${p.cancelUrl}` : null;
-  const body = joinParts([head, reschedule, cancel]);
+  const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
+  const body = joinParts([head, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
 }

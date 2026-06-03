@@ -2,6 +2,7 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { fetchAppointmentForCancelAction } from "./actions";
 import { CancelForm } from "./CancelForm";
 
@@ -61,6 +62,18 @@ export default async function CancelAppointmentPage({
                   {result.summary.studioName}
                 </SummaryRow>
               </dl>
+
+              {/* Studio policies shown before the cancel action so
+                  the client sees the cancellation/no-show rules
+                  before committing. Reminder/display only; the
+                  cancel action is not gated on policy presence and
+                  the card renders nothing when both fields are
+                  empty so we never show a blank heading. */}
+              <PublicPolicyReminderCard
+                cancellationPolicyText={result.summary.cancellationPolicyText}
+                noShowPolicyText={result.summary.noShowPolicyText}
+                studioName={result.summary.studioName}
+              />
 
               <CancelForm token={token} />
             </>

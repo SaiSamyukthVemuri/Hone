@@ -649,6 +649,17 @@ async function dispatchBookingEmails(p: DispatchParams) {
   const rescheduleUrl = p.appointment.cancellation_token
     ? `${APP_ORIGIN}/reschedule/${p.appointment.cancellation_token}`
     : null;
+  // SMS uses the single neutral /manage/<token> entry point. Only
+  // built when the row carries a column-based cancellation_token; the
+  // HMAC-fallback token used above for the legacy cancel URL is
+  // intentionally not minted into a manage URL because /manage
+  // resolves via the column-or-HMAC pattern and would just fall
+  // through to the same generic unavailable surface for HMAC inputs
+  // anyway. Null here means the SMS template omits the manage line
+  // entirely; the SMS still sends with the appointment moment.
+  const manageUrl = p.appointment.cancellation_token
+    ? `${APP_ORIGIN}/manage/${p.appointment.cancellation_token}`
+    : null;
   const appointmentUrl = `${APP_ORIGIN}/calendar`;
 
   if (p.clientEmail && p.studio.send_confirmation_emails) {
@@ -714,10 +725,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
         sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
       },
       intakeUrl: intake?.url ?? null,
-      rescheduleUrl,
-      // cancellationUrl was already built above for the email path;
-      // SMS uses the same token-based /cancel/<token> link.
-      cancelUrl: cancellationUrl,
+      manageUrl,
     });
   }
   // Migration 0047: studio owners can opt out of the practitioner

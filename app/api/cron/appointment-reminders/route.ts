@@ -255,11 +255,13 @@ async function sendSmsReminderPass(opts: {
     if (appt.client.sms_opted_out_at) continue;
 
     const token = appt.cancellation_token;
-    const rescheduleUrl = token ? `${APP_ORIGIN}/reschedule/${token}` : null;
-    // Same token, different single-action page. Listed separately in
-    // the SMS body so the client does not have to guess which link
-    // does what.
-    const cancelUrl = token ? `${APP_ORIGIN}/cancel/${token}` : null;
+    // SMS reminders carry one neutral /manage/<token> link instead
+    // of separate reschedule/cancel labels; the manage landing page
+    // surfaces both actions after the studio's policies. Null when
+    // the row lacks a column token (very old pre-backfill rows); the
+    // SMS template then drops the manage line and still sends the
+    // moment-only reminder.
+    const manageUrl = token ? `${APP_ORIGIN}/manage/${token}` : null;
 
     const sendFn =
       opts.kind === "24h"
@@ -276,8 +278,7 @@ async function sendSmsReminderPass(opts: {
         sms_consent_at: appt.client.sms_consent_at,
         sms_opted_out_at: appt.client.sms_opted_out_at,
       },
-      rescheduleUrl,
-      cancelUrl,
+      manageUrl,
     });
     if (result.ok) {
       stats.attempted += 1;

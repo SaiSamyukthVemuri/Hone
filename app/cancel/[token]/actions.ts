@@ -211,6 +211,12 @@ export type AppointmentSummary = {
   studioTimezone: string;
   serviceName: string;
   startsAt: string;
+  // Studio-authored policies surfaced on the cancel page so the
+  // client sees the cancellation/no-show rules before they commit.
+  // Reminder/display only; the cancel mutation does not consult
+  // these fields and is not blocked when either is empty.
+  cancellationPolicyText: string | null;
+  noShowPolicyText: string | null;
 };
 
 export async function fetchAppointmentForCancelAction(
@@ -237,7 +243,7 @@ export async function fetchAppointmentForCancelAction(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, status, starts_at, studio:studios(name, timezone), service:services(name)",
+      "id, status, starts_at, studio:studios(name, timezone, cancellation_policy_text, no_show_policy_text), service:services(name)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -252,7 +258,20 @@ export async function fetchAppointmentForCancelAction(
     id: string;
     status: string;
     starts_at: string;
-    studio: { name: string; timezone: string } | { name: string; timezone: string }[] | null;
+    studio:
+      | {
+          name: string;
+          timezone: string;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }
+      | Array<{
+          name: string;
+          timezone: string;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }>
+      | null;
     service: { name: string } | { name: string }[] | null;
   };
   const row = data as unknown as Joined;
@@ -282,6 +301,8 @@ export async function fetchAppointmentForCancelAction(
       studioTimezone: studio?.timezone ?? "UTC",
       serviceName: service?.name ?? "Appointment",
       startsAt: row.starts_at,
+      cancellationPolicyText: studio?.cancellation_policy_text ?? null,
+      noShowPolicyText: studio?.no_show_policy_text ?? null,
     },
   };
 }
