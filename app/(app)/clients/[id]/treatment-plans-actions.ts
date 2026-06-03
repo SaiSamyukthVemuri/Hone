@@ -22,6 +22,15 @@ const STAGE_LENGTH_MAX = 240;
 const GOAL_MINUTES_OVERRIDE_MAX = 60000;
 // Body Chart v1 Phase A — matches migration 0038's CHECK.
 const PRIMARY_AREA_MAX = 60;
+// Multi-area + timeline caps that match migration 0051 CHECK constraints.
+const TREATMENT_AREAS_MAX = 12;
+const TIMELINE_MONTHS_MIN = 1;
+const TIMELINE_MONTHS_MAX = 60;
+// Default Estimated visits to write when the new create UI omits it.
+// Matches the column default added in migration 0051 (we send it
+// explicitly so an older Postgres connection pool with stale schema
+// metadata still inserts a valid row).
+const DEFAULT_SUGGESTED_VISIT_COUNT = 12;
 const HOW_OFTEN_VALUES: ReadonlyArray<TreatmentPlanStageHowOftenUnit> = [
   "weekly",
   "every_2_weeks",
@@ -45,6 +54,80 @@ function parseVisits(value: FormDataEntryValue | null): number | null {
   return n;
 }
 
+// Multi-area writers: read every FormData value keyed `treatment_areas`
+// (repeated keys, one per selected area), trim, drop empties, dedupe
+// in order, and cap at TREATMENT_AREAS_MAX. Returns:
+//   - { ok: true, value: null }       → no field was sent; caller should
+//                                        leave the column untouched
+//   - { ok: true, value: string[] }   → field was sent (may be empty
+//                                        array to mean "clear all areas")
+//   - { ok: false, error }            → a value was malformed
+function parseTreatmentAreasFromFormData(
+  formData: FormData,
+):
+  | { ok: true; value: string[] | null }
+  | { ok: false; error: string } {
+  // formData.has() is the only way to tell "field omitted" from
+  // "field sent empty"; we need that distinction so partial form posts
+  // (e.g. the notes editor that only edits notes) don't clobber the
+  // existing areas array.
+  if (!formData.has("treatment_areas")) {
+    return { ok: true, value: null };
+  }
+  const raw = formData
+    .getAll("treatment_areas")
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter((v) => v.length > 0);
+
+  for (const v of raw) {
+    if (v.length > PRIMARY_AREA_MAX) {
+      return {
+        ok: false,
+        error: `Each treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+      };
+    }
+  }
+
+  // Dedupe in insertion order so the first occurrence wins (matters
+  // because areas[0] mirrors into primary_area).
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const v of raw) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    deduped.push(v);
+  }
+
+  if (deduped.length > TREATMENT_AREAS_MAX) {
+    return {
+      ok: false,
+      error: `A plan can cover at most ${TREATMENT_AREAS_MAX} areas.`,
+    };
+  }
+
+  return { ok: true, value: deduped };
+}
+
+// Timeline months parser. Each field is optional; an empty input
+// becomes null. Out-of-range returns a friendly error. Caller is
+// responsible for cross-field ordering checks (min <= max).
+function parseTimelineMonths(
+  value: FormDataEntryValue | null,
+):
+  | { ok: true; value: number | null }
+  | { ok: false; error: string } {
+  const t = trimmed(value);
+  if (!t) return { ok: true, value: null };
+  const n = parseInt(t, 10);
+  if (!Number.isFinite(n) || n < TIMELINE_MONTHS_MIN || n > TIMELINE_MONTHS_MAX) {
+    return {
+      ok: false,
+      error: `Timeline months must be between ${TIMELINE_MONTHS_MIN} and ${TIMELINE_MONTHS_MAX}.`,
+    };
+  }
+  return { ok: true, value: n };
+}
+
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function createTreatmentPlanAction(
@@ -52,23 +135,24 @@ export async function createTreatmentPlanAction(
 ): Promise<ActionResult> {
   const clientId = trimmed(formData.get("client_id"));
   const name = trimmed(formData.get("name"));
-  const suggested = parseVisits(formData.get("suggested_visit_count"));
 
   if (!clientId) return { ok: false, error: "Missing client id." };
   if (!name) return { ok: false, error: "Plan name is required." };
   if (name.length > MAX_NAME) {
     return { ok: false, error: `Plan name must be ${MAX_NAME} characters or fewer.` };
   }
-  if (suggested == null) {
-    return {
-      ok: false,
-      error: `Suggested visit count must be between 1 and ${MAX_VISITS}.`,
-    };
-  }
 
-  // Body Chart v1: optional structured area. Empty → null. No value-set
-  // validation here — the DB accepts any 1..60 char string, and the UI
-  // uses AREA_REGIONS as the canonical picker.
+  // Estimated visits is no longer required from the new create UI:
+  // Chloe's reframing makes it a legacy/secondary field. If the form
+  // does send a value we honour it for backward compatibility; if it
+  // is omitted or invalid we fall back to the column default added in
+  // migration 0051 so insert always succeeds with a sensible row.
+  const suggestedFromForm = parseVisits(formData.get("suggested_visit_count"));
+  const suggested = suggestedFromForm ?? DEFAULT_SUGGESTED_VISIT_COUNT;
+
+  // Backward-compatible single primary_area read, kept so older form
+  // posts still work. The multi-area parser below takes precedence and
+  // overwrites primary_area with treatment_areas[0] when present.
   const primaryAreaRaw = trimmed(formData.get("primary_area"));
   if (primaryAreaRaw.length > PRIMARY_AREA_MAX) {
     return {
@@ -76,7 +160,49 @@ export async function createTreatmentPlanAction(
       error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
     };
   }
-  const primaryArea = primaryAreaRaw.length === 0 ? null : primaryAreaRaw;
+
+  // Multi-area: read repeated `treatment_areas` form fields. Dedupes
+  // and caps at TREATMENT_AREAS_MAX. The first element mirrors into
+  // primary_area for backward compatibility with the session-area
+  // defaulting, banner fallback, and data export.
+  const areasParsed = parseTreatmentAreasFromFormData(formData);
+  if (!areasParsed.ok) return { ok: false, error: areasParsed.error };
+
+  let treatmentAreas: string[] | null;
+  let primaryArea: string | null;
+  if (areasParsed.value !== null) {
+    treatmentAreas = areasParsed.value.length === 0 ? null : areasParsed.value;
+    primaryArea =
+      treatmentAreas != null && treatmentAreas.length > 0
+        ? treatmentAreas[0]
+        : primaryAreaRaw.length === 0
+          ? null
+          : primaryAreaRaw;
+  } else {
+    treatmentAreas = null;
+    primaryArea = primaryAreaRaw.length === 0 ? null : primaryAreaRaw;
+  }
+
+  // Timeline months. Both sides optional and validated independently;
+  // cross-field ordering (min <= max) checked after.
+  const tlMinParsed = parseTimelineMonths(
+    formData.get("estimated_timeline_months_min"),
+  );
+  if (!tlMinParsed.ok) return { ok: false, error: tlMinParsed.error };
+  const tlMaxParsed = parseTimelineMonths(
+    formData.get("estimated_timeline_months_max"),
+  );
+  if (!tlMaxParsed.ok) return { ok: false, error: tlMaxParsed.error };
+  if (
+    tlMinParsed.value != null &&
+    tlMaxParsed.value != null &&
+    tlMinParsed.value > tlMaxParsed.value
+  ) {
+    return {
+      ok: false,
+      error: "Timeline from-months must be less than or equal to to-months.",
+    };
+  }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
@@ -102,6 +228,9 @@ export async function createTreatmentPlanAction(
       status: "active",
       created_by_practitioner_id: practitioner.id,
       primary_area: primaryArea,
+      treatment_areas: treatmentAreas,
+      estimated_timeline_months_min: tlMinParsed.value,
+      estimated_timeline_months_max: tlMaxParsed.value,
     })
     .select("id")
     .single();
@@ -349,24 +478,87 @@ export async function updateTreatmentPlanNotesAction(
     override = parsed;
   }
 
-  // Body Chart v1: optional primary area. The field is opt-in for this
-  // action — callers that don't include `primary_area` in FormData leave
-  // the column untouched. If the field is present, empty becomes null
-  // (so a practitioner can clear the area), otherwise the trimmed value
-  // is written. No value-set validation here; the canonical list is the
-  // UI's responsibility.
-  const primaryAreaEntry = formData.get("primary_area");
-  const updatePrimaryArea = primaryAreaEntry !== null;
-  let primaryArea: string | null = null;
-  if (updatePrimaryArea) {
-    const trimmedArea = trimmed(primaryAreaEntry);
-    if (trimmedArea.length > PRIMARY_AREA_MAX) {
-      return {
-        ok: false,
-        error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
-      };
+  // Multi-area: opt-in update. When the form does not include
+  // `treatment_areas` we leave both treatment_areas and primary_area
+  // untouched (the notes editor that only edits prose, for example,
+  // should not clobber a careful area selection from the create form).
+  // When the form does include treatment_areas, the parsed list is the
+  // authoritative source: empty → null on both columns; non-empty →
+  // store the list and mirror areas[0] into primary_area for backward
+  // compatibility with the session area defaulting, banner fallback,
+  // and data export.
+  //
+  // The legacy single-field `primary_area` is still honoured when the
+  // form sends it WITHOUT a treatment_areas key (older edit surfaces or
+  // partial form posts) so the column stays editable without a
+  // multi-area picker.
+  const areasParsed = parseTreatmentAreasFromFormData(formData);
+  if (!areasParsed.ok) return { ok: false, error: areasParsed.error };
+
+  let updateTreatmentAreas = false;
+  let updatePrimaryArea = false;
+  let nextTreatmentAreas: string[] | null = null;
+  let nextPrimaryArea: string | null = null;
+
+  if (areasParsed.value !== null) {
+    updateTreatmentAreas = true;
+    updatePrimaryArea = true;
+    nextTreatmentAreas =
+      areasParsed.value.length === 0 ? null : areasParsed.value;
+    nextPrimaryArea =
+      nextTreatmentAreas != null && nextTreatmentAreas.length > 0
+        ? nextTreatmentAreas[0]
+        : null;
+  } else {
+    const primaryAreaEntry = formData.get("primary_area");
+    if (primaryAreaEntry !== null) {
+      updatePrimaryArea = true;
+      const trimmedArea = trimmed(primaryAreaEntry);
+      if (trimmedArea.length > PRIMARY_AREA_MAX) {
+        return {
+          ok: false,
+          error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+        };
+      }
+      nextPrimaryArea = trimmedArea.length === 0 ? null : trimmedArea;
     }
-    primaryArea = trimmedArea.length === 0 ? null : trimmedArea;
+  }
+
+  // Timeline months: each side is independently opt-in. We only set a
+  // column when its form field is explicitly present; an absent field
+  // leaves the column untouched. An empty value with the field present
+  // clears the column to null.
+  const tlMinEntry = formData.get("estimated_timeline_months_min");
+  const tlMaxEntry = formData.get("estimated_timeline_months_max");
+  const updateTimelineMin = tlMinEntry !== null;
+  const updateTimelineMax = tlMaxEntry !== null;
+  let nextTimelineMin: number | null = null;
+  let nextTimelineMax: number | null = null;
+  if (updateTimelineMin) {
+    const parsedMin = parseTimelineMonths(tlMinEntry);
+    if (!parsedMin.ok) return { ok: false, error: parsedMin.error };
+    nextTimelineMin = parsedMin.value;
+  }
+  if (updateTimelineMax) {
+    const parsedMax = parseTimelineMonths(tlMaxEntry);
+    if (!parsedMax.ok) return { ok: false, error: parsedMax.error };
+    nextTimelineMax = parsedMax.value;
+  }
+  // Cross-field ordering check: only meaningful when both sides are
+  // being written in this request. If only one is being updated, the
+  // DB's CHECK guards the cross-field invariant against the
+  // not-being-touched persisted value.
+  if (
+    updateTimelineMin &&
+    updateTimelineMax &&
+    nextTimelineMin != null &&
+    nextTimelineMax != null &&
+    nextTimelineMin > nextTimelineMax
+  ) {
+    return {
+      ok: false,
+      error: "Timeline from-months must be less than or equal to to-months.",
+    };
   }
 
   const supabase = await createClient();
@@ -375,12 +567,22 @@ export async function updateTreatmentPlanNotesAction(
     practitioner_notes: string | null;
     treatment_goal_minutes_override: number | null;
     primary_area?: string | null;
+    treatment_areas?: string[] | null;
+    estimated_timeline_months_min?: number | null;
+    estimated_timeline_months_max?: number | null;
   } = {
     budget_notes: budget,
     practitioner_notes: practitioner,
     treatment_goal_minutes_override: override,
   };
-  if (updatePrimaryArea) update.primary_area = primaryArea;
+  if (updateTreatmentAreas) update.treatment_areas = nextTreatmentAreas;
+  if (updatePrimaryArea) update.primary_area = nextPrimaryArea;
+  if (updateTimelineMin) {
+    update.estimated_timeline_months_min = nextTimelineMin;
+  }
+  if (updateTimelineMax) {
+    update.estimated_timeline_months_max = nextTimelineMax;
+  }
 
   const { error } = await supabase
     .from("treatment_plans")
