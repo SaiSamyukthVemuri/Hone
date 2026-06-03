@@ -1,0 +1,173 @@
+"use server";
+
+import { headers } from "next/headers";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { verifyCancellationToken } from "@/lib/booking/tokens";
+import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+
+// Generic public-facing message for the /manage surface. Returned for
+// any non-success outcome so the existence of a real appointment row
+// cannot be probed by comparing error shapes. Matches the same
+// collapse stance used by /cancel and /reschedule; the wording is
+// scoped to "manage link" so the user sees a coherent message.
+const PUBLIC_MANAGE_GENERIC_ERROR =
+  "This manage link can't be used right now.";
+
+function logInternal(event: string, detail: unknown) {
+  try {
+    console.error(
+      JSON.stringify({
+        event,
+        detail,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    console.error(event, detail);
+  }
+}
+
+// Same column-or-HMAC resolver pattern used by the cancel surface so
+// the manage link works for both new column-based tokens and any
+// older in-flight HMAC-based links a client may still have in an
+// email. The reschedule surface is column-only; for a legacy HMAC-
+// only row the manage page therefore resolves and renders, but the
+// Reschedule button on it routes into /reschedule which then falls
+// through to its own generic unavailable surface. New bookings and
+// the cron path always carry a column token, so this asymmetry is
+// the rare legacy-row edge only. We intentionally do not export
+// this resolver; the manage surface is the only caller and a shared
+// helper would broaden the import graph without a need.
+async function resolveAppointmentIdFromToken(
+  token: string,
+): Promise<
+  | { ok: true; appointment_id: string }
+  | { ok: false; error: "expired" | "invalid" }
+> {
+  if (!token) return { ok: false, error: "invalid" };
+
+  const admin = createAdminClient();
+  const { data: byColumn } = await admin
+    .from("appointments")
+    .select("id")
+    .eq("cancellation_token", token)
+    .maybeSingle();
+  if (byColumn) {
+    return { ok: true, appointment_id: byColumn.id };
+  }
+
+  const v = verifyCancellationToken(token);
+  if (v.ok) return { ok: true, appointment_id: v.appointment_id };
+  return { ok: false, error: v.error === "expired" ? "expired" : "invalid" };
+}
+
+// Public-facing summary for the manage page. Only fields the visitor
+// already needs to recognise the appointment plus the two policy
+// strings used by the reminder card. Deliberately omits address,
+// client name, practitioner identifying details, and appointment id
+// to match the same minimal-leak stance as the cancel and reschedule
+// fetchers.
+export type ManageSummary = {
+  studioName: string;
+  studioTimezone: string;
+  serviceName: string;
+  startsAt: string;
+  cancellationPolicyText: string | null;
+  noShowPolicyText: string | null;
+};
+
+export type FetchManageResult =
+  | { ok: true; summary: ManageSummary }
+  | { ok: false; error: string };
+
+export async function fetchAppointmentForManageAction(
+  token: string,
+): Promise<FetchManageResult> {
+  // Rate limit at the view tier (looser than submit). The token is
+  // never consumed by /manage; this surface is read-only.
+  const gate = await limitTokenRoute({
+    routeClass: "cancel_view",
+    token,
+    headers: await headers(),
+  });
+  if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
+  const resolved = await resolveAppointmentIdFromToken(token);
+  if (!resolved.ok) {
+    // Collapse rule: malformed / unknown / expired all return the
+    // same generic public message. No distinct "expired" string is
+    // exposed.
+    return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("appointments")
+    .select(
+      "id, status, starts_at, studio:studios(name, timezone, cancellation_policy_text, no_show_policy_text), service:services(name)",
+    )
+    .eq("id", resolved.appointment_id)
+    .maybeSingle();
+  if (error) {
+    logInternal("public_manage_fetch_error", {
+      code: error.code,
+      message: error.message,
+    });
+    return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
+  }
+  if (!data) return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
+
+  type Joined = {
+    id: string;
+    status: string;
+    starts_at: string;
+    studio:
+      | {
+          name: string;
+          timezone: string;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }
+      | Array<{
+          name: string;
+          timezone: string;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
+        }>
+      | null;
+    service: { name: string } | { name: string }[] | null;
+  };
+  const row = data as unknown as Joined;
+
+  // Collapse rule (same as cancel/reschedule): only a future
+  // confirmed appointment can flow through. Any other status
+  // (cancelled / completed / no_show / unknown) and any past start
+  // time collapses to the same generic payload, so a probing visitor
+  // cannot tell whether the token is valid-but-now-ineligible vs.
+  // unknown.
+  const startsAtMs = new Date(row.starts_at).getTime();
+  const isManageable =
+    row.status === "confirmed" &&
+    Number.isFinite(startsAtMs) &&
+    startsAtMs > Date.now();
+  if (!isManageable) {
+    return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
+  }
+
+  const pick = <T,>(v: T | T[] | null): T | null =>
+    Array.isArray(v) ? (v[0] ?? null) : v;
+  const studio = pick(row.studio);
+  const service = pick(row.service);
+
+  return {
+    ok: true,
+    summary: {
+      studioName: studio?.name ?? "studio",
+      studioTimezone: studio?.timezone ?? "UTC",
+      serviceName: service?.name ?? "Appointment",
+      startsAt: row.starts_at,
+      cancellationPolicyText: studio?.cancellation_policy_text ?? null,
+      noShowPolicyText: studio?.no_show_policy_text ?? null,
+    },
+  };
+}

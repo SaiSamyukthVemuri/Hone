@@ -193,13 +193,13 @@ type SendConfirmationInput = {
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   intakeUrl: string | null;
-  rescheduleUrl: string | null;
-  // PR SMS link/copy cleanup: SMS now carries an explicit cancel link
-  // alongside the reschedule link. Email already includes both via
-  // /cancel/<token> and /reschedule/<token>; this brings SMS to
-  // parity. Null when the appointment has no cancellation_token (very
-  // old rows that pre-date PR 0025 token backfill).
-  cancelUrl: string | null;
+  // Single neutral manage-appointment link the SMS carries. Resolves
+  // to /manage/<token>, which surfaces both reschedule and cancel as
+  // follow-on actions after showing the studio's policies. Null when
+  // the appointment has no cancellation_token (very old rows that
+  // pre-date the PR 0025 token backfill); in that case the SMS omits
+  // the manage line entirely.
+  manageUrl: string | null;
 };
 
 export async function sendBookingConfirmationSmsToClient(
@@ -219,8 +219,7 @@ export async function sendBookingConfirmationSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         intakeUrl: input.intakeUrl,
-        rescheduleUrl: input.rescheduleUrl,
-        cancelUrl: input.cancelUrl,
+        manageUrl: input.manageUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -239,10 +238,10 @@ type SendReminderInput = {
     | "send_2h_sms_reminders"
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
-  rescheduleUrl: string | null;
-  // Same rationale as confirmation: reminder SMS now also offers a
-  // direct cancel link, matching the email reminder content.
-  cancelUrl: string | null;
+  // Reminder SMS carry the same neutral /manage/<token> link as
+  // confirmation. The manage landing page surfaces both reschedule
+  // and cancel options after the studio's policies.
+  manageUrl: string | null;
 };
 
 export async function send24hReminderSmsToClient(
@@ -259,8 +258,7 @@ export async function send24hReminderSmsToClient(
         studioName: input.studio.name,
         startsAt: input.startsAt,
         timezone: input.timezone,
-        rescheduleUrl: input.rescheduleUrl,
-        cancelUrl: input.cancelUrl,
+        manageUrl: input.manageUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -280,8 +278,7 @@ export async function send2hReminderSmsToClient(
         studioName: input.studio.name,
         startsAt: input.startsAt,
         timezone: input.timezone,
-        rescheduleUrl: input.rescheduleUrl,
-        cancelUrl: input.cancelUrl,
+        manageUrl: input.manageUrl,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });

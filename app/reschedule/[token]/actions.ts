@@ -79,6 +79,12 @@ export type RescheduleSummary = {
   studioPublicBookingHorizonMonths: number;
   startsAt: string;
   status: "confirmed" | "cancelled" | "completed" | "no_show";
+  // Studio-authored policies shown on the reschedule page so the
+  // client sees the cancellation/no-show rules before committing to a
+  // change. Reminder/display only; the reschedule mutation does not
+  // consult these fields and is not blocked when either is empty.
+  cancellationPolicyText: string | null;
+  noShowPolicyText: string | null;
 };
 
 export type FetchRescheduleResult =
@@ -104,7 +110,7 @@ export async function fetchAppointmentForRescheduleAction(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, status, starts_at, duration_minutes, service_id, service:services(id, name, default_duration_minutes), studio:studios(id, name, timezone, public_booking_horizon_months)",
+      "id, status, starts_at, duration_minutes, service_id, service:services(id, name, default_duration_minutes), studio:studios(id, name, timezone, public_booking_horizon_months, cancellation_policy_text, no_show_policy_text)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -127,12 +133,16 @@ export async function fetchAppointmentForRescheduleAction(
           name: string;
           timezone: string;
           public_booking_horizon_months: number;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
         }
       | Array<{
           id: string;
           name: string;
           timezone: string;
           public_booking_horizon_months: number;
+          cancellation_policy_text: string | null;
+          no_show_policy_text: string | null;
         }>
       | null;
   };
@@ -158,6 +168,8 @@ export async function fetchAppointmentForRescheduleAction(
       studioPublicBookingHorizonMonths: studio.public_booking_horizon_months,
       startsAt: row.starts_at,
       status: row.status,
+      cancellationPolicyText: studio.cancellation_policy_text,
+      noShowPolicyText: studio.no_show_policy_text,
     },
   };
 }
@@ -561,6 +573,12 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   if (clientRow?.email && studioRow.send_confirmation_emails) {
     const cancellationUrl = `${APP_ORIGIN}/cancel/${newToken}`;
     const rescheduleUrl = `${APP_ORIGIN}/reschedule/${newToken}`;
+    // SMS uses the single neutral manage entry point. The email
+    // path above keeps the explicit cancel + reschedule URLs because
+    // email has the room for both labelled links; SMS does not, and
+    // the pilot direction is to keep SMS from actively inviting
+    // cancel/reschedule.
+    const manageUrl = `${APP_ORIGIN}/manage/${newToken}`;
     const intake = await ensureIntakeForClient({
       studioId: existing.studio_id,
       clientId: existing.client_id,
@@ -628,12 +646,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
             sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
           },
           intakeUrl: intake?.url ?? null,
-          rescheduleUrl,
-          // cancellationUrl was already built above for the email
-          // path on the rescheduled (new) appointment; SMS uses the
-          // same /cancel/<token> link so the client can cancel the
-          // new appointment directly from the SMS.
-          cancelUrl: cancellationUrl,
+          manageUrl,
         });
       }
     } catch (err) {

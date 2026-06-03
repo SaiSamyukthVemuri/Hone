@@ -2,6 +2,7 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { fetchAppointmentForRescheduleAction } from "./actions";
 import { RescheduleForm } from "./RescheduleForm";
 
@@ -80,6 +81,18 @@ export default async function ReschedulePage({
                   {result.summary.studioName}
                 </SummaryRow>
               </dl>
+
+              {/* Studio policies shown before the reschedule slot
+                  picker so the client sees the cancellation/no-show
+                  rules before committing to a change. Reminder /
+                  display only; the reschedule action is not gated on
+                  policy presence and the card renders nothing when
+                  both fields are empty. */}
+              <PublicPolicyReminderCard
+                cancellationPolicyText={result.summary.cancellationPolicyText}
+                noShowPolicyText={result.summary.noShowPolicyText}
+                studioName={result.summary.studioName}
+              />
 
               <RescheduleForm
                 token={token}

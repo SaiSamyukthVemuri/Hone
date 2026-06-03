@@ -673,6 +673,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // older in-flight links.
   const cancellationUrl = `${APP_ORIGIN}/cancel/${appointmentToken}`;
   const rescheduleUrl = `${APP_ORIGIN}/reschedule/${appointmentToken}`;
+  // SMS carries one neutral /manage/<token> link that surfaces both
+  // reschedule and cancel after the studio's policies. Email still
+  // includes the separate cancel + reschedule URLs above; SMS used
+  // to mirror them and now does not, per the pilot direction change
+  // away from encouraging cancel/reschedule from inside the SMS.
+  const manageUrl = `${APP_ORIGIN}/manage/${appointmentToken}`;
   // Note: the HMAC-fallback generateCancellationToken() call previously
   // sat here purely to keep the import "used". It has been removed; the
   // public booking flow now depends exclusively on
@@ -750,11 +756,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       sms_opted_out_at: clientSmsOptedOutAt,
     },
     intakeUrl: intake?.url ?? null,
-    rescheduleUrl,
-    // cancellationUrl was already built above for the email path;
-    // SMS now carries the same /cancel/<token> link so the client
-    // does not need to text us to cancel.
-    cancelUrl: cancellationUrl,
+    manageUrl,
   });
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves existing
