@@ -174,17 +174,17 @@ function WhatGenericMisses() {
             className="font-[var(--font-fraunces)] mt-8 text-[34px] font-bold leading-[1.05] md:text-[48px]"
             style={{ letterSpacing: "-0.03em" }}
           >
-            The part generic booking tools miss.
+            Never wonder what you did last session.
           </h2>
           <p className="mt-6 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
-            General booking and scheduling tools handle appointments. They do
-            not remember what you did to a client&rsquo;s chin last September,
-            what intensity setting worked, what reaction you saw, and what you
+            Generic booking and scheduling tools handle appointments. They
+            do not remember what you did to a client&rsquo;s chin last week,
+            what intensity setting worked, what probe you liked, or what you
             planned to try next.
           </p>
           <p className="mt-5 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
-            That memory is the work, and it is where paper still beats most
-            software. Hone treats it as the product.
+            Electrolysis is detail work. Hone keeps those details close so
+            every appointment starts with the right context.
           </p>
         </div>
         <div className="md:col-span-6">
@@ -246,21 +246,22 @@ function ProductPreviewSection() {
           <CheatSheetMockup />
         </div>
         <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
-          Product preview with anonymized example data. Initials only.
+          Product preview with demo data.
         </p>
 
-        {/* Three smaller surface previews so the reader sees more than
-            one screen. ChartingPreview / PlanProgressPreview /
-            CalendarPreview are the three coded illustrations in
-            ProductPreview.tsx, with anonymized demo values inside. */}
+        {/* Three smaller product previews so the reader sees more
+            than one screen. ChartingPreview / PlanProgressPreview /
+            CalendarPreview are coded illustrations in
+            ProductPreview.tsx with anonymized demo values inside; the
+            visitor-facing disclaimer above ("Product preview with
+            anonymized example data. Initials only.") covers both this
+            cluster and the cheat sheet, so we do not repeat a
+            screenshots-vs-illustrations caption here. */}
         <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
           <ChartingPreview />
           <PlanProgressPreview />
           <CalendarPreview />
         </div>
-        <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
-          Three more surface previews. Coded illustrations, not screenshots.
-        </p>
       </div>
     </Reveal>
   );
@@ -378,7 +379,7 @@ function CheatSheetMockup() {
       <div className="mt-5">
         <p className="text-[18px] font-medium">Upper lip</p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
-          Thermolysis  ·  27.12 MHz  ·  Ballet · Gold · One-piece · F4
+          Thermolysis  ·  27.12 MHz  ·  Ballet · Gold · One-piece · F2
         </p>
         <p className="mt-1 text-[14px]" style={{ color: PALETTE.muted }}>
           120 hairs treated  ·  cleared, mild redness, settled fast
