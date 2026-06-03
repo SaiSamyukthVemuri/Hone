@@ -36,10 +36,12 @@ export default async function PortalLoginPage() {
             </h1>
             <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
               Enter the email your studio has on file. We will send you a
-              secure link that signs you in for the next seven days.
+              secure one-time link to sign in.
             </p>
             <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
-              The link expires in 30 minutes and can only be used once.
+              The link expires in 30 minutes. After you sign in, your
+              portal session may stay active on this device for a short
+              time.
             </p>
           </div>
 

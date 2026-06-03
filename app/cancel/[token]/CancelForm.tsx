@@ -22,7 +22,7 @@ export function CancelForm({ token }: Props) {
 
   if (done === "cancelled") {
     return (
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
         <h2
           className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight"
           style={{ letterSpacing: "-0.02em" }}
@@ -32,6 +32,22 @@ export function CancelForm({ token }: Props) {
         <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
           The studio has been notified.
         </p>
+        {/* Back-to-portal exit. /portal handles its own session
+            check: if the visitor has a live portal session they land
+            on their home; if not, the portal page redirects to
+            /portal/login. We do not promise they are already signed
+            in. */}
+        <a
+          href="/portal"
+          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+          style={{
+            border: "1px solid #0A0A0A",
+            color: "#0A0A0A",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Back to client portal
+        </a>
       </div>
     );
   }

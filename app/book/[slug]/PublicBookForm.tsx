@@ -367,6 +367,73 @@ export function PublicBookForm({
     );
   }
 
+  // Existing-client path now routes to the secure client portal
+  // rather than rendering the full public booking form. The pilot
+  // wants returning clients to manage and (eventually) book through
+  // the portal so they do not re-type name / phone / SMS consent on
+  // every visit. The server action's existing-client guard from
+  // PR #120 stays in place as defence in depth (the action will
+  // refuse client_type=existing without an active match), but no
+  // UI path here submits to it; the existing-client branch of the
+  // form is intentionally unreachable from the rendered surface.
+  // Full removal of the unreachable existing-client form fields is
+  // deferred to a follow-up cleanup PR.
+  if (clientType === "existing") {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+            Booking as an{" "}
+            <strong className="font-medium text-[#0A0A0A]">
+              existing client
+            </strong>
+            .
+          </p>
+          <button
+            type="button"
+            onClick={() => setClientType(null)}
+            className="text-[13px] underline"
+            style={{ color: "#6B6B6B" }}
+          >
+            Change
+          </button>
+        </div>
+        <div
+          className="flex flex-col gap-4 p-6"
+          style={{
+            backgroundColor: "#FAFAF7",
+            border: "1px solid #E5E2D9",
+          }}
+        >
+          <h2
+            className="font-[var(--font-fraunces)] text-[22px] font-bold leading-tight md:text-[26px]"
+            style={{ letterSpacing: "-0.02em" }}
+          >
+            Already a {studioName} client?
+          </h2>
+          <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+            Use your secure client portal to manage appointments and
+            book follow-up sessions.
+          </p>
+          <a
+            href="/portal/login"
+            className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+            style={{
+              backgroundColor: "#0A0A0A",
+              color: "#FAFAF7",
+              letterSpacing: "0.1em",
+            }}
+          >
+            Sign in to client portal
+          </a>
+          <p className="text-[12px]" style={{ color: "#6B6B6B" }}>
+            Use the email {studioName} has on file.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // New-client + no consultation service published: surface a calm
   // generic message and let the visitor switch back to existing. We
   // do NOT fall through to showing every active service; the spec
@@ -604,13 +671,11 @@ export function PublicBookForm({
         </Field>
       )}
 
-      <Field
-        label={
-          clientType === "existing"
-            ? `Anything ${studioName} should know for this appointment?`
-            : "Anything else?"
-        }
-      >
+      {/* Existing-client path early-returns above with the portal
+          sign-in card, so only the new-client branch reaches this
+          field; the previous existing-client label is no longer
+          reachable from the UI. */}
+      <Field label="Anything else?">
         <textarea
           rows={3}
           value={notes}
