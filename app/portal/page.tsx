@@ -17,6 +17,11 @@ import {
 import { portalLogoutAction } from "./logout/actions";
 import { markPortalMessageReviewedAction } from "./portal-message-actions";
 import { PortalReplyForm } from "./PortalReplyForm";
+import {
+  getActiveConsentTemplatesForPortal,
+  getLatestSignaturesByTemplateForPortal,
+} from "@/lib/consent/queries";
+import { PortalConsentForms } from "./PortalConsentForms";
 
 // Authenticated client portal home.
 //
@@ -51,24 +56,48 @@ export default async function PortalHomePage() {
     redirect("/portal/login");
   }
 
-  const [upcoming, intake, preCareEntries, messages, replies] =
-    await Promise.all([
-      getPortalUpcomingAppointments(session.studioId, session.clientId),
-      getPortalIntakeStatus(session.studioId, session.clientId),
-      getPortalUpcomingPreCare(session.studioId, session.clientId),
-      // Migration 0053: secure portal messages from the studio.
-      // Scoped to this session's (studioId, clientId) at the query
-      // layer; the action that marks them reviewed is similarly
-      // scoped so a forged message id from another row cannot be
-      // acknowledged from this session.
-      getPortalMessagesForClient(session.studioId, session.clientId),
-      // PR #129 (migration 0054): client replies to the visible
-      // messages above. Same scope guarantee at the query layer; the
-      // reply action additionally re-checks the parent message
-      // (studio_id, client_id, message_id) + the current client's
-      // archived_at IS NULL before inserting.
-      getPortalRepliesForClient(session.studioId, session.clientId),
-    ]);
+  const [
+    upcoming,
+    intake,
+    preCareEntries,
+    messages,
+    replies,
+    consentTemplates,
+    consentSignaturesByTemplate,
+  ] = await Promise.all([
+    getPortalUpcomingAppointments(session.studioId, session.clientId),
+    getPortalIntakeStatus(session.studioId, session.clientId),
+    getPortalUpcomingPreCare(session.studioId, session.clientId),
+    // Migration 0053: secure portal messages from the studio.
+    // Scoped to this session's (studioId, clientId) at the query
+    // layer; the action that marks them reviewed is similarly
+    // scoped so a forged message id from another row cannot be
+    // acknowledged from this session.
+    getPortalMessagesForClient(session.studioId, session.clientId),
+    // PR #129 (migration 0054): client replies to the visible
+    // messages above. Same scope guarantee at the query layer; the
+    // reply action additionally re-checks the parent message
+    // (studio_id, client_id, message_id) + the current client's
+    // archived_at IS NULL before inserting.
+    getPortalRepliesForClient(session.studioId, session.clientId),
+    // PR #134 (migration 0057): consent / e-sign foundation. Active
+    // templates for this studio + the latest signature per template
+    // for this client. Studios with no active templates render no
+    // section; templates the client has already signed render as a
+    // "Signed" badge under "Recently signed" instead of the
+    // unsigned "Forms to review" block.
+    getActiveConsentTemplatesForPortal(session.studioId),
+    getLatestSignaturesByTemplateForPortal(
+      session.studioId,
+      session.clientId,
+    ),
+  ]);
+  const unsignedConsentTemplates = consentTemplates.filter(
+    (t) => !consentSignaturesByTemplate.has(t.id),
+  );
+  const signedConsentTemplates = consentTemplates.filter((t) =>
+    consentSignaturesByTemplate.has(t.id),
+  );
   const unreviewedCount = messages.filter(
     (m) => m.client_reviewed_at == null,
   ).length;
@@ -393,6 +422,52 @@ export default async function PortalHomePage() {
               </p>
             )}
           </section>
+
+          {/* PR #134. Consent / e-sign foundation. Unsigned active
+              templates render via a client component that handles
+              the read + sign drawer. The signed list below is a
+              read-only summary rendered server-side. Both blocks
+              omit when the studio has no active templates at all. */}
+          <PortalConsentForms templates={unsignedConsentTemplates} />
+
+          {signedConsentTemplates.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <h2
+                className="text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+              >
+                Signed forms
+              </h2>
+              <ul className="flex flex-col gap-3">
+                {signedConsentTemplates.map((t) => {
+                  const sig = consentSignaturesByTemplate.get(t.id)!;
+                  return (
+                    <li
+                      key={t.id}
+                      className="flex flex-col gap-1 p-5"
+                      style={{
+                        backgroundColor: "#FAFAF7",
+                        border: "1px solid #E5E2D9",
+                      }}
+                    >
+                      <p className="text-[15px] font-medium text-[#0A0A0A]">
+                        {t.title}
+                      </p>
+                      <p
+                        className="text-[12px]"
+                        style={{ color: "#6B6B6B" }}
+                      >
+                        Signed{" "}
+                        <FormattedDateTime iso={sig.signed_at} />
+                        {" · "}
+                        v{sig.template_version}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
 
           {showCareSection && (
             <section className="flex flex-col gap-3">

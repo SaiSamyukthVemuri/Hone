@@ -403,6 +403,58 @@ export type ClientPortalMessageReply = {
   updated_at: string;
 };
 
+// Migration 0057: studio-authored consent / e-sign templates. v1
+// supports treatment consent, policy acknowledgement, photo
+// consent, plus a card-on-file authorization placeholder reserved
+// for the future Stripe / card-on-file PR (no payment behaviour
+// in this PR). Versioned + status-gated; archived templates hide
+// from portal and default practitioner lists but are referenced
+// by historical client_consent_signatures via ON DELETE RESTRICT.
+export type ConsentTemplateStatus = "draft" | "active" | "archived";
+export type ConsentTemplateFormType =
+  | "general"
+  | "treatment_consent"
+  | "policy_acknowledgement"
+  | "card_authorization"
+  | "photo_consent";
+
+export type ConsentFormTemplate = {
+  id: string;
+  studio_id: string;
+  title: string;
+  description: string | null;
+  body: string;
+  form_type: ConsentTemplateFormType;
+  version: number;
+  status: ConsentTemplateStatus;
+  created_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Migration 0057: append-only immutable record of one client
+// signing one template at one moment. Snapshot fields capture the
+// title / body / version as rendered to the client; template_hash
+// is SHA-256 hex over the canonical concatenation built by
+// buildConsentTemplateSnapshot(). Multiple signatures of the same
+// (client, template) pair are allowed and preserved; the portal +
+// practitioner UI surface the latest per template.
+export type ClientConsentSignature = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  template_id: string;
+  template_title_snapshot: string;
+  template_body_snapshot: string;
+  template_version: number;
+  template_hash: string;
+  signature_name: string;
+  signed_at: string;
+  ip_hash: string | null;
+  user_agent_hash: string | null;
+  created_at: string;
+};
+
 export type AppointmentAudit = {
   id: string;
   appointment_id: string;

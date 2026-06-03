@@ -26,6 +26,7 @@ export default async function SettingsLayout({
           { href: "/settings/availability", label: "Availability" },
           { href: "/settings/calendar", label: "Breaks & blocks" },
           { href: "/settings/services", label: "Services" },
+          { href: "/settings/consent", label: "Consent forms" },
           { href: "/settings/payments", label: "Payments" },
           { href: "/settings/data", label: "Data" },
         ]
