@@ -9,9 +9,14 @@ import {
 } from "@/components/treatment-schedule-editor";
 import { computePlannedVsActual } from "@/lib/treatment-time/plans";
 import { formatMinutes } from "@/lib/treatment-time/format";
-import { AreaPicker } from "@/components/area-picker";
+import { MultiAreaPicker } from "@/components/multi-area-picker";
+import {
+  formatTimelineMonths,
+  resolveTreatmentAreas,
+} from "@/lib/treatment-plans/display";
 
 const PRIMARY_AREA_MAX = 60;
+const MAX_NAME = 100;
 
 type ActionFn = (formData: FormData) => Promise<
   { ok: true } | { ok: false; error: string }
@@ -22,19 +27,16 @@ type Props = {
   plans: TreatmentPlanWithStages[];
   createAction: ActionFn;
   closeAction: ActionFn;
-  // Phase C additions — all are narrow authenticated actions that go
-  // through the same RLS-scoped Supabase client as the existing
-  // create/close actions. The plan card passes them down to the
-  // <TreatmentScheduleEditor> and the per-plan notes editor.
+  // All narrow authenticated actions that go through the same
+  // RLS-scoped Supabase client as the existing create/close actions.
+  // The plan card passes them down to the <TreatmentScheduleEditor>
+  // and the per-plan notes editor.
   updateNotesAction: ActionFn;
   createStageAction: TreatmentScheduleAction;
   updateStageAction: TreatmentScheduleAction;
   deleteStageAction: TreatmentScheduleAction;
   practitionerNames: Record<string, string>;
 };
-
-const MAX_NAME = 100;
-const MAX_VISITS = 200;
 
 export function TreatmentPlansCard({
   clientId,
@@ -50,23 +52,32 @@ export function TreatmentPlansCard({
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   // Tracks whether the practitioner has manually edited the plan name.
-  // While false, the name auto-fills from the chosen area ("Chin
-  // treatment plan"). Once the practitioner types in the name field we
-  // stop overwriting it. Purely client-side; the FormData `name` field
-  // and the server action are unchanged.
+  // While false, the name auto-fills from the first selected area
+  // ("Chin treatment plan" / "Chin + Jawline treatment plan"). Once the
+  // practitioner types in the name field we stop overwriting it. Purely
+  // client-side; the FormData `name` field and the server action are
+  // unchanged.
   const [nameTouched, setNameTouched] = useState(false);
-  const [visits, setVisits] = useState("12");
-  const [primaryArea, setPrimaryArea] = useState("");
+  const [areas, setAreas] = useState<string[]>([]);
+  const [timelineMin, setTimelineMin] = useState("");
+  const [timelineMax, setTimelineMax] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Area-first: choosing/clearing the area auto-generates the plan name
-  // until the practitioner edits the name themselves.
-  function handleAreaChange(next: string) {
-    setPrimaryArea(next);
+  // Area-first: changing the areas list auto-generates the plan name
+  // until the practitioner edits the name themselves. With multiple
+  // areas, we use the first one + " and others" so the auto-name does
+  // not get unwieldy.
+  function handleAreasChange(next: string[]) {
+    setAreas(next);
     if (!nameTouched) {
-      const a = next.trim();
-      setName(a.length > 0 ? `${a} treatment plan` : "");
+      if (next.length === 0) {
+        setName("");
+      } else if (next.length === 1) {
+        setName(`${next[0]} treatment plan`);
+      } else {
+        setName(`${next[0]} and others treatment plan`);
+      }
     }
   }
 
@@ -83,21 +94,46 @@ export function TreatmentPlansCard({
       setError(`Plan name must be ${MAX_NAME} characters or fewer.`);
       return;
     }
-    const visitsNum = parseInt(visits, 10);
-    if (!Number.isFinite(visitsNum) || visitsNum < 1 || visitsNum > MAX_VISITS) {
-      setError(`Estimated visits must be between 1 and ${MAX_VISITS}.`);
-      return;
+    for (const a of areas) {
+      if (a.length > PRIMARY_AREA_MAX) {
+        setError(
+          `Each treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+        );
+        return;
+      }
     }
-    const trimmedArea = primaryArea.trim();
-    if (trimmedArea.length > PRIMARY_AREA_MAX) {
-      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
-      return;
+    const trimMin = timelineMin.trim();
+    const trimMax = timelineMax.trim();
+    if (trimMin && trimMax) {
+      const a = parseInt(trimMin, 10);
+      const b = parseInt(trimMax, 10);
+      if (Number.isFinite(a) && Number.isFinite(b) && a > b) {
+        setError("Timeline from-months must be less than or equal to to-months.");
+        return;
+      }
     }
+
     const fd = new FormData();
     fd.set("client_id", clientId);
     fd.set("name", trimmedName);
-    fd.set("suggested_visit_count", String(visitsNum));
-    fd.set("primary_area", trimmedArea);
+    // Always send treatment_areas (possibly zero entries) so the server
+    // action takes the multi-area path. Each selected area is its own
+    // form value; the action's FormData.getAll("treatment_areas") will
+    // pick them up.
+    for (const a of areas) {
+      fd.append("treatment_areas", a);
+    }
+    if (areas.length === 0) {
+      // FormData.append above did nothing; send an explicit empty
+      // marker so the action knows the field was present (clear) vs.
+      // absent (untouched). Empty strings are filtered out by the
+      // parser, leaving an empty array which the action normalises
+      // to NULL on both treatment_areas and primary_area.
+      fd.append("treatment_areas", "");
+    }
+    if (trimMin) fd.set("estimated_timeline_months_min", trimMin);
+    if (trimMax) fd.set("estimated_timeline_months_max", trimMax);
+
     setError(null);
     startTransition(async () => {
       const res = await createAction(fd);
@@ -107,8 +143,9 @@ export function TreatmentPlansCard({
       }
       setName("");
       setNameTouched(false);
-      setVisits("12");
-      setPrimaryArea("");
+      setAreas([]);
+      setTimelineMin("");
+      setTimelineMax("");
       setAdding(false);
     });
   }
@@ -132,8 +169,9 @@ export function TreatmentPlansCard({
 
       {plans.length === 0 && !adding && (
         <p className="text-sm text-neutral-500">
-          Track multi-session treatments with a plan. Helpful for arm or leg
-          work over 12+ sessions.
+          Track multi-session treatments with a plan. Electrolysis plans
+          often run over months and depend on session length, consistency,
+          area, hormones, density, and tolerance.
         </p>
       )}
 
@@ -190,21 +228,20 @@ export function TreatmentPlansCard({
         <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-sm font-medium">Create treatment plan</p>
 
-          {/* Area-first: the treatment area is the primary choice. Most
-              plans are total-clearance work on one area, so picking the
-              area auto-names the plan and the name/visits below become
-              secondary. */}
+          {/* Area-first: a treatment plan can cover one or more areas.
+              Picking areas auto-names the plan; the practitioner can
+              edit the name. */}
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-              Treatment area
+              Treatment areas
             </span>
-            <AreaPicker
-              value={primaryArea}
-              onChange={handleAreaChange}
+            <MultiAreaPicker
+              selected={areas}
+              onChange={handleAreasChange}
               idPrefix="plan-create"
             />
             <span className="text-[11px] text-neutral-500">
-              The area this plan treats (e.g. total clearance of the chin).
+              Pick the areas this plan covers (e.g. Chin and Jawline).
               You can leave this blank.
             </span>
           </div>
@@ -225,31 +262,52 @@ export function TreatmentPlansCard({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
             <span className="text-[11px] text-neutral-500">
-              Auto-filled from the area. Edit it if you like.
+              Auto-filled from the areas. Edit it if you like.
             </span>
           </label>
 
-          <label className="flex flex-col gap-1 max-w-[12rem]">
+          {/* Timeline reframing: months window, not visit count. The two
+              inputs are optional; either side alone is fine ("about 24
+              months", "at least 18 months"). The copy stays cautious;
+              estimates change as treatment progresses. */}
+          <div className="flex flex-col gap-1.5">
             <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-              Estimated visits
+              Estimated treatment timeline
             </span>
-            {/* FormData field name (`suggested_visit_count`) is unchanged —
-                only the visible label is renamed. The server action and
-                schema column are untouched. */}
-            <input
-              type="number"
-              min={1}
-              max={MAX_VISITS}
-              step={1}
-              value={visits}
-              onChange={(e) => setVisits(e.target.value)}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                value={timelineMin}
+                onChange={(e) => setTimelineMin(e.target.value)}
+                placeholder="18"
+                aria-label="Timeline minimum months"
+                className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+              <span className="text-sm text-neutral-600">to</span>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                value={timelineMax}
+                onChange={(e) => setTimelineMax(e.target.value)}
+                placeholder="24"
+                aria-label="Timeline maximum months"
+                className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+              <span className="text-sm text-neutral-600">months</span>
+            </div>
             <span className="text-[11px] text-neutral-500">
-              A rough estimate. You can add a treatment schedule with stages
-              after creating the plan.
+              Most electrolysis plans are discussed over months, not a
+              fixed number of visits. Many clients need 18 to 24 months
+              depending on area, density, hormones, consistency, session
+              length, and skin tolerance. Both fields are optional.
             </span>
-          </label>
+          </div>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -265,8 +323,9 @@ export function TreatmentPlansCard({
                 setAdding(false);
                 setName("");
                 setNameTouched(false);
-                setVisits("12");
-                setPrimaryArea("");
+                setAreas([]);
+                setTimelineMin("");
+                setTimelineMax("");
                 setError(null);
               }}
               disabled={pending}
@@ -311,13 +370,21 @@ function PlanCard({
   deleteStageAction: TreatmentScheduleAction;
 }) {
   const isClosed = plan.status === "closed";
-  const isComplete = plan.attached_count >= plan.suggested_visit_count;
   const createdBy = plan.created_by_practitioner_id
     ? practitionerNames[plan.created_by_practitioner_id]
     : null;
   const closedBy = plan.closed_by_practitioner_id
     ? practitionerNames[plan.closed_by_practitioner_id]
     : null;
+
+  // Resolve the area chips: prefer the multi-area list, fall back to
+  // the legacy primary_area so plans created before migration 0051
+  // still render correctly.
+  const areaChips = resolveTreatmentAreas(plan);
+  const timelineLabel = formatTimelineMonths(
+    plan.estimated_timeline_months_min,
+    plan.estimated_timeline_months_max,
+  );
 
   return (
     <div
@@ -332,14 +399,15 @@ function PlanCard({
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
             {plan.name}
           </p>
-          {plan.primary_area && (
+          {areaChips.map((area) => (
             <span
+              key={area}
               className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
-              title="Primary area"
+              title="Treatment area"
             >
-              {plan.primary_area}
+              {area}
             </span>
-          )}
+          ))}
         </div>
         {isClosed ? (
           <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
@@ -351,6 +419,7 @@ function PlanCard({
           </span>
         )}
       </div>
+
       <div className="flex flex-col gap-0.5 text-xs text-neutral-500">
         <span>
           Created <FormattedDateTime iso={plan.created_at} />
@@ -364,41 +433,34 @@ function PlanCard({
         )}
       </div>
 
-      {/* Legacy attached-visits readout. De-emphasized after Treatment
-          Plan v2: the planned-vs-actual block below now carries the
-          primary progress story when stages exist. The legacy
-          suggested_visit_count column is preserved (still part of plan
-          creation) and surfaced as a single muted line so historical
-          plans without stages still show their target. */}
-      <div className="flex items-baseline justify-between gap-3 text-xs text-neutral-500">
-        <span className="tabular-nums">
-          {plan.attached_count} of {plan.suggested_visit_count} estimated
-          visits
-        </span>
-        {isClosed && isComplete && (
-          <span className="text-emerald-700 dark:text-emerald-400">
-            Complete
-          </span>
-        )}
-      </div>
+      {timelineLabel && (
+        <div className="flex flex-col gap-0.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+            Estimated treatment timeline
+          </p>
+          <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+            {timelineLabel}
+          </p>
+          <p className="text-[11px] text-neutral-500">
+            An estimate, not a guarantee. Can change as treatment progresses.
+          </p>
+        </div>
+      )}
 
-      {/* Phase D: planned vs actual treatment time. Sits between the
-          legacy attached-visits progress bar and the schedule editor.
-          Renders fully when an estimate exists (from stages or
-          override); falls back to a calm "actual logged only" view
-          for legacy/no-stage plans so practitioners still see how much
-          time they have logged against the plan. Never converts the
-          legacy suggested_visit_count into minutes — that would
-          fabricate data. */}
+      {/* Planned vs actual treatment time. This is now the primary
+          progress story; the legacy "X of Y estimated visits" line is
+          demoted to the muted footnote below. Renders fully when an
+          estimate exists (from stages or override); falls back to a
+          calm "actual logged only" view for legacy/no-stage plans so
+          practitioners still see how much time they have logged
+          against the plan. */}
       <PlannedVsActualBlock plan={plan} />
 
-      {/* Phase C: treatment schedule (stages) + practitioner-only notes.
-          The schedule editor renders for both active and closed plans —
-          closed plans show stages read-only. The notes editor only
+      {/* Treatment schedule (stages) + practitioner-only notes. The
+          schedule editor renders for both active and closed plans
+          (closed plans show stages read-only). The notes editor only
           renders for active plans (closed plans show read-only notes
-          if any). Both surfaces sit BELOW the legacy attached-visits
-          progress and ABOVE the Close plan button so the visual
-          hierarchy still leads with "what's this plan doing today". */}
+          if any). */}
       <TreatmentScheduleEditor
         planId={plan.id}
         clientId={clientId}
@@ -416,22 +478,22 @@ function PlanCard({
         action={updateNotesAction}
       />
 
+      {/* Legacy visit-count footnote. Kept so plans created before the
+          multi-area + timeline reframing still show what they were
+          originally targeted at, and so the data export number has a
+          UI surface. Muted and below the new primary story. */}
+      <p className="border-t border-dashed border-neutral-200 pt-2 text-[11px] text-neutral-500 dark:border-neutral-800">
+        Legacy visit estimate: {plan.attached_count} of{" "}
+        {plan.suggested_visit_count}.
+      </p>
+
       {onClose && !isClosed && (
         <div className="flex flex-col gap-2 pt-1">
-          {isComplete && (
-            <p className="text-xs italic text-neutral-600 dark:text-neutral-400">
-              All suggested visits complete.
-            </p>
-          )}
           <button
             type="button"
             onClick={onClose}
             disabled={pending}
-            className={
-              isComplete
-                ? "self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-                : "self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-            }
+            className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
           >
             Close plan
           </button>
@@ -441,12 +503,13 @@ function PlanCard({
   );
 }
 
-// Phase C: practitioner-only budget + clinical notes for a treatment plan.
-// Both fields are nullable text columns on treatment_plans (migration
-// 0034). Closed plans render the notes read-only (or omit if empty).
-// Active plans show an Edit toggle that opens a compact textarea form.
-//
-// These notes are NOT shown to clients and NOT included in any email.
+// Practitioner-only budget + clinical notes for a treatment plan.
+// budget_notes, practitioner_notes, treatment_areas, and
+// timeline-months are nullable columns on treatment_plans (migrations
+// 0034, 0038, 0051). Closed plans render the notes read-only (or omit
+// if empty). Active plans show an Edit toggle that opens a compact
+// form. These notes are NOT shown to clients and NOT included in any
+// email.
 function PlanNotesEditor({
   plan,
   clientId,
@@ -463,8 +526,22 @@ function PlanNotesEditor({
   const [practitioner, setPractitioner] = useState(
     plan.practitioner_notes ?? "",
   );
-  const [primaryAreaDraft, setPrimaryAreaDraft] = useState(
-    plan.primary_area ?? "",
+  const [areasDraft, setAreasDraft] = useState<string[]>(
+    plan.treatment_areas && plan.treatment_areas.length > 0
+      ? [...plan.treatment_areas]
+      : plan.primary_area
+        ? [plan.primary_area]
+        : [],
+  );
+  const [timelineMinDraft, setTimelineMinDraft] = useState(
+    plan.estimated_timeline_months_min != null
+      ? String(plan.estimated_timeline_months_min)
+      : "",
+  );
+  const [timelineMaxDraft, setTimelineMaxDraft] = useState(
+    plan.estimated_timeline_months_max != null
+      ? String(plan.estimated_timeline_months_max)
+      : "",
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -479,21 +556,47 @@ function PlanNotesEditor({
 
   function submit() {
     setError(null);
-    const trimmedArea = primaryAreaDraft.trim();
-    if (trimmedArea.length > PRIMARY_AREA_MAX) {
-      setError(`Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
-      return;
+    for (const a of areasDraft) {
+      if (a.length > PRIMARY_AREA_MAX) {
+        setError(
+          `Each treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
+        );
+        return;
+      }
+    }
+    const tmin = timelineMinDraft.trim();
+    const tmax = timelineMaxDraft.trim();
+    if (tmin && tmax) {
+      const a = parseInt(tmin, 10);
+      const b = parseInt(tmax, 10);
+      if (Number.isFinite(a) && Number.isFinite(b) && a > b) {
+        setError("Timeline from-months must be less than or equal to to-months.");
+        return;
+      }
     }
     const fd = new FormData();
     fd.set("plan_id", plan.id);
     fd.set("client_id", clientId);
     fd.set("budget_notes", budget);
     fd.set("practitioner_notes", practitioner);
-    fd.set("primary_area", trimmedArea);
-    // Always re-send the existing override unchanged. The override
-    // field is not edited from this form in Phase C; Phase D will wire
-    // it to a derived computation. Preserve whatever is currently on
-    // the plan so a save here doesn't accidentally clear it.
+    // Multi-area: always send treatment_areas so the action takes the
+    // multi-area path (and clears both columns when areasDraft is
+    // empty). One value per selected area; an empty selection sends a
+    // single empty string so the field is present.
+    if (areasDraft.length === 0) {
+      fd.append("treatment_areas", "");
+    } else {
+      for (const a of areasDraft) {
+        fd.append("treatment_areas", a);
+      }
+    }
+    // Timeline: always send both fields. Empty string clears the
+    // column to NULL; a number sets it.
+    fd.set("estimated_timeline_months_min", tmin);
+    fd.set("estimated_timeline_months_max", tmax);
+    // Always re-send the existing override unchanged. This editor does
+    // not edit the override directly; preserving avoids accidental
+    // clears on save.
     if (plan.treatment_goal_minutes_override != null) {
       fd.set(
         "treatment_goal_minutes_override",
@@ -513,7 +616,23 @@ function PlanNotesEditor({
   function cancel() {
     setBudget(plan.budget_notes ?? "");
     setPractitioner(plan.practitioner_notes ?? "");
-    setPrimaryAreaDraft(plan.primary_area ?? "");
+    setAreasDraft(
+      plan.treatment_areas && plan.treatment_areas.length > 0
+        ? [...plan.treatment_areas]
+        : plan.primary_area
+          ? [plan.primary_area]
+          : [],
+    );
+    setTimelineMinDraft(
+      plan.estimated_timeline_months_min != null
+        ? String(plan.estimated_timeline_months_min)
+        : "",
+    );
+    setTimelineMaxDraft(
+      plan.estimated_timeline_months_max != null
+        ? String(plan.estimated_timeline_months_max)
+        : "",
+    );
     setError(null);
     setEditing(false);
   }
@@ -531,7 +650,7 @@ function PlanNotesEditor({
               onClick={() => setEditing(true)}
               className="text-[11px] text-neutral-500 hover:underline"
             >
-              {hasNotes ? "Edit" : "Add notes"}
+              Edit
             </button>
           )}
         </div>
@@ -570,20 +689,55 @@ function PlanNotesEditor({
   return (
     <div className="flex flex-col gap-3 rounded-md border border-neutral-300 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
       <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-        Edit plan notes
+        Edit plan
       </p>
 
       <div className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Primary area
+          Treatment areas
         </span>
-        <AreaPicker
-          value={primaryAreaDraft}
-          onChange={setPrimaryAreaDraft}
+        <MultiAreaPicker
+          selected={areasDraft}
+          onChange={setAreasDraft}
           idPrefix={`plan-${plan.id}`}
         />
         <span className="text-[11px] text-neutral-500">
-          Used to group treatment progress by area. Leave blank to clear.
+          Pick the areas this plan covers. Clearing leaves no area.
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+          Estimated treatment timeline
+        </span>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={60}
+            step={1}
+            value={timelineMinDraft}
+            onChange={(e) => setTimelineMinDraft(e.target.value)}
+            placeholder="18"
+            aria-label="Timeline minimum months"
+            className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-sm text-neutral-600">to</span>
+          <input
+            type="number"
+            min={1}
+            max={60}
+            step={1}
+            value={timelineMaxDraft}
+            onChange={(e) => setTimelineMaxDraft(e.target.value)}
+            placeholder="24"
+            aria-label="Timeline maximum months"
+            className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-sm text-neutral-600">months</span>
+        </div>
+        <span className="text-[11px] text-neutral-500">
+          An estimate, not a guarantee. Either side optional.
         </span>
       </div>
 
@@ -633,7 +787,7 @@ function PlanNotesEditor({
           disabled={pending}
           className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
         >
-          {pending ? "Saving…" : "Save notes"}
+          {pending ? "Saving…" : "Save plan"}
         </button>
         <button
           type="button"
@@ -648,18 +802,18 @@ function PlanNotesEditor({
   );
 }
 
-// Phase D: planned vs actual treatment time, derived per-plan from
-// stages + override (planned side) and Σ session_blocks.minutes_performed
+// Planned vs actual treatment time, derived per-plan from stages +
+// override (planned side) and Σ session_blocks.minutes_performed
 // (actual side). Uses computePlannedVsActual() from
 // lib/treatment-time/plans so the same numbers appear here, in the
-// schedule editor's per-stage totals, and (later) on the session detail
+// schedule editor's per-stage totals, and on the session detail
 // banner.
 //
-// Display copy follows the practitioner-vocabulary rules from the audit:
-// "Estimated total", "Actual logged time", "Estimated remaining",
-// "Based on logged sessions", and the standing footnote "Estimates
-// change as treatment progresses." Avoids "guaranteed", "completion
-// date", "percent cleared", etc.
+// Copy follows the practitioner-vocabulary rules from the audit:
+// "Estimated total treatment time", "Actual logged time",
+// "Estimated remaining", "Based on logged sessions", and the standing
+// footnote "Estimates change as treatment progresses." Avoids
+// "guaranteed", "completion date", "percent cleared", etc.
 //
 // This block does NOT render on any client-facing surface (public
 // booking, confirmation/reminder emails, intake, cancel, reschedule).
@@ -703,14 +857,8 @@ function PlannedVsActualBlock({
         <>
           <dl className="grid grid-cols-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
             <div>
-              <dt className="text-neutral-500">Estimated total</dt>
+              <dt className="text-neutral-500">Estimated total treatment time</dt>
               <dd className="tabular-nums text-neutral-800 dark:text-neutral-200">
-                {pva.estimatedTotalVisits != null && (
-                  <>
-                    about {pva.estimatedTotalVisits}{" "}
-                    {pva.estimatedTotalVisits === 1 ? "visit" : "visits"} ·{" "}
-                  </>
-                )}
                 {formatMinutes(pva.estimatedTotalMinutes!)}
               </dd>
             </div>
@@ -752,9 +900,7 @@ function PlannedVsActualBlock({
       ) : (
         <>
           {/* No estimate yet — show the actual side alone so practitioners
-              can still see time invested. Avoid back-deriving an estimate
-              from suggested_visit_count: it has no per-visit duration,
-              and any conversion would be fabricated. */}
+              can still see time invested. */}
           {pva.actualLoggedMinutes > 0 && (
             <p className="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums">
               <span className="text-neutral-500">Actual logged time:</span>{" "}

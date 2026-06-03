@@ -92,17 +92,33 @@ export default async function SessionDetailPage({
   ]);
 
   // UI defaulting (NOT attachment): the new-treatment-area picker is seeded
-  // from a plan's structured primary_area. Prefer the attached plan; if the
+  // from a plan's first structured area. Prefer the attached plan; if the
   // session isn't attached — auto-attach only fires at session creation, and
   // only when the client has exactly one active electrolysis plan
   // (app/(app)/clients/[id]/sessions/new/actions.ts) — fall back to the
-  // client's single active plan's primary_area. This is a starting value
+  // client's single active plan's first area. This is a starting value
   // only: fully editable, never forced, and it does NOT attach the session,
   // change charting, or mutate any plan/saved data.
+  //
+  // Multi-area plans (migration 0051): use treatment_areas[0] when set so
+  // the practitioner can still benefit from defaulting even when the plan
+  // covers multiple areas. Falls back to primary_area for plans created
+  // before the multi-area reframing (which still keeps primary_area in
+  // sync with treatment_areas[0] via the action writers).
+  function defaultAreaForPlan(plan: {
+    treatment_areas: string[] | null;
+    primary_area: string | null;
+  } | null): string | null {
+    if (!plan) return null;
+    if (plan.treatment_areas && plan.treatment_areas.length > 0) {
+      return plan.treatment_areas[0] ?? null;
+    }
+    return plan.primary_area ?? null;
+  }
   const defaultPrimaryArea: string | null =
-    attachedPlan?.primary_area ??
+    defaultAreaForPlan(attachedPlan) ??
     (activePlansForClient.length === 1
-      ? (activePlansForClient[0]?.primary_area ?? null)
+      ? defaultAreaForPlan(activePlansForClient[0] ?? null)
       : null);
 
   // Running total: only shown for electrolysis sessions (the modality the

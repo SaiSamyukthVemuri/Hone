@@ -459,7 +459,26 @@ export type TreatmentPlan = {
   // area for this plan, e.g. "Chin" or "Underarms". Free-form 1..60
   // chars; the practitioner UI uses lib/constants.ts AREA_REGIONS as
   // the canonical picker but "Other" + custom strings are allowed.
+  // Migration 0051 keeps this column for backward compatibility: every
+  // multi-area writer mirrors the first selected area into primary_area
+  // so legacy readers (session area defaulting, banner fallback, data
+  // export) still resolve to a single canonical area string.
   primary_area: string | null;
+  // Migration 0051: multi-area + month-timeline reframing.
+  //
+  // treatment_areas: ordered list of structured areas this plan
+  //   treats. NULL or empty means "use primary_area as the single
+  //   area" (legacy plans). When non-empty, areas[0] mirrors
+  //   primary_area for backward compatibility. Cap is 12 elements
+  //   (DB CHECK).
+  // estimated_timeline_months_min / _max: optional months estimate
+  //   for the whole plan. Reminder/display only; not a clinical
+  //   guarantee. Either side may be NULL (one-sided estimates allowed);
+  //   when both are present min <= max (DB CHECK). Each side is
+  //   constrained to 1..60 months.
+  treatment_areas: string[] | null;
+  estimated_timeline_months_min: number | null;
+  estimated_timeline_months_max: number | null;
 };
 
 // Migration 0034: one stage of a treatment plan. A plan can contain

@@ -140,7 +140,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     supabase
       .from("treatment_plans")
       .select(
-        "id, client_id, name, primary_area, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
+        "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
       )
       .eq("studio_id", studio.id)
       .order("created_at", { ascending: false }),
@@ -490,10 +490,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   const treatmentPlanRows = (
     (treatmentPlansRes.data ?? []) as PlanExportRow[]
-  ).map((p) => ({
-    ...p,
-    client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
-  }));
+  ).map((p) => {
+    // Migration 0051: treatment_areas is a text[] on the row, which
+    // rowsToCsv would coerce to "Chin,Jawline" without quoting. Flatten
+    // explicitly here so the column shows up as a pipe-joined list,
+    // which round-trips cleanly through any spreadsheet tool ("Chin |
+    // Jawline").
+    const rawAreas = (p as PlanExportRow & {
+      treatment_areas?: string[] | null;
+    }).treatment_areas;
+    const treatment_areas_joined =
+      Array.isArray(rawAreas) && rawAreas.length > 0
+        ? rawAreas.join(" | ")
+        : null;
+    return {
+      ...p,
+      client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+      treatment_areas: treatment_areas_joined,
+    };
+  });
 
   zip.file(
     "treatment_plans.csv",
@@ -504,6 +519,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "client_name",
         "name",
         "primary_area",
+        "treatment_areas",
+        "estimated_timeline_months_min",
+        "estimated_timeline_months_max",
         "status",
         "suggested_visit_count",
         "treatment_goal_minutes_override",
@@ -576,7 +594,7 @@ Files included:
 - practitioners.csv: Active practitioners at your studio.
 - client_pricing.csv: Per-client custom pricing.
 - appointments.csv: One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.
-- treatment_plans.csv: One row per treatment plan with client, name, primary area, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
+- treatment_plans.csv: One row per treatment plan with client, name, primary area, all treatment areas (pipe-joined), estimated timeline months window, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
 - treatment_plan_stages.csv: Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.
 
 Your data is yours. This export can be opened in Excel, Numbers, Google Sheets, or any spreadsheet tool. If you ever leave Hone, your records leave with you.
