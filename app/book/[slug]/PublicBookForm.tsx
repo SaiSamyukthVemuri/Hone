@@ -192,10 +192,24 @@ export function PublicBookForm({
   }, [clientType, visibleServices, serviceId]);
 
   // Single source of truth for the slots fetch: re-runs only when slug,
-  // serviceId, or date actually change. Race-safe via a cancellation flag.
+  // serviceId, date, or clientType actually change. Race-safe via a
+  // cancellation flag.
+  //
+  // No-network-before-choice guard: while clientType === null the
+  // ClientTypeChooser is rendered, but this effect still runs because
+  // hooks must be called unconditionally. We short-circuit BEFORE
+  // calling fetchPublicSlotsAction so the first-step page load makes
+  // zero public booking API calls and any stale slot list / picked
+  // slot from a previous choice is cleared at the same time. The
+  // request-cancellation flag handles the unrelated race where slug,
+  // serviceId, or date change while a fetch is in flight.
   useEffect(() => {
-    if (!serviceId || !date) {
+    if (clientType == null || !serviceId || !date) {
       setSlots([]);
+      setPicked(null);
+      setError(null);
+      setNextSearched(false);
+      setNoneInHorizon(false);
       return;
     }
     let cancelled = false;
@@ -219,7 +233,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date]);
+  }, [slug, serviceId, date, clientType]);
 
   function onService(v: string) {
     setServiceId(v);
@@ -233,6 +247,12 @@ export function PublicBookForm({
   // returns the first date with bookable future slots. The slot-fetch
   // useEffect above re-runs automatically when `date` changes.
   function onFindNext() {
+    // Same no-network-before-choice guard as the slot-fetch effect:
+    // until the visitor picks a client type, the "Next available"
+    // button is not rendered, but a stale event handler or test
+    // harness could still invoke this. Bail before the action call
+    // so the public surface stays silent.
+    if (clientType == null) return;
     if (!serviceId) return;
     setError(null);
     setNextSearched(false);

@@ -82,6 +82,8 @@ const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
 // already rejects any forged new-client submit that picked a
 // non-consultation service id, which is the only way a no-
 // consultation studio could reach this action with client_type=new.
+const MISSING_CLIENT_TYPE_ERROR =
+  "Please choose whether you are a new or existing client.";
 
 function logInternalBookingError(event: string, detail: unknown) {
   try {
