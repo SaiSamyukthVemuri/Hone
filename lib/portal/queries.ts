@@ -329,6 +329,20 @@ export type PortalMessageForClient = Pick<
   | "client_reviewed_at"
 >;
 
+// PR #129. Client-side reply row shape. Only the fields the portal UI
+// actually renders are selected; the studio-facing notification_email_*
+// audit columns and practitioner_seen_at are intentionally NOT
+// surfaced to the portal because the client should not see whether
+// the studio has read their reply yet, only that the reply was
+// posted. Same scope rules as PortalMessageForClient: every read goes
+// through the resolved (studioId, clientId) session pair.
+export type PortalReplyForClient = {
+  id: string;
+  message_id: string;
+  body: string;
+  created_at: string;
+};
+
 export async function getPortalMessagesForClient(
   studioId: string,
   clientId: string,
@@ -354,6 +368,41 @@ export async function getPortalMessagesForClient(
     return [];
   }
   return (data ?? []) as PortalMessageForClient[];
+}
+
+// PR #129. Portal-side fetch of every reply the current client has
+// posted across their visible messages. Returns a flat array sorted
+// by created_at ascending so the portal page can render the oldest
+// reply first under its parent message (the conversation reads
+// top-down). Scoping is the same three-clause guard the
+// markPortalMessageReviewedAction uses: studio_id + client_id +
+// archived_at IS NULL. We do NOT filter by message_id here because
+// the parent-list query already returned the set of visible
+// messages; the portal page groups in memory.
+export async function getPortalRepliesForClient(
+  studioId: string,
+  clientId: string,
+): Promise<PortalReplyForClient[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("client_portal_message_replies")
+    .select("id, message_id, body, created_at")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_replies_for_client_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
+  return (data ?? []) as PortalReplyForClient[];
 }
 
 // Resolve an active non-archived client by normalized email scoped

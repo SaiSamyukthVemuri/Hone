@@ -224,6 +224,49 @@ export async function createPortalMessageAction(
   return { ok: true, messageId: created.id, emailSent };
 }
 
+// PR #129. Practitioner-side server action that marks one client
+// reply as seen. The UPDATE is keyed on (id, studio_id, client_id,
+// practitioner_seen_at IS NULL) so:
+//   * a forged reply id from another studio/client cannot be marked
+//     seen from this practitioner's session (studio scope comes from
+//     getCurrentPractitionerWithStudio, never form data);
+//   * an already-seen row is a no-op rather than a re-stamp.
+// Returns void to fit the same <form action> binding pattern that
+// markPortalMessageReviewedAction uses on the portal side; on success
+// revalidatePath refreshes the card with the new "Seen" badge.
+export async function markPortalReplySeenAction(
+  formData: FormData,
+): Promise<void> {
+  const replyId = (formData.get("reply_id") ?? "").toString().trim();
+  const clientId = (formData.get("client_id") ?? "").toString().trim();
+  if (!replyId || !clientId) return;
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) return;
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("client_portal_message_replies")
+    .update({ practitioner_seen_at: new Date().toISOString() })
+    .eq("id", replyId)
+    .eq("studio_id", studio.id)
+    .eq("client_id", clientId)
+    .is("practitioner_seen_at", null);
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_reply_mark_seen_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return;
+  }
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
 export type ArchivePortalMessageResult =
   | { ok: true }
   | { ok: false; error: string };

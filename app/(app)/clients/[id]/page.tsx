@@ -33,10 +33,12 @@ import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { getPortalMessagesForPractitionerView } from "@/lib/portal-messages/queries";
+import { getPortalMessageRepliesForPractitionerView } from "@/lib/portal-messages/replies-queries";
 import { PortalMessagesCard } from "@/components/portal-messages-card";
 import {
   archivePortalMessageAction,
   createPortalMessageAction,
+  markPortalReplySeenAction,
 } from "./portal-messages-actions";
 import {
   getTotalTreatmentTime,
@@ -160,6 +162,7 @@ export default async function ClientCheatSheetPage({
     treatmentGoal,
     personalNotes,
     portalMessages,
+    portalMessageReplies,
   ] = await Promise.all([
     getTotalTreatmentTime(studio.id, client.id),
     getTreatmentTimeByArea(studio.id, client.id),
@@ -171,6 +174,10 @@ export default async function ClientCheatSheetPage({
     // Practitioner-side view includes notification + reviewed
     // state. Empty array when the client has none.
     getPortalMessagesForPractitionerView(studio.id, client.id),
+    // PR #129 (migration 0054): client replies to the messages
+    // above. Same studio+client scope; render inline under each
+    // parent message. Empty array when the client has not replied.
+    getPortalMessageRepliesForPractitionerView(studio.id, client.id),
   ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -281,8 +288,10 @@ export default async function ClientCheatSheetPage({
             clientHasEmail={!!client.email && client.email.length > 0}
             clientIsArchived={client.archived_at != null}
             messages={portalMessages}
+            replies={portalMessageReplies}
             createAction={createPortalMessageAction}
             archiveAction={archivePortalMessageAction}
+            markReplySeenAction={markPortalReplySeenAction}
             practitionerNames={practitionerNames}
           />
 
