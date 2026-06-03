@@ -16,6 +16,12 @@ type Props = {
 
 export function CancelForm({ token }: Props) {
   const [reason, setReason] = useState("");
+  // PR #132. Required policy acknowledgement. Submit is disabled
+  // until this is checked, and the server action rejects any
+  // submission whose 'acknowledged_policy' form field is not
+  // exactly 'true' (defence in depth: the disabled attribute is
+  // not a security boundary).
+  const [acknowledged, setAcknowledged] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<"cancelled" | null>(null);
@@ -55,9 +61,20 @@ export function CancelForm({ token }: Props) {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!acknowledged) {
+      // Client-side mirror of the server validation so the visitor
+      // sees the same message whether they bypassed the disabled
+      // submit (impossible from the rendered UI but defensive) or
+      // clicked it normally.
+      setError(
+        "Please review and acknowledge the appointment policies before cancelling.",
+      );
+      return;
+    }
     const fd = new FormData();
     fd.set("token", token);
     fd.set("reason", reason);
+    fd.set("acknowledged_policy", "true");
     startTransition(async () => {
       const r = await publicCancelAppointmentAction(fd);
       if (!r.ok) {
@@ -88,10 +105,31 @@ export function CancelForm({ token }: Props) {
           style={{ borderBottom: "1px solid #0A0A0A" }}
         />
       </label>
+      {/* PR #132. Required policy acknowledgement. Sits directly
+          above the destructive cancel button so the visitor reads
+          the studio's policies (rendered higher up the page in the
+          shared PublicPolicyReminderCard) and ticks the box before
+          they can submit. Server rejects any non-'true' value. */}
+      <label
+        className="flex items-start gap-3 text-[14px] leading-[1.5]"
+        style={{ color: "#0A0A0A" }}
+      >
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(e) => setAcknowledged(e.target.checked)}
+          className="mt-1 h-4 w-4 flex-none"
+        />
+        <span>
+          I have reviewed and understand the cancellation and no-show
+          policies.
+        </span>
+      </label>
+
       <div className="flex items-center gap-4">
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || !acknowledged}
           className="px-8 py-4 text-[14px] font-medium uppercase disabled:opacity-50"
           style={{
             backgroundColor: "#0A0A0A",
