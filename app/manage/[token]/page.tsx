@@ -118,6 +118,32 @@ export default async function ManageAppointmentPage({
                   Cancel appointment
                 </Link>
               </div>
+
+              {/* Back-to-portal escape hatch (PR #127). When the
+                  client arrives here from the secure client portal
+                  (the "Manage appointment" CTA on /portal), there
+                  was no obvious way back. The link goes to /portal;
+                  middleware/portal-shell handle the auth case (if a
+                  valid portal session cookie is present /portal
+                  renders, otherwise /portal redirects to
+                  /portal/login). We deliberately do not promise the
+                  client is already signed in. The manage token is
+                  not touched by this link, so cancel/reschedule
+                  behaviour is unchanged. */}
+              <div className="pt-2">
+                <Link
+                  href="/portal"
+                  className="inline-flex items-center gap-2 text-[13px] font-medium uppercase"
+                  style={{
+                    letterSpacing: "0.12em",
+                    color: "#0A0A0A",
+                    borderBottom: "1px solid #0A0A0A",
+                    paddingBottom: "2px",
+                  }}
+                >
+                  &larr; Back to client portal
+                </Link>
+              </div>
             </>
           ) : (
             // Generic collapsed surface for every non-manageable
