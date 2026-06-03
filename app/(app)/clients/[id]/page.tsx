@@ -32,6 +32,12 @@ import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 // are unchanged and the data is preserved.
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
+import { getPortalMessagesForPractitionerView } from "@/lib/portal-messages/queries";
+import { PortalMessagesCard } from "@/components/portal-messages-card";
+import {
+  archivePortalMessageAction,
+  createPortalMessageAction,
+} from "./portal-messages-actions";
 import {
   getTotalTreatmentTime,
   getTreatmentTimeByArea,
@@ -148,15 +154,24 @@ export default async function ClientCheatSheetPage({
   // tags read removed: Tags no longer renders on the main profile.
   const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
   const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
-  const [treatmentTotals, treatmentByArea, treatmentGoal, personalNotes] =
-    await Promise.all([
-      getTotalTreatmentTime(studio.id, client.id),
-      getTreatmentTimeByArea(studio.id, client.id),
-      getTreatmentGoal(studio.id, client.id),
-      // Phase: personal notes (migration 0035). Returns null when the
-      // client has no row yet; the editor's defaultValues stay empty.
-      getClientPersonalNotes(studio.id, client.id),
-    ]);
+  const [
+    treatmentTotals,
+    treatmentByArea,
+    treatmentGoal,
+    personalNotes,
+    portalMessages,
+  ] = await Promise.all([
+    getTotalTreatmentTime(studio.id, client.id),
+    getTreatmentTimeByArea(studio.id, client.id),
+    getTreatmentGoal(studio.id, client.id),
+    // Phase: personal notes (migration 0035). Returns null when the
+    // client has no row yet; the editor's defaultValues stay empty.
+    getClientPersonalNotes(studio.id, client.id),
+    // Migration 0053: secure portal messages for this client.
+    // Practitioner-side view includes notification + reviewed
+    // state. Empty array when the client has none.
+    getPortalMessagesForPractitionerView(studio.id, client.id),
+  ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
@@ -252,6 +267,23 @@ export default async function ClientCheatSheetPage({
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
             removeAction={removeClientPinnedNoteAction}
+          />
+
+          {/* Secure portal messages (migration 0053). One-way
+              practitioner → client only; the client reads + can
+              acknowledge from /portal. Placed under pinned notes
+              so the practitioner sees existing message review
+              state alongside the rest of the every-visit
+              priorities. */}
+          <PortalMessagesCard
+            clientId={client.id}
+            clientName={client.name}
+            clientHasEmail={!!client.email && client.email.length > 0}
+            clientIsArchived={client.archived_at != null}
+            messages={portalMessages}
+            createAction={createPortalMessageAction}
+            archiveAction={archivePortalMessageAction}
+            practitionerNames={practitionerNames}
           />
 
           {/* Allergies/cautions are RED everywhere (see color convention
