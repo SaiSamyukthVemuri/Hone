@@ -226,18 +226,21 @@ export function QuickBookDrawer({
 
   // Drag-to-create: when the draft carries a durationMinutes value
   // (always 15-min granular from DayColumn), the override flow is
-  // auto-enabled and pre-confirmed because the dragged range is an
-  // explicit practitioner-typed intent. A bare click clears both
-  // back to the default flow. Effect runs only on draft identity so
-  // toggling the override checkbox manually is not undone by a
-  // re-render.
+  // auto-enabled and the duration field pre-filled because a custom
+  // duration cannot match the service-default slot list. The
+  // confirmation checkbox is NOT pre-ticked: the practitioner must
+  // explicitly acknowledge they are booking outside their published
+  // availability before the Save button enables. A bare click leaves
+  // both flags off and the duration field empty. Effect runs only on
+  // draft identity so toggling the override checkbox manually is not
+  // undone by a re-render.
   useEffect(() => {
     if (!open) return;
     const dragMinutes = draft?.durationMinutes;
     if (dragMinutes && dragMinutes > 0) {
       setOverrideDurationMinutes(String(dragMinutes));
       setOverrideEnabled(true);
-      setOverrideConfirmed(true);
+      setOverrideConfirmed(false);
     } else {
       setOverrideDurationMinutes("");
     }
@@ -866,6 +869,18 @@ export function QuickBookDrawer({
               {overrideDurationMinutes !== "" && !overrideDurationValid && (
                 <p className="text-[11px] text-red-700 dark:text-red-400">
                   Duration must be a 15-minute multiple between 15 and 360.
+                </p>
+              )}
+              {/* Drag-to-book explanatory line. Renders only when the
+                  drawer was opened via drag (overrideDurationMinutes
+                  is pre-filled). Tells the practitioner why the
+                  override path lit up and what they need to do next.
+                  Manual override (checkbox clicked, no drag) keeps the
+                  shorter amber warning below as its sole explanation. */}
+              {overrideDurationMinutes !== "" && (
+                <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
+                  This custom duration uses the internal override. Confirm
+                  before booking.
                 </p>
               )}
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">

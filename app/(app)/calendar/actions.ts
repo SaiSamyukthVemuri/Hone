@@ -55,16 +55,19 @@ export async function bookAppointmentForClientAction(
   // service default is 30. Honoured ONLY when the override toggle is
   // on (allow_outside_availability=true) so the standard slot flow
   // keeps using service.default_duration_minutes and slot membership
-  // checks remain valid. 15..360 minute window, multiples of 5 minutes
-  // to match the rest of the booking surface.
+  // checks remain valid. 15..360 minute window, multiples of 15
+  // minutes to match the calendar grid snap (CLICK_SNAP_MINUTES in
+  // DayColumn) and the public booking slot granularity
+  // (SLOT_GRANULARITY_MINUTES in lib/booking/slots.ts).
   const DURATION_OVERRIDE_MIN = 15;
   const DURATION_OVERRIDE_MAX = 360;
+  const DURATION_OVERRIDE_STEP = 15;
   function parseDurationOverride(raw: string | null): number | null {
     if (!raw) return null;
     const n = parseInt(raw.trim(), 10);
     if (!Number.isFinite(n)) return null;
     if (n < DURATION_OVERRIDE_MIN || n > DURATION_OVERRIDE_MAX) return null;
-    if (n % 5 !== 0) return null;
+    if (n % DURATION_OVERRIDE_STEP !== 0) return null;
     return n;
   }
   const rawDurationOverride = formDataStrOrNull(
@@ -75,7 +78,7 @@ export async function bookAppointmentForClientAction(
   if (rawDurationOverride && durationOverride == null) {
     return {
       ok: false,
-      error: `Duration must be between ${DURATION_OVERRIDE_MIN} and ${DURATION_OVERRIDE_MAX} minutes.`,
+      error: `Duration must be a ${DURATION_OVERRIDE_STEP}-minute multiple between ${DURATION_OVERRIDE_MIN} and ${DURATION_OVERRIDE_MAX}.`,
     };
   }
   if (durationOverride != null && !allowOutsideAvailability) {
