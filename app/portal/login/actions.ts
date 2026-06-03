@@ -29,6 +29,35 @@ const GENERIC_SUCCESS =
 
 const INVALID_EMAIL = "Please enter a valid email address.";
 
+// Timing-oracle floor for well-formed portal login requests. The
+// match branch does at least one DB insert, one DB select, and one
+// outbound HTTP send (the Resend call); the no-match branch returns
+// straight after the lookup. Without a floor, the wall-clock delta
+// is large enough to be measurable from a network client and is a
+// soft enumeration channel. We pad every post-rate-limit branch
+// (match, no-match, insert failure, email failure, multiple
+// matches) to the same floor so the visible response time is
+// uniform.
+//
+// 900 ms comfortably covers the slowest match path (DB insert +
+// studio lookup + Resend POST with default timeout headroom) on
+// production while still feeling responsive. The floor is applied
+// AFTER the email-syntax check and AFTER the rate-limit check;
+// those two paths return immediately on rejection because rejecting
+// them quickly is itself useful signal to the visitor (typo / over
+// the limit) and revealing nothing about client-record state.
+const MIN_PORTAL_LOGIN_RESPONSE_MS = 900;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntilMinimumElapsed(startedAt: number): Promise<void> {
+  const elapsed = Date.now() - startedAt;
+  const remaining = MIN_PORTAL_LOGIN_RESPONSE_MS - elapsed;
+  if (remaining > 0) await sleep(remaining);
+}
+
 export type RequestPortalLinkResult =
   | { ok: true; message: string }
   | { ok: false; error: string };
@@ -61,6 +90,15 @@ export async function requestPortalMagicLinkAction(
     return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
+  // Timing-oracle floor anchor. Captured AFTER the email-syntax
+  // check and AFTER the rate-limit check so those two rejection
+  // paths return immediately. Every well-formed branch below
+  // awaits waitUntilMinimumElapsed(startedAt) right before
+  // returning the generic success so the visible response time is
+  // uniform across no-match, single-match, multi-match, insert
+  // failure, and email-send failure.
+  const startedAt = Date.now();
+
   // Hashed fingerprints recorded on every issued magic-link row for
   // audit. Hashing prevents the DB from ever holding raw IP/UA.
   const ipHash = hashFingerprint(clientIpFromHeaders(hdrs));
@@ -71,10 +109,14 @@ export async function requestPortalMagicLinkAction(
   if (matches.length === 0) {
     // No active client. Return the same generic message; we
     // deliberately do NOT log the email or signal that nothing
-    // happened from the caller's perspective.
+    // happened from the caller's perspective. The hashed email is
+    // safe to log (salted SHA-256 via hashFingerprint) and helps an
+    // operator triage a brute-force attempt without storing the
+    // raw address.
     logSanitized("portal_login_request_no_match", {
       emailHash: hashFingerprint(emailNormalized),
     });
+    await waitUntilMinimumElapsed(startedAt);
     return { ok: true, message: GENERIC_SUCCESS };
   }
 
@@ -144,6 +186,14 @@ export async function requestPortalMagicLinkAction(
     matchCount: matches.length,
     successfulSends,
   });
+  // Same timing floor as the no-match branch. The match branch
+  // already does at least one DB insert + studio select + Resend
+  // POST, so the floor is usually a no-op here; we still call it
+  // unconditionally so a fast-path (e.g. cache hit, env-disabled
+  // Resend) cannot collapse the wall-clock delta. Insert-failure
+  // and email-failure cases hit this same return via the loop
+  // above, so they get the floor as well.
+  await waitUntilMinimumElapsed(startedAt);
   return { ok: true, message: GENERIC_SUCCESS };
 }
 
