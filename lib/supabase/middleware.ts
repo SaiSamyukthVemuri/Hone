@@ -54,6 +54,12 @@ export async function updateSession(request: NextRequest) {
     // (intake form completion, reschedule picker) without being logged in.
     // The route handlers verify the signed token themselves.
     pathname.startsWith("/intake/") ||
+    // /manage/<token> is the single neutral SMS landing page that
+    // surfaces both reschedule and cancel after the studio's
+    // policies. It resolves the same column-or-HMAC token as /cancel
+    // and must clear the same anonymous-visitor gate; without this
+    // entry, every "Manage appointment:" SMS link bounces to /login.
+    pathname.startsWith("/manage/") ||
     pathname.startsWith("/reschedule/") ||
     // Read-only iCal subscription feed at /calendar-feed/<token>.ics.
     // Google Calendar / Apple Calendar fetch the feed server-side and
