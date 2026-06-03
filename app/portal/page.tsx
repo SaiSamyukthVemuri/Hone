@@ -9,10 +9,12 @@ import { getCurrentPortalSession } from "@/lib/portal/session";
 import {
   getPortalIdentity,
   getPortalIntakeStatus,
+  getPortalMessagesForClient,
   getPortalUpcomingAppointments,
   getPortalUpcomingPreCare,
 } from "@/lib/portal/queries";
 import { portalLogoutAction } from "./logout/actions";
+import { markPortalMessageReviewedAction } from "./portal-message-actions";
 
 // Authenticated client portal home.
 //
@@ -47,11 +49,20 @@ export default async function PortalHomePage() {
     redirect("/portal/login");
   }
 
-  const [upcoming, intake, preCareEntries] = await Promise.all([
+  const [upcoming, intake, preCareEntries, messages] = await Promise.all([
     getPortalUpcomingAppointments(session.studioId, session.clientId),
     getPortalIntakeStatus(session.studioId, session.clientId),
     getPortalUpcomingPreCare(session.studioId, session.clientId),
+    // Migration 0053: secure portal messages from the studio.
+    // Scoped to this session's (studioId, clientId) at the query
+    // layer; the action that marks them reviewed is similarly
+    // scoped so a forged message id from another row cannot be
+    // acknowledged from this session.
+    getPortalMessagesForClient(session.studioId, session.clientId),
   ]);
+  const unreviewedCount = messages.filter(
+    (m) => m.client_reviewed_at == null,
+  ).length;
 
   const { client, studio } = identity;
 
@@ -180,6 +191,98 @@ export default async function PortalHomePage() {
               </ul>
             )}
           </section>
+
+          {messages.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2
+                  className="text-[12px] font-medium uppercase"
+                  style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+                >
+                  Messages from {studio.name}
+                </h2>
+                {unreviewedCount > 0 && (
+                  <span
+                    className="text-[11px] font-medium uppercase tracking-wider"
+                    style={{ color: "#0A0A0A" }}
+                    aria-label={`${unreviewedCount} unreviewed`}
+                  >
+                    {unreviewedCount} unreviewed
+                  </span>
+                )}
+              </div>
+              <ul className="flex flex-col gap-3">
+                {messages.map((m) => {
+                  const reviewed = m.client_reviewed_at != null;
+                  return (
+                    <li key={m.id}>
+                      <article
+                        className="flex flex-col gap-3 p-5"
+                        style={{
+                          backgroundColor: reviewed ? "#FAFAF7" : "#FFFFFF",
+                          border: reviewed
+                            ? "1px solid #E5E2D9"
+                            : "1px solid #0A0A0A",
+                        }}
+                      >
+                        <header className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-[15px] font-medium text-[#0A0A0A]">
+                            {m.subject}
+                          </p>
+                          <p className="text-[12px]" style={{ color: "#6B6B6B" }}>
+                            <FormattedDateTime iso={m.published_at} />
+                          </p>
+                        </header>
+                        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[#0A0A0A]">
+                          {m.body}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          {reviewed ? (
+                            <p
+                              className="text-[12px] font-medium uppercase"
+                              style={{
+                                letterSpacing: "0.18em",
+                                color: "#6B6B6B",
+                              }}
+                            >
+                              Reviewed
+                              {m.client_reviewed_at && (
+                                <>
+                                  {" · "}
+                                  <FormattedDateTime
+                                    iso={m.client_reviewed_at}
+                                  />
+                                </>
+                              )}
+                            </p>
+                          ) : (
+                            <form action={markPortalMessageReviewedAction}>
+                              <input
+                                type="hidden"
+                                name="message_id"
+                                value={m.id}
+                              />
+                              <button
+                                type="submit"
+                                className="px-5 py-2 text-[12px] font-medium uppercase"
+                                style={{
+                                  backgroundColor: "#0A0A0A",
+                                  color: "#FAFAF7",
+                                  letterSpacing: "0.1em",
+                                }}
+                              >
+                                Mark as reviewed
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      </article>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3">
             <h2

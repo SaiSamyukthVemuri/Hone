@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
+import type { ClientPortalMessage } from "@/lib/types/database";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
@@ -307,6 +308,52 @@ export async function getPortalIntakeStatus(
   });
   if (!ensured) return { kind: "unavailable" };
   return { kind: "outstanding", url: ensured.url };
+}
+
+// Secure portal messages visible to this client on this studio.
+// Filters published + non-archived; the partial index
+// client_portal_messages_unreviewed_idx (migration 0053) keeps the
+// common "any unreviewed?" lookup cheap. We deliberately do NOT
+// pull notification_email_* fields; those are practitioner-side
+// audit and never reach the client surface.
+//
+// Scoped strictly by (studioId, clientId). The portal page resolves
+// both from getCurrentPortalSession() and passes them in; callers
+// must never accept these from the URL or from form data.
+export type PortalMessageForClient = Pick<
+  ClientPortalMessage,
+  | "id"
+  | "subject"
+  | "body"
+  | "published_at"
+  | "client_reviewed_at"
+>;
+
+export async function getPortalMessagesForClient(
+  studioId: string,
+  clientId: string,
+): Promise<PortalMessageForClient[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("client_portal_messages")
+    .select("id, subject, body, published_at, client_reviewed_at")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("status", "published")
+    .is("archived_at", null)
+    .order("published_at", { ascending: false });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_messages_for_client_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
+  return (data ?? []) as PortalMessageForClient[];
 }
 
 // Resolve an active non-archived client by normalized email across

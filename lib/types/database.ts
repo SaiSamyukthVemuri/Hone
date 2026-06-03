@@ -350,6 +350,32 @@ export type ClientPortalSession = {
   last_seen_at: string | null;
 };
 
+// Migration 0053: one-way practitioner → client secure portal
+// messages. Subject + body are stored on the row; the body is
+// rendered exclusively inside the portal and is never included in
+// the notification email. All writes happen via server actions on
+// the admin client; the practitioner side is gated by
+// getCurrentPractitionerWithStudio() and the portal side by
+// getCurrentPortalSession() + (studio_id, client_id) scoping.
+export type ClientPortalMessageStatus = "draft" | "published" | "archived";
+
+export type ClientPortalMessage = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  created_by_practitioner_id: string;
+  subject: string;
+  body: string;
+  status: ClientPortalMessageStatus;
+  published_at: string;
+  client_reviewed_at: string | null;
+  notification_email_sent_at: string | null;
+  notification_email_error: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AppointmentAudit = {
   id: string;
   appointment_id: string;
