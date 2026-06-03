@@ -49,6 +49,14 @@ export type QuickBookDraft = {
   localDate: string;
   // HH:MM in studio local time, snapped to 15-minute increments
   localTime: string;
+  // Optional duration in minutes, snapped to 15-minute increments,
+  // produced by the click-and-drag selection in DayColumn. When
+  // present, the drawer auto-enables the "Outside your regular
+  // availability" override (because a custom duration cannot match
+  // the service default's slot list) and pre-fills the override
+  // duration input. A bare click (no drag) leaves this undefined and
+  // the drawer keeps the standard slot-picker flow.
+  durationMinutes?: number;
 };
 
 // Trimmed shape sent from the calendar server component. Avoids
@@ -168,6 +176,13 @@ export function QuickBookDrawer({
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [overrideConfirmed, setOverrideConfirmed] = useState(false);
   const [overrideLocalTime, setOverrideLocalTime] = useState<string>("");
+  // Drag-derived duration (minutes). Empty string when the drawer was
+  // opened by a bare click; the override duration input is hidden in
+  // that case and the booking uses the service default. When the
+  // practitioner drags out a range, this is pre-filled and the input
+  // is shown so the duration is editable before save.
+  const [overrideDurationMinutes, setOverrideDurationMinutes] =
+    useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoadingSlots] = useTransition();
   const [booking, startBooking] = useTransition();
@@ -195,6 +210,7 @@ export function QuickBookDrawer({
       setOverrideEnabled(false);
       setOverrideConfirmed(false);
       setOverrideLocalTime("");
+      setOverrideDurationMinutes("");
     }
   }, [open, firstServiceId]);
 
@@ -207,6 +223,31 @@ export function QuickBookDrawer({
       setOverrideLocalTime(draft.localTime);
     }
   }, [open, draft?.localTime]);
+
+  // Drag-to-create: when the draft carries a durationMinutes value
+  // (always 15-min granular from DayColumn), the override flow is
+  // auto-enabled and the duration field pre-filled because a custom
+  // duration cannot match the service-default slot list. The
+  // confirmation checkbox is NOT pre-ticked: the practitioner must
+  // explicitly acknowledge they are booking outside their published
+  // availability before the Save button enables. A bare click leaves
+  // both flags off and the duration field empty. Effect runs only on
+  // draft identity so toggling the override checkbox manually is not
+  // undone by a re-render.
+  useEffect(() => {
+    if (!open) return;
+    const dragMinutes = draft?.durationMinutes;
+    if (dragMinutes && dragMinutes > 0) {
+      setOverrideDurationMinutes(String(dragMinutes));
+      setOverrideEnabled(true);
+      setOverrideConfirmed(false);
+    } else {
+      setOverrideDurationMinutes("");
+    }
+    // We intentionally do NOT add overrideEnabled / overrideConfirmed
+    // to the deps; a user toggle off should stick until the drawer
+    // closes or a new draft arrives.
+  }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
 
   // Lazy rebook lookup: fetch the selected client's last service only
   // when a client is selected (never prefetched for the whole list).
@@ -304,6 +345,27 @@ export function QuickBookDrawer({
 
   const formattedDate = formatLocalDate(draft.localDate);
   const formattedTime = formatLocalTime(draft.localTime);
+  // Compute the end label when a drag duration is present so the
+  // drawer header reads "11:00 AM to 11:45 AM" instead of just the
+  // start. Pure local-clock math against the HH:MM start; no UTC.
+  function addMinutesToLocalHHMM(hhmm: string, minutes: number): string {
+    const [hStr, mStr] = hhmm.split(":");
+    const h = Number(hStr);
+    const m = Number(mStr);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+    const total = h * 60 + m + minutes;
+    const wrapped = ((total % (24 * 60)) + 24 * 60) % (24 * 60);
+    const eh = Math.floor(wrapped / 60);
+    const em = wrapped % 60;
+    return `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+  }
+  const dragDurationForHeader = draft.durationMinutes ?? null;
+  const dragEndTimeLabel =
+    dragDurationForHeader != null && dragDurationForHeader > 0
+      ? formatLocalTime(
+          addMinutesToLocalHHMM(draft.localTime, dragDurationForHeader),
+        )
+      : null;
 
   const queryLower = clientQuery.trim().toLowerCase();
   const clientMatches = selectedClient
@@ -318,12 +380,24 @@ export function QuickBookDrawer({
 
   // Save-enabled rule: standard flow needs a picked slot; override
   // flow needs a typed HH:MM AND the explicit confirmation
-  // checkbox. Override and standard cannot both be active because
-  // the slot picker is hidden when overrideEnabled is true.
+  // checkbox; if the duration field is shown (drag-to-create flow)
+  // it must parse to a 15-min multiple in [15, 360]. Override and
+  // standard cannot both be active because the slot picker is hidden
+  // when overrideEnabled is true.
   const overrideTimeValid = /^\d{2}:\d{2}$/.test(overrideLocalTime);
+  const parsedOverrideDuration = (() => {
+    if (!overrideDurationMinutes) return null;
+    const n = parseInt(overrideDurationMinutes, 10);
+    if (!Number.isFinite(n)) return null;
+    if (n < 15 || n > 360) return null;
+    if (n % 15 !== 0) return null;
+    return n;
+  })();
+  const overrideDurationValid =
+    overrideDurationMinutes === "" || parsedOverrideDuration != null;
   const canBook = !booking && !!selectedClient && !!serviceId && (
     overrideEnabled
-      ? overrideTimeValid && overrideConfirmed
+      ? overrideTimeValid && overrideConfirmed && overrideDurationValid
       : !!pickedSlot
   );
 
@@ -380,6 +454,15 @@ export function QuickBookDrawer({
       );
       fd.set("starts_at", utc.toISOString());
       fd.set("allow_outside_availability", "true");
+      // Drag-to-create duration override (only sent when present).
+      // The booking action validates the value server-side; an
+      // unsupplied or empty field falls through to service default.
+      if (parsedOverrideDuration != null) {
+        fd.set(
+          "duration_minutes_override",
+          String(parsedOverrideDuration),
+        );
+      }
     } else {
       fd.set("starts_at", pickedSlot!.start);
     }
@@ -435,7 +518,9 @@ export function QuickBookDrawer({
               {formattedDate}
             </h2>
             <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">
-              clicked at {formattedTime}
+              {dragEndTimeLabel
+                ? `${formattedTime} to ${dragEndTimeLabel} (${dragDurationForHeader} min)`
+                : `clicked at ${formattedTime}`}
             </p>
           </div>
           <button
@@ -739,20 +824,65 @@ export function QuickBookDrawer({
 
           {overrideEnabled ? (
             <div className="flex flex-col gap-2">
-              <label
-                htmlFor="override-time"
-                className="text-xs text-neutral-600 dark:text-neutral-400"
-              >
-                Start time (studio local)
-              </label>
-              <input
-                id="override-time"
-                type="time"
-                step={900}
-                value={overrideLocalTime}
-                onChange={(e) => setOverrideLocalTime(e.target.value)}
-                className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-              />
+              <div className="flex flex-wrap gap-3">
+                <label className="flex flex-col gap-1">
+                  <span
+                    className="text-xs text-neutral-600 dark:text-neutral-400"
+                    id="override-time-label"
+                  >
+                    Start (studio local)
+                  </span>
+                  <input
+                    id="override-time"
+                    aria-labelledby="override-time-label"
+                    type="time"
+                    step={900}
+                    value={overrideLocalTime}
+                    onChange={(e) => setOverrideLocalTime(e.target.value)}
+                    className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                  />
+                </label>
+                {overrideDurationMinutes !== "" && (
+                  <label className="flex flex-col gap-1">
+                    <span
+                      className="text-xs text-neutral-600 dark:text-neutral-400"
+                      id="override-duration-label"
+                    >
+                      Duration (minutes)
+                    </span>
+                    <input
+                      id="override-duration"
+                      aria-labelledby="override-duration-label"
+                      type="number"
+                      min={15}
+                      max={360}
+                      step={15}
+                      value={overrideDurationMinutes}
+                      onChange={(e) =>
+                        setOverrideDurationMinutes(e.target.value)
+                      }
+                      className="w-28 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                    />
+                  </label>
+                )}
+              </div>
+              {overrideDurationMinutes !== "" && !overrideDurationValid && (
+                <p className="text-[11px] text-red-700 dark:text-red-400">
+                  Duration must be a 15-minute multiple between 15 and 360.
+                </p>
+              )}
+              {/* Drag-to-book explanatory line. Renders only when the
+                  drawer was opened via drag (overrideDurationMinutes
+                  is pre-filled). Tells the practitioner why the
+                  override path lit up and what they need to do next.
+                  Manual override (checkbox clicked, no drag) keeps the
+                  shorter amber warning below as its sole explanation. */}
+              {overrideDurationMinutes !== "" && (
+                <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
+                  This custom duration uses the internal override. Confirm
+                  before booking.
+                </p>
+              )}
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                 This appointment will be booked outside your published
                 availability. Public booking remains unchanged.

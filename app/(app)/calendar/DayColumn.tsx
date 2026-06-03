@@ -13,7 +13,7 @@
 // the overlay on truly empty space.
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -121,12 +121,35 @@ const TWO_LINE_THRESHOLD_PX = 40;
 
 // Snaps an arbitrary minute-of-day to the same 15-minute grid the
 // public booking flow uses (SLOT_GRANULARITY_MINUTES in
-// lib/booking/slots.ts). Phase A only displays this in the drawer;
-// it isn't sent to any server action.
+// lib/booking/slots.ts). Used for both bare-click time and the
+// drag-selection start/end times so the value the drawer receives is
+// always a 15-min multiple.
 const CLICK_SNAP_MINUTES = 15;
 
-function snapMinutes(n: number): number {
+// Pixel distance (== minutes here, since 1 px = 1 minute) below which
+// a pointer-down → pointer-up gesture is treated as a bare click
+// rather than a drag. Keeps an accidental 1-2 px wiggle on touchpad
+// from creating a sliver-duration draft.
+const DRAG_THRESHOLD_PX = 3;
+
+// Minimum drag duration in minutes. A drag that snaps to a smaller
+// range collapses to the bare-click flow so single-click semantics
+// are preserved when the practitioner barely moved.
+const MIN_DRAG_DURATION_MINUTES = 15;
+
+// Maximum drag duration in minutes. Mirrors the booking action's
+// duration_minutes_override cap so the drawer never opens with a
+// value the server will reject; the practitioner can still type a
+// shorter or longer value (within the same bounds) in the override
+// field before saving.
+const MAX_DRAG_DURATION_MINUTES = 360;
+
+function snapMinutesFloor(n: number): number {
   return Math.floor(n / CLICK_SNAP_MINUTES) * CLICK_SNAP_MINUTES;
+}
+
+function snapMinutesCeil(n: number): number {
+  return Math.ceil(n / CLICK_SNAP_MINUTES) * CLICK_SNAP_MINUTES;
 }
 
 function minutesToHHMM(totalMinutes: number): string {
@@ -155,6 +178,17 @@ type Props = {
   closedDay: boolean;
 };
 
+// Drag-selection state. `pointerId` matches the in-flight pointer so a
+// multi-touch start cannot interleave; `startY` is the pointer-down Y
+// in grid pixels (column-local), `currentY` updates on every move so
+// the translucent overlay re-renders. `null` means no drag is in
+// progress.
+type DragState = {
+  pointerId: number;
+  startY: number;
+  currentY: number;
+};
+
 export function DayColumn({
   date,
   appts,
@@ -169,6 +203,11 @@ export function DayColumn({
   closedDay,
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  // The empty-cell button. Used to compute pointer-local Y in a way
+  // that survives the pointer drifting outside the button (with
+  // pointer capture). The ref is set on the button below.
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   // Neutral availability tint regions (visual guidance only; gray, never
   // a status color). A closed weekday tints the whole grid; an open day
@@ -195,20 +234,167 @@ export function DayColumn({
     }
   }
 
-  function handleEmptyClick(e: React.MouseEvent<HTMLButtonElement>) {
-    // Only fires on truly empty space. Appointment Links (z-10) and
-    // blockout/break divs (z-[5]) intercept their own clicks because
-    // they paint on top of this z-0 overlay; the overlay's onClick
-    // never sees those events.
-    const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    // Grid is 1 px = 1 min (ROW_HEIGHT_PX / ROW_MINUTES = 1).
-    const minutesFromGridTop = Math.max(0, Math.min(VISIBLE_MINUTES - 1, y));
-    const totalMinutes = HOUR_START * 60 + minutesFromGridTop;
-    const snapped = snapMinutes(totalMinutes);
-    if (snapped < HOUR_START * 60 || snapped >= HOUR_END * 60) return;
-    setDraft({ localDate: date, localTime: minutesToHHMM(snapped) });
+  // Compute pointer-local Y in column-grid pixels (1 px = 1 minute).
+  // Reads the button's current bounding rect each call so the value
+  // stays correct after scrolling or window resize.
+  const pointerLocalY = useCallback((clientY: number): number => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    return clientY - rect.top;
+  }, []);
+
+  // Open the drawer for a bare click at the snapped time. Preserves
+  // the pre-drag single-click behaviour; never sends a duration so
+  // the drawer flows through the standard slot picker.
+  const openDraftAtY = useCallback(
+    (y: number) => {
+      const minutesFromGridTop = Math.max(0, Math.min(VISIBLE_MINUTES - 1, y));
+      const totalMinutes = HOUR_START * 60 + minutesFromGridTop;
+      const snapped = snapMinutesFloor(totalMinutes);
+      if (snapped < HOUR_START * 60 || snapped >= HOUR_END * 60) return;
+      setDraft({ localDate: date, localTime: minutesToHHMM(snapped) });
+    },
+    [date],
+  );
+
+  // Open the drawer with a drag-selected range. Snaps the start down
+  // and the end up so the dragged range never shrinks below the
+  // practitioner's intent; clamps the start to HOUR_START..HOUR_END
+  // and the end to HOUR_END; caps duration to MAX_DRAG_DURATION; and
+  // falls through to the bare-click path when the resulting duration
+  // is below MIN_DRAG_DURATION (a tiny wiggle stays a click).
+  const openDraftFromDrag = useCallback(
+    (rawStartY: number, rawEndY: number) => {
+      const startY = Math.min(rawStartY, rawEndY);
+      const endY = Math.max(rawStartY, rawEndY);
+      const startMinFromTop = Math.max(0, Math.min(VISIBLE_MINUTES, startY));
+      const endMinFromTop = Math.max(0, Math.min(VISIBLE_MINUTES, endY));
+      const snappedStartTotal = snapMinutesFloor(
+        HOUR_START * 60 + startMinFromTop,
+      );
+      const snappedEndTotal = Math.min(
+        HOUR_END * 60,
+        snapMinutesCeil(HOUR_START * 60 + endMinFromTop),
+      );
+      if (
+        snappedStartTotal < HOUR_START * 60 ||
+        snappedStartTotal >= HOUR_END * 60
+      ) {
+        return;
+      }
+      let duration = snappedEndTotal - snappedStartTotal;
+      if (duration < MIN_DRAG_DURATION_MINUTES) {
+        // Collapsed too small to count as a drag; treat as a click at
+        // the start point.
+        openDraftAtY(startY);
+        return;
+      }
+      if (duration > MAX_DRAG_DURATION_MINUTES) {
+        duration = MAX_DRAG_DURATION_MINUTES;
+      }
+      setDraft({
+        localDate: date,
+        localTime: minutesToHHMM(snappedStartTotal),
+        durationMinutes: duration,
+      });
+    },
+    [date, openDraftAtY],
+  );
+
+  function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    // Left mouse button + primary touch only. Ignore right/middle
+    // click and any non-primary touch so contextmenu and multi-finger
+    // gestures still work normally.
+    if (e.button !== 0) return;
+    const y = pointerLocalY(e.clientY);
+    // Capture the pointer so subsequent moves/up still fire on this
+    // element even if the cursor drifts outside the column.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // setPointerCapture can throw in some test envs; the drag still
+      // works without capture, the overlay just stops updating if the
+      // cursor leaves the column.
+    }
+    setDragState({ pointerId: e.pointerId, startY: y, currentY: y });
   }
+
+  function handlePointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragState || dragState.pointerId !== e.pointerId) return;
+    const y = pointerLocalY(e.clientY);
+    setDragState({ ...dragState, currentY: y });
+  }
+
+  function handlePointerUp(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragState || dragState.pointerId !== e.pointerId) return;
+    const finalY = pointerLocalY(e.clientY);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // releasePointerCapture can throw if capture was never set.
+    }
+    const startY = dragState.startY;
+    setDragState(null);
+    const distance = Math.abs(finalY - startY);
+    if (distance < DRAG_THRESHOLD_PX) {
+      // Bare click: keep the pre-drag semantics. Open the drawer at
+      // the snapped time, no duration; standard slot flow runs.
+      openDraftAtY(startY);
+      return;
+    }
+    openDraftFromDrag(startY, finalY);
+  }
+
+  function handlePointerCancel(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragState || dragState.pointerId !== e.pointerId) return;
+    setDragState(null);
+  }
+
+  // Keyboard activation: Enter / Space mimic a click at the top of
+  // the visible range, matching the pre-drag fallback. Pointer events
+  // do not handle keyboard, so this path is the only way a keyboard
+  // user opens the drawer.
+  function handleKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    openDraftAtY(0);
+  }
+
+  // Reset drag state if the parent re-renders into a new date/key, so
+  // a drag in flight on the previous render does not leak into the
+  // next. (DayColumn keys by date so this is mostly defensive.)
+  useEffect(() => {
+    return () => {
+      setDragState(null);
+    };
+  }, [date]);
+
+  // Live drag-overlay geometry, computed only while a drag is in
+  // flight. Snaps start down and end up to 15-min boundaries so the
+  // overlay matches what the drawer will receive on release.
+  const overlay = (() => {
+    if (!dragState) return null;
+    const a = Math.min(dragState.startY, dragState.currentY);
+    const b = Math.max(dragState.startY, dragState.currentY);
+    if (Math.abs(b - a) < DRAG_THRESHOLD_PX) return null;
+    const startMin = Math.max(0, Math.min(VISIBLE_MINUTES, a));
+    const endMin = Math.max(0, Math.min(VISIBLE_MINUTES, b));
+    const snappedStart = snapMinutesFloor(HOUR_START * 60 + startMin);
+    const snappedEnd = Math.min(
+      HOUR_END * 60,
+      snapMinutesCeil(HOUR_START * 60 + endMin),
+    );
+    const top = (snappedStart - HOUR_START * 60) * (ROW_HEIGHT_PX / ROW_MINUTES);
+    const height =
+      (snappedEnd - snappedStart) * (ROW_HEIGHT_PX / ROW_MINUTES);
+    return {
+      top,
+      height,
+      startLabel: minutesToHHMM(snappedStart),
+      endLabel: minutesToHHMM(snappedEnd),
+      durationMinutes: snappedEnd - snappedStart,
+    };
+  })();
 
   return (
     <div
@@ -269,21 +455,52 @@ export function DayColumn({
         />
       ))}
 
-      {/* Empty-cell click overlay. Sits at z-0 — beneath every
-          event card so it ONLY captures clicks on transparent
-          empty space. Renders an aria-labeled button rather than a
-          div+onClick so keyboard users can focus and activate
-          per-day cells; pressing Enter does the same thing as
-          clicking at the top of the visible range (kept simple in
-          Phase A — Phase B will replace this with a focused
-          control). The button is invisible except for a subtle hover
-          wash that signals the empty space is clickable. */}
+      {/* Empty-cell pointer + keyboard overlay. Sits at z-0, beneath
+          every event card so it ONLY receives pointer events on
+          transparent empty space. Single-click semantics are
+          preserved: a pointer-down → pointer-up with sub-threshold
+          movement opens the drawer at the snapped time with no
+          duration (standard slot picker). A drag opens the drawer
+          with a duration so the drag-to-create flow auto-enables the
+          override path and pre-fills the time range. Keyboard users
+          activate via Enter/Space (opens at the top of the visible
+          range, same as the pre-drag fallback). */}
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`Open quick-book draft for ${date}`}
-        onClick={handleEmptyClick}
-        className="absolute inset-0 z-0 cursor-pointer rounded-none outline-none transition-colors hover:bg-sky-100/40 focus-visible:bg-sky-100/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300 dark:hover:bg-sky-900/20 dark:focus-visible:bg-sky-900/20 dark:focus-visible:ring-sky-700"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onKeyDown={handleKeyDown}
+        // Disable native browser drag image when the practitioner
+        // drags inside the cell; we run our own drag-selection model
+        // and don't want the cursor to switch to the no-drop sigil.
+        onDragStart={(e) => e.preventDefault()}
+        style={{ touchAction: "none" }}
+        className="absolute inset-0 z-0 cursor-pointer select-none rounded-none outline-none transition-colors hover:bg-sky-100/40 focus-visible:bg-sky-100/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300 dark:hover:bg-sky-900/20 dark:focus-visible:bg-sky-900/20 dark:focus-visible:ring-sky-700"
       />
+
+      {/* Live drag-selection overlay. Translucent block + time-range
+          label that tracks the snapped start/end as the practitioner
+          drags. Sits ABOVE the empty-cell button but BELOW the
+          appointment cards (z-[6] vs z-10) so an existing card stays
+          on top: the overlay can extend across a card visually, and
+          the server-side conflict logic rejects the booking on
+          release if the chosen range overlaps anything. */}
+      {overlay && (
+        <div
+          aria-hidden
+          style={{ top: overlay.top, height: overlay.height }}
+          className="pointer-events-none absolute inset-x-1 z-[6] flex items-start rounded-md border border-sky-400/70 bg-sky-200/40 px-2 py-1 text-[11px] font-medium text-sky-900 shadow-sm dark:border-sky-500/70 dark:bg-sky-500/20 dark:text-sky-100"
+        >
+          <span className="truncate tabular-nums">
+            {overlay.startLabel} to {overlay.endLabel} ·{" "}
+            {overlay.durationMinutes} min
+          </span>
+        </div>
+      )}
 
       {blocked && (
         <div className="absolute inset-0 z-[3] bg-neutral-50/80 dark:bg-neutral-900/40">
