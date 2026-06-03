@@ -77,6 +77,9 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
   // archived. The detail page (/clients/[id]) intentionally does not
   // filter so the practitioner can navigate to a known archived
   // client to un-archive or to view their history.
+  //
+  // The dedicated archived view in /clients?view=archived uses the
+  // sibling helper getArchivedClientsForStudio below.
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("clients")
@@ -86,6 +89,31 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
     .order("name", { ascending: true });
 
   if (error) throw new Error(`Failed to load clients: ${error.message}`);
+  return (data ?? []) as Client[];
+}
+
+// Archived clients for the studio's "Archived clients" view. Mirrors
+// getClientsForStudio but with the filter inverted: returns rows
+// where archived_at is non-null, ordered by most-recently-archived
+// first so a practitioner who just archived a row by mistake finds
+// it at the top of the list without scrolling. This is the only
+// surface that intentionally shows archived clients in a list; the
+// calendar quick-book picker, dashboard birthday surface, and active
+// client list continue to hide them.
+export async function getArchivedClientsForStudio(
+  studioId: string,
+): Promise<Client[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("clients")
+    .select("*")
+    .eq("studio_id", studioId)
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to load archived clients: ${error.message}`);
+  }
   return (data ?? []) as Client[];
 }
 
