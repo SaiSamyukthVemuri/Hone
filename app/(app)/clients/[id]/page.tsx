@@ -36,6 +36,11 @@ import { getPortalMessagesForPractitionerView } from "@/lib/portal-messages/quer
 import { getPortalMessageRepliesForPractitionerView } from "@/lib/portal-messages/replies-queries";
 import { PortalMessagesCard } from "@/components/portal-messages-card";
 import {
+  getConsentTemplatesForStudio,
+  getLatestSignaturesForPractitionerView,
+} from "@/lib/consent/queries";
+import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
+import {
   archivePortalMessageAction,
   createPortalMessageAction,
   markPortalReplySeenAction,
@@ -163,6 +168,8 @@ export default async function ClientCheatSheetPage({
     personalNotes,
     portalMessages,
     portalMessageReplies,
+    consentTemplatesAll,
+    consentLatestSignatures,
   ] = await Promise.all([
     getTotalTreatmentTime(studio.id, client.id),
     getTreatmentTimeByArea(studio.id, client.id),
@@ -178,6 +185,12 @@ export default async function ClientCheatSheetPage({
     // above. Same studio+client scope; render inline under each
     // parent message. Empty array when the client has not replied.
     getPortalMessageRepliesForPractitionerView(studio.id, client.id),
+    // PR #134 (migration 0057): consent / e-sign foundation.
+    // Active templates (per-studio) + latest signature per template
+    // (per-client). Same studio scope; rendered as a read-only
+    // status card on the profile.
+    getConsentTemplatesForStudio(studio.id),
+    getLatestSignaturesForPractitionerView(studio.id, client.id),
   ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -293,6 +306,23 @@ export default async function ClientCheatSheetPage({
             archiveAction={archivePortalMessageAction}
             markReplySeenAction={markPortalReplySeenAction}
             practitionerNames={practitionerNames}
+          />
+
+          {/* PR #134. Consent / e-sign per-template signed status for
+              this client. Renders active templates only; archived
+              and draft templates do not appear here. View-only in
+              v1; the practitioner authoring surface lives in
+              Settings &rarr; Consent forms. */}
+          <ConsentSignaturesCard
+            clientName={client.name}
+            activeTemplates={consentTemplatesAll
+              .filter((t) => t.status === "active")
+              .map((t) => ({
+                id: t.id,
+                title: t.title,
+                form_type: t.form_type,
+              }))}
+            latestSignatures={consentLatestSignatures}
           />
 
           {/* Allergies/cautions are RED everywhere (see color convention

@@ -1,0 +1,195 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getCurrentPortalSession } from "@/lib/portal/session";
+import { hashFingerprint } from "@/lib/portal/tokens";
+import { buildConsentTemplateSnapshot } from "@/lib/consent/template-snapshot";
+
+// PR #134. Portal-side consent sign action. Lives in app/portal so
+// the middleware allowlist does not need to widen; Next.js server
+// actions POST to whatever page route they are bound to and the
+// only binding is the portal home (/portal, already allowlisted).
+//
+// Critical security invariants (mirrors PR #129 spec for replies):
+//   * Requires a valid portal session.
+//   * Template lookup MUST match all three of:
+//       id = templateId
+//       studio_id = session.studioId
+//       status = 'active'
+//     so a forged template id from another studio or a draft /
+//     archived template cannot resolve.
+//   * The current clients row is re-checked active + non-archived
+//     before insert. A portal session cookie outlives an archive
+//     by design; this gate stops an archived client from continuing
+//     to sign forms with an in-flight cookie.
+//   * Insert uses session.studioId / session.clientId / template.id
+//     server-resolved values. The client-supplied templateId is
+//     only used as a lookup key above and is now redundantly the
+//     same value.
+//   * Snapshot fields are built from the resolved template by the
+//     shared helper; the client cannot supply them, edit them, or
+//     produce a forged hash.
+//   * Signatures are immutable: this action only INSERTs. There is
+//     no update / delete path in this PR. Multiple signatures of
+//     the same (client, template) pair are preserved as point-in-
+//     time historical rows.
+
+const REPLY_NAME_MIN = 1;
+const REPLY_NAME_MAX = 200;
+
+function clientIpFromHeaders(h: Headers): string | null {
+  // Same shape lib/rate-limit/public.ts uses; re-implemented to
+  // avoid widening a non-exported helper's reach.
+  const forwarded = h.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  const realIp = h.get("x-real-ip");
+  if (realIp) return realIp.trim();
+  return null;
+}
+
+export type SignConsentFormResult =
+  | { ok: true; signatureId: string }
+  | { ok: false; error: string };
+
+export async function signConsentFormAction(
+  formData: FormData,
+): Promise<SignConsentFormResult> {
+  const templateId = (formData.get("template_id") ?? "").toString().trim();
+  const signatureNameRaw = (formData.get("signature_name") ?? "")
+    .toString()
+    .trim();
+  const agreed = (formData.get("agreed") ?? "").toString().trim();
+
+  if (!templateId) {
+    return { ok: false, error: "Missing form reference." };
+  }
+  if (signatureNameRaw.length < REPLY_NAME_MIN) {
+    return { ok: false, error: "Type your full name to sign." };
+  }
+  if (signatureNameRaw.length > REPLY_NAME_MAX) {
+    return {
+      ok: false,
+      error: `Name must be ${REPLY_NAME_MAX} characters or fewer.`,
+    };
+  }
+  // Client-side checkbox state arrives as the literal string 'true'
+  // only when ticked; any other shape (missing field, 'false',
+  // other) is treated as unconfirmed. The DB row has no analogous
+  // boolean column because the row's existence + the checked-only
+  // post path IS the agreement.
+  if (agreed !== "true") {
+    return {
+      ok: false,
+      error: "Please confirm you have read and agree to this form.",
+    };
+  }
+
+  const session = await getCurrentPortalSession();
+  if (!session) {
+    return { ok: false, error: "Your portal session has expired." };
+  }
+
+  const admin = createAdminClient();
+
+  // Defence in depth: client row must still be active + belong to
+  // this session's studio. A portal cookie outlives an archive
+  // action by design; this is the guardrail that stops an
+  // archived client from accumulating new signatures.
+  const { data: client, error: clientErr } = await admin
+    .from("clients")
+    .select("id, archived_at")
+    .eq("id", session.clientId)
+    .eq("studio_id", session.studioId)
+    .maybeSingle();
+  if (clientErr) {
+    console.error(
+      JSON.stringify({
+        event: "consent_sign_client_lookup_failed",
+        code: clientErr.code,
+        message: clientErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Couldn't sign this form. Please try again." };
+  }
+  if (!client || client.archived_at != null) {
+    return { ok: false, error: "This form is no longer available to sign." };
+  }
+
+  // Template lookup with the three security clauses. Any mismatch
+  // (forged id from another studio, draft, archived, gone) returns
+  // the same generic error string.
+  const { data: template, error: templateErr } = await admin
+    .from("consent_form_templates")
+    .select("id, title, body, version, status, studio_id")
+    .eq("id", templateId)
+    .eq("studio_id", session.studioId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (templateErr) {
+    console.error(
+      JSON.stringify({
+        event: "consent_sign_template_lookup_failed",
+        code: templateErr.code,
+        message: templateErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Couldn't sign this form. Please try again." };
+  }
+  if (!template) {
+    return { ok: false, error: "This form is no longer available to sign." };
+  }
+
+  // Build the snapshot from the server-resolved template; the
+  // client cannot supply title / body / version.
+  const snapshot = buildConsentTemplateSnapshot({
+    title: template.title,
+    body: template.body,
+    version: template.version,
+  });
+
+  // Best-effort fingerprint hashing for the audit trail. Both are
+  // nullable on the row so a missing header is fine. Raw IP / UA
+  // never reach the DB.
+  const hdrs = await headers();
+  const ipHash = hashFingerprint(clientIpFromHeaders(hdrs));
+  const uaHash = hashFingerprint(hdrs.get("user-agent"));
+
+  const { data: created, error: insertErr } = await admin
+    .from("client_consent_signatures")
+    .insert({
+      studio_id: session.studioId,
+      client_id: session.clientId,
+      template_id: template.id,
+      template_title_snapshot: snapshot.templateTitleSnapshot,
+      template_body_snapshot: snapshot.templateBodySnapshot,
+      template_version: snapshot.templateVersion,
+      template_hash: snapshot.templateHash,
+      signature_name: signatureNameRaw,
+      ip_hash: ipHash,
+      user_agent_hash: uaHash,
+    })
+    .select("id")
+    .single();
+  if (insertErr || !created) {
+    console.error(
+      JSON.stringify({
+        event: "consent_sign_insert_failed",
+        code: insertErr?.code,
+        message: insertErr?.message,
+        templateId: template.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Couldn't save your signature. Please try again." };
+  }
+
+  revalidatePath("/portal");
+  return { ok: true, signatureId: created.id };
+}
