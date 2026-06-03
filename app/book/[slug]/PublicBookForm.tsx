@@ -246,20 +246,38 @@ export function PublicBookForm({
   // forward from today/selected-date through the booking horizon and
   // returns the first date with bookable future slots. The slot-fetch
   // useEffect above re-runs automatically when `date` changes.
+  //
+  // Two render surfaces share this handler (PR #131):
+  //   1. The empty-slot path ("Next available" button). Shown when
+  //      the currently displayed date has zero slots; the original
+  //      behaviour.
+  //   2. The populated-slot path ("Next available day" button).
+  //      Shown when slots ARE available but the visitor wants to
+  //      jump forward to the next bookable day after the currently
+  //      displayed one.
+  // Both surfaces start the lookup from addOneDayLocal(date), so
+  // "next available day" always advances from whatever date is on
+  // screen right now (including a manually picked date or the
+  // result of a previous Next-day click). The server clamps to
+  // today and to studio.public_booking_horizon_months; the same
+  // MAX_NEXT_AVAILABLE_SCAN_DAYS=200 belt-and-braces cap applies.
   function onFindNext() {
     // Same no-network-before-choice guard as the slot-fetch effect:
-    // until the visitor picks a client type, the "Next available"
-    // button is not rendered, but a stale event handler or test
-    // harness could still invoke this. Bail before the action call
-    // so the public surface stays silent.
+    // until the visitor picks a client type, neither button is
+    // rendered, but a stale event handler or test harness could
+    // still invoke this. Bail before the action call so the public
+    // surface stays silent.
     if (clientType == null) return;
     if (!serviceId) return;
     setError(null);
     setNextSearched(false);
     setNoneInHorizon(false);
-    // Start the lookup from the day AFTER the currently-selected date,
-    // since we already know that date has no slots (that's why this
-    // button is visible). The server clamps to today.
+    // Start the lookup from the day AFTER the currently-selected
+    // date. Regardless of which surface invoked us, we advance from
+    // the date in state, so clicking the populated-path button
+    // multiple times keeps walking forward, and manually picking a
+    // calendar date and then clicking starts the next search from
+    // that manual date.
     const startFrom = addOneDayLocal(date);
     startFindingNext(async () => {
       const r = await fetchNextAvailableDateAction({
@@ -569,25 +587,70 @@ export function PublicBookForm({
             )}
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {slots.map((s) => {
-              const sel = picked?.start === s.start;
-              return (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {slots.map((s) => {
+                const sel = picked?.start === s.start;
+                return (
+                  <button
+                    key={s.start}
+                    type="button"
+                    onClick={() => setPicked(s)}
+                    className={`px-4 py-2 text-sm transition ${
+                      sel
+                        ? "bg-[#0A0A0A] text-[#FAFAF7]"
+                        : "bg-white text-[#0A0A0A] hover:bg-[#F5F2EB]"
+                    }`}
+                    style={{ border: "1px solid #0A0A0A" }}
+                  >
+                    {s.startLabel}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* PR #131. "Next available day" jump from a date that
+                already HAS slots. The pilot friction Chloe surfaced
+                was that once any slot appeared, the existing "Next
+                available" button disappeared, so a client whose
+                preferred times don't fit had to click calendar dates
+                one by one. We reuse the same onFindNext handler
+                (which already starts from addOneDayLocal(date) and
+                hits the same fetchNextAvailableDateAction with the
+                same studio.public_booking_horizon_months horizon and
+                MAX_NEXT_AVAILABLE_SCAN_DAYS=200 server-side cap), so
+                the search semantics are identical to the existing
+                button. The only difference is the surface: this one
+                renders when slots.length > 0. The boundary message
+                below is the spec's "No later availability is
+                currently published. Please contact the studio." line
+                shown when the server returns date: null. */}
+            {noneInHorizon ? (
+              <p className="text-sm text-[#6B6B6B]">
+                No later availability is currently published. Please
+                contact the studio.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs" style={{ color: "#6B6B6B" }}>
+                  Do these times not work? Check the next available day.
+                </p>
                 <button
-                  key={s.start}
                   type="button"
-                  onClick={() => setPicked(s)}
-                  className={`px-4 py-2 text-sm transition ${
-                    sel
-                      ? "bg-[#0A0A0A] text-[#FAFAF7]"
-                      : "bg-white text-[#0A0A0A] hover:bg-[#F5F2EB]"
-                  }`}
-                  style={{ border: "1px solid #0A0A0A" }}
+                  onClick={onFindNext}
+                  disabled={findingNext}
+                  className="self-start px-3 py-1.5 text-xs font-medium uppercase disabled:opacity-50"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    backgroundColor: "transparent",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
                 >
-                  {s.startLabel}
+                  {findingNext ? "Finding next day..." : "Next available day"}
                 </button>
-              );
-            })}
+              </div>
+            )}
           </div>
         )}
       </div>
