@@ -37,13 +37,19 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
   emergency_contact_phone: "",
 };
 
+// The save action returns void on success (it calls redirect()) or
+// { ok: false, error } when validation fails. Server actions in
+// Next.js production redact thrown errors to an opaque crash; this
+// return-shape lets the form render a clean error banner instead.
+export type ClientFormActionResult = { ok: false; error: string };
+
 type Props = {
   initialValues?: ClientFormValues;
   submitLabel: string;
   pendingLabel: string;
   cancelHref: string;
   hiddenFields?: Record<string, string>;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<ClientFormActionResult | void>;
 };
 
 // Blocks the browser's implicit submit-on-Enter for single-line text inputs;
@@ -101,9 +107,19 @@ export function ClientForm({
     }
     startTransition(async () => {
       try {
-        await action(fd);
+        const result = await action(fd);
+        if (result && result.ok === false) {
+          setError(result.error);
+        }
+        // On success the action calls redirect() which throws a
+        // NEXT_REDIRECT internally; the framework handles that
+        // transparently and we never reach the post-await statements.
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to save client.");
+        // Fallback for any unexpected throw. Server actions redact
+        // thrown errors in production, so the message here is rarely
+        // useful; surface a generic line and log for triage.
+        console.error("Client form action threw:", err);
+        setError("Couldn't save the client. Please try again.");
       }
     });
   }
@@ -152,6 +168,7 @@ export function ClientForm({
           value={values.email}
           onChange={(v) => update("email", v)}
           onKeyDown={blockEnterSubmit}
+          helperText="Portal login requires each active client to have a unique email address."
         />
       </div>
 
@@ -295,6 +312,7 @@ function Field({
   value,
   onChange,
   onKeyDown,
+  helperText,
 }: {
   label: string;
   type?: string;
@@ -306,6 +324,7 @@ function Field({
   value: string;
   onChange: (v: string) => void;
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+  helperText?: string;
 }) {
   return (
     <label className="flex flex-col gap-1.5">
@@ -325,6 +344,9 @@ function Field({
         onKeyDown={onKeyDown}
         className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
       />
+      {helperText && (
+        <span className="text-xs text-neutral-500">{helperText}</span>
+      )}
     </label>
   );
 }
