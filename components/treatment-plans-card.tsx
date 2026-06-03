@@ -18,6 +18,31 @@ import {
 const PRIMARY_AREA_MAX = 60;
 const MAX_NAME = 100;
 
+// Auto-name (PR #128, Part 4). The previous shape ("Chin and others
+// treatment plan" for two areas) confused practitioners who could see
+// both selected areas on screen but a vague label. Rebuild the auto-
+// name as a " + "-joined area list and fall back to a counted suffix
+// only when the full list would exceed MAX_NAME (which is the same
+// budget the server enforces on save):
+//   0 areas  -> ""
+//   1 area   -> "Chin treatment plan"
+//   2 areas  -> "Chin + Neck treatment plan"
+//   3 areas  -> "Chin + Neck + Upper lip treatment plan"
+//                  (or "Chin + Neck + 1 more treatment plan" if too long)
+//   N areas  -> "Chin + Neck + (N-2) more treatment plan" when full
+//               list overflows MAX_NAME, else full list.
+// Treats the input order verbatim; the MultiAreaPicker preserves the
+// selection order the practitioner clicked, so the first one or two
+// chips stay visible in both the picker and the auto-name.
+function buildAutoPlanName(areas: string[]): string {
+  if (areas.length === 0) return "";
+  if (areas.length === 1) return `${areas[0]} treatment plan`;
+  const allJoined = `${areas.join(" + ")} treatment plan`;
+  if (allJoined.length <= MAX_NAME) return allJoined;
+  const tailCount = areas.length - 2;
+  return `${areas[0]} + ${areas[1]} + ${tailCount} more treatment plan`;
+}
+
 type ActionFn = (formData: FormData) => Promise<
   { ok: true } | { ok: false; error: string }
 >;
@@ -65,19 +90,18 @@ export function TreatmentPlansCard({
   const [pending, startTransition] = useTransition();
 
   // Area-first: changing the areas list auto-generates the plan name
-  // until the practitioner edits the name themselves. With multiple
-  // areas, we use the first one + " and others" so the auto-name does
-  // not get unwieldy.
+  // until the practitioner edits the name themselves. Auto-name shape
+  // is owned by buildAutoPlanName (PR #128, Part 4): the vague
+  // "<first> and others treatment plan" became a " + "-joined list
+  // ("Chin + Neck treatment plan") that falls back to "Chin + Neck +
+  // <count> more treatment plan" only when the full list overflows
+  // MAX_NAME. The nameTouched gate is unchanged so a typed name is
+  // never overwritten and existing plans loaded from the DB are not
+  // re-auto-named.
   function handleAreasChange(next: string[]) {
     setAreas(next);
     if (!nameTouched) {
-      if (next.length === 0) {
-        setName("");
-      } else if (next.length === 1) {
-        setName(`${next[0]} treatment plan`);
-      } else {
-        setName(`${next[0]} and others treatment plan`);
-      }
+      setName(buildAutoPlanName(next));
     }
   }
 
@@ -377,6 +401,14 @@ function PlanCard({
     ? practitionerNames[plan.closed_by_practitioner_id]
     : null;
 
+  // Editing state lifted from PlanNotesEditor (PR #128, Part 3) so the
+  // card header can expose a prominent "Edit plan" button next to the
+  // status badge. The editor below renders the same form when this
+  // flag is true; the header button and the existing in-notes Edit
+  // link both write to it, so a returning practitioner has two
+  // discoverable entry points to the plan-level editor.
+  const [editing, setEditing] = useState(false);
+
   // Resolve the area chips: prefer the multi-area list, fall back to
   // the legacy primary_area so plans created before migration 0051
   // still render correctly.
@@ -409,15 +441,34 @@ function PlanCard({
             </span>
           ))}
         </div>
-        {isClosed ? (
-          <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-            Closed
-          </span>
-        ) : (
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-            Active
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Prominent Edit plan affordance (PR #128, Part 3). The
+              old card buried plan-level editing under the small "Edit"
+              link in the Notes section, which made the timeline /
+              areas / budget fields hard to find. The header button is
+              the discoverable entry point; the small Notes-section
+              "Edit" link below stays as a redundant entry so existing
+              muscle memory still works. Renders only for active plans
+              because closed plans are read-only. */}
+          {!isClosed && !editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="rounded-md border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              Edit plan
+            </button>
+          )}
+          {isClosed ? (
+            <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              Closed
+            </span>
+          ) : (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+              Active
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-0.5 text-xs text-neutral-500">
@@ -476,6 +527,8 @@ function PlanCard({
         clientId={clientId}
         isClosed={isClosed}
         action={updateNotesAction}
+        editing={editing}
+        setEditing={setEditing}
       />
 
       {/* Legacy visit-count footnote. Kept so plans created before the
@@ -515,13 +568,20 @@ function PlanNotesEditor({
   clientId,
   isClosed,
   action,
+  editing,
+  setEditing,
 }: {
   plan: TreatmentPlanWithStages;
   clientId: string;
   isClosed: boolean;
   action: ActionFn;
+  // PR #128 Part 3: editing state is now owned by the parent PlanCard
+  // so a header "Edit plan" button can open the editor too. The
+  // existing in-notes "Edit" link still calls setEditing(true) and
+  // remains a secondary discoverable entry.
+  editing: boolean;
+  setEditing: (next: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [budget, setBudget] = useState(plan.budget_notes ?? "");
   const [practitioner, setPractitioner] = useState(
     plan.practitioner_notes ?? "",

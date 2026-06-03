@@ -18,7 +18,7 @@
 // minimal name/email/phone/pronouns fields are collected; the full
 // client profile is filled in later from /clients/[id].
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Service } from "@/lib/types/database";
 import {
@@ -183,6 +183,23 @@ export function QuickBookDrawer({
   // is shown so the duration is editable before save.
   const [overrideDurationMinutes, setOverrideDurationMinutes] =
     useState<string>("");
+  // Soft-vs-explicit override tracking (PR #128). A drag-opened drawer
+  // auto-enables the override path because a custom drag duration
+  // cannot be matched against the standard service-default slot list
+  // up front. That auto-enable is a HINT, not the practitioner's
+  // intent: when the picked service has an exact standard slot at the
+  // drag's start time (Part 1), or when the practitioner picks a
+  // different service after the drag (Part 2), the soft override
+  // should drop back to standard mode and use the service duration.
+  // Any explicit interaction with the override controls (toggle the
+  // checkbox, edit the start time, edit the duration field, or tick
+  // the confirmation) promotes the override to "explicit" so the
+  // drop-out logic stops touching it. Ref-backed so the slot-fetch
+  // effect can read the current value without re-running on toggles.
+  const autoOverrideRef = useRef(false);
+  function markOverrideExplicit() {
+    autoOverrideRef.current = false;
+  }
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoadingSlots] = useTransition();
   const [booking, startBooking] = useTransition();
@@ -211,6 +228,7 @@ export function QuickBookDrawer({
       setOverrideConfirmed(false);
       setOverrideLocalTime("");
       setOverrideDurationMinutes("");
+      autoOverrideRef.current = false;
     }
   }, [open, firstServiceId]);
 
@@ -226,14 +244,19 @@ export function QuickBookDrawer({
 
   // Drag-to-create: when the draft carries a durationMinutes value
   // (always 15-min granular from DayColumn), the override flow is
-  // auto-enabled and the duration field pre-filled because a custom
-  // duration cannot match the service-default slot list. The
-  // confirmation checkbox is NOT pre-ticked: the practitioner must
-  // explicitly acknowledge they are booking outside their published
-  // availability before the Save button enables. A bare click leaves
-  // both flags off and the duration field empty. Effect runs only on
-  // draft identity so toggling the override checkbox manually is not
-  // undone by a re-render.
+  // soft-enabled and the duration field pre-filled because a custom
+  // duration cannot match the service-default slot list up front.
+  // autoOverrideRef tracks that the enable was a drag hint, not the
+  // practitioner's choice; the slot-fetch effect and the service-
+  // change effect (PR #128) can drop back out when a standard slot
+  // covers the same start time or when the picked service implies a
+  // different duration. The confirmation checkbox is NOT pre-ticked:
+  // even in true override mode the practitioner must explicitly
+  // acknowledge they are booking outside published availability
+  // before the Save button enables. A bare click leaves both flags
+  // off and the duration field empty. Effect runs only on draft
+  // identity so toggling the override checkbox manually is not undone
+  // by a re-render.
   useEffect(() => {
     if (!open) return;
     const dragMinutes = draft?.durationMinutes;
@@ -241,13 +264,35 @@ export function QuickBookDrawer({
       setOverrideDurationMinutes(String(dragMinutes));
       setOverrideEnabled(true);
       setOverrideConfirmed(false);
+      autoOverrideRef.current = true;
     } else {
       setOverrideDurationMinutes("");
+      autoOverrideRef.current = false;
     }
     // We intentionally do NOT add overrideEnabled / overrideConfirmed
     // to the deps; a user toggle off should stick until the drawer
     // closes or a new draft arrives.
   }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
+
+  // Service change after a drag (PR #128, Part 2). A drag of 105 min
+  // followed by picking a 60-minute service should book at the
+  // service duration, not at 105 minutes. When the soft override is
+  // still active (autoOverrideRef.current) and the practitioner
+  // changes serviceId, we drop the drag-derived duration hint so the
+  // service default takes over. The slot-fetch effect below will then
+  // re-evaluate against the new service and, if a standard slot
+  // exists at the drag start time, drop out of override entirely.
+  // Practitioner can still type a custom duration; once they do, the
+  // explicit-promote in the input onChange disables this snap.
+  useEffect(() => {
+    if (!open) return;
+    if (autoOverrideRef.current) {
+      setOverrideDurationMinutes("");
+    }
+    // Intentionally deps on serviceId only (plus open as a render
+    // gate); the snap should fire when the practitioner picks a
+    // different service, not on every override-mode toggle.
+  }, [open, serviceId]);
 
   // Lazy rebook lookup: fetch the selected client's last service only
   // when a client is selected (never prefetched for the whole list).
@@ -322,6 +367,23 @@ export function QuickBookDrawer({
       );
       setSlots(futureSlots);
       const exact = futureSlots.find((s) => s.startLabel === targetHint);
+      // PR #128 Part 1. If the picked service has an exact-match
+      // standard slot at the drag's start time AND the override path
+      // was only soft-enabled by the drag (not explicitly chosen by
+      // the practitioner), drop back to standard mode and preselect
+      // that slot. This is the false-positive fix: drag 12:00 to
+      // 1:45, then pick a 60-min service whose 12:00 slot is inside
+      // availability, and the drawer no longer shows the outside-
+      // availability warning, no longer posts allow_outside, and
+      // books at the service duration. True override (no standard
+      // slot at the drag start, or practitioner explicitly toggled
+      // override) is untouched.
+      if (exact && autoOverrideRef.current) {
+        setOverrideEnabled(false);
+        setOverrideConfirmed(false);
+        setOverrideDurationMinutes("");
+        autoOverrideRef.current = false;
+      }
       setPickedSlot(exact ?? null);
     });
     return () => {
@@ -808,6 +870,10 @@ export function QuickBookDrawer({
                 if (!e.target.checked) {
                   setOverrideConfirmed(false);
                 }
+                // Explicit toggle (either direction) means the
+                // practitioner owns the override state from here on.
+                // The soft-drag drop-out logic stops touching it.
+                markOverrideExplicit();
               }}
               className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
             />
@@ -838,7 +904,10 @@ export function QuickBookDrawer({
                     type="time"
                     step={900}
                     value={overrideLocalTime}
-                    onChange={(e) => setOverrideLocalTime(e.target.value)}
+                    onChange={(e) => {
+                      setOverrideLocalTime(e.target.value);
+                      markOverrideExplicit();
+                    }}
                     className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                   />
                 </label>
@@ -858,9 +927,10 @@ export function QuickBookDrawer({
                       max={360}
                       step={15}
                       value={overrideDurationMinutes}
-                      onChange={(e) =>
-                        setOverrideDurationMinutes(e.target.value)
-                      }
+                      onChange={(e) => {
+                        setOverrideDurationMinutes(e.target.value);
+                        markOverrideExplicit();
+                      }}
                       className="w-28 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                     />
                   </label>
@@ -891,7 +961,10 @@ export function QuickBookDrawer({
                 <input
                   type="checkbox"
                   checked={overrideConfirmed}
-                  onChange={(e) => setOverrideConfirmed(e.target.checked)}
+                  onChange={(e) => {
+                    setOverrideConfirmed(e.target.checked);
+                    markOverrideExplicit();
+                  }}
                   className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
                 />
                 <span>
