@@ -33,6 +33,19 @@ export type PortalStudioSummary = {
   timezone: string;
   cancellationPolicyText: string | null;
   noShowPolicyText: string | null;
+  // Postcare fields the studio configured (same source the postcare
+  // email renders from; we never invent a new postcare store). All
+  // nullable: empty fields render nothing on the portal home.
+  postcareAftercareText: string | null;
+  postcareWarningSignsText: string | null;
+  postcareProductRecommendationsText: string | null;
+  postcareReviewUrl: string | null;
+  postcareReviewPromptText: string | null;
+  // Studio business contact email surfaced by the portal Contact
+  // button. Reuses the same field that postcare emails fall back to
+  // for "reply to" so we never hardcode a personal address. Null
+  // means no contact button.
+  postcareContactEmail: string | null;
 };
 
 export type PortalUpcomingAppointment = {
@@ -75,7 +88,7 @@ export async function getPortalIdentity(
   const { data: studioRow, error: studioErr } = await admin
     .from("studios")
     .select(
-      "id, name, timezone, cancellation_policy_text, no_show_policy_text",
+      "id, name, timezone, cancellation_policy_text, no_show_policy_text, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email",
     )
     .eq("id", studioId)
     .maybeSingle();
@@ -99,6 +112,19 @@ export async function getPortalIdentity(
         (studioRow.cancellation_policy_text as string | null) ?? null,
       noShowPolicyText:
         (studioRow.no_show_policy_text as string | null) ?? null,
+      postcareAftercareText:
+        (studioRow.postcare_aftercare_text as string | null) ?? null,
+      postcareWarningSignsText:
+        (studioRow.postcare_warning_signs_text as string | null) ?? null,
+      postcareProductRecommendationsText:
+        (studioRow.postcare_product_recommendations_text as string | null) ??
+        null,
+      postcareReviewUrl:
+        (studioRow.postcare_review_url as string | null) ?? null,
+      postcareReviewPromptText:
+        (studioRow.postcare_review_prompt_text as string | null) ?? null,
+      postcareContactEmail:
+        (studioRow.postcare_contact_email as string | null) ?? null,
     },
   };
 }
@@ -163,6 +189,75 @@ export async function getPortalUpcomingAppointments(
       manageToken: row.cancellation_token,
     };
   });
+}
+
+// Pre-care instruction strings for the client's upcoming
+// appointments. Service-level field (services.pre_care_instructions);
+// the portal home groups by service name so a client with multiple
+// upcoming appointments of the same service sees one entry. Empty /
+// null pre-care strings are omitted at the source so an empty
+// services row never produces a blank card.
+//
+// Scoped to (studioId, clientId) and to status=confirmed + future,
+// matching the upcoming-appointments query. No clinical, charting,
+// or treatment-plan fields are read.
+export type PortalPreCareEntry = {
+  serviceName: string;
+  preCareText: string;
+};
+
+export async function getPortalUpcomingPreCare(
+  studioId: string,
+  clientId: string,
+): Promise<PortalPreCareEntry[]> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  // Select only the columns we need to render pre-care; no notes,
+  // practitioner_id, or treatment_plan_id are touched.
+  const { data, error } = await admin
+    .from("appointments")
+    .select(
+      "service:services(id, name, pre_care_instructions)",
+    )
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("status", "confirmed")
+    .gt("starts_at", nowIso)
+    .order("starts_at", { ascending: true });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_pre_care_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
+
+  type Row = {
+    service:
+      | { id: string; name: string; pre_care_instructions: string | null }
+      | Array<{ id: string; name: string; pre_care_instructions: string | null }>
+      | null;
+  };
+  const pick = <T>(v: T | T[] | null): T | null =>
+    Array.isArray(v) ? (v[0] ?? null) : v;
+
+  const byServiceId = new Map<string, PortalPreCareEntry>();
+  for (const row of ((data ?? []) as unknown as Row[])) {
+    const service = pick(row.service);
+    if (!service) continue;
+    const text = service.pre_care_instructions?.trim();
+    if (!text) continue;
+    if (byServiceId.has(service.id)) continue;
+    byServiceId.set(service.id, {
+      serviceName: service.name?.trim() || "Appointment",
+      preCareText: text,
+    });
+  }
+  return Array.from(byServiceId.values());
 }
 
 // Resolve intake status for the portal home. Reuses the same

@@ -182,6 +182,22 @@ export function RescheduleForm({
         <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
           Your new appointment is set. A confirmation email is on its way.
         </p>
+        {/* Back-to-portal exit. /portal handles its own session
+            check: if the visitor has a live portal session they land
+            on their home; if not, the portal page redirects to
+            /portal/login. We do not promise they are already signed
+            in. */}
+        <a
+          href="/portal"
+          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+          style={{
+            border: "1px solid #0A0A0A",
+            color: "#0A0A0A",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Back to client portal
+        </a>
       </div>
     );
   }

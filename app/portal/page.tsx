@@ -4,12 +4,13 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
-import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
+import { MarkdownLiteBlock } from "@/app/_components/MarkdownLiteBlock";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import {
   getPortalIdentity,
   getPortalIntakeStatus,
   getPortalUpcomingAppointments,
+  getPortalUpcomingPreCare,
 } from "@/lib/portal/queries";
 import { portalLogoutAction } from "./logout/actions";
 
@@ -46,12 +47,48 @@ export default async function PortalHomePage() {
     redirect("/portal/login");
   }
 
-  const [upcoming, intake] = await Promise.all([
+  const [upcoming, intake, preCareEntries] = await Promise.all([
     getPortalUpcomingAppointments(session.studioId, session.clientId),
     getPortalIntakeStatus(session.studioId, session.clientId),
+    getPortalUpcomingPreCare(session.studioId, session.clientId),
   ]);
 
   const { client, studio } = identity;
+
+  // Postcare resolves from studio-level fields, the same source the
+  // postcare email already reads. We deliberately do NOT pull
+  // service.postcare or any practitioner-side notes; postcare is
+  // studio-scoped by Chloe's design and this surface honours that.
+  const postcareSections: ReadonlyArray<{
+    heading: string;
+    text: string;
+  }> = [
+    {
+      heading: "Aftercare",
+      text: studio.postcareAftercareText ?? "",
+    },
+    {
+      heading: "Warning signs",
+      text: studio.postcareWarningSignsText ?? "",
+    },
+    {
+      heading: "Product recommendations",
+      text: studio.postcareProductRecommendationsText ?? "",
+    },
+  ].filter((s) => s.text.trim().length > 0);
+
+  const hasPreCare = preCareEntries.length > 0;
+  const hasPostcare = postcareSections.length > 0;
+  const showCareSection = hasPreCare || hasPostcare;
+
+  // Contact button: rendered only when the studio has configured a
+  // contact email. We never hardcode a personal address and the
+  // mailto: is never built from a missing value.
+  const contactEmail = studio.postcareContactEmail?.trim() || null;
+  const contactSubject = `Question about my ${studio.name} appointment`;
+  const contactHref = contactEmail
+    ? `mailto:${contactEmail}?subject=${encodeURIComponent(contactSubject)}`
+    : null;
 
   return (
     <main
@@ -186,11 +223,112 @@ export default async function PortalHomePage() {
             )}
           </section>
 
-          <PublicPolicyReminderCard
-            cancellationPolicyText={studio.cancellationPolicyText}
-            noShowPolicyText={studio.noShowPolicyText}
-            studioName={studio.name}
-          />
+          {showCareSection && (
+            <section className="flex flex-col gap-3">
+              <h2
+                className="text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+              >
+                Care instructions
+              </h2>
+              <p
+                className="text-[14px]"
+                style={{ color: "#3F3F3F" }}
+              >
+                Review this before and after your appointment.
+              </p>
+
+              {hasPreCare && (
+                <div
+                  className="flex flex-col gap-4 p-6"
+                  style={{
+                    backgroundColor: "#FAFAF7",
+                    border: "1px solid #E5E2D9",
+                  }}
+                >
+                  <h3
+                    className="text-[12px] font-medium uppercase"
+                    style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+                  >
+                    Before your appointment
+                  </h3>
+                  {preCareEntries.map((entry) => (
+                    <div
+                      key={entry.serviceName}
+                      className="flex flex-col gap-1.5"
+                    >
+                      <p className="text-[14px] font-medium text-[#0A0A0A]">
+                        {entry.serviceName}
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        <MarkdownLiteBlock
+                          text={entry.preCareText}
+                          keyPrefix={`precare-${entry.serviceName}`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {hasPostcare && (
+                <div
+                  className="flex flex-col gap-4 p-6"
+                  style={{
+                    backgroundColor: "#FAFAF7",
+                    border: "1px solid #E5E2D9",
+                  }}
+                >
+                  <h3
+                    className="text-[12px] font-medium uppercase"
+                    style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+                  >
+                    After your appointment
+                  </h3>
+                  {postcareSections.map((s) => (
+                    <div key={s.heading} className="flex flex-col gap-1.5">
+                      <p className="text-[13px] font-medium text-[#0A0A0A]">
+                        {s.heading}
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        <MarkdownLiteBlock
+                          text={s.text}
+                          keyPrefix={`postcare-${s.heading}`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {contactHref && (
+            <section className="flex flex-col gap-2">
+              <h2
+                className="text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+              >
+                Questions
+              </h2>
+              <p
+                className="text-[14px] leading-relaxed text-[#0A0A0A]"
+              >
+                Reach out to {studio.name} directly for anything else.
+              </p>
+              <a
+                href={contactHref}
+                className="self-start px-5 py-2 text-[12px] font-medium uppercase"
+                style={{
+                  border: "1px solid #0A0A0A",
+                  color: "#0A0A0A",
+                  letterSpacing: "0.1em",
+                }}
+              >
+                Email {studio.name}
+              </a>
+            </section>
+          )}
 
           <p className="text-[12px]" style={{ color: "#6B6B6B" }}>
             Session expires{" "}

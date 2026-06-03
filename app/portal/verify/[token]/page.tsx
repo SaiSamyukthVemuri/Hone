@@ -114,7 +114,7 @@ export default async function PortalVerifyPage({
             </h1>
             <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
               This secure link is ready. Continue to access your
-              appointments, forms, and policies.
+              appointments, forms, and appointment details.
             </p>
             <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
               The link is single use; clicking Continue will sign you in
