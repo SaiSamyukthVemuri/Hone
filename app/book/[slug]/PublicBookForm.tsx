@@ -416,7 +416,7 @@ export function PublicBookForm({
             book follow-up sessions.
           </p>
           <a
-            href="/portal/login"
+            href={`/portal/login?studio=${encodeURIComponent(slug)}`}
             className="self-start px-6 py-3 text-[13px] font-medium uppercase"
             style={{
               backgroundColor: "#0A0A0A",

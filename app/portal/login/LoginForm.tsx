@@ -8,7 +8,18 @@ import { requestPortalMagicLinkAction } from "./actions";
 // well-formed request. The page renders the action result inline so
 // the visitor sees the same string regardless of whether a match
 // existed, satisfying the no-enumeration guarantee.
-export function PortalLoginForm() {
+//
+// Studio scoping (PR #126). When the page renders the
+// /portal/login?studio=<slug> surface, it passes the slug here as
+// `studioSlug` and we include it in the form post so the action
+// can run the scoped client-lookup. The slug is server-resolved
+// AGAIN on submit (defence in depth) so a forged or tampered
+// hidden input cannot point at an unrelated studio.
+export function PortalLoginForm({
+  studioSlug = null,
+}: {
+  studioSlug?: string | null;
+}) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +31,9 @@ export function PortalLoginForm() {
     setError(null);
     const fd = new FormData();
     fd.set("email", email);
+    if (studioSlug) {
+      fd.set("studio_slug", studioSlug);
+    }
     startTransition(async () => {
       const r = await requestPortalMagicLinkAction(fd);
       if (r.ok) {

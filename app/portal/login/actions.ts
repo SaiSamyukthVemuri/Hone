@@ -12,7 +12,11 @@ import {
   hashFingerprint,
   hashToken,
 } from "@/lib/portal/tokens";
-import { findActiveClientsForPortalLogin } from "@/lib/portal/queries";
+import {
+  findActiveClientsForPortalLogin,
+  findActiveClientsForStudioPortalLogin,
+} from "@/lib/portal/queries";
+import { getStudioBySlug } from "@/lib/booking/queries";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
@@ -77,6 +81,15 @@ export async function requestPortalMagicLinkAction(
   }
   const emailNormalized = trimmed.toLowerCase();
 
+  // Optional studio scoping. Bare /portal/login keeps the existing
+  // global behaviour; /portal/login?studio=<slug> resolves the
+  // studio and uses the scoped lookup so a client whose email
+  // exists in multiple studios can still log into THIS studio's
+  // portal. We never trust the client-supplied slug as a row id;
+  // it's resolved server-side via getStudioBySlug.
+  const studioSlugRaw = (formData.get("studio_slug") ?? "").toString().trim();
+  const studioSlug = studioSlugRaw.length > 0 ? studioSlugRaw : null;
+
   const hdrs = await headers();
 
   // Rate limit by IP and email. Sliding windows; fails open. Runs
@@ -96,7 +109,7 @@ export async function requestPortalMagicLinkAction(
   // awaits waitUntilMinimumElapsed(startedAt) right before
   // returning the generic success so the visible response time is
   // uniform across no-match, single-match, multi-match, insert
-  // failure, and email-send failure.
+  // failure, email-send failure, AND the invalid-slug branch.
   const startedAt = Date.now();
 
   // Hashed fingerprints recorded on every issued magic-link row for
@@ -104,7 +117,28 @@ export async function requestPortalMagicLinkAction(
   const ipHash = hashFingerprint(clientIpFromHeaders(hdrs));
   const uaHash = hashFingerprint(hdrs.get("user-agent"));
 
-  const matches = await findActiveClientsForPortalLogin(emailNormalized);
+  // Resolve the studio (if a slug was supplied) before picking the
+  // matches list. An invalid/unknown slug falls through to the
+  // generic-success-no-email branch (same as a no-match) so the
+  // visitor cannot probe whether a slug exists, and a typo from a
+  // forwarded link does not crash.
+  let matches: Array<{ studioId: string; clientId: string }>;
+  if (studioSlug != null) {
+    const studio = await getStudioBySlug(studioSlug);
+    if (!studio) {
+      logSanitized("portal_login_studio_slug_unknown", {
+        emailHash: hashFingerprint(emailNormalized),
+      });
+      await waitUntilMinimumElapsed(startedAt);
+      return { ok: true, message: GENERIC_SUCCESS };
+    }
+    matches = await findActiveClientsForStudioPortalLogin(
+      emailNormalized,
+      studio.id,
+    );
+  } else {
+    matches = await findActiveClientsForPortalLogin(emailNormalized);
+  }
 
   if (matches.length === 0) {
     // No active client. Return the same generic message; we
@@ -112,30 +146,35 @@ export async function requestPortalMagicLinkAction(
     // happened from the caller's perspective. The hashed email is
     // safe to log (salted SHA-256 via hashFingerprint) and helps an
     // operator triage a brute-force attempt without storing the
-    // raw address.
+    // raw address. studioSlug (when present) is safe to log because
+    // it's already in the URL the visitor used and reveals nothing
+    // about a specific client.
     logSanitized("portal_login_request_no_match", {
       emailHash: hashFingerprint(emailNormalized),
+      studioSlug,
     });
     await waitUntilMinimumElapsed(startedAt);
     return { ok: true, message: GENERIC_SUCCESS };
   }
 
   // Pilot safety: when the same normalized email matches multiple
-  // active clients (e.g. test data collisions, or a real client who
-  // exists in more than one studio's roster) we must NOT fan out a
-  // magic link per match. Sending several emails to one address is
-  // confusing and the visitor cannot tell which link belongs to
-  // which (studio, client) pair from the email body, which is
-  // intentionally generic for no-enumeration reasons. For the
-  // pilot we refuse the send, log a sanitized review signal, and
-  // return the same generic success so a visitor cannot probe the
-  // multi-match condition by timing or by observing inbox state.
-  // A future multi-studio claim flow can replace this branch with
-  // a chooser surface; that is out of scope here.
+  // active clients (e.g. test data collisions inside a single
+  // studio, or a duplicate row that needs merging) we must NOT fan
+  // out a magic link per match. Sending several emails to one
+  // address is confusing and the visitor cannot tell which link
+  // belongs to which (studio, client) pair from the email body,
+  // which is intentionally generic for no-enumeration reasons.
+  //
+  // With studio scoping (PR #126) the most common cross-studio
+  // collision is gone: a client who is active in studio A AND
+  // studio B reaches A through ?studio=a and B through ?studio=b.
+  // This branch now usually fires only for in-studio duplicates
+  // which want a proper merge/dedupe flow (deferred).
   if (matches.length > 1) {
     logSanitized("portal_login_multiple_matches_needs_review", {
       emailHash: hashFingerprint(emailNormalized),
       matchCount: matches.length,
+      studioSlug,
     });
     await waitUntilMinimumElapsed(startedAt);
     return { ok: true, message: GENERIC_SUCCESS };

@@ -147,9 +147,22 @@ export async function createPortalMessageAction(
   if (!client.email) {
     emailErrorString = "No email on file";
   } else {
+    // Studio-scoped portal login URL (PR #126). A client whose
+    // email is also active in another Hone studio cannot log into
+    // this studio's portal via the bare /portal/login surface
+    // because the multi-studio guard refuses to send a magic link
+    // when more than one match exists. Scoping the URL to this
+    // studio's slug routes the action through
+    // findActiveClientsForStudioPortalLogin, which only matches in
+    // this studio. studio.slug is the canonical public booking
+    // slug already in use by /book/<slug>; we encode it because
+    // slugs are URL-safe by convention but a future change might
+    // relax that.
+    const portalLoginUrl =
+      `${APP_ORIGIN}/portal/login?studio=${encodeURIComponent(studio.slug)}`;
     const tmpl = buildPortalMessageNotificationEmail({
       studioName: studio.name,
-      portalLoginUrl: `${APP_ORIGIN}/portal/login`,
+      portalLoginUrl,
     });
     const sendResult = await sendEmailSafely({
       to: client.email,
