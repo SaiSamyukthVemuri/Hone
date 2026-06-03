@@ -649,17 +649,19 @@ async function dispatchBookingEmails(p: DispatchParams) {
   const rescheduleUrl = p.appointment.cancellation_token
     ? `${APP_ORIGIN}/reschedule/${p.appointment.cancellation_token}`
     : null;
-  // SMS uses the single neutral /manage/<token> entry point. Only
-  // built when the row carries a column-based cancellation_token; the
-  // HMAC-fallback token used above for the legacy cancel URL is
-  // intentionally not minted into a manage URL because /manage
-  // resolves via the column-or-HMAC pattern and would just fall
-  // through to the same generic unavailable surface for HMAC inputs
-  // anyway. Null here means the SMS template omits the manage line
-  // entirely; the SMS still sends with the appointment moment.
-  const manageUrl = p.appointment.cancellation_token
-    ? `${APP_ORIGIN}/manage/${p.appointment.cancellation_token}`
-    : null;
+  // SMS uses the single neutral /manage/<token> entry point. We
+  // build it from the same `token` cancel uses (column-based when
+  // the row has one, HMAC fallback for legacy rows that pre-date
+  // the column backfill) so a client sees one policy-aware landing
+  // page before choosing an action. /manage and /cancel both
+  // resolve column-or-HMAC; /reschedule is column-only, so for the
+  // rare legacy HMAC-only row the manage page still works as a
+  // cancel landing and the Reschedule button on the manage page
+  // falls through to the same generic unavailable surface
+  // /reschedule already shows for unknown tokens. New internal
+  // bookings always carry a column token via the insert path, so
+  // this fallback is the legacy-row edge only.
+  const manageUrl = `${APP_ORIGIN}/manage/${token}`;
   const appointmentUrl = `${APP_ORIGIN}/calendar`;
 
   if (p.clientEmail && p.studio.send_confirmation_emails) {

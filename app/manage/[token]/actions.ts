@@ -30,9 +30,14 @@ function logInternal(event: string, detail: unknown) {
 // Same column-or-HMAC resolver pattern used by the cancel surface so
 // the manage link works for both new column-based tokens and any
 // older in-flight HMAC-based links a client may still have in an
-// email. We intentionally do not export this; the manage surface is
-// the only caller and a shared helper would broaden the import graph
-// without a need.
+// email. The reschedule surface is column-only; for a legacy HMAC-
+// only row the manage page therefore resolves and renders, but the
+// Reschedule button on it routes into /reschedule which then falls
+// through to its own generic unavailable surface. New bookings and
+// the cron path always carry a column token, so this asymmetry is
+// the rare legacy-row edge only. We intentionally do not export
+// this resolver; the manage surface is the only caller and a shared
+// helper would broaden the import graph without a need.
 async function resolveAppointmentIdFromToken(
   token: string,
 ): Promise<
