@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   getClientById,
   getCurrentPractitionerWithStudio,
+  getPastConfirmedAppointmentsForClient,
   sessionPerformerName,
 } from "@/lib/supabase/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
@@ -114,6 +115,17 @@ export default async function ClientCheatSheetPage({
   const { client, pricing, sessions, practitioners } = data;
   const lastSession = sessions[0];
   const olderSessions = sessions.slice(1);
+  // PR Willow launch fixes: surface past appointments that the
+  // practitioner has not charted yet under the Sessions tab. The
+  // helper filters out appointments that already have a session
+  // within +/-2h (heuristic dedup; sessions do not carry an
+  // appointment_id today). Capped at 50 rows. Display-only; no
+  // appointment status mutation.
+  const unchartedPastAppointments = await getPastConfirmedAppointmentsForClient(
+    studio.id,
+    client.id,
+    sessions.map((s) => s.started_at),
+  );
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
   const intake = await getLatestIntakeForClient(studio.id, client.id);
@@ -179,6 +191,16 @@ export default async function ClientCheatSheetPage({
               <h1 className="text-3xl font-semibold tracking-tight">
                 {client.name}
               </h1>
+              {/* PR Willow launch fixes: when the client is archived
+                  (migration 0050), show a calm badge so a practitioner
+                  who navigated here from a deep link or a historical
+                  appointment knows the row is hidden from active lists
+                  and can unarchive from the Edit page. */}
+              {client.archived_at && (
+                <span className="rounded-full bg-neutral-200 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                  Archived
+                </span>
+              )}
               <Link
                 href={`/clients/${client.id}/edit`}
                 className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
@@ -534,6 +556,63 @@ export default async function ClientCheatSheetPage({
               </div>
             )}
           </section>
+
+          {/* 1b. Uncharted past visits. PR Willow launch fixes:
+                Chloe expects to see past appointments in the Sessions
+                tab even before she has charted them, so she can chart
+                from the client context instead of hunting back through
+                the calendar. Each row shows date/time, service, the
+                "Not charted yet" status, and a Chart-session CTA that
+                lands on the existing new-session creation page. The
+                helper above filters out appointments that already
+                have a session within +/-2h, so a charted past visit
+                does not appear as a duplicate row here. Hidden
+                entirely when the list is empty so a brand-new client
+                profile stays calm. */}
+          {unchartedPastAppointments.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-lg font-medium">Visits awaiting charting</h2>
+                <p className="text-xs text-neutral-500">
+                  {unchartedPastAppointments.length}{" "}
+                  {unchartedPastAppointments.length === 1
+                    ? "appointment"
+                    : "appointments"}{" "}
+                  not yet charted
+                </p>
+              </div>
+              <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+                {unchartedPastAppointments.map((appt) => {
+                  const svc = services.find((s) => s.id === appt.service_id);
+                  return (
+                    <li
+                      key={appt.id}
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium">
+                          <FormattedDateTime iso={appt.starts_at} />
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {svc?.name ?? "Appointment"}
+                          {svc?.modality ? ` · ${svc.modality}` : ""}
+                          <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                            Not charted yet
+                          </span>
+                        </div>
+                      </div>
+                      <Link
+                        href={`/clients/${client.id}/sessions/new`}
+                        className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                      >
+                        Chart session
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
 
           {/* 2. Treatment time totals + goal: progress-tracking,
                 lower priority than immediate last-session memory.

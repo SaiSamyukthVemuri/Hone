@@ -17,7 +17,7 @@ export default async function SettingsLayout({
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },
     { href: "/settings/launch", label: "Launch" },
-    { href: "/settings/intake", label: "Intake & Postcare" },
+    { href: "/settings/intake", label: "Forms & Policies" },
     ...(isOwner
       ? [
           { href: "/settings/studio", label: "Studio" },

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { updateStudioPolicyAction } from "./actions";
+import { MarkdownLiteTextarea } from "./PostcareEditingHelpers";
 
 // Per-studio cancellation / no-show policy editor (C2a-core).
 //
@@ -80,16 +81,36 @@ export function PolicySettingsForm({ initial }: Props) {
           enabled in a future release. No cards are collected yet. Saving
           these policies does not enable card collection.
         </p>
+        {/* Formatting help mirrors PostcareSettingsForm so practitioners
+            who edited postcare already know the shortcuts and tokens.
+            The same lib/email/markdown-lite.ts renderer will format the
+            text when it is shown to clients (deferred render, gated on
+            card-on-file). MarkdownLiteTextarea wraps the textarea with
+            a Bold / Italic / Bullet toolbar and Cmd+B / Cmd+I keyboard
+            shortcuts; storage is unchanged (still the same markdown-lite
+            string the renderer already understands). */}
+        <div className="mt-1 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+          <p className="font-medium text-neutral-800 dark:text-neutral-200">
+            Formatting
+          </p>
+          <p className="mt-1">
+            Use the toolbar buttons or keyboard shortcuts: Cmd+B / Ctrl+B
+            for bold, Cmd+I / Ctrl+I for italic. <code>- bullet</code> at
+            the start of a line makes a list.{" "}
+            <code>[label](https://example.com)</code> makes a link. All
+            other HTML is escaped before sending.
+          </p>
+        </div>
       </div>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Cancellation policy</span>
-        <textarea
+        <MarkdownLiteTextarea
           rows={5}
           value={cancellation}
-          onChange={(e) => setCancellation(e.target.value)}
+          onChange={setCancellation}
           placeholder="Describe how much notice you need and any cancellation fee."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          ariaLabel="Cancellation policy"
         />
         <details className="mt-1 text-xs text-neutral-500">
           <summary className="cursor-pointer select-none">
@@ -103,12 +124,12 @@ export function PolicySettingsForm({ initial }: Props) {
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">No-show policy</span>
-        <textarea
+        <MarkdownLiteTextarea
           rows={5}
           value={noShow}
-          onChange={(e) => setNoShow(e.target.value)}
+          onChange={setNoShow}
           placeholder="Describe what counts as a no-show and any associated fee."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          ariaLabel="No-show policy"
         />
         <details className="mt-1 text-xs text-neutral-500">
           <summary className="cursor-pointer select-none">

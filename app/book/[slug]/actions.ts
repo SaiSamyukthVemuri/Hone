@@ -45,6 +45,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PUBLIC_BOOKING_GENERIC_ERROR =
   "We couldn't complete your booking. Please try again or contact the studio.";
 
+// Returned when an unauthenticated public booking attempts to use an
+// email address that is owned by a client the studio has archived
+// (migration 0050 + PR #113). We deliberately do NOT reveal that an
+// archived client exists or invite the booker to retry with different
+// details that would unmask the archive: that would re-introduce a
+// soft enumeration channel. The wording matches the spec and stays
+// generic. studio.name is interpolated at call time.
+function archivedClientCollisionError(studioName: string): string {
+  return `We couldn't complete this booking with those details. Please contact ${studioName} or use a different email.`;
+}
+
 function logInternalBookingError(event: string, detail: unknown) {
   try {
     console.error(
@@ -391,11 +402,21 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: "Enter a valid email address." };
   }
 
+  // Active-only existing-client lookup. Archived clients (migration
+  // 0050) MUST NOT match here. If they did, a public booker who knows
+  // an archived client's email could attach a brand new appointment
+  // to the archived row, and the appointment would then disappear
+  // from Chloe's active client list because the parent client is
+  // hidden. The archived-collision case is detected below in the
+  // 23505 race-fallback branch, where we re-read the unique-index
+  // winner WITHOUT this filter so we can distinguish "no winner" from
+  // "winner is archived" and return a non-revealing error.
   const { data: existingClient, error: lookupErr } = await admin
     .from("clients")
     .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("studio_id", studio.id)
     .eq("normalized_email", normalizedEmail)
+    .is("archived_at", null)
     .maybeSingle();
   if (lookupErr) {
     logInternalBookingError("public_booking_client_lookup_failed", {
@@ -510,17 +531,48 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
       .single();
     if (clientErr || !createdClient) {
-      // Race-safe path: a concurrent booking from the same email may
-      // have inserted between our SELECT above and this INSERT. The
-      // clients_studio_normalized_email_uniq partial unique index
-      // raises sqlstate 23505. Re-read the winning row and continue.
+      // Race-safe path: the clients_studio_normalized_email_uniq
+      // partial unique index raises sqlstate 23505 when our INSERT
+      // collides on (studio_id, normalized_email). The winning row is
+      // either:
+      //   (a) an ACTIVE client created by a concurrent booking from
+      //       the same email (the original race-fallback case), or
+      //   (b) an ARCHIVED client (migration 0050) that owns the same
+      //       email. The initial lookup filters archived clients, so
+      //       case (b) falls through to the INSERT, which then trips
+      //       the unique index because the index is on the bare
+      //       normalized_email column (archived rows still occupy
+      //       their slot in the index).
+      //
+      // We re-read the winner WITHOUT the archived filter so we can
+      // distinguish (a) from (b). If the winner is archived, we
+      // refuse the booking with a generic non-revealing error -- we
+      // never attach a public appointment to an archived client,
+      // never auto-unarchive from a public surface, and never reveal
+      // to the booker that the email belongs to an archived row.
       if (clientErr?.code === "23505") {
         const { data: winner } = await admin
           .from("clients")
-          .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
+          .select(
+            "id, name, phone, sms_consent_at, sms_opted_out_at, archived_at",
+          )
           .eq("studio_id", studio.id)
           .eq("normalized_email", normalizedEmail)
           .maybeSingle();
+        if (winner && winner.archived_at != null) {
+          // Archived-collision case. Log internally so an operator
+          // can see what happened; return a generic message that
+          // does not reveal the archive.
+          logInternalBookingError("public_booking_archived_client_collision", {
+            studioId: studio.id,
+            normalizedEmail,
+            archivedClientId: winner.id,
+          });
+          return {
+            ok: false,
+            error: archivedClientCollisionError(studio.name),
+          };
+        }
         if (winner) {
           clientId = winner.id;
           clientName = winner.name;

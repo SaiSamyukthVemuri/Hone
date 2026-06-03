@@ -115,7 +115,7 @@ export default async function LaunchChecklistPage() {
       detail:
         "Preview available. The current intake form is shown to every new client booked through Hone.",
       cta: {
-        label: "Open Intake & Postcare",
+        label: "Open Forms & Policies",
         href: "/settings/intake",
       },
     },

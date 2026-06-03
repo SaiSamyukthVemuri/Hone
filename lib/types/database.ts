@@ -368,6 +368,14 @@ export type Client = {
   notes: string | null;
   created_at: string;
   created_by: string | null;
+  // Migration 0050: soft-archive for test/duplicate cleanup. When
+  // archived_at is non-null, the client is hidden from active
+  // client lists, the calendar quick-book picker, and the birthday
+  // surface. The detail page (/clients/[id]) still resolves so the
+  // practitioner can un-archive or view history. archived_by is a
+  // practitioners.id with on-delete-set-null.
+  archived_at: string | null;
+  archived_by: string | null;
   // Migration 0049: SMS consent and opt-out. consent_at is stamped
   // when the client explicitly opts in (public booking checkbox or a
   // practitioner action); opt_out_at is stamped by the Twilio inbound
