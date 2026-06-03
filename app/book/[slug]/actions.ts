@@ -33,6 +33,7 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
+import { isConsultationService } from "@/lib/booking/consultation";
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -55,6 +56,32 @@ const PUBLIC_BOOKING_GENERIC_ERROR =
 function archivedClientCollisionError(studioName: string): string {
   return `We couldn't complete this booking with those details. Please contact ${studioName} or use a different email.`;
 }
+
+// Returned when an unauthenticated public booking with
+// client_type=existing cannot find an ACTIVE client by normalized
+// email in the studio. Same message regardless of whether the email
+// is unknown OR belongs to an archived client; the archived path
+// naturally falls through to "no active match" because the lookup
+// already filters archived_at IS NULL. Keeping a single generic
+// string preserves the no-enumeration guarantee.
+const EXISTING_CLIENT_NO_MATCH_ERROR =
+  "We couldn't match this as an existing client. Please book a consultation as a new client or contact the studio.";
+
+// Returned when client_type=new attempts to book a service that is
+// not a consultation. Explicit phrasing so the visitor understands
+// the constraint without exposing any record state.
+const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
+  "New clients must book a consultation first.";
+
+// Returned when client_type is missing, unknown, or otherwise not in
+// the {new, existing} set. The new UI always sends one of those two;
+// any other value should be treated as a stale/forged request and get
+// the same generic error a missing field would produce. A no-
+// consultation-service condition is surfaced at the UI layer instead
+// of here because the existing isConsultationService guard below
+// already rejects any forged new-client submit that picked a
+// non-consultation service id, which is the only way a no-
+// consultation studio could reach this action with client_type=new.
 
 function logInternalBookingError(event: string, detail: unknown) {
   try {
@@ -285,6 +312,32 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const phone = nullable(formData.get("phone"));
   const notes = nullable(formData.get("notes"));
 
+  // Public booking new/existing split. The first-step UI choice is
+  // posted as client_type and is the source of truth for two rules:
+  //   * client_type = "new" requires a consultation service.
+  //   * client_type = "existing" requires an active (non-archived)
+  //     client to already exist in the studio under the submitted
+  //     normalized email; the action MUST NOT create a new client
+  //     here and MUST NOT reveal whether the email exists in an
+  //     archived row.
+  // An older client (pre-PR public form, replayed cache, etc.) that
+  // omits client_type is rejected with the same generic missing-
+  // choice message; we never silently fall back to the old "new or
+  // existing" lookup because that path would let an existing-client
+  // intent be silently downgraded to a new-client insert. The error
+  // is generic so a probing visitor cannot tell which field was
+  // missing.
+  const rawClientType = trimmed(formData.get("client_type"));
+  const clientType: "new" | "existing" | null =
+    rawClientType === "new"
+      ? "new"
+      : rawClientType === "existing"
+        ? "existing"
+        : null;
+  if (clientType == null) {
+    return { ok: false, error: MISSING_CLIENT_TYPE_ERROR };
+  }
+
   if (!slug || !serviceId || !startsAtRaw)
     return { ok: false, error: "Missing booking details." };
   if (!name) return { ok: false, error: "Your name is required." };
@@ -365,6 +418,17 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .maybeSingle();
   if (!service) return { ok: false, error: "Service no longer available." };
 
+  // New-client consultation guard. Server is the source of truth: the
+  // UI filters the picker to consultation services when client_type
+  // is "new", but a forged or replayed form post could still submit
+  // any active service id. The same predicate is shared by the UI
+  // helper (lib/booking/consultation.ts) so the visible list and the
+  // server gate cannot drift apart. Rejected attempts surface the
+  // explicit copy from the spec; no internal state is leaked.
+  if (clientType === "new" && !isConsultationService(service)) {
+    return { ok: false, error: NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR };
+  }
+
   // Re-verify slot is free. Use the studio's local date, not the
   // UTC date: a 10pm Toronto booking would otherwise look up slots
   // for the next calendar day.
@@ -436,6 +500,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // only consent_at can be stamped from this public surface.
   let clientSmsConsentAt: string | null = null;
   let clientSmsOptedOutAt: string | null = null;
+
+  // No-enumeration gate for the existing-client path. When the
+  // visitor said "I am an existing client" but the studio has no
+  // ACTIVE client under this email, the action MUST NOT silently
+  // insert a new row, MUST NOT reveal that an archived row exists,
+  // and MUST NOT acknowledge any internal state. The same generic
+  // error is returned whether the email is unknown OR archived
+  // (archived rows naturally fall through to "no active match"
+  // because the lookup above filters archived_at IS NULL). New
+  // clients still take the INSERT path below; the existing-client
+  // path can only succeed when existingClient is truthy.
+  if (clientType === "existing" && !existingClient) {
+    return { ok: false, error: EXISTING_CLIENT_NO_MATCH_ERROR };
+  }
   if (existingClient) {
     // P0 hardening: an unauthenticated public booking MUST NOT
     // modify the existing client's clinical/profile record. The
