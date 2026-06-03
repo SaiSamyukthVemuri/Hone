@@ -30,7 +30,7 @@ import { PolicySettingsForm } from "../studio/PolicySettingsForm";
 // directive was removed in PR #90 because it caused Next.js to
 // pre-render the route at build time and bake a redirect to /login
 // into the static output.
-export const metadata = { title: "Intake & Postcare" };
+export const metadata = { title: "Forms & Policies" };
 
 export default async function IntakeAndPostcarePage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();

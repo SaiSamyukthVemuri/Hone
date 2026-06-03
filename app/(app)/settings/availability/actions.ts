@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
+import {
+  localLongDate,
+  todayInTz,
+  utcInstantFromLocal,
+} from "@/lib/booking/tz";
 import type { Practitioner, Studio } from "@/lib/types/database";
 
 // Typed result used by every action that can hit the unified shadow's
@@ -26,6 +30,16 @@ function formatTimeInTz(iso: string, tz: string): string {
     minute: "2-digit",
     hour12: true,
   }).format(new Date(iso));
+}
+
+// Studio-local long date for the conflict message ("Tuesday, June 4").
+// Strips the trailing year so the message stays scannable; the year is
+// noise for owner-facing diagnostics that always refer to a near-term
+// appointment. Reuses the shared lib/booking/tz.ts helper so the
+// format never drifts from the email / SMS day-string format.
+function formatDateInTz(iso: string, tz: string): string {
+  const long = localLongDate(new Date(iso), tz);
+  return long.replace(/,\s*\d{4}$/, "");
 }
 
 // Looks up the soonest reservation row that overlaps the requested
@@ -67,16 +81,27 @@ async function lookupConflictMessage(
   }
 
   const conflict = candidates[0];
+  // Conflict messages now include the conflicting item's date so the
+  // owner can tell which appointment in a multi-day blockout range
+  // is blocking the save. Previously the message only showed time,
+  // which read as "the app doesn't understand I'm blocking a range".
+  // Date format reuses the shared lib/booking/tz.ts helper so the
+  // wording matches the email/SMS day-string format.
   if (conflict.source_kind === "appointment") {
+    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
     const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
     const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
-    return `You can't block this time because an appointment already reserves ${startFmt} to ${endFmt}, including turnaround time. Choose a time after ${endFmt}.`;
+    return `This block overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a block that does not overlap that appointment, or reschedule or cancel the appointment first.`;
   }
   if (conflict.source_kind === "timed_block") {
-    return "This time overlaps an existing blocked period. Edit or remove the existing block first.";
+    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
+    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
+    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
+    return `This block overlaps an existing blocked period on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove the existing block first.`;
   }
   if (conflict.source_kind === "full_day_blockout") {
-    return "This date is already unavailable because of an existing full-day blockout.";
+    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
+    return `This block overlaps an existing full-day blockout on ${dateFmt}. Edit or remove the existing blockout first.`;
   }
   return FALLBACK_CONFLICT_MESSAGE;
 }

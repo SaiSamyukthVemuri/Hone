@@ -80,6 +80,123 @@ export async function updateClientAction(formData: FormData): Promise<void> {
   redirect(`/clients/${clientId}`);
 }
 
+// Soft-archive a client. Stamps clients.archived_at + archived_by.
+// The row stays in the table so every foreign-key reference
+// (appointments, sessions, intake forms, treatment plans, audit) keeps
+// working; the active client list, calendar quick-book picker, and
+// birthday surface filter on archived_at IS NULL. The detail page
+// still resolves so the practitioner can un-archive later.
+//
+// Hard delete is intentionally NOT supported: destroying a client row
+// while the clinical history graph references it is data loss with no
+// operational upside for the actual use cases (test clients during
+// pilot setup and duplicate-entry rows from a typo).
+//
+// One audit_logs row is inserted so there is a durable trace of who
+// archived which client; audit failure logs but does not block the
+// archive itself (the archive is the safety action, an audit row
+// missing later is recoverable).
+export async function archiveClientAction(formData: FormData): Promise<void> {
+  const clientId = formData.get("client_id");
+  if (typeof clientId !== "string" || !clientId) {
+    throw new Error("Missing client id.");
+  }
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  await assertClientVisible(studio.id, clientId);
+
+  const supabase = await createClient();
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("clients")
+    .update({
+      archived_at: nowIso,
+      archived_by: practitioner.id,
+    })
+    .eq("id", clientId)
+    .eq("studio_id", studio.id)
+    .is("archived_at", null);
+  if (error) {
+    throw new Error(`Failed to archive client: ${error.message}`);
+  }
+
+  const { error: auditErr } = await supabase.from("audit_logs").insert({
+    studio_id: studio.id,
+    actor_id: practitioner.id,
+    action: "client_archived",
+    entity_type: "client",
+    entity_id: clientId,
+    metadata: { archived_at: nowIso },
+  });
+  if (auditErr) {
+    console.error(
+      JSON.stringify({
+        event: "client_archive_audit_failed",
+        clientId,
+        code: auditErr.code,
+        message: auditErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/clients");
+  redirect("/clients");
+}
+
+// Reverse of archiveClientAction. Clears archived_at + archived_by so
+// the client returns to the active list. Safe to call any number of
+// times; the conditional WHERE in archiveClientAction prevents a
+// no-op archive from advancing the timestamp once it is already set.
+export async function unarchiveClientAction(formData: FormData): Promise<void> {
+  const clientId = formData.get("client_id");
+  if (typeof clientId !== "string" || !clientId) {
+    throw new Error("Missing client id.");
+  }
+
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  await assertClientVisible(studio.id, clientId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({
+      archived_at: null,
+      archived_by: null,
+    })
+    .eq("id", clientId)
+    .eq("studio_id", studio.id)
+    .not("archived_at", "is", null);
+  if (error) {
+    throw new Error(`Failed to unarchive client: ${error.message}`);
+  }
+
+  const { error: auditErr } = await supabase.from("audit_logs").insert({
+    studio_id: studio.id,
+    actor_id: practitioner.id,
+    action: "client_unarchived",
+    entity_type: "client",
+    entity_id: clientId,
+    metadata: {},
+  });
+  if (auditErr) {
+    console.error(
+      JSON.stringify({
+        event: "client_unarchive_audit_failed",
+        clientId,
+        code: auditErr.code,
+        message: auditErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/clients");
+  redirect(`/clients/${clientId}`);
+}
+
 export async function addClientPricingAction(formData: FormData): Promise<void> {
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId)

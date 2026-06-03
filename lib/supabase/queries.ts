@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import type {
   ApilusModality,
+  Appointment,
   Client,
   ClientPricing,
   ElectrolysisEntry,
@@ -67,11 +68,21 @@ export async function getPractitionersForStudio(
 }
 
 export async function getClientsForStudio(studioId: string): Promise<Client[]> {
+  // PR Willow launch fixes (migration 0050): filter archived clients
+  // out of the active list. Archived rows still exist (their
+  // appointments, sessions, intake, treatment plans, and audit
+  // history all keep working), but the active client list, the
+  // calendar quick-book picker, and the dashboard birthday surface
+  // should not show the test/duplicate rows the practitioner
+  // archived. The detail page (/clients/[id]) intentionally does not
+  // filter so the practitioner can navigate to a known archived
+  // client to un-archive or to view their history.
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("clients")
     .select("*")
     .eq("studio_id", studioId)
+    .is("archived_at", null)
     .order("name", { ascending: true });
 
   if (error) throw new Error(`Failed to load clients: ${error.message}`);
@@ -147,6 +158,63 @@ export async function getClientById(
     sessions: (sessionsRes.data ?? []) as SessionWithEntries[],
     practitioners,
   };
+}
+
+// Past confirmed appointments for the client's Sessions tab. Returns
+// rows where starts_at < now AND status = 'confirmed' (i.e. the
+// appointment happened or was supposed to happen and was not
+// cancelled). The page interleaves these with charted sessions to
+// surface visits the practitioner has not yet charted.
+//
+// Heuristic dedup: we exclude any past appointment whose starts_at
+// is within +/-2 hours of an existing session's started_at for this
+// client. Sessions do not carry an appointment_id (see migration
+// 0043 header comment), so this proximity filter is the practical
+// way to avoid showing the same visit twice: once as a charted
+// session and once as an "uncharted past visit". The +/-2 hour
+// window is generous because a practitioner who logs the session
+// after the appointment typically does so within minutes; only
+// pathological cases would land outside the window. False negatives
+// (we hide an uncharted visit because there happened to be an
+// unrelated session nearby) are accepted in v1 as the lesser harm
+// versus duplicate rows.
+//
+// no_show appointments are intentionally NOT included: those have
+// their own lifecycle handled by no-show-check cron + follow-up.
+export async function getPastConfirmedAppointmentsForClient(
+  studioId: string,
+  clientId: string,
+  knownSessionStartIsoList: ReadonlyArray<string>,
+): Promise<Appointment[]> {
+  const supabase = await createClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("status", "confirmed")
+    .lt("starts_at", nowIso)
+    .order("starts_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    throw new Error(
+      `Failed to load past appointments: ${error.message}`,
+    );
+  }
+  const rows = (data ?? []) as Appointment[];
+  if (rows.length === 0) return rows;
+
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  const sessionStartMs = knownSessionStartIsoList.map((iso) =>
+    new Date(iso).getTime(),
+  );
+  return rows.filter((a) => {
+    const aMs = new Date(a.starts_at).getTime();
+    return !sessionStartMs.some(
+      (sMs) => Math.abs(sMs - aMs) <= TWO_HOURS_MS,
+    );
+  });
 }
 
 export async function getSessionForClient(

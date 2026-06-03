@@ -26,10 +26,14 @@ export async function getClientBirthdaysForMonth(
   monthInStudioTz: number,
 ): Promise<ClientBirthdayRow[]> {
   const supabase = await createClient();
+  // PR Willow launch fixes (migration 0050): archived clients are
+  // hidden from the dashboard birthday surface for the same reason
+  // they are hidden from the active client list.
   const { data, error } = await supabase
     .from("clients")
     .select("id, name, date_of_birth")
     .eq("studio_id", studioId)
+    .is("archived_at", null)
     .not("date_of_birth", "is", null)
     .order("name");
   if (error) {
