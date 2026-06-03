@@ -98,6 +98,10 @@ export function RescheduleForm({
   const [done, setDone] = useState<{ when: string } | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
+  // PR #132. Required policy acknowledgement. Submit is disabled
+  // until this is checked; the server action rejects any submission
+  // whose 'acknowledged_policy' form field is not exactly 'true'.
+  const [acknowledged, setAcknowledged] = useState(false);
   // Next-available lookup (mirrors PublicBookForm). One server roundtrip
   // per click; bounded server-side scan from the day AFTER the date the
   // user already saw as empty.
@@ -156,10 +160,21 @@ export function RescheduleForm({
       setError("Pick a time first.");
       return;
     }
+    if (!acknowledged) {
+      // Client-side mirror of the server validation. The disabled
+      // submit button blocks this from reaching the action in
+      // practice, but a stale event handler or test harness could
+      // still send the FormData; the action re-checks.
+      setError(
+        "Please review and acknowledge the appointment policies before rescheduling.",
+      );
+      return;
+    }
     setError(null);
     const fd = new FormData();
     fd.set("token", token);
     fd.set("starts_at", picked.start);
+    fd.set("acknowledged_policy", "true");
     startSubmitting(async () => {
       const r = await rescheduleAppointmentViaTokenAction(fd);
       if (!r.ok) {
@@ -283,12 +298,34 @@ export function RescheduleForm({
         )}
       </div>
 
+      {/* PR #132. Required policy acknowledgement. Sits directly
+          above the destructive reschedule button so the visitor
+          reads the studio's policies (rendered higher up the page in
+          the shared PublicPolicyReminderCard) and ticks the box
+          before they can submit. Server rejects any non-'true'
+          value. */}
+      <label
+        className="flex items-start gap-3 text-[14px] leading-[1.5]"
+        style={{ color: "#0A0A0A" }}
+      >
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(e) => setAcknowledged(e.target.checked)}
+          className="mt-1 h-4 w-4 flex-none"
+        />
+        <span>
+          I have reviewed and understand the cancellation and no-show
+          policies.
+        </span>
+      </label>
+
       {error && <p className="text-sm text-red-700">{error}</p>}
 
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={!picked || submitting}
+          disabled={!picked || submitting || !acknowledged}
           className="rounded-md bg-[#0A0A0A] px-5 py-3 text-base font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? "Rescheduling…" : "Confirm new time"}

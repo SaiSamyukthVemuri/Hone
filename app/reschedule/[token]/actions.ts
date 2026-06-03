@@ -15,6 +15,10 @@ import {
   recordEmailAttempt,
   sendBookingConfirmationToClient,
 } from "@/lib/email/send-appointment";
+import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+
+const POLICY_ACK_REQUIRED_ERROR =
+  "Please review and acknowledge the appointment policies before rescheduling.";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -384,6 +388,15 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 > {
   const token = stringOrEmpty(formData.get("token"));
   const newStartsAt = stringOrEmpty(formData.get("starts_at"));
+  // PR #132. Policy acknowledgement is required before the RPC fires.
+  // 'true' is the only accepted value; anything else (missing,
+  // 'false', or other) is unacknowledged. Distinct error string from
+  // the generic public collapse because this is the visitor's own
+  // form input and reveals nothing about appointment / token state.
+  const acknowledged = stringOrEmpty(formData.get("acknowledged_policy"));
+  if (acknowledged !== "true") {
+    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
   if (!token) return { ok: false, error: "Missing token." };
   if (!newStartsAt) return { ok: false, error: "Pick a time." };
 
@@ -426,10 +439,15 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   const end = new Date(start.getTime() + existing.duration_minutes * 60_000);
 
   // Re-verify the new slot is still free.
+  //
+  // PR #132. cancellation_policy_text and no_show_policy_text are
+  // added to the select so the policy snapshot row below can be
+  // computed from the same studio row the rest of this action uses.
+  // Server-resolved; never trusts a client-supplied snapshot.
   const { data: studioRow } = await admin
     .from("studios")
     .select(
-      "id, timezone, default_appointment_duration_minutes, buffer_minutes, name, send_confirmation_emails, public_booking_horizon_months",
+      "id, timezone, default_appointment_duration_minutes, buffer_minutes, name, send_confirmation_emails, public_booking_horizon_months, cancellation_policy_text, no_show_policy_text",
     )
     .eq("id", existing.studio_id)
     .maybeSingle();
@@ -531,6 +549,46 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   }
 
   const newAppointmentId = row.new_appointment_id as string;
+
+  // PR #132. Write the policy acknowledgement row scoped to the
+  // server-resolved (studio_id, client_id, appointment_id=ORIGINAL).
+  // We link to the ORIGINAL existing.id (the appointment the token
+  // resolved to) rather than the new appointment id because the
+  // acknowledgement is "client accepted policies before they
+  // rescheduled appointment X", and X is what the token referenced.
+  // The audit_logs row the RPC stamps already ties the new
+  // appointment back to the original.
+  //
+  // Failure to write this row does NOT roll back the reschedule: the
+  // RPC committed atomically. We log server-side and proceed.
+  const snapshot = buildPolicySnapshot({
+    cancellationPolicyText: studioRow.cancellation_policy_text,
+    noShowPolicyText: studioRow.no_show_policy_text,
+  });
+  const { error: ackErr } = await admin
+    .from("appointment_policy_acknowledgements")
+    .insert({
+      studio_id: existing.studio_id,
+      appointment_id: existing.id,
+      client_id: existing.client_id,
+      action: "reschedule",
+      cancellation_policy_text_snapshot:
+        snapshot.cancellationPolicyTextSnapshot,
+      no_show_policy_text_snapshot: snapshot.noShowPolicyTextSnapshot,
+      policy_snapshot_hash: snapshot.policySnapshotHash,
+    });
+  if (ackErr) {
+    console.error(
+      JSON.stringify({
+        event: "public_reschedule_policy_ack_insert_failed",
+        code: ackErr.code,
+        message: ackErr.message,
+        originalAppointmentId: existing.id,
+        newAppointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
 
   // Re-fetch the newly inserted row so the email-builder has the
   // complete appointment shape. The RPC returns only the id.

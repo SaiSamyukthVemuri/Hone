@@ -5,6 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+
+const POLICY_ACK_REQUIRED_ERROR =
+  "Please review and acknowledge the appointment policies before cancelling.";
 
 // Generic public-facing message. Returned for any non-success outcome
 // on BOTH the mutation surface (`publicCancelAppointmentAction`) AND
@@ -71,6 +75,17 @@ export async function publicCancelAppointmentAction(
 ): Promise<PublicCancelResult> {
   const token = strOrEmpty(formData.get("token"));
   const reason = strOrNull(formData.get("reason"));
+  // PR #132. Policy acknowledgement is required before the RPC fires.
+  // The form posts 'acknowledged_policy=true' only when the checkbox
+  // was ticked; any other shape (missing field, 'false', other
+  // value) is treated as unacknowledged. The validation error is
+  // distinct from the generic public collapse error because this
+  // branch reveals nothing about appointment / token state (the
+  // form is the visitor's own input).
+  const acknowledged = strOrEmpty(formData.get("acknowledged_policy"));
+  if (acknowledged !== "true") {
+    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
   if (!token) {
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
@@ -149,13 +164,18 @@ export async function publicCancelAppointmentAction(
   // separately to avoid coupling the mutation surface to the
   // notification surface. Supabase types joined relations as arrays,
   // so we normalize below.
+  //
+  // PR #132. client_id is added to the select so the policy
+  // acknowledgement row below can be scoped to the server-resolved
+  // client without trusting any client-supplied id.
   const { data: apptRaw } = await admin
     .from("appointments")
-    .select("studio_id, starts_at, service:services(name), studio:studios(*)")
+    .select("studio_id, client_id, starts_at, service:services(name), studio:studios(*)")
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   type CancelAppt = {
     studio_id: string;
+    client_id: string;
     starts_at: string;
     service: { name: string } | { name: string }[] | null;
     studio: import("@/lib/types/database").Studio | import("@/lib/types/database").Studio[] | null;
@@ -166,6 +186,49 @@ export async function publicCancelAppointmentAction(
       Array.isArray(v) ? (v[0] ?? null) : v;
     const apptStudio = pickOne(apptRow.studio);
     const apptService = pickOne(apptRow.service);
+
+    // PR #132. Write the policy acknowledgement row. studio_id,
+    // client_id, and appointment_id are all server-resolved from the
+    // token via apptRow; the snapshot text is read from the joined
+    // studio row, which is the canonical source the cancel page
+    // rendered to the client. policy_snapshot_hash is built by the
+    // shared buildPolicySnapshot helper so the reschedule action
+    // produces an identical hash format for the same inputs.
+    //
+    // Failure to write this row does NOT roll back the cancel: the
+    // appointment is already cancelled atomically inside the RPC.
+    // We log the failure server-side; the practitioner-side audit
+    // continues to live in appointments.cancellation_reason + the
+    // audit_logs row the RPC stamped. Re-running the action with
+    // the same token is a no-op (the RPC rejects non-confirmed
+    // source state), so we cannot retry the ack here.
+    if (apptStudio) {
+      const snapshot = buildPolicySnapshot({
+        cancellationPolicyText: apptStudio.cancellation_policy_text,
+        noShowPolicyText: apptStudio.no_show_policy_text,
+      });
+      const { error: ackErr } = await admin
+        .from("appointment_policy_acknowledgements")
+        .insert({
+          studio_id: apptRow.studio_id,
+          appointment_id: resolved.appointment_id,
+          client_id: apptRow.client_id,
+          action: "cancel",
+          cancellation_policy_text_snapshot:
+            snapshot.cancellationPolicyTextSnapshot,
+          no_show_policy_text_snapshot:
+            snapshot.noShowPolicyTextSnapshot,
+          policy_snapshot_hash: snapshot.policySnapshotHash,
+        });
+      if (ackErr) {
+        logInternal("public_cancel_policy_ack_insert_failed", {
+          code: ackErr.code,
+          message: ackErr.message,
+          appointmentId: resolved.appointment_id,
+        });
+      }
+    }
+
     const { data: owner } = await admin
       .from("practitioners")
       .select("display_name, email")
