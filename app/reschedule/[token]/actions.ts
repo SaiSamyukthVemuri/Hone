@@ -15,7 +15,10 @@ import {
   recordEmailAttempt,
   sendBookingConfirmationToClient,
 } from "@/lib/email/send-appointment";
-import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+import {
+  buildPolicySnapshot,
+  hasAnyPolicy,
+} from "@/lib/booking/policy-acknowledgement";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -388,15 +391,13 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 > {
   const token = stringOrEmpty(formData.get("token"));
   const newStartsAt = stringOrEmpty(formData.get("starts_at"));
-  // PR #132. Policy acknowledgement is required before the RPC fires.
-  // 'true' is the only accepted value; anything else (missing,
-  // 'false', or other) is unacknowledged. Distinct error string from
-  // the generic public collapse because this is the visitor's own
-  // form input and reveals nothing about appointment / token state.
+  // PR #132 / #133. The acknowledgement field is read up front but
+  // the require / skip decision happens AFTER we load the studio
+  // row because requiring acknowledgement of a non-existent policy
+  // is confusing. A studio with no policy on file can reschedule
+  // without the field. The server-side decision is the source of
+  // truth; the page hint just keeps the UI honest.
   const acknowledged = stringOrEmpty(formData.get("acknowledged_policy"));
-  if (acknowledged !== "true") {
-    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
-  }
   if (!token) return { ok: false, error: "Missing token." };
   if (!newStartsAt) return { ok: false, error: "Pick a time." };
 
@@ -452,6 +453,21 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .eq("id", existing.studio_id)
     .maybeSingle();
   if (!studioRow) return { ok: false, error: "Studio missing." };
+
+  // PR #133. Decide acknowledgement requirement from the resolved
+  // studio row. A studio with no policy text on file accepts the
+  // reschedule without the field; one with at least one of
+  // cancellation_policy_text or no_show_policy_text requires the
+  // visitor to have ticked the box. The acknowledgement insert
+  // below is gated on the same flag so the table only carries
+  // meaningful rows.
+  const requiresAck = hasAnyPolicy({
+    cancellationPolicyText: studioRow.cancellation_policy_text,
+    noShowPolicyText: studioRow.no_show_policy_text,
+  });
+  if (requiresAck && acknowledged !== "true") {
+    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
 
   if (
     !isWithinPublicBookingHorizon(
@@ -561,33 +577,40 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   //
   // Failure to write this row does NOT roll back the reschedule: the
   // RPC committed atomically. We log server-side and proceed.
-  const snapshot = buildPolicySnapshot({
-    cancellationPolicyText: studioRow.cancellation_policy_text,
-    noShowPolicyText: studioRow.no_show_policy_text,
-  });
-  const { error: ackErr } = await admin
-    .from("appointment_policy_acknowledgements")
-    .insert({
-      studio_id: existing.studio_id,
-      appointment_id: existing.id,
-      client_id: existing.client_id,
-      action: "reschedule",
-      cancellation_policy_text_snapshot:
-        snapshot.cancellationPolicyTextSnapshot,
-      no_show_policy_text_snapshot: snapshot.noShowPolicyTextSnapshot,
-      policy_snapshot_hash: snapshot.policySnapshotHash,
+  //
+  // PR #133. Acknowledgement is only written when the studio has
+  // policy text on file. A studio with no policy never produced an
+  // acknowledgement on the UI side either; we mirror that here so
+  // the table only carries meaningful rows.
+  if (requiresAck) {
+    const snapshot = buildPolicySnapshot({
+      cancellationPolicyText: studioRow.cancellation_policy_text,
+      noShowPolicyText: studioRow.no_show_policy_text,
     });
-  if (ackErr) {
-    console.error(
-      JSON.stringify({
-        event: "public_reschedule_policy_ack_insert_failed",
-        code: ackErr.code,
-        message: ackErr.message,
-        originalAppointmentId: existing.id,
-        newAppointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    const { error: ackErr } = await admin
+      .from("appointment_policy_acknowledgements")
+      .insert({
+        studio_id: existing.studio_id,
+        appointment_id: existing.id,
+        client_id: existing.client_id,
+        action: "reschedule",
+        cancellation_policy_text_snapshot:
+          snapshot.cancellationPolicyTextSnapshot,
+        no_show_policy_text_snapshot: snapshot.noShowPolicyTextSnapshot,
+        policy_snapshot_hash: snapshot.policySnapshotHash,
+      });
+    if (ackErr) {
+      console.error(
+        JSON.stringify({
+          event: "public_reschedule_policy_ack_insert_failed",
+          code: ackErr.code,
+          message: ackErr.message,
+          originalAppointmentId: existing.id,
+          newAppointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 
   // Re-fetch the newly inserted row so the email-builder has the

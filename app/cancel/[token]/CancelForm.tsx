@@ -12,9 +12,16 @@ import { publicCancelAppointmentAction } from "./actions";
 // prop.
 type Props = {
   token: string;
+  // PR #133. True when the resolved studio has at least one of
+  // cancellation_policy_text or no_show_policy_text configured.
+  // False for studios with no policy text on file ("My Studio",
+  // any fresh studio). When false we render no checkbox and post
+  // no acknowledged_policy field; the server-side action mirrors
+  // the same predicate against the resolved studio row.
+  requiresAcknowledgement: boolean;
 };
 
-export function CancelForm({ token }: Props) {
+export function CancelForm({ token, requiresAcknowledgement }: Props) {
   const [reason, setReason] = useState("");
   // PR #132. Required policy acknowledgement. Submit is disabled
   // until this is checked, and the server action rejects any
@@ -61,11 +68,13 @@ export function CancelForm({ token }: Props) {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!acknowledged) {
+    if (requiresAcknowledgement && !acknowledged) {
       // Client-side mirror of the server validation so the visitor
       // sees the same message whether they bypassed the disabled
       // submit (impossible from the rendered UI but defensive) or
-      // clicked it normally.
+      // clicked it normally. Only fires when the studio actually
+      // has policy text; otherwise both branches skip the ack
+      // entirely.
       setError(
         "Please review and acknowledge the appointment policies before cancelling.",
       );
@@ -74,7 +83,12 @@ export function CancelForm({ token }: Props) {
     const fd = new FormData();
     fd.set("token", token);
     fd.set("reason", reason);
-    fd.set("acknowledged_policy", "true");
+    if (requiresAcknowledgement) {
+      // Only post the ack field when it is required. A studio with
+      // no policy on file accepts the submit without this field
+      // entirely; sending an unsolicited 'true' would be misleading.
+      fd.set("acknowledged_policy", "true");
+    }
     startTransition(async () => {
       const r = await publicCancelAppointmentAction(fd);
       if (!r.ok) {
@@ -109,27 +123,33 @@ export function CancelForm({ token }: Props) {
           above the destructive cancel button so the visitor reads
           the studio's policies (rendered higher up the page in the
           shared PublicPolicyReminderCard) and ticks the box before
-          they can submit. Server rejects any non-'true' value. */}
-      <label
-        className="flex items-start gap-3 text-[14px] leading-[1.5]"
-        style={{ color: "#0A0A0A" }}
-      >
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          onChange={(e) => setAcknowledged(e.target.checked)}
-          className="mt-1 h-4 w-4 flex-none"
-        />
-        <span>
-          I have reviewed and understand the cancellation and no-show
-          policies.
-        </span>
-      </label>
+          they can submit. Server rejects any non-'true' value.
+          PR #133. The whole block renders only when the studio
+          actually has policy text; otherwise the cancel surface
+          omits the checkbox entirely (no policy on file => no
+          policy to acknowledge). */}
+      {requiresAcknowledgement && (
+        <label
+          className="flex items-start gap-3 text-[14px] leading-[1.5]"
+          style={{ color: "#0A0A0A" }}
+        >
+          <input
+            type="checkbox"
+            checked={acknowledged}
+            onChange={(e) => setAcknowledged(e.target.checked)}
+            className="mt-1 h-4 w-4 flex-none"
+          />
+          <span>
+            I have reviewed and understand the cancellation and no-show
+            policies.
+          </span>
+        </label>
+      )}
 
       <div className="flex items-center gap-4">
         <button
           type="submit"
-          disabled={pending || !acknowledged}
+          disabled={pending || (requiresAcknowledgement && !acknowledged)}
           className="px-8 py-4 text-[14px] font-medium uppercase disabled:opacity-50"
           style={{
             backgroundColor: "#0A0A0A",
