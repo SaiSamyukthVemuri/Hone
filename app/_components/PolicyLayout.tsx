@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
+import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 
 // Shared shell for /privacy and /terms. Same header + footer as the
@@ -54,6 +55,11 @@ export function PolicyLayout({
         </div>
       </article>
       <MarketingFooter />
+      {/* PR #142. PolicyLayout wraps the privacy + terms pages.
+          Both are safe marketing routes (no bearer token in URL),
+          so SafeAnalytics mounts here. Token routes never use
+          PolicyLayout. */}
+      <SafeAnalytics />
     </main>
   );
 }

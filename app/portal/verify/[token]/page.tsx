@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
@@ -5,6 +6,16 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { ContinueToPortalForm } from "./ContinueForm";
+
+// PR #142. Token-bearing route. Robots noindex/nofollow keeps the
+// URL out of search indexes; the next.config.ts headers() block
+// adds the X-Robots-Tag header for the same prefix as a redundant
+// signal to non-rendering crawlers. Analytics is also OFF for this
+// subtree (root layout no longer mounts it; this route does not opt
+// in via SafeAnalytics).
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 // Magic-link verify page. The GET request that lands here is now
 // NON-CONSUMING: it validates the token shape, checks the row is

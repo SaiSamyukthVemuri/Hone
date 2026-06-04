@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Reveal } from "./_components/Reveal";
 import { MarketingHeader } from "./_components/MarketingHeader";
 import { MarketingFooter } from "./_components/MarketingFooter";
+import { SafeAnalytics } from "./_components/SafeAnalytics";
 import {
   EyebrowCaption,
   Hairline,
@@ -43,6 +44,8 @@ export default function HomePage() {
       <PricingTeaser />
       <FinalCTA />
       <MarketingFooter />
+      {/* PR #142. Safe marketing page (no token in URL). */}
+      <SafeAnalytics />
     </main>
   );
 }

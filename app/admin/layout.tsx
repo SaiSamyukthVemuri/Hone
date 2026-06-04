@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isAdmin } from "@/lib/admin";
+import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { signOut } from "../(app)/dashboard/actions";
 
 export default async function AdminLayout({
@@ -53,6 +54,8 @@ export default async function AdminLayout({
       <main className="mx-auto max-w-6xl px-5 py-8 md:px-8 md:py-10">
         {children}
       </main>
+      {/* PR #142. Safe tree (no token descendants). */}
+      <SafeAnalytics />
     </div>
   );
 }

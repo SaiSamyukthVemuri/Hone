@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Reveal } from "../_components/Reveal";
 import { MarketingHeader } from "../_components/MarketingHeader";
 import { MarketingFooter } from "../_components/MarketingFooter";
+import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { EyebrowCaption } from "../_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "../_components/marketingNav";
 import { DemoForm } from "../_components/DemoForm";
@@ -41,6 +42,8 @@ export default function DemoPage() {
       <MarketingHeader />
       <WalkthroughHero />
       <MarketingFooter />
+      {/* PR #142. Safe marketing page (no token in URL). */}
+      <SafeAnalytics />
     </main>
   );
 }

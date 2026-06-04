@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Reveal } from "../_components/Reveal";
 import { MarketingHeader } from "../_components/MarketingHeader";
 import { MarketingFooter } from "../_components/MarketingFooter";
+import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { EyebrowCaption } from "../_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "../_components/marketingNav";
 
@@ -124,6 +125,8 @@ export default function PricingPage() {
       <PricingTrust />
       <PricingFAQ />
       <MarketingFooter />
+      {/* PR #142. Safe marketing page (no token in URL). */}
+      <SafeAnalytics />
     </main>
   );
 }
