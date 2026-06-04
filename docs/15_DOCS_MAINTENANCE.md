@@ -36,6 +36,7 @@ Docs must be updated in the same PR if the change touches any of:
 | Architecture (folder structure, runtime, route groups) | `docs/01` |
 | AI handoff updates (grep gates, non-negotiables) | `docs/14` |
 | Documentation maintenance policy itself | `docs/15` (this file) |
+| Browser security headers / CSP changes | `docs/03` (Global browser security headers), `docs/10` (Browser security headers), `docs/11` (post-deploy header check), `docs/12` (§11 smoke), `docs/14` (CSP discipline non-negotiable) |
 
 If a PR fits more than one row, update all of them.
 

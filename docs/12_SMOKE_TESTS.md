@@ -210,6 +210,46 @@ Expected:
 | `/portal/verify/fake` | `200` | same |
 | `/calendar-feed/fake.ics` | `404` (no real token) | same |
 
+## 11. Global security header smoke (PR #150)
+
+Run after every deploy. The global headers ship from `next.config.ts` via the builder in `lib/security/headers.ts`.
+
+```bash
+echo "=== Global headers on a safe route ==="
+curl -sI https://hone.care/book/willow-electrolysis \
+  | grep -iE '^(content-security-policy|strict-transport-security|x-frame-options|x-content-type-options|referrer-policy|permissions-policy)'
+
+echo ""
+echo "=== Token routes still carry the PR #142 privacy overrides ==="
+for p in /cancel/fake /reschedule/fake /manage/fake /intake/fake /portal/verify/fake /calendar-feed/fake.ics; do
+  echo "--- $p ---"
+  curl -sI "https://hone.care$p" \
+    | grep -iE '^(content-security-policy|x-robots-tag|referrer-policy|x-frame-options|x-content-type-options|permissions-policy)'
+done
+```
+
+Expected on the safe route:
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | starts with `default-src 'self'`, contains `frame-ancestors 'none'`, contains `https://js.stripe.com`, contains `https://m.stripe.network` in BOTH `frame-src` and `connect-src`, contains the specific Supabase project host BOTH as `https://<host>` AND as `wss://<host>`, no wildcard `*`, no `sentry.io` |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (no `preload` for this baseline) |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | starts with `camera=(), microphone=(), geolocation=()`, ... |
+
+Expected on token routes: all of the above EXCEPT `Referrer-Policy` flips to `no-referrer` and `X-Robots-Tag: noindex, nofollow` is added.
+
+Manual browser smoke (still required for full verification):
+
+1. Open `https://hone.care/book/<slug>` in a fresh tab. Confirm public booking renders, slot picker works, no console CSP violations break the flow.
+2. Open `https://hone.care/portal/login`. Confirm the page renders.
+3. As a test client, sign in via magic link. Confirm `/portal` renders the two-zone layout.
+4. Open the portal Add card flow. **Confirm Stripe Elements iframes load**, the test card `4242 4242 4242 4242` can be entered, and `setup_intent.succeeded` arrives at the webhook. CSP-breaking changes typically show up as the Stripe iframes failing to render or `loadStripe` throwing.
+5. Confirm browser console shows no CSP violations on any of the core flows.
+6. Confirm no second PaymentIntent / Charge was created (this PR adds no money-moving code).
+
 ## Quick gates a reviewer can run
 
 ```bash

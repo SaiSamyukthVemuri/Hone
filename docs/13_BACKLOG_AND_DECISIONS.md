@@ -88,6 +88,18 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Global browser security headers (PR #150)
+
+**Decision:** Ship a first enforced baseline of global browser security headers in `next.config.ts`. Token-route privacy headers (PR #142) preserved by layering AFTER the global block. Header builder lives in `lib/security/headers.ts` and is unit-tested.
+
+Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (tight baseline), and an enforced `Content-Security-Policy` with `frame-ancestors 'none'`, Stripe Elements sources, Supabase project host (from build-time env, not a wildcard), Vercel Analytics/Speed Insights, `font-src 'self' data:` (next/font self-hosts).
+
+**Why:** Hone has strong DB/application security (RLS, hashed portal tokens, token-route privacy, Stripe test-mode gates, claim-then-charge idempotency), but no browser-layer baseline. Without `X-Frame-Options: DENY` + `frame-ancestors 'none'`, the portal consent signing surfaces, photo-consent allow/deny, card-on-file Stripe Elements, and manual fee test-charge button were all theoretically iframe-able by a third-party site (clickjacking risk).
+
+**Alternative considered:** Nonce-based CSP with `'unsafe-inline'` removed. Rejected for this baseline because it requires plumbing per-request nonces through every inline script Next emits (RSC hydration, navigation state) and would substantially expand the PR. Deferred to a future deliberate PR that may also add `Content-Security-Policy-Report-Only` first to collect violations before tightening.
+
+**Sentry domains intentionally omitted:** Sentry is not installed. CSP sources for Sentry will be added in the same PR that installs Sentry, not pre-emptively.
+
 ### Minimum automated test harness (PR #149)
 
 **Decision:** Introduced a minimal Vitest harness (`vitest.config.ts`, `tests/`, `npm test` script). Three test files cover: `filterFutureSlots` strict-`>`-now semantics, the submitted-start guard predicate, and the "no raw `.message` leak" invariant on `app/reschedule/[token]/actions.ts` (textual grep over the source).
