@@ -14,6 +14,8 @@ import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import { PostcareSendButton } from "../PostcareSendButton";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
+import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
+import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
 import {
   appointmentDisplayStatus,
   type AppointmentDisplayStatus,
@@ -127,6 +129,30 @@ export default async function AppointmentDetailPage({
       }
     }
   }
+
+  // PR #145. Manual cancellation/no-show fee preview. Both eligibility
+  // snapshots are computed when the appointment is cancelled or
+  // no_show; the card UI toggles between them locally without a
+  // round-trip. The helper itself is read-only and runs through
+  // service-role; no Stripe call, no row write. The future Stripe-
+  // charge PR will reuse the same helper before any PaymentIntent.
+  const showManualFeeCard =
+    data.status === "cancelled" || data.status === "no_show";
+  const manualFeeLateCancel = showManualFeeCard
+    ? await getManualFeeChargeEligibility({
+        studioId: studio.id,
+        appointmentId: id,
+        chargeType: "late_cancel",
+      })
+    : null;
+  const manualFeeNoShow = showManualFeeCard
+    ? await getManualFeeChargeEligibility({
+        studioId: studio.id,
+        appointmentId: id,
+        chargeType: "no_show",
+      })
+    : null;
+
   // P0-1 + P0-3: typed alias so the lifecycle component sees an exhaustive
   // status union and not the raw `string` from the database row type.
   const typedStatus = data.status as
@@ -413,6 +439,20 @@ export default async function AppointmentDetailPage({
         // legitimate path.
         <PractitionerCancelForm appointmentId={id} />
       ) : null}
+
+      {/* PR #145. Manual cancellation/no-show fee preview. Rendered
+          only when the appointment is cancelled or no_show. Both
+          eligibility branches are pre-loaded server-side so the
+          card's local type toggle is instant; the prepare action
+          re-validates eligibility before any DB write. No Stripe
+          call lives in this card. */}
+      {showManualFeeCard && manualFeeLateCancel && manualFeeNoShow && (
+        <ManualFeeChargeCard
+          appointmentId={id}
+          lateCancel={manualFeeLateCancel}
+          noShow={manualFeeNoShow}
+        />
+      )}
 
       {data.notes && (
         <section className="rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
