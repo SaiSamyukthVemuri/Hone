@@ -30,11 +30,12 @@ function cspDirective(csp: string, name: string): string {
 describe("buildGlobalSecurityHeaders", () => {
   const headers = buildGlobalSecurityHeaders(PROD_ARGS);
 
-  it("includes Strict-Transport-Security with one year + preload", () => {
+  it("includes Strict-Transport-Security with one year + includeSubDomains, NO preload", () => {
     const h = findHeader(headers, "Strict-Transport-Security");
-    expect(h?.value).toBe(
-      "max-age=31536000; includeSubDomains; preload",
-    );
+    expect(h?.value).toBe("max-age=31536000; includeSubDomains");
+    // PR #150 pre-merge patch: preload is intentionally omitted for
+    // this baseline (longer-term commitment; separate decision).
+    expect(h?.value).not.toContain("preload");
   });
 
   it("forces X-Frame-Options to DENY (clickjacking protection)", () => {
@@ -99,6 +100,16 @@ describe("buildContentSecurityPolicy", () => {
     );
   });
 
+  it("includes https://m.stripe.network in BOTH frame-src and connect-src (Stripe Elements card-entry path)", () => {
+    const csp = buildContentSecurityPolicy(PROD_ARGS);
+    expect(cspDirective(csp, "frame-src")).toContain(
+      "https://m.stripe.network",
+    );
+    expect(cspDirective(csp, "connect-src")).toContain(
+      "https://m.stripe.network",
+    );
+  });
+
   it("includes Vercel Analytics + Speed Insights for safe-route mounts", () => {
     const csp = buildContentSecurityPolicy(PROD_ARGS);
     expect(cspDirective(csp, "script-src")).toContain(
@@ -112,24 +123,35 @@ describe("buildContentSecurityPolicy", () => {
     );
   });
 
-  it("scopes Supabase connect-src to the specific project host", () => {
+  it("scopes Supabase connect-src to the specific project host (HTTPS + WSS)", () => {
     const csp = buildContentSecurityPolicy(PROD_ARGS);
     expect(cspDirective(csp, "connect-src")).toContain(
       "https://abc123xyz.supabase.co",
     );
-    // The wildcard form must NOT appear when a concrete URL was supplied.
+    // PR #150 pre-merge patch: matching WSS origin must be present
+    // so the Supabase realtime websocket is not silently blocked.
+    expect(cspDirective(csp, "connect-src")).toContain(
+      "wss://abc123xyz.supabase.co",
+    );
+    // The wildcard forms must NOT appear when a concrete URL was supplied.
     expect(cspDirective(csp, "connect-src")).not.toContain(
       "https://*.supabase.co",
     );
+    expect(cspDirective(csp, "connect-src")).not.toContain(
+      "wss://*.supabase.co",
+    );
   });
 
-  it("falls back to *.supabase.co only when supabaseUrl is missing", () => {
+  it("falls back to *.supabase.co (HTTPS + WSS) only when supabaseUrl is missing", () => {
     const csp = buildContentSecurityPolicy({
       env: "production",
       supabaseUrl: null,
     });
     expect(cspDirective(csp, "connect-src")).toContain(
       "https://*.supabase.co",
+    );
+    expect(cspDirective(csp, "connect-src")).toContain(
+      "wss://*.supabase.co",
     );
   });
 

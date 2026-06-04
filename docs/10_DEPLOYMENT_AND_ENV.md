@@ -101,7 +101,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 
 What the headers depend on for correctness:
 
-- `NEXT_PUBLIC_SUPABASE_URL` must be set at build time. The CSP `connect-src` is scoped to that specific Supabase host. A missing value falls back to `https://*.supabase.co` (wider than ideal); set the env in every environment.
+- `NEXT_PUBLIC_SUPABASE_URL` must be set at build time. The CSP `connect-src` is scoped to that specific Supabase host BOTH as `https://<host>` AND as `wss://<host>` (the realtime websocket origin). A missing value falls back to `https://*.supabase.co` + `wss://*.supabase.co` (wider than ideal); set the env in every environment.
 - If you add a third-party browser integration (Sentry, an analytics provider, a CDN), you must extend the CSP in the same PR. See `lib/security/headers.ts` and [docs/03 § Global browser security headers](./03_SECURITY_AND_PRIVACY.md).
 - Local dev over HTTP ignores HSTS. The same enforced CSP applies in dev with one extra source: `'unsafe-eval'` in `script-src` for Next HMR. Production builds do not need it.
 

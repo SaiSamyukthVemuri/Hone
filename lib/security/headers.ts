@@ -44,15 +44,22 @@ export type BuildSecurityHeadersArgs = {
 
 // Stripe Elements + Stripe.js requirements. Documented at:
 // https://stripe.com/docs/security/guide#content-security-policy
+//
+// m.stripe.network is included in BOTH frame-src and connect-src
+// because Stripe Elements / card entry uses it from the browser
+// (PR #150 pre-merge patch). Missing it can silently break the
+// Add-card flow under enforced CSP.
 const STRIPE_SCRIPT_SOURCES = ["https://js.stripe.com"];
 const STRIPE_FRAME_SOURCES = [
   "https://js.stripe.com",
   "https://hooks.stripe.com",
+  "https://m.stripe.network",
 ];
 const STRIPE_CONNECT_SOURCES = [
   "https://api.stripe.com",
   "https://r.stripe.com",
   "https://q.stripe.com",
+  "https://m.stripe.network",
 ];
 
 // Vercel Analytics + Speed Insights script + beacon hosts.
@@ -80,10 +87,14 @@ const PERMISSIONS_POLICY_VALUE = [
   "interest-cohort=()",
 ].join(", ");
 
-// HSTS one year + includeSubDomains + preload. Browsers ignore the
-// header on plain HTTP so local dev over http://localhost is
-// unaffected.
-const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
+// HSTS one year + includeSubDomains. The `preload` directive is
+// intentionally omitted from this first baseline (PR #150 pre-merge
+// patch). Submitting to hstspreload.org is a longer-term browser-
+// preload-list commitment that should be a separate deliberate
+// decision; strong HSTS without preload is enough for the baseline.
+// Browsers ignore the header on plain HTTP so local dev over
+// http://localhost is unaffected.
+const HSTS_VALUE = "max-age=31536000; includeSubDomains";
 
 // Strict same-origin/cross-origin Referrer-Policy as the global
 // default. Token routes override this back to `no-referrer` via the
@@ -91,21 +102,29 @@ const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
 // by source; the later block's same key wins).
 const REFERRER_POLICY_VALUE = "strict-origin-when-cross-origin";
 
-// Helper that emits the supabase connect-src token, falling back to
-// the wildcard only when the env is missing.
-function supabaseConnectSrcToken(supabaseUrl: string | null): string {
+// Helper that emits the Supabase connect-src tokens (BOTH the
+// HTTPS REST origin AND the WSS realtime origin), falling back to
+// wildcards only when the env is missing.
+//
+// PR #150 pre-merge patch added the WSS origin. Supabase realtime
+// uses wss://<project>.supabase.co/realtime/v1/websocket; an
+// HTTPS-only connect-src silently blocks the websocket. Future
+// realtime subscriptions (e.g. portal message live updates) would
+// have failed without this.
+function supabaseConnectSrcTokens(supabaseUrl: string | null): string[] {
   if (!supabaseUrl || supabaseUrl.length === 0) {
-    return "https://*.supabase.co";
+    return ["https://*.supabase.co", "wss://*.supabase.co"];
   }
-  // Pull just the origin so we never include a path component in
-  // the CSP value. URL constructor would throw on a malformed
-  // string; we accept the throw at build time so a misconfigured
-  // env fails loudly rather than producing a broken policy.
+  // Pull just the host so we never include a path component in the
+  // CSP value. URL constructor would throw on a malformed string;
+  // we catch the throw and fall back to the wildcard pair so a
+  // misconfigured env produces a working (wider) policy rather than
+  // a broken build.
   try {
     const u = new URL(supabaseUrl);
-    return `${u.protocol}//${u.host}`;
+    return [`https://${u.host}`, `wss://${u.host}`];
   } catch {
-    return "https://*.supabase.co";
+    return ["https://*.supabase.co", "wss://*.supabase.co"];
   }
 }
 
@@ -146,7 +165,7 @@ export function buildContentSecurityPolicy(
   // Analytics/Speed Insights beacons.
   const connectSrc = [
     "'self'",
-    supabaseConnectSrcToken(args.supabaseUrl),
+    ...supabaseConnectSrcTokens(args.supabaseUrl),
     ...STRIPE_CONNECT_SOURCES,
     ...VERCEL_CONNECT_SOURCES,
   ];
