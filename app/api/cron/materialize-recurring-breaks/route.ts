@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
@@ -61,61 +62,115 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("studio_recurring_break_rules")
-    .select("id, studio_id, studio:studios(timezone)")
-    .eq("active", true);
+  const startedAt = Date.now();
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("studio_recurring_break_rules")
+      .select("id, studio_id, studio:studios(timezone)")
+      .eq("active", true);
 
-  if (error) {
+    if (error) {
+      // PR #153. Database lookup failure at the top of the cron is
+      // route-level; surface as cron_route_failed and 500.
+      await recordOpsAlert({
+        severity: "critical",
+        event: "cron_route_failed",
+        message: error.message,
+        route: "/api/cron/materialize-recurring-breaks",
+        safeDetails: {
+          stage: "rule_lookup",
+          code: error.code ?? null,
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+      return NextResponse.json(
+        { ok: false, error: "cron_failed" },
+        { status: 500 },
+      );
+    }
+
+    const rules = (data ?? []) as RuleRow[];
+    const failures: Failure[] = [];
+    let succeeded = 0;
+
+    for (const r of rules) {
+      const studio = Array.isArray(r.studio) ? (r.studio[0] ?? null) : r.studio;
+      const tz = studio?.timezone ?? "America/Toronto";
+      const horizonEnd = horizonEndInTz(tz);
+      const { error: rpcErr } = await admin.rpc(
+        "materialize_recurring_break_rule",
+        { p_rule_id: r.id, p_horizon_end: horizonEnd },
+      );
+      if (rpcErr) {
+        const event =
+          rpcErr.code === "23P01"
+            ? "recurring_break_materialization_conflict"
+            : "recurring_break_materialization_error";
+        console.error(
+          JSON.stringify({
+            event,
+            rule_id: r.id,
+            studio_id: r.studio_id,
+            code: rpcErr.code ?? null,
+            error: rpcErr.message,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+        failures.push({
+          rule_id: r.id,
+          studio_id: r.studio_id,
+          error: rpcErr.message,
+          code: rpcErr.code ?? null,
+        });
+        continue;
+      }
+      succeeded += 1;
+    }
+
+    // PR #153. If any rule failed, surface a single warning-severity
+    // alert summarising the count rather than one alert per rule.
+    // 23P01 collisions are expected when a freshly-extended
+    // occurrence intersects a manually-scheduled appointment / block;
+    // the per-rule structured log above already captures them.
+    if (failures.length > 0) {
+      await recordOpsAlert({
+        severity: "warning",
+        event: "recurring_break_materialization_failures",
+        message: `${failures.length}/${rules.length} recurring-break rules failed materialization.`,
+        route: "/api/cron/materialize-recurring-breaks",
+        safeDetails: {
+          rules_processed: rules.length,
+          failures_count: failures.length,
+          succeeded,
+          // Codes only; no studio_id list to keep the safe_details
+          // payload bounded. The structured per-rule logs above
+          // carry the studio_id for operator triage.
+          failure_codes: failures.map((f) => f.code ?? "unknown").slice(0, 50),
+        },
+      });
+    }
+
+    return NextResponse.json({
+      ok: failures.length === 0,
+      rules_processed: rules.length,
+      succeeded,
+      failures,
+    });
+  } catch (err) {
+    await recordOpsAlert({
+      severity: "critical",
+      event: "cron_route_failed",
+      message:
+        err instanceof Error ? err.message : String(err ?? "unknown error"),
+      route: "/api/cron/materialize-recurring-breaks",
+      safeDetails: {
+        duration_ms: Date.now() - startedAt,
+      },
+    });
     return NextResponse.json(
-      { ok: false, error: error.message },
+      { ok: false, error: "cron_failed" },
       { status: 500 },
     );
   }
-
-  const rules = (data ?? []) as RuleRow[];
-  const failures: Failure[] = [];
-  let succeeded = 0;
-
-  for (const r of rules) {
-    const studio = Array.isArray(r.studio) ? (r.studio[0] ?? null) : r.studio;
-    const tz = studio?.timezone ?? "America/Toronto";
-    const horizonEnd = horizonEndInTz(tz);
-    const { error: rpcErr } = await admin.rpc(
-      "materialize_recurring_break_rule",
-      { p_rule_id: r.id, p_horizon_end: horizonEnd },
-    );
-    if (rpcErr) {
-      const event =
-        rpcErr.code === "23P01"
-          ? "recurring_break_materialization_conflict"
-          : "recurring_break_materialization_error";
-      console.error(
-        JSON.stringify({
-          event,
-          rule_id: r.id,
-          studio_id: r.studio_id,
-          code: rpcErr.code ?? null,
-          error: rpcErr.message,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      failures.push({
-        rule_id: r.id,
-        studio_id: r.studio_id,
-        error: rpcErr.message,
-        code: rpcErr.code ?? null,
-      });
-      continue;
-    }
-    succeeded += 1;
-  }
-
-  return NextResponse.json({
-    ok: failures.length === 0,
-    rules_processed: rules.length,
-    succeeded,
-    failures,
-  });
 }

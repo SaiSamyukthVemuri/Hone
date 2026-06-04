@@ -39,6 +39,26 @@ Vercel Analytics + Speed Insights are removed from the root layout. Safe trees o
 
 Each React-tree token page also exports `metadata.robots = { index: false, follow: false }` as a redundant meta-tag signal. The route handler `/calendar-feed/[token]/route.ts` relies on the header alone (no HTML head).
 
+### Ops alert observability (PR #153)
+
+A new `ops_alerts` table (migration 0067) records durable, append-only rows for operator-facing silent-failure states: manual fee charge needs_manual_review, Stripe webhook processing failures, card-on-file setup failures, email/SMS give-up, cron route failures. The `lib/ops/alerts.ts:recordOpsAlert` helper is the single entry point.
+
+Redaction rules (enforced before any DB insert OR stderr log):
+
+- Keys matching `token`, `raw_token`, `client_secret`, `secret`, `password`, `cookie`, `authorization`, `auth`, `api_key`, `apikey`, `stripe_secret_key`, `private_key`, `card_number`, `pan`, `cvc`, `cvv`, `ssn`, `bearer` are replaced with `[redacted]`.
+- Values matching the Stripe secret-key shape (`sk_test_*` / `sk_live_*`), a JWT shape, or a long bearer-token shape (>= 32 alnum/underscore/hyphen, excluding UUIDs) are replaced with `[redacted]` regardless of key name.
+- String values longer than 500 chars are truncated with a `...[truncated]` sentinel so a paste-bomb cannot fill the column.
+- The helper itself never throws to the caller; DB / email failures are swallowed and surface only as additional structured logs.
+
+RLS posture for `ops_alerts`:
+
+- Studio members read alerts scoped to their studio via `is_studio_member(studio_id)`.
+- NULL-studio rows (failures that arrived before lineage was resolved) are visible to service-role queries only.
+- No INSERT/UPDATE policy is granted to anon/authenticated; the helper writes via the service-role admin client only.
+- No DELETE policy; resolve via `resolved_at` + `resolution_note`.
+
+Operator email (optional): `OPS_ALERT_EMAILS` allowlist. Fails closed when unset. Never emails for events whose name starts with `email_` (loop guard). See [docs/11_RUNBOOK.md](./11_RUNBOOK.md) for the full SQL recipes and incident workflow.
+
 ### Token routes collapse error states
 
 Token resolution failure (malformed / unknown / expired) always returns the same generic message. Comparing response strings cannot reveal whether the token is structurally valid or only expired. The cancel page and the reschedule page both collapse `invalid_token / already_cancelled / not_cancelable` into one public error.

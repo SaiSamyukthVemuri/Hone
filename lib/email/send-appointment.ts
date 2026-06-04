@@ -178,12 +178,26 @@ export async function recordEmailAttempt(
   }
 }
 
+// PR #153. Threshold used to surface a final-failure ops alert.
+// Matches MAX_ATTEMPTS in /api/cron/appointment-reminders/route.ts
+// (which also caps retries at 3). Importing that constant would
+// create a cyclic dependency; the documented contract is "three
+// strikes". A future refactor can move the threshold into a single
+// shared source.
+const EMAIL_GIVE_UP_ATTEMPT_THRESHOLD = 3;
+
 export function logEmailFailure(opts: {
   appointmentId: string;
   emailType: EmailType;
   error: string;
   retryable: boolean;
   attemptNumber?: number;
+  // PR #153. Optional studio id surfaces on the ops alert so the
+  // operator can filter by studio. Cron paths that already have
+  // the studio on the appointment join should pass it; legacy
+  // call sites can omit and fall back to studio_id=null on the
+  // alert row.
+  studioId?: string | null;
 }): void {
   console.error(
     JSON.stringify({
@@ -196,6 +210,41 @@ export function logEmailFailure(opts: {
       timestamp: new Date().toISOString(),
     }),
   );
+  // PR #153. Record a durable ops alert ONLY when the attempt was
+  // the final one (3-strike cap reached or marked non-retryable).
+  // Lower-numbered retryable attempts are normal noise and stay
+  // log-only. The alerts helper's loop guard (`event.startsWith
+  // "email_"`) ensures we never email an alert about an email
+  // failure; DB + structured log only.
+  const isFinalAttempt =
+    !opts.retryable ||
+    (typeof opts.attemptNumber === "number" &&
+      opts.attemptNumber >= EMAIL_GIVE_UP_ATTEMPT_THRESHOLD);
+  if (!isFinalAttempt) return;
+  // Fire-and-forget; the helper never throws to the caller.
+  void (async () => {
+    try {
+      const { recordOpsAlert } = await import("@/lib/ops/alerts");
+      await recordOpsAlert({
+        severity: "warning",
+        event: "email_send_gave_up",
+        message: `Email ${opts.emailType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        studioId: opts.studioId ?? null,
+        appointmentId: opts.appointmentId,
+        route: "lib/email/send-appointment",
+        safeDetails: {
+          email_type: opts.emailType,
+          attempt_number: opts.attemptNumber ?? null,
+          retryable: opts.retryable,
+          provider_error: opts.error,
+        },
+      });
+    } catch {
+      // recordOpsAlert is itself try/catch'd. Swallow anything
+      // exotic here so the email-send call site never sees an
+      // alerting exception.
+    }
+  })();
 }
 
 export async function sendBookingConfirmationToClient(params: {

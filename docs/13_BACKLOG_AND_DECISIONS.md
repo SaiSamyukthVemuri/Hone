@@ -88,6 +88,24 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Error tracking and alerting for silent-failure states (PR #153)
+
+**Decision:** A single `recordOpsAlert` helper writes a durable row to `public.ops_alerts` (migration 0067), emits a structured stderr log on every call, and optionally emails an `OPS_ALERT_EMAILS` allowlist for critical alerts. No Sentry. No Slack. The wiring covers manual fee `needs_manual_review` / `manual_fee_charge_failed`, Stripe webhook `card_on_file_setup_failed` / `stripe_webhook_processing_failed`, cron `cron_route_failed` / `recurring_break_materialization_failures`, and email/SMS `email_send_gave_up` / `sms_send_failed` (final-attempt only).
+
+**Why a table not a service:** Sentry / Datadog / Honeycomb would solve the same problem with much more surface area. The pilot studio doesn't need fan-out; it needs a single durable record the operator can SQL. Service-role insert + studio-member-only RLS keep the alert visibility consistent with the rest of the application.
+
+**Why email gated, not on by default:** Pilot operator is one person. Email noise from non-critical events would condition the operator to ignore the channel. Fail-closed (`OPS_ALERT_EMAILS` unset = no email) keeps the alert table as the floor and lets the operator opt in.
+
+**Loop guard:** events whose name starts with `email_` never trigger the email path. Without that guard, an `email_send_gave_up` alert would attempt to email the operator via the same failing Resend client, fail, and recurse.
+
+**Alternative considered:** Per-call-site `console.error` only (status quo). Rejected because the existing `logInternal` lines are findable only in Vercel logs and disappear after Vercel's log retention. A durable table makes after-the-fact triage possible and gives a single SQL surface for `SELECT … WHERE resolved_at IS NULL`.
+
+**What this PR did NOT do:**
+- No Sentry / Slack / Datadog integration.
+- No `/admin/ops-alerts` UI (runbook SQL only).
+- No alert spike detection / batching.
+- No new product, payment, SMS, email send, or live-mode behavior.
+
 ### Portal Replace card uses the existing SetupIntent flow (PR #151)
 
 **Decision:** The portal Replace card affordance reuses the same `createCardSetupIntentAction` server action as Add card. The `mode` prop on `PortalPaymentMethodForm` drives copy only; the server action and webhook are unchanged. The webhook's `setup_intent.succeeded` handler pre-flips any existing active row to `status='removed'` and inserts the new active row in the same transaction (PR #135). The PR #135 idempotency SELECT on `(studio, client, account, mode, setup_intent_id)` makes the handler safe against Stripe re-deliveries even during a replace.

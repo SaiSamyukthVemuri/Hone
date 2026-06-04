@@ -41,6 +41,7 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/server";
 import { accountToStatusSnapshot } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // Force Node runtime — Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -204,6 +205,28 @@ export async function POST(req: Request): Promise<Response> {
       eventId: event.id,
       eventType: event.type,
       err: err instanceof Error ? err.message : String(err),
+    });
+    // PR #153. Persistent webhook processing failure is a critical
+    // ops alert. For setup_intent.succeeded specifically, the
+    // failure means the client may believe their card was saved
+    // while Hone has no record; surface as a more specific event so
+    // the operator's runbook can branch.
+    await recordOpsAlert({
+      severity: "critical",
+      event:
+        event.type === "setup_intent.succeeded"
+          ? "card_on_file_setup_failed"
+          : "stripe_webhook_processing_failed",
+      message: err instanceof Error ? err.message : String(err),
+      studioId,
+      stripeEventId: event.id,
+      route: "app/api/stripe/webhook",
+      safeDetails: {
+        event_type: event.type,
+        stripe_account_id: stripeAccountId,
+        livemode,
+        handler: event.type,
+      },
     });
     try {
       const { error: releaseErr } = await admin.rpc(

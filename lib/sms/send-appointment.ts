@@ -108,12 +108,22 @@ export async function recordSmsResult(
   }
 }
 
+// PR #153. SMS give-up threshold. SMS retries are bounded by the
+// claim_sms_send RPC's claim window (see migration 0049 + 0062);
+// most non-retryable failures are Twilio rejections that should not
+// be re-attempted (e.g. opt-out code 21610). We surface a
+// warning-severity ops alert when retryable=false OR the attempt
+// hit a cap. Lower-numbered retryable attempts stay log-only.
+const SMS_GIVE_UP_ATTEMPT_THRESHOLD = 3;
+
 export function logSmsFailure(opts: {
   appointmentId: string;
   smsType: SmsType;
   error: string;
   retryable: boolean;
   attemptNumber?: number;
+  // PR #153. Optional studio id surfaces on the ops alert.
+  studioId?: string | null;
 }): void {
   console.error(
     JSON.stringify({
@@ -126,6 +136,33 @@ export function logSmsFailure(opts: {
       timestamp: new Date().toISOString(),
     }),
   );
+  const isFinalAttempt =
+    !opts.retryable ||
+    (typeof opts.attemptNumber === "number" &&
+      opts.attemptNumber >= SMS_GIVE_UP_ATTEMPT_THRESHOLD);
+  if (!isFinalAttempt) return;
+  // Fire-and-forget; recordOpsAlert never throws to the caller.
+  void (async () => {
+    try {
+      const { recordOpsAlert } = await import("@/lib/ops/alerts");
+      await recordOpsAlert({
+        severity: "warning",
+        event: "sms_send_failed",
+        message: `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        studioId: opts.studioId ?? null,
+        appointmentId: opts.appointmentId,
+        route: "lib/sms/send-appointment",
+        safeDetails: {
+          sms_type: opts.smsType,
+          attempt_number: opts.attemptNumber ?? null,
+          retryable: opts.retryable,
+          provider_error: opts.error,
+        },
+      });
+    } catch {
+      // Swallow alerting exceptions so the SMS path is never broken.
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------

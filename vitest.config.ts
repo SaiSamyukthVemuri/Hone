@@ -35,6 +35,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),
+      // Next's `server-only` marker is consumed at compile time by
+      // the Next bundler. Vitest's Node loader doesn't ship it, so
+      // we stub to a virtual empty module. The actual server-only
+      // enforcement is provided by Next itself at build, NOT by
+      // the test harness.
+      "server-only": path.resolve(__dirname, "./tests/stubs/server-only.ts"),
     },
   },
 });

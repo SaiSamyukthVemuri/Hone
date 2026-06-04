@@ -63,6 +63,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `INTAKE_SIGNING_SECRET` | Required | HMAC for `/intake/<token>`. |
 | `ADMIN_EMAILS` | **Required in production** | Comma-separated allowlist for `/admin`. Production with no/empty value makes `isAdmin()` return false for everyone (PR #143 fail-closed). |
 | `PORTAL_FINGERPRINT_SALT` | **Required in production for diagnostics** | Salts SHA-256 of IP / UA / email hashes on `client_portal_magic_links` and `client_consent_signatures`. Missing in production → `hashFingerprint()` returns null; portal login still works (diagnostic-only). |
+| `OPS_ALERT_EMAILS` | Optional | Comma-separated allowlist of operator addresses that receive **critical** ops alerts (manual fee needs-manual-review, Stripe webhook processing failure, card-on-file setup failure, cron route failure). Unset → no operator emails; alerts still land in `ops_alerts` + Vercel logs (PR #153). Never emails for `email_*` events (loop guard). |
 | `STRIPE_SECRET_KEY` | Required for any Stripe surface | `sk_test_*` everywhere; `sk_live_*` only when `STRIPE_ALLOW_LIVE_MODE=true` AND not Preview/Development. |
 | `STRIPE_ALLOW_LIVE_MODE` | Default `false` | Live-mode gate. Leave unset / `false` until a deliberate live-mode PR. |
 | `STRIPE_WEBHOOK_SECRET` | Required | Signing secret from the connected-account webhook in the Stripe dashboard. |

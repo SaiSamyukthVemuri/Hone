@@ -216,6 +216,61 @@ If the test-mode manual fee charge action needs to be quickly disabled:
       and status    = 'ready';
    ```
 
+## Ops alerts (PR #153)
+
+The `ops_alerts` table (migration 0067) is the durable record of silent-failure states. Recent alerts:
+
+```sql
+select id, created_at, severity, event, message,
+       studio_id, appointment_id, client_id,
+       manual_fee_attempt_id, stripe_event_id,
+       stripe_payment_intent_id, route, safe_details,
+       resolved_at
+  from public.ops_alerts
+ order by created_at desc
+ limit 50;
+```
+
+Open alerts only:
+
+```sql
+select id, created_at, severity, event, message, safe_details
+  from public.ops_alerts
+ where resolved_at is null
+ order by created_at desc;
+```
+
+Critical alerts that need same-day investigation:
+
+| Event | Surface | Most likely cause | Investigate |
+|---|---|---|---|
+| `manual_fee_needs_manual_review` | `lib/billing/manual-fee-charge.ts` (reconcile + run) | Pending `manual_fee_charge_attempts` row past 60-min reconciliation window; PI retrieve failed; unknown error after claim | Match `manual_fee_attempt_id` to the `manual_fee_charge_attempts` row; cross-check Stripe Dashboard PaymentIntent search by metadata `hone_manual_fee_charge_attempt_id` |
+| `manual_fee_charge_failed` | Same module | StripeError caught (declined / authentication_required) or PI status post-create was `requires_action` / `canceled` / `requires_payment_method` | Read `failure_code` + `stripe_status` in `safe_details`; the attempt row already has sanitized `failure_code` / `failure_message` |
+| `card_on_file_setup_failed` | `app/api/stripe/webhook` `setup_intent.succeeded` arm | Lineage mismatch / customer mismatch / signature mismatch / PaymentMethod retrieve failure / insert failure | Stripe Dashboard → SetupIntents on the connected account → match `stripe_event_id`; the client probably believes their card was saved but Hone has no `client_payment_methods` row |
+| `stripe_webhook_processing_failed` | Same route, other event types | Generic webhook handler exception | Read `safe_details.event_type` + `safe_details.stripe_account_id`; `stripe_events.processing_error` carries the matching error string |
+| `cron_route_failed` | `/api/cron/appointment-reminders` or `/api/cron/materialize-recurring-breaks` | Cron route threw at the top level | Vercel logs for the same `route` will carry the error stack; rerun the cron after the underlying issue is fixed |
+
+Warning alerts (the operator dashboard surface, not paging):
+
+| Event | Surface | Most likely cause |
+|---|---|---|
+| `email_send_gave_up` | `lib/email/send-appointment.ts:logEmailFailure` | 3 failed Resend attempts on the same appointment + email type |
+| `sms_send_failed` | `lib/sms/send-appointment.ts:logSmsFailure` | Final-attempt SMS failure (non-retryable Twilio code or 3-strike) |
+| `recurring_break_materialization_failures` | `/api/cron/materialize-recurring-breaks` | At least one recurring-break rule failed; usually 23P01 collisions with manually-scheduled appointments |
+
+Resolving an alert (operator workflow):
+
+```sql
+update public.ops_alerts
+   set resolved_at = now(),
+       resolved_by_practitioner_id = '<your practitioner uuid>',
+       resolution_note = 'Investigated; PaymentIntent ' ||
+                         'pi_xxx succeeded in Stripe; manual_fee_charge_attempts row corrected.'
+ where id = '<alert uuid>';
+```
+
+The DB CHECK enforces that `resolved_at` is set whenever `resolved_by_practitioner_id` or `resolution_note` are; partial updates fail.
+
 ## Vercel env checks
 
 The Vercel MCP `get_project` does not expose env-var values. To check production env, use the Vercel dashboard:

@@ -3,6 +3,7 @@ import "server-only";
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { getManualFeeChargeEligibility } from "./manual-fee-eligibility";
 import type { ManualFeeChargeType } from "./manual-fee-types";
 
@@ -349,6 +350,9 @@ async function writeFailedOutcome(args: {
 // facing result.
 async function reconcileExistingPaymentIntent(args: {
   attemptId: string;
+  studioId: string;
+  appointmentId: string;
+  clientId: string;
   stripeAccountId: string;
   stripeCustomerId: string;
   stripePaymentMethodId: string;
@@ -364,6 +368,20 @@ async function reconcileExistingPaymentIntent(args: {
     logInternal("manual_fee_pi_retrieve_failed", {
       attemptId: args.attemptId,
       message: err instanceof Error ? err.message : String(err),
+    });
+    // PR #153. Surface as a needs-manual-review alert; the operator
+    // must reconcile the PaymentIntent by hand.
+    await recordOpsAlert({
+      severity: "critical",
+      event: "manual_fee_needs_manual_review",
+      message: "PaymentIntent retrieve failed during reconcile.",
+      studioId: args.studioId,
+      appointmentId: args.appointmentId,
+      clientId: args.clientId,
+      manualFeeAttemptId: args.attemptId,
+      stripePaymentIntentId: args.paymentIntentId,
+      route: "lib/billing/manual-fee-charge:reconcileExistingPaymentIntent",
+      safeDetails: { reason: "pi_retrieve_failed" },
     });
     return {
       ok: false,
@@ -413,6 +431,27 @@ async function reconcileExistingPaymentIntent(args: {
         pi.last_payment_error?.message ??
         `PaymentIntent status: ${pi.status}`,
     });
+    // PR #153. Charge-failure alert. authentication_required is
+    // critical because the off-session flow cannot recover; the
+    // other terminal-non-success states are warnings the operator
+    // should review.
+    await recordOpsAlert({
+      severity:
+        pi.status === "requires_action" ? "critical" : "warning",
+      event: "manual_fee_charge_failed",
+      message: `PaymentIntent status: ${pi.status}`,
+      studioId: args.studioId,
+      appointmentId: args.appointmentId,
+      clientId: args.clientId,
+      manualFeeAttemptId: args.attemptId,
+      stripePaymentIntentId: pi.id,
+      route: "lib/billing/manual-fee-charge:reconcileExistingPaymentIntent",
+      safeDetails: {
+        stripe_status: pi.status,
+        failure_code: pi.last_payment_error?.code ?? pi.status,
+        recovered_via: "reconcile",
+      },
+    });
     return {
       ok: false,
       outcome: "failed",
@@ -426,6 +465,19 @@ async function reconcileExistingPaymentIntent(args: {
   }
 
   // 'processing': keep pending; Stripe will finalize asynchronously.
+  await recordOpsAlert({
+    severity: "critical",
+    event: "manual_fee_needs_manual_review",
+    message:
+      "PaymentIntent still 'processing' during reconcile; manual review.",
+    studioId: args.studioId,
+    appointmentId: args.appointmentId,
+    clientId: args.clientId,
+    manualFeeAttemptId: args.attemptId,
+    stripePaymentIntentId: pi.id,
+    route: "lib/billing/manual-fee-charge:reconcileExistingPaymentIntent",
+    safeDetails: { stripe_status: pi.status },
+  });
   return {
     ok: false,
     outcome: "needs_manual_review",
@@ -609,6 +661,9 @@ export async function runManualFeeCharge(args: {
     if (claim.stripe_payment_intent_id) {
       return reconcileExistingPaymentIntent({
         attemptId: attemptRow.id,
+        studioId: attemptRow.studio_id,
+        appointmentId: attemptRow.appointment_id,
+        clientId: attemptRow.client_id,
         stripeAccountId: card.stripe_account_id,
         stripeCustomerId: card.stripe_customer_id,
         stripePaymentMethodId: card.stripe_payment_method_id,
@@ -630,6 +685,24 @@ export async function runManualFeeCharge(args: {
       // Fall through to the create-and-confirm path with the same
       // deterministic key.
     } else {
+      // PR #153. The claim is older than the safe retry window AND
+      // we have no PI id. Refusing to retry is the safe choice;
+      // alert the operator so they can reconcile by hand.
+      await recordOpsAlert({
+        severity: "critical",
+        event: "manual_fee_needs_manual_review",
+        message:
+          "Pending claim is older than the reconciliation window and has no PaymentIntent id.",
+        studioId: attemptRow.studio_id,
+        appointmentId: attemptRow.appointment_id,
+        clientId: attemptRow.client_id,
+        manualFeeAttemptId: attemptRow.id,
+        route: "lib/billing/manual-fee-charge:runManualFeeCharge",
+        safeDetails: {
+          reason: "stale_pending_no_pi",
+          age_minutes_floor: Math.floor(ageMin),
+        },
+      });
       return {
         ok: false,
         outcome: "needs_manual_review",
@@ -703,6 +776,27 @@ export async function runManualFeeCharge(args: {
         type: err.type,
         code: err.code,
       });
+      // PR #153. authentication_required is critical (off-session
+      // cannot recover; the practitioner needs to contact the
+      // client). Other Stripe errors are warning-severity (card
+      // declined, etc.; normal but operator-visible).
+      await recordOpsAlert({
+        severity:
+          err.code === "authentication_required" ? "critical" : "warning",
+        event: "manual_fee_charge_failed",
+        message: err.message || "Stripe error during PaymentIntent create.",
+        studioId: attemptRow.studio_id,
+        appointmentId: attemptRow.appointment_id,
+        clientId: attemptRow.client_id,
+        manualFeeAttemptId: attemptRow.id,
+        stripePaymentIntentId: piId,
+        route: "lib/billing/manual-fee-charge:runManualFeeCharge",
+        safeDetails: {
+          failure_code: err.code ?? null,
+          stripe_status: piStatus,
+          stripe_error_type: err.type,
+        },
+      });
       return {
         ok: false,
         outcome: "failed",
@@ -721,6 +815,20 @@ export async function runManualFeeCharge(args: {
     logInternal("manual_fee_stripe_unknown_error", {
       attemptId: attemptRow.id,
       message: err instanceof Error ? err.message : String(err),
+    });
+    // PR #153. Money may have moved without Hone recording it; this
+    // is the highest-priority alert.
+    await recordOpsAlert({
+      severity: "critical",
+      event: "manual_fee_needs_manual_review",
+      message:
+        "Unknown error after claim; row stays pending_stripe. Reconcile via Stripe dashboard.",
+      studioId: attemptRow.studio_id,
+      appointmentId: attemptRow.appointment_id,
+      clientId: attemptRow.client_id,
+      manualFeeAttemptId: attemptRow.id,
+      route: "lib/billing/manual-fee-charge:runManualFeeCharge",
+      safeDetails: { reason: "unknown_error_after_claim" },
     });
     return {
       ok: false,
@@ -768,6 +876,25 @@ export async function runManualFeeCharge(args: {
       (pi.status === "requires_action"
         ? AUTHENTICATION_REQUIRED_MESSAGE
         : `PaymentIntent status: ${pi.status}`),
+  });
+  // PR #153. PaymentIntent landed but Stripe could not capture off-
+  // session. authentication_required is critical (cannot recover
+  // without the cardholder); other non-success statuses are warning.
+  await recordOpsAlert({
+    severity:
+      pi.status === "requires_action" ? "critical" : "warning",
+    event: "manual_fee_charge_failed",
+    message: `PaymentIntent status post-create: ${pi.status}`,
+    studioId: attemptRow.studio_id,
+    appointmentId: attemptRow.appointment_id,
+    clientId: attemptRow.client_id,
+    manualFeeAttemptId: attemptRow.id,
+    stripePaymentIntentId: pi.id,
+    route: "lib/billing/manual-fee-charge:runManualFeeCharge",
+    safeDetails: {
+      stripe_status: pi.status,
+      failure_code: pi.last_payment_error?.code ?? pi.status,
+    },
   });
   return {
     ok: false,

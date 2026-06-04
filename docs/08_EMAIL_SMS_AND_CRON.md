@@ -82,6 +82,19 @@ External scheduler (`https://cron-job.org/`) or Vercel cron. The cron schedule c
 
 Every `/api/cron/*` route validates `Authorization: Bearer $CRON_SECRET` before doing anything. Missing or wrong secret → `401`. Generate with `openssl rand -hex 32`. Required in production.
 
+### Ops alerts (PR #153)
+
+When an email or SMS send gives up (final-attempt non-retryable failure OR attempt counter reaches 3), `logEmailFailure` / `logSmsFailure` now ALSO record a durable row in the `ops_alerts` table via `recordOpsAlert`. The helper never throws to the caller, so the booking / reminder / postcare path that triggered the log is not affected by alerting failures.
+
+Events:
+
+- `email_send_gave_up` (warning): emitted from `logEmailFailure` when the email send is non-retryable OR attempt_number >= 3. **Never** emails the operator (loop guard in `lib/ops/alerts.ts`); DB + stderr only.
+- `sms_send_failed` (warning): emitted from `logSmsFailure` under the same threshold.
+- `cron_route_failed` (critical): emitted from the catch block at the top of `/api/cron/appointment-reminders/route.ts` and `/api/cron/materialize-recurring-breaks/route.ts`.
+- `recurring_break_materialization_failures` (warning): emitted once per run when at least one rule failed.
+
+The no-show-check route is intentionally non-mutating (responds with `{ ok: true, disabled: true }`) and does NOT emit cron alerts.
+
 ### Operational expectations
 
 - **`appointment-reminders` schedule drift**: if the scheduler stops hitting this route, the 24h and 2h reminder emails stop going out. The per-row 3-strike attempts counter caps the retry blast radius once the scheduler resumes, but real reminders will be missed in the meantime.
