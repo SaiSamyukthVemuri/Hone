@@ -9,9 +9,28 @@ import {
   buildPolicySnapshot,
   hasAnyPolicy,
 } from "@/lib/booking/policy-acknowledgement";
+import {
+  CANCELLATION_NOTE_MAX_LENGTH,
+  getCancellationReasonLabel,
+  isCancellationReasonValue,
+  type CancellationReasonValue,
+} from "@/lib/booking/cancellation-reasons";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
+
+// Validation messages for the new structured cancellation insight
+// fields. These are surfaced to the client only when their input
+// fails the server check; the disabled-submit and option-list rendering
+// in CancelForm prevents the legitimate UI from sending an out-of-set
+// value. The strings are deliberately neutral and never echo the bad
+// input.
+const NOTE_TOO_LONG_ERROR =
+  "Your note is too long. Please keep it under " +
+  CANCELLATION_NOTE_MAX_LENGTH +
+  " characters.";
+const INVALID_REASON_ERROR =
+  "Please pick one of the suggested reasons or leave the field blank.";
 
 // Generic public-facing message. Returned for any non-success outcome
 // on BOTH the mutation surface (`publicCancelAppointmentAction`) AND
@@ -77,7 +96,14 @@ export async function publicCancelAppointmentAction(
   formData: FormData,
 ): Promise<PublicCancelResult> {
   const token = strOrEmpty(formData.get("token"));
-  const reason = strOrNull(formData.get("reason"));
+  // PR #144. The reason field is now a structured machine value drawn
+  // from CANCELLATION_REASONS (or null/blank when the client opted to
+  // cancel without picking a reason). The free-form textarea that used
+  // to feed this field is gone; the optional note has moved to its
+  // own field below.
+  const rawReason = strOrNull(formData.get("reason"));
+  const rawNote = strOrEmpty(formData.get("note"));
+  const rawFollowUpAllowed = strOrEmpty(formData.get("follow_up_allowed"));
   // PR #132 / #133. The acknowledgement field is read up front but
   // the require / skip decision happens AFTER we resolve the studio
   // because requiring an acknowledgement of a non-existent policy
@@ -88,6 +114,33 @@ export async function publicCancelAppointmentAction(
   if (!token) {
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
+
+  // PR #144. Validate the structured insight fields up front so the
+  // server never trusts client input for them.
+  //
+  //   * Reason: if present, MUST be one of CANCELLATION_REASONS.value.
+  //     The label that gets snapshotted is derived server-side from
+  //     this map; we never store a client-supplied label string.
+  //   * Note: optional, trimmed, length-capped. Stored only on the
+  //     successful cancellation branch via the audit row.
+  //   * follow_up_allowed: optional boolean. The form posts the literal
+  //     "true" when the checkbox is checked; anything else (missing,
+  //     "false", "1", "on", "yes") collapses to false. The DB row's
+  //     follow_up_allowed default is false.
+  let reasonValue: CancellationReasonValue | null = null;
+  let reasonLabel: string | null = null;
+  if (rawReason !== null) {
+    if (!isCancellationReasonValue(rawReason)) {
+      return { ok: false, error: INVALID_REASON_ERROR };
+    }
+    reasonValue = rawReason;
+    reasonLabel = getCancellationReasonLabel(rawReason);
+  }
+  if (rawNote.length > CANCELLATION_NOTE_MAX_LENGTH) {
+    return { ok: false, error: NOTE_TOO_LONG_ERROR };
+  }
+  const noteValue = rawNote.length > 0 ? rawNote : null;
+  const followUpAllowed = rawFollowUpAllowed === "true";
 
   // Rate limit before token verification, the cancel RPC, and the owner
   // email. Runs independent of token validity, so a 429 reveals nothing.
@@ -181,9 +234,21 @@ export async function publicCancelAppointmentAction(
     rpcToken = row.cancellation_token;
   }
 
+  // PR #144. Switched to the 5-arg variant of the RPC (migration
+  // 0063). The new signature accepts the machine value, the label
+  // snapshot, the optional note, and the follow-up flag, and writes
+  // them into appointment_audit.details inside the same transaction
+  // as the status flip. The 2-arg variant remains in the DB during
+  // the deploy window and is no longer called from this action.
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "public_cancel_appointment_with_token",
-    { p_token: rpcToken, p_reason: reason },
+    {
+      p_token: rpcToken,
+      p_reason: reasonValue,
+      p_reason_label: reasonLabel,
+      p_note: noteValue,
+      p_follow_up_allowed: followUpAllowed,
+    },
   );
   if (rpcErr) {
     logInternal("public_cancel_rpc_error", { code: rpcErr.code, message: rpcErr.message });
@@ -295,7 +360,14 @@ export async function publicCancelAppointmentAction(
           serviceName: apptService?.name ?? "Appointment",
           startsAt: new Date(apptRow.starts_at),
           cancelledBy: "client",
-          reason,
+          // The owner notification continues to receive the same
+          // free-form reason string it always has. PR #144 sends the
+          // human label (e.g. "Schedule changed") when the client
+          // picked one; null when they cancelled without selecting
+          // anything. The richer note + follow-up flag live in the
+          // audit row and the practitioner-facing appointment detail
+          // page rather than the email body.
+          reason: reasonLabel,
           isClient: false,
         });
       } catch (emailErr) {
