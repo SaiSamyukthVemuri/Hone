@@ -37,8 +37,16 @@
 --     PaymentMethod IDs are per-connected-account; cross-studio
 --     uniqueness would not be globally true. The
 --     (stripe_payment_method_id) index supports webhook
---     reconciliation lookups; an ON CONFLICT-style duplicate guard
---     happens at the action layer instead.
+--     reconciliation lookups; the webhook handler does its own
+--     pre-INSERT idempotency check on (stripe_account_id,
+--     stripe_livemode, stripe_setup_intent_id), and migration
+--     0059 adds the partial unique that backs that check.
+--   * stripe_setup_intent_id is per-connected-account unique on the
+--     Stripe side. The corresponding partial unique on
+--     (stripe_account_id, stripe_livemode, stripe_setup_intent_id)
+--     is added in migration 0059 (NOT in this migration) so the
+--     constraint can be installed independently if a downstream
+--     consumer needs to reproduce the schema in stages.
 --
 -- Strictly additive + idempotent.
 

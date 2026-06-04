@@ -433,7 +433,49 @@ async function handleSetupIntentSucceeded(
     };
   }
 
-  // 5. Retrieve the PaymentMethod from Stripe on the connected
+  // 5. PR #135 hardening. Idempotency SELECT first: if a row already
+  //    exists for the same (studio, client, account, mode,
+  //    setup_intent_id), this is a duplicate Stripe re-delivery
+  //    after the first delivery already inserted. Return
+  //    idempotent success WITHOUT pre-flipping any active row.
+  //    Without this check, a re-delivery would UPDATE the active
+  //    row inserted by the FIRST delivery to status='removed' and
+  //    then hit the unique constraint on the INSERT, leaving the
+  //    (studio, client) with no active card.
+  //
+  //    The DB-side guarantee for this idempotency is the partial
+  //    unique index client_payment_methods_setup_intent_account_mode_uniq
+  //    added in migration 0059. The application check below short-
+  //    circuits the happy path; the 23505 catch on the INSERT
+  //    further down is a defensive backstop against any race we
+  //    do not anticipate (claim_stripe_event already serialises
+  //    deliveries of the same event id).
+  {
+    const { data: existing, error: existingErr } = await admin
+      .from("client_payment_methods")
+      .select("id")
+      .eq("studio_id", metaStudioId)
+      .eq("client_id", metaClientId)
+      .eq("stripe_account_id", ctx.stripeAccountId)
+      .eq("stripe_livemode", ctx.livemode)
+      .eq("stripe_setup_intent_id", si.id)
+      .maybeSingle();
+    if (existingErr) {
+      throw new Error(
+        `idempotency_lookup_failed:${existingErr.code}:${existingErr.message}`,
+      );
+    }
+    if (existing) {
+      return {
+        eventType: event.type,
+        setupIntentId: si.id,
+        idempotent: true,
+        existingClientPaymentMethodId: existing.id,
+      };
+    }
+  }
+
+  // 6. Retrieve the PaymentMethod from Stripe on the connected
   //    account. This is the only authoritative source for brand /
   //    last4 / exp; browser-side Elements never sends that data to
   //    Hone.
@@ -466,13 +508,16 @@ async function handleSetupIntentSucceeded(
     };
   }
 
-  // 6. Pre-flip any existing active row for the (studio, client)
+  // 7. Pre-flip any existing active row for the (studio, client)
   //    pair, then insert the new active row. Both writes use the
   //    service-role admin client; RLS default-deny on
   //    UPDATE/INSERT against authenticated roles is preserved.
-  //    A redelivered webhook hits the partial unique constraint on
-  //    the second insert; we catch + treat as a no-op idempotent
-  //    success.
+  //    The idempotency SELECT above already returned for the
+  //    duplicate-SetupIntent re-delivery case; the 23505 catch
+  //    below remains as a defensive backstop for the rarer race
+  //    where claim_stripe_event admits two distinct events that
+  //    happen to resolve to the same (account, mode,
+  //    setup_intent_id) tuple.
   const nowIso = new Date().toISOString();
   const { error: removeErr } = await admin
     .from("client_payment_methods")
