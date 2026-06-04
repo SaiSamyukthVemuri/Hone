@@ -8,6 +8,10 @@ import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-eligibility";
+import {
+  runManualFeeCharge,
+  type ManualFeeChargeResult,
+} from "@/lib/billing/manual-fee-charge";
 
 // ---------------------------------------------------------------------------
 // prepareManualFeeChargeAction (PR #145).
@@ -180,4 +184,198 @@ export async function prepareManualFeeChargeAction(
   revalidatePath(`/calendar/${appointmentId}`);
 
   return { ok: true, attemptId: inserted.id };
+}
+
+// ---------------------------------------------------------------------------
+// chargeManualFeeAttemptAction (PR #146).
+// ---------------------------------------------------------------------------
+//
+// Runs a TEST-MODE-ONLY Stripe PaymentIntent against an existing
+// manual_fee_charge_attempts row whose status is 'ready' (or
+// pending_stripe under the recovery branch). The heavy lifting lives
+// in lib/billing/manual-fee-charge.ts:runManualFeeCharge; this action
+// is the server-action entry point that:
+//
+//   * resolves the practitioner + studio from the session, so the
+//     browser cannot supply either identity
+//   * verifies the explicit confirm_charge flag
+//   * forwards the attempt_id only
+//   * surfaces the helper's result to the UI
+//
+// No browser-supplied amount, card id, studio id, client id, or
+// charge type is read. Every value comes from the row resolved by
+// attempt_id.
+
+export type ChargeManualFeeAttemptResult =
+  | {
+      ok: true;
+      outcome: "succeeded";
+      stripePaymentIntentId: string;
+      stripeChargeId: string | null;
+    }
+  | {
+      ok: false;
+      outcome:
+        | "failed"
+        | "needs_manual_review"
+        | "blocked"
+        | "live_mode_blocked"
+        | "lineage_mismatch"
+        | "not_found"
+        | "not_authorized";
+      error: string;
+      blockingReasons?: string[];
+      failureCode?: string | null;
+    };
+
+export async function chargeManualFeeAttemptAction(
+  formData: FormData,
+): Promise<ChargeManualFeeAttemptResult> {
+  let practitionerId: string;
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("manual_fee_charge_auth_failed", { err: String(err) });
+    return {
+      ok: false,
+      outcome: "not_authorized",
+      error: NOT_AUTHORIZED_ERROR,
+    };
+  }
+
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const confirmCharge = strOrEmpty(formData.get("confirm_charge"));
+  if (!attemptId) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+  if (confirmCharge !== "true") {
+    return {
+      ok: false,
+      outcome: "blocked",
+      error:
+        "Confirm the charge before running it.",
+    };
+  }
+
+  const result: ManualFeeChargeResult = await runManualFeeCharge({
+    attemptId,
+    studioId,
+    practitionerId,
+  });
+
+  // The detail page will read the updated row on next render.
+  // We don't know the appointment id from here without another lookup;
+  // we revalidate the broader /calendar path to cover both the detail
+  // page and any list surfaces that show prepared attempts.
+  revalidatePath("/calendar");
+
+  if (result.ok) {
+    return {
+      ok: true,
+      outcome: "succeeded",
+      stripePaymentIntentId: result.stripePaymentIntentId,
+      stripeChargeId: result.stripeChargeId,
+    };
+  }
+  return {
+    ok: false,
+    outcome: result.outcome,
+    error: result.message,
+    blockingReasons: result.blockingReasons,
+    failureCode: result.failureCode ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// cancelManualFeeChargeAttemptAction (PR #146).
+// ---------------------------------------------------------------------------
+//
+// Practitioner withdraws a prepared 'ready' attempt without ever
+// touching Stripe. This is NOT a refund. It moves a never-charged
+// attempt to status='cancelled' and records who did it and why.
+//
+// Allowed transition: ready -> cancelled. The conditional UPDATE on
+// status='ready' refuses any other source state (pending_stripe /
+// succeeded / failed / blocked / cancelled).
+
+const CANCEL_REASON_MAX = 500;
+
+export type CancelManualFeeAttemptResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export async function cancelManualFeeChargeAttemptAction(
+  formData: FormData,
+): Promise<CancelManualFeeAttemptResult> {
+  let practitionerId: string;
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("manual_fee_cancel_auth_failed", { err: String(err) });
+    return { ok: false, error: NOT_AUTHORIZED_ERROR };
+  }
+
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const reason = strOrEmpty(formData.get("cancelled_reason"));
+  if (!attemptId) {
+    return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  if (reason.length === 0) {
+    return {
+      ok: false,
+      error: "Add a short reason before cancelling the prepared fee.",
+    };
+  }
+  if (reason.length > CANCEL_REASON_MAX) {
+    return {
+      ok: false,
+      error: `Reason must be under ${CANCEL_REASON_MAX} characters.`,
+    };
+  }
+
+  const admin = createAdminClient();
+  // Conditional UPDATE on status='ready' refuses non-ready source
+  // states atomically. We re-check studio_id as a defence-in-depth
+  // against a future caller that forgets to pass an attempt scoped
+  // to this practitioner's studio.
+  const { data, error } = await admin
+    .from("manual_fee_charge_attempts")
+    .update({
+      status: "cancelled",
+      cancelled_at: new Date().toISOString(),
+      cancelled_by_practitioner_id: practitionerId,
+      cancelled_reason: reason,
+    })
+    .eq("id", attemptId)
+    .eq("studio_id", studioId)
+    .eq("status", "ready")
+    .select("id, appointment_id")
+    .maybeSingle();
+  if (error) {
+    logInternal("manual_fee_cancel_update_failed", {
+      code: error.code,
+      message: error.message,
+      attemptId,
+    });
+    return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  if (!data) {
+    return {
+      ok: false,
+      error: "This prepared fee can no longer be cancelled.",
+    };
+  }
+
+  revalidatePath(`/calendar/${data.appointment_id}`);
+  return { ok: true };
 }
