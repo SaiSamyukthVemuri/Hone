@@ -40,6 +40,8 @@ import {
   getLatestSignaturesForPractitionerView,
 } from "@/lib/consent/queries";
 import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
+import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
+import { PaymentMethodCard } from "@/components/payment-method-card";
 import {
   archivePortalMessageAction,
   createPortalMessageAction,
@@ -170,6 +172,7 @@ export default async function ClientCheatSheetPage({
     portalMessageReplies,
     consentTemplatesAll,
     consentLatestSignatures,
+    activeCard,
   ] = await Promise.all([
     getTotalTreatmentTime(studio.id, client.id),
     getTreatmentTimeByArea(studio.id, client.id),
@@ -191,6 +194,10 @@ export default async function ClientCheatSheetPage({
     // status card on the profile.
     getConsentTemplatesForStudio(studio.id),
     getLatestSignaturesForPractitionerView(studio.id, client.id),
+    // PR #135 (migration 0058): card-on-file Phase 1. Active card
+    // metadata only; Stripe identifiers stay off the wire. Rendered
+    // by the new PaymentMethodCard below ConsentSignaturesCard.
+    getActiveCardForStudioClient(studio.id, client.id),
   ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -323,6 +330,28 @@ export default async function ClientCheatSheetPage({
                 form_type: t.form_type,
               }))}
             latestSignatures={consentLatestSignatures}
+          />
+
+          {/* PR #135. Card-on-file Phase 1 read-only status card.
+              Practitioner sees brand / last4 / exp + the
+              authorization signed-at timestamp when available.
+              v1 has no Charge / Replace / Remove affordances; card
+              management lives in the portal. */}
+          <PaymentMethodCard
+            clientName={client.name}
+            activeCard={activeCard}
+            authorizationSignedAt={(() => {
+              const cardAuthTemplate = consentTemplatesAll.find(
+                (t) =>
+                  t.status === "active" &&
+                  t.form_type === "card_authorization",
+              );
+              if (!cardAuthTemplate) return null;
+              const sig = consentLatestSignatures.find(
+                (s) => s.template_id === cardAuthTemplate.id,
+              );
+              return sig ? sig.signed_at : null;
+            })()}
           />
 
           {/* Allergies/cautions are RED everywhere (see color convention

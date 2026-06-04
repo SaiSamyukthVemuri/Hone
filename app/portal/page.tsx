@@ -22,6 +22,9 @@ import {
   getLatestSignaturesByTemplateForPortal,
 } from "@/lib/consent/queries";
 import { PortalConsentForms } from "./PortalConsentForms";
+import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
+import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
+import { PortalPaymentMethodForm } from "./PortalPaymentMethodForm";
 
 // Authenticated client portal home.
 //
@@ -98,6 +101,29 @@ export default async function PortalHomePage() {
   const signedConsentTemplates = consentTemplates.filter((t) =>
     consentSignaturesByTemplate.has(t.id),
   );
+
+  // PR #135. Card-on-file Phase 1 portal section gating.
+  //   * activeCard:          current saved card (null = none)
+  //   * cardAuthTemplate:    studio's active card_authorization
+  //                          template (null = owner has not set
+  //                          one up yet)
+  //   * cardAuthSigned:      whether this client already signed it
+  //                          at any version
+  //   * publishableKey:      resolved via the gate; ok=false
+  //                          surfaces the calm unavailable copy
+  // We reuse consentTemplates (already loaded above) so this block
+  // adds at most one DB hit for the active-card lookup.
+  const activeCard = await getActiveCardForStudioClient(
+    session.studioId,
+    session.clientId,
+  );
+  const cardAuthTemplate =
+    consentTemplates.find((t) => t.form_type === "card_authorization") ??
+    null;
+  const cardAuthSigned =
+    cardAuthTemplate != null &&
+    consentSignaturesByTemplate.has(cardAuthTemplate.id);
+  const publishableKeyResolution = resolveStripePublishableKey();
   const unreviewedCount = messages.filter(
     (m) => m.client_reviewed_at == null,
   ).length;
@@ -468,6 +494,60 @@ export default async function PortalHomePage() {
               </ul>
             </section>
           )}
+
+          {/* PR #135. Payment method (card-on-file Phase 1).
+              The section ALWAYS renders; the inner branch is
+              decided server-side from activeCard + cardAuthTemplate
+              + cardAuthSigned + publishableKeyResolution. We never
+              expose Stripe identifiers in the rendered HTML; the
+              browser only gets brand / last4 / exp for the saved
+              card, and a publishable key for Elements when adding. */}
+          <section className="flex flex-col gap-3">
+            <h2
+              className="text-[12px] font-medium uppercase"
+              style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+            >
+              Payment method
+            </h2>
+            {activeCard != null ? (
+              <p
+                className="text-[15px] leading-relaxed text-[#0A0A0A]"
+              >
+                Card on file: {activeCard.brand} ending in{" "}
+                {activeCard.last4}, expires{" "}
+                {String(activeCard.expMonth).padStart(2, "0")}/
+                {activeCard.expYear}
+              </p>
+            ) : !cardAuthTemplate ? (
+              <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
+                Card-on-file authorization is not configured yet.
+                Please contact the studio.
+              </p>
+            ) : !cardAuthSigned ? (
+              <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
+                Please review and sign the card-on-file authorization
+                before adding a card.
+              </p>
+            ) : !publishableKeyResolution.ok ? (
+              <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
+                Card-on-file is not configured yet. Please contact the
+                studio.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <p
+                  className="text-[14px] leading-relaxed"
+                  style={{ color: "#3F3F3F" }}
+                >
+                  Your card will be stored securely by Stripe. Hone
+                  does not store your full card number.
+                </p>
+                <PortalPaymentMethodForm
+                  publishableKey={publishableKeyResolution.key}
+                />
+              </div>
+            )}
+          </section>
 
           {showCareSection && (
             <section className="flex flex-col gap-3">

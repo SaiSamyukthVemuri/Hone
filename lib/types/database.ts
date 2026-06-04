@@ -455,6 +455,38 @@ export type ClientConsentSignature = {
   created_at: string;
 };
 
+// Migration 0058: card-on-file durable mapping. One active row per
+// (studio, client) is enforced by partial unique. Stripe identifiers
+// (customer / payment_method / setup_intent / account) are NEVER
+// surfaced to the rendered UI; only brand / last4 / exp_month /
+// exp_year flow into views. PR #135. Phase 1 stores cards; no
+// charges, no PaymentIntents, no refunds, no public-booking
+// card-required flow.
+export type ClientPaymentMethodStatus = "active" | "removed";
+export type ClientPaymentMethodAddedVia = "portal" | "practitioner_recovery";
+
+export type ClientPaymentMethod = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  stripe_account_id: string;
+  stripe_livemode: boolean;
+  stripe_customer_id: string;
+  stripe_payment_method_id: string;
+  stripe_setup_intent_id: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  status: ClientPaymentMethodStatus;
+  card_authorization_signature_id: string | null;
+  added_via: ClientPaymentMethodAddedVia;
+  added_at: string;
+  removed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AppointmentAudit = {
   id: string;
   appointment_id: string;

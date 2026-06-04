@@ -1,7 +1,14 @@
-// Stripe webhook endpoint (Phase 1).
+// Stripe webhook endpoint (Phase 1 + card-on-file Phase 1).
 //
-// Allowed mutations: account-status sync only.
+// Allowed mutations:
 //   - account.updated, capability.updated -> sync_studio_account_status
+//   - setup_intent.succeeded               -> client_payment_methods INSERT
+//     (PR #135; portal card-on-file)
+//
+// Note on setup_intent.setup_failed: claimed + recorded with a small
+// summary so the audit chain is complete, but no row is written.
+// The client portal Elements form surfaces the Stripe error to the
+// visitor directly.
 //
 // Forbidden mutations in Phase 1 (these events are claimed for
 // idempotency and marked processed with a payload_summary, but they
@@ -11,7 +18,7 @@
 //   - refund.*
 //   - charge.dispute.*
 //   - customer.*
-//   - setup_intent.*
+//   - setup_intent.* OTHER THAN succeeded / setup_failed
 //
 // Webhook discipline:
 //   * Raw body via await req.text(). NEVER req.json() before
@@ -287,16 +294,288 @@ async function handleStripeEvent(
       };
     }
 
+    case "setup_intent.succeeded": {
+      // PR #135. Card-on-file: insert / replace
+      // client_payment_methods row. Every value flows from
+      // server-side Stripe data via paymentMethods.retrieve; the
+      // browser-supplied card metadata is never trusted.
+      return await handleSetupIntentSucceeded(event, ctx);
+    }
+
+    case "setup_intent.setup_failed": {
+      // Surface a small summary for audit; no DB write. The portal
+      // Elements form already told the visitor what to do.
+      const si = event.data.object as Stripe.SetupIntent;
+      return {
+        eventType: event.type,
+        setupIntentId: si.id,
+        // last_setup_error is a Stripe-defined shape that may
+        // contain a sanitized 'code' and 'message'; we record only
+        // the code to keep the summary PII-free.
+        lastSetupErrorCode: si.last_setup_error?.code ?? null,
+      };
+    }
+
     // Phase 1: every other event class is recorded without side effects.
     // No appointment state changes, no payment intent / charge / refund
-    // / dispute / customer / setup_intent handling. The summary records
-    // the type so the audit trail is complete; no body is logged.
+    // / dispute / customer / other-setup_intent handling. The summary
+    // records the type so the audit trail is complete; no body is logged.
     default:
       return {
         eventType: event.type,
         ignoredInPhase1: true,
       };
   }
+}
+
+// PR #135. setup_intent.succeeded arm. Validates the metadata +
+// every lineage dimension before writing client_payment_methods.
+// Throws on validation failure so the parent handler releases the
+// stripe_events claim with the error; Stripe retries the delivery,
+// and the next attempt either succeeds against fresh server state
+// or surfaces the same validation error for an operator to fix.
+//
+// Returns the sanitized payload_summary the parent persists on
+// stripe_events. NEVER includes raw card data, PaymentMethod object,
+// SetupIntent client_secret, or any PII.
+async function handleSetupIntentSucceeded(
+  event: Stripe.Event,
+  ctx: { studioId: string | null; stripeAccountId: string | null; livemode: boolean },
+): Promise<Record<string, unknown>> {
+  const si = event.data.object as Stripe.SetupIntent;
+
+  // 1. Metadata must carry the Hone identity tuple. We do NOT
+  //    accept the SetupIntent if any field is missing.
+  const meta = (si.metadata ?? {}) as Record<string, string>;
+  const metaStudioId = meta.hone_studio_id;
+  const metaClientId = meta.hone_client_id;
+  const metaSignatureId = meta.hone_card_authorization_signature_id;
+  if (!metaStudioId || !metaClientId || !metaSignatureId) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "missing_metadata",
+    };
+  }
+
+  // 2. Connected-account context must agree with the event's
+  //    account + the studio's payment settings.
+  if (!ctx.stripeAccountId || !ctx.studioId) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "missing_account_context",
+    };
+  }
+  if (ctx.studioId !== metaStudioId) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "studio_metadata_mismatch",
+    };
+  }
+
+  const admin = createAdminClient();
+
+  // 3. Validate the customer lineage against client_stripe_customers.
+  //    A forged metadata.hone_studio_id / hone_client_id would not
+  //    match the (studio, client, account, mode, customer) tuple
+  //    here and is rejected.
+  if (typeof si.customer !== "string" || si.customer.length === 0) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "missing_customer",
+    };
+  }
+  const { data: customerLineage, error: customerLineageErr } = await admin
+    .from("client_stripe_customers")
+    .select("client_id, studio_id, stripe_account_id, stripe_livemode")
+    .eq("studio_id", metaStudioId)
+    .eq("client_id", metaClientId)
+    .eq("stripe_account_id", ctx.stripeAccountId)
+    .eq("stripe_livemode", ctx.livemode)
+    .eq("stripe_customer_id", si.customer)
+    .maybeSingle();
+  if (customerLineageErr) {
+    throw new Error(
+      `customer_lineage_lookup_failed:${customerLineageErr.code}:${customerLineageErr.message}`,
+    );
+  }
+  if (!customerLineage) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "customer_lineage_mismatch",
+    };
+  }
+
+  // 4. Validate the card_authorization signature belongs to the
+  //    same (studio, client) pair. A forged signature id from
+  //    another studio/client is rejected.
+  const { data: signature, error: signatureErr } = await admin
+    .from("client_consent_signatures")
+    .select("id")
+    .eq("id", metaSignatureId)
+    .eq("studio_id", metaStudioId)
+    .eq("client_id", metaClientId)
+    .maybeSingle();
+  if (signatureErr) {
+    throw new Error(
+      `signature_lookup_failed:${signatureErr.code}:${signatureErr.message}`,
+    );
+  }
+  if (!signature) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "signature_lineage_mismatch",
+    };
+  }
+
+  // 5. PR #135 hardening. Idempotency SELECT first: if a row already
+  //    exists for the same (studio, client, account, mode,
+  //    setup_intent_id), this is a duplicate Stripe re-delivery
+  //    after the first delivery already inserted. Return
+  //    idempotent success WITHOUT pre-flipping any active row.
+  //    Without this check, a re-delivery would UPDATE the active
+  //    row inserted by the FIRST delivery to status='removed' and
+  //    then hit the unique constraint on the INSERT, leaving the
+  //    (studio, client) with no active card.
+  //
+  //    The DB-side guarantee for this idempotency is the partial
+  //    unique index client_payment_methods_setup_intent_account_mode_uniq
+  //    added in migration 0059. The application check below short-
+  //    circuits the happy path; the 23505 catch on the INSERT
+  //    further down is a defensive backstop against any race we
+  //    do not anticipate (claim_stripe_event already serialises
+  //    deliveries of the same event id).
+  {
+    const { data: existing, error: existingErr } = await admin
+      .from("client_payment_methods")
+      .select("id")
+      .eq("studio_id", metaStudioId)
+      .eq("client_id", metaClientId)
+      .eq("stripe_account_id", ctx.stripeAccountId)
+      .eq("stripe_livemode", ctx.livemode)
+      .eq("stripe_setup_intent_id", si.id)
+      .maybeSingle();
+    if (existingErr) {
+      throw new Error(
+        `idempotency_lookup_failed:${existingErr.code}:${existingErr.message}`,
+      );
+    }
+    if (existing) {
+      return {
+        eventType: event.type,
+        setupIntentId: si.id,
+        idempotent: true,
+        existingClientPaymentMethodId: existing.id,
+      };
+    }
+  }
+
+  // 6. Retrieve the PaymentMethod from Stripe on the connected
+  //    account. This is the only authoritative source for brand /
+  //    last4 / exp; browser-side Elements never sends that data to
+  //    Hone.
+  if (typeof si.payment_method !== "string" || si.payment_method.length === 0) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "missing_payment_method",
+    };
+  }
+  const stripe = getStripe();
+  let pm: Stripe.PaymentMethod;
+  try {
+    pm = await stripe.paymentMethods.retrieve(
+      si.payment_method,
+      undefined,
+      { stripeAccount: ctx.stripeAccountId },
+    );
+  } catch (err) {
+    throw new Error(
+      `payment_method_retrieve_failed:${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const card = pm.card;
+  if (!card || !card.brand || !card.last4 || !card.exp_month || !card.exp_year) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      rejected: "non_card_payment_method",
+    };
+  }
+
+  // 7. Pre-flip any existing active row for the (studio, client)
+  //    pair, then insert the new active row. Both writes use the
+  //    service-role admin client; RLS default-deny on
+  //    UPDATE/INSERT against authenticated roles is preserved.
+  //    The idempotency SELECT above already returned for the
+  //    duplicate-SetupIntent re-delivery case; the 23505 catch
+  //    below remains as a defensive backstop for the rarer race
+  //    where claim_stripe_event admits two distinct events that
+  //    happen to resolve to the same (account, mode,
+  //    setup_intent_id) tuple.
+  const nowIso = new Date().toISOString();
+  const { error: removeErr } = await admin
+    .from("client_payment_methods")
+    .update({ status: "removed", removed_at: nowIso })
+    .eq("studio_id", metaStudioId)
+    .eq("client_id", metaClientId)
+    .eq("status", "active");
+  if (removeErr) {
+    throw new Error(
+      `existing_active_card_flip_failed:${removeErr.code}:${removeErr.message}`,
+    );
+  }
+
+  const { data: inserted, error: insertErr } = await admin
+    .from("client_payment_methods")
+    .insert({
+      studio_id: metaStudioId,
+      client_id: metaClientId,
+      stripe_account_id: ctx.stripeAccountId,
+      stripe_livemode: ctx.livemode,
+      stripe_customer_id: si.customer,
+      stripe_payment_method_id: pm.id,
+      stripe_setup_intent_id: si.id,
+      brand: card.brand,
+      last4: card.last4,
+      exp_month: card.exp_month,
+      exp_year: card.exp_year,
+      status: "active",
+      card_authorization_signature_id: metaSignatureId,
+      added_via: "portal",
+    })
+    .select("id")
+    .single();
+  if (insertErr) {
+    // Idempotent re-delivery: a row keyed on the same SetupIntent
+    // already exists (unique on stripe_setup_intent_id index) OR
+    // the partial unique blocked a concurrent dual-delivery.
+    // Treat as success since the webhook's job is done.
+    if (insertErr.code === "23505") {
+      return {
+        eventType: event.type,
+        setupIntentId: si.id,
+        cardBrandPresent: true,
+        idempotent: true,
+      };
+    }
+    throw new Error(
+      `client_payment_methods_insert_failed:${insertErr.code}:${insertErr.message}`,
+    );
+  }
+
+  return {
+    eventType: event.type,
+    setupIntentId: si.id,
+    cardPaymentMethodId: pm.id,
+    cardBrandPresent: true,
+    insertedId: inserted?.id,
+  };
 }
 
 async function resolveAccountFromEvent(
