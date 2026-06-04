@@ -218,6 +218,8 @@ If the test-mode manual fee charge action needs to be quickly disabled:
 
 ## Ops alerts (PR #153)
 
+**Operator surface in PR #153: SQL + Vercel logs.** Operator email dispatch is deliberately not implemented; the alerts helper avoids importing `lib/email/send-appointment.ts` to keep a clean separation from the email subsystem it observes. `OPS_ALERT_EMAILS` is reserved in env docs but not read. A future PR may add a standalone `lib/ops/alert-email.ts` calling Resend directly.
+
 The `ops_alerts` table (migration 0067) is the durable record of silent-failure states. Recent alerts:
 
 ```sql

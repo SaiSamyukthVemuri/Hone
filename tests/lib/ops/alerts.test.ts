@@ -183,17 +183,34 @@ describe("ops alerts wiring (PR #153)", () => {
     expect(ALERTS_SOURCE).toMatch(/import "server-only"/);
   });
 
-  it("alerts helper never throws on email-* events (loop guard)", () => {
-    // The helper's email branch must short-circuit when the event
-    // name starts with "email_". This avoids alerting via the same
-    // email path that just failed.
-    expect(ALERTS_SOURCE).toMatch(
-      /if \(input\.event\.startsWith\("email_"\)\) return;/,
+  it("alerts helper does NOT import lib/email/send-appointment (no dependency cycle with the email subsystem it observes)", () => {
+    // PR #153 pre-merge patch. Earlier draft dynamically imported
+    // sendEmailSafely to fire operator email; that coupled ops
+    // alerting back into the appointment email helper. The merged
+    // helper must contain no `import` from
+    // lib/email/send-appointment AT ALL (static OR dynamic).
+    expect(ALERTS_SOURCE).not.toMatch(
+      /import[\s\S]{0,200}from\s+["']@\/lib\/email\/send-appointment["']/,
     );
+    expect(ALERTS_SOURCE).not.toMatch(
+      /import\s*\(\s*["']@\/lib\/email\/send-appointment["']\s*\)/,
+    );
+    // sendEmailSafely is the specific symbol we forbid. The
+    // comments above may reference the name for documentation; we
+    // only block the actual call surface.
+    expect(ALERTS_SOURCE).not.toMatch(/sendEmailSafely\s*\(/);
   });
 
-  it("alerts helper gates email path behind OPS_ALERT_EMAILS env", () => {
-    expect(ALERTS_SOURCE).toMatch(/OPS_ALERT_EMAILS/);
+  it("alerts helper does NOT dispatch operator email in PR #153 (deferred)", () => {
+    // The helper should not contain a maybeEmailAlert / dispatch
+    // function. Operator email is reserved for a future PR with a
+    // standalone lib/ops/alert-email.ts.
+    expect(ALERTS_SOURCE).not.toMatch(/function maybeEmailAlert/);
+    expect(ALERTS_SOURCE).not.toMatch(/parseOpsAlertEmails/);
+    // OPS_ALERT_EMAILS is reserved in env docs but the helper does
+    // NOT read it. Reading would be a soft regression toward email
+    // dispatch.
+    expect(ALERTS_SOURCE).not.toMatch(/process\.env\.OPS_ALERT_EMAILS/);
   });
 
   it("manual fee charge wires the helper at every needs_manual_review return", () => {

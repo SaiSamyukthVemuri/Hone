@@ -57,7 +57,7 @@ RLS posture for `ops_alerts`:
 - No INSERT/UPDATE policy is granted to anon/authenticated; the helper writes via the service-role admin client only.
 - No DELETE policy; resolve via `resolved_at` + `resolution_note`.
 
-Operator email (optional): `OPS_ALERT_EMAILS` allowlist. Fails closed when unset. Never emails for events whose name starts with `email_` (loop guard). See [docs/11_RUNBOOK.md](./11_RUNBOOK.md) for the full SQL recipes and incident workflow.
+Operator notification channel: **SQL against `ops_alerts` + Vercel logs** for this PR. Operator email dispatch is deferred to a future PR (the helper deliberately does NOT import `lib/email/send-appointment.ts` to avoid a dependency cycle with the same email subsystem the helper observes). `OPS_ALERT_EMAILS` is reserved in env docs but not read today. See [docs/11_RUNBOOK.md](./11_RUNBOOK.md) for the full SQL recipes and incident workflow.
 
 ### Token routes collapse error states
 

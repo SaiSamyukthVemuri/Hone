@@ -88,7 +88,7 @@ When an email or SMS send gives up (final-attempt non-retryable failure OR attem
 
 Events:
 
-- `email_send_gave_up` (warning): emitted from `logEmailFailure` when the email send is non-retryable OR attempt_number >= 3. **Never** emails the operator (loop guard in `lib/ops/alerts.ts`); DB + stderr only.
+- `email_send_gave_up` (warning): emitted from `logEmailFailure` when the email send is non-retryable OR attempt_number >= 3. The ops helper does not dispatch operator email at all in PR #153 (deferred), so the give-up alert lives purely as a `ops_alerts` row + stderr log.
 - `sms_send_failed` (warning): emitted from `logSmsFailure` under the same threshold.
 - `cron_route_failed` (critical): emitted from the catch block at the top of `/api/cron/appointment-reminders/route.ts` and `/api/cron/materialize-recurring-breaks/route.ts`.
 - `recurring_break_materialization_failures` (warning): emitted once per run when at least one rule failed.

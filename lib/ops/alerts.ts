@@ -18,13 +18,19 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 //   * Inserts a durable row into `public.ops_alerts` via the service-
 //     role admin client. RLS lets studio members read alerts scoped
 //     to their studio (migration 0067).
-//   * Optionally emails an `OPS_ALERT_EMAILS` allowlist for critical
-//     alerts. Gated behind the env var (fail-closed when unset).
-//     NEVER emails for `email_*` events; that would create a loop.
 //
 // What this helper does NOT do
 // ----------------------------
-// * No retry. A failure to insert / email is logged and dropped.
+// * No operator email dispatch. Earlier draft imported sendEmailSafely
+//   from lib/email/send-appointment.ts to fire critical alerts; that
+//   coupled ops alerting back into the appointment email subsystem
+//   the helper is meant to OBSERVE. Even with an email_* loop guard,
+//   the dependency cycle (ops alerts <- appointment email helper ->
+//   ops alerts) is avoidable. v1 ships durable-row + structured-log
+//   only. OPS_ALERT_EMAILS is reserved for a future PR that adds a
+//   separate ops/alert-email.ts using Resend directly with no path
+//   back into lib/email/send-appointment.ts.
+// * No retry. A failure to insert is logged and dropped.
 // * No SMS. SMS alerts are out of scope for this PR.
 // * No payment-moving code. The helper imports nothing from
 //   `lib/stripe/*` or `lib/billing/manual-fee-charge.ts`.
@@ -168,71 +174,11 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
   }
 }
 
-// Parse the allowlist from OPS_ALERT_EMAILS. Returns [] when unset.
-// The helper's email path is gated on this returning non-empty.
-function parseOpsAlertEmails(): string[] {
-  const raw = process.env.OPS_ALERT_EMAILS;
-  if (!raw || raw.length === 0) return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-// Email path. Conservative: only fires for `critical` severity, only
-// when OPS_ALERT_EMAILS is configured, and NEVER for events whose
-// name starts with "email_" (the loop-avoidance rule). The helper
-// imports the Resend client lazily so the alerts module does not
-// pull a heavier email graph into routes that don't need it.
-async function maybeEmailAlert(
-  input: OpsAlertInput,
-  redacted: Record<string, unknown>,
-): Promise<void> {
-  if (input.severity !== "critical") return;
-  if (input.event.startsWith("email_")) return; // loop guard
-  const recipients = parseOpsAlertEmails();
-  if (recipients.length === 0) return;
-  try {
-    // Lazy import to keep the alerting module light and avoid
-    // pulling lib/email/* into routes that don't ship email code.
-    const { sendEmailSafely } = await import("@/lib/email/send-appointment");
-    const subject = `[Hone ops] ${input.severity}: ${input.event}`;
-    const linesText = [
-      `Severity: ${input.severity}`,
-      `Event:    ${input.event}`,
-      `Message:  ${input.message}`,
-      input.studioId ? `Studio:   ${input.studioId}` : null,
-      input.appointmentId ? `Appt:     ${input.appointmentId}` : null,
-      input.clientId ? `Client:   ${input.clientId}` : null,
-      input.stripeEventId ? `StripeEv: ${input.stripeEventId}` : null,
-      input.stripePaymentIntentId
-        ? `StripePI: ${input.stripePaymentIntentId}`
-        : null,
-      input.manualFeeAttemptId
-        ? `Manual fee attempt: ${input.manualFeeAttemptId}`
-        : null,
-      input.route ? `Route:    ${input.route}` : null,
-      "",
-      "Safe details:",
-      JSON.stringify(redacted, null, 2),
-    ].filter((l): l is string => l !== null);
-    const text = linesText.join("\n");
-    const html = `<pre style="font-family: monospace;">${text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")}</pre>`;
-    for (const to of recipients) {
-      await sendEmailSafely({ to, subject, html, text });
-    }
-  } catch (err) {
-    structuredConsoleLog({
-      event: "ops_alert_email_dispatch_failed",
-      origin_event: input.event,
-      err_message: err instanceof Error ? err.message : String(err),
-      timestamp: new Date().toISOString(),
-    });
-  }
-}
+// Operator email dispatch is intentionally NOT implemented in this
+// module. See the file-top doc block for the rationale (dependency
+// cycle with lib/email/send-appointment.ts). A future PR may add a
+// separate lib/ops/alert-email.ts that uses Resend directly with no
+// path back into the appointment-email helper.
 
 // Main entry point.
 export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
@@ -293,8 +239,9 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
     });
   }
 
-  // Optional operator email. Fail-closed if env unset.
-  // Awaited so test harnesses see a deterministic call sequence,
-  // but the maybeEmailAlert function itself never throws.
-  await maybeEmailAlert(input, redacted);
+  // Operator email is intentionally deferred (see file-top
+  // comment). OPS_ALERT_EMAILS is reserved for a future PR; until
+  // then the durable ops_alerts row + the structured stderr log
+  // are the operator surfaces. SQL recipes for triage live in
+  // docs/11_RUNBOOK.md.
 }

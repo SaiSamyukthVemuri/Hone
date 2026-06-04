@@ -90,13 +90,11 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 ### Error tracking and alerting for silent-failure states (PR #153)
 
-**Decision:** A single `recordOpsAlert` helper writes a durable row to `public.ops_alerts` (migration 0067), emits a structured stderr log on every call, and optionally emails an `OPS_ALERT_EMAILS` allowlist for critical alerts. No Sentry. No Slack. The wiring covers manual fee `needs_manual_review` / `manual_fee_charge_failed`, Stripe webhook `card_on_file_setup_failed` / `stripe_webhook_processing_failed`, cron `cron_route_failed` / `recurring_break_materialization_failures`, and email/SMS `email_send_gave_up` / `sms_send_failed` (final-attempt only).
+**Decision:** A single `recordOpsAlert` helper writes a durable row to `public.ops_alerts` (migration 0067) and emits a structured stderr log on every call. No Sentry. No Slack. No operator email in this PR (see "Why email deferred" below). The wiring covers manual fee `needs_manual_review` / `manual_fee_charge_failed`, Stripe webhook `card_on_file_setup_failed` / `stripe_webhook_processing_failed`, cron `cron_route_failed` / `recurring_break_materialization_failures`, and email/SMS `email_send_gave_up` / `sms_send_failed` (final-attempt only).
 
 **Why a table not a service:** Sentry / Datadog / Honeycomb would solve the same problem with much more surface area. The pilot studio doesn't need fan-out; it needs a single durable record the operator can SQL. Service-role insert + studio-member-only RLS keep the alert visibility consistent with the rest of the application.
 
-**Why email gated, not on by default:** Pilot operator is one person. Email noise from non-critical events would condition the operator to ignore the channel. Fail-closed (`OPS_ALERT_EMAILS` unset = no email) keeps the alert table as the floor and lets the operator opt in.
-
-**Loop guard:** events whose name starts with `email_` never trigger the email path. Without that guard, an `email_send_gave_up` alert would attempt to email the operator via the same failing Resend client, fail, and recurse.
+**Why email deferred:** an earlier draft imported `sendEmailSafely` from `lib/email/send-appointment.ts` so the alerts helper could dispatch critical alerts via Resend. That coupled ops alerting back into the appointment email subsystem the helper is meant to OBSERVE: ops alerts module imports → appointment email helper, which on give-up imports → ops alerts module. Even with an `email_*` event-name loop guard, the dependency cycle is avoidable. v1 ships durable-row + structured-log only. `OPS_ALERT_EMAILS` is reserved in `.env.local.example` for a future PR that adds a standalone `lib/ops/alert-email.ts` calling Resend directly with no path back into `lib/email/send-appointment.ts`.
 
 **Alternative considered:** Per-call-site `console.error` only (status quo). Rejected because the existing `logInternal` lines are findable only in Vercel logs and disappear after Vercel's log retention. A durable table makes after-the-fact triage possible and gives a single SQL surface for `SELECT … WHERE resolved_at IS NULL`.
 
