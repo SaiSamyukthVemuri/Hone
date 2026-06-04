@@ -9,7 +9,11 @@ import {
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
-import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
+import {
+  filterFutureSlots,
+  getAvailableSlots,
+  type Slot,
+} from "@/lib/booking/slots";
 import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
@@ -172,14 +176,12 @@ export async function fetchPublicSlotsAction(params: {
     service.default_duration_minutes,
   );
   // Public-only past-time guard: never offer a slot whose start instant is
-  // already in the past (today's earlier hours). Absolute UTC comparison —
-  // slot.start is an ISO instant — so a slot starting even a minute from now
-  // still shows; only start <= now is dropped. No lead-time buffer here.
+  // already in the past (today's earlier hours). Shared helper in
+  // lib/booking/slots.ts so public booking + public reschedule cannot
+  // drift apart (PR #149). No lead-time buffer here.
   // The shared getAvailableSlots() is untouched, so the internal calendar
   // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
-  const nowMs = Date.now();
-  const futureSlots = slots.filter((s) => new Date(s.start).getTime() > nowMs);
-  return { ok: true, slots: futureSlots };
+  return { ok: true, slots: filterFutureSlots(slots) };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +270,10 @@ export async function fetchNextAvailableDateAction(params: {
     return { ok: true, date: null };
   }
 
-  const nowMs = Date.now();
+  // Capture `now` ONCE before the loop so every iteration's
+  // future-filter uses a single clock reading (shared helper in
+  // lib/booking/slots.ts, PR #149).
+  const nowRef = new Date();
   let cursor = startDate;
   let scans = 0;
   while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
@@ -285,9 +290,7 @@ export async function fetchNextAvailableDateAction(params: {
       cursor,
       service.default_duration_minutes,
     );
-    const futureSlots = slots.filter(
-      (s) => new Date(s.start).getTime() > nowMs,
-    );
+    const futureSlots = filterFutureSlots(slots, nowRef);
     if (futureSlots.length > 0) {
       return { ok: true, date: cursor };
     }

@@ -132,6 +132,41 @@ Critical money-adjacent path.
 9. Confirm no email/SMS receipt was sent (none should be; no receipt code exists today).
 10. Confirm no live payment exists.
 
+## 9b. Public reschedule safety smoke (PR #149)
+
+Critical safety path. Public reschedule must match public booking on past-slot handling and must never expose raw DB or RPC errors.
+
+1. Create a test appointment in the future. Open its `/reschedule/<token>` link.
+2. Confirm the summary loads and slots render.
+3. Pick **today** as the date. Confirm slots earlier than or equal to now are NOT offered.
+4. Submit a forged form with `newStartsAt <= now()` (browser devtools edit the value attribute on a hidden field or POST directly). Confirm the response is the generic "This reschedule link can't be used right now." copy with no raw Postgres or function-name text.
+5. Cancel the original appointment via `/cancel/<token>`. Re-open `/reschedule/<token>`. Confirm the page renders the generic unavailable surface and `/reschedule/<token>`'s read actions do not return the appointment summary.
+6. Mark another future appointment `completed` and another `no_show` (via the practitioner calendar lifecycle). Re-open each one's reschedule link. Confirm the same generic behavior.
+7. SQL check after a successful reschedule:
+   ```sql
+   select id, status, starts_at, cancellation_reason, cancelled_at,
+          cancelled_by, cancellation_token, updated_at
+     from public.appointments
+    where studio_id = '<studio uuid>'
+      and (id = '<original id>' or starts_at = '<new starts_at>')
+    order by updated_at desc;
+   ```
+   Expected: original row has `status='cancelled'`, `cancellation_reason='Rescheduled via email link'`. New row has `status='confirmed'` and a new `cancellation_token`.
+8. SQL check the RPC source carries both guards:
+   ```sql
+   select pg_get_functiondef(p.oid)
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname='public' and p.proname='reschedule_appointment';
+   ```
+   Expected substring matches:
+   - `v_original.starts_at <= now()`
+   - `p_new_starts_at <= now()`
+9. Run the local automated test harness against the action's source file:
+   ```bash
+   npm test
+   ```
+   Expected: every test in `tests/app/reschedule/error-sanitization.test.ts`, `tests/app/reschedule/submitted-start-guard.test.ts`, and `tests/lib/booking/slots-filter-future.test.ts` passes. These pin down "no raw .message leak", "strict > now()" comparison, and the shared future-slot filter.
+
 ## 10. Security route smoke
 
 ```bash

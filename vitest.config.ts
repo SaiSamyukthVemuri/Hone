@@ -1,0 +1,40 @@
+import { defineConfig } from "vitest/config";
+import path from "node:path";
+
+// Minimal Vitest config introduced in PR #149.
+//
+// This is the floor of an automated test harness for Hone, not a full
+// suite. Tests live alongside the code they exercise (`tests/`
+// directory at the repo root). The harness focuses on:
+//
+//   * Pure helpers that can be exercised without a database or
+//     a browser (e.g. filterFutureSlots, the submitted-start guard
+//     logic, the cancellation-reason allowlist).
+//   * Action-layer protection invariants we never want to lose
+//     (e.g. raw DB error text MUST NOT leak from the public
+//     reschedule actions).
+//
+// What this is NOT
+// ----------------
+// * Not an end-to-end browser test. Playwright / Cypress are not set
+//   up; manual smoke remains the way we exercise the live system.
+// * Not a database harness. DB-touching tests would need a separate
+//   Supabase local stack. The DB RPC guard added in migration 0066
+//   is verified by reading pg_get_functiondef and by manual SQL.
+// * Not a coverage gate. The PR template's review checklist is the
+//   gate; tests added here are spot checks, not a comprehensive
+//   harness.
+export default defineConfig({
+  test: {
+    environment: "node",
+    include: ["tests/**/*.test.ts"],
+    exclude: ["node_modules/**", ".next/**"],
+    pool: "forks",
+    reporters: "default",
+  },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./"),
+    },
+  },
+});

@@ -80,6 +80,22 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Why:** Anyone adding a second occurrence is taking on the full charge-safety budget (claim RPC, idempotency, evidence recheck, lineage recheck, test-mode gate). Treating it as zero would invite the legitimate test-mode call to be deleted by mistake.
 
+### Public reschedule future-instant safety (PR #149)
+
+**Decision:** Public reschedule now matches public booking on past-slot handling and never returns raw DB/RPC error text. Concretely: every read + submit path refuses the token unless the original appointment is `status='confirmed'` AND `starts_at > now()`. The slot list hides same-day past slots via a new shared `filterFutureSlots` helper. The submit action rejects `newStartsAt <= now()` before any DB lookup or RPC call. The `reschedule_appointment` RPC (migration 0066) independently rejects past originals and past `p_new_starts_at` as defence in depth. Every public action collapses DB / RPC failure into the generic `PUBLIC_RESCHEDULE_GENERIC_ERROR` copy while a structured `logInternal` line records the detail server-side.
+
+**Why:** A deeper review found that public booking already filtered same-day past slots and rejected submitted past starts, but public reschedule was inconsistent. Raw `error.message`, `lookupErr.message`, and `rpcErr.message` were returned from the action layer to a token-bearing public route, revealing Postgres / function-name internals to a probing caller. The fix is the smallest set of guards needed to make reschedule as safe as booking, plus a parallel guard in the RPC so a future caller that bypasses the action layer also cannot reschedule into the past or rebuild a non-confirmed row.
+
+**Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
+
+### Minimum automated test harness (PR #149)
+
+**Decision:** Introduced a minimal Vitest harness (`vitest.config.ts`, `tests/`, `npm test` script). Three test files cover: `filterFutureSlots` strict-`>`-now semantics, the submitted-start guard predicate, and the "no raw `.message` leak" invariant on `app/reschedule/[token]/actions.ts` (textual grep over the source).
+
+**Why:** The previous review pattern relied entirely on manual smoke. PR #149's safety fix is the kind of thing that historically regresses (a future copy-paste re-introduces `return { ok: false, error: rpcErr.message }`). Pinning the invariant as a `npm test` assertion catches the regression in CI-like fashion at PR time, even without a full automated end-to-end suite.
+
+**Alternative considered:** Bigger Playwright / Cypress setup. Rejected because the goal is the floor of a test harness, not the comprehensive suite. A future PR can grow it; this PR adds it without dependency churn (only `vitest` + `@vitest/coverage-v8` as devDeps).
+
 ## Backlog
 
 ### P0 (block live mode or pilot expansion)

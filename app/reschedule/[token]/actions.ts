@@ -4,7 +4,11 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
-import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
+import {
+  filterFutureSlots,
+  getAvailableSlots,
+  type Slot,
+} from "@/lib/booking/slots";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -71,6 +75,83 @@ async function resolveAppointmentIdFromToken(
   return { ok: true, appointment_id: data.id };
 }
 
+// PR #149: sanitized server-side log helper for the reschedule
+// surface. Logs structured JSON with the event + sanitized fields;
+// NEVER includes the raw token, raw PII, or raw Stripe ids. The
+// public action layer collapses the matching outcome to the generic
+// public copy.
+function logInternal(event: string, detail: Record<string, unknown>): void {
+  try {
+    console.error(
+      JSON.stringify({
+        event,
+        ...detail,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    console.error(event, detail);
+  }
+}
+
+// PR #149: shared "is this token usable for a public reschedule?" check.
+// Every public reschedule action (fetch summary, fetch slots, find next
+// available date, submit) must refuse unless the resolved original
+// appointment is in BOTH:
+//   * status = 'confirmed'
+//   * starts_at  > now()
+//
+// Any other combination (cancelled / completed / no_show / past starts)
+// collapses to the same generic public error so a probing caller cannot
+// distinguish state. The DB RPC re-enforces the same invariants
+// independently (migration 0066) for defence in depth.
+type ReschedulableOriginal = {
+  appointment_id: string;
+  studio_id: string;
+  client_id: string;
+};
+async function assertReschedulableOriginal(
+  token: string,
+): Promise<
+  { ok: true; original: ReschedulableOriginal } | { ok: false; error: string }
+> {
+  const resolved = await resolveAppointmentIdFromToken(token);
+  if (!resolved.ok) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("appointments")
+    .select("id, studio_id, client_id, status, starts_at")
+    .eq("id", resolved.appointment_id)
+    .maybeSingle();
+  if (error) {
+    logInternal("public_reschedule_assert_lookup_failed", {
+      code: error.code,
+      message: error.message,
+      appointmentId: resolved.appointment_id,
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  if (!data) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  if (data.status !== "confirmed") {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  if (new Date(data.starts_at).getTime() <= Date.now()) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  return {
+    ok: true,
+    original: {
+      appointment_id: data.id,
+      studio_id: data.studio_id,
+      client_id: data.client_id,
+    },
+  };
+}
+
 export type RescheduleSummary = {
   appointmentId: string;
   serviceId: string;
@@ -108,9 +189,13 @@ export async function fetchAppointmentForRescheduleAction(
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  const resolved = await resolveAppointmentIdFromToken(token);
-  if (!resolved.ok) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  // PR #149: every reschedule read path must refuse non-confirmed
+  // or past originals. The shared helper collapses every failure
+  // (token mismatch / cancelled / completed / no_show / past) to
+  // the generic public error.
+  const asserted = await assertReschedulableOriginal(token);
+  if (!asserted.ok) {
+    return { ok: false, error: asserted.error };
   }
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -118,9 +203,17 @@ export async function fetchAppointmentForRescheduleAction(
     .select(
       "id, status, starts_at, duration_minutes, service_id, service:services(id, name, default_duration_minutes), studio:studios(id, name, timezone, public_booking_horizon_months, cancellation_policy_text, no_show_policy_text)",
     )
-    .eq("id", resolved.appointment_id)
+    .eq("id", asserted.original.appointment_id)
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // PR #149: never surface raw DB error text to the public client.
+    logInternal("public_reschedule_fetch_summary_failed", {
+      code: error.code,
+      message: error.message,
+      appointmentId: asserted.original.appointment_id,
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
   if (!data) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
   type Joined = {
@@ -193,9 +286,12 @@ export async function fetchRescheduleSlotsAction(params: {
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  const resolved = await resolveAppointmentIdFromToken(params.token);
-  if (!resolved.ok) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  // PR #149: refuse non-confirmed / past originals on the slot
+  // fetch surface; collapse every failure to the generic public
+  // copy.
+  const asserted = await assertReschedulableOriginal(params.token);
+  if (!asserted.ok) {
+    return { ok: false, error: asserted.error };
   }
   const admin = createAdminClient();
   const { data: appt } = await admin
@@ -203,7 +299,7 @@ export async function fetchRescheduleSlotsAction(params: {
     .select(
       "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
     )
-    .eq("id", resolved.appointment_id)
+    .eq("id", asserted.original.appointment_id)
     .maybeSingle();
   if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
@@ -258,7 +354,11 @@ export async function fetchRescheduleSlotsAction(params: {
     params.date,
     svc?.default_duration_minutes ?? r.duration_minutes,
   );
-  return { ok: true, slots };
+  // PR #149: hide same-day past slots. Shared filterFutureSlots
+  // helper is the single source of truth for public booking and
+  // public reschedule so the two surfaces cannot drift apart on
+  // what "future slot" means.
+  return { ok: true, slots: filterFutureSlots(slots) };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,9 +394,11 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  const resolved = await resolveAppointmentIdFromToken(params.token);
-  if (!resolved.ok) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  // PR #149: refuse non-confirmed / past originals on the next-
+  // available surface too.
+  const asserted = await assertReschedulableOriginal(params.token);
+  if (!asserted.ok) {
+    return { ok: false, error: asserted.error };
   }
   const admin = createAdminClient();
   const { data: appt } = await admin
@@ -304,7 +406,7 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
     .select(
       "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
     )
-    .eq("id", resolved.appointment_id)
+    .eq("id", asserted.original.appointment_id)
     .maybeSingle();
   if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
@@ -353,7 +455,9 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
   }
 
   const durationMinutes = svc?.default_duration_minutes ?? r.duration_minutes;
-  const nowMs = Date.now();
+  // PR #149: single clock reading shared across every scan iteration
+  // so filterFutureSlots sees a consistent "now" through the loop.
+  const nowRef = new Date();
   let cursor = startDate;
   let scans = 0;
   while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
@@ -370,9 +474,7 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
       cursor,
       durationMinutes,
     );
-    const futureSlots = slots.filter(
-      (s) => new Date(s.start).getTime() > nowMs,
-    );
+    const futureSlots = filterFutureSlots(slots, nowRef);
     if (futureSlots.length > 0) {
       return { ok: true, date: cursor };
     }
@@ -410,9 +512,14 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  const resolved = await resolveAppointmentIdFromToken(token);
-  if (!resolved.ok) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  // PR #149: gate the submit through the same shared assert helper
+  // every read path uses. If the token doesn't resolve, or the
+  // original is not confirmed + future, we collapse to the generic
+  // public error. The detailed lookup below is still needed for the
+  // fields the RPC will consume, but it is now defended in depth.
+  const asserted = await assertReschedulableOriginal(token);
+  if (!asserted.ok) {
+    return { ok: false, error: asserted.error };
   }
 
   const admin = createAdminClient();
@@ -421,20 +528,43 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .select(
       "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes",
     )
-    .eq("id", resolved.appointment_id)
+    .eq("id", asserted.original.appointment_id)
     .maybeSingle();
-  if (lookupErr) return { ok: false, error: lookupErr.message };
+  if (lookupErr) {
+    // PR #149: never surface raw DB error text. The structured log
+    // keeps the operator's debugging power without leaking
+    // table/function names to the public client.
+    logInternal("public_reschedule_submit_lookup_failed", {
+      code: lookupErr.code,
+      message: lookupErr.message,
+      appointmentId: asserted.original.appointment_id,
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
   if (!existing) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  // Belt-and-braces: the helper already enforced confirmed + future,
+  // but a tiny race window between the helper and this lookup could
+  // in theory show a flipped row. The action re-checks here so the
+  // RPC call never runs against a stale "confirmed + future" snapshot
+  // and the DB CHECK in migration 0066 still enforces it last.
   if (existing.status !== "confirmed") {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
-  if (new Date(existing.starts_at).getTime() < Date.now()) {
+  if (new Date(existing.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   const start = new Date(newStartsAt);
   if (Number.isNaN(start.getTime())) {
     return { ok: false, error: "Invalid time." };
+  }
+  // PR #149: the submitted new start must be strictly in the future.
+  // The slot list is already past-filtered, but a forged form (or a
+  // visitor who submitted a stale slot) cannot bypass that filter to
+  // cancel-and-recreate an appointment in the past. The DB RPC
+  // (migration 0066) enforces the same invariant.
+  if (start.getTime() <= Date.now()) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
   const end = new Date(start.getTime() + existing.duration_minutes * 60_000);
 
@@ -542,7 +672,17 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         code: "slot_taken",
       };
     }
-    return { ok: false, error: rpcErr.message };
+    // PR #149: never surface raw RPC error text. Structured log
+    // keeps the operator's debugging power; public copy stays
+    // generic so a token-bearing public route cannot reveal
+    // internal function names or Postgres error strings.
+    logInternal("public_reschedule_rpc_failed", {
+      code: rpcErr.code,
+      message: rpcErr.message,
+      studioId: existing.studio_id,
+      appointmentId: existing.id,
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
