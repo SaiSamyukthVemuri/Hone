@@ -503,8 +503,26 @@ export function DayColumn({
       )}
 
       {blocked && (
-        <div className="absolute inset-0 z-[3] bg-neutral-50/80 dark:bg-neutral-900/40">
-          <div className="px-2 pt-2 text-[11px] uppercase tracking-wider text-neutral-500">
+        // PR #138 Part 2. Whole-day closed-or-blocked overlay. The
+        // previous bg-neutral-50/80 read so close to the empty grid
+        // gray that the day looked normal. We swap to a warm tan
+        // wash + a soft slate-warm diagonal stripe so the slot is
+        // unmistakably unavailable without shouting in red. Text
+        // colour bumped from neutral-500 to a solid dark gray so
+        // the Blocked label remains legible over the stripes.
+        <div
+          aria-label="Blocked day"
+          className="absolute inset-0 z-[3] dark:bg-stone-900/55"
+          style={{
+            backgroundColor: "#F4F1EA",
+            backgroundImage:
+              "repeating-linear-gradient(135deg, transparent 0, transparent 7px, rgba(140, 133, 121, 0.22) 7px, rgba(140, 133, 121, 0.22) 9px)",
+          }}
+        >
+          <div
+            className="px-2 pt-2 text-[11px] font-medium uppercase tracking-wider"
+            style={{ color: "#3F3F3F" }}
+          >
             Blocked
           </div>
         </div>
@@ -705,23 +723,38 @@ function BlockoutCard({
 }) {
   const twoLine = height >= TWO_LINE_THRESHOLD_PX;
   return (
+    // PR #138 Part 2. Per-block / recurring-break card. Replaces
+    // the prior bg-neutral-100 + border-l-neutral-300 + text-neutral-600
+    // (which sat too close to the empty grid gray) with a warm tan
+    // wash + slate-warm border accent + a soft diagonal stripe so
+    // blocks are unmistakably unavailable at a glance and remain
+    // visually distinct from appointment cards. Text remains a
+    // solid dark gray for legibility over the stripes.
     <div
       title={title}
-      style={{ top, height }}
-      className="absolute inset-x-1 z-[5] overflow-hidden rounded-lg border-l-[3px] border-l-neutral-300 bg-neutral-100 px-2 py-1 text-[11px] leading-tight text-neutral-600 dark:border-l-neutral-600 dark:bg-neutral-800/70 dark:text-neutral-300"
+      style={{
+        top,
+        height,
+        backgroundColor: "#F4F1EA",
+        backgroundImage:
+          "repeating-linear-gradient(135deg, transparent 0, transparent 6px, rgba(140, 133, 121, 0.18) 6px, rgba(140, 133, 121, 0.18) 8px)",
+      }}
+      className="absolute inset-x-1 z-[5] overflow-hidden rounded-lg border border-[#C9C4B6] border-l-[3px] border-l-[#8C8579] px-2 py-1 text-[11px] leading-tight dark:border-stone-700 dark:border-l-stone-500 dark:bg-stone-800/80 dark:text-stone-200"
     >
-      {twoLine ? (
-        <>
-          <div className="truncate font-medium">{label}</div>
-          <div className="truncate text-[10px] opacity-80">
-            {startLocal}–{endLocal} · {durationMinutes}m
+      <div style={{ color: "#3F3F3F" }}>
+        {twoLine ? (
+          <>
+            <div className="truncate font-medium">{label}</div>
+            <div className="truncate text-[10px] opacity-80">
+              {startLocal}–{endLocal} · {durationMinutes}m
+            </div>
+          </>
+        ) : (
+          <div className="truncate font-medium">
+            {label} <span className="opacity-70">· {startLocal}–{endLocal}</span>
           </div>
-        </>
-      ) : (
-        <div className="truncate font-medium">
-          {label} <span className="opacity-70">· {startLocal}–{endLocal}</span>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

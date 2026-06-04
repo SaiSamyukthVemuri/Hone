@@ -796,30 +796,39 @@ function ClientTypeChooser({
           treatment time.
         </p>
       </div>
+      {/* PR #138 Part 1. Move backgroundColor + border off the
+          inline style attribute so the hover variants below
+          actually win. Inline style has higher CSS specificity than
+          Tailwind utilities; the prior version kept bg pinned to
+          beige via inline style while the hover utility tried to
+          flip it to dark, so on hover the bg stayed beige AND the
+          text flipped to beige -> invisible text. Moving every
+          state-dependent style into Tailwind classes lets the
+          default + hover + focus-visible states all paint
+          correctly. focus-visible:ring keeps keyboard navigation
+          readable. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
         <button
           type="button"
           onClick={() => onChoose("new")}
-          className="flex flex-col items-start gap-1 px-6 py-4 text-left transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7]"
-          style={{ border: "1px solid #0A0A0A", backgroundColor: "#FAFAF7" }}
+          className="flex flex-col items-start gap-1 border border-[#0A0A0A] bg-[#FAFAF7] px-6 py-4 text-left text-[#0A0A0A] transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A0A0A] focus-visible:ring-offset-2"
         >
           <span className="text-[15px] font-medium uppercase tracking-[0.1em]">
             I&rsquo;m a new client
           </span>
-          <span className="text-[12px] opacity-70">
+          <span className="text-[12px] opacity-80">
             Start with a consultation.
           </span>
         </button>
         <button
           type="button"
           onClick={() => onChoose("existing")}
-          className="flex flex-col items-start gap-1 px-6 py-4 text-left transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7]"
-          style={{ border: "1px solid #0A0A0A", backgroundColor: "#FAFAF7" }}
+          className="flex flex-col items-start gap-1 border border-[#0A0A0A] bg-[#FAFAF7] px-6 py-4 text-left text-[#0A0A0A] transition hover:bg-[#0A0A0A] hover:text-[#FAFAF7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A0A0A] focus-visible:ring-offset-2"
         >
           <span className="text-[15px] font-medium uppercase tracking-[0.1em]">
             I&rsquo;m an existing client
           </span>
-          <span className="text-[12px] opacity-70">
+          <span className="text-[12px] opacity-80">
             For returning {studioName} clients. Use the email {studioName}{" "}
             has on file.
           </span>
