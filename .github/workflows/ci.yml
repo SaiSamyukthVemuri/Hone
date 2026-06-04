@@ -1,0 +1,109 @@
+# PR #154. Continuous integration for Hone.
+#
+# Runs the same validation gates every contributor (and every AI
+# agent) is asked to run locally before opening a PR:
+#
+#   npm ci
+#   npm run typecheck
+#   npm run lint
+#   npm run build
+#   npm test
+#   git diff --check
+#   npm run check:stripe-gates
+#
+# Triggers:
+#   * pull_request (every PR, against any base branch)
+#   * push to the default branch claude/build-hone-saas-hOex7
+#
+# Secrets:
+#   * NONE. The job uses dummy/test env values only. See the `env`
+#     block below for the rationale on each variable.
+#   * No supabase db push. No deploy. No production credentials.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - claude/build-hone-saas-hOex7
+
+# Cancel in-progress runs for the same ref when a newer commit lands.
+# Keeps CI minutes bounded and stops a slow run from blocking the
+# next attempt.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: typecheck / lint / build / test / safety gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Dummy / test-safe env values. The build and test harness do not
+    # need real Supabase / Stripe / Resend / Twilio / cron credentials
+    # to compile or run unit tests. Every value here is shaped to pass
+    # the in-app validators (e.g. STRIPE_SECRET_KEY must start with
+    # sk_test_ or sk_live_; pk_test_ for publishable; whsec_ prefix
+    # for webhook secret). Nothing here is a real secret.
+    #
+    # Anything that genuinely needs a real secret to run is excluded
+    # from CI by design (Stripe Elements canary, real Resend send,
+    # real Twilio send, real Supabase prod query). Those live in the
+    # manual smoke catalogue in docs/12.
+    env:
+      NEXT_PUBLIC_APP_ORIGIN: "http://localhost:3000"
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key"
+      SUPABASE_SERVICE_ROLE_KEY: "dummy-service-role-key"
+      RESEND_API_KEY: "re_dummy_resend_key"
+      TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000000"
+      TWILIO_AUTH_TOKEN: "dummy-twilio-token"
+      TWILIO_FROM_NUMBER: "+15555550100"
+      STRIPE_SECRET_KEY: "sk_test_dummy"
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_dummy"
+      STRIPE_WEBHOOK_SECRET: "whsec_dummy"
+      STRIPE_ALLOW_LIVE_MODE: "false"
+      CRON_SECRET: "dummy-cron-secret"
+      APPOINTMENT_SIGNING_SECRET: "dummy-appointment-signing-secret"
+      INTAKE_SIGNING_SECRET: "dummy-intake-signing-secret"
+      PORTAL_FINGERPRINT_SALT: "dummy-portal-fingerprint-salt-for-ci"
+      ADMIN_EMAILS: "ci@example.com"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # No .nvmrc and no engines.node in package.json today.
+          # Pin to Node 20 (LTS), matches the docs/14 fallback and
+          # is comfortably within Next 15's supported range.
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Whitespace + conflict-marker check
+        # Catches stray trailing whitespace + leftover merge-conflict
+        # markers. Matches the manual `git diff --check` step every
+        # local PR is asked to run.
+        run: git diff --check HEAD
+
+      - name: Stripe / payment safety grep gates
+        run: npm run check:stripe-gates

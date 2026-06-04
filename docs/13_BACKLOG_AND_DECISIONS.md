@@ -88,6 +88,18 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### GitHub Actions CI for validation, tests, and safety grep gates (PR #154)
+
+**Decision:** Add a single GitHub Actions workflow (`.github/workflows/ci.yml`) that runs `npm ci`, `typecheck`, `lint`, `build`, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and on every push to the default branch. The Stripe grep gates live in `scripts/check-stripe-gates.mjs` with a typed allowlist + a strict scan scope (only `app/`, `lib/`, `middleware.ts`, `next.config.ts`; only `.ts/.tsx/.js/.jsx`; tests, docs, migrations, scripts, and the gate script itself are excluded).
+
+**Why a dedicated gate script, not `grep -R`:** the forbidden strings (`paymentIntents.create`, `charges.create`, `refunds.create`, `checkout.sessions`, `set_studio_require_card_on_file`, `STRIPE_ALLOW_LIVE_MODE=true`) legitimately appear in docs (operator copy, runbook), tests (assertion strings), migrations (column definitions), and the gate script itself (rule list). A naive grep would flag all of them. The script enforces "no new money-moving CALL SITE in runtime code" with a per-rule allowlist where dormant references must remain.
+
+**Allowlist:** `paymentIntents.create` pinned to exactly one occurrence in `lib/billing/manual-fee-charge.ts` (PR #146). `STRIPE_ALLOW_LIVE_MODE=true` allowlisted in `lib/stripe/server.ts` because the string appears in an operator-facing error message there, NOT as a code path that flips the flag.
+
+**Why no real secrets in CI:** the build + test surface do not need them. Dummy `sk_test_`, `pk_test_`, `whsec_*` values pass the shape validators in `lib/stripe/server.ts:assertStripeKeyAllowed` and the rest of the env shape gates. Real-credential paths (Stripe Elements canary, real Resend / Twilio sends, real Supabase prod query) are documented in `docs/12_SMOKE_TESTS.md` as manual smoke. CI does NOT replace manual smoke.
+
+**Alternative considered:** Run CI only on the default branch, not on PRs. Rejected because PRs are exactly when the gates need to run; landing a regression on main and learning about it on the next push wastes the operator's time.
+
 ### Error tracking and alerting for silent-failure states (PR #153)
 
 **Decision:** A single `recordOpsAlert` helper writes a durable row to `public.ops_alerts` (migration 0067) and emits a structured stderr log on every call. No Sentry. No Slack. No operator email in this PR (see "Why email deferred" below). The wiring covers manual fee `needs_manual_review` / `manual_fee_charge_failed`, Stripe webhook `card_on_file_setup_failed` / `stripe_webhook_processing_failed`, cron `cron_route_failed` / `recurring_break_materialization_failures`, and email/SMS `email_send_gave_up` / `sms_send_failed` (final-attempt only).
