@@ -56,6 +56,14 @@ export type SignConsentFormResult =
   | { ok: true; signatureId: string }
   | { ok: false; error: string };
 
+// Photo-consent allow / deny labels (PR #137). The portal radio
+// rendered to the client uses these exact strings; the snapshot
+// column captures whichever one the client chose so a later audit
+// query reads the same text the portal showed.
+const PHOTO_CONSENT_ACCEPT_LABEL =
+  "I consent to photo use as described above.";
+const PHOTO_CONSENT_DENY_LABEL = "I do not consent to photo use.";
+
 export async function signConsentFormAction(
   formData: FormData,
 ): Promise<SignConsentFormResult> {
@@ -64,6 +72,12 @@ export async function signConsentFormAction(
     .toString()
     .trim();
   const agreed = (formData.get("agreed") ?? "").toString().trim();
+  // PR #137. Photo-consent response. For non-photo forms the action
+  // ignores this field and writes 'accepted'; for photo_consent
+  // forms the response is required and must be exactly
+  // 'accepted' or 'denied'. The portal-side radio submits the
+  // chosen string; an empty / unknown value is rejected.
+  const responseRaw = (formData.get("response") ?? "").toString().trim();
 
   if (!templateId) {
     return { ok: false, error: "Missing form reference." };
@@ -126,7 +140,7 @@ export async function signConsentFormAction(
   // the same generic error string.
   const { data: template, error: templateErr } = await admin
     .from("consent_form_templates")
-    .select("id, title, body, version, status, studio_id")
+    .select("id, title, body, version, status, studio_id, form_type")
     .eq("id", templateId)
     .eq("studio_id", session.studioId)
     .eq("status", "active")
@@ -146,8 +160,40 @@ export async function signConsentFormAction(
     return { ok: false, error: "This form is no longer available to sign." };
   }
 
+  // PR #137. Resolve the response server-side based on the
+  // template's form_type. Photo-consent forms require an explicit
+  // 'accepted' or 'denied' choice; every other form_type writes
+  // 'accepted' as the default (the act of signing IS the
+  // acceptance, and the response column exists primarily to admit
+  // photo-consent's third state without weakening the immutable
+  // signature posture). An invalid or missing response on a
+  // photo-consent form is rejected with a safe error.
+  let response: "accepted" | "denied";
+  let responseLabelSnapshot: string | null;
+  if (template.form_type === "photo_consent") {
+    if (responseRaw !== "accepted" && responseRaw !== "denied") {
+      return {
+        ok: false,
+        error: "Please choose your photo consent response.",
+      };
+    }
+    response = responseRaw;
+    responseLabelSnapshot =
+      response === "accepted"
+        ? PHOTO_CONSENT_ACCEPT_LABEL
+        : PHOTO_CONSENT_DENY_LABEL;
+  } else {
+    response = "accepted";
+    responseLabelSnapshot = null;
+  }
+
   // Build the snapshot from the server-resolved template; the
-  // client cannot supply title / body / version.
+  // client cannot supply title / body / version. template_hash
+  // remains a TEMPLATE-only fingerprint (PR #134 / migration 0057)
+  // and is INTENTIONALLY NOT widened with the response in
+  // PR #137 / migration 0060: a re-signing of the same template
+  // version should produce the same hash, and the response is
+  // captured as its own column for audit + display.
   const snapshot = buildConsentTemplateSnapshot({
     title: template.title,
     body: template.body,
@@ -174,6 +220,8 @@ export async function signConsentFormAction(
       signature_name: signatureNameRaw,
       ip_hash: ipHash,
       user_agent_hash: uaHash,
+      response,
+      response_label_snapshot: responseLabelSnapshot,
     })
     .select("id")
     .single();

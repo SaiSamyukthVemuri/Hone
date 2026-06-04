@@ -105,6 +105,15 @@ function PortalConsentSignForm({
 }) {
   const [signatureName, setSignatureName] = useState("");
   const [agreed, setAgreed] = useState(false);
+  // PR #137. Photo-consent allow / deny. For non-photo templates
+  // photoResponse stays null and the legacy "Sign form" submit
+  // shape is preserved. For photo_consent templates the client
+  // must pick one before the submit can fire; the server action
+  // re-validates the same rule.
+  const isPhotoConsent = template.form_type === "photo_consent";
+  const [photoResponse, setPhotoResponse] = useState<
+    "accepted" | "denied" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -124,10 +133,17 @@ function PortalConsentSignForm({
       setError("Please confirm you have read and agree to this form.");
       return;
     }
+    if (isPhotoConsent && photoResponse == null) {
+      setError("Please choose your photo consent response.");
+      return;
+    }
     const fd = new FormData();
     fd.set("template_id", template.id);
     fd.set("signature_name", trimmed);
     fd.set("agreed", "true");
+    if (isPhotoConsent && photoResponse != null) {
+      fd.set("response", photoResponse);
+    }
     startTransition(async () => {
       const r = await signConsentFormAction(fd);
       if (!r.ok) {
@@ -179,6 +195,50 @@ function PortalConsentSignForm({
         {template.body}
       </div>
 
+      {/* PR #137. Photo-consent allow / deny radio. Renders only
+          for photo_consent templates; every other form_type uses
+          the legacy single-button sign shape below. The radio is
+          a fieldset so a screen reader announces the group label
+          alongside each option. */}
+      {isPhotoConsent && (
+        <fieldset className="flex flex-col gap-2">
+          <legend
+            className="text-[11px] font-medium uppercase"
+            style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+          >
+            Choose your photo consent response
+          </legend>
+          <label
+            className="flex items-start gap-3 text-[14px] leading-[1.5]"
+            style={{ color: "#0A0A0A" }}
+          >
+            <input
+              type="radio"
+              name="photo_response"
+              value="accepted"
+              checked={photoResponse === "accepted"}
+              onChange={() => setPhotoResponse("accepted")}
+              className="mt-1 h-4 w-4 flex-none"
+            />
+            <span>I consent to photo use as described above.</span>
+          </label>
+          <label
+            className="flex items-start gap-3 text-[14px] leading-[1.5]"
+            style={{ color: "#0A0A0A" }}
+          >
+            <input
+              type="radio"
+              name="photo_response"
+              value="denied"
+              checked={photoResponse === "denied"}
+              onChange={() => setPhotoResponse("denied")}
+              className="mt-1 h-4 w-4 flex-none"
+            />
+            <span>I do not consent to photo use.</span>
+          </label>
+        </fieldset>
+      )}
+
       <label className="flex flex-col gap-1.5">
         <span
           className="text-[11px] font-medium uppercase"
@@ -225,7 +285,10 @@ function PortalConsentSignForm({
         <button
           type="submit"
           disabled={
-            pending || signatureName.trim().length === 0 || !agreed
+            pending
+            || signatureName.trim().length === 0
+            || !agreed
+            || (isPhotoConsent && photoResponse == null)
           }
           className="px-5 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
           style={{
@@ -234,7 +297,13 @@ function PortalConsentSignForm({
             letterSpacing: "0.1em",
           }}
         >
-          {pending ? "Signing..." : "Sign form"}
+          {pending
+            ? isPhotoConsent
+              ? "Submitting..."
+              : "Signing..."
+            : isPhotoConsent
+              ? "Submit response"
+              : "Sign form"}
         </button>
       </div>
     </form>

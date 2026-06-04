@@ -439,6 +439,15 @@ export type ConsentFormTemplate = {
 // buildConsentTemplateSnapshot(). Multiple signatures of the same
 // (client, template) pair are allowed and preserved; the portal +
 // practitioner UI surface the latest per template.
+//
+// Migration 0060 (PR #137) extended the table with response columns
+// to support photo_consent allow / deny without mutating prior
+// rows. response is always 'accepted' for non-photo forms and
+// either 'accepted' or 'denied' for photo_consent forms.
+// response_label_snapshot is the human-readable label the client
+// chose at sign time (nullable for legacy rows).
+export type ClientConsentSignatureResponse = "accepted" | "denied";
+
 export type ClientConsentSignature = {
   id: string;
   studio_id: string;
@@ -453,6 +462,8 @@ export type ClientConsentSignature = {
   ip_hash: string | null;
   user_agent_hash: string | null;
   created_at: string;
+  response: ClientConsentSignatureResponse;
+  response_label_snapshot: string | null;
 };
 
 // Migration 0058: card-on-file durable mapping. One active row per

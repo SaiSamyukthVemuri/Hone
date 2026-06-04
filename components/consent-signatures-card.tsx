@@ -61,6 +61,40 @@ export function ConsentSignaturesCard({
         <ul className="flex flex-col gap-2">
           {activeTemplates.map((t) => {
             const sig = latestByTemplateId.get(t.id);
+            // PR #137. Photo-consent forms have three states:
+            //   * accepted -> green Consent granted
+            //   * denied   -> amber Consent denied (NOT treated as
+            //                 missing; the row is a legitimate
+            //                 immutable response)
+            //   * no row   -> neutral Not answered
+            // Every other form_type keeps the legacy Signed /
+            // Not signed shape.
+            const isPhoto = t.form_type === "photo_consent";
+            const badgeStyle = isPhoto
+              ? sig
+                ? sig.response === "denied"
+                  ? "rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                  : "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+              : sig
+                ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400";
+            const badgeLabel = isPhoto
+              ? sig
+                ? sig.response === "denied"
+                  ? "Consent denied"
+                  : "Consent granted"
+                : "Not answered"
+              : sig
+                ? "Signed"
+                : "Not signed";
+            const subline = isPhoto
+              ? sig
+                ? `${sig.response === "denied" ? "Denied" : "Granted"} · `
+                : null
+              : sig
+                ? "Signed "
+                : null;
             return (
               <li
                 key={t.id}
@@ -72,7 +106,7 @@ export function ConsentSignaturesCard({
                   </p>
                   {sig ? (
                     <p className="text-[11px] text-neutral-500">
-                      Signed{" "}
+                      {subline}
                       <FormattedDateTime iso={sig.signed_at} />
                       {" · "}
                       {sig.signature_name}
@@ -80,18 +114,12 @@ export function ConsentSignaturesCard({
                       v{sig.template_version}
                     </p>
                   ) : (
-                    <p className="text-[11px] text-neutral-500">Not signed</p>
+                    <p className="text-[11px] text-neutral-500">
+                      {isPhoto ? "Not answered" : "Not signed"}
+                    </p>
                   )}
                 </div>
-                <span
-                  className={
-                    sig
-                      ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                      : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
-                  }
-                >
-                  {sig ? "Signed" : "Not signed"}
-                </span>
+                <span className={badgeStyle}>{badgeLabel}</span>
               </li>
             );
           })}
