@@ -55,7 +55,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     }
     const { data: appt, error: apptErr } = await supabase
       .from("appointments")
-      .select("id, studio_id, client_id")
+      .select("id, studio_id, client_id, practitioner_id")
       .eq("id", appointmentIdRaw)
       .maybeSingle();
     if (apptErr) {
@@ -76,6 +76,21 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       // and linking it to another client's appointment would corrupt
       // both clients' treatment timelines.
       throw new Error("Appointment is for a different client.");
+    }
+    // PR #156 patch. Practitioner lineage: refuse a session-to-
+    // appointment link when the appointment is assigned to a
+    // different practitioner. The appointments table currently
+    // allows practitioner_id to be non-null on every active booking
+    // surface (public booking + calendar create both stamp the
+    // practitioner), but historically a few legacy rows may carry
+    // null; we treat null as "unassigned, anyone in the studio may
+    // chart" rather than reject outright. Same-studio + same-client
+    // is preserved as the absolute floor. The session itself still
+    // records the current practitioner via the server-resolved
+    // practitioner.id on the insert below; this check is about which
+    // appointment the session links TO, not who performed it.
+    if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
+      throw new Error("Appointment is assigned to a different practitioner.");
     }
     appointmentId = appt.id;
   }

@@ -39,6 +39,16 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     expect(SOURCE).toMatch(/from\("appointments"\)/);
   });
 
+  it("selects studio_id, client_id, and practitioner_id from the appointment row", () => {
+    // PR #156 patch. The select list must carry every lineage column
+    // the action compares against the server-resolved session
+    // context. Missing any of the three would silently degrade the
+    // corresponding check to "always pass".
+    expect(SOURCE).toMatch(
+      /\.select\(\s*["']id, studio_id, client_id, practitioner_id["']\s*\)/,
+    );
+  });
+
   it("validates studio_id lineage server-side", () => {
     // The studio is server-resolved via getCurrentPractitionerWithStudio.
     // The action MUST compare appt.studio_id to studio.id and reject
@@ -52,6 +62,30 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // per-client, and a cross-client link would corrupt two clients'
     // treatment timelines.
     expect(SOURCE).toMatch(/appt\.client_id\s*!==\s*clientId/);
+  });
+
+  it("validates practitioner_id lineage server-side (non-null case)", () => {
+    // PR #156 patch. The appointment may have practitioner_id set to
+    // null (legacy / pre-assignment), in which case the check passes
+    // and the session links freely; the action records the current
+    // practitioner via practitioner_id on the insert payload below
+    // regardless. When the appointment IS assigned, a mismatch
+    // against the server-resolved practitioner.id is a hard reject so
+    // a tampered form value cannot bind a session to another
+    // practitioner's appointment within the same studio + client.
+    expect(SOURCE).toMatch(
+      /if \(appt\.practitioner_id && appt\.practitioner_id !== practitioner\.id\)/,
+    );
+  });
+
+  it("uses a stable practitioner-mismatch error message", () => {
+    // The error message is part of the public contract for callers
+    // that surface it (today: the practitioner sees it in the
+    // browser). Pin the exact copy so a future refactor cannot drift
+    // the wording silently.
+    expect(SOURCE).toMatch(
+      /"Appointment is assigned to a different practitioner\."/,
+    );
   });
 
   it("never trusts a client-supplied studio_id / practitioner_id on insert", () => {
