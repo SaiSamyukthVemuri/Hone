@@ -760,9 +760,23 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .eq("id", newAppointmentId)
     .single();
   if (fetchErr || !created) {
+    // PR #155: this branch previously leaked the raw DB error text
+    // via `error: fetchErr?.message ?? "..."`. Optional-chaining
+    // tricked the PR #149 regex which only caught `fetchErr.message`.
+    // The reschedule RPC has already committed atomically at this
+    // point; the post-create fetch failure means the email/SMS
+    // confirmation step cannot run, but the appointment itself is
+    // confirmed in the database. Collapse to the generic public copy
+    // so a probing caller does not see "row not found" vs raw Postgres
+    // error text; keep structured server-side detail for the operator.
+    logInternal("public_reschedule_post_create_fetch_failed", {
+      code: fetchErr?.code,
+      message: fetchErr?.message ?? "created appointment not found",
+      newAppointmentId,
+    });
     return {
       ok: false,
-      error: fetchErr?.message ?? "Could not load the rescheduled appointment.",
+      error: PUBLIC_RESCHEDULE_GENERIC_ERROR,
     };
   }
 

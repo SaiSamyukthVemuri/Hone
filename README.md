@@ -40,8 +40,18 @@ Required commands before opening a PR:
 npm run typecheck
 npm run lint
 npm run build
+npm test
+npm run check:stripe-gates
 git diff --check
 ```
+
+Or the shortcut that chains the first five:
+
+```bash
+npm run ci
+```
+
+GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
 
 ## Required services
 

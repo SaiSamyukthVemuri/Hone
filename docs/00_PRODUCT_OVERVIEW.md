@@ -44,7 +44,7 @@ Hone collapses that into one practice surface where the calendar is informed by 
 - **Live-mode payment.** The Stripe key gate refuses `sk_live_*` without `STRIPE_ALLOW_LIVE_MODE=true`; the `manual_fee_charge_attempts` DB row has a CHECK that pins `stripe_livemode = false`. Live charging needs a deliberate live-mode PR with legal review.
 - **Auto-generated charge notices, late-cancel detection from policy text.** The system cannot mechanically decide "this cancellation crossed the late window" because the policy is free-form text; the practitioner asserts the timing classification manually (PR #145).
 - **Public booking card-required flow.** The 0032 Stripe backend has the SQL for this but it stays dormant.
-- **Automated tests / CI.** There is no test suite. Every PR runs `typecheck / lint / build / git diff --check`. Manual smoke is run by hand.
+- **Comprehensive automated coverage.** Minimal Vitest guard/regression tests and a GitHub Actions CI job (`.github/workflows/ci.yml`, PR #154) run `typecheck`, `lint`, `build`, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and every push to the default branch. Full Supabase-local DB integration coverage, an RLS policy suite, and browser E2E coverage are NOT yet built; manual smoke (docs/12) remains the production-readiness check.
 - **Google Calendar two-way sync.** Read-only ICS feed exists at `/calendar-feed/<token>.ics` but no two-way sync.
 - **Intake form builder.** Intake schema lives in code; Chloe cannot author her own intake fields yet.
 - **Admin / support dashboard.** The `/admin` portal is allowlist-gated to a handful of emails and shows read-only data, not a support console.
@@ -65,7 +65,7 @@ A booking system can be replaced. The studio's accumulated treatment memory is w
 | Controlled pilot at Willow Electrolysis | **Active**. Chloe runs real bookings, intake, charting, postcare, portal messages, cancellation/reschedule. |
 | Card-on-file (test mode) | **Production-deployed, exercised end-to-end** via portal SetupIntent. No live charging. |
 | Manual fee charging (test mode) | **Production-deployed.** Practitioner can test-charge a `ready` attempt with full evidence stack. |
-| Broad SaaS launch | **Not ready.** Self-serve onboarding, intake builder, payment legal review, refund + receipt code, automated tests, real CI all required first. |
+| Broad SaaS launch | **Not ready.** Self-serve onboarding, intake builder, payment legal review, refund + receipt code, and deeper automated coverage (Supabase-local DB integration, RLS policy suite, browser E2E) all required first. Minimal Vitest + GitHub Actions CI exist as of PR #154. |
 | Live payment | **Not ready.** Requires legal review of Ontario CASL/PCI obligations, a deliberate live-mode PR replacing the `livemode_false_check` constraint, a stronger pending-reconciliation path (Stripe metadata search before any retry), and explicit receipt / charge-notice flows. See [docs/06](./06_PAYMENTS_AND_STRIPE.md) §8. |
 
 ## Where the line is between "Hone today" and "Hone soon"

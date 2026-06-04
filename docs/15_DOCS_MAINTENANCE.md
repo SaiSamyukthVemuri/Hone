@@ -97,7 +97,7 @@ The docs MUST NOT say any of:
 - "Receipts are sent." (Currently false. No receipt email exists.)
 - "Signatures are legally binding." (Unknown. Enforceability depends on lawyer-reviewed wording under Ontario law.)
 - "Google Calendar sync exists." (Currently false. Read-only ICS feed only.)
-- "Automated tests exist." (Currently false. Manual smoke only.)
+- "Comprehensive automated coverage exists." (Currently false. Minimal Vitest guard/regression tests and GitHub Actions CI exist as of PR #154; full Supabase-local DB integration, RLS policy coverage, and browser E2E remain manual.)
 - "Hone is at hone.studio." (Stale. The production domain is `hone.care`.)
 
 Use the cautious forms instead:
@@ -106,6 +106,7 @@ Use the cautious forms instead:
 - "Refunds and receipts are deferred."
 - "Electronic signatures are evidence-friendly; enforceability depends on lawyer-reviewed wording."
 - "Calendar feed is a read-only ICS subscription. Two-way Google Calendar sync is backlog."
+- "Minimal automated guard/regression tests and GitHub Actions CI exist (PR #154). Full DB integration, RLS policy, and browser E2E coverage are deferred."
 
 ## How to document deferred work
 
