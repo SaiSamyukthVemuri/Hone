@@ -1,5 +1,11 @@
 # Cron setup for Hone
 
+> **Status: DEPRECATED as of PR #148.** This document was written for the
+> pre-Stripe hardening era. The authoritative source today is
+> [docs/08_EMAIL_SMS_AND_CRON.md](./docs/08_EMAIL_SMS_AND_CRON.md) and
+> [docs/11_RUNBOOK.md](./docs/11_RUNBOOK.md). Kept as historical
+> reference; do not use as a primary guide.
+
 > **Pre-Stripe hardening status:** the **no-show endpoint is currently
 > non-mutating AND must NOT be externally scheduled** until the
 > lifecycle redesign is approved (see "Re-enabling auto no-show"

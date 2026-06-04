@@ -1,4 +1,12 @@
-# Pre-Stripe operational hardening — review + deployment notes
+# Pre-Stripe operational hardening: review + deployment notes
+
+> **Status: HISTORICAL as of PR #148.** This document is the review +
+> deployment notes for migration 0033, which moved direct UPDATEs
+> into SECURITY DEFINER RPCs and is now baseline state. The migration
+> summary lives in [docs/09_DATABASE_AND_RLS.md](./docs/09_DATABASE_AND_RLS.md);
+> the cancel/no-show flows it created are documented in
+> [docs/04_BOOKING_AND_PORTAL_FLOWS.md](./docs/04_BOOKING_AND_PORTAL_FLOWS.md).
+> Kept as historical reference for anyone digging into the 0033 design.
 
 > Branch: `claude/pre-stripe-final-hardening`
 > Base: `claude/build-hone-saas-hOex7` at `9ae86a60`
