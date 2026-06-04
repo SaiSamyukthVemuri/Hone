@@ -62,6 +62,17 @@ export type EligibilityExistingAttemptSummary = {
   amount_cents: number;
   currency: string;
   created_at: string;
+  // PR #146. Result fields populated by the Stripe test-charge or
+  // cancel-prepared-attempt actions. Nullable across the board so the
+  // 'ready' row still passes the type check before any Stripe call.
+  stripe_payment_intent_id: string | null;
+  stripe_charge_id: string | null;
+  charged_at: string | null;
+  failed_at: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  cancelled_at: string | null;
+  cancelled_reason: string | null;
 };
 
 export type ManualFeeEligibility =

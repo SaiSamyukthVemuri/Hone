@@ -295,7 +295,7 @@ export async function getManualFeeChargeEligibility(
   const { data: attemptRows } = await admin
     .from("manual_fee_charge_attempts")
     .select(
-      "id, charge_type, status, amount_cents, currency, created_at",
+      "id, charge_type, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message, cancelled_at, cancelled_reason",
     )
     .eq("studio_id", args.studioId)
     .eq("appointment_id", args.appointmentId)
@@ -309,6 +309,15 @@ export async function getManualFeeChargeEligibility(
     amount_cents: row.amount_cents as number,
     currency: row.currency as string,
     created_at: row.created_at as string,
+    stripe_payment_intent_id:
+      (row.stripe_payment_intent_id as string | null) ?? null,
+    stripe_charge_id: (row.stripe_charge_id as string | null) ?? null,
+    charged_at: (row.charged_at as string | null) ?? null,
+    failed_at: (row.failed_at as string | null) ?? null,
+    failure_code: (row.failure_code as string | null) ?? null,
+    failure_message: (row.failure_message as string | null) ?? null,
+    cancelled_at: (row.cancelled_at as string | null) ?? null,
+    cancelled_reason: (row.cancelled_reason as string | null) ?? null,
   }));
   const ACTIVE_STATUSES = new Set([
     "ready",
