@@ -1,10 +1,10 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. 65 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
+Hone uses Supabase Postgres. 68 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0066`.
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0069`.
 - Apply to production via `supabase db push --linked` BEFORE merging code that reads new columns or tables. A merged PR whose code references a column not yet in prod produces a 500. See the [Migration data + DDL splits](../README.md) memory.
 - For mixed `UPDATE` + `ALTER CONSTRAINT` migrations, paste the `UPDATE` first and inspect the row count before applying the constraint.
 - For atomic install patterns with cross-step invariants, wrap in `begin; … commit;` with `raise exception` validators between backfill and final constraints.
@@ -91,6 +91,9 @@ Current SECURITY DEFINER RPCs:
 | 0063 | Cancellation insight | Overloaded `public_cancel_appointment_with_token(text, text, text, text, boolean)` for structured reason/note/follow_up_allowed. |
 | 0064 | Manual fee protection | `studios.late_cancel_fee_cents` + `studios.no_show_fee_cents`. `manual_fee_charge_attempts` table. Partial unique on `(appointment_id, charge_type) WHERE status IN ('ready', 'pending_stripe', 'succeeded')`. |
 | 0065 | Manual fee charge test-mode result | Stripe result columns on `manual_fee_charge_attempts` (`stripe_livemode` CHECK-pinned to `false`). `claim_manual_fee_charge_attempt` RPC. Partial uniques on `stripe_payment_intent_id` and `stripe_idempotency_key`. |
+| 0066 | Reschedule future guard | DB CHECK on `reschedule_appointment` RPC that the new starts_at is strictly in the future and the original is confirmed. |
+| 0067 | Ops alerts | `ops_alerts` table with redaction; `record_ops_alert` service-role helper; never-throws contract. |
+| 0068 | Sessions ↔ appointments link | Nullable `sessions.appointment_id` with FK to `appointments(id) ON DELETE SET NULL`. Two partial indexes (`sessions_appointment_id_idx`, `sessions_studio_appointment_idx`) keyed on `appointment_id is not null`. NO unique constraint (one appointment may have multiple sessions). NO historical backfill. NO RLS change. Server-side `startSessionAction` validates `(studio_id, client_id)` lineage before writing the FK. |
 
 ## Future migration checklist
 

@@ -88,6 +88,20 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Sessions ↔ appointments foundation link (PR #156, migration 0068)
+
+**Decision:** Add a nullable `sessions.appointment_id` FK to `appointments(id) ON DELETE SET NULL`, no unique constraint, no historical backfill. Two partial indexes keyed on `appointment_id IS NOT NULL`. Two surfaces stamp the FK today (calendar appointment detail page "+ Chart session"; client profile "Chart session" on an uncharted past visit). Client-scoped "+ Log session" continues to insert null. The dedup helper `getPastConfirmedAppointmentsForClient` prefers the explicit link and falls back to the `+/- 2 hour` proximity window only for sessions where `appointment_id IS NULL`, so no row is counted twice.
+
+**Why a nullable FK and not a NOT NULL column with backfill:** historical clinical records cannot be safely re-attributed without supervised review. A wrong link silently corrupts the treatment memory the column exists to protect. The nullable column lets new appointment-context flows write the FK incrementally; a separate supervised PR (preview matches, human review, UPDATE only after sign-off) can backfill later if the operator wants. Even then, ambiguous cases stay null.
+
+**Why no unique constraint on `appointment_id`:** treatment blocks/areas may legitimately produce multiple session rows for one appointment. The runtime invariant is one-to-many in that direction, not one-to-one.
+
+**Why no cross-table consistency trigger:** server actions already validate `(studio_id, client_id)` lineage before writing the FK. A SECURITY DEFINER trigger would duplicate that logic at the DB layer and be harder to reason about than the existing action-layer pattern. The migration deliberately ships no RLS change either: the studio-membership policy from migration 0001 already covers the new column.
+
+**Write-forward partiality is documented honestly.** The product overview, the AI handoff, and the domain-model doc all carry the rule that new appointment-scoped session creation writes `appointment_id`; client-scoped creation remains nullable until a future appointment-selection flow exists. Do not claim "all new sessions are linked"; do not claim analytics are solved; do not claim billing is tied to completed appointments yet.
+
+**Alternative considered:** require the FK on every new insert (NOT NULL). Rejected because the client profile "+ Log session" flow has no appointment in scope and is the primary practitioner-facing surface. Forcing it to require a picker would either ship a new picker UI in this PR (out of scope) or break the existing flow. Nullable + partial write-forward is the additive minimum that lets future flows mature without rewriting today's surfaces.
+
 ### GitHub Actions CI for validation, tests, and safety grep gates (PR #154)
 
 **Decision:** Add a single GitHub Actions workflow (`.github/workflows/ci.yml`) that runs `npm ci`, `typecheck`, `lint`, `build`, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and on every push to the default branch. The Stripe grep gates live in `scripts/check-stripe-gates.mjs` with a typed allowlist + a strict scan scope (only `app/`, `lib/`, `middleware.ts`, `next.config.ts`; only `.ts/.tsx/.js/.jsx`; tests, docs, migrations, scripts, and the gate script itself are excluded).

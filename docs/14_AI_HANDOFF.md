@@ -2,14 +2,15 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #155)
+## Current production status (as of PR #156)
 
 - Production domain: `https://hone.care`.
 - Default branch: `claude/build-hone-saas-hOex7`. Every push to it triggers a production deploy. Vercel project: `prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk`, team `team_Pwj27KsmnBKe3ZUBfKLcFczf`.
-- At least 67 migrations applied. Most recent in-tree: `0067_ops_alerts.sql`. The next migration is `0068`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
+- At least 68 migrations applied. Most recent in-tree: `0068_sessions_appointment_link.sql`. The next migration is `0069`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
 - Card-on-file and test-mode manual fee charge are live in production **test mode**. Live mode is blocked by three independent guards.
 - GitHub Actions CI (PR #154) runs typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and push to default. `npm run ci` is the local shortcut. A red CI check blocks merge.
 - Ops alerts (PR #153, migration `0067_ops_alerts.sql`) capture silent failure states for the manual-fee path, Stripe webhook, SMS path, and the appointment-reminder cron. The SMS path stamps `studio_id` on alerts as of PR #155.
+- Sessions can be explicitly linked to appointments via `sessions.appointment_id` (PR #156, migration `0068_sessions_appointment_link.sql`). Write-forward is partial: appointment-context flows stamp the FK, client-scoped session creation remains null. Historical sessions remain null; no backfill has been run. The dedup site in `lib/supabase/queries.ts:getPastConfirmedAppointmentsForClient` prefers the explicit link and falls back to the `+/- 2 hour` heuristic only for unlinked sessions.
 
 ## Branch / PR / deploy workflow
 

@@ -611,6 +611,13 @@ export type Session = {
   delete_reason: string | null;
   // Migration 0024: optional attachment to a multi-session treatment plan.
   treatment_plan_id: string | null;
+  // Migration 0068: optional link to the appointment that produced this
+  // session. Null on historical rows and on client-scoped session
+  // creation (no appointment in scope). Server actions validate
+  // (studio_id, client_id) lineage before writing this field. One
+  // appointment may have zero or more sessions; one session belongs
+  // to zero or one appointment. No unique constraint on this column.
+  appointment_id: string | null;
 };
 
 export type TreatmentPlanStatus = "active" | "closed";

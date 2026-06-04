@@ -194,25 +194,46 @@ export async function getClientById(
 // cancelled). The page interleaves these with charted sessions to
 // surface visits the practitioner has not yet charted.
 //
-// Heuristic dedup: we exclude any past appointment whose starts_at
-// is within +/-2 hours of an existing session's started_at for this
-// client. Sessions do not carry an appointment_id (see migration
-// 0043 header comment), so this proximity filter is the practical
-// way to avoid showing the same visit twice: once as a charted
-// session and once as an "uncharted past visit". The +/-2 hour
-// window is generous because a practitioner who logs the session
-// after the appointment typically does so within minutes; only
-// pathological cases would land outside the window. False negatives
-// (we hide an uncharted visit because there happened to be an
-// unrelated session nearby) are accepted in v1 as the lesser harm
-// versus duplicate rows.
+// Dedup, in order of preference (PR #156, migration 0068):
+//
+//   1. EXPLICIT LINK. If any session for this client has
+//      `appointment_id = a.id`, the appointment is charted and is
+//      excluded. This is exact, robust to same-day visits and
+//      reschedules, and replaces guessing.
+//
+//   2. HEURISTIC FALLBACK. For appointments NOT covered by the
+//      explicit link, fall back to the +/-2 hour starts_at proximity
+//      window against sessions where `appointment_id IS NULL`. These
+//      are legacy sessions (pre-0068) and client-scoped sessions
+//      that did not run through the appointment-context create
+//      flow. The fallback intentionally consults only the unlinked
+//      sessions so a linked session does not get counted twice (once
+//      explicitly + once via proximity to its own appointment).
+//
+//   3. The +/-2 hour window is generous because a practitioner who
+//      logs the session after the appointment typically does so
+//      within minutes; only pathological cases would land outside
+//      the window. False negatives (an uncharted visit gets hidden
+//      because there happened to be an unrelated unlinked session
+//      nearby) are accepted as the lesser harm versus duplicate
+//      rows.
 //
 // no_show appointments are intentionally NOT included: those have
 // their own lifecycle handled by no-show-check cron + follow-up.
+//
+// The function takes the session list as a parameter because the
+// caller (the client profile page) already loads the same sessions
+// for the timeline render; passing them in avoids a redundant DB
+// roundtrip. Each entry carries started_at AND appointment_id so the
+// helper can split the explicit set from the heuristic set.
+export type KnownSessionForPastAppointmentDedup = {
+  started_at: string;
+  appointment_id: string | null;
+};
 export async function getPastConfirmedAppointmentsForClient(
   studioId: string,
   clientId: string,
-  knownSessionStartIsoList: ReadonlyArray<string>,
+  knownSessions: ReadonlyArray<KnownSessionForPastAppointmentDedup>,
 ): Promise<Appointment[]> {
   const supabase = await createClient();
   const nowIso = new Date().toISOString();
@@ -233,13 +254,32 @@ export async function getPastConfirmedAppointmentsForClient(
   const rows = (data ?? []) as Appointment[];
   if (rows.length === 0) return rows;
 
+  // Split the session list into two buckets so we can prefer the
+  // explicit FK lookup and only fall through to the proximity window
+  // for legacy / client-scoped rows.
+  const linkedAppointmentIds = new Set<string>();
+  const unlinkedSessionStartMs: number[] = [];
+  for (const s of knownSessions) {
+    if (s.appointment_id) {
+      linkedAppointmentIds.add(s.appointment_id);
+    } else {
+      const ms = new Date(s.started_at).getTime();
+      if (Number.isFinite(ms)) unlinkedSessionStartMs.push(ms);
+    }
+  }
+
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
-  const sessionStartMs = knownSessionStartIsoList.map((iso) =>
-    new Date(iso).getTime(),
-  );
   return rows.filter((a) => {
+    // 1. Explicit link. The appointment has a session pointing at it
+    //    via the new appointment_id FK; the practitioner has already
+    //    charted this visit.
+    if (linkedAppointmentIds.has(a.id)) return false;
+    // 2. Heuristic fallback over UNLINKED sessions only. A session
+    //    that already has an explicit appointment_id is not consulted
+    //    here, so the same visit cannot be counted twice (once via
+    //    the explicit set + once via its own +/- 2h window).
     const aMs = new Date(a.starts_at).getTime();
-    return !sessionStartMs.some(
+    return !unlinkedSessionStartMs.some(
       (sMs) => Math.abs(sMs - aMs) <= TWO_HOURS_MS,
     );
   });
