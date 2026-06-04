@@ -1,5 +1,12 @@
 # Testing the email reminder + cancellation + reschedule + no-show system
 
+> **Status: HISTORICAL as of PR #148.** This document was written for
+> Session 19.2's email-reminder + cancel + reschedule + no-show walk-
+> through. The end-to-end recipe is still valid, but the broader doc
+> set today lives in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md)
+> and [docs/08_EMAIL_SMS_AND_CRON.md](./docs/08_EMAIL_SMS_AND_CRON.md).
+> Kept as a useful longer-form recipe for manual email smoke runs.
+
 End-to-end walkthrough for Session 19.2. Run on a Vercel preview deploy with
 `CRON_SECRET` set and `RESEND_API_KEY` set. Use a real email inbox you
 control for the test client (an alias of your own address works).

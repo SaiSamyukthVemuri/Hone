@@ -1,0 +1,217 @@
+# 11 Runbook
+
+Operational recipes for after-deploy checks, incident response, and the SQL needed to investigate the state of the system. Audience: developer + operator (Sam).
+
+## After every deploy
+
+1. `gh pr view <N> --json mergeCommit,state`; confirm merge SHA.
+2. Poll Vercel commit status to `success`:
+   ```bash
+   SHA=<merge-commit-sha>
+   gh api "repos/SaiSamyukthVemuri/Hone/commits/${SHA}/status" --jq '.state'
+   ```
+3. Verify the production deployment is `READY` via Vercel MCP `get_deployment` (target=production, aliased to `hone.care`).
+4. Run anonymous smoke ([docs/12 §10](./12_SMOKE_TESTS.md#10-security-route-smoke)).
+
+## After every migration
+
+1. `supabase migration list --linked`; confirm only the new file is missing remote.
+2. `supabase db push --linked`; apply.
+3. `supabase db query --linked "<verify the new column/table/RPC>"`; confirm.
+4. Only then merge the code PR that references the new schema.
+
+## Public route smoke
+
+```bash
+curl -sI -o /dev/null -w "%{http_code} -> %{redirect_url}\n" \
+  "https://hone.care/book/willow-electrolysis"
+
+curl -sI "https://hone.care/cancel/fake" \
+  | grep -iE '^(x-robots-tag|referrer-policy)'
+```
+
+Expected:
+- `/book/willow-electrolysis` returns `200`.
+- `/cancel/fake` returns `200` with both `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`.
+
+## Portal smoke
+
+Manual (cannot be done from the harness).
+
+1. Request a magic link at `/portal/login?studio=willow-electrolysis` with a test client's email.
+2. Open the email; click the link.
+3. Confirm `/portal/verify/<token>` shows the Continue form (not the consumed-token surface); i.e. the GET is non-consuming.
+4. Click Continue. Verify the `hone_portal_session` cookie is set (httpOnly, secure).
+5. Land on `/portal`. Verify the two-zone layout (Needs you / Your info).
+6. Sign out (or wait for cookie expiry) and confirm `/portal/messages` redirects to `/login` (the global app login surface) when anonymous.
+
+## Stripe card-on-file smoke (test mode)
+
+1. From `/settings/payments`, confirm Stripe Connect is `enabled` with `chargesEnabled=true`.
+2. On a test client's `/portal`, sign and submit a `card_authorization` form if not already.
+3. Add a card via the portal Stripe Elements form with test card `4242 4242 4242 4242`.
+4. Verify webhook delivery in Stripe Dashboard → Developers → Webhooks. Look for `setup_intent.succeeded`.
+5. SQL:
+   ```sql
+   select id, brand, last4, exp_month, exp_year, status,
+          stripe_account_id, stripe_livemode, stripe_customer_id,
+          stripe_payment_method_id, card_authorization_signature_id,
+          added_via, added_at
+     from public.client_payment_methods
+    where studio_id = '<studio uuid>'
+      and client_id = '<client uuid>'
+    order by added_at desc;
+   ```
+   Expected: one `status='active'` row with `stripe_livemode=false` and `card_authorization_signature_id is not null`.
+
+## Manual fee test charge smoke (test mode)
+
+1. On a cancelled or no-show test appointment, confirm full evidence stack:
+   - Active card on file.
+   - Signed card authorization.
+   - Policy acknowledgement for this appointment.
+   - Fee amount configured in `/settings/payments`.
+2. Open `/calendar/<appointment-id>`. The "Cancellation/no-show fee" card should render.
+3. Verify the test-mode banner is visible.
+4. If the attempt is not yet prepared: pick a charge type, add an internal note, click "Prepare manual fee charge". Confirm the row appears with `status='ready'`.
+5. Click "Run test charge". On success:
+   - The card flips to the "Test charge succeeded" panel.
+   - The PaymentIntent id is shown.
+6. SQL:
+   ```sql
+   select id, charge_type, status, amount_cents, currency,
+          stripe_livemode, stripe_account_id,
+          stripe_payment_intent_id, stripe_charge_id,
+          stripe_idempotency_key, charged_at,
+          failed_at, failure_code, failure_message,
+          cancelled_at, cancelled_reason
+     from public.manual_fee_charge_attempts
+    where appointment_id = '<appointment uuid>'
+    order by created_at desc;
+   ```
+   Expected: `status='succeeded'`, `stripe_livemode=false`, `stripe_payment_intent_id` populated (`pi_…`), `stripe_charge_id` populated, `stripe_idempotency_key = 'hone:manual-fee:<attempt-id>:v1'`, `charged_at` set.
+7. Refresh the appointment detail page and click "Run test charge" again. The action should short-circuit via `already_succeeded`; no second PaymentIntent is created. Verify in Stripe Dashboard → Payments under the connected account: exactly one PaymentIntent + Charge.
+
+## Webhook delivery checks
+
+Stripe Dashboard → Developers → Webhooks → `<connected-account endpoint>` → Recent deliveries.
+
+Verify the signing secret matches `STRIPE_WEBHOOK_SECRET` in Vercel. Mismatch shows up as 400 responses on every event. Stripe will retry; fix the secret in Vercel env and re-deliver.
+
+SQL ledger:
+
+```sql
+select stripe_event_id, event_type, stripe_account_id, stripe_livemode,
+       studio_id, processed_at, processing_error,
+       payload_summary, created_at
+  from public.stripe_events
+ order by created_at desc
+ limit 20;
+```
+
+Look at `processed_at` (when it succeeded), `processing_error` (sanitized failure), and `payload_summary` (per-event metadata Hone chose to record).
+
+## Failed email handling
+
+The per-appointment counters tell you what happened:
+
+```sql
+select id, status, starts_at,
+       confirmation_send_attempts, confirmation_sent_at,
+       reminder_24h_send_attempts, reminder_24h_sent_at,
+       reminder_2h_send_attempts, reminder_2h_sent_at,
+       no_show_email_send_attempts, no_show_email_sent_at,
+       postcare_email_send_attempts, postcare_email_sent_at
+  from public.appointments
+ where studio_id = '<studio uuid>'
+   and starts_at > now() - interval '7 days'
+ order by starts_at desc
+ limit 20;
+```
+
+- `attempts > 0` and `sent_at IS NULL` → Resend rejected the message. Check Resend dashboard.
+- `attempts >= 3` and `sent_at IS NULL` → 3-strike out; no more retries from the cron.
+- The cron only ever picks rows where `attempts < 3` AND the matching `_sent_at IS NULL`.
+
+## Failed SMS handling
+
+```sql
+select appointment_id, kind, claimed_at, sent_at, twilio_sid,
+       failure_code, failure_message
+  from public.sms_send_attempts
+ order by claimed_at desc
+ limit 30;
+```
+
+Look for `failure_code = 21610` (opt-out; the recipient previously sent STOP). The client's `sms_opted_out_at` should be set; if not, the STOP webhook may have missed delivery.
+
+## Pending manual fee charge handling
+
+```sql
+select id, appointment_id, charge_type, status, amount_cents,
+       stripe_payment_intent_id, stripe_idempotency_key,
+       updated_at,
+       extract(epoch from (now() - updated_at)) / 60 as minutes_since_claim
+  from public.manual_fee_charge_attempts
+ where status = 'pending_stripe'
+ order by updated_at;
+```
+
+Per row:
+
+- `stripe_payment_intent_id` set + `minutes_since_claim` any → next click runs `paymentIntents.retrieve` and finalizes.
+- `stripe_payment_intent_id` null + `minutes_since_claim ≤ 60` → next click retries with same idempotency key; Stripe replays.
+- `stripe_payment_intent_id` null + `minutes_since_claim > 60` → action returns `needs_manual_review`. Operator must reconcile by hand:
+  1. Search Stripe Dashboard for a PaymentIntent on the connected account with `metadata.hone_manual_fee_charge_attempt_id = <id>`.
+  2. If found: manually UPDATE the row with the PI id + result.
+  3. If not found: manually UPDATE the row to `failed` or `cancelled` with a clear reason; the next prepare for the same `(appointment, charge_type)` will succeed.
+
+## Webhook signature error handling
+
+If every webhook is returning 400 with "signature mismatch":
+
+1. Confirm Stripe Dashboard → Webhook → Signing secret matches `STRIPE_WEBHOOK_SECRET` in Vercel (Project → Settings → Environment Variables → Production).
+2. Confirm the webhook is configured on the **connected-account** webhook surface, not the platform webhook. Earlier issue: the platform-webhook secret was set in `STRIPE_WEBHOOK_SECRET` while the connected-account events were being sent to a different endpoint, producing endless invalid-signature replies.
+3. After fixing, redeliver from the Stripe Dashboard.
+
+## Rollback
+
+1. Identify the offending merge commit SHA.
+2. Locally:
+   ```bash
+   git checkout claude/build-hone-saas-hOex7
+   git pull
+   git revert -m 1 <merge-commit-sha>
+   git push
+   ```
+3. Vercel auto-deploys the revert as the new production.
+4. If the offender was a migration, the revert restores the code; the schema change remains unless a follow-up migration drops the new objects (migrations are additive; a deliberate teardown migration is the only correct removal path).
+
+## How to disable charging safely
+
+If the test-mode manual fee charge action needs to be quickly disabled:
+
+1. In Vercel env, set a feature flag (no such flag exists today; add one before live mode); OR:
+2. SQL-disable by setting both fee amounts to NULL:
+   ```sql
+   update public.studios
+      set late_cancel_fee_cents = null,
+          no_show_fee_cents     = null
+    where id = '<studio uuid>';
+   ```
+   The eligibility helper will block every new prepare with "fee amount is not configured." Existing `ready` rows can still be charged; cancel them first if needed:
+   ```sql
+   update public.manual_fee_charge_attempts
+      set status                       = 'cancelled',
+          cancelled_at                 = now(),
+          cancelled_by_practitioner_id = '<your practitioner uuid>',
+          cancelled_reason             = 'Disabled by operator'
+    where studio_id = '<studio uuid>'
+      and status    = 'ready';
+   ```
+
+## Vercel env checks
+
+The Vercel MCP `get_project` does not expose env-var values. To check production env, use the Vercel dashboard:
+
+- Project → Settings → Environment Variables → Production. Confirm `ADMIN_EMAILS`, `NEXT_PUBLIC_APP_ORIGIN=https://hone.care`, `PORTAL_FINGERPRINT_SALT`, `CRON_SECRET`, `STRIPE_SECRET_KEY` (test), `STRIPE_WEBHOOK_SECRET`, `STRIPE_ALLOW_LIVE_MODE=false` (or unset), `RESEND_API_KEY`, Twilio vars if SMS is in use.

@@ -1,0 +1,108 @@
+# 03 Security and privacy
+
+## 1. Tenant isolation model
+
+Hone is multi-tenant per studio. The unit of isolation is `studio_id`.
+
+- Every studio-scoped table carries a `studio_id` column.
+- Every studio-scoped table has RLS enabled.
+- The default SELECT policy on those tables is `using (public.is_studio_member(studio_id))`. The helper is `SECURITY DEFINER` and reads from `public.practitioners` to check that the calling auth user is an active practitioner in the row's studio.
+- INSERT / UPDATE / DELETE policies are stricter and table-specific. Most are owner-only or service-role-only.
+- Cross-studio data sharing does not exist. The same email can be a client of two studios; each studio gets its own `clients` row.
+
+Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_id, studio_id)` unique). Services, appointments, sessions, treatment plans, intake forms, consent templates, signatures, card payment methods, policy acknowledgements, fee attempts; all studio-scoped, all RLS-gated.
+
+## 2. Public route model
+
+| Surface | Public? | What protects it |
+|---|---|---|
+| `/`, `/pricing`, `/demo`, `/privacy`, `/terms` | Yes | Static marketing content. No identity data. |
+| `/book/<slug>` | Yes | Slug is the studio's public booking identifier (not a token). Rate-limited via Upstash if configured (fails open). Server resolves studio by slug; client is find-or-created with normalized email. |
+| `/portal/login` | Yes | Generic-success response regardless of email match (no enumeration). Rate-limited per email + per IP. |
+| `/cancel/<token>` | Yes via token | Token IS the credential. See §4. |
+| `/reschedule/<token>` | Yes via token | Same. |
+| `/manage/<token>` | Yes via token | Same. |
+| `/intake/<token>` | Yes via token | Same. |
+| `/portal/verify/<token>` | Yes via token | Same. |
+| `/calendar-feed/<token>.ics` | Yes via token | Same; carries privacy-collapsed iCal feed for the practitioner's own calendar app. |
+
+### Token routes do not get analytics (PR #142)
+
+Vercel Analytics + Speed Insights are removed from the root layout. Safe trees opt in via `app/_components/SafeAnalytics.tsx`. Token subtrees never opt in. Reason: an analytics script that already loaded on an earlier safe page can capture the URL of a later token page in the same SPA session; a runtime pathname denylist cannot prevent this. The only safe fix is structural absence.
+
+### Token routes carry privacy headers (PR #142)
+
+`next.config.ts` adds these to every token URL prefix:
+
+- `X-Robots-Tag: noindex, nofollow`; keeps the URL out of search indexes even if a link leaks.
+- `Referrer-Policy: no-referrer`; strips the token URL from the `Referer` header on any outbound navigation initiated from the page.
+
+Each React-tree token page also exports `metadata.robots = { index: false, follow: false }` as a redundant meta-tag signal. The route handler `/calendar-feed/[token]/route.ts` relies on the header alone (no HTML head).
+
+### Token routes collapse error states
+
+Token resolution failure (malformed / unknown / expired) always returns the same generic message. Comparing response strings cannot reveal whether the token is structurally valid or only expired. The cancel page and the reschedule page both collapse `invalid_token / already_cancelled / not_cancelable` into one public error.
+
+## 3. Portal session model
+
+| Step | What happens |
+|---|---|
+| Client requests magic link at `/portal/login` | `requestPortalMagicLinkAction` rate-limits, generates a 32-byte URL-safe-base64 raw token, SHA-256-hashes it, stores the hash + email + studio binding on `client_portal_magic_links`. Returns the SAME generic success regardless of match. |
+| Email arrives | The magic-link URL is `https://hone.care/portal/verify/<raw token>`. Token has a 30-minute TTL. |
+| GET `/portal/verify/<token>` | **NON-consuming.** Validates the token shape + that the row exists + not consumed + not expired + linked to an active client. Renders Continue button or generic unavailable. Reason: email scanners and link-preview bots fetch the URL before the human clicks; the previous one-step verify burned the token against those bots. |
+| POST `/portal/verify/<token>` | **Consuming.** Conditional UPDATE on `consumed_at IS NULL` stamps `consumed_at`. Creates the `hone_portal_session` cookie (httpOnly, secure, SameSite=Lax). Resolves to `(studio_id, client_id)`. |
+| Subsequent `/portal/*` reads | Action resolves the session cookie via `getCurrentPortalSession()`. Archived clients are blocked. |
+
+Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise does not yield usable tokens. Comparison uses constant-time `crypto.timingSafeEqual` over the 64-char hex strings.
+
+## 4. Stripe / payment safety
+
+- **No raw card data ever lands on Hone.** Stripe Elements collects the card directly in the browser via `stripe.confirmCardSetup` (SetupIntent) for save-card and `stripe.paymentIntents.create({ confirm: true })` (server-side) for charge. Hone reads `brand`, `last4`, `exp_month`, `exp_year`, and the Stripe ids; the PAN and CVC never touch Hone's servers or DB.
+- **`client_secret` is never persisted.** It is returned to the browser exactly once for the SetupIntent flow; the portal Stripe Elements form consumes it and discards it. Nothing else reads it.
+- **Card is linked to a signed card authorization.** `client_payment_methods.card_authorization_signature_id` is the FK to `client_consent_signatures`. The portal flow refuses to save a card without that signature.
+- **Manual fee charge is test-mode only today.** Three guards stack:
+  1. `inferStripeLivemode()` short-circuits before any Stripe call.
+  2. `assertStripeKeyAllowed()` refuses `sk_live_*` without `STRIPE_ALLOW_LIVE_MODE=true`.
+  3. `manual_fee_charge_attempts.stripe_livemode` is CHECK-pinned to `false`. Live-mode requires a deliberate migration replacing this CHECK.
+- **Atomic claim before any Stripe call.** `claim_manual_fee_charge_attempt` (PR #146) uses `FOR UPDATE` + conditional UPDATE + idempotency-key stamp in one transaction.
+- **Deterministic idempotency key.** `hone:manual-fee:<attempt_id>:v1`. Same attempt always produces the same key. Stripe's 24-hour idempotency replays the response on retry within the window.
+- **Pending recovery never blind-retries past safe window.** If a `pending_stripe` row has no PI id and the claim is older than 60 minutes, the action returns `needs_manual_review` rather than retrying. See [docs/06](./06_PAYMENTS_AND_STRIPE.md) §6 for the full state machine.
+- **No platform customer / no platform payment method.** Every Stripe call carries `{ stripeAccount }`. Customers and PaymentMethods live on the connected account, not on the platform.
+
+## 5. SMS safety
+
+- **Studio toggle off by default.** `studios.send_*_sms` columns default `false`. SMS only goes out when the studio toggle is `true`.
+- **Client consent required.** `clients.sms_consent_at` must be set and `clients.sms_opted_out_at` must be null.
+- **STOP webhook handled.** `/api/twilio/inbound-sms` verifies the Twilio signature, idempotently stamps `sms_opted_out_at` on the matching client, and never reveals whether the number was known.
+- **SMS RPC grants are service-role only.** PR #141 / migration 0062 revoked `claim_sms_send` and friends from `anon` and `authenticated`. The action layer always invokes them via `createAdminClient()`.
+- **Twilio credentials gate the whole subsystem.** Missing `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` makes `sendBookingConfirmationSmsToClient` return `ok:false` cleanly; the booking continues.
+
+## 6. Analytics privacy (PR #142)
+
+- Vercel Analytics + Speed Insights are NOT mounted in `app/layout.tsx`.
+- A new `app/_components/SafeAnalytics.tsx` wrapper mounts both together.
+- Safe routes opt in: `app/(app)/layout.tsx`, `app/admin/layout.tsx`, `app/book/layout.tsx`, `app/_components/PolicyLayout.tsx` (covers privacy + terms), inline on `app/page.tsx`, `app/pricing/page.tsx`, `app/demo/page.tsx`.
+- Token subtrees never opt in. The compiled production bundles confirm: the token-route page chunks (`/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/portal/verify/[token]`) have zero matches for `vercel-scripts.com`, `vitals.vercel-insights`, `_vercel/insights`, or `_vercel/speed-insights`. The safe-only chunks (`/_next/static/chunks/3494-*.js`, `(app)/layout-*.js`, `book/layout-*.js`) each carry the analytics URL.
+- **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
+
+## 7. Production config fail-closed (PR #143)
+
+- **`ADMIN_EMAILS`**; production with no/empty `ADMIN_EMAILS` makes `isAdmin()` return `false` for everyone. The previous hardcoded `["samyukth.ssv@gmail.com"]` fallback was removed from the production path; dev still keeps it for convenience. A sanitized one-shot server-side log fires on the missing-env path in prod.
+- **`PORTAL_FINGERPRINT_SALT`**; production with no salt makes `hashFingerprint()` return `null` (the diagnostic IP / UA / email-hash columns store null). No constant fallback salt in prod, so a leaked DB yields no usable reverse-lookup table. Portal login does NOT break because fingerprint hashing is diagnostic-only. Dev still has a stable fallback.
+- **`NEXT_PUBLIC_APP_ORIGIN`**; `lib/app-origin.ts:getRequiredAppOrigin()` throws in production if neither this nor `VERCEL_URL` is set. No silent fallback to `https://hone.care`. Resolution order: explicit env → `VERCEL_URL` (Preview) → `localhost:3000` (dev only) → throw.
+
+## 8. Known risks and deferred hardening
+
+This is the honest list. Do not hide gaps.
+
+| Risk | Status |
+|---|---|
+| Email reminder outbox / claim discipline | **Deferred.** The 24h / 2h cron currently dispatches reminders directly. A claim-then-send outbox would prevent double-sends in the rare race; the dispatch path already records attempts but does not lock the row. |
+| Hashed `calendar_feed_token` storage | **Deferred.** Practitioners' calendar feed tokens are stored raw in `practitioners.calendar_feed_token`. A DB compromise would yield usable tokens. Migration to hash + raw-token-only-on-rotate is a known follow-up. |
+| Automated tests / CI | **Not built.** Every PR runs `typecheck / lint / build / git diff --check` and manual smoke. Replacing manual smoke with a real test suite is on the backlog. |
+| Real legal review of consent / cancellation / card-authorization wording | **Required before live payment.** Drafts exist in code (`docs/05_CONSENT_AND_FORMS.md`). Enforceability under Ontario law depends on lawyer-reviewed wording. |
+| Stripe metadata search for stale pending recovery | **Test mode acceptable today.** PR #146 reconciles within a 60-minute window with the deterministic idempotency key; older pending attempts surface "needs manual review." A live-mode PR must add `paymentIntents.search` by metadata before any blind retry. |
+| Receipts / charge notice email | **Not built.** No email is sent on a successful test charge. A live-mode PR must add a receipt path. |
+| Refunds / disputes | **Not built.** No code path issues a refund. The 0032 backend has the SQL but is dormant. |
+| Practitioner-recovery card-add path | **Deferred.** `client_payment_methods.added_via` allows `practitioner` but no UI exists for that yet. |
+| Two-practitioner studio support | **Not exercised.** Code paths are written studio-scoped, not owner-scoped, but the only pilot is single-practitioner. |

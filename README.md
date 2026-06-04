@@ -1,112 +1,96 @@
 # Hone
 
-Charting software for independent electrologists and laser hair removal practitioners.
+Electrolysis and laser-hair-removal practice software. Booking, intake, treatment plans, session charting, postcare, client portal, consent + e-sign, and card-on-file. Production domain: **https://hone.care**.
 
-Built by [Saltkiln](https://saltkiln.com). Anchor customer: Belleville Electrolysis Studio.
+Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis** (operator: Chloe).
 
-## Stack
+## Status
 
-- **Next.js 15** (App Router) + **TypeScript** + **Tailwind CSS v4**
-- **Supabase** — Postgres, Auth (magic link), Storage
-- **Vercel** — hosting at `hone.care`
+| Surface | State |
+|---|---|
+| Public booking, new/existing client, next-available | **Production** |
+| Authenticated practitioner app, calendar, charting, postcare | **Production** |
+| Client portal (magic-link + session cookie, two-zone UX) | **Production** |
+| Portal messages + replies | **Production** |
+| Consent + e-sign (treatment, photo, card authorization, policy ack) | **Production**, draft template wording, **lawyer review required before live use** |
+| Card-on-file (Stripe SetupIntent on connected account) | **Production, test mode only** |
+| Manual cancellation/no-show fee charge (PaymentIntent off-session) | **Production, test mode only**. Live charging requires a deliberate live-mode PR with legal review |
+| Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
+| Refunds, dispute handling, receipts | **Not built** |
+| SMS (Twilio) | **Implemented but disabled by default** per studio toggle and per-client consent |
+| Google Calendar sync, intake builder, signed-consent viewer, admin/support dashboard | **Backlog** |
 
-## Local setup
+## Who Hone is for
+
+Independent electrologists and small permanent-hair-removal studios. The current pilot is Willow Electrolysis. The product framing: **a calendar is the surface; the moat is treatment memory**; what was done last time, what worked, what the client tolerated, what needs caution, and what the practitioner should remember before the next visit.
+
+## Quick start for developers
 
 ```bash
-npm install
-cp .env.local.example .env.local   # then fill in the values
-npm run dev
+git clone https://github.com/SaiSamyukthVemuri/Hone.git
+cd Hone
+npm ci
+cp .env.local.example .env.local       # fill in the values
+npm run dev                              # http://localhost:3000
 ```
 
-The app starts on http://localhost:3000.
+Required commands before opening a PR:
 
-## Supabase setup
-
-1. Create a new project at <https://supabase.com/dashboard>.
-2. In **Project Settings → API**, copy:
-   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon` public key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-3. In **Authentication → URL Configuration**, set:
-   - **Site URL**: `http://localhost:3000` (dev) and later `https://hone.care`
-   - **Redirect URLs**: add `http://localhost:3000/auth/callback` and `https://hone.care/auth/callback`
-4. In **Authentication → Providers → Email**, enable **Magic Link**. Disable signups via password.
-5. Apply the schema. Easiest path:
-   - Open the SQL editor in the Supabase dashboard.
-   - Paste the contents of `supabase/migrations/0001_init.sql` and run it.
-   - Or, with the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started) linked to the project: `supabase db push`.
-6. Seed the first studio + owner practitioner manually (one-time). In the SQL editor:
-
-   ```sql
-   -- 1. Create the studio.
-   insert into studios (name, owner_email)
-   values ('Belleville Electrolysis Studio', 'theresa@example.com')
-   returning id;
-   -- copy the returned id
-
-   -- 2. Have the owner sign in once via magic link so an auth.users row exists,
-   --    then look up their user id:
-   select id, email from auth.users where email = 'theresa@example.com';
-
-   -- 3. Link them as the owner practitioner:
-   insert into practitioners (studio_id, user_id, display_name, email, role)
-   values (
-     '<studio-id-from-step-1>',
-     '<user-id-from-step-2>',
-     'Theresa Newman',
-     'theresa@example.com',
-     'owner'
-   );
-   ```
-
-## Vercel setup
-
-1. Push this repo to GitHub.
-2. Import the project on Vercel and pick the Next.js preset.
-3. Add the two environment variables (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) to **Production**, **Preview**, and **Development**.
-4. Once deployed, point `hone.care` at the Vercel project.
-5. Add `https://hone.care/auth/callback` to Supabase Auth redirect URLs (step 3 above).
-
-## Project layout
-
-```
-app/
-  (auth)/
-    login/           magic-link sign-in form
-    auth/callback/   code → session exchange
-  (app)/
-    dashboard/       protected placeholder home
-  page.tsx           public landing
-  layout.tsx
-  globals.css        Tailwind v4 entrypoint
-components/          shared UI (empty for now)
-lib/
-  supabase/
-    client.ts        createBrowserClient — use in client components
-    server.ts        createServerClient — use in server components / actions / route handlers
-    middleware.ts    session refresh + redirect-when-signed-out
-  types/
-    database.ts      hand-rolled row types (regenerate later via supabase gen types)
-supabase/
-  migrations/
-    0001_init.sql    schema + RLS policies
-middleware.ts        wires lib/supabase/middleware into Next.js
+```bash
+npm run typecheck
+npm run lint
+npm run build
+git diff --check
 ```
 
-## Multi-tenancy
+## Required services
 
-Every domain table has a `studio_id` and an RLS policy that delegates to
-`public.is_studio_member(studio_id)` (or `is_studio_owner(...)` for sensitive
-writes). The helper checks whether the current `auth.uid()` has an active
-`practitioners` row in that studio. Per-entry tables that don't carry
-`studio_id` themselves (`electrolysis_entries`, `laser_entries`) go through
-`session_is_visible(session_id)` instead.
+| Service | Used for |
+|---|---|
+| Vercel | Hosting (Next.js 15 App Router, Node 24 runtime) |
+| Supabase | Postgres + Auth (magic link) + Storage |
+| Stripe | Connect Express onboarding, card-on-file (SetupIntent), test-mode manual fee charging |
+| Resend | Transactional email |
+| Twilio | SMS confirmations and reminders (off by default; consent-gated) |
+| Upstash Redis | Rate-limit token bucket for public surfaces (optional; fails open) |
+| External cron | `https://cron-job.org/` or Vercel cron hits `/api/cron/*` with `CRON_SECRET` |
 
-## Next steps
+Environment variables: see [`.env.local.example`](./.env.local.example) for the full list and [`docs/10_DEPLOYMENT_AND_ENV.md`](./docs/10_DEPLOYMENT_AND_ENV.md) for production setup.
 
-The six v1 screens, in order:
-1. Today's roster
-2. Client cheat sheet (the killer flow)
-3. Log session (with copy-last-session)
-4. Client list + new client
-5. Settings (practitioners, probe lots, areas, pricing)
-6. PDF export
+## Documentation map
+
+| File | Audience | Topic |
+|---|---|---|
+| [docs/00_PRODUCT_OVERVIEW.md](./docs/00_PRODUCT_OVERVIEW.md) | Anyone | What Hone is and is not |
+| [docs/01_ARCHITECTURE.md](./docs/01_ARCHITECTURE.md) | Developers | Next.js + Supabase + Stripe shape |
+| [docs/02_DOMAIN_MODEL.md](./docs/02_DOMAIN_MODEL.md) | Developers | Studios, clients, appointments, the rest |
+| [docs/03_SECURITY_AND_PRIVACY.md](./docs/03_SECURITY_AND_PRIVACY.md) | Reviewers | Tenant isolation, RLS, token routes, portal session |
+| [docs/04_BOOKING_AND_PORTAL_FLOWS.md](./docs/04_BOOKING_AND_PORTAL_FLOWS.md) | Developers + product | Public booking, portal, cancel/reschedule |
+| [docs/05_CONSENT_AND_FORMS.md](./docs/05_CONSENT_AND_FORMS.md) | Developers + legal reviewer | Consent templates, signatures, photo consent |
+| [docs/06_PAYMENTS_AND_STRIPE.md](./docs/06_PAYMENTS_AND_STRIPE.md) | Developers + payment reviewer | Stripe Connect, card-on-file, manual fee charging |
+| [docs/07_CALENDAR_AND_AVAILABILITY.md](./docs/07_CALENDAR_AND_AVAILABILITY.md) | Developers | Availability, drag-to-book, blockouts |
+| [docs/08_EMAIL_SMS_AND_CRON.md](./docs/08_EMAIL_SMS_AND_CRON.md) | Developers | Resend, Twilio, cron routes |
+| [docs/09_DATABASE_AND_RLS.md](./docs/09_DATABASE_AND_RLS.md) | Developers | Migrations, RLS principles, RPC review |
+| [docs/10_DEPLOYMENT_AND_ENV.md](./docs/10_DEPLOYMENT_AND_ENV.md) | Operators | Vercel, Supabase, Stripe, Twilio, env vars |
+| [docs/11_RUNBOOK.md](./docs/11_RUNBOOK.md) | Operators | Post-deploy checks, SQL recipes, incident handling |
+| [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md) | Operators + reviewers | The smoke-test catalogue |
+| [docs/13_BACKLOG_AND_DECISIONS.md](./docs/13_BACKLOG_AND_DECISIONS.md) | Anyone | Decision log + ranked backlog |
+| [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | Read-this-first for any AI continuing the work |
+| [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) | Maintainers | When to update which doc |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributors | Branching, PR discipline, review expectations |
+| [.github/pull_request_template.md](./.github/pull_request_template.md) | Every PR | Required checklist (PR #147) |
+
+## Warnings
+
+- **Do not flip live payments.** Live mode is structurally blocked: the Stripe key gate refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`, and the `manual_fee_charge_attempts` DB row has a CHECK constraint that pins `stripe_livemode = false`. Both must be deliberately altered in a reviewed live-mode PR.
+- **Do not enable auto-charge.** No automatic, background, batch, or public-triggered charge path exists. Charging is one manual practitioner click on a `ready` attempt. Anything different is a new design that needs review.
+- **Do not bypass RLS or security review.** Every public route, token route, RPC grant, and `SECURITY DEFINER` function in this repo was chosen carefully. See [docs/03](./docs/03_SECURITY_AND_PRIVACY.md) before changing.
+- **Do not expose tokenized routes to analytics.** PR #142 removed Vercel Analytics from `/portal/verify/[token]`, `/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/calendar-feed/[token]` structurally. Adding analytics to those subtrees re-leaks the token to a third party.
+- **Do not claim signatures are legally binding.** Consent + e-sign produces an evidence-friendly record. Enforceability under Ontario law depends on lawyer-reviewed wording.
+- **Do not store raw card data, CVC, or Stripe `client_secret`.** Stripe holds the card; Hone stores brand, last4, expiry, and Stripe ids.
+
+## Documentation maintenance rule
+
+Every PR that changes product behavior, data model, security posture, payment behavior, env config, routes, cron, email/SMS, legal copy, or operational behavior **must update the relevant docs in the same PR**. The `.github/pull_request_template.md` checklist enforces this at review time. See [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) for the map of "which doc to update for which change."
+
+A PR is not complete if it changes behavior but leaves docs stale.
