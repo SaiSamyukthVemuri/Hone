@@ -18,6 +18,7 @@ import {
 } from "@/lib/treatment-time/queries";
 import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -304,48 +305,70 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const now = Date.now();
-  // 24h pass: appointments starting in 23-25h from now.
-  const win24Start = new Date(now + 23 * 60 * 60 * 1000).toISOString();
-  const win24End = new Date(now + 25 * 60 * 60 * 1000).toISOString();
-  // 2h pass: 1h45m to 2h15m.
-  const win2Start = new Date(now + 105 * 60 * 1000).toISOString();
-  const win2End = new Date(now + 135 * 60 * 1000).toISOString();
+  const startedAt = Date.now();
+  try {
+    const now = Date.now();
+    // 24h pass: appointments starting in 23-25h from now.
+    const win24Start = new Date(now + 23 * 60 * 60 * 1000).toISOString();
+    const win24End = new Date(now + 25 * 60 * 60 * 1000).toISOString();
+    // 2h pass: 1h45m to 2h15m.
+    const win2Start = new Date(now + 105 * 60 * 1000).toISOString();
+    const win2End = new Date(now + 135 * 60 * 1000).toISOString();
 
-  const reminder_24h = await sendReminderPass({
-    kind: "24h",
-    windowStartIso: win24Start,
-    windowEndIso: win24End,
-  });
-  const reminder_2h = await sendReminderPass({
-    kind: "2h",
-    windowStartIso: win2Start,
-    windowEndIso: win2End,
-  });
+    const reminder_24h = await sendReminderPass({
+      kind: "24h",
+      windowStartIso: win24Start,
+      windowEndIso: win24End,
+    });
+    const reminder_2h = await sendReminderPass({
+      kind: "2h",
+      windowStartIso: win2Start,
+      windowEndIso: win2End,
+    });
 
-  // SMS reminder passes run immediately after their email counterparts,
-  // sharing the same time windows. They use independent queries on the
-  // sms_* columns; an email reminder failure does not block the SMS
-  // reminder and vice versa. Stats are added to the response JSON as
-  // additional fields; existing email keys (reminder_24h /
-  // reminder_2h) are unchanged so downstream log parsing stays
-  // compatible.
-  const sms_reminder_24h = await sendSmsReminderPass({
-    kind: "24h",
-    windowStartIso: win24Start,
-    windowEndIso: win24End,
-  });
-  const sms_reminder_2h = await sendSmsReminderPass({
-    kind: "2h",
-    windowStartIso: win2Start,
-    windowEndIso: win2End,
-  });
+    // SMS reminder passes run immediately after their email counterparts,
+    // sharing the same time windows. They use independent queries on the
+    // sms_* columns; an email reminder failure does not block the SMS
+    // reminder and vice versa. Stats are added to the response JSON as
+    // additional fields; existing email keys (reminder_24h /
+    // reminder_2h) are unchanged so downstream log parsing stays
+    // compatible.
+    const sms_reminder_24h = await sendSmsReminderPass({
+      kind: "24h",
+      windowStartIso: win24Start,
+      windowEndIso: win24End,
+    });
+    const sms_reminder_2h = await sendSmsReminderPass({
+      kind: "2h",
+      windowStartIso: win2Start,
+      windowEndIso: win2End,
+    });
 
-  return NextResponse.json({
-    ok: true,
-    reminder_24h,
-    reminder_2h,
-    sms_reminder_24h,
-    sms_reminder_2h,
-  });
+    return NextResponse.json({
+      ok: true,
+      reminder_24h,
+      reminder_2h,
+      sms_reminder_24h,
+      sms_reminder_2h,
+    });
+  } catch (err) {
+    // PR #153. Cron-route failure alert. The cron runs every few
+    // minutes; if it starts throwing, reminders silently stop. The
+    // 3-strike per-row attempt counter caps the blast radius once
+    // the scheduler resumes, but the operator needs to know now.
+    await recordOpsAlert({
+      severity: "critical",
+      event: "cron_route_failed",
+      message:
+        err instanceof Error ? err.message : String(err ?? "unknown error"),
+      route: "/api/cron/appointment-reminders",
+      safeDetails: {
+        duration_ms: Date.now() - startedAt,
+      },
+    });
+    return NextResponse.json(
+      { ok: false, error: "cron_failed" },
+      { status: 500 },
+    );
+  }
 }

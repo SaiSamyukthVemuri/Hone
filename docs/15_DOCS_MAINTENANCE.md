@@ -37,6 +37,7 @@ Docs must be updated in the same PR if the change touches any of:
 | AI handoff updates (grep gates, non-negotiables) | `docs/14` |
 | Documentation maintenance policy itself | `docs/15` (this file) |
 | Browser security headers / CSP changes | `docs/03` (Global browser security headers), `docs/10` (Browser security headers), `docs/11` (post-deploy header check), `docs/12` (§11 smoke), `docs/14` (CSP discipline non-negotiable) |
+| Observability / ops alerts changes | `docs/03` (Ops alert observability), `docs/08` (give-up alerts), `docs/10` (`OPS_ALERT_EMAILS` row), `docs/11` (alert workflow + SQL), `docs/12` (§12 smoke), `docs/13` (decision log), `docs/14` (Ops alert hygiene non-negotiable) |
 
 If a PR fits more than one row, update all of them.
 

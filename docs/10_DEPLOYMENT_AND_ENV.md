@@ -63,6 +63,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `INTAKE_SIGNING_SECRET` | Required | HMAC for `/intake/<token>`. |
 | `ADMIN_EMAILS` | **Required in production** | Comma-separated allowlist for `/admin`. Production with no/empty value makes `isAdmin()` return false for everyone (PR #143 fail-closed). |
 | `PORTAL_FINGERPRINT_SALT` | **Required in production for diagnostics** | Salts SHA-256 of IP / UA / email hashes on `client_portal_magic_links` and `client_consent_signatures`. Missing in production → `hashFingerprint()` returns null; portal login still works (diagnostic-only). |
+| `OPS_ALERT_EMAILS` | **Reserved (not read today)** | Reserved for a future PR that adds a standalone `lib/ops/alert-email.ts` using Resend directly with no path back into the appointment email helper. PR #153 ships ops alerting as durable `ops_alerts` rows + structured stderr logs ONLY; operator email dispatch was deferred to avoid a dependency cycle (ops alerts module observing the same email subsystem that would deliver them). Leave unset. SQL against `ops_alerts` (see [docs/11_RUNBOOK.md](./11_RUNBOOK.md)) is the operator surface today. |
 | `STRIPE_SECRET_KEY` | Required for any Stripe surface | `sk_test_*` everywhere; `sk_live_*` only when `STRIPE_ALLOW_LIVE_MODE=true` AND not Preview/Development. |
 | `STRIPE_ALLOW_LIVE_MODE` | Default `false` | Live-mode gate. Leave unset / `false` until a deliberate live-mode PR. |
 | `STRIPE_WEBHOOK_SECRET` | Required | Signing secret from the connected-account webhook in the Stripe dashboard. |

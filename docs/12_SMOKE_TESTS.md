@@ -284,6 +284,32 @@ Manual browser smoke (still required for full verification):
 5. Confirm browser console shows no CSP violations on any of the core flows.
 6. Confirm no second PaymentIntent / Charge was created (this PR adds no money-moving code).
 
+## 12. Ops alerts smoke (PR #153)
+
+Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes, or the email/SMS helpers.
+
+1. Force a benign critical alert by setting `STRIPE_WEBHOOK_SECRET` to an obviously wrong value in a non-production env and hitting `/api/stripe/webhook` with a real Stripe test event. The route returns 400 (signature mismatch); no ops_alerts row is written for the signature-mismatch path because it's a normal protocol error. Restore the secret.
+2. Force a benign `cron_route_failed` by temporarily setting `SUPABASE_SERVICE_ROLE_KEY` to garbage and hitting `/api/cron/appointment-reminders` with the right `CRON_SECRET`. The route's catch fires `cron_route_failed`. Restore the env.
+3. Query the table:
+   ```sql
+   select created_at, severity, event, message, route, safe_details
+     from public.ops_alerts
+    order by created_at desc
+    limit 10;
+   ```
+   Expected:
+   - No raw tokens / `client_secret` / Stripe secrets / card numbers anywhere in `safe_details`.
+   - Each row has an `event` matching one of the documented names.
+   - Severity is `info`, `warning`, or `critical` (CHECK enforced).
+4. Confirm normal flows do NOT spam alerts:
+   - Open `/cancel/fake` (invalid token) → no alert.
+   - Submit `/portal/login` with a non-matching email → no alert.
+   - Trigger a 429 via the rate limiter → no alert.
+5. Run the full test suite. The 23 new ops-alerts tests + the source-grep wiring tests guard the contract:
+   ```bash
+   npm test
+   ```
+
 ## Quick gates a reviewer can run
 
 ```bash
