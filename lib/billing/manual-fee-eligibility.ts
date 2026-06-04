@@ -133,21 +133,25 @@ export async function getManualFeeChargeEligibility(
     clientSummary = client
       ? { id: client.id, name: client.name }
       : null;
-    if (appt.status !== "cancelled" && appt.status !== "no_show") {
+    // Positive allowlist for (status, charge_type) pairs. Any future
+    // appointment status (e.g. cancelled_late, rescheduled) defaults
+    // to BLOCKED until deliberately added here. The previous
+    // asymmetric pair of one-direction `if` checks let a no_show
+    // appointment be charged as late_cancel and vice-versa; this
+    // table forces both directions to match the billing-evidence rule
+    // status=cancelled -> late_cancel, status=no_show -> no_show.
+    const ALLOWED_STATUS_CHARGE_PAIRS: Record<
+      string,
+      ReadonlySet<ManualFeeChargeType>
+    > = {
+      cancelled: new Set(["late_cancel"]),
+      no_show: new Set(["no_show"]),
+    };
+    if (!ALLOWED_STATUS_CHARGE_PAIRS[appt.status]?.has(serverChargeType)) {
       reasons.push(
-        "Appointment status is not cancelled or no-show; no fee can be prepared.",
-      );
-    }
-    // For v1, charge_type is whatever the practitioner passed; we do
-    // NOT auto-flip late_cancel to no_show based on appointment status
-    // because the practitioner may want to bill a 'late_cancel' against
-    // a row that landed in no_show status (e.g. they no-showed AND
-    // never cancelled). We do, however, sanity-check that no_show
-    // type only applies to no_show appointments to prevent the most
-    // obvious mistake.
-    if (serverChargeType === "no_show" && appt.status !== "no_show") {
-      reasons.push(
-        "Charge type no_show requires the appointment to be in no-show status.",
+        serverChargeType === "late_cancel"
+          ? "Late cancellation fee requires a cancelled appointment."
+          : "No-show fee requires a no-show appointment.",
       );
     }
   }
@@ -262,7 +266,14 @@ export async function getManualFeeChargeEligibility(
       serverChargeType === "late_cancel"
         ? studioRow.late_cancel_fee_cents
         : studioRow.no_show_fee_cents;
-    if (cents == null) {
+    // NULL and 0 both block. The DB CHECK on
+    // studios.<type>_fee_cents permits 0 for settings/test clearing
+    // semantics, but a $0.00 fee must never become a 'ready' attempt
+    // because the future Stripe-charge PR would either reject the
+    // PaymentIntent or create a confusing zero-dollar charge. Treat
+    // NULL and 0 as the same "not configured" block reason so the
+    // practitioner sees one calm message.
+    if (cents == null || cents === 0) {
       reasons.push(
         serverChargeType === "late_cancel"
           ? "Late cancellation fee amount is not configured."
