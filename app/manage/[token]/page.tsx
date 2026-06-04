@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
@@ -5,6 +6,12 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { fetchAppointmentForManageAction } from "./actions";
+
+// PR #142. Token-bearing route. See
+// app/portal/verify/[token]/page.tsx for the full rationale.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 // Public manage-appointment page. Single neutral entry point for the
 // "Manage appointment" link that confirmation and reminder SMS now

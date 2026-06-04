@@ -1,8 +1,17 @@
 import type { Metadata } from "next";
 import { Fraunces, Inter } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
+
+// PR #142. Vercel Analytics + SpeedInsights are NOT mounted in the
+// root layout. Bearer-token routes (/portal/verify/[token],
+// /cancel/[token], /reschedule/[token], /manage/[token],
+// /intake/[token], /calendar-feed/[token]) inherit this root layout,
+// and tokens in the URL must not be exposed to analytics providers
+// or session-wide tracking scripts. Safe routes opt INTO analytics
+// via the SafeAnalytics wrapper in app/_components/SafeAnalytics.tsx
+// (mounted by the (app) layout, admin layout, book layout, and
+// marketing leaf pages). See PR #142 for the audit + structural
+// reasoning.
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -74,11 +83,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${fraunces.variable} ${inter.variable}`}>
-      <body>
-        {children}
-        <Analytics />
-        <SpeedInsights />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

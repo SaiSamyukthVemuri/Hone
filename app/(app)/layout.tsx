@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
 import { AppFooter } from "@/app/_components/AppFooter";
+import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { signOut } from "./dashboard/actions";
 
 export default async function AppLayout({
@@ -91,6 +92,10 @@ export default async function AppLayout({
         {children}
       </main>
       <AppFooter />
+      {/* PR #142. Analytics mounts here (and at the other safe-tree
+          layouts + marketing leaf pages) instead of the root layout,
+          so token-bearing public routes never inherit it. */}
+      <SafeAnalytics />
     </div>
   );
 }

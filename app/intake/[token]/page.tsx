@@ -1,9 +1,16 @@
+import type { Metadata } from "next";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import { IntakeWizard } from "./IntakeWizard";
+
+// PR #142. Token-bearing route. See
+// app/portal/verify/[token]/page.tsx for the full rationale.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 type LoadResult =
   | {
