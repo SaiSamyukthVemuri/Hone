@@ -124,3 +124,55 @@ describe("portal replace-card surface (PR #151)", () => {
     expect(PORTAL_CARD_SOURCE).not.toMatch(/checkout\.sessions/);
   });
 });
+
+// PR #152: Replace card now auto-starts the SetupIntent fetch on
+// mount so the visitor sees exactly one "Replace card" click before
+// Stripe Elements appears. The double-button bug was caused by the
+// inner form re-rendering its own idle "Replace card" button.
+describe("portal replace-card auto-start (PR #152)", () => {
+  it("PortalCardOnFileCard passes autoStart to PortalPaymentMethodForm in replace mode", () => {
+    // We accept either the shorthand `autoStart` or the explicit
+    // `autoStart={true}` JSX form.
+    expect(PORTAL_CARD_SOURCE).toMatch(/<PortalPaymentMethodForm[\s\S]*?autoStart[\s\S]*?\/>/);
+    expect(PORTAL_CARD_SOURCE).toMatch(/mode="replace"/);
+  });
+
+  it("PortalPaymentMethodForm declares an autoStart prop with a sensible default", () => {
+    expect(PORTAL_FORM_SOURCE).toMatch(/autoStart\?\s*:\s*boolean/);
+    expect(PORTAL_FORM_SOURCE).toMatch(/autoStart\s*=\s*false/);
+  });
+
+  it("PortalPaymentMethodForm guards auto-start against double-fire (useRef)", () => {
+    // Strict Mode runs effects twice in dev; the ref is the
+    // contract that prevents two SetupIntents.
+    expect(PORTAL_FORM_SOURCE).toMatch(/autoStartedRef\s*=\s*useRef/);
+    expect(PORTAL_FORM_SOURCE).toMatch(/autoStartedRef\.current/);
+  });
+
+  it("PortalPaymentMethodForm exposes the 'Preparing secure card form...' loading copy", () => {
+    expect(PORTAL_FORM_SOURCE).toMatch(/Preparing secure card form\.\.\./);
+  });
+
+  it("PortalPaymentMethodForm exposes the start-failure copy", () => {
+    expect(PORTAL_FORM_SOURCE).toMatch(
+      /We could not open the secure card form\. Please try again\./,
+    );
+  });
+
+  it("Add mode default is autoStart=false (the existing manual click stays)", () => {
+    // The default in the function signature is `autoStart = false`,
+    // and the Needs You add-card mount does NOT pass the prop.
+    expect(PORTAL_PAGE_SOURCE).toMatch(/<PortalPaymentMethodForm[\s\S]*?publishableKey=/);
+    // The Add usage in the portal page must not pass autoStart.
+    const addMatch = PORTAL_PAGE_SOURCE.match(
+      /<PortalPaymentMethodForm[\s\S]*?publishableKey=\{[^}]+\}[\s\S]*?\/>/,
+    );
+    expect(addMatch).not.toBeNull();
+    // The Add card surface in /portal page uses the bare form without
+    // mode=replace or autoStart. Verify there is no autoStart in the
+    // Add mount specifically.
+    const addBlock = addMatch?.[0] ?? "";
+    expect(addBlock).not.toMatch(/autoStart/);
+    expect(addBlock).not.toMatch(/mode="replace"/);
+  });
+});
