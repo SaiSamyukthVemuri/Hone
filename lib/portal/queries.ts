@@ -2,8 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import type { ClientPortalMessage } from "@/lib/types/database";
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -304,7 +303,7 @@ export async function getPortalIntakeStatus(
   const ensured = await ensureIntakeForClient({
     studioId,
     clientId,
-    appOrigin: APP_ORIGIN,
+    appOrigin: getRequiredAppOrigin(),
   });
   if (!ensured) return { kind: "unavailable" };
   return { kind: "outstanding", url: ensured.url };

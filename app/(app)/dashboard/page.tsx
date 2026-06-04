@@ -30,12 +30,7 @@ import type {
   Service,
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
-
-// Public origin used to build the owner-facing booking link surface. Same
-// resolution as the other settings pages: explicit override wins, otherwise
-// the production canonical host. Never used to send anything to clients.
-const DASHBOARD_APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -207,7 +202,7 @@ export default async function DashboardPage() {
         studio,
         activeServicesCount,
         openAvailabilityDaysCount,
-        appOrigin: DASHBOARD_APP_ORIGIN,
+        appOrigin: getRequiredAppOrigin(),
       })
     : null;
 
@@ -236,7 +231,7 @@ export default async function DashboardPage() {
         <BookingSetupCard
           readiness={bookingReadiness}
           studioSlug={studio.slug}
-          appOrigin={DASHBOARD_APP_ORIGIN}
+          appOrigin={getRequiredAppOrigin()}
         />
       )}
 

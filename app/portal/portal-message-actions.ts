@@ -6,8 +6,8 @@ import { getCurrentPortalSession } from "@/lib/portal/session";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { postcareContactEmail } from "@/lib/email/send-appointment";
 import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-reply-notification";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const REPLY_BODY_MIN = 1;
 const REPLY_BODY_MAX = 5000;
 
@@ -291,7 +291,7 @@ export async function createPortalMessageReplyAction(
       emailErrorString = "No studio email on file";
     } else {
       const clientProfileUrl =
-        `${APP_ORIGIN}/clients/${encodeURIComponent(session.clientId)}`;
+        `${getRequiredAppOrigin()}/clients/${encodeURIComponent(session.clientId)}`;
       const tmpl = buildPortalReplyNotificationEmail({
         studioName: studio.name,
         clientProfileUrl,

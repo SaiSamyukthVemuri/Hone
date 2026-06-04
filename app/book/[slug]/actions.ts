@@ -34,8 +34,8 @@ import {
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isConsultationService } from "@/lib/booking/consultation";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Generic public booking error. Returned for all non-success outcomes
@@ -748,17 +748,19 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     details: { source: "public_booking", email, notes },
   });
 
+  // Single helper call up front; downstream lines share the same origin.
+  const appOrigin = getRequiredAppOrigin();
   // Emails. New confirmation + reminder + reschedule URLs use the random
   // appointment_token column; legacy /cancel/[hmac] route still validates
   // older in-flight links.
-  const cancellationUrl = `${APP_ORIGIN}/cancel/${appointmentToken}`;
-  const rescheduleUrl = `${APP_ORIGIN}/reschedule/${appointmentToken}`;
+  const cancellationUrl = `${appOrigin}/cancel/${appointmentToken}`;
+  const rescheduleUrl = `${appOrigin}/reschedule/${appointmentToken}`;
   // SMS carries one neutral /manage/<token> link that surfaces both
   // reschedule and cancel after the studio's policies. Email still
   // includes the separate cancel + reschedule URLs above; SMS used
   // to mirror them and now does not, per the pilot direction change
   // away from encouraging cancel/reschedule from inside the SMS.
-  const manageUrl = `${APP_ORIGIN}/manage/${appointmentToken}`;
+  const manageUrl = `${appOrigin}/manage/${appointmentToken}`;
   // Note: the HMAC-fallback generateCancellationToken() call previously
   // sat here purely to keep the import "used". It has been removed; the
   // public booking flow now depends exclusively on
@@ -773,7 +775,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const intake = await ensureIntakeForClient({
     studioId: studio.id,
     clientId,
-    appOrigin: APP_ORIGIN,
+    appOrigin,
   });
 
   // Studio toggle: skip the confirmation email entirely if disabled.
@@ -801,7 +803,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       rescheduleUrl,
       intakeUrl: intake?.url ?? null,
       treatmentTimeLine,
-      appBaseUrl: APP_ORIGIN,
+      appBaseUrl: appOrigin,
     });
     await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
     if (!result.ok) {
@@ -854,7 +856,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       clientEmail: email,
       clientPhone,
       notes,
-      appointmentUrl: `${APP_ORIGIN}/calendar/${created.id}`,
+      appointmentUrl: `${appOrigin}/calendar/${created.id}`,
     });
   }
 

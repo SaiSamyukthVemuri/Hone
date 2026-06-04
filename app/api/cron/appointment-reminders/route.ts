@@ -17,8 +17,8 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
 
@@ -153,8 +153,9 @@ async function sendReminderPass(opts: {
       stats.failed += 1;
       continue;
     }
-    const cancellationUrl = `${APP_ORIGIN}/cancel/${token}`;
-    const rescheduleUrl = `${APP_ORIGIN}/reschedule/${token}`;
+    const cronAppOrigin = getRequiredAppOrigin();
+    const cancellationUrl = `${cronAppOrigin}/cancel/${token}`;
+    const rescheduleUrl = `${cronAppOrigin}/reschedule/${token}`;
     const practitionerName =
       appt.practitioner?.display_name?.trim() ||
       appt.practitioner?.email ||
@@ -261,7 +262,7 @@ async function sendSmsReminderPass(opts: {
     // the row lacks a column token (very old pre-backfill rows); the
     // SMS template then drops the manage line and still sends the
     // moment-only reminder.
-    const manageUrl = token ? `${APP_ORIGIN}/manage/${token}` : null;
+    const manageUrl = token ? `${getRequiredAppOrigin()}/manage/${token}` : null;
 
     const sendFn =
       opts.kind === "24h"
