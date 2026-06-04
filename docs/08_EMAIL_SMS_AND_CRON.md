@@ -70,19 +70,23 @@ Endpoint: `/api/twilio/inbound-sms`.
 
 ## Cron
 
-External scheduler (`https://cron-job.org/`) or Vercel cron. Routes:
+External scheduler (`https://cron-job.org/`) or Vercel cron. The cron schedule currently lives **outside the repo** (configured in the external scheduler dashboard, not in `vercel.json` or `next.config.ts`). Routes:
 
-| Route | Schedule | What it does |
-|---|---|---|
-| `/api/cron/appointment-reminders` | Every 5 minutes | Picks up confirmed appointments due in ~24h or ~2h, sends reminder email + SMS where eligible, increments attempts, stamps `_sent_at` on success. Bounded per-run (`PER_RUN_LIMIT = 50`). 3-strike per row. |
+| Route | Status | Should be scheduled? | What it does |
+|---|---|---|---|
+| `/api/cron/appointment-reminders` | Active, mutating | **Yes, frequent cadence (~every 5 minutes)** | Picks up confirmed appointments due in ~24h or ~2h, sends reminder email + SMS where eligible, increments attempts, stamps `_sent_at` on success. Bounded per-run (`PER_RUN_LIMIT = 50`). 3-strike per row. |
+| `/api/cron/materialize-recurring-breaks` | Active, mutating | **Yes, daily** | Daily rolling-horizon refresh for recurring break occurrences. For every active `studio_recurring_break_rules` row, materializes missing occurrences from today (in the studio's local tz) through today + ~186 days (covers the 6-month maximum public booking horizon). The underlying RPC uses `ON CONFLICT DO NOTHING` so repeated runs are idempotent. **If this is not scheduled, recurring-break availability drifts: the studio's break windows stop appearing on public booking and the calendar as the rolling horizon advances.** |
+| `/api/cron/no-show-check` | **Disabled (non-mutating)** | **No** | The previous implementation auto-flipped confirmed appointments to no_show after `starts_at + 30min`. That heuristic was unsafe (treatment sessions run long; no manual-complete UI existed) and the route is now non-mutating. The first safe no-show path is the practitioner-initiated `mark_appointment_no_show` RPC via the calendar lifecycle UI. **Do not re-enable this cron without a deliberate PR following the design constraints in `app/api/cron/no-show-check/route.ts` source comments.** |
 
 ### `CRON_SECRET`
 
 Every `/api/cron/*` route validates `Authorization: Bearer $CRON_SECRET` before doing anything. Missing or wrong secret → `401`. Generate with `openssl rand -hex 32`. Required in production.
 
-### Disabled cron routes
+### Operational expectations
 
-The original `no-show finalize` cron route (pre-Stripe hardening) is **non-mutating** and must NOT be externally scheduled. The no-show transition is now manual practitioner-initiated only via the lifecycle UI (`Mark no-show`); see [docs/13](./13_BACKLOG_AND_DECISIONS.md) decision log.
+- **`appointment-reminders` schedule drift**: if the scheduler stops hitting this route, the 24h and 2h reminder emails stop going out. The per-row 3-strike attempts counter caps the retry blast radius once the scheduler resumes, but real reminders will be missed in the meantime.
+- **`materialize-recurring-breaks` schedule drift**: if the scheduler stops hitting this route, recurring break occurrences are NOT materialized for newly-extended horizon days. Public booking eventually starts offering slots inside recurring-break windows once the rolling horizon advances past the last materialized day. The RPC is idempotent, so re-running catches up.
+- **No cron heartbeat in this repo yet.** A future PR may add a /healthz-style cron heartbeat surface so missed runs are observable inside Hone instead of requiring an external scheduler check. Out of scope for PR #149.
 
 ## Testing instructions
 

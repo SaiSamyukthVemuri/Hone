@@ -18,6 +18,36 @@ export type Slot = {
   startLabel: string;
 };
 
+// Public-only past-time guard for slot lists.
+//
+// Returns the subset of `slots` whose `start` instant is strictly
+// after `now`. The shared helper exists so public booking, public
+// reschedule, and the public next-available helpers cannot drift
+// apart on what "future slot" means (PR #149 found that the
+// reschedule slot list lacked this filter while public booking
+// already had it).
+//
+// What this is NOT
+// ----------------
+// * NOT used by the practitioner calendar quick-book drawer or by
+//   the internal slot helpers in app/(app)/calendar/actions.ts.
+//   Practitioners intentionally see past slots for charting
+//   workflows; only the PUBLIC surfaces (cancel/reschedule/book
+//   tokenized + slug routes) apply this filter.
+// * NOT a lead-time / buffer. A slot starting one minute from now
+//   still passes. Add a separate helper if a real "n-hour lead time"
+//   becomes a per-studio setting.
+//
+// `now` defaults to `new Date()` so callers don't need to plumb a
+// clock; tests pass an explicit `now` so the filter is deterministic.
+export function filterFutureSlots(
+  slots: ReadonlyArray<Slot>,
+  now: Date = new Date(),
+): Slot[] {
+  const nowMs = now.getTime();
+  return slots.filter((s) => new Date(s.start).getTime() > nowMs);
+}
+
 type StudioRow = {
   id: string;
   timezone: string;
