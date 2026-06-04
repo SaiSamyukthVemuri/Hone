@@ -42,9 +42,18 @@ Every business object in Hone is **studio-scoped**. The `studio_id` column appea
 - Multi-area plan with timeline (PR #51). Status: `in_progress` / `paused`. Each area row records the body area, target sessions, intervals.
 
 ### Session (`sessions`) and session blocks (`session_blocks`)
-- A session represents the actual treatment that happened during an appointment. Created when the practitioner clicks "Mark complete".
+- A session represents the actual treatment that happened during an appointment. Created when the practitioner clicks "+ Log session" or, as of PR #156, "+ Chart session" from the calendar appointment detail page.
 - Session blocks are individual treatment units (area + duration + equipment settings + notes) inside a session. PR #51 reshaped session blocks to use a structured area enum.
 - Drives **treatment memory**: next-visit briefings, intake history, postcare.
+- **PR #156 (migration 0068).** Sessions now carry an optional `appointment_id` FK to `appointments(id) ON DELETE SET NULL`. Two write-forward surfaces stamp the FK today:
+  - **Calendar appointment detail page** "+ Chart session" affordance forwards `?appointment_id` to the new-session page; the action validates `(studio_id, client_id)` lineage before stamping the FK.
+  - **Client profile** "Chart session" link on an uncharted past appointment forwards the same query parameter.
+- Client-scoped session creation (the legacy "+ Log session" button on the client profile, no appointment in scope) continues to insert with `appointment_id = null`. Historical sessions remain null; no backfill has been run.
+- **Dedup rule for past confirmed appointments** (the client profile's "Sessions" tab):
+  1. Sessions with `appointment_id = a.id` exclude the appointment exactly.
+  2. Sessions with `appointment_id IS NULL` participate in a `+/- 2 hour` `starts_at` proximity fallback.
+  3. Linked sessions are never counted in both buckets; no double-counting.
+- One session belongs to zero or one appointment. One appointment may have zero or more sessions. No unique constraint enforces one-to-one.
 
 ### Intake (`client_intake_forms`)
 - One per client per studio. Status: `in_progress` / `submitted` / `reviewed`.

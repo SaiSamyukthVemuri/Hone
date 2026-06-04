@@ -310,6 +310,45 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Migration 0068 verification (PR #156)
+
+After `supabase db push --linked` lands `0068_sessions_appointment_link.sql`, run the following to confirm the column, FK, and indexes are in place. Do NOT run an UPDATE backfill from this recipe; ambiguous matches must stay null.
+
+```sql
+-- 1. Column shape
+select column_name, data_type, is_nullable
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'sessions'
+  and column_name = 'appointment_id';
+-- expect: appointment_id | uuid | YES
+
+-- 2. FK definition
+select conname, pg_get_constraintdef(oid)
+from pg_constraint
+where conrelid = 'public.sessions'::regclass
+  and conname ilike '%appointment%';
+-- expect: a single row with "FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL"
+
+-- 3. Indexes
+select indexname, indexdef
+from pg_indexes
+where schemaname = 'public'
+  and tablename = 'sessions'
+  and indexdef ilike '%appointment_id%';
+-- expect: sessions_appointment_id_idx + sessions_studio_appointment_idx, both partial on (appointment_id is not null)
+
+-- 4. Row counts (read-only)
+select
+  count(*) filter (where appointment_id is not null) as linked_sessions,
+  count(*) filter (where appointment_id is null)     as unlinked_sessions
+from public.sessions;
+-- expect immediately after deploy:
+--   linked_sessions = 0
+--   unlinked_sessions = current total session row count
+-- The linked count climbs only as new appointment-context "+ Chart session" runs.
+```
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:

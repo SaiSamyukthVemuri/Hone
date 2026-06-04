@@ -136,10 +136,19 @@ export default async function ClientCheatSheetPage({
   // within +/-2h (heuristic dedup; sessions do not carry an
   // appointment_id today). Capped at 50 rows. Display-only; no
   // appointment status mutation.
+  // PR #156 (migration 0068). Pass session.appointment_id alongside
+  // started_at so the helper prefers the explicit FK over the
+  // proximity heuristic. The Session type now includes appointment_id
+  // (nullable); legacy / client-scoped rows that never carried it
+  // simply pass null and feed the heuristic fallback the way they
+  // always have.
   const unchartedPastAppointments = await getPastConfirmedAppointmentsForClient(
     studio.id,
     client.id,
-    sessions.map((s) => s.started_at),
+    sessions.map((s) => ({
+      started_at: s.started_at,
+      appointment_id: s.appointment_id,
+    })),
   );
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
@@ -702,7 +711,15 @@ export default async function ClientCheatSheetPage({
                         </div>
                       </div>
                       <Link
-                        href={`/clients/${client.id}/sessions/new`}
+                        // PR #156 (migration 0068). Forward the
+                        // appointment id so the new session is
+                        // stamped with appointment_id. The action
+                        // re-validates the lineage against the
+                        // authenticated studio and the client id.
+                        // Falls back to client-scoped (null
+                        // appointment_id) if the search-param is
+                        // ever stripped or malformed.
+                        href={`/clients/${client.id}/sessions/new?appointment_id=${encodeURIComponent(appt.id)}`}
                         className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                       >
                         Chart session

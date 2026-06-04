@@ -188,31 +188,65 @@ export default async function AppointmentDetailPage({
     Session,
     "id" | "started_at" | "modality" | "session_notes"
   > | null = null;
+  // PR #156 (migration 0068). The session, if any, that was logged
+  // explicitly against THIS appointment via the new appointment_id
+  // FK. Distinct from `lastSession` above, which is the most recent
+  // session for the client (used as a "what happened last time" hint
+  // for context). The linked session is the per-visit treatment
+  // record for this appointment; when present, the appointment is
+  // already charted and the Chart session affordance becomes a View
+  // session link instead.
+  let linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null =
+    null;
 
   if (data.client) {
     const clientId = data.client.id;
-    const [pinnedRes, tagsRes, intakeRes, plansRes, lastSessionRes] =
-      await Promise.all([
-        getPinnedNotesForClient(studio.id, clientId),
-        getClientTags(studio.id, clientId),
-        getLatestIntakeForClient(studio.id, clientId),
-        getTreatmentPlansForClient(studio.id, clientId),
-        // Most recent non-deleted session that began before this
-        // appointment. Used as a one-line "what happened last time"
-        // hint above the per-visit chart. Narrow column set; no
-        // entries, no audit, no notes leakage beyond the existing
-        // owner-only view.
-        supabase
-          .from("sessions")
-          .select("id, started_at, modality, session_notes")
-          .eq("studio_id", studio.id)
-          .eq("client_id", clientId)
-          .is("deleted_at", null)
-          .lt("started_at", data.starts_at)
-          .order("started_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
+    const [
+      pinnedRes,
+      tagsRes,
+      intakeRes,
+      plansRes,
+      lastSessionRes,
+      linkedSessionRes,
+    ] = await Promise.all([
+      getPinnedNotesForClient(studio.id, clientId),
+      getClientTags(studio.id, clientId),
+      getLatestIntakeForClient(studio.id, clientId),
+      getTreatmentPlansForClient(studio.id, clientId),
+      // Most recent non-deleted session that began before this
+      // appointment. Used as a one-line "what happened last time"
+      // hint above the per-visit chart. Narrow column set; no
+      // entries, no audit, no notes leakage beyond the existing
+      // owner-only view.
+      supabase
+        .from("sessions")
+        .select("id, started_at, modality, session_notes")
+        .eq("studio_id", studio.id)
+        .eq("client_id", clientId)
+        .is("deleted_at", null)
+        .lt("started_at", data.starts_at)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // PR #156 (migration 0068). Explicitly linked session, if one
+      // was logged against this appointment id. ON DELETE SET NULL
+      // means the row is queryable even if the parent appointment
+      // is later removed; we still filter to the current appointment
+      // id so a freshly-nulled row does not surface here. The query
+      // returns the most recent linked session in case future flows
+      // ever produce more than one (today the action treats the FK
+      // as effectively one-to-one per coalesce window).
+      supabase
+        .from("sessions")
+        .select("id, started_at, modality")
+        .eq("studio_id", studio.id)
+        .eq("client_id", clientId)
+        .eq("appointment_id", id)
+        .is("deleted_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
@@ -225,6 +259,14 @@ export default async function AppointmentDetailPage({
     }
     lastSession = (lastSessionRes.data ?? null) as
       | Pick<Session, "id" | "started_at" | "modality" | "session_notes">
+      | null;
+    if (linkedSessionRes.error) {
+      throw new Error(
+        `Failed to load linked session: ${linkedSessionRes.error.message}`,
+      );
+    }
+    linkedSession = (linkedSessionRes.data ?? null) as
+      | Pick<Session, "id" | "started_at" | "modality">
       | null;
   }
 
@@ -275,6 +317,25 @@ export default async function AppointmentDetailPage({
         session={lastSession}
         clientId={data.client?.id ?? null}
       />
+
+      {/* PR #156 (migration 0068). Chart-this-appointment affordance.
+          Skipped on cancelled appointments (nothing to chart) but
+          shown for confirmed / done / completed / no_show so the
+          practitioner can record what happened or look at what they
+          already charted. When a linked session exists, the card
+          becomes a "View session" link. When no linked session
+          exists, it forwards to /clients/[id]/sessions/new with
+          ?appointment_id so the action stamps the FK. This is the
+          single appointment-context write-forward surface in this PR;
+          there is intentionally no appointment picker on the
+          client-scoped flow. */}
+      {!isCancelled && (
+        <ChartSessionCard
+          appointmentId={id}
+          clientId={data.client?.id ?? null}
+          linkedSession={linkedSession}
+        />
+      )}
 
       <TreatmentPlanCard
         plans={activePlans}
@@ -833,6 +894,68 @@ function LastSessionCard({
           {session.session_notes}
         </p>
       )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #156 (migration 0068). Chart-this-appointment affordance. Two states:
+//   * a session is already linked to this appointment id  → View session
+//   * no linked session                                    → + Chart session
+// Both states route to existing pages: the View link points at the
+// session detail page where the practitioner edits entries / notes /
+// blocks; the Chart link points at the new-session page with
+// ?appointment_id, which the action validates against (studio_id,
+// client_id) before stamping the FK. The card stays hidden on a
+// cancelled appointment (LastSessionCard above already conveys what
+// the practitioner needs in that case). No appointment status
+// mutation happens here.
+// ---------------------------------------------------------------------------
+function ChartSessionCard({
+  appointmentId,
+  clientId,
+  linkedSession,
+}: {
+  appointmentId: string;
+  clientId: string | null;
+  linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+}) {
+  if (!clientId) {
+    return null;
+  }
+  if (linkedSession) {
+    return (
+      <section className="rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
+        <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Session for this appointment
+        </h2>
+        <p className="mt-2">
+          <Link
+            href={`/clients/${clientId}/sessions/${linkedSession.id}`}
+            className="font-medium hover:underline"
+          >
+            <FormattedDateTime iso={linkedSession.started_at} />
+          </Link>
+          <span className="text-neutral-500"> · {linkedSession.modality}</span>
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-dashed border-neutral-300 p-5 text-sm dark:border-neutral-700">
+      <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+        Session for this appointment
+      </h2>
+      <p className="text-neutral-500">
+        Not charted yet. Logging from here links the session to this
+        appointment.
+      </p>
+      <Link
+        href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
+        className="self-start rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+      >
+        + Chart session
+      </Link>
     </section>
   );
 }
