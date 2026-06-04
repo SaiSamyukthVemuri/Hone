@@ -613,6 +613,16 @@ export default async function PortalHomePage() {
                 <ul className="flex flex-col gap-1.5">
                   {signedConsentTemplates.map((t) => {
                     const sig = consentSignaturesByTemplate.get(t.id)!;
+                    // PR #137. Photo-consent rows render the
+                    // explicit response (granted / denied) instead
+                    // of the legacy "Signed" verb so a denied row
+                    // is honestly surfaced.
+                    const isPhoto = t.form_type === "photo_consent";
+                    const captionPrefix = isPhoto
+                      ? sig.response === "denied"
+                        ? "Consent denied · "
+                        : "Consent granted · "
+                      : "Signed ";
                     return (
                       <li
                         key={t.id}
@@ -629,7 +639,7 @@ export default async function PortalHomePage() {
                           className="text-[12px]"
                           style={{ color: "#6B6B6B" }}
                         >
-                          Signed{" "}
+                          {captionPrefix}
                           <FormattedDateTime iso={sig.signed_at} />
                           {" · "}
                           v{sig.template_version}

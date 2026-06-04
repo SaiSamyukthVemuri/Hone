@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type {
   ClientConsentSignature,
+  ClientConsentSignatureResponse,
   ConsentFormTemplate,
 } from "@/lib/types/database";
 
@@ -86,6 +87,7 @@ export type PortalSignatureSummary = {
   signed_at: string;
   signature_name: string;
   template_version: number;
+  response: ClientConsentSignatureResponse;
 };
 
 export async function getLatestSignaturesByTemplateForPortal(
@@ -95,7 +97,9 @@ export async function getLatestSignaturesByTemplateForPortal(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("client_consent_signatures")
-    .select("template_id, signed_at, signature_name, template_version")
+    .select(
+      "template_id, signed_at, signature_name, template_version, response",
+    )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .order("signed_at", { ascending: false });
@@ -136,6 +140,7 @@ export type PractitionerSignatureSummary = Pick<
   | "template_version"
   | "signature_name"
   | "signed_at"
+  | "response"
 >;
 
 export async function getLatestSignaturesForPractitionerView(
@@ -146,7 +151,7 @@ export async function getLatestSignaturesForPractitionerView(
   const { data, error } = await admin
     .from("client_consent_signatures")
     .select(
-      "id, template_id, template_title_snapshot, template_version, signature_name, signed_at",
+      "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
