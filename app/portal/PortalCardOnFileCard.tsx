@@ -88,9 +88,16 @@ export function PortalCardOnFileCard({
         Replace card
       </h3>
       {summary}
+      {/* PR #152. autoStart=true makes the inner form skip its own
+          idle "Replace card" button and immediately fetch the
+          SetupIntent client_secret. The outer "Replace card" button
+          (above) is the single user click that drives the flow; the
+          visitor previously had to click a SECOND identically-
+          labelled button before Stripe Elements appeared. */}
       <PortalPaymentMethodForm
         publishableKey={publishableKey}
         mode="replace"
+        autoStart
         onCancel={() => setReplacing(false)}
       />
     </section>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe, type Stripe as StripeJs } from "@stripe/stripe-js";
 import { createCardSetupIntentAction } from "./payment-method-actions";
@@ -46,6 +46,10 @@ const COPY: Record<
     saveButtonPending: string;
     successHeadline: string;
     introCopy: string | null;
+    // PR #152. Copy shown while the client_secret is being fetched.
+    startingHeadline: string;
+    // PR #152. Generic error surfaced if the start action fails.
+    startErrorMessage: string;
   }
 > = {
   add: {
@@ -54,6 +58,9 @@ const COPY: Record<
     saveButtonPending: "Saving...",
     successHeadline: "Card saved. It may take a moment to appear on the page.",
     introCopy: null,
+    startingHeadline: "Preparing secure card form...",
+    startErrorMessage:
+      "We could not open the secure card form. Please try again.",
   },
   replace: {
     idleButton: "Replace card",
@@ -63,16 +70,34 @@ const COPY: Record<
       "Card updated. The new card may take a moment to appear on the page.",
     introCopy:
       "Your current card will be replaced after the new card is saved. No charge will be made. Test mode only.",
+    startingHeadline: "Preparing secure card form...",
+    startErrorMessage:
+      "We could not open the secure card form. Please try again.",
   },
 };
 
 export function PortalPaymentMethodForm({
   publishableKey,
   mode = "add",
+  autoStart = false,
   onCancel,
 }: {
   publishableKey: string;
   mode?: Mode;
+  // PR #152. When true, the form skips its own idle "click to start"
+  // button and immediately triggers the start logic on mount. The
+  // Replace card flow turns this on: the OUTER "Replace card" button
+  // (in PortalCardOnFileCard) is the single user action; mounting
+  // this component is the intent. Without autoStart the user had to
+  // click a SECOND identically-labelled "Replace card" button inside
+  // this form before Stripe Elements appeared, which read as "the
+  // first click did nothing."
+  //
+  // The autoStart prop is NEVER trusted on the server. The server
+  // action does not branch on it; it derives identity + state from
+  // the portal session cookie + the DB. autoStart is purely a UX
+  // hint that controls whether the inner idle button renders.
+  autoStart?: boolean;
   // Optional Cancel handler exposed for the Replace flow so the
   // parent can collapse the form back to the card summary. Add
   // flow does not pass it (Needs You's Add panel does not need a
@@ -98,7 +123,64 @@ export function PortalPaymentMethodForm({
     })();
   }
 
+  // PR #152. Auto-start guard. React Strict Mode (and any future
+  // remount) runs `useEffect` setup twice in development. A single
+  // server action call is the contract; a SetupIntent costs Stripe
+  // round-trips and the second call would produce a wasted PaymentIntent-
+  // unused SetupIntent on the connected account. The ref ensures
+  // exactly one start across all renders of this component instance.
+  //
+  // We also gate on `start.kind === "idle"` so a parent rerender that
+  // toggles autoStart on after the form already started does not kick
+  // off a second start.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart) return;
+    if (autoStartedRef.current) return;
+    if (start.kind !== "idle") return;
+    autoStartedRef.current = true;
+    onClickAddCard();
+    // We intentionally do NOT include `start` in deps. The effect is
+    // a one-shot kickoff; the ref guard plus the start.kind check
+    // above is the gate. Re-running on every state change would
+    // either double-start or be redundant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
+
+  // PR #152. When autoStart is on we suppress the inner idle button
+  // entirely. The effect above will flip state to `starting` on the
+  // next tick; in the interim we render the same "Preparing secure
+  // card form..." copy the `starting` branch shows, so the visitor
+  // never sees a second click target. When autoStart is off (the Add
+  // card path), the idle branch renders the labelled button as before.
   if (start.kind === "idle") {
+    if (autoStart) {
+      return (
+        <div className="flex flex-col gap-3">
+          {copy.introCopy && (
+            <p
+              className="text-[13px] leading-[1.5]"
+              style={{ color: "#6B6B6B" }}
+            >
+              {copy.introCopy}
+            </p>
+          )}
+          <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
+            {copy.startingHeadline}
+          </p>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="self-start text-[13px] underline"
+              style={{ color: "#0A0A0A" }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col gap-3">
         {copy.introCopy && (
@@ -139,9 +221,29 @@ export function PortalPaymentMethodForm({
 
   if (start.kind === "starting") {
     return (
-      <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
-        Preparing secure card form...
-      </p>
+      <div className="flex flex-col gap-3">
+        {copy.introCopy && (
+          <p
+            className="text-[13px] leading-[1.5]"
+            style={{ color: "#6B6B6B" }}
+          >
+            {copy.introCopy}
+          </p>
+        )}
+        <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
+          {copy.startingHeadline}
+        </p>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="self-start text-[13px] underline"
+            style={{ color: "#0A0A0A" }}
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -149,16 +251,31 @@ export function PortalPaymentMethodForm({
     return (
       <div className="flex flex-col gap-3">
         <p className="text-[13px]" style={{ color: "#A03030" }} role="alert">
-          {start.message}
+          {copy.startErrorMessage}
         </p>
-        <button
-          type="button"
-          onClick={() => setStart({ kind: "idle" })}
-          className="self-start text-[13px] underline"
-          style={{ color: "#0A0A0A" }}
-        >
-          Try again
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              autoStartedRef.current = false;
+              setStart({ kind: "idle" });
+            }}
+            className="self-start text-[13px] underline"
+            style={{ color: "#0A0A0A" }}
+          >
+            Try again
+          </button>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="self-start text-[13px] underline"
+              style={{ color: "#0A0A0A" }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
     );
   }
