@@ -172,6 +172,12 @@ export function logSmsFailure(opts: {
 type ConsentGateInput = {
   studio: Pick<
     Studio,
+    // PR #155: "id" is included on the studio Pick so the SMS failure
+    // path can stamp studio_id on the ops_alerts row without a second
+    // DB roundtrip. The consent-gate logic itself only consults the
+    // three send_*_sms toggles; "id" is metadata for downstream
+    // logSmsFailure / recordOpsAlert calls.
+    | "id"
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
@@ -223,6 +229,9 @@ type SendConfirmationInput = {
   timezone: string;
   studio: Pick<
     Studio,
+    // PR #155: "id" included so SMS alerts carry studio_id (see
+    // ConsentGateInput comment above).
+    | "id"
     | "name"
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
@@ -269,6 +278,9 @@ type SendReminderInput = {
   timezone: string;
   studio: Pick<
     Studio,
+    // PR #155: "id" included so SMS alerts carry studio_id (see
+    // ConsentGateInput comment above).
+    | "id"
     | "name"
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
@@ -387,6 +399,12 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
         smsType: args.smsType,
         error: result.error,
         retryable: result.retryable,
+        // PR #155: stamp studio_id on the resulting ops_alerts row so
+        // the operator can filter alerts by studio. PR #153 already
+        // accepted studioId as optional but the appointment SMS path
+        // was not threading it through. studio.id is always available
+        // because the SMS input types Pick "id" since PR #155.
+        studioId: args.studio.id ?? null,
       });
     }
   } catch (err) {
@@ -402,6 +420,9 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       smsType: args.smsType,
       error: `exception:${message}`,
       retryable: true,
+      // PR #155: stamp studio_id (see comment on the result-failure
+      // branch above).
+      studioId: args.studio.id ?? null,
     });
   } finally {
     await recordSmsResult(

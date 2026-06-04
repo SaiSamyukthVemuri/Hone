@@ -336,7 +336,7 @@ grep -rn '@stripe/' --include='*.ts' --include='*.tsx' . | grep -v node_modules 
 
 ## What the harness cannot verify
 
-When opening a PR, the report MUST explicitly call out which smoke steps were not run. Items that always require manual execution (until automated tests exist):
+When opening a PR, the report MUST explicitly call out which smoke steps were not run. Items that always require manual execution because GitHub Actions CI (PR #154) cannot exercise them without real credentials or a real browser:
 
 - Anything requiring the practitioner session cookie (`/calendar/[id]`, `/settings/*`, the in-app actions).
 - Anything requiring a real Resend send to a real inbox.

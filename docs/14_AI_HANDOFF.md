@@ -2,12 +2,14 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #148)
+## Current production status (as of PR #155)
 
 - Production domain: `https://hone.care`.
 - Default branch: `claude/build-hone-saas-hOex7`. Every push to it triggers a production deploy. Vercel project: `prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk`, team `team_Pwj27KsmnBKe3ZUBfKLcFczf`.
-- 65 migrations applied. Most recent: `0065_manual_fee_charge_test_mode_result.sql`. The next migration is `0066`.
+- At least 67 migrations applied. Most recent in-tree: `0067_ops_alerts.sql`. The next migration is `0068`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
 - Card-on-file and test-mode manual fee charge are live in production **test mode**. Live mode is blocked by three independent guards.
+- GitHub Actions CI (PR #154) runs typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and push to default. `npm run ci` is the local shortcut. A red CI check blocks merge.
+- Ops alerts (PR #153, migration `0067_ops_alerts.sql`) capture silent failure states for the manual-fee path, Stripe webhook, SMS path, and the appointment-reminder cron. The SMS path stamps `studio_id` on alerts as of PR #155.
 
 ## Branch / PR / deploy workflow
 
@@ -17,7 +19,11 @@
    npm run typecheck
    npm run lint
    npm run build
+   npm test
+   npm run check:stripe-gates
    git diff --check
+   # or as one command:
+   npm run ci
    ```
 3. Commit as `SaiSamyukthVemuri <samyukth.ssv@gmail.com>` (the Vercel author gate requires this).
 4. Push. Open a PR with the `.github/pull_request_template.md` checklist filled honestly.
