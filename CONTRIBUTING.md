@@ -26,10 +26,22 @@ Required environment variables are documented in [docs/10_DEPLOYMENT_AND_ENV.md]
 npm run typecheck
 npm run lint
 npm run build
+npm test
 git diff --check
+npm run check:stripe-gates
 ```
 
-All four must pass. The Vercel preview deploy on the PR must reach `READY`.
+Or run them together as one command:
+
+```bash
+npm run ci
+```
+
+All six must pass. The Vercel preview deploy on the PR must reach `READY`.
+
+GitHub Actions runs the same set automatically on every PR and every push to `claude/build-hone-saas-hOex7` (see `.github/workflows/ci.yml`, added in PR #154). A failing CI check blocks merge; do not merge a PR with a red workflow even if the local run passed.
+
+CI does NOT replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md). Browser flows (Stripe Elements, portal sign-in, public booking), real Resend / Twilio sends, real Stripe test charges, and live webhook delivery cannot be exercised in CI; they live in manual smoke.
 
 ## PR template
 

@@ -312,8 +312,18 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
 
 ## Quick gates a reviewer can run
 
+GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:
+
 ```bash
-# Stripe dormancy
+npm run ci    # typecheck + lint + build + test + check:stripe-gates
+git diff --check
+```
+
+Lighter manual checks the reviewer can run by hand for spot-checking:
+
+```bash
+# Stripe dormancy: diff-only sanity check. The authoritative gate
+# is scripts/check-stripe-gates.mjs (run via npm run check:stripe-gates).
 git diff | grep -E '^\+' | \
   grep -E 'paymentIntents\.create|charges\.create|refunds\.create|checkout\.sessions|set_studio_require_card_on_file|STRIPE_ALLOW_LIVE_MODE=true'
 

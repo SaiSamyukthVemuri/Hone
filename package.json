@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
+    "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.6.0",
