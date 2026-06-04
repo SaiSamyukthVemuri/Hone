@@ -364,28 +364,69 @@ function buildBlockUtcRange(
   return { startsAt: start.toISOString(), endsAt: end.toISOString() };
 }
 
+// PR #139. All-day block helper. Half-open range in studio-local
+// time: [local 00:00 of dateStr, local 00:00 of dateStr + 1). DST-
+// safe via utcInstantFromLocal which uses Intl.DateTimeFormat for
+// the tz resolution rather than naive Date arithmetic. The
+// matching pattern is the createBlockoutAction conflict-window
+// computation already used elsewhere in this file.
+function buildAllDayBlockUtcRange(
+  dateStr: string,
+  tz: string,
+): { startsAt: string; endsAt: string } {
+  const start = utcInstantFromLocal(dateStr, "00:00", tz);
+  const nextDate = addDaysToIsoLocal(dateStr, 1);
+  const end = utcInstantFromLocal(nextDate, "00:00", tz);
+  return { startsAt: start.toISOString(), endsAt: end.toISOString() };
+}
+
+// Local mirror of addDaysToIso so this helper lives next to the
+// build* family. Same UTC-noon trick: adds N days to a YYYY-MM-DD
+// string and returns YYYY-MM-DD without DST drift.
+function addDaysToIsoLocal(dateStr: string, n: number): string {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function createTimedBlockAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
   const { studio, practitioner } = await assertOwnerWithStudio();
   const dateStr = trimmed(formData.get("date"));
+  // PR #139. All-day blocks. When 'all_day=true' is posted the
+  // start_local / end_local time inputs are ignored and the action
+  // synthesises a full studio-local-day UTC range:
+  //   starts_at = utc(dateStr 00:00 in tz)
+  //   ends_at   = utc((dateStr + 1) 00:00 in tz)
+  // The existing slot-exclusion logic in lib/booking/slots.ts treats
+  // any timed_block row as a slot-killer for its range, so a row
+  // shaped this way kills the entire day for public booking and
+  // internal quick-book without a schema change. Timezone-safe
+  // because both endpoints flow through utcInstantFromLocal.
+  const allDay = trimmed(formData.get("all_day")).toLowerCase() === "true";
   const startLocal = trimmed(formData.get("start_local"));
   const endLocal = trimmed(formData.get("end_local"));
   const category = trimmed(formData.get("category")).toLowerCase();
   const privateNote = nullable(formData.get("private_note"));
 
-  if (!dateStr || !startLocal || !endLocal) {
+  if (!dateStr) {
+    return { ok: false, error: "Date is required." };
+  }
+  if (!allDay && (!startLocal || !endLocal)) {
     return { ok: false, error: "Date and start/end times are required." };
   }
   const todayLocal = todayInTz(studio.timezone);
   if (dateStr < todayLocal) {
     return { ok: false, error: "Blocked time cannot be created in the past." };
   }
-  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
-    return { ok: false, error: "Times must be in HH:MM format." };
-  }
-  if (startLocal >= endLocal) {
-    return { ok: false, error: "End time must be after start time." };
+  if (!allDay) {
+    if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+      return { ok: false, error: "Times must be in HH:MM format." };
+    }
+    if (startLocal >= endLocal) {
+      return { ok: false, error: "End time must be after start time." };
+    }
   }
   if (
     !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
@@ -393,12 +434,9 @@ export async function createTimedBlockAction(
     return { ok: false, error: "Invalid category." };
   }
 
-  const { startsAt, endsAt } = buildBlockUtcRange(
-    dateStr,
-    startLocal,
-    endLocal,
-    studio.timezone,
-  );
+  const { startsAt, endsAt } = allDay
+    ? buildAllDayBlockUtcRange(dateStr, studio.timezone)
+    : buildBlockUtcRange(dateStr, startLocal, endLocal, studio.timezone);
   if (new Date(endsAt).getTime() <= Date.now()) {
     return { ok: false, error: "Blocked time must end in the future." };
   }

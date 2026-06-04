@@ -81,6 +81,13 @@ export function TimedBlocksSection({
   const [endLocal, setEndLocal] = useState(DEFAULT_END);
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [privateNote, setPrivateNote] = useState("");
+  // PR #139. All-day toggle for create. When checked the start /
+  // end time inputs are visually disabled and the action receives
+  // 'all_day=true'; the server synthesises a full studio-local-day
+  // UTC range and ignores the time fields. Edit flow stays on the
+  // legacy time-of-day inputs for v1; converting between modes is
+  // delete + recreate.
+  const [allDay, setAllDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -91,6 +98,7 @@ export function TimedBlocksSection({
     setEndLocal(DEFAULT_END);
     setCategory(DEFAULT_CATEGORY);
     setPrivateNote("");
+    setAllDay(false);
     setError(null);
   }
 
@@ -102,6 +110,11 @@ export function TimedBlocksSection({
     fd.set("end_local", endLocal);
     fd.set("category", category);
     fd.set("private_note", privateNote);
+    // Only send all_day on the create path; the update action does
+    // not branch on it and keeps the legacy time-of-day shape.
+    if (!editingId && allDay) {
+      fd.set("all_day", "true");
+    }
 
     if (editingId) {
       fd.set("id", editingId);
@@ -143,6 +156,9 @@ export function TimedBlocksSection({
     setEndLocal(formatTimeForInput(b.ends_at, studioTimezone));
     setCategory(b.category);
     setPrivateNote(b.private_note ?? "");
+    // PR #139. Edit always uses the explicit time-of-day shape so
+    // the visible state matches whatever is currently stored.
+    setAllDay(false);
     setError(null);
   }
 
@@ -198,6 +214,30 @@ export function TimedBlocksSection({
             className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
+        {/* PR #139. All-day toggle. When checked the start / end
+            inputs become read-only and the visible label switches to
+            'Block the entire day'. The server-side action ignores the
+            time inputs and synthesises a full studio-local-day UTC
+            range. Hidden during edit because v1 keeps the edit form
+            on the explicit time-of-day shape. */}
+        {!editingId && (
+          <label className="flex items-start gap-2 self-end text-xs md:col-span-1">
+            <input
+              type="checkbox"
+              checked={allDay}
+              onChange={(e) => setAllDay(e.target.checked)}
+              className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+            />
+            <span className="flex flex-col">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                All day
+              </span>
+              <span className="text-[11px] text-neutral-500">
+                Block the entire day
+              </span>
+            </span>
+          </label>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Start
@@ -206,8 +246,9 @@ export function TimedBlocksSection({
             type="time"
             value={startLocal}
             step={300}
+            disabled={!editingId && allDay}
             onChange={(e) => setStartLocal(e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
         <label className="flex flex-col gap-1.5">
@@ -218,8 +259,9 @@ export function TimedBlocksSection({
             type="time"
             value={endLocal}
             step={300}
+            disabled={!editingId && allDay}
             onChange={(e) => setEndLocal(e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
         <label className="flex flex-col gap-1.5">

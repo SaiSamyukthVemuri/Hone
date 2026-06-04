@@ -26,6 +26,8 @@ import {
   type QuickBookClient,
   type QuickBookDraft,
 } from "./QuickBookDrawer";
+import { DragActionChooser } from "./DragActionChooser";
+import { QuickBlockDrawer } from "./QuickBlockDrawer";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module — a client-module value imported by a Server Component
@@ -203,6 +205,23 @@ export function DayColumn({
   closedDay,
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
+  // PR #139. Drag-created drafts route through a chooser ("Book
+  // appointment" vs "Block time") instead of opening the quick-book
+  // drawer immediately. chooserDraft holds the dragged range while
+  // the chooser is up; blockDraft is set when the practitioner picks
+  // Block time. Bare clicks (no drag duration) skip the chooser and
+  // open the quick-book drawer directly via setDraft above.
+  const [chooserDraft, setChooserDraft] = useState<{
+    date: string;
+    startLocal: string;
+    endLocal: string;
+    durationMinutes: number;
+  } | null>(null);
+  const [blockDraft, setBlockDraft] = useState<{
+    localDate: string;
+    startLocal: string;
+    endLocal: string;
+  } | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   // The empty-cell button. Used to compute pointer-local Y in a way
   // that survives the pointer drifting outside the button (with
@@ -292,9 +311,13 @@ export function DayColumn({
       if (duration > MAX_DRAG_DURATION_MINUTES) {
         duration = MAX_DRAG_DURATION_MINUTES;
       }
-      setDraft({
-        localDate: date,
-        localTime: minutesToHHMM(snappedStartTotal),
+      // PR #139. Drag-created drafts open the chooser; the
+      // practitioner then decides Book vs Block. Bare clicks
+      // (openDraftAtY above) still bypass the chooser.
+      setChooserDraft({
+        date,
+        startLocal: minutesToHHMM(snappedStartTotal),
+        endLocal: minutesToHHMM(snappedEndTotal),
         durationMinutes: duration,
       });
     },
@@ -695,6 +718,50 @@ export function DayColumn({
         services={services}
         studioTimezone={tz}
         onClose={() => setDraft(null)}
+      />
+
+      {/* PR #139. Drag chooser: when the practitioner drags a range
+          we ask Book vs Block here before opening either drawer.
+          Picking Book promotes the chooser draft to a QuickBookDraft;
+          picking Block promotes it to a QuickBlockDraft. Cancel
+          clears the chooser without opening anything. */}
+      <DragActionChooser
+        open={chooserDraft !== null}
+        draft={
+          chooserDraft != null
+            ? {
+                localDate: chooserDraft.date,
+                startLocal: chooserDraft.startLocal,
+                endLocal: chooserDraft.endLocal,
+              }
+            : null
+        }
+        onCancel={() => setChooserDraft(null)}
+        onBook={() => {
+          if (!chooserDraft) return;
+          setDraft({
+            localDate: chooserDraft.date,
+            localTime: chooserDraft.startLocal,
+            durationMinutes: chooserDraft.durationMinutes,
+          });
+          setChooserDraft(null);
+        }}
+        onBlock={() => {
+          if (!chooserDraft) return;
+          setBlockDraft({
+            localDate: chooserDraft.date,
+            startLocal: chooserDraft.startLocal,
+            endLocal: chooserDraft.endLocal,
+          });
+          setChooserDraft(null);
+        }}
+      />
+
+      <QuickBlockDrawer
+        open={blockDraft !== null}
+        draft={blockDraft}
+        studioTimezone={tz}
+        onClose={() => setBlockDraft(null)}
       />
     </div>
   );
