@@ -4,6 +4,7 @@ import {
   getActiveServices,
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Studio launch readiness checklist.
 //
@@ -18,9 +19,6 @@ import {
 // row that is never "Ready". This avoids the misleading impression
 // that payments are live; PR #93/#94 keep card collection off and
 // require_card_on_file untouched.
-
-const APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
 type Status = "ready" | "needs_setup" | "optional" | "not_enabled" | "manual";
 
@@ -62,7 +60,7 @@ export default async function LaunchChecklistPage() {
   const hasSlug = nonEmpty(studio.slug);
   const studioReady = nonEmpty(studio.name) && hasSlug;
   const bookingUrl = hasSlug
-    ? `${APP_ORIGIN}/book/${studio.slug}`
+    ? `${getRequiredAppOrigin()}/book/${studio.slug}`
     : null;
 
   const rows: Row[] = [

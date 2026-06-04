@@ -5,8 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/portal-message-notification";
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 const SUBJECT_MIN = 1;
 const SUBJECT_MAX = 160;
@@ -159,7 +158,7 @@ export async function createPortalMessageAction(
     // slugs are URL-safe by convention but a future change might
     // relax that.
     const portalLoginUrl =
-      `${APP_ORIGIN}/portal/login?studio=${encodeURIComponent(studio.slug)}`;
+      `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`;
     const tmpl = buildPortalMessageNotificationEmail({
       studioName: studio.name,
       portalLoginUrl,

@@ -28,8 +28,7 @@ import {
   buildTreatmentTimeLine,
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Public reschedule collapse string. Returned for every user-facing
 // outcome that depends on the appointment's existence or state —
@@ -652,18 +651,20 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .maybeSingle();
 
   if (clientRow?.email && studioRow.send_confirmation_emails) {
-    const cancellationUrl = `${APP_ORIGIN}/cancel/${newToken}`;
-    const rescheduleUrl = `${APP_ORIGIN}/reschedule/${newToken}`;
+    // Single helper call up front; downstream lines share the same origin.
+    const appOrigin = getRequiredAppOrigin();
+    const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
+    const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
     // SMS uses the single neutral manage entry point. The email
     // path above keeps the explicit cancel + reschedule URLs because
     // email has the room for both labelled links; SMS does not, and
     // the pilot direction is to keep SMS from actively inviting
     // cancel/reschedule.
-    const manageUrl = `${APP_ORIGIN}/manage/${newToken}`;
+    const manageUrl = `${appOrigin}/manage/${newToken}`;
     const intake = await ensureIntakeForClient({
       studioId: existing.studio_id,
       clientId: existing.client_id,
-      appOrigin: APP_ORIGIN,
+      appOrigin,
     });
     try {
       const { data: studioFull } = await admin
@@ -697,7 +698,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
           rescheduleUrl,
           intakeUrl: intake?.url ?? null,
           treatmentTimeLine,
-          appBaseUrl: APP_ORIGIN,
+          appBaseUrl: appOrigin,
         });
         await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
         if (!result.ok) {

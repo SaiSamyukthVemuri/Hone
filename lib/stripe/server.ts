@@ -26,6 +26,7 @@
 //     publishable key requirement.
 
 import Stripe from "stripe";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 const STRIPE_API_VERSION = "2026-04-22.dahlia" as const;
 
@@ -91,7 +92,7 @@ export function getStripe(): Stripe {
   // appInfo.url if it cannot be resolved without falling back.
   let appOrigin: string | undefined;
   try {
-    appOrigin = getAppOrigin();
+    appOrigin = getRequiredAppOrigin();
   } catch {
     appOrigin = undefined;
   }
@@ -132,36 +133,11 @@ export const STRIPE_CONNECT_COUNTRY: string =
 // ---------------------------------------------------------------------------
 //
 // Used to build Stripe `return_url` / `refresh_url` and the Stripe SDK
-// appInfo.url. Resolution order:
-//
-//   1. NEXT_PUBLIC_APP_ORIGIN (explicit; production wins on this).
-//   2. VERCEL_URL (Preview deployments — Vercel populates this with
-//      the unique per-deploy URL, NOT the production hostname).
-//   3. http://localhost:3000 ONLY if NODE_ENV !== "production".
-//   4. Throw — NEXT_PUBLIC_APP_ORIGIN must be set in production.
-//
-// Never silently fall back to https://hone.care; doing so makes
-// Preview / Dev deployments redirect through the production
-// hostname and could send a real client's Stripe onboarding return
-// to the wrong app instance.
+// appInfo.url. The resolution logic now lives in lib/app-origin.ts so
+// every link-generation call site (portal magic links, manage/cancel/
+// reschedule links, intake links, cron reminders, Stripe return URLs)
+// shares one source of truth. This wrapper is preserved so existing
+// `import { getAppOrigin } from "@/lib/stripe/server"` callers keep
+// working; new callers should import `getRequiredAppOrigin` directly.
 // ---------------------------------------------------------------------------
-export function getAppOrigin(): string {
-  const explicit = process.env.NEXT_PUBLIC_APP_ORIGIN;
-  if (explicit && explicit.length > 0) {
-    return explicit.replace(/\/$/, "");
-  }
-
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl && vercelUrl.length > 0) {
-    return `https://${vercelUrl.replace(/\/$/, "")}`;
-  }
-
-  if (process.env.NODE_ENV !== "production") {
-    return "http://localhost:3000";
-  }
-
-  throw new Error(
-    "NEXT_PUBLIC_APP_ORIGIN is required in production. " +
-      "Set it to https://hone.care (or the appropriate canonical hostname).",
-  );
-}
+export { getRequiredAppOrigin as getAppOrigin } from "@/lib/app-origin";

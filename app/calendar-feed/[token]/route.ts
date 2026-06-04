@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { buildIcsFeed, type IcsEvent } from "@/lib/booking/ical";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Private read-only iCal subscription feed.
 //
@@ -35,8 +36,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const FEED_WINDOW_DAYS = 30;
-const APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
 // Map a service modality string to a generic, treatment-area-free
 // label. Anything unknown collapses to "Appointment".
@@ -135,6 +134,7 @@ export async function GET(
     client: { name: string } | { name: string }[] | null;
   };
 
+  const appOrigin = getRequiredAppOrigin();
   const events: IcsEvent[] = ((rows ?? []) as Row[]).map((row) => {
     const service = Array.isArray(row.service) ? row.service[0] : row.service;
     const client = Array.isArray(row.client) ? row.client[0] : row.client;
@@ -147,7 +147,7 @@ export async function GET(
     if (descriptor) {
       lines.push(`Status: ${descriptor}`);
     }
-    lines.push(`View in Hone: ${APP_ORIGIN}/calendar/${row.id}`);
+    lines.push(`View in Hone: ${appOrigin}/calendar/${row.id}`);
 
     return {
       uid: row.id,

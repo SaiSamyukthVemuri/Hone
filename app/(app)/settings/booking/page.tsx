@@ -4,6 +4,7 @@ import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 import { updateStudioBookingPrefsAction } from "./actions";
 import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -14,8 +15,6 @@ function bufferOptionLabel(minutes: number): string {
   if (minutes === 0) return "No buffer";
   return `${minutes} minutes`;
 }
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 
 // Renders a calm green/red banner above the form after the save
 // action redirected back with a status query param. Server-rendered;
@@ -67,6 +66,7 @@ export default async function BookingSettingsPage({
   const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const appOrigin = getRequiredAppOrigin();
   if (practitioner.role !== "owner") {
     return (
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
@@ -89,7 +89,7 @@ export default async function BookingSettingsPage({
 
       <section className="flex flex-col gap-2">
         <label className="text-sm font-medium">Your booking link</label>
-        <BookingLinkCard slug={studio.slug} origin={APP_ORIGIN} variant="card" />
+        <BookingLinkCard slug={studio.slug} origin={appOrigin} variant="card" />
       </section>
 
       <form
@@ -100,7 +100,7 @@ export default async function BookingSettingsPage({
           <span className="text-sm font-medium">Booking URL slug</span>
           <div className="flex items-stretch">
             <span className="inline-flex items-center rounded-l-md border border-r-0 border-neutral-300 bg-neutral-50 px-3 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-              {APP_ORIGIN.replace(/^https?:\/\//, "")}/book/
+              {appOrigin.replace(/^https?:\/\//, "")}/book/
             </span>
             <input
               name="slug"

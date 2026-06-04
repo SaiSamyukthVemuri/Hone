@@ -18,8 +18,8 @@ import {
 } from "@/lib/portal/queries";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAGIC_LINK_TTL_MS = 30 * 60 * 1000;
 
@@ -219,7 +219,7 @@ export async function requestPortalMagicLinkAction(
       .maybeSingle();
     const studioName = studioRow?.name?.trim() || "your studio";
 
-    const magicLink = `${APP_ORIGIN}/portal/verify/${rawToken}`;
+    const magicLink = `${getRequiredAppOrigin()}/portal/verify/${rawToken}`;
     const email = buildPortalMagicLinkEmail({
       studioName,
       magicLink,

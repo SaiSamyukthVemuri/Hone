@@ -8,7 +8,7 @@ Built by [Saltkiln](https://saltkiln.com). Anchor customer: Belleville Electroly
 
 - **Next.js 15** (App Router) + **TypeScript** + **Tailwind CSS v4**
 - **Supabase** — Postgres, Auth (magic link), Storage
-- **Vercel** — hosting at `hone.studio`
+- **Vercel** — hosting at `hone.care`
 
 ## Local setup
 
@@ -27,8 +27,8 @@ The app starts on http://localhost:3000.
    - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
    - `anon` public key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 3. In **Authentication → URL Configuration**, set:
-   - **Site URL**: `http://localhost:3000` (dev) and later `https://hone.studio`
-   - **Redirect URLs**: add `http://localhost:3000/auth/callback` and `https://hone.studio/auth/callback`
+   - **Site URL**: `http://localhost:3000` (dev) and later `https://hone.care`
+   - **Redirect URLs**: add `http://localhost:3000/auth/callback` and `https://hone.care/auth/callback`
 4. In **Authentication → Providers → Email**, enable **Magic Link**. Disable signups via password.
 5. Apply the schema. Easiest path:
    - Open the SQL editor in the Supabase dashboard.
@@ -63,8 +63,8 @@ The app starts on http://localhost:3000.
 1. Push this repo to GitHub.
 2. Import the project on Vercel and pick the Next.js preset.
 3. Add the two environment variables (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) to **Production**, **Preview**, and **Development**.
-4. Once deployed, point `hone.studio` at the Vercel project.
-5. Add `https://hone.studio/auth/callback` to Supabase Auth redirect URLs (step 3 above).
+4. Once deployed, point `hone.care` at the Vercel project.
+5. Add `https://hone.care/auth/callback` to Supabase Auth redirect URLs (step 3 above).
 
 ## Project layout
 

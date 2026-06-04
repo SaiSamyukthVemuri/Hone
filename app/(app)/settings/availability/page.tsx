@@ -6,8 +6,7 @@ import {
 } from "@/lib/booking/queries";
 import { addDays, todayInTz } from "@/lib/booking/tz";
 import { AvailabilityClient } from "./AvailabilityClient";
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export default async function AvailabilitySettingsPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -40,7 +39,7 @@ export default async function AvailabilitySettingsPage() {
       </div>
       <AvailabilityClient
         studioSlug={studio.slug}
-        appOrigin={APP_ORIGIN}
+        appOrigin={getRequiredAppOrigin()}
         defaults={defaults}
         overrides={overrides}
         blockouts={blockouts}

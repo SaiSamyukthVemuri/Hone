@@ -21,8 +21,7 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
-
-const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -370,7 +369,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           cancelledBy: practitioner.role === "owner" ? "owner" : "practitioner",
           reason,
           isClient: true,
-          rebookUrl: `${APP_ORIGIN}/book/${studio.slug}`,
+          rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
       } catch (err) {
         console.error("client cancel notification email failed", err);
@@ -704,14 +703,16 @@ type DispatchParams = {
 };
 
 async function dispatchBookingEmails(p: DispatchParams) {
+  // Single helper call up front; downstream lines share the same origin.
+  const appOrigin = getRequiredAppOrigin();
   // Prefer the column-based token if the row has one; legacy callers that
   // missed the new path can still produce a working HMAC link.
   const token =
     p.appointment.cancellation_token ??
     generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
-  const cancellationUrl = `${APP_ORIGIN}/cancel/${token}`;
+  const cancellationUrl = `${appOrigin}/cancel/${token}`;
   const rescheduleUrl = p.appointment.cancellation_token
-    ? `${APP_ORIGIN}/reschedule/${p.appointment.cancellation_token}`
+    ? `${appOrigin}/reschedule/${p.appointment.cancellation_token}`
     : null;
   // SMS uses the single neutral /manage/<token> entry point. We
   // build it from the same `token` cancel uses (column-based when
@@ -725,14 +726,14 @@ async function dispatchBookingEmails(p: DispatchParams) {
   // /reschedule already shows for unknown tokens. New internal
   // bookings always carry a column token via the insert path, so
   // this fallback is the legacy-row edge only.
-  const manageUrl = `${APP_ORIGIN}/manage/${token}`;
-  const appointmentUrl = `${APP_ORIGIN}/calendar`;
+  const manageUrl = `${appOrigin}/manage/${token}`;
+  const appointmentUrl = `${appOrigin}/calendar`;
 
   if (p.clientEmail && p.studio.send_confirmation_emails) {
     const intake = await ensureIntakeForClient({
       studioId: p.studio.id,
       clientId: p.appointment.client_id,
-      appOrigin: APP_ORIGIN,
+      appOrigin,
     });
     const treatmentTimeLine = p.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
@@ -758,7 +759,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
       rescheduleUrl,
       intakeUrl: intake?.url ?? null,
       treatmentTimeLine,
-      appBaseUrl: APP_ORIGIN,
+      appBaseUrl: appOrigin,
     });
     const { createAdminClient } = await import("@/lib/supabase/admin-server");
     const admin = createAdminClient();

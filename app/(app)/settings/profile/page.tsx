@@ -2,9 +2,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { ProfileForm } from "./ProfileForm";
 import { ColorPicker } from "./ColorPicker";
 import { CalendarFeedCard } from "./CalendarFeedCard";
-
-const APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export default async function ProfileSettingsPage() {
   const { practitioner } = await getCurrentPractitionerWithStudio();
@@ -23,7 +21,7 @@ export default async function ProfileSettingsPage() {
       />
       <ColorPicker initialColor={practitioner.color} />
       <CalendarFeedCard
-        appOrigin={APP_ORIGIN}
+        appOrigin={getRequiredAppOrigin()}
         initialToken={practitioner.calendar_feed_token}
       />
     </section>

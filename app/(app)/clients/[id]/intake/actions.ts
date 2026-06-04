@@ -8,9 +8,7 @@ import {
   generateIntakeLinkUrl,
 } from "@/lib/intake/queries";
 import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
-
-const APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://hone.care";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
@@ -184,7 +182,7 @@ export async function requestIntakeUpdateAction(
     studioId: auth.studioId,
     clientId: auth.client.id,
     requestedBy: auth.practitionerId,
-    appOrigin: APP_ORIGIN,
+    appOrigin: getRequiredAppOrigin(),
   });
   if (!created) {
     return { ok: false, error: "Could not create the new intake request." };
@@ -264,7 +262,7 @@ export async function getIntakeLinkAction(
     };
   }
 
-  const url = generateIntakeLinkUrl(intake.id, APP_ORIGIN);
+  const url = generateIntakeLinkUrl(intake.id, getRequiredAppOrigin());
   return {
     ok: true,
     intakeId: intake.id,
@@ -319,7 +317,7 @@ export async function resendIntakeEmailAction(
   const studioRes = await loadStudioForReissue(auth.studioId);
   if (!studioRes.ok) return studioRes;
 
-  const url = generateIntakeLinkUrl(intake.id, APP_ORIGIN);
+  const url = generateIntakeLinkUrl(intake.id, getRequiredAppOrigin());
   const result = await sendIntakeUpdateRequestToClient({
     clientEmail: auth.client.email,
     studioName: studioRes.studio.name,
