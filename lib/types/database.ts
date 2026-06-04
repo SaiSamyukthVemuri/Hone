@@ -69,6 +69,12 @@ export type Studio = {
   no_show_policy_text: string | null;
   policy_version: string | null;
   policy_updated_at: string | null;
+  // Migration 0064 (PR #145): per-studio manual cancellation/no-show
+  // fee amount, in cents. NULL means "fee not configured" and the
+  // manual-fee preview blocks charge prepare for that type. Range
+  // is enforced by CHECK (0..20000) at the column level.
+  late_cancel_fee_cents: number | null;
+  no_show_fee_cents: number | null;
   // Migration 0049: per-studio SMS toggles. All default false. SMS
   // only goes out when the matching toggle is on AND the client has
   // explicit consent AND the client is not opted out AND Twilio is

@@ -1,6 +1,7 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
+import { FeeAmountsCard } from "./FeeAmountsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,13 @@ export default async function PaymentsSettingsPage() {
         paidServiceCount={paidServiceCount}
         hasCancellationPolicy={hasCancellationPolicy}
         hasNoShowPolicy={hasNoShowPolicy}
+      />
+      {/* PR #145. Owner-only fee amount settings. Money is not
+          charged here; this only persists the dollar amount that
+          the manual-fee preview will reuse. */}
+      <FeeAmountsCard
+        initialLateCancelCents={studio.late_cancel_fee_cents}
+        initialNoShowCents={studio.no_show_fee_cents}
       />
     </section>
   );
