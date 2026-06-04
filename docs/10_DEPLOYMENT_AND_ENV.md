@@ -95,6 +95,16 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `STRIPE_SECRET_KEY` | `getStripe()` throws when any Stripe surface is hit. |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verification fails; webhook returns 400. |
 
+## Browser security headers (PR #150)
+
+`next.config.ts` ships a global enforced CSP plus HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and Permissions-Policy on every route. Token-bearing routes additionally override Referrer-Policy back to `no-referrer` and carry `X-Robots-Tag: noindex, nofollow` (PR #142, preserved).
+
+What the headers depend on for correctness:
+
+- `NEXT_PUBLIC_SUPABASE_URL` must be set at build time. The CSP `connect-src` is scoped to that specific Supabase host. A missing value falls back to `https://*.supabase.co` (wider than ideal); set the env in every environment.
+- If you add a third-party browser integration (Sentry, an analytics provider, a CDN), you must extend the CSP in the same PR. See `lib/security/headers.ts` and [docs/03 § Global browser security headers](./03_SECURITY_AND_PRIVACY.md).
+- Local dev over HTTP ignores HSTS. The same enforced CSP applies in dev with one extra source: `'unsafe-eval'` in `script-src` for Next HMR. Production builds do not need it.
+
 ## Stripe warnings
 
 - **Test vs live keys.** Vercel Preview and Development environments **MUST** use `sk_test_*` regardless of `STRIPE_ALLOW_LIVE_MODE`. The key-gate enforces this and throws if a live key is presented in those environments.

@@ -12,6 +12,12 @@ Operational recipes for after-deploy checks, incident response, and the SQL need
    ```
 3. Verify the production deployment is `READY` via Vercel MCP `get_deployment` (target=production, aliased to `hone.care`).
 4. Run anonymous smoke ([docs/12 §10](./12_SMOKE_TESTS.md#10-security-route-smoke)).
+5. Confirm the global browser security headers (PR #150) are present on production routes:
+   ```bash
+   curl -sI https://hone.care/book/willow-electrolysis \
+     | grep -iE '^(content-security-policy|strict-transport-security|x-frame-options|x-content-type-options|referrer-policy|permissions-policy)'
+   ```
+   Expected: every header listed; `X-Frame-Options: DENY`; `Referrer-Policy: strict-origin-when-cross-origin`; CSP contains `frame-ancestors 'none'`. The token-route block additionally overrides `Referrer-Policy: no-referrer` on `/cancel/:token*`, `/reschedule/:token*`, `/manage/:token*`, `/intake/:token*`, `/portal/verify/:token*`, `/calendar-feed/:token*`.
 
 ## After every migration
 

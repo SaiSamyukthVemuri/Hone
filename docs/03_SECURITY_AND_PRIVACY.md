@@ -43,6 +43,25 @@ Each React-tree token page also exports `metadata.robots = { index: false, follo
 
 Token resolution failure (malformed / unknown / expired) always returns the same generic message. Comparing response strings cannot reveal whether the token is structurally valid or only expired. The cancel page and the reschedule page both collapse `invalid_token / already_cancelled / not_cancelable` into one public error.
 
+### Global browser security headers (PR #150)
+
+Every route (`/:path*`) now carries an enforced baseline of cross-cutting browser security headers. The token-route privacy block from PR #142 is layered AFTER the global block so it overrides the global `Referrer-Policy` back to `no-referrer` for token subtrees. The header builder is `lib/security/headers.ts` and is unit-tested.
+
+Globally:
+
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+- `X-Frame-Options: DENY` (and `Content-Security-Policy: frame-ancestors 'none'` for the same reason): no Hone page may be framed by third-party sites. This is the clickjacking protection around portal consent signing, photo-consent allow/deny, card-on-file Stripe Elements, and the manual fee test-charge button.
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: strict-origin-when-cross-origin` (token routes override to `no-referrer`)
+- `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=(), interest-cohort=()`: every browser capability Hone does not currently use is explicitly empty. A future feature that needs camera (e.g. portal photo capture) must deliberately loosen this entry.
+- `Content-Security-Policy`: first enforced baseline. Keeps `'unsafe-inline'` for now (Next inline RSC hydration, Tailwind inline styles, Stripe Elements styling). Production excludes `'unsafe-eval'`; development includes it for Next HMR. Allowlisted sources by directive: `script-src https://js.stripe.com https://va.vercel-scripts.com`; `frame-src https://js.stripe.com https://hooks.stripe.com`; `connect-src` carries the specific Supabase project host (from `NEXT_PUBLIC_SUPABASE_URL` at build), Stripe API surfaces (`api.stripe.com`, `r.stripe.com`, `q.stripe.com`), and Vercel Analytics + Speed Insights beacons (`va.vercel-scripts.com`, `vitals.vercel-insights.com`); `font-src 'self' data:` (next/font self-hosts the Google fonts at build, so the browser never fetches from `fonts.gstatic.com` at runtime); `frame-ancestors 'none'`; `form-action 'self'`; `object-src 'none'`; `base-uri 'self'`; `upgrade-insecure-requests`.
+- No wildcard `*` source. No Sentry domains (Sentry is NOT installed). No `fonts.gstatic.com` / `fonts.googleapis.com`.
+
+What this baseline is **not**:
+- Not a nonce-based CSP. A future PR may convert `'unsafe-inline'` to per-request nonces.
+- Not a report-only path. A future PR may add `Content-Security-Policy-Report-Only` with a report endpoint before tightening further.
+- Not a Sentry-aware policy. CSP sources for Sentry are explicitly excluded; they will be added in the Sentry-install PR if that ships.
+
 ## 3. Portal session model
 
 | Step | What happens |
