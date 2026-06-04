@@ -78,6 +78,55 @@ export default async function AppointmentDetailPage({
   if (!data) notFound();
 
   const isCancelled = data.status === "cancelled";
+
+  // PR #144. When the appointment is cancelled, load the latest
+  // `cancelled` audit row so we can surface the structured insight
+  // the public token path now captures (reason machine value, label
+  // snapshot, optional note, follow-up permission). Studio members
+  // can read appointment_audit via RLS (migration 0010); no service
+  // role needed. The shape is jsonb so we narrow at use sites.
+  // Practitioner-initiated cancellations produce a different details
+  // shape (no reason_label / note / follow_up_allowed) and the UI
+  // below falls through to the existing column-based rendering for
+  // those rows.
+  type CancellationAuditDetails = {
+    source?: string;
+    reason?: string;
+    reason_label?: string;
+    note?: string;
+    follow_up_allowed?: boolean;
+  };
+  let cancellationInsight: CancellationAuditDetails | null = null;
+  if (isCancelled) {
+    const { data: auditRow } = await supabase
+      .from("appointment_audit")
+      .select("details")
+      .eq("appointment_id", id)
+      .eq("action", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ details: CancellationAuditDetails | null }>();
+    cancellationInsight = auditRow?.details ?? null;
+  }
+
+  // Compute "cancelled quickly" from the row's own timestamps. The
+  // window is 15 minutes between created_at and cancelled_at; if the
+  // row was created and cancelled within that window the practitioner
+  // sees a small "Cancelled quickly" hint with the elapsed minutes.
+  // No new column, no migration; just arithmetic on what the row
+  // already stores. Returns null when the appointment is not
+  // cancelled or when either timestamp is missing or malformed.
+  let cancelledQuicklyMinutes: number | null = null;
+  if (isCancelled && data.cancelled_at && data.created_at) {
+    const createdMs = new Date(data.created_at).getTime();
+    const cancelledMs = new Date(data.cancelled_at).getTime();
+    if (Number.isFinite(createdMs) && Number.isFinite(cancelledMs)) {
+      const deltaMin = Math.round((cancelledMs - createdMs) / 60000);
+      if (deltaMin >= 0 && deltaMin <= 15) {
+        cancelledQuicklyMinutes = deltaMin;
+      }
+    }
+  }
   // P0-1 + P0-3: typed alias so the lifecycle component sees an exhaustive
   // status union and not the raw `string` from the database row type.
   const typedStatus = data.status as
@@ -278,19 +327,82 @@ export default async function AppointmentDetailPage({
       )}
 
       {isCancelled ? (
-        <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-          Cancelled
-          {data.cancelled_by ? ` by ${data.cancelled_by}` : ""}
-          {data.cancelled_at && (
-            <>
-              {" "}
-              · <FormattedDateTime iso={data.cancelled_at} />
-            </>
+        <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-medium">Cancelled</span>
+            {data.cancelled_by && (
+              <span className="text-neutral-600 dark:text-neutral-400">
+                by {data.cancelled_by}
+              </span>
+            )}
+            {data.cancelled_at && (
+              <span className="text-neutral-600 dark:text-neutral-400">
+                · <FormattedDateTime iso={data.cancelled_at} />
+              </span>
+            )}
+            {/* PR #144. "Cancelled quickly" hint: rendered only when
+                the cancellation happened within 15 minutes of the
+                booking row being created. Shown to the practitioner
+                only; never to the client. Computed above from the
+                row's own timestamps so no schema change was needed. */}
+            {cancelledQuicklyMinutes !== null && (
+              <span
+                className="rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                title="Cancelled within 15 minutes of booking"
+              >
+                {cancelledQuicklyMinutes === 0
+                  ? "Cancelled within a minute of booking"
+                  : `Cancelled ${cancelledQuicklyMinutes} minute${cancelledQuicklyMinutes === 1 ? "" : "s"} after booking`}
+              </span>
+            )}
+            {/* PR #144. Follow-up permission. Surfaced as a small
+                positive badge only when the client opted in.
+                Absence is silent (no "no follow-up" badge in the
+                main UI). */}
+            {cancellationInsight?.follow_up_allowed === true && (
+              <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                Follow-up okay
+              </span>
+            )}
+          </div>
+
+          {/* PR #144. Reason label snapshot + note. Both are
+              optional; we only render the labelled rows when the
+              client supplied them. The label snapshot lives in the
+              audit row (cancellationInsight.reason_label), and
+              appointments.cancellation_reason carries the same
+              string for back-compat with older surfaces. Prefer the
+              snapshot when present. */}
+          {(cancellationInsight?.reason_label ||
+            data.cancellation_reason) && (
+            <div className="text-neutral-700 dark:text-neutral-300">
+              <span className="font-medium">Cancellation reason: </span>
+              {cancellationInsight?.reason_label ||
+                data.cancellation_reason}
+            </div>
           )}
-          {data.cancellation_reason && (
-            <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-              {data.cancellation_reason}
-            </p>
+          {cancellationInsight?.note && (
+            <div className="text-neutral-700 dark:text-neutral-300">
+              <span className="font-medium">Client note: </span>
+              {cancellationInsight.note}
+            </div>
+          )}
+
+          {/* PR #144. Suggested follow-up copy. Shown only when the
+              client opted into follow-up. The practitioner can copy
+              this into an email manually; we do not auto-send
+              anything. */}
+          {cancellationInsight?.follow_up_allowed === true && (
+            <details className="mt-1 text-neutral-700 dark:text-neutral-300">
+              <summary className="cursor-pointer text-xs font-medium uppercase tracking-wider text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
+                Suggested follow-up message
+              </summary>
+              <p className="mt-2 whitespace-pre-line text-sm">
+                No worries at all about the cancellation. If another
+                time would work better or if anything was confusing
+                during booking, feel free to let me know.
+              </p>
+            </details>
           )}
         </section>
       ) : isCancelable ? (
