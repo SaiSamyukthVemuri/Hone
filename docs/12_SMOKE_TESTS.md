@@ -60,6 +60,40 @@ Expected end state:
 - One `stripe_events` row for `setup_intent.succeeded` with `processed_at` set and no `processing_error`.
 - The portal "Your info" zone shows `Visa ending in 4242`.
 
+### 5b. Replace card smoke (PR #151)
+
+1. Sign into the portal as a test client who already has an active card on file (Visa 4242 from §5).
+2. Confirm the "Your info" zone shows `Card on file: visa ending in 4242, expires MM/YYYY` plus a **Replace card** button (and the test-mode disclaimer).
+3. Click "Replace card". Confirm:
+   - Read-only summary remains visible.
+   - The replace-mode helper copy renders: "Your current card will be replaced after the new card is saved. No charge will be made."
+   - A Stripe Elements `<PaymentElement />` form mounts under the connected-account context.
+   - An inline Cancel link is present.
+4. Enter a different Stripe test card if practical (e.g. `5555 5555 5555 4444` for Mastercard) or `4242 4242 4242 4242` again. Submit "Save new card".
+5. On Elements success, the form replaces itself with the success copy "Card updated. The new card may take a moment to appear on the page."
+6. Refresh the portal page. The "Your info" zone now shows the new brand + last4 + expiry.
+7. SQL verify:
+   ```sql
+   select id, status, brand, last4, exp_month, exp_year,
+          stripe_livemode, stripe_account_id, stripe_customer_id,
+          stripe_payment_method_id, stripe_setup_intent_id,
+          card_authorization_signature_id, added_via,
+          added_at, removed_at
+     from public.client_payment_methods
+    where studio_id = '<studio uuid>'
+      and client_id = '<client uuid>'
+    order by added_at desc;
+   ```
+   Expected:
+   - Exactly ONE row with `status='active'` (the new card).
+   - The prior card row is `status='removed'` with `removed_at` populated.
+   - The new active row carries a non-null `card_authorization_signature_id`.
+   - `stripe_livemode = false` on both rows.
+   - The new active row's `stripe_setup_intent_id` is different from the prior row's.
+8. Stripe Dashboard → Customers → the connected-account customer for this `(studio, client)`. Confirm a NEW PaymentMethod attached. Confirm a NEW SetupIntent succeeded. Confirm **no PaymentIntent and no Charge were created** during the replace.
+9. Click "Replace card" again, then click Cancel. Confirm the form unmounts and the card summary is restored unchanged.
+10. (Optional safety) Cancel a Stripe test SetupIntent that has not yet succeeded. Confirm the prior active card row is NOT removed (the webhook only flips on `setup_intent.succeeded`).
+
 ## 6. Cancellation reason smoke (PR #144)
 
 1. From a test booked appointment, open the cancel link `/cancel/<token>`.

@@ -67,6 +67,20 @@ client opens /portal -> "Add card" entry
 
 The PAN and CVC never touch Hone's servers or DB. The `client_secret` is consumed by the portal browser code once and never persisted.
 
+### Replace card (PR #151)
+
+The same flow handles the Replace card path. When a client already has an active card on file:
+
+- The portal "Your info" zone shows `PortalCardOnFileCard` with the read-only summary AND a "Replace card" button.
+- Clicking Replace mounts the existing `PortalPaymentMethodForm` in `mode='replace'`; the server action does NOT branch on mode (it derives state from the DB).
+- The same SetupIntent / webhook chain runs. The PR #135 `setup_intent.succeeded` handler:
+  - SELECTs first against `(studio, client, account, mode, setup_intent_id)` for idempotency (short-circuits re-delivery).
+  - UPDATEs any existing `status='active'` row for the `(studio, client)` pair to `status='removed'` with `removed_at = now()`.
+  - INSERTs the new active row with the new `stripe_payment_method_id`, `stripe_setup_intent_id`, and the same `card_authorization_signature_id`.
+  - The partial unique `(studio, client) WHERE status='active'` (migration 0058) is the structural backstop.
+
+Result: exactly one active card per `(studio, client)`; the prior row stays as `status='removed'` (audit trail; never hard-deleted). No PaymentIntent, no charge, no refund, no live-mode change.
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).

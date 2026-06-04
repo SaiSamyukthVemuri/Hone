@@ -90,6 +90,28 @@ Surface: `/portal` (post-magic-link), `/portal/login`, `/portal/verify/<token>`.
 
 See [docs/03 §3](./03_SECURITY_AND_PRIVACY.md#3-portal-session-model). Generic-success response on `requestPortalMagicLinkAction` regardless of match. GET on `/portal/verify/<token>` is non-consuming so email scanners do not burn the token; POST consumes via conditional UPDATE.
 
+### Card on file: Add vs Replace (PR #135, PR #151)
+
+The portal card-on-file surface has two affordances depending on whether the client already has an active card:
+
+- **No active card** (`/portal` "Needs you" zone, only when the studio has a `card_authorization` template AND the client has signed it AND the publishable-key gate resolved ok): a calm "Add card on file" button mounts `PortalPaymentMethodForm` in `mode='add'`. Submitting confirms a SetupIntent on the connected account; the webhook's `setup_intent.succeeded` arm inserts the `client_payment_methods` row.
+- **Active card on file** (`/portal` "Your info" zone, when the same publishable-key gate is open): `PortalCardOnFileCard` renders the read-only card summary AND a "Replace card" button. Replace mounts `PortalPaymentMethodForm` in `mode='replace'` with explicit copy ("Your current card will be replaced after the new card is saved. No charge will be made.") and an inline Cancel.
+
+Replace reuses the same `createCardSetupIntentAction` server action. The action does not branch on the `mode` prop; it derives the client's current card state from the DB. The webhook's `setup_intent.succeeded` handler (PR #135) pre-flips any existing `status='active'` row for the `(studio_id, client_id)` pair to `status='removed'` BEFORE inserting the new active row, inside the same transaction. The PR #135 idempotency SELECT on `(studio, client, account, mode, setup_intent_id)` short-circuits a Stripe re-delivery without re-flipping the new active row to removed. The partial unique `(studio_id, client_id) WHERE status='active'` from migration 0058 is the structural backstop.
+
+What this preserves:
+
+- **One active card per (studio, client).** Always.
+- **Card authorization signature linkage.** The replacement card still requires a signed `card_authorization` template; the latest signature row is linked via `card_authorization_signature_id` on the new `client_payment_methods` row.
+- **Manual fee charge eligibility (PR #145).** The eligibility helper continues to require an active card with a non-null `card_authorization_signature_id`; after a Replace, the new active card carries the same FK, so prepared fee attempts that reference the prior `client_payment_method_id` will fail their lineage recheck. Future fee attempts pick the new card.
+
+What Replace does NOT do:
+
+- No card delete. The prior row stays as `status='removed'` with `removed_at` stamped.
+- No charge. No PaymentIntent. No refund. No invoice. No receipt.
+- No live mode. The same `STRIPE_ALLOW_LIVE_MODE=false` posture applies.
+- No practitioner-side card replace UI. `client_payment_methods.added_via` accepts `practitioner` but no UI exists today.
+
 ### Two-zone portal UX (PR #136)
 
 The portal home (`/portal`) is reorganized into two zones:

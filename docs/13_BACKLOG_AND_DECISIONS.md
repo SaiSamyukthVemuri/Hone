@@ -88,6 +88,21 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Portal Replace card uses the existing SetupIntent flow (PR #151)
+
+**Decision:** The portal Replace card affordance reuses the same `createCardSetupIntentAction` server action as Add card. The `mode` prop on `PortalPaymentMethodForm` drives copy only; the server action and webhook are unchanged. The webhook's `setup_intent.succeeded` handler pre-flips any existing active row to `status='removed'` and inserts the new active row in the same transaction (PR #135). The PR #135 idempotency SELECT on `(studio, client, account, mode, setup_intent_id)` makes the handler safe against Stripe re-deliveries even during a replace.
+
+**Why:** The webhook ALREADY handled replacement correctly. Splitting Replace into a separate action or a separate webhook arm would have duplicated the lineage checks, the customer get-or-create, and the metadata validation without adding any safety. One server action + one webhook arm + one DB constraint = one place to reason about.
+
+**Alternative considered:** A dedicated `replaceCardOnFileAction` that read the prior card's id from the form. Rejected because: (1) the server already derives current card state from the DB so the prior card id is not needed as input, and (2) trusting any form-supplied identity would weaken the security contract.
+
+**What this PR did NOT do:**
+- No card delete. Prior row stays as `status='removed'` for audit.
+- No live mode. Same `STRIPE_ALLOW_LIVE_MODE=false` posture.
+- No PaymentIntent / charge / refund / invoice / receipt.
+- No practitioner-side card replace UI (still backlog).
+- No multiple-card wallet, no default-card picker (still backlog).
+
 ### Global browser security headers (PR #150)
 
 **Decision:** Ship a first enforced baseline of global browser security headers in `next.config.ts`. Token-route privacy headers (PR #142) preserved by layering AFTER the global block. Header builder lives in `lib/security/headers.ts` and is unit-tested.

@@ -25,6 +25,7 @@ import { PortalConsentForms } from "./PortalConsentForms";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
 import { PortalPaymentMethodForm } from "./PortalPaymentMethodForm";
+import { PortalCardOnFileCard } from "./PortalCardOnFileCard";
 
 // Authenticated client portal home.
 //
@@ -651,24 +652,41 @@ export default async function PortalHomePage() {
               </section>
             )}
 
-            {/* PR #135 / #136. Payment method compact summary. The
-                Add card surface lives in Needs you above when it is
-                actually needed; this block is read-only and quiet. */}
+            {/* PR #135 / #136 / #151. Payment method block.
+                The Add card surface lives in Needs you above when
+                no card is on file. When a card IS on file, this
+                surface shows the read-only summary AND surfaces a
+                Replace card affordance (PR #151) via
+                PortalCardOnFileCard. Replace reuses the existing
+                SetupIntent flow; the webhook pre-flips the prior
+                active row to status='removed' atomically when the
+                new SetupIntent succeeds (see the webhook handler
+                in app/api/stripe/webhook/route.ts). The Replace
+                affordance renders only when the publishable key
+                gate resolved ok; otherwise the read-only summary
+                stays alone. */}
             {activeCard != null ? (
-              <section className="flex flex-col gap-2">
-                <h3
-                  className="text-[11px] font-medium uppercase"
-                  style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
-                >
-                  Payment method
-                </h3>
-                <p className="text-[14px] text-[#0A0A0A]">
-                  Card on file: {activeCard.brand} ending in{" "}
-                  {activeCard.last4}, expires{" "}
-                  {String(activeCard.expMonth).padStart(2, "0")}/
-                  {activeCard.expYear}
-                </p>
-              </section>
+              publishableKeyResolution.ok ? (
+                <PortalCardOnFileCard
+                  card={activeCard}
+                  publishableKey={publishableKeyResolution.key}
+                />
+              ) : (
+                <section className="flex flex-col gap-2">
+                  <h3
+                    className="text-[11px] font-medium uppercase"
+                    style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+                  >
+                    Payment method
+                  </h3>
+                  <p className="text-[14px] text-[#0A0A0A]">
+                    Card on file: {activeCard.brand} ending in{" "}
+                    {activeCard.last4}, expires{" "}
+                    {String(activeCard.expMonth).padStart(2, "0")}/
+                    {activeCard.expYear}
+                  </p>
+                </section>
+              )
             ) : showNoPaymentTemplateNote ? (
               <section className="flex flex-col gap-2">
                 <h3
