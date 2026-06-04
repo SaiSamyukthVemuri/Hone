@@ -213,9 +213,9 @@ export function logEmailFailure(opts: {
   // PR #153. Record a durable ops alert ONLY when the attempt was
   // the final one (3-strike cap reached or marked non-retryable).
   // Lower-numbered retryable attempts are normal noise and stay
-  // log-only. The alerts helper's loop guard (`event.startsWith
-  // "email_"`) ensures we never email an alert about an email
-  // failure; DB + structured log only.
+  // log-only. Operator email is deferred in PR #153, so the alert
+  // is DB + structured log only; no recursion path back through
+  // this email helper exists.
   const isFinalAttempt =
     !opts.retryable ||
     (typeof opts.attemptNumber === "number" &&
