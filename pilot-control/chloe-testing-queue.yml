@@ -1,0 +1,288 @@
+# Pilot Control Sheet: Chloe testing queue.
+#
+# Each entry is one thing Chloe needs to verify in her own
+# environment. Status moves:
+#   - "Needs Chloe Testing" (default after a PR ships)
+#   - "In Progress" (Chloe is testing now)
+#   - "Passed" (Chloe confirmed the behavior works)
+#   - "Failed" (Chloe found a bug; capture a Product Feedback entry too)
+#   - "Deferred" (Chloe will revisit after another PR)
+#
+# Required fields:
+#   area, pr, priority, owner, status, what_changed,
+#   why_chloe_should_care, test_steps, expected_result
+#
+# Optional fields:
+#   chloe_notes, last_tested
+#
+# Priority scale:
+#   P0: blocks pilot operation today
+#   P1: directly affects Chloe's daily workflow
+#   P2: nice-to-have or future-facing
+#
+# When editing this file, run `npm run pilot:export` so the CSV
+# under pilot-control/generated/ and the operator-facing Excel
+# stay in sync. `npm run pilot:check` (run by GitHub Actions CI)
+# fails when the YAML is dirty against the generated CSV.
+
+- area: Client portal layout
+  pr: 159
+  priority: P0
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Portal now has clearer top-level sections (Appointments, Care
+    instructions, Forms and records, Payment method). Email <studio>
+    button moved to the header. Care instructions render open by
+    default. "Signed forms" renamed to "Completed forms" with quiet
+    record styling. PR #158 card-authorization guidance preserved.
+  why_chloe_should_care: |
+    Clients should feel less lost in the portal. Chloe's smoke-test
+    feedback drove this restructure.
+  test_steps:
+    - Log into the portal as a test client.
+    - Confirm the "Email Willow" button appears in the header near Sign out.
+    - Confirm the four top-level sections render with h2 headings.
+    - Confirm Care instructions are open by default.
+    - Confirm Completed forms render as a quiet divider list, not
+      as bordered cards.
+    - Confirm the bottom "Need help?" section is gone.
+  expected_result: |
+    Portal feels clearer and less cluttered. Contact action is
+    immediately visible.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Card authorization guidance
+  pr: 158
+  priority: P0
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Portal renders four explicit card states (no template
+    configured / authorization needed / signed but no card / active
+    card). The "Card authorization needed" placeholder explains
+    exactly what the client must do, with a "Review card
+    authorization" deep-link to the unsigned-forms section. The
+    matching practitioner card on the client profile renders the
+    same four branches with practitioner-actionable copy.
+  why_chloe_should_care: |
+    Chloe's feedback: "I don't know how to add a card. It should
+    give you instructions." This PR makes the gating legible to
+    both the client and the practitioner.
+  test_steps:
+    - Open the portal as a client whose studio has an active
+      card_authorization template AND who has NOT yet signed it.
+    - Expect the "Card authorization needed before adding a card"
+      placeholder.
+    - Click "Review card authorization" and confirm the page
+      scrolls to the "Review and sign forms" block.
+    - Sign the card authorization.
+    - Confirm the Add card form appears with the "You have signed
+      card authorization. You can now add a card on file." line.
+    - Open the same client's profile as the practitioner.
+    - Confirm the "Card authorization signed, but no card is on
+      file yet." block renders before the card is added.
+  expected_result: |
+    Both the client and Chloe always know what to do next, with no
+    silent gating.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Client profile appointment timeline
+  pr: 157
+  priority: P1
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Client profile Sessions tab leads with an Appointments timeline
+    grouped into Upcoming / Needs charting / Charted / Cancelled /
+    No-show. Each row exposes the right per-bucket affordance
+    (Open appointment / Chart session / View session).
+  why_chloe_should_care: |
+    Chloe asked to see appointment history from the client profile
+    without context-switching to the calendar.
+  test_steps:
+    - Open a client profile with at least one appointment in each
+      status group.
+    - Switch to the Sessions tab.
+    - Verify Upcoming shows future confirmed appointments.
+    - Verify Needs charting offers Chart session linking to /sessions/new?appointment_id=APPT_ID.
+    - Verify Charted offers View session linking to the linked
+      session detail page.
+    - Verify Cancelled rows show cancelled_at and
+      cancellation_reason when present and offer no Chart session.
+  expected_result: |
+    Chloe can plan and review without leaving the client profile.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Session to appointment link (foundation)
+  pr: 156
+  priority: P1
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    sessions.appointment_id FK added (migration 0068). The calendar
+    appointment detail page exposes a Chart session button that
+    stamps the FK on the new session row. startSessionAction
+    validates studio/client/practitioner lineage before writing the
+    FK. Historical sessions remain null.
+  why_chloe_should_care: |
+    Treatment memory now ties each session to a real booking.
+    Future analytics, billing, and post-care logic depend on this
+    link being correct.
+  test_steps:
+    - Open a future confirmed appointment in the calendar.
+    - Click "+ Chart session" and confirm the new-session page
+      says it is linking to the appointment.
+    - Pick a modality and save the session.
+    - Refresh the appointment detail and confirm it shows
+      View session.
+    - From a client profile, click "+ Log session" (no appointment
+      context) and confirm the new session has appointment_id
+      null.
+  expected_result: |
+    Appointment-context flow stamps appointment_id; legacy and
+    client-scoped flows still work and leave it null.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Confirmation/reminder email AM/PM
+  pr: 157
+  priority: P1
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Every client-facing email (confirmation, reminder, cancellation,
+    practitioner notification, postcare) now renders appointment
+    times in 12-hour AM/PM format. Previously a 24-hour body
+    produced "11:00 to 12:00" / "11:00 - 12:00" which a recipient
+    on mobile read as "11 to 12".
+  why_chloe_should_care: |
+    Chloe's recipient sees "11:00 AM to 12:00 PM" now. Less risk
+    that a client misreads the appointment time and shows up at
+    the wrong hour.
+  test_steps:
+    - Book an 11:00-12:00 appointment for a test client.
+    - Confirm the confirmation email body reads "11:00 AM to 12:00 PM".
+    - Trigger or wait for the 24h reminder; subject should read "Reminder: SERVICE tomorrow at 11:00 AM".
+    - Cancel the appointment and confirm the cancellation email uses "at 11:00 AM".
+  expected_result: |
+    No 24-hour formats anywhere in client-facing email bodies or
+    subjects.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Portal replace card one-click flow
+  pr: 152
+  priority: P1
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    The Replace card surface no longer requires two clicks. The
+    autoStart prop with a useRef guard opens the secure card form
+    immediately when the client lands on the Replace surface from
+    the portal.
+  why_chloe_should_care: |
+    A two-click replace was confusing during the smoke test. The
+    new flow is one obvious action.
+  test_steps:
+    - Open the portal as a client with an active card on file.
+    - Tap Replace card.
+    - The secure card form should open immediately without a
+      second tap.
+    - Save a new test card.
+    - Confirm the read-only summary now shows the new card.
+  expected_result: |
+    One tap from Replace card to the saved-new-card summary.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Photo consent allow/deny
+  pr: 137
+  priority: P2
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Photo consent was a single-button "Sign" flow. It is now an
+    explicit binary. The portal records "granted" or "denied" so
+    the studio honors the client's actual choice.
+  why_chloe_should_care: |
+    A client who tapped Sign without reading would have been
+    consenting silently. Now the choice is explicit on the record.
+  test_steps:
+    - Open the portal as a client who has not yet signed photo
+      consent.
+    - Choose Deny and confirm the Completed forms section shows
+      "Consent denied".
+    - In another test client, choose Grant and confirm Completed
+      forms shows "Consent granted".
+    - Verify the client profile in the practitioner view reflects
+      the same response.
+  expected_result: |
+    Both responses are visible and unambiguous on both sides.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: SMS confirmation path
+  pr: 0
+  priority: P1
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    SMS confirmation/reminder pipeline (Twilio v1) runs the claim-
+    then-send-then-record discipline. PR #155 enriched failure
+    alerts with studio_id. Behavior itself is unchanged.
+  why_chloe_should_care: |
+    Studio toggles control whether SMS sends. Chloe should verify
+    that a real client with sms_consent_at on file receives the
+    confirmation and reminder texts when toggles are on, and
+    nothing when toggles are off or opt-out is set.
+  test_steps:
+    - Book a test appointment for a client with sms_consent_at and
+      a valid phone number, and the studio toggle on for
+      confirmation.
+    - Confirm the client receives a confirmation SMS within ~15s.
+    - Toggle the 24h reminder toggle off; do not expect a 24h
+      reminder.
+    - Toggle it back on and verify the next 24h cron pass sends
+      the reminder.
+    - Mark the client opted-out and confirm no further SMS sends.
+  expected_result: |
+    SMS only goes to consenting clients with toggles on.
+  chloe_notes: ""
+  last_tested: ""
+
+- area: Manual fee test-mode duplicate-charge smoke
+  pr: 146
+  priority: P0
+  owner: Chloe
+  status: Needs Chloe Testing
+  what_changed: |
+    Manual fee charge is test-mode only (PR #146). One
+    paymentIntents.create call site exists at
+    lib/billing/manual-fee-charge.ts; everything else is gated.
+    The duplicate-charge smoke is the load-bearing safety check:
+    a second click on a charged attempt must NOT produce a second
+    PaymentIntent.
+  why_chloe_should_care: |
+    Without this guard a tired practitioner could double-bill a
+    cancelled client. The whole live-payment posture rests on
+    this attempt model working correctly even in test mode.
+  test_steps:
+    - Find a cancelled or no-show appointment for a client with an
+      active card on file and signed card authorization.
+    - Use Prepare fee charge to claim a manual fee attempt.
+    - Click Charge once. Verify the PaymentIntent succeeds in test
+      mode.
+    - Click Charge again immediately. Verify the second click does
+      NOT create a second PaymentIntent and the UI surfaces the
+      "already attempted" branch.
+    - Confirm the manual_fee_charge_attempts row reflects one
+      successful attempt only.
+  expected_result: |
+    Exactly one PaymentIntent per attempt; double-click is a
+    no-op.
+  chloe_notes: ""
+  last_tested: ""

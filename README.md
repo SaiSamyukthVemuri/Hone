@@ -42,14 +42,23 @@ npm run lint
 npm run build
 npm test
 npm run check:stripe-gates
+npm run pilot:check
 git diff --check
 ```
 
-Or the shortcut that chains the first five:
+Or the shortcut that chains the first six:
 
 ```bash
 npm run ci
 ```
+
+The pilot control sheet (PR #160) is regenerated via:
+
+```bash
+npm run pilot:export
+```
+
+That writes the canonical CSVs under `pilot-control/generated/` (checked into the repo) and the operator-facing `Hone_Pilot_Control_Sheet.xlsx` (not checked in; regenerate locally as needed).
 
 GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
 

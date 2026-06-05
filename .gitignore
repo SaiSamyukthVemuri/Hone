@@ -24,3 +24,9 @@ yarn-error.log*
 *.pem
 
 coverage
+
+# PR #160. Pilot control sheet Excel artifact is generated on
+# demand by `npm run pilot:export` and is not checked in. The
+# canonical, CI-checked source of truth lives in
+# pilot-control/generated/*.csv.
+Hone_Pilot_Control_Sheet.xlsx

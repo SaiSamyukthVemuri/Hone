@@ -310,6 +310,29 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Pilot control sheet (PR #160)
+
+After a PR that touches Chloe / client testing lands, the operator's smoke is to refresh the tracker and confirm `pilot:check` agrees:
+
+```bash
+# 1. Edit the relevant YAML file(s) under pilot-control/.
+$EDITOR pilot-control/chloe-testing-queue.yml
+$EDITOR pilot-control/product-feedback.yml
+
+# 2. Regenerate the canonical CSVs + the operator Excel.
+npm run pilot:export
+
+# 3. Confirm the freshness check is clean before opening the PR.
+npm run pilot:check
+
+# 4. Open Hone_Pilot_Control_Sheet.xlsx locally to scan the Dashboard
+#    tab (counts by status / priority / pain level) before sharing
+#    with Chloe.
+open Hone_Pilot_Control_Sheet.xlsx
+```
+
+CI runs `npm run pilot:check` on every PR and every push to the default branch. A YAML drift or a missing required field fails the build.
+
 ## Portal layout cleanup (PR #159)
 
 After deploy, the operator should confirm the portal's new structure renders end to end.

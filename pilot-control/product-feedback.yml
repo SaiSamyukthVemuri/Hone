@@ -1,0 +1,203 @@
+# Pilot Control Sheet: Product feedback.
+#
+# Each entry is one piece of feedback from Chloe (or another pilot
+# voice). The goal is to record the raw signal, the area it
+# touches, the pain level, the candidate fix, and the current
+# decision so future PRs can plan against it.
+#
+# Required fields:
+#   feedback, source, area, pain_level, suggested_fix, decision,
+#   status
+#
+# Pain level scale:
+#   blocker:        cannot run the pilot today without this
+#   high:           daily friction; client or practitioner asks again
+#   medium:         comes up but a workaround exists
+#   low:            polish or future feature
+#
+# Decision values:
+#   Accepted, Deferred, Rejected, Investigating
+#
+# Status values:
+#   Open, In Progress, Shipped, Closed
+#
+# When editing this file, run `npm run pilot:export` so the CSV
+# under pilot-control/generated/ stays in sync.
+
+- feedback: |
+    The portal felt cluttered and the "Your info" wrapper made it
+    hard to find anything.
+  source: Chloe smoke test
+  area: Client portal layout
+  pain_level: high
+  suggested_fix: |
+    Split Your info into top-level Appointments / Care instructions
+    / Forms and records / Payment method sections. Surface
+    Email <studio> in the header.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    Care instructions were collapsed by default; clients miss them.
+  source: Chloe smoke test
+  area: Client portal layout
+  pain_level: high
+  suggested_fix: Render Care instructions open by default via <details open>.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    Signed forms looked clickable but had no destination. Confusing.
+  source: Chloe smoke test
+  area: Signed forms display
+  pain_level: medium
+  suggested_fix: |
+    Rename to "Completed forms"; use a quiet divider list instead
+    of bordered cards. Add a footnote acknowledging that a
+    viewable copy is coming soon.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    I don't know how to add a card. It should give you instructions.
+  source: Chloe smoke test
+  area: Portal card-on-file
+  pain_level: blocker
+  suggested_fix: |
+    Surface a "Card authorization needed before adding a card"
+    placeholder with a deep-link to the signing form. Mirror the
+    four states on the practitioner profile card.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    Confirmation email said "11 to 12" instead of "11 AM to 12 PM".
+  source: Chloe smoke test
+  area: Email templates
+  pain_level: high
+  suggested_fix: |
+    Switch every client-facing email template to localTimeString12h
+    (keep practitioner calendar / dashboard on 24h).
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    All of the client's booked appointments should show up under
+    their client profile. Right now I can only do that via calendar.
+  source: Chloe smoke test
+  area: Client profile
+  pain_level: high
+  suggested_fix: |
+    Add an Appointments timeline on the Sessions tab with
+    Upcoming / Needs charting / Charted / Cancelled / No-show
+    groups.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    All appointments are a session. From a client's profile or
+    from the calendar, I should be able to log the session and
+    chart.
+  source: Chloe smoke test
+  area: Session creation
+  pain_level: high
+  suggested_fix: |
+    Add sessions.appointment_id FK and surface Chart session
+    affordances from both the client profile timeline and the
+    calendar appointment detail.
+  decision: Accepted
+  status: Shipped
+
+- feedback: |
+    Editable appointment prep / before-treatment instructions per
+    service.
+  source: Chloe smoke test
+  area: Services / pre-care
+  pain_level: medium
+  suggested_fix: |
+    Make services.pre_care_instructions editable per-service from
+    Settings without code change.
+  decision: Investigating
+  status: Open
+
+- feedback: |
+    Photo consent customization (different wording per studio).
+  source: Chloe smoke test
+  area: Consent templates
+  pain_level: low
+  suggested_fix: |
+    Allow the owner to edit the photo_consent template body from
+    Settings → Consent forms.
+  decision: Deferred
+  status: Open
+
+- feedback: |
+    Editable consent / policy / intake template bodies from the UI.
+  source: Chloe smoke test
+  area: Consent templates / Intake
+  pain_level: low
+  suggested_fix: |
+    Intake builder + consent editor surfaces. Large scope; defer
+    until pilot stabilizes.
+  decision: Deferred
+  status: Open
+
+- feedback: |
+    Percentage / time-window based cancellation fee model.
+  source: Chloe smoke test
+  area: Cancellation fees
+  pain_level: medium
+  suggested_fix: |
+    Today only a flat late_cancel_fee_cents / no_show_fee_cents
+    exists. Future: per-hour-window or percentage of service
+    price.
+  decision: Deferred
+  status: Open
+
+- feedback: |
+    A practitioner notifications feed (silent failures, give-up
+    SMS, manual fee charge results) visible inside Hone.
+  source: Internal
+  area: Practitioner experience
+  pain_level: medium
+  suggested_fix: |
+    Surface the ops_alerts table (PR #153) inside the app for
+    owner-only viewing. ops_alerts already records redacted
+    failure rows.
+  decision: Deferred
+  status: Open
+
+- feedback: |
+    A way to actually view a signed form from the portal
+    (Completed forms list).
+  source: Chloe smoke test
+  area: Signed forms display
+  pain_level: medium
+  suggested_fix: |
+    Build a signed-form viewer reading the template snapshot +
+    signature row. Future PR; PR #159 set the honest expectation
+    in copy.
+  decision: Investigating
+  status: Open
+
+- feedback: |
+    Past appointments visible on the portal (not just upcoming).
+  source: Chloe smoke test
+  area: Client portal layout
+  pain_level: low
+  suggested_fix: |
+    Add a portal-side past-appointment read. Deferred from PR
+    #159 to keep that PR layout-only.
+  decision: Deferred
+  status: Open
+
+- feedback: |
+    Email Chloe button should be at the top of the portal.
+  source: Chloe smoke test
+  area: Client portal layout
+  pain_level: medium
+  suggested_fix: |
+    Move the contact-the-studio action into the header next to
+    Sign out.
+  decision: Accepted
+  status: Shipped

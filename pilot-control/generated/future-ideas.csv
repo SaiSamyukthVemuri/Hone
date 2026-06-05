@@ -1,0 +1,45 @@
+idea,area,why,complexity
+Notion or Google Sheets sync of the pilot control sheet,Operator tooling,"Chloe asked for a Notion-style tracker. The current local
+CSV+XLSX flow is the first cut; future versions could push
+to Notion or a Google Sheet on each merge so Chloe never
+needs to clone the repo.
+",medium
+Full intake builder,Intake,"Intake fields live in code today. A self-serve intake builder
+would let a studio author its own intake form without a code
+change. Out of scope for the controlled pilot.
+",large
+Practitioner notifications feed,Practitioner experience,"Surface ops_alerts inside the app (owner-only) so Chloe can
+review silent failures (SMS give-ups, manual fee retries,
+stripe webhook signature mismatches) without a SQL query.
+",medium
+Signed form PDF export,Signed forms display,"Build the viewable copy promised by the PR #159 footnote.
+Render the template snapshot + signature row as a PDF the
+client (or the studio) can save.
+",medium
+Self-serve studio onboarding,Onboarding,"Today a new studio is created via SQL by the operator. A
+self-serve flow (sign up, create studio, add practitioner,
+connect Stripe) would unlock broader pilot.
+",large
+Hone subscription billing,Billing,"Once Hone has multiple paying studios, charge a monthly
+subscription. Independent of the client-card pipeline. Needs
+a separate Stripe account or product model.
+",large
+Right-to-erasure / export flow for client data,Privacy / compliance,"PIPEDA gives clients a right to erasure and a right to access
+their data. Today only the practitioner can act on this; a
+self-serve client export + erasure flow is the long-term
+answer.
+",medium
+Calendar feed token hashing,Security,"practitioners.calendar_feed_token is stored raw today. A DB
+compromise would yield usable feed tokens. Migration to
+hash + raw-token-only-on-rotate would reduce blast radius.
+See docs/03 risk 2.
+",small
+Public booking card-required flow,Booking / payments,"studios.require_card_on_file = true is the gate. The SQL
+backend has been in prod since migration 0032 but the public
+booking UI does not surface a card-collection step. Wire it
+up when live payments unblock.
+",medium
+Two-way Google Calendar sync,Calendar,"Read-only ICS feed exists today. Two-way sync would let Chloe
+block time directly from her Google Calendar and have Hone
+honor it.
+",large

@@ -1,0 +1,24 @@
+tracker,metric,value
+Chloe Testing Queue,total entries,9
+Chloe Testing Queue,status: Needs Chloe Testing,9
+Chloe Testing Queue,priority: P0,3
+Chloe Testing Queue,priority: P1,5
+Chloe Testing Queue,priority: P2,1
+Product Feedback,total entries,15
+Product Feedback,status: Open,7
+Product Feedback,status: Shipped,8
+Product Feedback,pain_level: blocker,1
+Product Feedback,pain_level: high,5
+Product Feedback,pain_level: low,3
+Product Feedback,pain_level: medium,6
+Launch Blockers,total entries,6
+Launch Blockers,status: In Progress,1
+Launch Blockers,status: Open,5
+PR / Build Log,total entries,10
+PR / Build Log,risk_level: high,2
+PR / Build Log,risk_level: low,4
+PR / Build Log,risk_level: medium,4
+PR / Build Log,smoke_result: N/A,4
+PR / Build Log,smoke_result: Pass,2
+PR / Build Log,smoke_result: Pending,4
+Future Ideas,total entries,10

@@ -1,0 +1,165 @@
+# Pilot Control Sheet: PR / build log.
+#
+# Lightweight history of recent merged PRs so Chloe (and the
+# operator) can scan a single sheet to see what shipped, the risk
+# level, and whether Chloe needs to test it.
+#
+# Required fields:
+#   pr, name, what_changed, risk_level, merged, needs_chloe_test,
+#   smoke_result, notes
+#
+# Risk level scale:
+#   low:    docs/tooling/copy/test only, no runtime behavior change
+#   medium: app behavior change with a clear gate or guard
+#   high:   payment / RLS / migration / live-mode adjacent
+#
+# Smoke result values:
+#   Pending, Pass, Fail, N/A
+#
+# When editing this file, run `npm run pilot:export` so the CSV
+# under pilot-control/generated/ stays in sync. New entries should
+# be added in descending PR-number order at the top.
+
+- pr: 160
+  name: Pilot control sheet automation
+  what_changed: |
+    Adds pilot-control/ YAML trackers + scripts/export-pilot-
+    control-sheet.mjs. Generates deterministic CSVs at
+    pilot-control/generated/ checked into the repo plus an
+    optional Hone_Pilot_Control_Sheet.xlsx generated on demand
+    via npm run pilot:export. GitHub Actions CI runs npm run
+    pilot:check.
+  risk_level: low
+  merged: pending
+  needs_chloe_test: false
+  smoke_result: N/A
+  notes: |
+    Internal process / tooling. No app runtime behavior changes.
+    Flip `merged` to the actual date once this PR lands.
+
+- pr: 159
+  name: Portal layout cleanup
+  what_changed: |
+    Retired the "Your info" wrapper. Added top-level Appointments,
+    Care instructions, Forms and records, Payment method sections.
+    Email <studio> button moved to header. Care instructions open
+    by default. "Signed forms" renamed to "Completed forms" with
+    quiet record styling.
+  risk_level: low
+  merged: 2026-06-05
+  needs_chloe_test: true
+  smoke_result: Pending
+  notes: |
+    PR #158 card-authorization guidance preserved.
+
+- pr: 158
+  name: Card authorization guidance
+  what_changed: |
+    Portal renders four explicit card states with a "Card
+    authorization needed" placeholder that deep-links to the
+    signing form. Matching practitioner PaymentMethodCard renders
+    the same four branches. Manual fee blocked reasons updated to
+    actionable copy.
+  risk_level: medium
+  merged: 2026-06-05
+  needs_chloe_test: true
+  smoke_result: Pending
+  notes: |
+    createCardSetupIntentAction and Stripe gates unchanged.
+
+- pr: 157
+  name: Client profile appointment timeline + email AM/PM
+  what_changed: |
+    Sessions tab now leads with a five-bucket appointment
+    timeline. Plus a patch fixed the reported email AM/PM bug by
+    routing every client-facing email through localTimeString12h.
+  risk_level: medium
+  merged: 2026-06-04
+  needs_chloe_test: true
+  smoke_result: Pending
+  notes: |
+    Practitioner calendar / dashboard still 24h. SMS unchanged.
+
+- pr: 156
+  name: Sessions to appointments link
+  what_changed: |
+    Added sessions.appointment_id FK (migration 0068) with
+    studio + client + practitioner lineage validation in
+    startSessionAction. Calendar appointment detail exposes
+    Chart session. Client-scoped flow still works with null
+    appointment_id.
+  risk_level: high
+  merged: 2026-06-04
+  needs_chloe_test: true
+  smoke_result: Pass
+  notes: |
+    Migration 0068 applied to prod first. No historical
+    backfill.
+
+- pr: 155
+  name: Pilot readiness hardening
+  what_changed: |
+    Closed a residual public reschedule raw-error leak,
+    added server-only boundary on the Supabase admin
+    client, threaded studio_id into SMS ops alerts, and
+    refreshed stale docs.
+  risk_level: low
+  merged: 2026-06-04
+  needs_chloe_test: false
+  smoke_result: N/A
+  notes: |
+    No payment / SMS send / email behavior change.
+
+- pr: 154
+  name: GitHub Actions CI
+  what_changed: |
+    Added .github/workflows/ci.yml that runs typecheck, lint,
+    build, npm test, git diff --check, and a Stripe safety
+    grep gate on every PR and push to default.
+  risk_level: low
+  merged: 2026-06-04
+  needs_chloe_test: false
+  smoke_result: N/A
+  notes: |
+    Dummy env values in CI. No real secrets, no deploy
+    commands.
+
+- pr: 153
+  name: Ops alerts (silent-failure tracking)
+  what_changed: |
+    Migration 0067 adds an ops_alerts table with redaction +
+    never-throws contract. SMS / Stripe webhook / manual-fee
+    paths now log failures durably for operator review.
+  risk_level: medium
+  merged: 2026-06-03
+  needs_chloe_test: false
+  smoke_result: N/A
+  notes: |
+    Operator email loop deferred (no active loop today).
+
+- pr: 152
+  name: Portal Replace card one-click
+  what_changed: |
+    Replace card now opens the secure form immediately
+    instead of requiring a second tap. autoStart prop with
+    useRef guard.
+  risk_level: medium
+  merged: 2026-06-03
+  needs_chloe_test: true
+  smoke_result: Pending
+  notes: |
+    No SetupIntent behavior change.
+
+- pr: 151
+  name: Portal Replace card surface
+  what_changed: |
+    Added the Replace card affordance on the portal active-
+    card surface. Webhook pre-flips the prior active row to
+    removed atomically when the new SetupIntent succeeds.
+  risk_level: high
+  merged: 2026-06-03
+  needs_chloe_test: true
+  smoke_result: Pass
+  notes: |
+    PR #151 webhook flow has the load-bearing partial-unique
+    backstop from migration 0058.

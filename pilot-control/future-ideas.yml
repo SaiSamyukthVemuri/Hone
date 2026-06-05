@@ -1,0 +1,102 @@
+# Pilot Control Sheet: Future ideas.
+#
+# Lightweight notepad for ideas that are NOT on the active backlog
+# but should not be forgotten. Anything here is a candidate for
+# future PR work AFTER the controlled-pilot blockers in
+# launch-blockers.yml are mitigated.
+#
+# Required fields:
+#   idea, area, why, complexity
+#
+# Complexity scale:
+#   small:  one PR, no schema change
+#   medium: multiple PRs OR one schema change
+#   large:  multi-week, multiple schema changes, or product-shape
+#           decision needed first
+#
+# When editing this file, run `npm run pilot:export` so the CSV
+# under pilot-control/generated/ stays in sync.
+
+- idea: Notion or Google Sheets sync of the pilot control sheet
+  area: Operator tooling
+  why: |
+    Chloe asked for a Notion-style tracker. The current local
+    CSV+XLSX flow is the first cut; future versions could push
+    to Notion or a Google Sheet on each merge so Chloe never
+    needs to clone the repo.
+  complexity: medium
+
+- idea: Full intake builder
+  area: Intake
+  why: |
+    Intake fields live in code today. A self-serve intake builder
+    would let a studio author its own intake form without a code
+    change. Out of scope for the controlled pilot.
+  complexity: large
+
+- idea: Practitioner notifications feed
+  area: Practitioner experience
+  why: |
+    Surface ops_alerts inside the app (owner-only) so Chloe can
+    review silent failures (SMS give-ups, manual fee retries,
+    stripe webhook signature mismatches) without a SQL query.
+  complexity: medium
+
+- idea: Signed form PDF export
+  area: Signed forms display
+  why: |
+    Build the viewable copy promised by the PR #159 footnote.
+    Render the template snapshot + signature row as a PDF the
+    client (or the studio) can save.
+  complexity: medium
+
+- idea: Self-serve studio onboarding
+  area: Onboarding
+  why: |
+    Today a new studio is created via SQL by the operator. A
+    self-serve flow (sign up, create studio, add practitioner,
+    connect Stripe) would unlock broader pilot.
+  complexity: large
+
+- idea: Hone subscription billing
+  area: Billing
+  why: |
+    Once Hone has multiple paying studios, charge a monthly
+    subscription. Independent of the client-card pipeline. Needs
+    a separate Stripe account or product model.
+  complexity: large
+
+- idea: Right-to-erasure / export flow for client data
+  area: Privacy / compliance
+  why: |
+    PIPEDA gives clients a right to erasure and a right to access
+    their data. Today only the practitioner can act on this; a
+    self-serve client export + erasure flow is the long-term
+    answer.
+  complexity: medium
+
+- idea: Calendar feed token hashing
+  area: Security
+  why: |
+    practitioners.calendar_feed_token is stored raw today. A DB
+    compromise would yield usable feed tokens. Migration to
+    hash + raw-token-only-on-rotate would reduce blast radius.
+    See docs/03 risk 2.
+  complexity: small
+
+- idea: Public booking card-required flow
+  area: Booking / payments
+  why: |
+    studios.require_card_on_file = true is the gate. The SQL
+    backend has been in prod since migration 0032 but the public
+    booking UI does not surface a card-collection step. Wire it
+    up when live payments unblock.
+  complexity: medium
+
+- idea: Two-way Google Calendar sync
+  area: Calendar
+  why: |
+    Read-only ICS feed exists today. Two-way sync would let Chloe
+    block time directly from her Google Calendar and have Hone
+    honor it.
+  complexity: large

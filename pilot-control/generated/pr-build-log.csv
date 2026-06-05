@@ -1,0 +1,65 @@
+pr,name,what_changed,risk_level,merged,needs_chloe_test,smoke_result,notes
+160,Pilot control sheet automation,"Adds pilot-control/ YAML trackers + scripts/export-pilot-
+control-sheet.mjs. Generates deterministic CSVs at
+pilot-control/generated/ checked into the repo plus an
+optional Hone_Pilot_Control_Sheet.xlsx generated on demand
+via npm run pilot:export. GitHub Actions CI runs npm run
+pilot:check.
+",low,pending,false,N/A,"Internal process / tooling. No app runtime behavior changes.
+Flip `merged` to the actual date once this PR lands.
+"
+159,Portal layout cleanup,"Retired the ""Your info"" wrapper. Added top-level Appointments,
+Care instructions, Forms and records, Payment method sections.
+Email <studio> button moved to header. Care instructions open
+by default. ""Signed forms"" renamed to ""Completed forms"" with
+quiet record styling.
+",low,Thu Jun 04 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pending,"PR #158 card-authorization guidance preserved.
+"
+158,Card authorization guidance,"Portal renders four explicit card states with a ""Card
+authorization needed"" placeholder that deep-links to the
+signing form. Matching practitioner PaymentMethodCard renders
+the same four branches. Manual fee blocked reasons updated to
+actionable copy.
+",medium,Thu Jun 04 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pending,"createCardSetupIntentAction and Stripe gates unchanged.
+"
+157,Client profile appointment timeline + email AM/PM,"Sessions tab now leads with a five-bucket appointment
+timeline. Plus a patch fixed the reported email AM/PM bug by
+routing every client-facing email through localTimeString12h.
+",medium,Wed Jun 03 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pending,"Practitioner calendar / dashboard still 24h. SMS unchanged.
+"
+156,Sessions to appointments link,"Added sessions.appointment_id FK (migration 0068) with
+studio + client + practitioner lineage validation in
+startSessionAction. Calendar appointment detail exposes
+Chart session. Client-scoped flow still works with null
+appointment_id.
+",high,Wed Jun 03 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pass,"Migration 0068 applied to prod first. No historical
+backfill.
+"
+155,Pilot readiness hardening,"Closed a residual public reschedule raw-error leak,
+added server-only boundary on the Supabase admin
+client, threaded studio_id into SMS ops alerts, and
+refreshed stale docs.
+",low,Wed Jun 03 2026 20:00:00 GMT-0400 (Eastern Daylight Time),false,N/A,"No payment / SMS send / email behavior change.
+"
+154,GitHub Actions CI,"Added .github/workflows/ci.yml that runs typecheck, lint,
+build, npm test, git diff --check, and a Stripe safety
+grep gate on every PR and push to default.
+",low,Wed Jun 03 2026 20:00:00 GMT-0400 (Eastern Daylight Time),false,N/A,"Dummy env values in CI. No real secrets, no deploy
+commands.
+"
+153,Ops alerts (silent-failure tracking),"Migration 0067 adds an ops_alerts table with redaction +
+never-throws contract. SMS / Stripe webhook / manual-fee
+paths now log failures durably for operator review.
+",medium,Tue Jun 02 2026 20:00:00 GMT-0400 (Eastern Daylight Time),false,N/A,"Operator email loop deferred (no active loop today).
+"
+152,Portal Replace card one-click,"Replace card now opens the secure form immediately
+instead of requiring a second tap. autoStart prop with
+useRef guard.
+",medium,Tue Jun 02 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pending,"No SetupIntent behavior change.
+"
+151,Portal Replace card surface,"Added the Replace card affordance on the portal active-
+card surface. Webhook pre-flips the prior active row to
+removed atomically when the new SetupIntent succeeds.
+",high,Tue Jun 02 2026 20:00:00 GMT-0400 (Eastern Daylight Time),true,Pass,"PR #151 webhook flow has the load-bearing partial-unique
+backstop from migration 0058.
+"

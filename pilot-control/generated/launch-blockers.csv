@@ -1,0 +1,49 @@
+blocker,why_it_matters,owner,needed_before_launch,status,next_action
+Legal review of consent / card / cancellation wording,"The card authorization, photo consent, treatment consent, and
+policy acknowledgement templates all carry binding-ish
+language but have not been reviewed by an Ontario lawyer.
+Enforceability of e-signatures under Ontario law depends on
+that review.
+",Sam,broader pilot,Open,"Engage an Ontario lawyer with PIPEDA / e-signature expertise.
+Provide the four template bodies in docs/05_CONSENT_AND_FORMS.md
+and the e-sign capture model.
+"
+Live payments,"Hone is structurally blocked from live mode by three guards
+(no TS charge calls outside the test-mode manual fee path,
+require_card_on_file = false, live mode refused unless
+STRIPE_ALLOW_LIVE_MODE=true). Lifting the block requires a
+deliberate PR with legal review and stronger pending
+reconciliation. See docs/06 section 8.
+",Sam,broader pilot,Open,"After legal review and a Stripe metadata search for stale
+pending recovery, open the live-mode PR with explicit Chloe
+sign-off.
+"
+Cancellation fee model mismatch,"Today the studio has flat late_cancel_fee_cents and
+no_show_fee_cents columns. Real practices want
+percentage-of-service or time-window tiered fees. Without
+that, the manual fee surface will get used wrong as the pilot
+scales.
+",Sam,broader pilot,Open,"Design a tiered policy model (Hours-out -> Fee bucket) and
+migrate the existing flat columns to the new shape with a
+backfill plan.
+"
+Manual fee duplicate-charge smoke verified by Chloe,"The whole live-payment posture depends on the claim-then-
+charge-then-record pattern in PR #146 actually preventing a
+double click from producing a second PaymentIntent. Chloe
+needs to run this smoke and confirm.
+",Chloe,controlled pilot,Open,"See chloe-testing-queue.yml entry for ""Manual fee test-mode
+duplicate-charge smoke"".
+"
+Chloe's confidence in the full workflow,"Chloe must be able to run a real client through book -> intake
+-> consent -> session -> postcare -> manage without asking the
+operator for help. That is the only honest signal that the
+pilot is ready to widen.
+",Chloe,controlled pilot,In Progress,"Work through the active items in chloe-testing-queue.yml as a
+weekly batch.
+"
+Laura onboarding (second studio),"Bringing in a second studio (Laura) is the first true test of
+multi-studio data isolation and self-serve-ish onboarding.
+Until the Chloe workflow is stable AND legal review has
+landed, onboarding Laura is premature.
+",Sam,broader pilot,Open,"Park until the controlled-pilot blockers above are mitigated.
+"

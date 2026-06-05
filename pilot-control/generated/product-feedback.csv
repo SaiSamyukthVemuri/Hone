@@ -1,0 +1,74 @@
+feedback,source,area,pain_level,suggested_fix,decision,status
+"The portal felt cluttered and the ""Your info"" wrapper made it
+hard to find anything.
+",Chloe smoke test,Client portal layout,high,"Split Your info into top-level Appointments / Care instructions
+/ Forms and records / Payment method sections. Surface
+Email <studio> in the header.
+",Accepted,Shipped
+"Care instructions were collapsed by default; clients miss them.
+",Chloe smoke test,Client portal layout,high,Render Care instructions open by default via <details open>.,Accepted,Shipped
+"Signed forms looked clickable but had no destination. Confusing.
+",Chloe smoke test,Signed forms display,medium,"Rename to ""Completed forms""; use a quiet divider list instead
+of bordered cards. Add a footnote acknowledging that a
+viewable copy is coming soon.
+",Accepted,Shipped
+"I don't know how to add a card. It should give you instructions.
+",Chloe smoke test,Portal card-on-file,blocker,"Surface a ""Card authorization needed before adding a card""
+placeholder with a deep-link to the signing form. Mirror the
+four states on the practitioner profile card.
+",Accepted,Shipped
+"Confirmation email said ""11 to 12"" instead of ""11 AM to 12 PM"".
+",Chloe smoke test,Email templates,high,"Switch every client-facing email template to localTimeString12h
+(keep practitioner calendar / dashboard on 24h).
+",Accepted,Shipped
+"All of the client's booked appointments should show up under
+their client profile. Right now I can only do that via calendar.
+",Chloe smoke test,Client profile,high,"Add an Appointments timeline on the Sessions tab with
+Upcoming / Needs charting / Charted / Cancelled / No-show
+groups.
+",Accepted,Shipped
+"All appointments are a session. From a client's profile or
+from the calendar, I should be able to log the session and
+chart.
+",Chloe smoke test,Session creation,high,"Add sessions.appointment_id FK and surface Chart session
+affordances from both the client profile timeline and the
+calendar appointment detail.
+",Accepted,Shipped
+"Editable appointment prep / before-treatment instructions per
+service.
+",Chloe smoke test,Services / pre-care,medium,"Make services.pre_care_instructions editable per-service from
+Settings without code change.
+",Investigating,Open
+"Photo consent customization (different wording per studio).
+",Chloe smoke test,Consent templates,low,"Allow the owner to edit the photo_consent template body from
+Settings → Consent forms.
+",Deferred,Open
+"Editable consent / policy / intake template bodies from the UI.
+",Chloe smoke test,Consent templates / Intake,low,"Intake builder + consent editor surfaces. Large scope; defer
+until pilot stabilizes.
+",Deferred,Open
+"Percentage / time-window based cancellation fee model.
+",Chloe smoke test,Cancellation fees,medium,"Today only a flat late_cancel_fee_cents / no_show_fee_cents
+exists. Future: per-hour-window or percentage of service
+price.
+",Deferred,Open
+"A practitioner notifications feed (silent failures, give-up
+SMS, manual fee charge results) visible inside Hone.
+",Internal,Practitioner experience,medium,"Surface the ops_alerts table (PR #153) inside the app for
+owner-only viewing. ops_alerts already records redacted
+failure rows.
+",Deferred,Open
+"A way to actually view a signed form from the portal
+(Completed forms list).
+",Chloe smoke test,Signed forms display,medium,"Build a signed-form viewer reading the template snapshot +
+signature row. Future PR; PR #159 set the honest expectation
+in copy.
+",Investigating,Open
+"Past appointments visible on the portal (not just upcoming).
+",Chloe smoke test,Client portal layout,low,"Add a portal-side past-appointment read. Deferred from PR
+#159 to keep that PR layout-only.
+",Deferred,Open
+"Email Chloe button should be at the top of the portal.
+",Chloe smoke test,Client portal layout,medium,"Move the contact-the-studio action into the header next to
+Sign out.
+",Accepted,Shipped

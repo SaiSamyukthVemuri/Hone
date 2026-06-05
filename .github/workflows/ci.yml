@@ -10,6 +10,7 @@
 #   npm test
 #   git diff --check
 #   npm run check:stripe-gates
+#   npm run pilot:check
 #
 # Triggers:
 #   * pull_request (every PR, against any base branch)
@@ -107,3 +108,13 @@ jobs:
 
       - name: Stripe / payment safety grep gates
         run: npm run check:stripe-gates
+
+      - name: Pilot control sheet freshness (PR #160)
+        # Regenerates the pilot-control/generated/*.csv files in a
+        # temp directory and diffs against the checked-in copies.
+        # Fails when the YAML in pilot-control/*.yml has drifted
+        # from the generated CSVs, when a required field is missing,
+        # or when the YAML is syntactically invalid. The XLSX is NOT
+        # checked in and not part of this gate; humans regenerate it
+        # locally via `npm run pilot:export`.
+        run: npm run pilot:check

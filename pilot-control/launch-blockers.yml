@@ -1,0 +1,105 @@
+# Pilot Control Sheet: Launch blockers.
+#
+# Each entry is a hard prerequisite for broader launch (beyond the
+# current controlled pilot at Willow Electrolysis). Anything here
+# is a thing the operator must clear before bringing in more
+# studios.
+#
+# Required fields:
+#   blocker, why_it_matters, owner, needed_before_launch, status,
+#   next_action
+#
+# needed_before_launch values:
+#   "controlled pilot": already required for the Willow pilot
+#   "broader pilot": needed before inviting a second studio
+#   "general availability": needed before a self-serve open signup
+#
+# Status values:
+#   Open, In Progress, Mitigated, Closed
+#
+# When editing this file, run `npm run pilot:export` so the CSV
+# under pilot-control/generated/ stays in sync.
+
+- blocker: Legal review of consent / card / cancellation wording
+  why_it_matters: |
+    The card authorization, photo consent, treatment consent, and
+    policy acknowledgement templates all carry binding-ish
+    language but have not been reviewed by an Ontario lawyer.
+    Enforceability of e-signatures under Ontario law depends on
+    that review.
+  owner: Sam
+  needed_before_launch: broader pilot
+  status: Open
+  next_action: |
+    Engage an Ontario lawyer with PIPEDA / e-signature expertise.
+    Provide the four template bodies in docs/05_CONSENT_AND_FORMS.md
+    and the e-sign capture model.
+
+- blocker: Live payments
+  why_it_matters: |
+    Hone is structurally blocked from live mode by three guards
+    (no TS charge calls outside the test-mode manual fee path,
+    require_card_on_file = false, live mode refused unless
+    STRIPE_ALLOW_LIVE_MODE=true). Lifting the block requires a
+    deliberate PR with legal review and stronger pending
+    reconciliation. See docs/06 section 8.
+  owner: Sam
+  needed_before_launch: broader pilot
+  status: Open
+  next_action: |
+    After legal review and a Stripe metadata search for stale
+    pending recovery, open the live-mode PR with explicit Chloe
+    sign-off.
+
+- blocker: Cancellation fee model mismatch
+  why_it_matters: |
+    Today the studio has flat late_cancel_fee_cents and
+    no_show_fee_cents columns. Real practices want
+    percentage-of-service or time-window tiered fees. Without
+    that, the manual fee surface will get used wrong as the pilot
+    scales.
+  owner: Sam
+  needed_before_launch: broader pilot
+  status: Open
+  next_action: |
+    Design a tiered policy model (Hours-out -> Fee bucket) and
+    migrate the existing flat columns to the new shape with a
+    backfill plan.
+
+- blocker: Manual fee duplicate-charge smoke verified by Chloe
+  why_it_matters: |
+    The whole live-payment posture depends on the claim-then-
+    charge-then-record pattern in PR #146 actually preventing a
+    double click from producing a second PaymentIntent. Chloe
+    needs to run this smoke and confirm.
+  owner: Chloe
+  needed_before_launch: controlled pilot
+  status: Open
+  next_action: |
+    See chloe-testing-queue.yml entry for "Manual fee test-mode
+    duplicate-charge smoke".
+
+- blocker: Chloe's confidence in the full workflow
+  why_it_matters: |
+    Chloe must be able to run a real client through book -> intake
+    -> consent -> session -> postcare -> manage without asking the
+    operator for help. That is the only honest signal that the
+    pilot is ready to widen.
+  owner: Chloe
+  needed_before_launch: controlled pilot
+  status: In Progress
+  next_action: |
+    Work through the active items in chloe-testing-queue.yml as a
+    weekly batch.
+
+- blocker: Laura onboarding (second studio)
+  why_it_matters: |
+    Bringing in a second studio (Laura) is the first true test of
+    multi-studio data isolation and self-serve-ish onboarding.
+    Until the Chloe workflow is stable AND legal review has
+    landed, onboarding Laura is premature.
+  owner: Sam
+  needed_before_launch: broader pilot
+  status: Open
+  next_action: |
+    Park until the controlled-pilot blockers above are mitigated.

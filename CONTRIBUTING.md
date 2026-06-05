@@ -29,6 +29,7 @@ npm run build
 npm test
 git diff --check
 npm run check:stripe-gates
+npm run pilot:check
 ```
 
 Or run them together as one command:
@@ -37,7 +38,9 @@ Or run them together as one command:
 npm run ci
 ```
 
-All six must pass. The Vercel preview deploy on the PR must reach `READY`.
+All seven must pass.
+
+The `pilot:check` step (PR #160) validates the pilot control sheet YAML + the generated CSVs under `pilot-control/generated/`. When you change any tracker YAML, run `npm run pilot:export` and commit the regenerated CSVs alongside the YAML edits. CI fails when they drift. The Vercel preview deploy on the PR must reach `READY`.
 
 GitHub Actions runs the same set automatically on every PR and every push to `claude/build-hone-saas-hOex7` (see `.github/workflows/ci.yml`, added in PR #154). A failing CI check blocks merge; do not merge a PR with a red workflow even if the local run passed.
 
