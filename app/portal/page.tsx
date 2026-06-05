@@ -195,13 +195,31 @@ export default async function PortalHomePage() {
   //   * the publishable key gate resolved to ok.
   // The "authorization not signed" state is handled by the unsigned
   // forms block above (the card_authorization template itself is in
-  // unsignedConsentTemplates), so we do NOT surface a duplicate
-  // payment-add prompt here.
+  // unsignedConsentTemplates), AND PR #158 adds a calm placeholder
+  // immediately below explaining that signing the form unlocks the
+  // Add card surface. We do not surface a duplicate payment form
+  // until the signature is in place.
   const showAddCardInNeedsYou =
     cardAuthTemplate != null &&
     cardAuthSigned &&
     activeCard == null &&
     publishableKeyResolution.ok;
+  // PR #158. Calm "Card authorization needed before adding a card"
+  // placeholder. Sits inside Needs you between the unsigned-forms
+  // block and the actual Add card surface. Visible only when:
+  //   * studio has an active card_authorization template, AND
+  //   * this client has NOT yet signed it, AND
+  //   * no active card is currently on file
+  // Chloe's smoke test feedback: "I don't know how to add a card.
+  // It should give you instructions." The unsigned form is already
+  // listed in the Review and sign block, but a calm card-section
+  // placeholder makes the implication ("sign that form to unlock
+  // Add card") visually obvious and tells the client no charge
+  // will be made.
+  const showCardAuthorizationNeeded =
+    cardAuthTemplate != null &&
+    !cardAuthSigned &&
+    activeCard == null;
   // Compact informational message rendered only when payment-method
   // is relevant but cannot be added because no active template
   // exists. Avoids shouting at every client.
@@ -211,7 +229,8 @@ export default async function PortalHomePage() {
     hasIntakeAction
     || hasUnsignedForms
     || hasUnreviewedMessages
-    || showAddCardInNeedsYou;
+    || showAddCardInNeedsYou
+    || showCardAuthorizationNeeded;
 
   const nextAppointment = upcoming[0] ?? null;
   const laterAppointments = upcoming.slice(1);
@@ -297,7 +316,10 @@ export default async function PortalHomePage() {
               )}
 
               {hasUnsignedForms && (
-                <section className="flex flex-col gap-2">
+                <section
+                  id="forms-to-sign"
+                  className="flex flex-col gap-2 scroll-mt-20"
+                >
                   <p className="text-[15px] font-medium text-[#0A0A0A]">
                     Review and sign forms
                   </p>
@@ -307,7 +329,11 @@ export default async function PortalHomePage() {
                       revalidatePath('/portal') reruns the parent so
                       the just-signed template moves out of this
                       block automatically. No duplicate card is
-                      rendered lower on the page. */}
+                      rendered lower on the page.
+                      PR #158: section now carries id="forms-to-sign"
+                      so the "Card authorization needed" placeholder
+                      below can deep-link the client straight to the
+                      signing surface via a fragment URL. */}
                   <PortalConsentForms templates={unsignedConsentTemplates} />
                 </section>
               )}
@@ -410,17 +436,69 @@ export default async function PortalHomePage() {
                 </section>
               )}
 
-              {showAddCardInNeedsYou && publishableKeyResolution.ok && (
-                <section className="flex flex-col gap-2">
+              {/* PR #158. Card authorization needed placeholder. Calm
+                  card-section block that explains the gating implication
+                  the unsigned form above carries: card-on-file is locked
+                  until the client signs Card authorization. Avoids the
+                  prior failure mode where Chloe (and by extension real
+                  clients) opened the portal, saw the unsigned form
+                  separately, and never connected the dots that signing
+                  it unlocks the Add card surface. Carries an explicit
+                  "review card authorization" link that deep-links to
+                  the Review and sign forms block above. */}
+              {showCardAuthorizationNeeded && (
+                <section className="flex flex-col gap-3">
                   <p className="text-[15px] font-medium text-[#0A0A0A]">
-                    Add payment method
+                    Card authorization needed before adding a card
                   </p>
                   <p
                     className="text-[14px] leading-relaxed"
                     style={{ color: "#3F3F3F" }}
                   >
-                    Your card will be stored securely by Stripe. Hone
-                    does not store your full card number.
+                    Before you can add a card on file, please review and sign the card authorization form above.
+                  </p>
+                  <p
+                    className="text-[14px] leading-relaxed"
+                    style={{ color: "#3F3F3F" }}
+                  >
+                    Once that form is signed, the secure card form will appear here. No charge will be made when you add a card.
+                  </p>
+                  <a
+                    href="#forms-to-sign"
+                    className="self-start text-[12px] font-medium uppercase"
+                    style={{
+                      backgroundColor: "#0A0A0A",
+                      color: "#FAFAF7",
+                      letterSpacing: "0.1em",
+                      padding: "10px 20px",
+                    }}
+                  >
+                    Review card authorization
+                  </a>
+                </section>
+              )}
+
+              {showAddCardInNeedsYou && publishableKeyResolution.ok && (
+                <section className="flex flex-col gap-2">
+                  <p className="text-[15px] font-medium text-[#0A0A0A]">
+                    Add payment method
+                  </p>
+                  {/* PR #158. Supporting line clarifies the state for the
+                      client who just signed Card authorization and is
+                      now seeing the card form appear. The "No charge"
+                      reassurance mirrors the placeholder above so the
+                      two surfaces tell the same story end to end. */}
+                  <p
+                    className="text-[14px] leading-relaxed"
+                    style={{ color: "#3F3F3F" }}
+                  >
+                    You have signed card authorization. You can now add a card on file. No charge will be made when you add a card.
+                  </p>
+                  <p
+                    className="text-[14px] leading-relaxed"
+                    style={{ color: "#3F3F3F" }}
+                  >
+                    Your card will be stored securely by Stripe. Hone does not store your full card number.
                   </p>
                   <PortalPaymentMethodForm
                     publishableKey={publishableKeyResolution.key}
@@ -695,9 +773,16 @@ export default async function PortalHomePage() {
                 >
                   Payment method
                 </h3>
+                {/* PR #158. Calm State A copy: the studio has not
+                    enabled the card-on-file feature at all (no
+                    active card_authorization template exists yet).
+                    Distinct from the "authorization needed" placeholder
+                    in Needs you, which fires when the template exists
+                    but the client has not signed it. Wording avoids
+                    Stripe jargon since the client cannot act on this
+                    state. */}
                 <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
-                  Card-on-file authorization is not configured yet.
-                  Please contact the studio.
+                  Card setup is not available yet. This studio has not enabled online card setup. Please contact the studio if you have a question about payment.
                 </p>
               </section>
             ) : null}

@@ -174,7 +174,13 @@ export async function getManualFeeChargeEligibility(
       .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!cardRow) {
-      reasons.push("No active card on file for this client.");
+      // PR #158. Practitioner-actionable copy. Chloe was seeing the
+      // older terse "No active card on file" line and asking "what
+      // do I do?" The new copy tells her exactly what to say to the
+      // client and what the prerequisite is.
+      reasons.push(
+        "No card on file. Ask the client to open their portal and add a card. They must first sign card authorization in the portal before the Add card option appears.",
+      );
     } else {
       cardSummary = {
         id: cardRow.id,
@@ -185,7 +191,12 @@ export async function getManualFeeChargeEligibility(
       };
       cardPaymentMethodId = cardRow.id;
       if (!cardRow.card_authorization_signature_id) {
-        reasons.push("Card on file has no signed card authorization.");
+        // PR #158. Matches the practitioner-facing copy on the
+        // <PaymentMethodCard /> AuthorizationNotSignedBlock so both
+        // surfaces say the same thing.
+        reasons.push(
+          "Card authorization not signed. The client must sign card authorization in the portal before a card can be added or a manual fee can be prepared.",
+        );
       } else {
         cardSignatureId = cardRow.card_authorization_signature_id;
       }
