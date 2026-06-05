@@ -22,6 +22,14 @@ Provider: Resend. From-address pattern: `<Studio name> via hone <hello@hone.care
 | Portal reply notification | Studio owner | Client replies in portal (PR #129) |
 | Intake update request | Client | Practitioner re-issues an intake |
 
+### Pre-appointment instructions (PR #160)
+
+Booking confirmation + 24h + 2h reminder emails render a per-service `Before your appointment` block sourced from `services.pre_care_instructions` (nullable text, migration 0025). The studio edits it from `Settings → Services` per service; the same field also feeds the portal Care instructions section (PR #159), so a single edit reaches both surfaces.
+
+Prior to PR #160 the confirmation template also rendered a hardcoded "Please arrive 5 minutes early. Wear comfortable clothing. Avoid caffeine before your appointment." paragraph above the editable block. That constant was removed so the studio owns the wording end to end. When a service has no prep text set, the block is omitted entirely from the email (no leftover heading, no empty card).
+
+The threading lives in `lib/email/send-appointment.ts`: the booking action selects `services(name, default_duration_minutes, pre_care_instructions)`, threads `preCareInstructions: service?.pre_care_instructions ?? null` into the template props, and the template's conditional block does the rest. Reminder templates use the same shape and were already on the editable-only path before PR #160; the file `tests/lib/email/prep-instructions.test.ts` pins both behaviors.
+
 ### Email send tracking
 
 Appointment rows carry attempt counters and stamped timestamps:

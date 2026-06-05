@@ -194,13 +194,13 @@ function ServiceEditForm({ service }: { service: Service }) {
         </FieldLabel>
 
         <FieldLabel
-          label="Pre-care instructions"
-          hint="Optional. Included in confirmation and reminder emails."
+          label="Pre-appointment instructions"
+          hint="Optional. Shown in client confirmation and reminder emails AND in the client portal Care instructions section. Use this for arrival time, clothing, caffeine, shaving, medication reminders, or anything the client should know before this service. Plain text; line breaks are okay."
         >
           <textarea
             name="pre_care_instructions"
             defaultValue={service.pre_care_instructions ?? ""}
-            rows={2}
+            rows={4}
             placeholder="e.g. Please arrive 5 minutes early. Skin should be free of lotion or makeup."
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />

@@ -33,8 +33,17 @@ function rangeLabel(start: Date, end: Date, tz: string): string {
   return `${localTimeString12h(start, tz)} to ${localTimeString12h(end, tz)}`;
 }
 
-const PREP_INSTRUCTIONS =
-  "Please arrive 5 minutes early. Wear comfortable clothing. Avoid caffeine before your appointment.";
+// PR #160. Prior versions of this template carried a hardcoded
+// "Please arrive 5 minutes early. Wear comfortable clothing. Avoid
+// caffeine before your appointment." paragraph that rendered ABOVE
+// the per-service preCareInstructions block. Chloe's smoke-test
+// feedback: the studio (and Laura later) must own that wording, and
+// rendering both the hardcoded default + the per-service text felt
+// like two prep sections fighting each other. The constant is gone;
+// the per-service services.pre_care_instructions field (migration
+// 0025) is now the single source of truth, edited via Settings ->
+// Services. When a service has no prep text on file the email simply
+// omits the prep block.
 
 type ConfirmationToClient = {
   clientName: string;
@@ -95,12 +104,9 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
           ${safeAddress ? `<br/><br/>${safeAddress}` : ""}
           ${p.treatmentTimeLine ? `<br/><br/><span style="font-family:Georgia, serif; font-style:italic; color:#6B6B6B;">${escapeHtml(p.treatmentTimeLine)}</span>` : ""}
         </td></tr>
-        <tr><td style="padding:24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.65; color:#6B6B6B;">
-          ${escapeHtml(PREP_INSTRUCTIONS)}
-        </td></tr>
         ${
           p.preCareInstructions
-            ? `<tr><td style="padding:0 0 20px 0;">
+            ? `<tr><td style="padding:24px 0 20px 0;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F1EA; border-left:3px solid #C9C4B6;">
                   <tr><td style="padding:16px 20px;">
                     <p style="margin:0 0 8px 0; font-family:-apple-system, system-ui, sans-serif; font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">Before your appointment</p>
@@ -154,7 +160,6 @@ ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${p.treatmentTimeLine ? `${p.treatmentTimeLine}\n` : ""}
-${PREP_INSTRUCTIONS}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 7 to 10 minutes):\n${p.intakeUrl}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}

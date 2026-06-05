@@ -310,6 +310,30 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Pre-appointment instructions (PR #160)
+
+After deploy, the operator should confirm the editable per-service prep text feeds both the email and the portal end to end.
+
+1. Sign in as the studio owner. Open `Settings → Services`. Pick any active service.
+2. Confirm the textarea labelled "Pre-appointment instructions" exists. Set it to a recognisable string, for example: `"Smoke test: shave the area 24h before your visit. Avoid caffeine the morning of."`
+3. Save. Confirm the success state. Refresh the page and confirm the value persisted.
+4. As a test client, book that service. Open the booking confirmation email. Expect a `Before your appointment` block carrying the smoke-test string and NO "Please arrive 5 minutes early. Wear comfortable clothing. Avoid caffeine before your appointment." paragraph anywhere in the body or subject.
+5. Trigger or wait for the 24h reminder. Expect the same `Before your appointment` block with the smoke-test string. Same for the 2h reminder.
+6. Open the portal as the same client. Switch to the Care instructions section (PR #159; open by default). Expect the same smoke-test string under "Before your appointment".
+7. Go back to `Settings → Services`. Clear the textarea (empty value). Save.
+8. Book another appointment for the same service. The confirmation email should now omit the `Before your appointment` block entirely (no empty card, no leftover heading). The portal Care instructions section should also omit the pre-care entry for that service.
+
+SQL backstop:
+
+```sql
+select id, name, modality, pre_care_instructions
+from public.services
+where studio_id = '<studio uuid>'
+order by sort_order, name;
+```
+
+Expected: the value the studio owner typed in step 2 appears verbatim on the row for the smoke service.
+
 ## Portal layout cleanup (PR #159)
 
 After deploy, the operator should confirm the portal's new structure renders end to end.

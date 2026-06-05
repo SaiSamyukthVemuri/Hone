@@ -2,7 +2,7 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #159)
+## Current production status (as of PR #160)
 
 - Production domain: `https://hone.care`.
 - Default branch: `claude/build-hone-saas-hOex7`. Every push to it triggers a production deploy. Vercel project: `prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk`, team `team_Pwj27KsmnBKe3ZUBfKLcFczf`.
@@ -10,6 +10,7 @@
 - Client profile (`app/(app)/clients/[id]/page.tsx`) Sessions tab leads with an Appointments timeline (PR #157) that groups every appointment into Upcoming / Needs charting / Charted / Cancelled / No-show with per-row Chart / View / Open affordances. The query helper is `getAppointmentsForClientProfile` (`lib/supabase/queries.ts`); the component is `components/client-appointment-timeline.tsx`. No service role.
 - Portal card-on-file section (PR #158) renders one of four explanatory states (no template configured / authorization needed / signed but no card / active card) with a deep-link `#forms-to-sign` from the "Card authorization needed" placeholder to the existing "Review and sign forms" block. Matching practitioner-side `PaymentMethodCard` on the client profile renders the same four branches with practitioner-actionable copy. Manual fee blocked-reason strings (`lib/billing/manual-fee-eligibility.ts`) updated to tell the practitioner exactly what to ask the client to do next. No new schema, no new RPC, no new payment behavior.
 - Portal layout (PR #159) replaces the legacy "Your info" wrapper with four top-level sections (Appointments / Care instructions / Forms and records / Payment method). Header now carries an `Email <studio>` contact button next to Sign out. Care instructions render `<details open>` so the client sees them without clicking. "Signed forms" renamed to "Completed forms" with quiet border-top divider styling so the rows do not read as actionable. PR #158 card-authorization guidance preserved and verified by existing tests.
+- Pre-appointment instructions (PR #160) are studio/service-owned via the existing `services.pre_care_instructions` field (migration 0025), edited from `Settings → Services`. The same field feeds the booking confirmation email, both reminder emails, AND the portal Care instructions section. The prior hardcoded "Please arrive 5 minutes early. Wear comfortable clothing. Avoid caffeine before your appointment." paragraph was removed from `lib/email/templates/appointment.ts`; empty prep text now omits the block entirely. No migration; no payment / SMS / public-route behavior change.
 - Card-on-file and test-mode manual fee charge are live in production **test mode**. Live mode is blocked by three independent guards.
 - GitHub Actions CI (PR #154) runs typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and push to default. `npm run ci` is the local shortcut. A red CI check blocks merge.
 - Ops alerts (PR #153, migration `0067_ops_alerts.sql`) capture silent failure states for the manual-fee path, Stripe webhook, SMS path, and the appointment-reminder cron. The SMS path stamps `studio_id` on alerts as of PR #155.
