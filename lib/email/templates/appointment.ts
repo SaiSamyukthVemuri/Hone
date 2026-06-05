@@ -1,4 +1,4 @@
-import { localTimeString } from "@/lib/booking/tz";
+import { localTimeString12h } from "@/lib/booking/tz";
 
 function escapeHtml(s: string): string {
   return s
@@ -19,8 +19,18 @@ function dayLabel(d: Date, tz: string): string {
   }).format(d);
 }
 
+// PR #157 patch. Email time range label, used by both the client
+// confirmation email and the practitioner notification email. Uses
+// the 12h localTimeString12h helper (returns "11:00 AM" / "12:00 PM")
+// and the ASCII " to " separator the bug spec called for
+// ("11 AM to 12 PM"). The previous shape was
+// `${localTimeString(...)} – ${localTimeString(...)}` which produced
+// "11:00 – 12:00" (24h, en-dash) and matched the client confusion
+// report. Practitioner notification gets the same 12h treatment
+// because Chloe (the practitioner) also reads these on mobile where
+// AM/PM is universally clearer than a bare 24h hour.
 function rangeLabel(start: Date, end: Date, tz: string): string {
-  return `${localTimeString(start, tz)} – ${localTimeString(end, tz)}`;
+  return `${localTimeString12h(start, tz)} to ${localTimeString12h(end, tz)}`;
 }
 
 const PREP_INSTRUCTIONS =
@@ -248,7 +258,14 @@ export function buildCancellationEmail(p: CancellationEmail): {
   text: string;
 } {
   const dayStr = dayLabel(p.startsAt, p.timezone);
-  const timeStr = localTimeString(p.startsAt, p.timezone);
+  // PR #157 patch. Cancellation email rendered the start time in 24h
+  // (e.g. "Tuesday, June 9, 2026 at 11:00"); the recipient could
+  // misread an early-morning vs midday cancellation. Switched to the
+  // 12h client-facing helper so both branches (isClient and not)
+  // surface "11:00 AM" / "11:00 PM" unambiguously. The recipient
+  // identity does not affect the format because both the client and
+  // the studio side benefit from the same disambiguation.
+  const timeStr = localTimeString12h(p.startsAt, p.timezone);
   const subject = p.isClient
     ? `Appointment cancelled: ${p.serviceName} at ${p.studioName}`
     : `Appointment cancelled: ${p.recipientName === p.studioName ? "" : `${p.recipientName}, `}${p.serviceName} on ${dayStr}`;

@@ -1,4 +1,4 @@
-import { localTimeString } from "@/lib/booking/tz";
+import { localTimeString12h } from "@/lib/booking/tz";
 
 function escapeHtml(s: string): string {
   return s
@@ -19,8 +19,13 @@ function dayLabel(d: Date, tz: string): string {
   }).format(d);
 }
 
+// PR #157 patch. This helper is the source of the reported bug:
+// `${localTimeString(start)} to ${localTimeString(end)}` produced
+// "11:00 to 12:00" (24h, no AM/PM), which a recipient on mobile
+// read as the ambiguous "11 to 12". Switched both ends to the 12h
+// client-facing helper so the body now reads "11:00 AM to 12:00 PM".
 function rangeLabel(start: Date, end: Date, tz: string): string {
-  return `${localTimeString(start, tz)} to ${localTimeString(end, tz)}`;
+  return `${localTimeString12h(start, tz)} to ${localTimeString12h(end, tz)}`;
 }
 
 type ReminderProps = {
@@ -140,7 +145,10 @@ export function build24hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  const timeStr = localTimeString(p.startsAt, p.timezone);
+  // PR #157 patch. Subject line carries the appointment start time;
+  // recipient sees it in the inbox preview before opening the email.
+  // 12h with AM/PM is unambiguous; 24h "11:00" forced a guess.
+  const timeStr = localTimeString12h(p.startsAt, p.timezone);
   const subject = `Reminder: ${p.serviceName} tomorrow at ${timeStr}`;
   const headline = "Your appointment is tomorrow.";
   const lead =
@@ -157,7 +165,8 @@ export function build2hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  const timeStr = localTimeString(p.startsAt, p.timezone);
+  // PR #157 patch. Same 12h subject-line fix as the 24h reminder.
+  const timeStr = localTimeString12h(p.startsAt, p.timezone);
   const subject = `Reminder: ${p.serviceName} today at ${timeStr}`;
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";

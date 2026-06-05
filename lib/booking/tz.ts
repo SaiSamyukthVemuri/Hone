@@ -74,10 +74,16 @@ export function localTimeString(d: Date, tz: string): string {
 }
 
 // 12-hour public-facing time formatter (e.g. "9:00 AM" / "1:30 PM").
-// Kept separate from localTimeString (which the internal practitioner
-// calendar + dashboard + email templates rely on at 24h) so flipping
-// the public booking surfaces does NOT silently change owner-facing
-// formats. Use ONLY on client-facing booking/reschedule slot labels.
+// Use this on every CLIENT-FACING surface: public booking + reschedule
+// slot labels AND every email template that renders an appointment
+// time. Practitioner-facing surfaces (calendar grid, dashboard roster,
+// owner notification email) stay on the 24h localTimeString helper so
+// the column header heuristics + tight calendar rows are not
+// disturbed. Bug context: PR #157 patch corrected the
+// confirmation/reminder/postcare/cancellation client emails which
+// previously rendered "11 to 12" (24h) for an 11:00-12:00 booking
+// because they were calling the 24h helper despite being client-
+// facing.
 export function localTimeString12h(d: Date, tz: string): string {
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
