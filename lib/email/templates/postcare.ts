@@ -1,4 +1,4 @@
-import { localTimeString } from "@/lib/booking/tz";
+import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
 
 // Postcare email template (v1).
@@ -92,8 +92,12 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const studioLine = p.practitionerName
     ? `${p.practitionerName} at ${p.studioName}`
     : p.studioName;
+  // PR #157 patch. Postcare references "your appointment on X at Y"
+  // in the greeting; 12h matches the rest of the client-facing email
+  // surfaces so a single recipient does not see "11:00" on one email
+  // and "11:00 AM" on the next.
   const appointmentLine = p.startsAt
-    ? `${dayLabel(p.startsAt, p.timezone)} at ${localTimeString(
+    ? `${dayLabel(p.startsAt, p.timezone)} at ${localTimeString12h(
         p.startsAt,
         p.timezone,
       )}`

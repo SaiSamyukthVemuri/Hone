@@ -310,6 +310,28 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Client profile appointment timeline (PR #157)
+
+After deploy, the operator should confirm the new Sessions-tab timeline behaves correctly:
+
+1. Open `/clients/<id>` for a client with at least one appointment in any status.
+2. Switch to the **Sessions** tab.
+3. Expect an **Appointments** section at the top with one or more of these groups visible (only non-empty groups render):
+   - **Upcoming**: future confirmed appointments. Action: Open appointment.
+   - **Needs charting**: past confirmed/completed appointments with no linked session yet. Action: Chart session (plus Open appointment).
+   - **Charted**: appointments with a linked session via `appointment_id`. Action: View session (plus Open appointment).
+   - **Cancelled**: status cancelled. Shows `cancelled_at` and `cancellation_reason` when present. Action: Open appointment (plus View session in the rare-case linked).
+   - **No-show**: status `no_show`. Action: Open appointment (plus View session if linked).
+4. Each row shows date/time with AM/PM in the user's browser timezone.
+5. Click a **Needs charting** row's "Chart session" button. The destination page should show "Linking this session to the selected appointment." and the URL should carry `?appointment_id=<uuid>`.
+6. After picking a modality, the new session row in DB should have `appointment_id` populated:
+   ```sql
+   select id, appointment_id from public.sessions
+   where id = '<new session id>';
+   ```
+7. Return to the client profile Sessions tab. The same appointment now appears under **Charted**, not **Needs charting**. Click View session to confirm the link points at the new session.
+8. The top-level **+ Log session** button still works for the client-scoped case and creates `appointment_id = NULL`.
+
 ## Migration 0068 verification (PR #156)
 
 After `supabase db push --linked` lands `0068_sessions_appointment_link.sql`, run the following to confirm the column, FK, and indexes are in place. Do NOT run an UPDATE backfill from this recipe; ambiguous matches must stay null.

@@ -96,19 +96,76 @@ describe("getPastConfirmedAppointmentsForClient prefers the explicit FK", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Caller site (the client profile page) must thread the new shape so the
-// helper actually sees the explicit links.
+// PR #157 supersedes the caller-side check from PR #156. The client
+// profile no longer calls getPastConfirmedAppointmentsForClient; it
+// reads the timeline via getAppointmentsForClientProfile which joins
+// to sessions.appointment_id directly. The helper above stays in
+// queries.ts as a reusable utility (and is still validated by the
+// invariants in this file), but no production code calls it today.
+// We assert that explicitly so a future PR that re-enables it knows
+// to revisit the invariants on its new caller.
 // ---------------------------------------------------------------------------
 
-const CLIENT_PAGE_PATH = path.resolve(
-  __dirname,
-  "../../../app/(app)/clients/[id]/page.tsx",
-);
-const CLIENT_PAGE_SOURCE = readFileSync(CLIENT_PAGE_PATH, "utf8");
-
-describe("client profile page passes the explicit session.appointment_id through", () => {
-  it("maps sessions to { started_at, appointment_id } when calling the helper", () => {
-    expect(CLIENT_PAGE_SOURCE).toMatch(/started_at:\s*s\.started_at/);
-    expect(CLIENT_PAGE_SOURCE).toMatch(/appointment_id:\s*s\.appointment_id/);
+describe("getPastConfirmedAppointmentsForClient is currently unused by app code", () => {
+  it("has no caller in app/ or lib/ (outside queries.ts itself)", () => {
+    // Walk app/ and lib/ in pure Node so the test works on any PATH
+    // (the GitHub Actions CI runner does not have ripgrep
+    // installed). We grep file contents for the symbol name and
+    // self-exclude the helper's home file.
+    const { readdirSync, readFileSync, statSync } =
+      require("node:fs") as typeof import("node:fs");
+    const repoRoot = path.resolve(__dirname, "../../..");
+    const SCAN_ROOTS = ["app", "lib"];
+    const SELF_EXCLUDE = "lib/supabase/queries.ts";
+    const INCLUDE = new Set([".ts", ".tsx", ".js", ".jsx"]);
+    const SKIP = new Set([
+      "node_modules",
+      ".next",
+      ".git",
+      "coverage",
+      "tests",
+    ]);
+    const offenders: string[] = [];
+    function walk(absDir: string) {
+      let entries: string[];
+      try {
+        entries = readdirSync(absDir);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (SKIP.has(entry)) continue;
+        const full = path.join(absDir, entry);
+        let s;
+        try {
+          s = statSync(full);
+        } catch {
+          continue;
+        }
+        if (s.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!s.isFile()) continue;
+        if (!INCLUDE.has(path.extname(full))) continue;
+        const rel = path.relative(repoRoot, full);
+        if (rel === SELF_EXCLUDE) continue;
+        let text: string;
+        try {
+          text = readFileSync(full, "utf8");
+        } catch {
+          continue;
+        }
+        // Match a CALL site, not the bare substring. The page may
+        // legitimately mention the helper name in a comment that
+        // explains why it is no longer called; we only flag actual
+        // invocations: `getPastConfirmedAppointmentsForClient(`.
+        if (/\bgetPastConfirmedAppointmentsForClient\s*\(/.test(text)) {
+          offenders.push(rel);
+        }
+      }
+    }
+    for (const root of SCAN_ROOTS) walk(path.join(repoRoot, root));
+    expect(offenders).toEqual([]);
   });
 });

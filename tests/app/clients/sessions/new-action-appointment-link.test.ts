@@ -164,13 +164,23 @@ describe("new-session page carries appointment_id from search params", () => {
 // ---------------------------------------------------------------------------
 
 describe("write-forward surfaces include ?appointment_id in the chart-session link", () => {
-  it("client profile passes appointment_id on the uncharted-past-visit Chart session link", () => {
+  it("client appointment timeline component passes appointment_id on the Chart session link", () => {
+    // PR #157 moved the per-row Chart session link out of
+    // app/(app)/clients/[id]/page.tsx into the new
+    // <ClientAppointmentTimeline> server component. The original
+    // assertion (which looked for `${client.id}` + `${appt.id}` on
+    // the page) is replaced with the equivalent assertion on the
+    // component file, where `${clientId}` is the prop name and
+    // `${row.id}` is the appointment row's id.
     const text = readFileSync(
-      path.resolve(__dirname, "../../../../app/(app)/clients/[id]/page.tsx"),
+      path.resolve(
+        __dirname,
+        "../../../../components/client-appointment-timeline.tsx",
+      ),
       "utf8",
     );
     expect(text).toMatch(
-      /\/clients\/\$\{[^}]*client\.id[^}]*\}\/sessions\/new\?appointment_id=\$\{[^}]*appt\.id[^}]*\}/,
+      /\/clients\/\$\{clientId\}\/sessions\/new\?appointment_id=\$\{encodeURIComponent\(row\.id\)\}/,
     );
   });
 

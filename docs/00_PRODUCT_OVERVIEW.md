@@ -62,7 +62,7 @@ A booking system can be replaced. The studio's accumulated treatment memory is w
 
 | Capability | State |
 |---|---|
-| Controlled pilot at Willow Electrolysis | **Active**. Chloe runs real bookings, intake, charting, postcare, portal messages, cancellation/reschedule. |
+| Controlled pilot at Willow Electrolysis | **Active**. Chloe runs real bookings, intake, charting (with appointment-linked sessions per PR #156/#157), postcare, portal messages, cancellation/reschedule, and an appointment timeline on every client profile. |
 | Card-on-file (test mode) | **Production-deployed, exercised end-to-end** via portal SetupIntent. No live charging. |
 | Manual fee charging (test mode) | **Production-deployed.** Practitioner can test-charge a `ready` attempt with full evidence stack. |
 | Broad SaaS launch | **Not ready.** Self-serve onboarding, intake builder, payment legal review, refund + receipt code, and deeper automated coverage (Supabase-local DB integration, RLS policy suite, browser E2E) all required first. Minimal Vitest + GitHub Actions CI exist as of PR #154. |

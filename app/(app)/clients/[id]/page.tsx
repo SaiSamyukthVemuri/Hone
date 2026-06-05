@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  getAppointmentsForClientProfile,
   getClientById,
   getCurrentPractitionerWithStudio,
-  getPastConfirmedAppointmentsForClient,
   sessionPerformerName,
 } from "@/lib/supabase/queries";
+import { ClientAppointmentTimeline } from "@/components/client-appointment-timeline";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { SessionTimeline } from "@/components/session-timeline";
 import {
@@ -136,19 +137,20 @@ export default async function ClientCheatSheetPage({
   // within +/-2h (heuristic dedup; sessions do not carry an
   // appointment_id today). Capped at 50 rows. Display-only; no
   // appointment status mutation.
-  // PR #156 (migration 0068). Pass session.appointment_id alongside
-  // started_at so the helper prefers the explicit FK over the
-  // proximity heuristic. The Session type now includes appointment_id
-  // (nullable); legacy / client-scoped rows that never carried it
-  // simply pass null and feed the heuristic fallback the way they
-  // always have.
-  const unchartedPastAppointments = await getPastConfirmedAppointmentsForClient(
+  // PR #157. Replaces the prior `getPastConfirmedAppointmentsForClient`
+  // call with the appointment timeline read that powers the new
+  // <ClientAppointmentTimeline> on the Sessions tab. The new helper
+  // returns the full appointment history (confirmed + completed +
+  // cancelled + no_show) joined with the linked session via the
+  // PR #156 appointment_id FK, and the component groups it into
+  // Upcoming / Needs charting / Charted / Cancelled / No-show
+  // sections. The legacy +/- 2 hour dedup helper remains in
+  // lib/supabase/queries.ts as a reusable utility but is no longer
+  // wired here; the explicit FK on the new read does the dedup
+  // directly.
+  const appointmentTimeline = await getAppointmentsForClientProfile(
     studio.id,
     client.id,
-    sessions.map((s) => ({
-      started_at: s.started_at,
-      appointment_id: s.appointment_id,
-    })),
   );
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
@@ -274,13 +276,24 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col items-end gap-1">
             <Link
               href={`/clients/${client.id}/sessions/new`}
               className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
             >
               + Log session
             </Link>
+            {/* PR #157. Helper copy demoting this button to the
+                "no appointment context" path now that the
+                appointment timeline on the Sessions tab carries a
+                per-row "Chart session" affordance that stamps the
+                PR #156 appointment_id FK. The button stays so the
+                practitioner can still log walk-ins / off-book
+                sessions that have no booking attached. */}
+            <p className="max-w-[16rem] text-right text-[11px] leading-snug text-neutral-500">
+              For a session that is not tied to a booked appointment. Otherwise,
+              chart from the appointment row in the Sessions tab.
+            </p>
           </div>
         </div>
         <div className="mt-4">
@@ -624,6 +637,20 @@ export default async function ClientCheatSheetPage({
 
       {activeTab === "sessions" && (
         <>
+          {/* PR #157. Appointment timeline at the top of the Sessions
+                tab. Surfaces upcoming + past + cancelled + no-show
+                appointments grouped by practitioner urgency, with
+                explicit Chart session / View session affordances per
+                row using the PR #156 appointment_id FK. The legacy
+                uncharted-past-visits section that sat further down
+                has been removed; the new "Needs charting" group
+                inside the timeline subsumes it without losing the
+                same data. */}
+          <ClientAppointmentTimeline
+            clientId={client.id}
+            rows={appointmentTimeline}
+          />
+
           {/* Sessions tab (split out from the prior combined "Sessions
                 & Treatment Plans" tab after Chloe's launch retest).
                 Holds per-visit memory + progress totals. Treatment
@@ -666,70 +693,13 @@ export default async function ClientCheatSheetPage({
             )}
           </section>
 
-          {/* 1b. Uncharted past visits. PR Willow launch fixes:
-                Chloe expects to see past appointments in the Sessions
-                tab even before she has charted them, so she can chart
-                from the client context instead of hunting back through
-                the calendar. Each row shows date/time, service, the
-                "Not charted yet" status, and a Chart-session CTA that
-                lands on the existing new-session creation page. The
-                helper above filters out appointments that already
-                have a session within +/-2h, so a charted past visit
-                does not appear as a duplicate row here. Hidden
-                entirely when the list is empty so a brand-new client
-                profile stays calm. */}
-          {unchartedPastAppointments.length > 0 && (
-            <section className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-lg font-medium">Visits awaiting charting</h2>
-                <p className="text-xs text-neutral-500">
-                  {unchartedPastAppointments.length}{" "}
-                  {unchartedPastAppointments.length === 1
-                    ? "appointment"
-                    : "appointments"}{" "}
-                  not yet charted
-                </p>
-              </div>
-              <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-                {unchartedPastAppointments.map((appt) => {
-                  const svc = services.find((s) => s.id === appt.service_id);
-                  return (
-                    <li
-                      key={appt.id}
-                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium">
-                          <FormattedDateTime iso={appt.starts_at} />
-                        </div>
-                        <div className="text-xs text-neutral-500">
-                          {svc?.name ?? "Appointment"}
-                          {svc?.modality ? ` · ${svc.modality}` : ""}
-                          <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                            Not charted yet
-                          </span>
-                        </div>
-                      </div>
-                      <Link
-                        // PR #156 (migration 0068). Forward the
-                        // appointment id so the new session is
-                        // stamped with appointment_id. The action
-                        // re-validates the lineage against the
-                        // authenticated studio and the client id.
-                        // Falls back to client-scoped (null
-                        // appointment_id) if the search-param is
-                        // ever stripped or malformed.
-                        href={`/clients/${client.id}/sessions/new?appointment_id=${encodeURIComponent(appt.id)}`}
-                        className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-                      >
-                        Chart session
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          )}
+          {/* PR #157. The prior uncharted-past-visits section that
+                lived here is now subsumed by the
+                <ClientAppointmentTimeline /> at the top of this tab;
+                its "Needs charting" group surfaces the same rows
+                with the same Chart session affordance and link
+                shape. Removing the duplicate keeps the Sessions tab
+                calm per Chloe's clutter feedback. */}
 
           {/* 2. Treatment time totals + goal: progress-tracking,
                 lower priority than immediate last-session memory.
