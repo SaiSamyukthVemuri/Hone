@@ -2,12 +2,13 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #157)
+## Current production status (as of PR #158)
 
 - Production domain: `https://hone.care`.
 - Default branch: `claude/build-hone-saas-hOex7`. Every push to it triggers a production deploy. Vercel project: `prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk`, team `team_Pwj27KsmnBKe3ZUBfKLcFczf`.
 - At least 68 migrations applied. Most recent in-tree: `0068_sessions_appointment_link.sql`. The next migration is `0069`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
 - Client profile (`app/(app)/clients/[id]/page.tsx`) Sessions tab leads with an Appointments timeline (PR #157) that groups every appointment into Upcoming / Needs charting / Charted / Cancelled / No-show with per-row Chart / View / Open affordances. The query helper is `getAppointmentsForClientProfile` (`lib/supabase/queries.ts`); the component is `components/client-appointment-timeline.tsx`. No service role.
+- Portal card-on-file section (PR #158) renders one of four explanatory states (no template configured / authorization needed / signed but no card / active card) with a deep-link `#forms-to-sign` from the "Card authorization needed" placeholder to the existing "Review and sign forms" block. Matching practitioner-side `PaymentMethodCard` on the client profile renders the same four branches with practitioner-actionable copy. Manual fee blocked-reason strings (`lib/billing/manual-fee-eligibility.ts`) updated to tell the practitioner exactly what to ask the client to do next. No new schema, no new RPC, no new payment behavior.
 - Card-on-file and test-mode manual fee charge are live in production **test mode**. Live mode is blocked by three independent guards.
 - GitHub Actions CI (PR #154) runs typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and push to default. `npm run ci` is the local shortcut. A red CI check blocks merge.
 - Ops alerts (PR #153, migration `0067_ops_alerts.sql`) capture silent failure states for the manual-fee path, Stripe webhook, SMS path, and the appointment-reminder cron. The SMS path stamps `studio_id` on alerts as of PR #155.

@@ -70,7 +70,9 @@ Signed-consent viewer in full is still on the [docs/13 backlog](./13_BACKLOG_AND
 
 ## Card authorization specifically
 
-`form_type = 'card_authorization'`. Required before the portal Stripe Elements form will show. The portal action `createPortalSetupIntentAction` looks up the latest signed authorization for `(studio, client)`; if none exists or it is older than the current template version, the form is not offered.
+`form_type = 'card_authorization'`. Required before the portal Stripe Elements form will show. The portal action `createCardSetupIntentAction` looks up the latest signed authorization for `(studio, client)`; if none exists or it is older than the current template version, the form is not offered.
+
+**Portal guidance when authorization is missing (PR #158).** Until the client signs `card_authorization`, the portal does NOT silently hide the card section. The "Needs you" zone surfaces a calm placeholder: `"Card authorization needed before adding a card. Before you can add a card on file, please review and sign the card authorization form above. Once that form is signed, the secure card form will appear here. No charge will be made when you add a card."` plus a `Review card authorization` button that deep-links to the existing "Review and sign forms" block (anchor `#forms-to-sign`). The matching practitioner-side card on `app/(app)/clients/[id]/page.tsx` renders one of three explanatory branches (`Card authorization template not configured` / `Card authorization not signed` / `Card authorization signed, but no card is on file yet`) so the practitioner can read out the exact next step to the client.
 
 On successful SetupIntent webhook (`setup_intent.succeeded`), the new `client_payment_methods` row records `card_authorization_signature_id = <the signature row's id>`. The PR #145 manual fee charge eligibility helper re-checks this FK still resolves to a signature scoped to the same `(studio, client)` before allowing prepare.
 

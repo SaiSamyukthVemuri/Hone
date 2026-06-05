@@ -359,22 +359,43 @@ export default async function ClientCheatSheetPage({
               authorization signed-at timestamp when available.
               v1 has no Charge / Replace / Remove affordances; card
               management lives in the portal. */}
-          <PaymentMethodCard
-            clientName={client.name}
-            activeCard={activeCard}
-            authorizationSignedAt={(() => {
-              const cardAuthTemplate = consentTemplatesAll.find(
-                (t) =>
-                  t.status === "active" &&
-                  t.form_type === "card_authorization",
-              );
-              if (!cardAuthTemplate) return null;
-              const sig = consentLatestSignatures.find(
-                (s) => s.template_id === cardAuthTemplate.id,
-              );
-              return sig ? sig.signed_at : null;
-            })()}
-          />
+          {/* PR #158. Resolve card-authorization state from data the
+              page has already loaded (consentTemplatesAll +
+              consentLatestSignatures) so the practitioner card can
+              render one of four explanatory branches without a new
+              query: active card, no template configured, template
+              exists but unsigned, or signed but no card yet. The IIFE
+              keeps the derivation co-located with the prop site so a
+              future refactor moving this block does not split the
+              two halves of the same decision. */}
+          {(() => {
+            const cardAuthTemplate = consentTemplatesAll.find(
+              (t) =>
+                t.status === "active" &&
+                t.form_type === "card_authorization",
+            );
+            const cardAuthorizationTemplateExists = cardAuthTemplate != null;
+            const matchingSignature = cardAuthTemplate
+              ? consentLatestSignatures.find(
+                  (s) => s.template_id === cardAuthTemplate.id,
+                )
+              : null;
+            const cardAuthorizationSigned = matchingSignature != null;
+            const authorizationSignedAt = matchingSignature
+              ? matchingSignature.signed_at
+              : null;
+            return (
+              <PaymentMethodCard
+                clientName={client.name}
+                activeCard={activeCard}
+                authorizationSignedAt={authorizationSignedAt}
+                cardAuthorizationTemplateExists={
+                  cardAuthorizationTemplateExists
+                }
+                cardAuthorizationSigned={cardAuthorizationSigned}
+              />
+            );
+          })()}
 
           {/* Allergies/cautions are RED everywhere (see color convention
               in app/(app)/dashboard/page.tsx). Previously amber here,

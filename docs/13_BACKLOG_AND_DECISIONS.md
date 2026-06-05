@@ -88,6 +88,18 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Card authorization guidance for portal + practitioner (PR #158)
+
+**Decision:** When the client has not signed `card_authorization`, the portal now renders a calm placeholder in the card section ("Card authorization needed before adding a card") with a deep-link button (`#forms-to-sign`) to the existing "Review and sign forms" block. When the client has signed it but no active card exists, the existing Add card surface now carries supporting copy ("You have signed card authorization. You can now add a card on file. No charge will be made when you add a card."). Matching practitioner-side card on the client profile renders one of four explanatory branches (`Card authorization template not configured` / `Card authorization not signed` / `Card authorization signed, but no card is on file yet` / active card summary) so the practitioner knows exactly what to ask the client to do next. Manual fee eligibility blocked reasons updated to use the same actionable wording.
+
+**Why:** Chloe's smoke test feedback was verbatim: "I don't know how to add a card. It should give you instructions." The pre-PR portal silently hid the Add card surface when authorization was unsigned; the only on-page mention of the gating was the unsigned form entry in a separate list. A real client who scans for "Add card" and sees no obvious affordance gives up. The new placeholder + deep-link makes the implication visible without changing the underlying gating logic.
+
+**Why no schema or action change:** the gate already exists at the page-render layer (`showAddCardInNeedsYou` requires `cardAuthSigned`) and at the server-action layer (`createCardSetupIntentAction` returns `ERR_UNSIGNED_AUTHORIZATION`). PR #158 only adds copy and a single id/anchor pair; the existing two-layer enforcement is unchanged. No new RLS, no new RPC, no new env var, no Stripe behavior change.
+
+**Why not auto-scroll instead of an anchor:** the anchor (`<a href="#forms-to-sign">`) requires only a server-rendered link and no client JavaScript. It works in any browser, including with JavaScript disabled. A `useEffect`-based scroll would have shipped client-side code that adds zero functional value over the anchor.
+
+**Honest non-claims:** no live charging is enabled. No automatic charging. No Stripe Connect onboarding change. No payment policy change. No cancellation-fee redesign. The portal still cannot add a card until both the studio template and the client signature are in place; this PR only makes that state legible.
+
 ### Client profile appointment timeline (PR #157)
 
 **Decision:** Add an Appointments timeline at the top of the client profile's Sessions tab. The timeline groups every appointment (Upcoming, Needs charting, Charted, Cancelled, No-show) and exposes per-row affordances using the PR #156 `sessions.appointment_id` FK: Chart session (carries `?appointment_id`), View session (links to the existing session detail), Open appointment (links to the calendar detail). The legacy "Visits awaiting charting" section that lived further down the same tab is removed; the new "Needs charting" group inside the timeline subsumes it without losing data.

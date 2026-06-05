@@ -40,10 +40,19 @@ Three independent guards stack. All three must be deliberately altered for live 
 
 ## 4. Card-on-file flow (portal SetupIntent)
 
+Gating order (PR #158 clarifies what the client sees in each state):
+
+1. Studio has no active `card_authorization` template → portal shows `"Card setup is not available yet. This studio has not enabled online card setup. Please contact the studio if you have a question about payment."` No Add card surface.
+2. Template exists; client has NOT signed → portal shows the unsigned template in "Review and sign forms" AND a calm placeholder in the card section: `"Card authorization needed before adding a card."` with a `Review card authorization` deep-link to the signing form. No Add card surface.
+3. Template signed; no active card → portal shows `"You have signed card authorization. You can now add a card on file. No charge will be made when you add a card."` plus the Add card form.
+4. Active card → portal shows the read-only card summary plus Replace card.
+
+The practitioner-side `PaymentMethodCard` on the client profile mirrors the same four states with practitioner-actionable copy so Chloe can read out exactly what to ask the client to do next.
+
 ```
 client opens /portal -> "Add card" entry
   -> portal verifies a signed card_authorization signature exists
-  -> createPortalSetupIntentAction
+  -> createCardSetupIntentAction
        resolve portal session -> (studio_id, client_id)
        find or claim Stripe Customer mapping via client_stripe_customers
          (uses migration 0032 RPCs: create_or_claim_stripe_customer_provisioning,

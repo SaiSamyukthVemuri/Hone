@@ -310,6 +310,30 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Card authorization guidance (PR #158)
+
+After deploy, the operator should confirm the client portal and the matching practitioner card render the new explanatory copy.
+
+### Portal (client view)
+
+1. Log into a test client portal at `https://hone.care/portal` (use the magic-link flow) for a client whose studio has an active `card_authorization` template AND the client has NOT yet signed it AND has no card on file.
+2. Expect "Needs you" to surface:
+   - The `card_authorization` template inside the "Review and sign forms" block.
+   - A second calm placeholder titled `"Card authorization needed before adding a card"` with the supporting copy (`"Before you can add a card on file, please review and sign the card authorization form above."` and `"Once that form is signed, the secure card form will appear here. No charge will be made when you add a card."`).
+   - A dark `Review card authorization` button. Clicking it scrolls to the "Review and sign forms" block above.
+3. Sign the form. The page revalidates; the placeholder disappears and the Add card form appears with supporting copy `"You have signed card authorization. You can now add a card on file."` and `"No charge will be made when you add a card."`.
+4. Add a test card. The Add card surface goes away; the "Your info" zone now shows the card summary with a Replace card button.
+5. As a separate check, open the portal for a studio with NO active `card_authorization` template at all. "Your info" shows the State A copy: `"Card setup is not available yet. This studio has not enabled online card setup. Please contact the studio if you have a question about payment."`
+
+### Practitioner (client profile view)
+
+1. Open `/clients/<id>` for the same test client. The "Payment method" card should mirror the portal state:
+   - Before signing: yellow/amber block, heading `"Card authorization not signed"`, body explaining the Ask the client to open their portal step.
+   - After signing, before adding the card: neutral block, heading `"Card authorization signed, but no card is on file yet."`
+   - After the card is added: brand/last4/expiry summary with the authorization-signed timestamp.
+   - If the studio has no template at all: amber block, heading `"Card authorization template not configured"`.
+2. On a cancelled appointment for the same client (calendar detail), open the manual fee card. The blocked reasons should reflect the new wording: `"Card authorization not signed. The client must sign card authorization in the portal before a card can be added or a manual fee can be prepared."`
+
 ## Client profile appointment timeline (PR #157)
 
 After deploy, the operator should confirm the new Sessions-tab timeline behaves correctly:
