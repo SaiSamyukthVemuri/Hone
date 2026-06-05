@@ -285,6 +285,141 @@ export async function getPastConfirmedAppointmentsForClient(
   });
 }
 
+// PR #157. Single appointment timeline read for the client profile.
+// Returns the client's appointments across all statuses (confirmed,
+// completed, cancelled, no_show) joined with the linked session via
+// the PR #156 appointment_id FK. The page groups the result into
+// Upcoming / Needs charting / Charted / Cancelled / No-show buckets;
+// the query stays a single helper so the page can render the timeline
+// from one read.
+//
+// Linked-session row: at most one per appointment is returned (the
+// most recent non-deleted linked session for that appointment id).
+// The PR #156 data model does NOT enforce one-to-one and a future
+// flow may produce multiple linked sessions per appointment; until
+// that ships, surfacing the latest is the correct v1 simplification.
+// The client profile's separate session-timeline section below the
+// appointments timeline continues to show every session row
+// regardless of linkage, so no row is lost to this collapse.
+//
+// Studio + client scope are enforced at the query layer; the
+// underlying tables also carry the studio-membership RLS policies
+// from migrations 0001 (sessions) and 0010 (appointments). No
+// service-role.
+export type ClientAppointmentTimelineRow = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  status: "confirmed" | "cancelled" | "completed" | "no_show";
+  service_id: string | null;
+  service_name: string | null;
+  service_modality: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  linked_session: {
+    id: string;
+    started_at: string;
+    modality: Modality;
+  } | null;
+};
+
+// Bound the timeline at 100 rows ordered newest-first. A studio that
+// books 2-3 appointments per client per month hits this only after
+// roughly 3 years of relationship; older rows can be surfaced via a
+// future "Show older" expansion if the operator asks for it.
+const CLIENT_APPOINTMENT_TIMELINE_LIMIT = 100;
+
+export async function getAppointmentsForClientProfile(
+  studioId: string,
+  clientId: string,
+): Promise<ClientAppointmentTimelineRow[]> {
+  const supabase = await createClient();
+  const { data: rawAppts, error: apptErr } = await supabase
+    .from("appointments")
+    .select(
+      "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, service:services(name, modality)",
+    )
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .order("starts_at", { ascending: false })
+    .limit(CLIENT_APPOINTMENT_TIMELINE_LIMIT);
+  if (apptErr) {
+    throw new Error(
+      `Failed to load client appointments: ${apptErr.message}`,
+    );
+  }
+  const appts = (rawAppts ?? []) as Array<{
+    id: string;
+    starts_at: string;
+    ends_at: string;
+    status: "confirmed" | "cancelled" | "completed" | "no_show";
+    service_id: string | null;
+    cancelled_at: string | null;
+    cancellation_reason: string | null;
+    service:
+      | { name: string; modality: string | null }
+      | Array<{ name: string; modality: string | null }>
+      | null;
+  }>;
+  if (appts.length === 0) return [];
+
+  // Second roundtrip for linked sessions. We could do a single Postgres
+  // LEFT JOIN via PostgREST but the resource-name embed would not let
+  // us LIMIT the linked session per appointment, and a session can
+  // appear in multiple appointment-context flows (rare today, but
+  // possible). Two queries + an in-memory map keeps the dedup
+  // deterministic: latest session wins per appointment id.
+  const apptIds = appts.map((a) => a.id);
+  const { data: rawSessions, error: sessErr } = await supabase
+    .from("sessions")
+    .select("id, started_at, modality, appointment_id")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .in("appointment_id", apptIds)
+    .is("deleted_at", null)
+    .order("started_at", { ascending: false });
+  if (sessErr) {
+    throw new Error(
+      `Failed to load linked sessions: ${sessErr.message}`,
+    );
+  }
+  const sessions = (rawSessions ?? []) as Array<{
+    id: string;
+    started_at: string;
+    modality: Modality;
+    appointment_id: string | null;
+  }>;
+  const latestByAppointment = new Map<
+    string,
+    { id: string; started_at: string; modality: Modality }
+  >();
+  for (const s of sessions) {
+    if (!s.appointment_id) continue;
+    if (latestByAppointment.has(s.appointment_id)) continue; // newest wins (order DESC)
+    latestByAppointment.set(s.appointment_id, {
+      id: s.id,
+      started_at: s.started_at,
+      modality: s.modality,
+    });
+  }
+
+  return appts.map((a) => {
+    const svc = Array.isArray(a.service) ? (a.service[0] ?? null) : a.service;
+    return {
+      id: a.id,
+      starts_at: a.starts_at,
+      ends_at: a.ends_at,
+      status: a.status,
+      service_id: a.service_id,
+      service_name: svc?.name ?? null,
+      service_modality: svc?.modality ?? null,
+      cancelled_at: a.cancelled_at,
+      cancellation_reason: a.cancellation_reason,
+      linked_session: latestByAppointment.get(a.id) ?? null,
+    };
+  });
+}
+
 export async function getSessionForClient(
   studioId: string,
   clientId: string,

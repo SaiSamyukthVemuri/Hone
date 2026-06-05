@@ -88,6 +88,20 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Client profile appointment timeline (PR #157)
+
+**Decision:** Add an Appointments timeline at the top of the client profile's Sessions tab. The timeline groups every appointment (Upcoming, Needs charting, Charted, Cancelled, No-show) and exposes per-row affordances using the PR #156 `sessions.appointment_id` FK: Chart session (carries `?appointment_id`), View session (links to the existing session detail), Open appointment (links to the calendar detail). The legacy "Visits awaiting charting" section that lived further down the same tab is removed; the new "Needs charting" group inside the timeline subsumes it without losing data.
+
+**Why now:** Chloe's smoke test surfaced this as the next real product issue. She had no way to see a client's appointment history (past + upcoming + cancelled + no-show) from the client profile and had to context-switch into the calendar to find anything that was not the most recent session. "All appointments are a session" is her mental model; the timeline makes that mental model legible in one place.
+
+**Why a single read instead of a chained query:** the helper `getAppointmentsForClientProfile` does two roundtrips (appointments, then linked sessions IN the appointment-id set), maps the latest linked session per appointment in memory, and returns the merged shape. A PostgREST embed would have been one roundtrip but would not let us cap the linked session per appointment id; the two-roundtrip path keeps the dedup deterministic (latest session wins per appointment) and stays under one second on the studio's row counts.
+
+**Why no service role:** the existing `sessions: members all` and `appointments_member_all` policies already gate visibility through `is_studio_member(studio_id)`. The helper runs through the authenticated practitioner's RLS client. The PR #155 admin-server boundary still holds.
+
+**What's deferred:** structured cancellation insight (reason label, client note, follow-up permission) was only inlined when the appointment row already carries `cancellation_reason`. The richer audit-row read used on the calendar appointment detail page is intentionally NOT replicated on the client profile to keep the timeline a single bounded read. A future PR can promote the audit row read into the helper if the operator asks for it; today's row carries enough for the practitioner to spot the cancelled visit and open it for more.
+
+**Honest non-claims:** new sessions are NOT all linked (client-scoped + Log session still inserts null on purpose); historical sessions are NOT linked (no backfill ran); analytics are NOT solved; billing is NOT yet tied to completed appointments; this is NOT a practitioner notification feed; this is NOT a portal redesign.
+
 ### Sessions ↔ appointments foundation link (PR #156, migration 0068)
 
 **Decision:** Add a nullable `sessions.appointment_id` FK to `appointments(id) ON DELETE SET NULL`, no unique constraint, no historical backfill. Two partial indexes keyed on `appointment_id IS NOT NULL`. Two surfaces stamp the FK today (calendar appointment detail page "+ Chart session"; client profile "Chart session" on an uncharted past visit). Client-scoped "+ Log session" continues to insert null. The dedup helper `getPastConfirmedAppointmentsForClient` prefers the explicit link and falls back to the `+/- 2 hour` proximity window only for sessions where `appointment_id IS NULL`, so no row is counted twice.

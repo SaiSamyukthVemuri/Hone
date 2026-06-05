@@ -46,13 +46,11 @@ Every business object in Hone is **studio-scoped**. The `studio_id` column appea
 - Session blocks are individual treatment units (area + duration + equipment settings + notes) inside a session. PR #51 reshaped session blocks to use a structured area enum.
 - Drives **treatment memory**: next-visit briefings, intake history, postcare.
 - **PR #156 (migration 0068).** Sessions now carry an optional `appointment_id` FK to `appointments(id) ON DELETE SET NULL`. Two write-forward surfaces stamp the FK today:
-  - **Calendar appointment detail page** "+ Chart session" affordance forwards `?appointment_id` to the new-session page; the action validates `(studio_id, client_id)` lineage before stamping the FK.
-  - **Client profile** "Chart session" link on an uncharted past appointment forwards the same query parameter.
-- Client-scoped session creation (the legacy "+ Log session" button on the client profile, no appointment in scope) continues to insert with `appointment_id = null`. Historical sessions remain null; no backfill has been run.
-- **Dedup rule for past confirmed appointments** (the client profile's "Sessions" tab):
-  1. Sessions with `appointment_id = a.id` exclude the appointment exactly.
-  2. Sessions with `appointment_id IS NULL` participate in a `+/- 2 hour` `starts_at` proximity fallback.
-  3. Linked sessions are never counted in both buckets; no double-counting.
+  - **Calendar appointment detail page** "+ Chart session" affordance forwards `?appointment_id` to the new-session page; the action validates `(studio_id, client_id, practitioner_id)` lineage before stamping the FK.
+  - **Client profile Sessions tab appointment timeline (PR #157)** "Chart session" link on each "Needs charting" row forwards the same query parameter.
+- **PR #157.** The client profile's Sessions tab leads with an Appointments timeline that groups every appointment for the client (Upcoming / Needs charting / Charted / Cancelled / No-show). Each row shows date/time in the user's local 12-hour format, service name, status badge, and the appropriate primary affordance (Open appointment / Chart session / View session). The query helper `getAppointmentsForClientProfile` returns up to 100 rows newest-first and joins to the latest linked session via the PR #156 FK; no service role; studio + client RLS gates apply.
+- Client-scoped session creation (the legacy "+ Log session" button on the client profile, no appointment in scope) continues to insert with `appointment_id = null`. Helper copy under the button labels it as the path for sessions not tied to a booked appointment. Historical sessions remain null; no backfill has been run.
+- **Dedup rule for past confirmed appointments**: the PR #157 timeline reads the FK directly, so the legacy `+/- 2 hour` proximity helper (`getPastConfirmedAppointmentsForClient`) is no longer wired in the page. The helper stays in `lib/supabase/queries.ts` as a reusable utility for any future surface that needs the same dedup; its invariants are still pinned in `tests/lib/supabase/past-appointments-dedup.test.ts`.
 - One session belongs to zero or one appointment. One appointment may have zero or more sessions. No unique constraint enforces one-to-one.
 
 ### Intake (`client_intake_forms`)
