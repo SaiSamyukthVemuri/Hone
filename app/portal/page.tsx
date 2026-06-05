@@ -256,19 +256,40 @@ export default async function PortalHomePage() {
                 Hello, {client.firstName}.
               </h1>
               <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-                Anything you need to handle is at the top. Your
-                appointments, forms, and payment method live below.
+                Anything you need to handle is at the top. Your appointments and records live below.
               </p>
             </div>
-            <form action={portalLogoutAction}>
-              <button
-                type="submit"
-                className="text-[13px] underline"
-                style={{ color: "#6B6B6B" }}
-              >
-                Sign out
-              </button>
-            </form>
+            {/* PR #159. Contact and sign-out actions move into the
+                top-right cluster so the client can see how to reach
+                the studio without scrolling. The Email button only
+                renders when the studio has a postcare contact email
+                on file (the same gate the bottom Need help block
+                used before this PR); the bottom block is now
+                removed to avoid duplicating the same affordance. */}
+            <div className="flex flex-col items-end gap-3">
+              {contactHref && (
+                <a
+                  href={contactHref}
+                  className="px-5 py-2 text-[12px] font-medium uppercase"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  Email {studio.name}
+                </a>
+              )}
+              <form action={portalLogoutAction}>
+                <button
+                  type="submit"
+                  className="text-[13px] underline"
+                  style={{ color: "#6B6B6B" }}
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
           </header>
 
           {/* PR #136 zone 1: Needs you. Renders only when at least
@@ -515,19 +536,30 @@ export default async function PortalHomePage() {
             </p>
           )}
 
-          {/* PR #136 zone 2: Your info. Reference cards, always
-              compact. Renders below the Needs-you zone whether
-              that zone was visible or not. Each card here is
-              read-only summary; the actionable variants live in
-              Needs you above. */}
-          <section className="flex flex-col gap-5">
+          {/* PR #136 / PR #159. "Your info" wrapper retired after
+              Chloe's smoke test feedback ("the portal's a little
+              cluttered"). The cards below are now top-level sections
+              with concrete headings (Appointments, Care instructions,
+              Forms and records, Payment method) so the client does
+              not have to parse a generic wrapper before reading the
+              actual content. Section order is by client priority:
+                1. Appointments  (what is coming up / what happened)
+                2. Care          (open by default for the current
+                                  appointment cycle)
+                3. Forms + records (completed / past, no actions)
+                4. Payment method (active card or PR #158 State A
+                                   copy when the studio has no
+                                   template configured)
+              The PR #158 "Card authorization needed" placeholder
+              and the Add card surface live in Needs you above and
+              are NOT moved by this reorder. */}
+          <section className="flex flex-col gap-2">
             <h2
               className="text-[12px] font-medium uppercase"
               style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
             >
-              Your info
+              Appointments
             </h2>
-
             <section className="flex flex-col gap-2">
               <h3
                 className="text-[11px] font-medium uppercase"
@@ -630,11 +662,133 @@ export default async function PortalHomePage() {
                 </>
               )}
             </section>
+          </section>
 
-            {reviewedMessages.length > 0 && (
-              <section className="flex flex-col gap-2">
-                <h3
-                  className="text-[11px] font-medium uppercase"
+          {/* PR #159. Care instructions promoted out of "Your info"
+              and rendered as a top-level section, OPEN by default.
+              Chloe's smoke-test feedback: care instructions should
+              be visible without the client having to click a
+              disclosure. <details open> keeps the native HTML
+              collapse affordance for clients who want to hide it
+              after reading. Heading + helper line match the spec
+              wording ("Review these before and after your
+              appointment."). */}
+          {showCareSection && (
+            <section className="flex flex-col gap-2">
+              <h2
+                className="text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+              >
+                Care instructions
+              </h2>
+              <details open className="flex flex-col gap-2">
+                <summary
+                  className="cursor-pointer text-[11px] font-medium uppercase"
+                  style={{
+                    letterSpacing: "0.18em",
+                    color: "#6B6B6B",
+                  }}
+                >
+                  Review these before and after your appointment.
+                </summary>
+                <div className="mt-3 flex flex-col gap-3">
+                  {hasPreCare && (
+                    <div
+                      className="flex flex-col gap-4 p-5"
+                      style={{
+                        backgroundColor: "#FAFAF7",
+                        border: "1px solid #E5E2D9",
+                      }}
+                    >
+                      <h4
+                        className="text-[11px] font-medium uppercase"
+                        style={{
+                          letterSpacing: "0.18em",
+                          color: "#6B6B6B",
+                        }}
+                      >
+                        Before your appointment
+                      </h4>
+                      {preCareEntries.map((entry) => (
+                        <div
+                          key={entry.serviceName}
+                          className="flex flex-col gap-1.5"
+                        >
+                          <p className="text-[13px] font-medium text-[#0A0A0A]">
+                            {entry.serviceName}
+                          </p>
+                          <div className="flex flex-col gap-2">
+                            <MarkdownLiteBlock
+                              text={entry.preCareText}
+                              keyPrefix={`precare-${entry.serviceName}`}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {hasPostcare && (
+                    <div
+                      className="flex flex-col gap-4 p-5"
+                      style={{
+                        backgroundColor: "#FAFAF7",
+                        border: "1px solid #E5E2D9",
+                      }}
+                    >
+                      <h4
+                        className="text-[11px] font-medium uppercase"
+                        style={{
+                          letterSpacing: "0.18em",
+                          color: "#6B6B6B",
+                        }}
+                      >
+                        After your appointment
+                      </h4>
+                      {postcareSections.map((s) => (
+                        <div
+                          key={s.heading}
+                          className="flex flex-col gap-1.5"
+                        >
+                          <p className="text-[13px] font-medium text-[#0A0A0A]">
+                            {s.heading}
+                          </p>
+                          <div className="flex flex-col gap-2">
+                            <MarkdownLiteBlock
+                              text={s.text}
+                              keyPrefix={`postcare-${s.heading}`}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            </section>
+          )}
+
+          {/* PR #159. Forms and records: read-only history grouping
+              for completed forms + past messages. Both subsections
+              are visually quieter than Needs you so the client
+              understands they are reference material, not actions.
+              Past messages (already reviewed) and Completed forms
+              previously lived inside the old "Your info" wrapper
+              with separate top-level styling; folding them here
+              groups them by intent (records the client has
+              acknowledged or completed). */}
+          {(reviewedMessages.length > 0 || signedConsentTemplates.length > 0) && (
+            <section className="flex flex-col gap-5">
+              <h2
+                className="text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+              >
+                Forms and records
+              </h2>
+
+              {reviewedMessages.length > 0 && (
+                <section className="flex flex-col gap-2">
+                  <h3
+                    className="text-[11px] font-medium uppercase"
                   style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
                 >
                   Past messages
@@ -681,54 +835,72 @@ export default async function PortalHomePage() {
               </section>
             )}
 
-            {signedConsentTemplates.length > 0 && (
-              <section className="flex flex-col gap-2">
-                <h3
-                  className="text-[11px] font-medium uppercase"
-                  style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
-                >
-                  Signed forms
-                </h3>
-                <ul className="flex flex-col gap-1.5">
-                  {signedConsentTemplates.map((t) => {
-                    const sig = consentSignaturesByTemplate.get(t.id)!;
-                    // PR #137. Photo-consent rows render the
-                    // explicit response (granted / denied) instead
-                    // of the legacy "Signed" verb so a denied row
-                    // is honestly surfaced.
-                    const isPhoto = t.form_type === "photo_consent";
-                    const captionPrefix = isPhoto
-                      ? sig.response === "denied"
-                        ? "Consent denied · "
-                        : "Consent granted · "
-                      : "Signed ";
-                    return (
-                      <li
-                        key={t.id}
-                        className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-2"
-                        style={{
-                          backgroundColor: "#FAFAF7",
-                          border: "1px solid #E5E2D9",
-                        }}
-                      >
-                        <p className="text-[14px] font-medium text-[#0A0A0A]">
-                          {t.title}
-                        </p>
-                        <p
-                          className="text-[12px]"
-                          style={{ color: "#6B6B6B" }}
+              {signedConsentTemplates.length > 0 && (
+                <section className="flex flex-col gap-2">
+                  <h3
+                    className="text-[11px] font-medium uppercase"
+                    style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
+                  >
+                    Completed forms
+                  </h3>
+                  {/* PR #159. Chloe's smoke-test feedback: signed forms
+                      looked like they were clickable, but the row had
+                      no destination because there is no signed-form
+                      viewer yet. Two changes:
+                        * Heading renamed Signed forms -> Completed
+                          forms so the row reads like a record, not a
+                          link.
+                        * Row styling drops the heavy border + lifts
+                          the background tone so the list no longer
+                          mimics the actionable Needs-you cards.
+                      Caption verb changes Signed -> Completed for the
+                      same reason. Photo-consent denied/granted rows
+                      keep their explicit response prefix because the
+                      response itself is the record. A viewable copy
+                      of the signed form is a future PR; the placeholder
+                      footnote at the bottom of the section sets the
+                      expectation honestly without overclaiming. */}
+                  <ul className="flex flex-col">
+                    {signedConsentTemplates.map((t) => {
+                      const sig = consentSignaturesByTemplate.get(t.id)!;
+                      const isPhoto = t.form_type === "photo_consent";
+                      const captionPrefix = isPhoto
+                        ? sig.response === "denied"
+                          ? "Consent denied · "
+                          : "Consent granted · "
+                        : "Completed ";
+                      return (
+                        <li
+                          key={t.id}
+                          className="flex flex-wrap items-baseline justify-between gap-2 border-t py-3"
+                          style={{ borderColor: "#E5E2D9" }}
                         >
-                          {captionPrefix}
-                          <FormattedDateTime iso={sig.signed_at} />
-                          {" · "}
-                          v{sig.template_version}
-                        </p>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            )}
+                          <p className="text-[14px] text-[#0A0A0A]">
+                            {t.title}
+                          </p>
+                          <p
+                            className="text-[12px]"
+                            style={{ color: "#6B6B6B" }}
+                          >
+                            {captionPrefix}
+                            <FormattedDateTime iso={sig.signed_at} />
+                            {" · "}
+                            v{sig.template_version}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <p
+                    className="text-[12px]"
+                    style={{ color: "#6B6B6B" }}
+                  >
+                    A viewable copy of signed forms is coming soon.
+                  </p>
+                </section>
+              )}
+            </section>
+          )}
 
             {/* PR #135 / #136 / #151. Payment method block.
                 The Add card surface lives in Needs you above when
@@ -787,122 +959,14 @@ export default async function PortalHomePage() {
               </section>
             ) : null}
 
-            {showCareSection && (
-              <details className="flex flex-col gap-2">
-                <summary
-                  className="cursor-pointer text-[11px] font-medium uppercase"
-                  style={{
-                    letterSpacing: "0.18em",
-                    color: "#6B6B6B",
-                  }}
-                >
-                  Care instructions
-                </summary>
-                <div className="mt-3 flex flex-col gap-3">
-                  <p
-                    className="text-[13px]"
-                    style={{ color: "#3F3F3F" }}
-                  >
-                    Review this before and after your appointment.
-                  </p>
-
-                  {hasPreCare && (
-                    <div
-                      className="flex flex-col gap-4 p-5"
-                      style={{
-                        backgroundColor: "#FAFAF7",
-                        border: "1px solid #E5E2D9",
-                      }}
-                    >
-                      <h4
-                        className="text-[11px] font-medium uppercase"
-                        style={{
-                          letterSpacing: "0.18em",
-                          color: "#6B6B6B",
-                        }}
-                      >
-                        Before your appointment
-                      </h4>
-                      {preCareEntries.map((entry) => (
-                        <div
-                          key={entry.serviceName}
-                          className="flex flex-col gap-1.5"
-                        >
-                          <p className="text-[13px] font-medium text-[#0A0A0A]">
-                            {entry.serviceName}
-                          </p>
-                          <div className="flex flex-col gap-2">
-                            <MarkdownLiteBlock
-                              text={entry.preCareText}
-                              keyPrefix={`precare-${entry.serviceName}`}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {hasPostcare && (
-                    <div
-                      className="flex flex-col gap-4 p-5"
-                      style={{
-                        backgroundColor: "#FAFAF7",
-                        border: "1px solid #E5E2D9",
-                      }}
-                    >
-                      <h4
-                        className="text-[11px] font-medium uppercase"
-                        style={{
-                          letterSpacing: "0.18em",
-                          color: "#6B6B6B",
-                        }}
-                      >
-                        After your appointment
-                      </h4>
-                      {postcareSections.map((s) => (
-                        <div
-                          key={s.heading}
-                          className="flex flex-col gap-1.5"
-                        >
-                          <p className="text-[13px] font-medium text-[#0A0A0A]">
-                            {s.heading}
-                          </p>
-                          <div className="flex flex-col gap-2">
-                            <MarkdownLiteBlock
-                              text={s.text}
-                              keyPrefix={`postcare-${s.heading}`}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </details>
-            )}
-
-            {contactHref && (
-              <section className="flex flex-col gap-2">
-                <h3
-                  className="text-[11px] font-medium uppercase"
-                  style={{ letterSpacing: "0.18em", color: "#6B6B6B" }}
-                >
-                  Need help?
-                </h3>
-                <a
-                  href={contactHref}
-                  className="self-start px-5 py-2 text-[12px] font-medium uppercase"
-                  style={{
-                    border: "1px solid #0A0A0A",
-                    color: "#0A0A0A",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  Email {studio.name}
-                </a>
-              </section>
-            )}
-          </section>
+          {/* PR #159. The legacy Care instructions <details> block
+              (collapsed by default) and the bottom Need help? block
+              used to live here at the tail of the old "Your info"
+              wrapper. Care instructions moved up to its own top-
+              level section above and now defaults to open. Need
+              help? moved to the header as an Email <studio> button.
+              Both removals are deliberate and were Chloe smoke-test
+              asks. */}
 
           <p className="text-[12px]" style={{ color: "#6B6B6B" }}>
             Session expires{" "}

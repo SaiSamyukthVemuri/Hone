@@ -310,6 +310,21 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Portal layout cleanup (PR #159)
+
+After deploy, the operator should confirm the portal's new structure renders end to end.
+
+1. Open the portal as a test client. The top of the page should show: studio eyebrow, "Hello, <first name>.", a short intro line, and a top-right cluster containing an `Email <studio>` button (only when the studio has a postcare contact email on file) + Sign out.
+2. If the client has any unsigned forms, unreviewed messages, intake, or unsigned card authorization, the "Needs you" section appears next, unchanged from PR #158.
+3. The next four top-level sections appear in order:
+   - **Appointments**: next appointment card + "View N more upcoming" disclosure.
+   - **Care instructions**: open by default. Summary line reads `"Review these before and after your appointment."` Pre-care + postcare entries render below.
+   - **Forms and records**: past messages (if any) + Completed forms (if any). Form rows are quiet (no border cards). Caption verb for non-photo rows reads `"Completed "`. Footnote: `"A viewable copy of signed forms is coming soon."`
+   - **Payment method**: the four-state PR #158 surface (no template / authorization needed / signed but no card / active card).
+4. Click the `Email <studio>` button in the header. A `mailto:` should open with the subject `Question about my <studio> appointment` pre-filled.
+5. Confirm the legacy "Your info" wrapper heading is gone and the bottom "Need help?" section is gone.
+6. Smoke the PR #158 guidance once more: for a client with unsigned card authorization, the "Card authorization needed before adding a card" placeholder still renders inside Needs you, and clicking "Review card authorization" still scrolls to the unsigned-forms block via `#forms-to-sign`.
+
 ## Card authorization guidance (PR #158)
 
 After deploy, the operator should confirm the client portal and the matching practitioner card render the new explanatory copy.

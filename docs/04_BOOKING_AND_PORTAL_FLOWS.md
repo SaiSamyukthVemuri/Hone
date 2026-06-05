@@ -114,20 +114,26 @@ What Replace does NOT do:
 - No live mode. The same `STRIPE_ALLOW_LIVE_MODE=false` posture applies.
 - No practitioner-side card replace UI. `client_payment_methods.added_via` accepts `practitioner` but no UI exists today.
 
-### Two-zone portal UX (PR #136)
+### Portal layout (PR #136 zones, PR #159 cleanup)
 
-The portal home (`/portal`) is reorganized into two zones:
+The portal home (`/portal`) renders one header + one Needs you block + four top-level information sections. The legacy "Your info" wrapper used to group everything below Needs you under a single heading; PR #159 retired it after Chloe's smoke-test feedback ("the portal's a little cluttered looking").
 
-- **Needs you**; anything that requires the client to act:
-  - Outstanding intake.
-  - Outstanding consent forms (treatment, photo, card authorization).
-  - Unread messages from the studio.
-  - Upcoming appointment with policy not yet acknowledged.
-- **Your info**; passive surfaces:
-  - Upcoming appointments with cancel/reschedule/manage shortcuts.
-  - Signed forms (read-only view).
-  - Saved card on file (brand + last4 + status).
-  - Studio contact + address.
+**Header (PR #159).** Studio name eyebrow, greeting, one-line intro. Top-right cluster carries the contact-the-studio action (`Email <studio>` button, gated on `studio.postcare_contact_email`) and the Sign out button. Same `mailto:` shape as the previous bottom-of-page block; the bottom block is now removed to avoid duplicating the affordance.
+
+**Needs you**: anything the client must act on. Renders inline cards (not links to detail pages):
+- Outstanding intake.
+- Outstanding consent forms (treatment, photo, card authorization). The unsigned-forms section carries `id="forms-to-sign"` since PR #158 so the card-authorization placeholder can deep-link to it.
+- "Card authorization needed before adding a card" placeholder (PR #158) when `card_authorization` template exists, client has not signed, and no active card.
+- Unreviewed messages from the studio.
+- Add card form (when `card_authorization` is signed AND no active card AND publishable key gate resolved).
+
+**Appointments** (top-level, PR #159): next confirmed appointment + a `View N more upcoming` disclosure for later upcoming appointments. Manage / Cancel / Reschedule live on `/manage/<token>`, linked from each row.
+
+**Care instructions** (top-level, PR #159): rendered open by default via `<details open>`. Chloe asked for this explicitly; collapsing behind a disclosure made the surface easy to miss. The summary line reads `"Review these before and after your appointment."` Pre-care entries appear before postcare entries; both sub-blocks render only when their content exists.
+
+**Forms and records** (top-level, PR #159): read-only history grouping for past messages + Completed forms. The "Signed forms" heading is renamed to "Completed forms"; each row uses a soft border-top divider list (no bordered cards) so the surface reads as a record, not as an actionable card. Caption verb is `"Completed "` for non-photo rows; photo-consent rows retain `"Consent granted · "` / `"Consent denied · "` because the response itself is the record. Footnote: `"A viewable copy of signed forms is coming soon."` honestly sets the expectation for the future signed-form viewer.
+
+**Payment method** (no top-level wrapper; uses the inner h3 heading shipped by PR #135): four states (no template configured / authorization needed / signed but no card / active card) per PR #158. Active card surface uses `<PortalCardOnFileCard>` with the Replace card affordance from PR #151.
 
 ### Messages and replies
 
