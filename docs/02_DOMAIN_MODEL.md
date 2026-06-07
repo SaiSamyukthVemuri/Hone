@@ -41,6 +41,10 @@ Every business object in Hone is **studio-scoped**. The `studio_id` column appea
 ### Treatment plan (`treatment_plans` + `treatment_plan_areas`)
 - Multi-area plan with timeline (PR #51). Status: `in_progress` / `paused`. Each area row records the body area, target sessions, intervals.
 
+### Session block side label (PR #162)
+
+`session_blocks.side` accepts the same canonical lowercase values it always has: `center`, `left`, `right`, `bilateral`, `n/a` (migration 0039 CHECK constraint + the `SessionBlockSide` TS union). The stored value did NOT change. PR #162 only changed the practitioner-facing label for `bilateral` from `"Bilateral"` to `"Both sides"` after Chloe's charting feedback ("does Bilateral mean both sides?"). The label mapping lives in `lib/sessions/side-labels.ts` and is the single source of truth for every charting surface (setup form dropdown, read-only blocks view). Saved records with `side='bilateral'` continue to render with the new label end to end.
+
 ### Session (`sessions`) and session blocks (`session_blocks`)
 - A session represents the actual treatment that happened during an appointment. Created when the practitioner clicks "+ Log session" or, as of PR #156, "+ Chart session" from the calendar appointment detail page.
 - Session blocks are individual treatment units (area + duration + equipment settings + notes) inside a session. PR #51 reshaped session blocks to use a structured area enum.

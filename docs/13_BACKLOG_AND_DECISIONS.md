@@ -88,6 +88,18 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Charting terminology and electrolysis field-order cleanup (PR #162)
+
+**Decision:** Change the `session_blocks.side` display label `"Bilateral"` to `"Both sides"` on every charting surface, and reorder the thermolysis input fields so the rendered JSX shows `Duration -> Intensity -> Pulse count` (matching Chloe's machine and the order she enters values during a real session). The stored enum value `bilateral` is unchanged; the database CHECK constraint from migration 0039, the `SessionBlockSide` TS union, and the server validation array are all untouched. Persisted column names (`thermolysis_duration_seconds`, `thermolysis_intensity_percent`, `pulse_count`) are unchanged. No data migration.
+
+**Why a shared label helper:** `app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx` carried a local `SIDE_OPTIONS` array (`{ value: "bilateral", label: "Bilateral" }`); `app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx` pushed `block.side` raw into the area-title suffix. Two surfaces, two different presentations of the same underlying value, both wrong. PR #162 moved the canonical `SESSION_BLOCK_SIDE_OPTIONS` array + a `sessionBlockSideLabel(side)` helper into `lib/sessions/side-labels.ts`. Both consumers now read from one place, so a future label tweak (e.g. when Laura asks for different wording) is one edit, not two.
+
+**Why galvanic is unchanged:** Chloe asked specifically about thermolysis. Galvanic already renders Duration before Intensity in source order (lines 736 vs 750 of the form). The Galvanic mA + Units of lye (UL) controls are galvanic-specific concepts, not symmetrical with thermolysis's pulse count. PR #162 pins the existing galvanic order with a test so a casual reorder cannot silently regress it.
+
+**Why a presentation-only fix rather than renaming the enum:** renaming `bilateral` to `both_sides` would invalidate every existing session_blocks row, require a CHECK-constraint migration with a backfill, and break server validation. The display-vs-storage split is the right shape: practitioners read English; the DB stores a stable canonical value.
+
+**Honest non-claims:** no migration. No schema change. No payment / live-mode / webhook / SMS / email behavior change. No public route change. No new RPC. No new RLS policy. No new env var. No new appointment / session data model. Pure UX/copy.
+
 ### Editable pre-appointment instructions (PR #160)
 
 **Decision:** Remove the hardcoded "Please arrive 5 minutes early. Wear comfortable clothing. Avoid caffeine before your appointment." paragraph from the booking confirmation email template. The per-service `services.pre_care_instructions` field (migration 0025) is now the single source of truth for prep wording; it is edited from `Settings → Services` per service, and the same value feeds the confirmation email, both reminder emails, and the portal Care instructions section (PR #159). When a service has no prep text set, the block is omitted entirely from every surface.

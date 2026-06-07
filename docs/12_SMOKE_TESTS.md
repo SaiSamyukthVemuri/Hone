@@ -310,6 +310,30 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Charting terminology + thermolysis field order (PR #162)
+
+Operator smoke after deploy:
+
+1. As a practitioner, open any session detail page (`/clients/<id>/sessions/<sessionId>`) for a client with an existing electrolysis session.
+2. Click into the treatment-area editor for an existing or new block.
+3. **Side dropdown**: confirm the picker shows `Center / Left / Right / Both sides / n/a`. The prior `Bilateral` label must NOT appear.
+4. Pick `Both sides` and save. Refresh. Confirm the block re-renders with the same selection.
+5. In the read-only session blocks view (the area-title strip above each block), confirm a saved record with `side='bilateral'` prints as `... · Both sides · ...` (NOT lowercase `bilateral`).
+6. **Thermolysis field order**: in the same editor, pick the Thermolysis or Blend mode. Confirm the rendered input order under "Treatment readings" is:
+   1. Thermolysis duration (s)
+   2. Thermolysis intensity %
+   3. Pulse count
+7. Save a value in each field and confirm the saved record on the read view shows the same values. Persisted column names are unchanged (`thermolysis_duration_seconds`, `thermolysis_intensity_percent`, `pulse_count`).
+8. Backstop SQL (optional):
+   ```sql
+   select id, primary_area, side
+   from public.session_blocks
+   where studio_id = '<studio uuid>'
+     and side = 'bilateral'
+   limit 5;
+   ```
+   Expected: stored value is still the lowercase `bilateral`; only the rendered label changed.
+
 ## Pre-appointment instructions (PR #160)
 
 After deploy, the operator should confirm the editable per-service prep text feeds both the email and the portal end to end.

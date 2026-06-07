@@ -7,6 +7,7 @@ import type {
   TreatmentParams,
 } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
+import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
@@ -26,7 +27,15 @@ function areaTitle(block: SessionBlock): { text: string; placeholder: boolean } 
   const area = block.primary_area?.trim();
   if (area && area.length > 0) {
     const extras: string[] = [];
-    if (block.side && block.side !== "n/a") extras.push(block.side);
+    // PR #162. Render the user-facing label via the shared helper
+    // so a saved record with side='bilateral' prints as "Both sides"
+    // here too (matches the setup-form dropdown). "n/a" is filtered
+    // separately because it is the explicit "side not applicable"
+    // option and should not appear in the title suffix.
+    if (block.side && block.side !== "n/a") {
+      const label = sessionBlockSideLabel(block.side);
+      if (label) extras.push(label);
+    }
     const detail = block.custom_area_detail?.trim();
     if (detail && detail.length > 0) extras.push(detail);
     return {
