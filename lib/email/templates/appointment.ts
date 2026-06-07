@@ -184,6 +184,11 @@ type NotifyPractitioner = {
   timezone: string;
   notes: string | null;
   appointmentUrl: string;
+  // PR #163. Practitioner-facing attribution from the public booking
+  // form ("How did you hear about us?"). Already mapped through
+  // referralSourceLabel by the caller; null when the visitor declined
+  // to answer. NOT rendered in any client-facing email.
+  referralSourceLabel: string | null;
 };
 
 export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
@@ -219,6 +224,7 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
           <strong>${escapeHtml(dayStr)}</strong><br/>
           ${escapeHtml(timeStr)} (${escapeHtml(p.timezone)})
           ${p.notes ? `<br/><br/>Notes: ${escapeHtml(p.notes)}` : ""}
+          ${p.referralSourceLabel ? `<br/><br/>How they heard about us: ${escapeHtml(p.referralSourceLabel)}` : ""}
         </td></tr>
         <tr><td style="padding-top:24px;">
           <a href="${p.appointmentUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
@@ -239,6 +245,7 @@ ${p.serviceName}
 ${dayStr}
 ${timeStr} (${p.timezone})
 ${p.notes ? `\nNotes: ${p.notes}\n` : ""}
+${p.referralSourceLabel ? `How they heard about us: ${p.referralSourceLabel}\n` : ""}
 Open in Hone: ${p.appointmentUrl}
 `;
 

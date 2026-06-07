@@ -813,6 +813,11 @@ async function dispatchBookingEmails(p: DispatchParams) {
     clientPhone: p.clientPhone,
     notes: p.notes,
     appointmentUrl,
+    // PR #163. Practitioner-side bookings (created from the
+    // calendar) never ask the "How did you hear about us?"
+    // question; the practitioner knows the source already. Always
+    // null here.
+    referralSourceLabel: null,
   });
 }
 

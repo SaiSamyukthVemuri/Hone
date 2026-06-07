@@ -7,6 +7,7 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { isConsultationService } from "@/lib/booking/consultation";
+import { REFERRAL_SOURCE_OPTIONS } from "@/lib/booking/referral-source";
 import {
   fetchNextAvailableDateAction,
   fetchPublicSlotsAction,
@@ -151,6 +152,11 @@ export function PublicBookForm({
   // appointments.notes (no schema change).
   const [areasWanted, setAreasWanted] = useState("");
   const [notes, setNotes] = useState("");
+  // PR #163. "How did you hear about us?" attribution. Empty string
+  // means the visitor did not answer; the action layer treats it as
+  // null. Allowed values come from lib/booking/referral-source.ts so
+  // a new option added there appears here without a second edit.
+  const [referralSource, setReferralSource] = useState("");
   // SMS consent (PR Twilio v1). Defaults to false; opt-in only. The
   // checkbox is not required; phone stays required as before. Consent
   // is only honored when the submitted phone normalizes equal to the
@@ -331,6 +337,12 @@ export function PublicBookForm({
         : combineAreasAndNotes(areasWanted, notes),
     );
     fd.set("sms_consent", smsConsent ? "true" : "false");
+    // PR #163. Optional "How did you hear about us?" answer. Empty
+    // string means the visitor did not answer; the action layer
+    // normalises that to null. Allowed values are validated
+    // server-side via parseReferralSource from
+    // lib/booking/referral-source.ts.
+    fd.set("referral_source", referralSource);
     startSubmitting(async () => {
       const r = await publicBookAppointmentAction(fd);
       if (!r.ok) {
@@ -746,6 +758,33 @@ export function PublicBookForm({
           className="w-full resize-none bg-transparent py-2 text-[16px] outline-none"
           style={{ borderBottom: "1px solid #0A0A0A" }}
         />
+      </Field>
+
+      {/* PR #163. Booking attribution. Optional dropdown that captures
+          "How did you hear about us?" at booking time. Helper text
+          stays low-key so it does not feel like a required question.
+          Allowed values + display labels live in
+          lib/booking/referral-source.ts so this list, the action's
+          validation, and the practitioner-facing display all read
+          from one place. */}
+      <Field
+        label="How did you hear about us?"
+        helperText="Optional. Helps the studio understand where new clients come from."
+      >
+        <select
+          name="referral_source"
+          value={referralSource}
+          onChange={(e) => setReferralSource(e.target.value)}
+          className="w-full bg-transparent py-2 text-[16px] outline-none"
+          style={{ borderBottom: "1px solid #0A0A0A" }}
+        >
+          <option value="">Select an option (optional)</option>
+          {REFERRAL_SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </Field>
 
       <div className="flex items-center gap-4">

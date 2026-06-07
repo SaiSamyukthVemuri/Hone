@@ -243,6 +243,10 @@ describe("Settings -> Services exposes the editable Pre-appointment instructions
       timezone: TZ,
       notes: null,
       appointmentUrl: "https://example.com/calendar/abc",
+      // PR #163. Practitioner notification gained a
+      // referralSourceLabel field; null here keeps the prep
+      // assertion focused on the prep block, not on attribution.
+      referralSourceLabel: null,
     });
     expect(out.html).toContain("60-minute electrolysis");
   });

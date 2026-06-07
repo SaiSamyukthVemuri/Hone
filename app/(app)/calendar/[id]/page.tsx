@@ -7,6 +7,7 @@ import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
+import { referralSourceLabel } from "@/lib/booking/referral-source";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
@@ -522,6 +523,27 @@ export default async function AppointmentDetailPage({
           </h2>
           <p className="mt-2 whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
             {data.notes}
+          </p>
+        </section>
+      )}
+
+      {/* PR #163 (migration 0069). Practitioner-facing attribution
+          row. The "How did you hear about us?" answer the client
+          picked at booking time. Hidden when null so a brand-new
+          client without an answer does not show an empty box. The
+          label resolver lives in lib/booking/referral-source.ts so
+          every surface reads the same display string. This is
+          intentionally practitioner-only; it is NOT rendered in
+          the client confirmation email, the portal, or the public
+          booking confirmation page. */}
+      {data.referral_source && (
+        <section className="rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            How they heard about us
+          </h2>
+          <p className="mt-2 text-neutral-700 dark:text-neutral-300">
+            {referralSourceLabel(data.referral_source) ??
+              data.referral_source}
           </p>
         </section>
       )}

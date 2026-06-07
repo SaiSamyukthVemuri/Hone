@@ -88,6 +88,22 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Booking referral attribution (PR #163, migration 0069)
+
+**Decision:** Capture an optional "How did you hear about us?" answer on the public booking form. Store the canonical lowercase value on the new nullable `appointments.referral_source` column (migration 0069). Surface the label-mapped value on the practitioner-facing calendar appointment detail page and in the practitioner new-booking notification email body. Do NOT surface it on any client-facing surface (confirmation email, reminder emails, portal, public booking confirmation page).
+
+**Why appointment-level and not client-level for v1:** the smallest useful version that gives Chloe the signal. A future PR can promote to client-level first-touch / latest-touch attribution after Chloe has used the appointment-level data and decided what she wants. Designing the client-level model before the data is in is the wrong order.
+
+**Why a closed option set and no free-text "Other details":** avoids the PII / spam concerns of an arbitrary text box, makes future analytics simple (every value belongs to one of seven buckets), and keeps validation cheap. The seven options (Google, Instagram, Friend or referral, Existing client, Studio website, Other, Prefer not to say) cover Chloe's stated use cases. Free-text is a future PR if the operator asks.
+
+**Why no DB CHECK constraint on the column:** the option set lives in `lib/booking/referral-source.ts` and is enforced at the action layer via `parseReferralSource`. Pinning the same list at the DB layer would force a migration every time the option list grows; the action-layer check is sufficient because the only writers are server actions, and a tampered form value surfaces the visitor-facing generic booking error before reaching the insert.
+
+**Why no index:** low cardinality (seven values), no hot read path. The only readers today are the calendar appointment detail page (one row by id) and a future analytics query that can run a sequential scan happily.
+
+**Why "Studio website" instead of "Willow Electrolysis website":** the public booking form is shared by every studio that uses Hone. Hardcoding "Willow" in the option label would have leaked Willow-specific branding into a generic surface and would have been wrong as soon as a second studio (Laura) onboarded. The label stays studio-agnostic.
+
+**Honest non-claims:** not a full intake builder. Not an editable booking form builder. Not a marketing analytics dashboard. Not a client-level first-touch attribution model. Not a notification center. Not a CRM export. No payment behavior change. No live-mode change. No SMS change. No portal redesign. No consent change. No public route auth change.
+
 ### Charting terminology and electrolysis field-order cleanup (PR #162)
 
 **Decision:** Change the `session_blocks.side` display label `"Bilateral"` to `"Both sides"` on every charting surface, and reorder the thermolysis input fields so the rendered JSX shows `Duration -> Intensity -> Pulse count` (matching Chloe's machine and the order she enters values during a real session). The stored enum value `bilateral` is unchanged; the database CHECK constraint from migration 0039, the `SessionBlockSide` TS union, and the server validation array are all untouched. Persisted column names (`thermolysis_duration_seconds`, `thermolysis_intensity_percent`, `pulse_count`) are unchanged. No data migration.

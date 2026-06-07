@@ -321,6 +321,11 @@ export async function sendBookingNotificationToPractitioner(params: {
   clientPhone: string | null;
   notes: string | null;
   appointmentUrl: string;
+  // PR #163. Practitioner-facing display string for "How did you
+  // hear about us?". Already mapped through referralSourceLabel by
+  // the caller (the public booking action) so this helper does not
+  // need to know about the canonical option set.
+  referralSourceLabel: string | null;
 }) {
   if (!params.practitionerEmail) return;
   const start = new Date(params.appointment.starts_at);
@@ -337,6 +342,7 @@ export async function sendBookingNotificationToPractitioner(params: {
     timezone: params.studio.timezone,
     notes: params.notes,
     appointmentUrl: params.appointmentUrl,
+    referralSourceLabel: params.referralSourceLabel,
   });
   await sendEmailSafely({
     to: params.practitionerEmail,

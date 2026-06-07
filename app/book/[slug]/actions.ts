@@ -19,6 +19,10 @@ import {
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
 import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import {
+  parseReferralSource,
+  referralSourceLabel,
+} from "@/lib/booking/referral-source";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -316,6 +320,22 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const smsConsent = formData.get("sms_consent") === "true";
   const phone = nullable(formData.get("phone"));
   const notes = nullable(formData.get("notes"));
+  // PR #163. "How did you hear about us?" optional answer. Empty
+  // string -> null. Non-empty value MUST be in the canonical option
+  // set; an unknown value throws synchronously and surfaces as the
+  // generic public booking error below so a probing caller cannot
+  // enumerate the option set via the form. Validation lives in
+  // lib/booking/referral-source.ts so the form, the action, and
+  // every reader stay in sync.
+  let referralSource: string | null = null;
+  try {
+    referralSource = parseReferralSource(formData.get("referral_source"));
+  } catch {
+    return {
+      ok: false,
+      error: "We couldn't read your booking form. Please refresh and try again.",
+    };
+  }
 
   // Public booking new/existing split. The first-step UI choice is
   // posted as client_type and is the source of truth for two rules:
@@ -710,6 +730,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       status: "confirmed",
       notes,
       cancellation_token: appointmentToken,
+      // PR #163 (migration 0069). Stored as a canonical lowercase
+      // value; null when the visitor declined to answer the
+      // optional "How did you hear about us?" dropdown.
+      referral_source: referralSource,
     })
     .select("*")
     .single();
@@ -860,6 +884,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       clientPhone,
       notes,
       appointmentUrl: `${appOrigin}/calendar/${created.id}`,
+      // PR #163. Already-labelled practitioner-facing string;
+      // null when the visitor declined to answer.
+      referralSourceLabel: referralSourceLabel(referralSource),
     });
   }
 

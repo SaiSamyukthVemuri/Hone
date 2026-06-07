@@ -297,6 +297,13 @@ export type Appointment = {
   postcare_email_sent_at: string | null;
   postcare_email_send_attempts: number;
   cancellation_token: string | null;
+  // Migration 0069 (PR #163). Booking attribution: optional answer to
+  // "How did you hear about us?" captured at booking time on the
+  // public booking form. Internal lowercase value (e.g. "google",
+  // "instagram", "friend_or_referral"); see lib/booking/referral-
+  // source.ts for the canonical option set. Null on historical rows
+  // and when the visitor declined to answer; the field is optional.
+  referral_source: string | null;
   // Migration 0029: trailing-only protected interval
   // [starts_at, blocked_ends_at). buffer_minutes_snapshot is a copy
   // of studios.buffer_minutes at the moment the row was inserted or

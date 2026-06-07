@@ -1,10 +1,10 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. 68 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
+Hone uses Supabase Postgres. 69 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0069`.
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0070`.
 - Apply to production via `supabase db push --linked` BEFORE merging code that reads new columns or tables. A merged PR whose code references a column not yet in prod produces a 500. See the [Migration data + DDL splits](../README.md) memory.
 - For mixed `UPDATE` + `ALTER CONSTRAINT` migrations, paste the `UPDATE` first and inspect the row count before applying the constraint.
 - For atomic install patterns with cross-step invariants, wrap in `begin; … commit;` with `raise exception` validators between backfill and final constraints.
@@ -94,6 +94,7 @@ Current SECURITY DEFINER RPCs:
 | 0066 | Reschedule future guard | DB CHECK on `reschedule_appointment` RPC that the new starts_at is strictly in the future and the original is confirmed. |
 | 0067 | Ops alerts | `ops_alerts` table with redaction; `record_ops_alert` service-role helper; never-throws contract. |
 | 0068 | Sessions ↔ appointments link | Nullable `sessions.appointment_id` with FK to `appointments(id) ON DELETE SET NULL`. Two partial indexes (`sessions_appointment_id_idx`, `sessions_studio_appointment_idx`) keyed on `appointment_id is not null`. NO unique constraint (one appointment may have multiple sessions). NO historical backfill. NO RLS change. Server-side `startSessionAction` validates `(studio_id, client_id)` lineage before writing the FK. |
+| 0069 | Appointment referral source | Nullable `appointments.referral_source` text. Stores the visitor's answer to the public booking form's "How did you hear about us?" dropdown (PR #163). No CHECK constraint (option set enforced at the action layer in `lib/booking/referral-source.ts`); no index (low cardinality, practitioner-only read on the appointment detail page); no RLS change. No historical backfill (null on every existing row is the honest representation). |
 
 ## Future migration checklist
 

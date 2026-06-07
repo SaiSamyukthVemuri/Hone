@@ -1,0 +1,49 @@
+-- PR #163. Booking attribution. Chloe asked for a simple "How did
+-- you hear about us?" question on the public booking flow so the
+-- studio can see whether bookings come from Google, Instagram,
+-- referrals, the studio website, etc. v1 is appointment-level: the
+-- answer is captured at booking time and stored on the appointment
+-- row alongside the rest of the per-visit metadata.
+--
+-- This migration is additive only:
+--   * one nullable text column
+--   * no CHECK constraint (the allowed value set is enforced at the
+--     action layer in app/book/[slug]/actions.ts; pinning it at the
+--     DB layer would force a migration every time the option list
+--     grows, and the operator-facing risk of an unknown value is
+--     zero today)
+--   * no index (low cardinality + only practitioner-facing read on
+--     the appointment detail page; not on a hot path)
+--   * no RLS change (the studio-membership policy from migration
+--     0010 already gates the appointments table; the new column
+--     inherits that gate)
+--
+-- Future PRs may add a client-level first-touch / latest-touch
+-- attribution model that joins back to clients; this column stays
+-- as the per-appointment answer regardless.
+--
+-- Verification SQL (operator runs after deploy):
+--
+--   select column_name, data_type, is_nullable
+--   from information_schema.columns
+--   where table_schema = 'public'
+--     and table_name = 'appointments'
+--     and column_name = 'referral_source';
+--
+--   expected: referral_source | text | YES
+--
+--   select count(*) filter (where referral_source is not null) as answered,
+--          count(*) filter (where referral_source is null)     as unanswered
+--   from public.appointments;
+--
+--   expected immediately after deploy:
+--     answered   = 0
+--     unanswered = current total appointment row count
+--
+-- The "answered" count climbs only as new public bookings run
+-- through the form with a non-empty selection. No backfill is
+-- performed (the field did not exist before; every existing row
+-- legitimately has no answer).
+
+alter table public.appointments
+  add column if not exists referral_source text;
