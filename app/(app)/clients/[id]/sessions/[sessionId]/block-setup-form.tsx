@@ -301,8 +301,10 @@ export function BlockSetupForm({
       label: "Thermolysis intensity",
     });
     if (!tInt.ok) return setError(tInt.error);
+    // PR #165. Drop int: true so the parser preserves fractional
+    // seconds like 0.15 / 0.2. Migration 0071 widened the DB
+    // column to numeric so the round trip is now lossless.
     const tDur = parseOptionalNumber(draft.thermolysisDurationSeconds, {
-      int: true,
       min: 0,
       label: "Thermolysis duration",
     });
@@ -691,10 +693,17 @@ export function BlockSetupForm({
             <div className="grid gap-4 md:grid-cols-2">
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium">Thermolysis duration (s)</span>
+                {/* PR #165. Allow fractional seconds. Chloe enters
+                    values like 0.15 / 0.2 on the thermolysis flash;
+                    the prior integer-only step truncated those to
+                    0 at parse time AND the DB stored 0. Migration
+                    0071 widened the column to numeric; the form now
+                    accepts decimals and the parser below uses
+                    parseFloat (int: false). */}
                 <input
                   type="number"
-                  inputMode="numeric"
-                  step="1"
+                  inputMode="decimal"
+                  step="0.01"
                   min={0}
                   value={draft.thermolysisDurationSeconds}
                   onChange={(e) =>

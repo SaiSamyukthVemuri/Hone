@@ -1,0 +1,58 @@
+-- PR #165. Preserve fractional thermolysis duration.
+--
+-- Migration 0042 introduced electrolysis_entries.thermolysis_duration_seconds
+-- as `integer`, which silently truncated values like 0.15 down to 0 at
+-- insert time. Chloe logged a real session where the read view showed
+-- "0 seconds" for what she had entered as 0.15. That is clinically
+-- meaningful: a thermolysis flash is often a fraction of a second.
+--
+-- This migration changes the column type to numeric so fractional
+-- values survive the round trip. The existing CHECK constraint
+-- (electrolysis_entries_blend_galvanic_check, migration 0042) is
+-- already expressed with `>= 0` and applies cleanly to numeric values
+-- with no rewrite needed.
+--
+-- Scope decision: only thermolysis_duration_seconds is widened.
+--   * galvanic_duration_seconds stays integer. Chloe did not flag
+--     it, and a galvanic application is measured in whole seconds in
+--     the studio workflow today. If a future user surfaces a
+--     fractional-galvanic need we can widen it in its own PR.
+--   * intensity_percent fields stay integer; they are percentages
+--     0-100 and never need decimals.
+--   * The legacy generic duration_seconds column on
+--     electrolysis_entries (migration 0001) was already declared
+--     `numeric(7,3)` and is unchanged by this migration.
+--
+-- USING clause is the standard integer -> numeric coercion. Existing
+-- rows (all integer values today) become equivalent numeric values
+-- with zero scale. New rows can carry up to numeric's default scale
+-- which is more than the two decimal places the form accepts.
+--
+-- This is a non-data-rewriting ALTER COLUMN TYPE. Postgres rewrites
+-- the table for integer -> numeric, which is fast at our row counts.
+--
+-- Verification SQL (operator runs after deploy):
+--
+--   select column_name, data_type, numeric_precision, numeric_scale
+--   from information_schema.columns
+--   where table_schema = 'public'
+--     and table_name = 'electrolysis_entries'
+--     and column_name = 'thermolysis_duration_seconds';
+--   -- expect: data_type = numeric, numeric_precision = NULL,
+--   --         numeric_scale = NULL (unbounded numeric).
+--
+--   select count(*) filter (where thermolysis_duration_seconds is not null)
+--   from public.electrolysis_entries;
+--   -- expect: existing row count unchanged; no rows lost or rewritten
+--   --         beyond the type widening.
+--
+--   -- Spot-check a non-null row preserves its prior integer value as
+--   -- a numeric:
+--   select id, thermolysis_duration_seconds
+--   from public.electrolysis_entries
+--   where thermolysis_duration_seconds is not null
+--   limit 5;
+
+alter table public.electrolysis_entries
+  alter column thermolysis_duration_seconds type numeric
+  using thermolysis_duration_seconds::numeric;

@@ -310,6 +310,32 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Fractional thermolysis duration (PR #165, migration 0071)
+
+After deploy, the operator should confirm Chloe can enter a fractional value, the row stores it correctly, and the read view displays it.
+
+1. Open a test electrolysis session as the practitioner.
+2. Add or edit a thermolysis (or blend) block.
+3. Under "Treatment readings" enter:
+   - Thermolysis duration (s): `0.15`
+   - Thermolysis intensity %: `61`
+   - Pulse count: `1`
+   - Hairs treated: `37`
+4. Save. SQL verify the value persisted as a decimal:
+   ```sql
+   select id, thermolysis_duration_seconds
+   from public.electrolysis_entries
+   where session_id = '<session uuid>'
+   order by created_at desc
+   limit 5;
+   -- expect: top row carries 0.15 (not 0).
+   ```
+5. Refresh the session view. The entry row should read `... 61%, 0.15 seconds, 1 pulse ...` (not `... 0s ...`).
+6. Edit the same block again and confirm the input field still shows `0.15`.
+7. Enter `0.2` instead and save. Refresh. Confirm the row reads `0.2 seconds` (not `0.20`, not `0`).
+8. Enter `1` and save. Refresh. Confirm the row reads `1 second` (singular).
+9. Enter `2` and save. Refresh. Confirm `2 seconds`.
+
 ## Practitioner notification center (PR #164, migration 0070)
 
 After deploy, the operator should confirm the notification table is reachable, the three event sources fire the helper, and the practitioner-facing page renders the rows. Migration 0070 is applied to production before merge.

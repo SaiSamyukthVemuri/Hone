@@ -88,6 +88,20 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Fractional thermolysis duration (PR #165, migration 0071)
+
+**Decision:** Widen `electrolysis_entries.thermolysis_duration_seconds` from `integer` to `numeric` (migration 0071). Drop `int: true` from the form parser. Switch the input to `step="0.01"` + `inputMode="decimal"`. Add `lib/sessions/format-seconds.ts:formatSeconds` and route the entry-row display through it.
+
+**Why widen only thermolysis_duration_seconds:** Chloe's bug was specifically about thermolysis flash duration (`0.15s`, `0.2s` are clinically meaningful). Galvanic duration is measured in whole seconds in the studio workflow today; intensity percent fields are 0-100 percentages and never need decimals. The spec was explicit: "do not broaden unless clinically necessary." Pinned by a test that confirms the migration only references the thermolysis column in its DDL.
+
+**Why a 2-decimal-place format with trailing-zero trim:** `0.15` should render as `"0.15 seconds"`, `0.2` as `"0.2 seconds"` (not `"0.20"`), `1` as `"1 second"`, `2` as `"2 seconds"`. The `Math.round(value * 100) / 100` trick cleans float-precision noise (e.g. `0.15 * 100 = 14.999999999999998` in JS), and `String(rounded)` naturally drops trailing zeros. Pinned by `tests/lib/sessions/format-seconds.test.ts`.
+
+**Why singular only when value === 1 exactly:** `"1 second"` reads naturally; `"1.0 seconds"` does not exist in the formatter's output (the round-and-trim strips the `.0`). Fractional and `0` always read as `"seconds"`.
+
+**Why not touch the legacy generic `duration_seconds` display path:** the legacy column dates to migration 0001 and is only present on entries that pre-date the structured-readings work of migration 0042. Legacy entries still render via the bare `${value}s` template; touching that path would broaden scope without fixing a reported bug.
+
+**Honest non-claims:** no broad charting redesign. No new treatment model. No analytics. No notifications. No payment / live-mode / SMS / email / portal change. PR #162 thermolysis Duration -> Intensity -> Pulse count input order is preserved (pinned by a test in this PR's test file).
+
 ### Practitioner notification center foundation (PR #164, migration 0070)
 
 **Decision:** Add `practitioner_notifications` table with studio-wide RLS visibility. Wire three v1 event sources (public booking, client cancel, client reschedule) to a server-only fire-and-forget helper that writes via the admin/service-role client. Add a `/notifications` page + "Mark all read" server action that read/update via the authenticated RLS client. Header nav gains a Notifications link with an unread count badge.

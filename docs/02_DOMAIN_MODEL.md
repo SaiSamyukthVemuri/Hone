@@ -50,6 +50,10 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 - **Read + mark-read path:** authenticated RLS client. `/notifications` page reads via `createClient` (RLS-scoped); the `markAllNotificationsAsReadAction` server action updates `read_at` scoped to the resolved studio.
 - **Never-throws contract:** the write helper is fire-and-forget; the caller does not await it and a failure inside the helper logs to `ops_alerts` via the existing `recordOpsAlert` path but cannot roll back the booking / cancel / reschedule that just committed.
 
+### Thermolysis duration (PR #165, migration 0071)
+
+`electrolysis_entries.thermolysis_duration_seconds` is `numeric` (was `integer` in migration 0042). A thermolysis flash is often a fraction of a second; Chloe logged values like `0.15` and saw the read view collapse to `0 seconds` because the integer column was truncating at insert. The widened column carries decimals losslessly; the form input uses `step="0.01"` + `inputMode="decimal"`, and the entry-row display routes through `lib/sessions/format-seconds.ts:formatSeconds` which yields `"0.15 seconds"` / `"1 second"` / `"2 seconds"`. Galvanic duration stays integer (Chloe did not flag it); intensity-percent fields stay integer (they are 0–100 percentages).
+
 ### Session block side label (PR #162)
 
 `session_blocks.side` accepts the same canonical lowercase values it always has: `center`, `left`, `right`, `bilateral`, `n/a` (migration 0039 CHECK constraint + the `SessionBlockSide` TS union). The stored value did NOT change. PR #162 only changed the practitioner-facing label for `bilateral` from `"Bilateral"` to `"Both sides"` after Chloe's charting feedback ("does Bilateral mean both sides?"). The label mapping lives in `lib/sessions/side-labels.ts` and is the single source of truth for every charting surface (setup form dropdown, read-only blocks view). Saved records with `side='bilateral'` continue to render with the new label end to end.
