@@ -5,6 +5,7 @@ import type {
 } from "@/lib/types/database";
 import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
+import { formatSeconds } from "@/lib/sessions/format-seconds";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
@@ -74,7 +75,14 @@ export function ElectrolysisEntryRow({
     thermoParts.push(`${entry.thermolysis_intensity_percent}%`);
   }
   if (entry.thermolysis_duration_seconds != null) {
-    thermoParts.push(`${entry.thermolysis_duration_seconds}s`);
+    // PR #165. Route through formatSeconds so fractional values
+    // like 0.15 / 0.2 render as "0.15 seconds" / "0.2 seconds"
+    // instead of being silently rounded down to "0s" by the prior
+    // integer-truncating storage + bare template literal display.
+    // Whole-second values render as "1 second" / "2 seconds" so
+    // the practitioner-facing copy reads naturally.
+    const label = formatSeconds(entry.thermolysis_duration_seconds);
+    if (label) thermoParts.push(label);
   }
   if (isThermoish && entry.pulse_count != null) {
     thermoParts.push(
