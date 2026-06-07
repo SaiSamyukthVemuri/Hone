@@ -1,10 +1,10 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. 69 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
+Hone uses Supabase Postgres. 70 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0070`.
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0071`.
 - Apply to production via `supabase db push --linked` BEFORE merging code that reads new columns or tables. A merged PR whose code references a column not yet in prod produces a 500. See the [Migration data + DDL splits](../README.md) memory.
 - For mixed `UPDATE` + `ALTER CONSTRAINT` migrations, paste the `UPDATE` first and inspect the row count before applying the constraint.
 - For atomic install patterns with cross-step invariants, wrap in `begin; … commit;` with `raise exception` validators between backfill and final constraints.
@@ -95,6 +95,7 @@ Current SECURITY DEFINER RPCs:
 | 0067 | Ops alerts | `ops_alerts` table with redaction; `record_ops_alert` service-role helper; never-throws contract. |
 | 0068 | Sessions ↔ appointments link | Nullable `sessions.appointment_id` with FK to `appointments(id) ON DELETE SET NULL`. Two partial indexes (`sessions_appointment_id_idx`, `sessions_studio_appointment_idx`) keyed on `appointment_id is not null`. NO unique constraint (one appointment may have multiple sessions). NO historical backfill. NO RLS change. Server-side `startSessionAction` validates `(studio_id, client_id)` lineage before writing the FK. |
 | 0069 | Appointment referral source | Nullable `appointments.referral_source` text. Stores the visitor's answer to the public booking form's "How did you hear about us?" dropdown (PR #163). No CHECK constraint (option set enforced at the action layer in `lib/booking/referral-source.ts`); no index (low cardinality, practitioner-only read on the appointment detail page); no RLS change. No historical backfill (null on every existing row is the honest representation). |
+| 0070 | Practitioner notifications | New `practitioner_notifications` table (id / studio_id / practitioner_id / event_type / title / body / appointment_id / client_id / href / read_at / created_at). Three secondary indexes: `practitioner_notifications_studio_created_idx`, `practitioner_notifications_practitioner_created_idx` (partial on `practitioner_id is not null`), `practitioner_notifications_unread_idx` (partial on `read_at is null`). RLS enabled with `practitioner_notifications_member_read` (SELECT) + `practitioner_notifications_member_update` (UPDATE with WITH CHECK) gated on `is_studio_member(studio_id)`. NO insert policy by design: writes happen via the server-only helper `lib/notifications/practitioner-notifications.ts:recordPractitionerNotification` using service_role. NO CHECK on event_type (allowlist enforced in the helper). |
 
 ## Future migration checklist
 

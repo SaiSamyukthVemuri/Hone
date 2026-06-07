@@ -310,6 +310,32 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Practitioner notification center (PR #164, migration 0070)
+
+After deploy, the operator should confirm the notification table is reachable, the three event sources fire the helper, and the practitioner-facing page renders the rows. Migration 0070 is applied to production before merge.
+
+1. As Chloe, log into `https://hone.care` and confirm a new **Notifications** link appears in the header nav, between Calendar and Settings. Initial badge: zero (unless someone bookmarked the URL and visited; the unread count is from the live DB).
+2. As a test public visitor in an incognito browser, book a new appointment at `/book/willow-electrolysis`. Complete the booking.
+3. Refresh Chloe's `/notifications` page. Expect:
+   - A new row at the top titled **New booking**.
+   - Body: `<Client name> booked <Service> for <Day Mon DD> at <H:MM AM/PM>.`
+   - href clicks through to `/calendar/<appointment_id>`.
+   - Header badge shows 1 (or however many unread rows exist).
+4. From the public token email, click the cancellation link and cancel the appointment with a reason (e.g. "Schedule changed"). Refresh `/notifications`. Expect a new row titled **Appointment cancelled** with body `<Client name> cancelled their appointment. Reason: Schedule changed.`
+5. From a fresh public booking, follow the reschedule token to move the appointment to a different time. Refresh `/notifications`. Expect a new row titled **Appointment rescheduled** with body `<Client name> rescheduled from <Day Mon DD at H:MM AM/PM> to <Day Mon DD at H:MM AM/PM>.`
+6. Click **Mark all read**. Expect the badge to drop to 0 and the unread tint to disappear from every row.
+7. SQL backstop:
+   ```sql
+   select event_type, title, body, href, read_at, created_at
+   from public.practitioner_notifications
+   where studio_id = '<studio uuid>'
+   order by created_at desc
+   limit 10;
+   ```
+   Expected: three rows from the smoke flow (new_booking, appointment_cancelled, appointment_rescheduled). All `read_at` populated after step 6.
+8. Cross-studio safety: sign into a different studio's practitioner account (or use the admin SQL to flip studio scope) and confirm none of the rows above appear. The RLS `is_studio_member(studio_id)` clause is the gate.
+9. Never-throws safety: temporarily break the notification write path (e.g. revoke the service role's insert grant in a staging env) and book an appointment. The booking MUST succeed and the client confirmation email MUST go out, even though no notification row is created. The failure logs to `ops_alerts` with `event = 'practitioner_notification_insert_failed'`. This is the hard acceptance gate.
+
 ## Booking attribution / "How did you hear about us?" (PR #163, migration 0069)
 
 After deploy, the operator should confirm the new dropdown captures + surfaces correctly end to end.

@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
+import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import {
   buildPolicySnapshot,
@@ -280,15 +281,24 @@ export async function publicCancelAppointmentAction(
   // client without trusting any client-supplied id.
   const { data: apptRaw } = await admin
     .from("appointments")
-    .select("studio_id, client_id, starts_at, service:services(name), studio:studios(*)")
+    .select(
+      "studio_id, client_id, practitioner_id, starts_at, service:services(name), studio:studios(*), client:clients(name)",
+    )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   type CancelAppt = {
     studio_id: string;
     client_id: string;
+    // PR #164. practitioner_id + client name added so the
+    // practitioner notification helper can stamp the assigned
+    // practitioner + render a body like "<Client name> cancelled
+    // their appointment." Studio_id is the load-bearing scope; the
+    // helper requires it.
+    practitioner_id: string | null;
     starts_at: string;
     service: { name: string } | { name: string }[] | null;
     studio: import("@/lib/types/database").Studio | import("@/lib/types/database").Studio[] | null;
+    client: { name: string } | { name: string }[] | null;
   };
   const apptRow = apptRaw as CancelAppt | null;
   if (apptRow) {
@@ -296,6 +306,27 @@ export async function publicCancelAppointmentAction(
       Array.isArray(v) ? (v[0] ?? null) : v;
     const apptStudio = pickOne(apptRow.studio);
     const apptService = pickOne(apptRow.service);
+    const apptClient = pickOne(apptRow.client);
+
+    // PR #164. Fire-and-forget practitioner notification. The
+    // RPC already committed the cancellation; this helper never
+    // throws to the caller. Body composes the client name + the
+    // optional reason label that was already validated above and
+    // is studio-member-safe to display. href links to the
+    // appointment detail page where the full cancellation
+    // insight + audit row live.
+    recordPractitionerNotification({
+      studioId: apptRow.studio_id,
+      practitionerId: apptRow.practitioner_id,
+      eventType: "appointment_cancelled",
+      title: "Appointment cancelled",
+      body: reasonLabel
+        ? `${apptClient?.name ?? "A client"} cancelled their appointment. Reason: ${reasonLabel}.`
+        : `${apptClient?.name ?? "A client"} cancelled their appointment.`,
+      appointmentId: resolved.appointment_id,
+      clientId: apptRow.client_id,
+      href: `/calendar/${resolved.appointment_id}`,
+    });
 
     // PR #132. Write the policy acknowledgement row. studio_id,
     // client_id, and appointment_id are all server-resolved from the

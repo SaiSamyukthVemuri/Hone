@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
 import { AppFooter } from "@/app/_components/AppFooter";
@@ -12,6 +13,12 @@ export default async function AppLayout({
 }) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const admin = isAdmin(practitioner.email);
+
+  // PR #164. Unread notification count for the header badge. RLS
+  // gates the count by studio membership; a failed count (network,
+  // table missing in a hypothetical staging env) silently falls
+  // back to zero so the layout never breaks. Single bounded query.
+  const unreadNotifications = await loadUnreadNotificationCount(studio.id);
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -51,6 +58,26 @@ export default async function AppLayout({
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Calendar
+              </Link>
+              {/* PR #164. Practitioner notification center. Badge
+                  renders when unread count is positive; otherwise
+                  the link reads as plain "Notifications". The
+                  count itself lives on the server-rendered layout
+                  so the badge is correct on initial page load
+                  without client-side polling. */}
+              <Link
+                href="/notifications"
+                className="relative rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                Notifications
+                {unreadNotifications > 0 && (
+                  <span
+                    aria-label={`${unreadNotifications} unread`}
+                    className="ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-semibold text-white"
+                  >
+                    {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                  </span>
+                )}
               </Link>
               <Link
                 href="/settings/profile"
@@ -98,4 +125,25 @@ export default async function AppLayout({
       <SafeAnalytics />
     </div>
   );
+}
+
+// PR #164. Header unread-notification badge count. RLS scopes
+// the query to the authenticated practitioner's studio. The
+// partial unread index from migration 0070 backs this read; the
+// query is bounded and safe to run on every authenticated page
+// render. A failure (network, missing table in a fresh env)
+// falls back to zero so the layout never breaks.
+async function loadUnreadNotificationCount(studioId: string): Promise<number> {
+  try {
+    const supabase = await createClient();
+    const { count, error } = await supabase
+      .from("practitioner_notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("studio_id", studioId)
+      .is("read_at", null);
+    if (error) return 0;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
 }
