@@ -29,6 +29,26 @@ visitor opens /book/<slug>
   -> visitor lands on a thank-you page
 ```
 
+### Referral attribution (PR #163, migration 0069)
+
+The public booking form carries an optional **"How did you hear about us?"** dropdown after the "Anything else?" notes textarea. Options live in `lib/booking/referral-source.ts`:
+
+| Internal value | Display label |
+|---|---|
+| `google` | Google |
+| `instagram` | Instagram |
+| `friend_or_referral` | Friend or referral |
+| `existing_client` | Existing client |
+| `studio_website` | Studio website |
+| `other` | Other |
+| `prefer_not_to_say` | Prefer not to say |
+
+The dropdown's empty entry (`""`) means the visitor did not answer; the action layer normalises it to `null`. A non-empty value MUST be in the canonical option set; an unknown value is rejected with the visitor-facing generic booking error so a probing caller cannot enumerate the option set. No free-text "Other details" field in v1; the option list is closed.
+
+The answer is stored as a lowercase string in the nullable `appointments.referral_source` column (migration 0069). The practitioner sees it on the calendar appointment detail page in a small "How they heard about us" row (only rendered when the value is non-null) and in the practitioner new-booking notification email body. Client-facing surfaces (confirmation email, reminder emails, portal, public booking confirmation page) deliberately do NOT render the value.
+
+v1 is appointment-level: a returning client who books again may answer differently each time. A future PR can promote any of these values to a client-level first-touch or latest-touch attribution model without changing the per-appointment shape here.
+
 ### New / existing client split
 
 The booking form chooses the path based on `find_or_create_client_for_booking`:

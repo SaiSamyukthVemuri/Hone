@@ -310,6 +310,39 @@ Run after any PR that touches `lib/ops/alerts.ts`, the webhook, the cron routes,
    npm test
    ```
 
+## Booking attribution / "How did you hear about us?" (PR #163, migration 0069)
+
+After deploy, the operator should confirm the new dropdown captures + surfaces correctly end to end.
+
+1. Open `/book/<studio-slug>` as a fresh client (incognito window).
+2. Walk through the booking form. Confirm the new "How did you hear about us?" dropdown appears after "Anything else?" with the helper text "Optional. Helps the studio understand where new clients come from."
+3. Confirm the options match the seven canonical labels: Google, Instagram, Friend or referral, Existing client, Studio website, Other, Prefer not to say. The default option is "Select an option (optional)".
+4. Pick `Instagram` and submit. Confirm the booking succeeds.
+5. SQL verify the new column:
+   ```sql
+   select column_name, data_type, is_nullable
+   from information_schema.columns
+   where table_schema = 'public'
+     and table_name = 'appointments'
+     and column_name = 'referral_source';
+   -- expect: referral_source | text | YES
+   ```
+6. SQL verify the value landed on the new row:
+   ```sql
+   select id, starts_at, referral_source
+   from public.appointments
+   where studio_id = '<studio uuid>'
+     and client_id = '<client uuid>'
+   order by created_at desc
+   limit 5;
+   -- expect: the new row has referral_source = 'instagram'
+   ```
+7. As the studio practitioner, open the calendar appointment detail page for the new booking. Confirm a "How they heard about us" section renders below the appointment notes with the value `Instagram`.
+8. Open the practitioner notification email Chloe received. Confirm the body contains `How they heard about us: Instagram` after the time/notes lines.
+9. Open the client's confirmation email. Confirm it does NOT mention "How they heard about us" anywhere.
+10. Open the client portal. Confirm `referral_source` is not surfaced anywhere on the portal page.
+11. Book a second appointment without picking a referral option (leave the dropdown on "Select an option"). Confirm the row inserts with `referral_source = NULL` and the practitioner appointment detail page omits the "How they heard about us" section entirely.
+
 ## Charting terminology + thermolysis field order (PR #162)
 
 Operator smoke after deploy:
