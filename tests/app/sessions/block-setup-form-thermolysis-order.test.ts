@@ -1,0 +1,174 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+// PR #162. Chloe's charting feedback: the thermolysis settings
+// should match the order on her machine and her charting workflow:
+//   Duration -> Intensity -> Pulse count.
+//
+// Before PR #162 the rendered JSX in block-setup-form.tsx put
+// Intensity before Duration inside the thermolysis block. We pin
+// the order textually so a future refactor that swaps the inputs
+// back is caught by `npm test`.
+
+const FORM_PATH = path.resolve(
+  __dirname,
+  "../../../app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
+);
+const SOURCE = readFileSync(FORM_PATH, "utf8");
+
+// Helper: return the source-character offset of the first occurrence
+// of a substring inside a sliced range. Throws if not found.
+function findOrThrow(haystack: string, needle: string, label: string): number {
+  const idx = haystack.indexOf(needle);
+  if (idx === -1) throw new Error(`Expected to find '${needle}' (${label})`);
+  return idx;
+}
+
+describe("thermolysis input order in block-setup-form.tsx", () => {
+  // The thermolysis block is rendered inside the (mode === 'thermo' ||
+  // mode === 'blend') branch. Isolating it via JSX brace-matching is
+  // brittle; instead we slice the source between the thermo branch
+  // opener and the next-sibling galv branch opener. That window
+  // contains exactly the thermolysis labels we care about and ends
+  // before any Galvanic copy can leak in.
+  const thermoOpenIdx = SOURCE.indexOf(
+    '(mode === "thermo" || mode === "blend")',
+  );
+  const galvOpenIdx = SOURCE.indexOf(
+    '(mode === "galv" || mode === "blend")',
+  );
+  if (thermoOpenIdx === -1 || galvOpenIdx === -1) {
+    throw new Error(
+      "Could not isolate the thermolysis branch (mode-conditional opener missing).",
+    );
+  }
+  if (galvOpenIdx <= thermoOpenIdx) {
+    throw new Error(
+      "Expected the galv branch to appear AFTER the thermo branch in source order.",
+    );
+  }
+  const thermoBlock = SOURCE.slice(thermoOpenIdx, galvOpenIdx);
+
+  it("renders the Thermolysis duration label BEFORE the Thermolysis intensity label", () => {
+    const durationIdx = findOrThrow(
+      thermoBlock,
+      "Thermolysis duration",
+      "duration label",
+    );
+    const intensityIdx = findOrThrow(
+      thermoBlock,
+      "Thermolysis intensity",
+      "intensity label",
+    );
+    expect(durationIdx).toBeLessThan(intensityIdx);
+  });
+
+  it("the rendered inputs bind to the unchanged persisted field names", () => {
+    // Even after the swap, the input value/onChange must still bind
+    // to the same draft keys, which map 1:1 to the canonical column
+    // names (thermolysis_duration_seconds /
+    // thermolysis_intensity_percent). Pin both so a future rename
+    // would be caught here as well.
+    expect(thermoBlock).toMatch(/value=\{draft\.thermolysisDurationSeconds\}/);
+    expect(thermoBlock).toMatch(/value=\{draft\.thermolysisIntensityPercent\}/);
+    expect(thermoBlock).toMatch(
+      /update\("thermolysisDurationSeconds",/,
+    );
+    expect(thermoBlock).toMatch(
+      /update\("thermolysisIntensityPercent",/,
+    );
+  });
+});
+
+describe("pulse count renders AFTER the thermolysis block (Duration -> Intensity -> Pulse count)", () => {
+  it("Pulse count label appears after the second thermolysis input", () => {
+    // The two literal label strings ("Thermolysis duration",
+    // "Thermolysis intensity") also appear inside the validation
+    // array (label: "Thermolysis duration" / "Thermolysis
+    // intensity") earlier in the file. Anchor on the rendered JSX
+    // shape ">...Thermolysis duration (s)<" / ">...Thermolysis
+    // intensity %<" so the validation-array entries do not move
+    // the offsets around.
+    const formDurationIdx = SOURCE.indexOf("Thermolysis duration (s)");
+    const formIntensityIdx = SOURCE.indexOf("Thermolysis intensity %");
+    const pulseIdx = SOURCE.indexOf(">Pulse count<");
+    expect(formDurationIdx).toBeGreaterThan(-1);
+    expect(formIntensityIdx).toBeGreaterThan(-1);
+    expect(pulseIdx).toBeGreaterThan(-1);
+    expect(formDurationIdx).toBeLessThan(formIntensityIdx);
+    expect(formIntensityIdx).toBeLessThan(pulseIdx);
+  });
+
+  it("Pulse count is still gated on mode !== 'galv' (thermolysis concept)", () => {
+    // The comment block PR #162 added inside the thermo branch also
+    // mentions `mode !== "galv"`, so we look for the actual JSX
+    // gate `{mode !== "galv" && (`.
+    expect(SOURCE).toMatch(/\{mode !== "galv" && \(/);
+    // And the Pulse count span lives inside that gated block.
+    const gateIdx = SOURCE.indexOf('{mode !== "galv" && (');
+    const pulseIdx = SOURCE.indexOf(">Pulse count<");
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(pulseIdx).toBeGreaterThan(gateIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Galvanic order is left alone by PR #162. The Galvanic block already
+// renders Duration before Intensity (lines 736 vs 750 pre-PR-162), and
+// the Galvanic mA + Units of lye fields are galvanic-specific
+// concepts not covered by Chloe's "Duration -> Intensity -> Pulse
+// count" ask. Pin the existing order so a casual reorder does not
+// silently regress it.
+// ---------------------------------------------------------------------------
+
+describe("galvanic input order (preserved, not changed by PR #162)", () => {
+  // Same slice strategy as the thermo branch above: take the source
+  // window between the galv branch opener and the next-sibling
+  // "Pulse count" branch opener (`mode !== "galv"`). The comment
+  // block PR #162 added INSIDE the thermo branch also mentions the
+  // `mode !== "galv"` string, so we ask for the FIRST occurrence
+  // strictly after the galv opener.
+  const galvOpenIdx = SOURCE.indexOf(
+    '(mode === "galv" || mode === "blend")',
+  );
+  if (galvOpenIdx === -1) {
+    throw new Error("Could not isolate the galv branch opener.");
+  }
+  const pulseGateIdx = SOURCE.indexOf('mode !== "galv"', galvOpenIdx);
+  if (pulseGateIdx === -1) {
+    throw new Error(
+      "Could not find the pulse-count gate (`mode !== \"galv\"`) after the galv branch.",
+    );
+  }
+  const galvBlock = SOURCE.slice(galvOpenIdx, pulseGateIdx);
+
+  it("Galvanic duration (s) appears before Galvanic intensity %", () => {
+    const durationIdx = galvBlock.indexOf("Galvanic duration");
+    const intensityIdx = galvBlock.indexOf("Galvanic intensity");
+    expect(durationIdx).toBeGreaterThan(-1);
+    expect(intensityIdx).toBeGreaterThan(-1);
+    expect(durationIdx).toBeLessThan(intensityIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persisted field names are unchanged. Pinning these alongside the
+// render-order change makes it obvious in review that this PR is a
+// presentation change only.
+// ---------------------------------------------------------------------------
+
+describe("persisted field names are unchanged by PR #162", () => {
+  it("block-actions.ts still writes thermolysis_duration_seconds + thermolysis_intensity_percent + pulse_count", () => {
+    const actions = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
+      ),
+      "utf8",
+    );
+    expect(actions).toMatch(/thermolysis_duration_seconds/);
+    expect(actions).toMatch(/thermolysis_intensity_percent/);
+    expect(actions).toMatch(/pulse_count/);
+  });
+});

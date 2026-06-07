@@ -49,6 +49,7 @@ import type {
   SessionMode,
 } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
+import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
 import {
   createTreatmentAreaWithEntryAction,
@@ -85,14 +86,13 @@ function parseOptionalNumber(
 
 // Side options for paired anatomy. The DB CHECK (migration 0039) enforces
 // the same five values plus NULL. UI displays a Title-case label but
-// stores the canonical lowercase value.
-const SIDE_OPTIONS: ReadonlyArray<{ value: SessionBlockSide; label: string }> = [
-  { value: "center", label: "Center" },
-  { value: "left", label: "Left" },
-  { value: "right", label: "Right" },
-  { value: "bilateral", label: "Bilateral" },
-  { value: "n/a", label: "n/a" },
-];
+// stores the canonical lowercase value. PR #162 moved the option list +
+// label-lookup into lib/sessions/side-labels.ts so the read-only blocks
+// view picks up the same wording (notably "bilateral" -> "Both sides"
+// after Chloe's charting feedback). We re-export the alias here so the
+// rest of this file (which references SIDE_OPTIONS in two render sites)
+// continues to compile without a wider rename.
+const SIDE_OPTIONS = SESSION_BLOCK_SIDE_OPTIONS;
 
 type Props = {
   sessionId: string;
@@ -678,7 +678,31 @@ export function BlockSetupForm({
                 Thermolysis
               </span>
             )}
+            {/* PR #162. Field order matches the order Chloe sees on
+                her thermolysis machine and the order she enters
+                values during a real session:
+                  Duration -> Intensity -> Pulse count
+                Pulse count renders below this block via the
+                shared `mode !== "galv"` branch (lines further
+                down) so it lands third. Persisted column names
+                (thermolysis_duration_seconds,
+                thermolysis_intensity_percent, pulse_count) are
+                unchanged. */}
             <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Thermolysis duration (s)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min={0}
+                  value={draft.thermolysisDurationSeconds}
+                  onChange={(e) =>
+                    update("thermolysisDurationSeconds", e.target.value)
+                  }
+                  className={READING_INPUT_CLS}
+                />
+              </label>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium">Thermolysis intensity %</span>
                 <input
@@ -690,20 +714,6 @@ export function BlockSetupForm({
                   value={draft.thermolysisIntensityPercent}
                   onChange={(e) =>
                     update("thermolysisIntensityPercent", e.target.value)
-                  }
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Thermolysis duration (s)</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min={0}
-                  value={draft.thermolysisDurationSeconds}
-                  onChange={(e) =>
-                    update("thermolysisDurationSeconds", e.target.value)
                   }
                   className={READING_INPUT_CLS}
                 />
