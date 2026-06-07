@@ -41,6 +41,15 @@ Every business object in Hone is **studio-scoped**. The `studio_id` column appea
 ### Treatment plan (`treatment_plans` + `treatment_plan_areas`)
 - Multi-area plan with timeline (PR #51). Status: `in_progress` / `paused`. Each area row records the body area, target sessions, intervals.
 
+### Practitioner notifications (`practitioner_notifications`, PR #164)
+
+Business events for the practitioner workflow. **Separate from `ops_alerts`** (PR #153 / migration 0067), which captures system/operator failures for Sam. `practitioner_notifications` captures things Chloe cares about: a new public booking, a client cancellation, a client reschedule.
+
+- **Visibility:** studio-wide in v1. Every authenticated studio member sees every row for their studio (`is_studio_member(studio_id)` RLS). `practitioner_id` is stored but not yet used for per-practitioner filtering; a future PR can tighten without another migration.
+- **Write path:** server-only via `lib/notifications/practitioner-notifications.ts:recordPractitionerNotification`. Uses the admin/service-role client because the three event sources (public booking, public cancel, public reschedule) are anonymous visitor / token-bearing flows that cannot satisfy the member-RLS insert policy. The helper is the trust boundary: all fields are derived server-side from already-committed appointment/client/studio rows.
+- **Read + mark-read path:** authenticated RLS client. `/notifications` page reads via `createClient` (RLS-scoped); the `markAllNotificationsAsReadAction` server action updates `read_at` scoped to the resolved studio.
+- **Never-throws contract:** the write helper is fire-and-forget; the caller does not await it and a failure inside the helper logs to `ops_alerts` via the existing `recordOpsAlert` path but cannot roll back the booking / cancel / reschedule that just committed.
+
 ### Session block side label (PR #162)
 
 `session_blocks.side` accepts the same canonical lowercase values it always has: `center`, `left`, `right`, `bilateral`, `n/a` (migration 0039 CHECK constraint + the `SessionBlockSide` TS union). The stored value did NOT change. PR #162 only changed the practitioner-facing label for `bilateral` from `"Bilateral"` to `"Both sides"` after Chloe's charting feedback ("does Bilateral mean both sides?"). The label mapping lives in `lib/sessions/side-labels.ts` and is the single source of truth for every charting surface (setup form dropdown, read-only blocks view). Saved records with `side='bilateral'` continue to render with the new label end to end.

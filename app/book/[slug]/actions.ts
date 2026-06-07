@@ -23,6 +23,8 @@ import {
   parseReferralSource,
   referralSourceLabel,
 } from "@/lib/booking/referral-source";
+import { localTimeString12h } from "@/lib/booking/tz";
+import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -767,6 +769,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
 
+  // PR #164. Fire-and-forget practitioner notification. The
+  // appointment row is committed at this point; a failure inside
+  // the helper logs to ops_alerts but does NOT roll back the
+  // booking. Body is composed from the same data we already used
+  // for the email + SMS confirmations -- no tokens, no secrets, no
+  // PII beyond the client name + service name + start time the
+  // appointment detail page already exposes to studio members.
+  recordPractitionerNotification({
+    studioId: studio.id,
+    practitionerId: owner?.id ?? null,
+    eventType: "new_booking",
+    title: "New booking",
+    body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+    appointmentId: created.id,
+    clientId: clientId,
+    href: `/calendar/${created.id}`,
+  });
+
   await admin.from("appointment_audit").insert({
     appointment_id: created.id,
     actor_type: "client",
@@ -901,6 +921,20 @@ function trimmed(value: FormDataEntryValue | null): string {
 function nullable(value: FormDataEntryValue | null): string | null {
   const t = trimmed(value);
   return t.length === 0 ? null : t;
+}
+
+// PR #164. Short "weekday Month day" label used in the practitioner
+// notification body for a new booking. Kept local because the
+// notification builder is the only caller; the rest of the action
+// uses email-template helpers that build the day label themselves.
+// en-US locale matches the existing notification + email styling.
+function formatDayLabel(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(d);
 }
 
 // Public booking readiness probe. Two small admin-scoped reads:

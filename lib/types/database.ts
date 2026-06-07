@@ -938,3 +938,29 @@ export type AuditLog = {
   metadata: Record<string, unknown> | null;
   created_at: string;
 };
+
+// Migration 0070 (PR #164). Practitioner notification center.
+// Business events for the practitioner workflow (new booking, client
+// cancellation, client reschedule). Studio-wide visibility in v1;
+// practitioner_id is stored but not yet used for per-practitioner
+// filtering. Writes happen via the server-only helper in
+// lib/notifications/practitioner-notifications.ts; reads + mark-read
+// happen via the authenticated RLS client.
+export type PractitionerNotificationEventType =
+  | "new_booking"
+  | "appointment_cancelled"
+  | "appointment_rescheduled";
+
+export type PractitionerNotification = {
+  id: string;
+  studio_id: string;
+  practitioner_id: string | null;
+  event_type: string;
+  title: string;
+  body: string | null;
+  appointment_id: string | null;
+  client_id: string | null;
+  href: string | null;
+  read_at: string | null;
+  created_at: string;
+};

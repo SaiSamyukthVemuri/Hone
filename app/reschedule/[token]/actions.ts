@@ -9,7 +9,8 @@ import {
   getAvailableSlots,
   type Slot,
 } from "@/lib/booking/slots";
-import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
+import { addDays, localDateString, localTimeString12h, todayInTz } from "@/lib/booking/tz";
+import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import {
   horizonRangeInStudioTz,
   isWithinPublicBookingHorizon,
@@ -804,6 +805,24 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .eq("role", "owner")
     .maybeSingle();
 
+  // PR #164. Fire-and-forget practitioner notification. The
+  // reschedule RPC already committed atomically by this point; this
+  // helper never throws to the caller. Body composes the client
+  // name (fallback to "A client" if the lookup above missed) and
+  // both the old and new times in 12h AM/PM format so the
+  // practitioner can read the shift at a glance. href links to the
+  // appointment detail page for the NEW appointment id.
+  recordPractitionerNotification({
+    studioId: existing.studio_id,
+    practitionerId: existing.practitioner_id ?? null,
+    eventType: "appointment_rescheduled",
+    title: "Appointment rescheduled",
+    body: `${clientRow?.name ?? "A client"} rescheduled from ${formatDayTime(new Date(existing.starts_at), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+    appointmentId: created.id,
+    clientId: existing.client_id,
+    href: `/calendar/${created.id}`,
+  });
+
   if (clientRow?.email && studioRow.send_confirmation_emails) {
     // Single helper call up front; downstream lines share the same origin.
     const appOrigin = getRequiredAppOrigin();
@@ -902,4 +921,19 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
 function stringOrEmpty(v: FormDataEntryValue | null): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+// PR #164. Short "weekday, Month day at H:MM AM/PM" label used in
+// the practitioner notification body for a reschedule
+// ("rescheduled from <old> to <new>"). Composed locally so the
+// notification helper does not have to import every template
+// helper; localTimeString12h delivers the AM/PM clock per PR #157.
+function formatDayTime(d: Date, tz: string): string {
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+  return `${day} at ${localTimeString12h(d, tz)}`;
 }

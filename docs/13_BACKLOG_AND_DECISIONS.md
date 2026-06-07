@@ -88,6 +88,26 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Practitioner notification center foundation (PR #164, migration 0070)
+
+**Decision:** Add `practitioner_notifications` table with studio-wide RLS visibility. Wire three v1 event sources (public booking, client cancel, client reschedule) to a server-only fire-and-forget helper that writes via the admin/service-role client. Add a `/notifications` page + "Mark all read" server action that read/update via the authenticated RLS client. Header nav gains a Notifications link with an unread count badge.
+
+**Critical write contract.** The helper is never-throws from the caller's perspective. Pattern mirrors PR #155's `logSmsFailure`: the entire admin-client write runs inside a `void (async () => { try { ... } catch { ... } })()` IIFE. The caller does NOT await; the booking / cancel / reschedule never blocks on a notification insert. A failure inside the helper logs to `ops_alerts` via `recordOpsAlert` (PR #153) so the operator sees the silent failure trail; no error path leaks back to the visitor. Pinned by `tests/lib/notifications/practitioner-notifications.test.ts`.
+
+**Why separate from `ops_alerts`:** `ops_alerts` is the operator surface (Sam) for system / silent-failure states (SMS give-ups, Stripe webhook signature mismatches, manual fee retries). `practitioner_notifications` is the practitioner surface (Chloe) for business events. Different audience, different severity model, different read pattern. Reusing `ops_alerts` would have meant overloading a critical-failure table with non-failure events; the smoke for "is the system OK" would be polluted by routine bookings.
+
+**Why server-only helper with admin client for the WRITE path:** the three event sources are anonymous visitor / token-bearing flows. They cannot satisfy `is_studio_member(studio_id)` for an INSERT policy. The helper bypasses RLS deliberately because every field is derived server-side from already-committed rows; no visitor input reaches the notification body. `import "server-only";` plus the PR #155 admin-server boundary test guarantee no client component imports the helper.
+
+**Why authenticated RLS for the READ + mark-read path:** the `/notifications` page is a practitioner surface and the studio-membership policy is exactly the right gate. The mark-all-read UPDATE policy carries WITH CHECK so a member cannot move a row to a different studio.
+
+**Why studio-wide visibility in v1:** Willow runs one main practitioner workflow today (Chloe). `practitioner_id` is stored but not yet used for filtering; a future PR can switch to per-practitioner when a multi-practitioner studio (Laura) onboards, without another migration. Documented as a known future consideration in the migration header.
+
+**Why no DB CHECK on `event_type`:** the canonical event set lives in `lib/notifications/practitioner-notifications.ts:ALLOWED_EVENT_TYPES`. Pinning it at the DB layer would force a migration every time the event list grows. The action-layer allowlist is sufficient because the only writer is the server-only helper with a fixed typed union.
+
+**Why a Date label helper in each action site instead of a shared one:** each event's notification body has a slightly different shape (booking: "for <Day> at <Time>"; reschedule: "from <Day at Time> to <Day at Time>"; cancel: no time). Co-locating a one-line `formatDayLabel` / `formatDayTime` helper at the bottom of each action keeps the helper and the call site easy to read. The 12h clock comes from `localTimeString12h` (PR #157) so the practitioner notification reads consistently with the client emails Chloe also receives.
+
+**Honest non-claims.** No SMS sending added; the spec deferred SMS as a future channel on top of this event model. No email notification. No push. No realtime. No filtering / preferences UI. No client-facing notifications. No notifications for intake, consent, card added, portal reply, manual fee charge, or any other deferred event. No payment behavior change. No live-mode change. No portal redesign. No consent change.
+
 ### Booking referral attribution (PR #163, migration 0069)
 
 **Decision:** Capture an optional "How did you hear about us?" answer on the public booking form. Store the canonical lowercase value on the new nullable `appointments.referral_source` column (migration 0069). Surface the label-mapped value on the practitioner-facing calendar appointment detail page and in the practitioner new-booking notification email body. Do NOT surface it on any client-facing surface (confirmation email, reminder emails, portal, public booking confirmation page).
