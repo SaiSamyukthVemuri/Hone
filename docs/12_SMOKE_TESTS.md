@@ -79,6 +79,28 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Session payment post-refresh state smoke (PR #174, test mode only)
+
+Run after the PR #173 EXECUTE smoke has produced a `succeeded` row.
+
+1. Open the session detail page that produced the `succeeded` attempt.
+2. Confirm the green Succeeded panel appears with:
+   - Heading: "Test charge succeeded."
+   - Amount + charged-at timestamp.
+   - PaymentIntent id (`pi_...`).
+   - Charge id (`ch_...`) if available.
+   - Explicit "This was a Stripe test-mode charge. No live card was charged. No receipt was sent in this PR."
+3. Reload the page. Confirm the same Succeeded panel renders with all the Stripe ids still visible (no fallback to a bare "Succeeded" label).
+4. Confirm the Run test charge button does NOT appear.
+5. Confirm the Prepare form does NOT appear.
+6. Confirm no "Pay now" / "Charge card" / "Collect payment" / "Payment complete" / "Live payment" / "Receipt sent" copy is anywhere on the page.
+
+Negative path (failed row): use a Stripe test card that declines (e.g. `4000 0000 0000 0002`). After execute:
+1. Confirm the red Failed panel appears with sanitised failure message + failure code + failed-at.
+2. Confirm the "Prepare a new session payment attempt if you need to try again." guidance is present.
+3. Confirm no Run button appears.
+4. Refresh and confirm the same Failed panel survives.
+
 ## Session payment EXECUTE smoke (PR #173, test mode only)
 
 Run after the PR #172 prepare smoke has produced a `ready` row. The execute action calls Stripe in test mode on the connected account.

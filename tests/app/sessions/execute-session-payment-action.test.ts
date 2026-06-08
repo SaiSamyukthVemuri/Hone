@@ -129,10 +129,16 @@ describe("SessionPaymentPrepareCard: Run test charge button (PR #173)", () => {
     expect(CARD).toMatch(/executeAction:\s*ExecuteAction/);
   });
 
-  it("only renders the button when the active attempt status is 'ready'", () => {
+  it("only renders the button when the active attempt status is 'ready' (PR #174 via ReadyPanel)", () => {
+    // PR #174 moved the Run test charge button into a dedicated
+    // ReadyPanel subcomponent. AttemptStatusPanel dispatches on
+    // attempt.status; only the 'ready' case returns ReadyPanel,
+    // which is the only place the executeAction is consumed.
+    expect(CARD).toMatch(/case "ready":\s*\n?\s*return \(\s*\n?\s*<ReadyPanel/);
     expect(CARD).toMatch(
-      /activeAttempt\.status === "ready" && !executeSuccess/,
+      /function ReadyPanel\([\s\S]{0,400}executeAction: ExecuteAction/,
     );
+    expect(CARD).toMatch(/executeAction=\{executeAction\}/);
   });
 
   it("the button copy explicitly names test mode", () => {

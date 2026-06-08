@@ -265,9 +265,20 @@ export async function getSessionPaymentEligibility(
   //    even when an active row blocks a new prepare.
   let existingAttempts: SessionPaymentExistingAttemptSummary[] = [];
   if (sessionSummary) {
+    // PR #174 widened the SELECT to carry every field the
+    // SessionPaymentPrepareCard needs to render rich
+    // post-refresh panels (succeeded shows PaymentIntent +
+    // Charge id + charged_at; failed shows failure_code +
+    // failure_message_safe + failed_at). All fields exist on
+    // payment_charge_attempts (migration 0073) and are populated
+    // by writeSucceededOutcome / writeFailedOutcome in
+    // lib/billing/session-payment-charge.ts (PR #173). No
+    // migration; no Stripe call.
     const { data: attemptRows } = await admin
       .from("payment_charge_attempts")
-      .select("id, status, amount_cents, created_at")
+      .select(
+        "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe",
+      )
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
       .eq("charge_reason", "session_payment")
@@ -277,6 +288,14 @@ export async function getSessionPaymentEligibility(
       status: row.status as string,
       amountCents: row.amount_cents as number,
       createdAt: row.created_at as string,
+      stripePaymentIntentId:
+        (row.stripe_payment_intent_id as string | null) ?? null,
+      stripeChargeId: (row.stripe_charge_id as string | null) ?? null,
+      chargedAt: (row.charged_at as string | null) ?? null,
+      failedAt: (row.failed_at as string | null) ?? null,
+      failureCode: (row.failure_code as string | null) ?? null,
+      failureMessageSafe:
+        (row.failure_message_safe as string | null) ?? null,
     }));
     const blockingStatuses = new Set([
       "ready",

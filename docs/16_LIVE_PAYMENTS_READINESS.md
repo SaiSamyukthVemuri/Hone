@@ -648,6 +648,21 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
+### 12.5e Session payment UX hardening (PR #174, 2026-06-08, no schema change)
+
+PR #174 refactored `SessionPaymentPrepareCard` so every post-refresh state (succeeded / failed / pending_stripe / ready / cancelled / blocked) renders rich detail driven by the persisted `payment_charge_attempts` row, not by React local state. The eligibility helper's SELECT and the `SessionPaymentExistingAttemptSummary` type were widened to carry every post-execute field (`stripe_payment_intent_id`, `stripe_charge_id`, `charged_at`, `failed_at`, `failure_code`, `failure_message_safe`).
+
+A new `AttemptStatusPanel` dispatcher switches on `attempt.status` and returns one of six per-status subcomponents. The pattern mirrors `ManualFeeChargeCard.tsx`. React local state is now confined to in-session feedback during the same render cycle as the action submit; a page refresh always shows the persisted state.
+
+Copy contracts (each pinned by negative + positive source-grep tests):
+
+- Succeeded heading: "Test charge succeeded" (NOT "Payment complete").
+- Succeeded panel: PaymentIntent + Charge id + charged_at + "This was a Stripe test-mode charge. No live card was charged. No receipt was sent in this PR."
+- Failed heading: "Test charge failed" + sanitised failure message + failure code + failed_at + "Prepare a new session payment attempt if you need to try again."
+- Forbidden copy absent from actionable JSX: Pay now, Charge card, Collect payment, Payment complete, Live payment, Receipt sent.
+
+No live mode. No receipt. No refund. No webhook business logic. No SMS / email. No client-portal change. No new Stripe call sites. The readiness conclusion is unchanged: NOT READY FOR LIVE PAYMENTS. The remaining blockers (receipt path, refund path, payment_intent.* webhook handlers) are still pending.
+
 ### 12.5d Session payment EXECUTE flow (PR #173, migration 0075, 2026-06-08, test mode only)
 
 PR #173 shipped the test-mode execution helper that takes a prepared `session_payment` row (PR #172) and creates ONE Stripe PaymentIntent on the connected account against the saved test card. The helper (`lib/billing/session-payment-charge.ts:runSessionPaymentCharge`) is a faithful port of `runManualFeeCharge` adapted for `payment_charge_attempts`. Migration 0075 added the atomic claim RPC `claim_session_payment_charge_attempt` (mirror of the manual fee RPC from migration 0065).

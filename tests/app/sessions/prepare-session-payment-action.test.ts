@@ -229,8 +229,10 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
   });
 
   it("renders the test-mode disclaimer prominently", () => {
+    // The disclaimer is rendered in the header and may wrap across
+    // two lines in the JSX; allow the regex to bridge whitespace.
     expect(CARD).toMatch(
-      /This prepares a test-mode payment record\. It does not charge the client\./,
+      /This prepares a test-mode payment record\.\s*It does not charge the\s*client\./,
     );
   });
 
@@ -264,8 +266,13 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
     expect(CARD).toMatch(/blockingReasons\.map/);
   });
 
-  it("surfaces the existing-active-attempt state with a calm panel", () => {
-    expect(CARD).toMatch(/A session payment attempt is already prepared/);
+  it("surfaces the existing-active-attempt state with a status panel (PR #174)", () => {
+    // PR #174 refactor: the existing-attempt branch is now driven
+    // by AttemptStatusPanel which dispatches on status. For a
+    // 'ready' row the ReadyPanel renders "Session payment prepared"
+    // -- the calm heading the practitioner sees on first render.
+    expect(CARD).toMatch(/function ReadyPanel/);
+    expect(CARD).toMatch(/Session payment prepared/);
   });
 
   it("shows the test-mode-only success state with the attempt id", () => {

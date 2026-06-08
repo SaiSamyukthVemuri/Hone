@@ -66,11 +66,27 @@ export type SessionPaymentCardAuthorizationSummary = {
   signedAt: string;
 };
 
+// PR #174 added the post-execute fields (stripe_payment_intent_id,
+// stripe_charge_id, charged_at, failed_at, failure_code,
+// failure_message_safe) so the session detail page can render rich
+// succeeded / failed / pending panels after a page refresh. Before
+// PR #174 the card relied on React local state (executeSuccess) to
+// show the PaymentIntent id immediately after Run test charge; that
+// state was lost on reload, leaving the practitioner with a bare
+// "Succeeded" label. The fields here are the same set ManualFeeCharge
+// Card has read since PR #146; the session payment card now mirrors
+// the manual fee precedent.
 export type SessionPaymentExistingAttemptSummary = {
   id: string;
   status: string;
   amountCents: number;
   createdAt: string;
+  stripePaymentIntentId: string | null;
+  stripeChargeId: string | null;
+  chargedAt: string | null;
+  failedAt: string | null;
+  failureCode: string | null;
+  failureMessageSafe: string | null;
 };
 
 // The discriminated union the prepare-card consumes. eligible=true
