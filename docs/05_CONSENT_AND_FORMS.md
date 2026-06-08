@@ -99,6 +99,47 @@ Signed-consent viewer in full is still on the [docs/13 backlog](./13_BACKLOG_AND
 
 `form_type = 'card_authorization'`. Required before the portal Stripe Elements form will show. The portal action `createCardSetupIntentAction` looks up the latest signed authorization for `(studio, client)`; if none exists or it is older than the current template version, the form is not offered.
 
+### Current-version signature gate (PR #170)
+
+PR #170 introduced a shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` that is the single source of truth for "is the client's card_authorization signature current?". The helper returns one of four discriminated kinds:
+
+| kind | Meaning | Portal surface | Practitioner surface |
+|---|---|---|---|
+| `no_live_template` | Studio has not authored a live card_authorization template | "Card setup is not available yet" (PR #158) | "Card authorization template not configured" |
+| `unsigned` | Live template exists; client never signed | "Card authorization needed before adding a card" (PR #158) | "Card authorization not signed" |
+| `signed_out_of_date` | Client signed an older version; studio has since updated the template | "Card authorization was updated. Please review and sign the new version." (PR #170) | "Card authorization on file is out of date" (no active card) OR "Authorization needs re-signing" (active card present) |
+| `signed_current` | Client signed the current live version | Add Card surface available | "Card authorization signed" with timestamp |
+
+The gate is enforced at three sites, all reading the same helper or the same predicate:
+
+- `app/portal/payment-method-actions.ts:createCardSetupIntentAction` -- refuses the SetupIntent unless `kind === "signed_current"`.
+- `lib/billing/manual-fee-eligibility.ts` -- surfaces "Card authorization on file is out of date" as a blocking reason when the signature's `template_version` differs from the live template's current version.
+- `components/payment-method-card.tsx` (practitioner) and `app/portal/page.tsx` (client portal) -- render the dedicated re-sign state when out-of-date.
+
+The portal's `unsignedConsentTemplates` filter includes the live `card_authorization` template when the latest signature is at an older version, so the existing Review and sign UI handles re-signing without a separate code path. The signing action (`createConsentSignatureAction`, PR #167 `is_live=true` gated) writes a new signature row with the current `template_version`, which immediately satisfies the gate.
+
+The historical signature is preserved (the snapshot model in migration 0057 is immutable). Only NEW live work (SetupIntent, manual fee charge) is gated.
+
+### Production state and the placeholder body (PR #170)
+
+Before PR #170, both production studios (Willow Electrolysis and Sam's "My Studio") had `card_authorization` rows with `title="test"` and `body="test"` (4 chars). PR #170 ships:
+
+- The product-ready DRAFT body in `lib/consent/card-authorization-draft.ts:CARD_AUTHORIZATION_DRAFT_V1_BODY` (around 2.5 kB, covers all 7 spec topics: card on file, completed-session off-session charges, late cancellation, no-show, receipts/refunds/disputes, payment processing + privacy, scope + revocation).
+- The recommended product-ready TITLE `"Card on file authorization"`.
+- The current-version gate (above) so that once an owner updates the production template via Settings → Consent forms (which bumps `version` from 1 to 2 via the existing `updateConsentTemplateAction`), all historical signatures against `body="test"` stop satisfying the authorization clause until each client re-signs.
+
+**The DRAFT is NOT legally approved.** It is a product-ready draft suitable for Chloe + legal counsel to review. The Hone codebase deliberately does NOT claim approval. The legal review track is separate from this PR; once approved (or edited), the owner pastes the final body into Settings → Consent forms, which bumps the version and triggers the re-sign UI.
+
+**Operator step after PR #170 deploys** (Chloe-driven, not part of the PR's runtime):
+1. Sign in to `/settings/consent`.
+2. Find the `card_authorization` row titled `"test"`.
+3. Click Edit; change the title to `"Card on file authorization"`; paste the canonical body from `lib/consent/card-authorization-draft.ts:CARD_AUTHORIZATION_DRAFT_V1_BODY` (or the lawyer-approved final wording).
+4. Click Save. The action bumps `version` from 1 to 2.
+5. Verify via `supabase db query --linked` that title, body length, version, status, and is_live look right.
+6. Any client who had signed the placeholder body will now see the "Card authorization was updated" block in their portal and must re-sign before Add Card or new manual fees can proceed.
+
+Sam can repeat the same step for the "My Studio" dev row from his own owner session.
+
 **Completed forms surface (PR #159).** The portal's prior "Signed forms" section is now called "Completed forms" and renders as a quiet record list (soft border-top dividers, no bordered cards). Caption verb is `"Completed "` for treatment_consent / general / card_authorization; photo_consent rows keep `"Consent granted · "` / `"Consent denied · "` because the response itself is the record. A small footnote sets honest expectations: a viewable copy of the signed form is a future PR.
 
 **Portal guidance when authorization is missing (PR #158).** Until the client signs `card_authorization`, the portal does NOT silently hide the card section. The "Needs you" zone surfaces a calm placeholder: `"Card authorization needed before adding a card. Before you can add a card on file, please review and sign the card authorization form above. Once that form is signed, the secure card form will appear here. No charge will be made when you add a card."` plus a `Review card authorization` button that deep-links to the existing "Review and sign forms" block (anchor `#forms-to-sign`). The matching practitioner-side card on `app/(app)/clients/[id]/page.tsx` renders one of three explanatory branches (`Card authorization template not configured` / `Card authorization not signed` / `Card authorization signed, but no card is on file yet`) so the practitioner can read out the exact next step to the client.

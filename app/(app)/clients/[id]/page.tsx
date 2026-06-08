@@ -369,8 +369,20 @@ export default async function ClientCheatSheetPage({
               future refactor moving this block does not split the
               two halves of the same decision. */}
           {(() => {
+            // PR #170. Practitioner-side card_authorization state must
+            // match what the portal sees: the LIVE template
+            // (is_live=true AND status='active') and its current
+            // version. Before PR #170 this find used only
+            // status='active', which after PR #167 became inconsistent
+            // with the portal query that also requires is_live=true.
+            // The fix is small: add the is_live filter so a draft /
+            // not-live card_authorization template never surfaces here
+            // as "ready," and compare the matching signature's
+            // template_version to the live template's current version
+            // so an out-of-date signature flips the new prop.
             const cardAuthTemplate = consentTemplatesAll.find(
               (t) =>
+                t.is_live === true &&
                 t.status === "active" &&
                 t.form_type === "card_authorization",
             );
@@ -381,6 +393,10 @@ export default async function ClientCheatSheetPage({
                 )
               : null;
             const cardAuthorizationSigned = matchingSignature != null;
+            const cardAuthorizationOutOfDate =
+              cardAuthTemplate != null &&
+              matchingSignature != null &&
+              matchingSignature.template_version !== cardAuthTemplate.version;
             const authorizationSignedAt = matchingSignature
               ? matchingSignature.signed_at
               : null;
@@ -393,6 +409,7 @@ export default async function ClientCheatSheetPage({
                   cardAuthorizationTemplateExists
                 }
                 cardAuthorizationSigned={cardAuthorizationSigned}
+                cardAuthorizationOutOfDate={cardAuthorizationOutOfDate}
               />
             );
           })()}

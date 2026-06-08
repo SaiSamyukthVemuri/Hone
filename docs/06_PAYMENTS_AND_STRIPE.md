@@ -40,14 +40,17 @@ Three independent guards stack. All three must be deliberately altered for live 
 
 ## 4. Card-on-file flow (portal SetupIntent)
 
-Gating order (PR #158 clarifies what the client sees in each state):
+Gating order (PR #158 clarifies what the client sees in each state; PR #170 adds the current-version branch):
 
 1. Studio has no active `card_authorization` template → portal shows `"Card setup is not available yet. This studio has not enabled online card setup. Please contact the studio if you have a question about payment."` No Add card surface.
 2. Template exists; client has NOT signed → portal shows the unsigned template in "Review and sign forms" AND a calm placeholder in the card section: `"Card authorization needed before adding a card."` with a `Review card authorization` deep-link to the signing form. No Add card surface.
-3. Template signed; no active card → portal shows `"You have signed card authorization. You can now add a card on file. No charge will be made when you add a card."` plus the Add card form.
-4. Active card → portal shows the read-only card summary plus Replace card.
+3. **(PR #170)** Template exists; client signed an older version → portal shows the live template in "Review and sign forms" (the unsigned-templates filter special-cases card_authorization re-signs) AND a dedicated `"Card authorization was updated"` block in Needs you with explicit re-sign copy and a `Review updated authorization` deep-link. SetupIntent action refuses with `"The card-on-file authorization was updated. Please review and sign the new version before adding a card."` until re-signed.
+4. Template signed at current version; no active card → portal shows `"You have signed card authorization. You can now add a card on file. No charge will be made when you add a card."` plus the Add card form.
+5. Active card → portal shows the read-only card summary plus Replace card. If authorization is out of date (PR #170), an inline `"Authorization needs re-signing"` warning sits next to the card; Replace card and any future live charge are gated until the client re-signs.
 
-The practitioner-side `PaymentMethodCard` on the client profile mirrors the same four states with practitioner-actionable copy so Chloe can read out exactly what to ask the client to do next.
+The practitioner-side `PaymentMethodCard` on the client profile mirrors the same five states with practitioner-actionable copy so Chloe can read out exactly what to ask the client to do next. The new branches added by PR #170 are `AuthorizationOutOfDateBlock` (no active card) and `AuthorizationOutOfDateWarning` (alongside an active card).
+
+The shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` is the single source of truth for "is the signature current?". It compares `client_consent_signatures.template_version` (snapshot from migration 0057) to the live template's current `version`. The same helper is used by `createCardSetupIntentAction`; the `lib/billing/manual-fee-eligibility.ts` helper performs the same comparison inline. See [docs/05 §Current-version signature gate (PR #170)](./05_CONSENT_AND_FORMS.md#current-version-signature-gate-pr-170).
 
 ```
 client opens /portal -> "Add card" entry

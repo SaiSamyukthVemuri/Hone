@@ -88,6 +88,47 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Card authorization wording + current-version re-sign gate (PR #170)
+
+**Decision:** Ship the product-ready DRAFT card_authorization body as a TS constant + add a current-version signature gate so old signatures against the production placeholder body (`"test"`, 4 characters) stop counting once the live template is updated. Do NOT mutate production rows in this PR; the operator step (Chloe pasting the body via Settings -> Consent forms) is documented and is what bumps the template version. No live payments enabled. No migration: `client_consent_signatures.template_version` has existed since migration 0057, so the gate is pure application code.
+
+**Why:** PR #168 readiness review found Willow's `card_authorization` template body is literally `"test"`. PR #170 audit confirmed both studios (Willow Electrolysis and Sam's "My Studio") carry the same placeholder, both with one client signature each against it. PR #169 added a third charge reason (`session_payment`) that an existing draft only covering cancellation + no-show fees would not authorize. Without a current-version gate, simply updating the body would still let those historical "test" signatures satisfy the authorization clause for live charges, which is the exact scenario the readiness review flagged as a P0 blocker.
+
+**Key design choices:**
+
+- **DRAFT in code, not in DB.** The product-ready body lives at `lib/consent/card-authorization-draft.ts:CARD_AUTHORIZATION_DRAFT_V1_BODY` (around 2.5 kB). It covers all 7 spec topics: card on file (Stripe stores card; Hone/studio do not store full PAN or CVC; card can be replaced or removed); completed-session off-session charges (practitioner-confirmed amount; off-session after appointment ends; receipt to client); late cancellation fees (per studio's cancellation policy); no-show fees (per studio's no-show policy); receipts / refunds / disputes (high level; explicit "does not waive my dispute rights" line so no chargeback waiver); payment processing and privacy (Stripe is the processor; record retention; studio privacy policy); scope and revocation (saved card; until replaced / removed / revoked in writing). The constant is the audit reference; once Chloe edits the row via Settings, the DB row is the runtime source of truth.
+
+- **No claim of legal approval.** The constant's header comment is explicit: this is a DRAFT for legal review, not approved wording. The docs do not say "legally approved." A separate legal-review track (Chloe + counsel) decides whether to accept the draft as-is or edit it via Settings; either path bumps the version.
+
+- **Operator step, not auto-update.** The PR does NOT run a SQL `UPDATE` on production rows. The auto-mode safety classifier refused the direct UPDATE, and the user's preferred path is the same versioned update path that Settings uses. The operator step (paste body, change title from "test" to "Card on file authorization", save) is documented in docs/05 and verifiable post-deploy via the existing supabase verification SQL.
+
+- **Current-version gate.** New helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` returns one of four discriminated kinds: `no_live_template`, `unsigned`, `signed_out_of_date`, `signed_current`. The helper is used by `createCardSetupIntentAction` (refuses SetupIntent unless `signed_current`). The same comparison (signature.template_version vs live template.version) is inlined in `lib/billing/manual-fee-eligibility.ts` so manual fee preparation also requires current-version authorization. Pre-PR the action accepted any prior version, with a comment promising "A future PR can opt into 'require latest version' once the UX of re-sign-on-edit is settled" -- this is that PR.
+
+- **Card-authorization-only re-sign rule.** The portal `unsignedConsentTemplates` filter special-cases `card_authorization`: an out-of-date signature surfaces the template back into the Review and sign list so the existing PortalConsentForms UI handles the re-sign. Other consent types (treatment_consent, photo_consent, policy_acknowledgement) do NOT force re-sign on every edit; only card_authorization gates downstream money-related actions and gets the strict gate.
+
+- **Historical signatures preserved.** The snapshot model from migration 0057 keeps every signature immutable (title, body, version, SHA-256 hash). The FK `client_payment_methods.card_authorization_signature_id` is unchanged. PR #170 only changes which signatures count for NEW live work; old ones remain as audit evidence.
+
+- **Practitioner UI surfaces the state.** `components/payment-method-card.tsx` gains two new branches: `AuthorizationOutOfDateBlock` (no active card; client must re-sign) and `AuthorizationOutOfDateWarning` (active card present; warns the existing card is preserved but new live work is gated until re-sign). The client profile page (`app/(app)/clients/[id]/page.tsx`) computes the `cardAuthorizationOutOfDate` boolean from already-loaded data and also tightens the template lookup to require `is_live=true` (matching PR #167's portal-side rule).
+
+- **Portal UI dedicated re-sign block.** `showCardAuthorizationOutOfDate` is a new gate (alongside the existing PR #158 `showCardAuthorizationNeeded`). When true, the portal renders a calm "Card authorization was updated" block in Needs you with explicit re-sign copy and a `Review updated authorization` deep-link to the unsigned-forms section. The block mirrors the visual shape of PR #158 so the client sees a consistent affordance.
+
+**What this PR does NOT do:**
+
+- Does NOT mutate the production `consent_form_templates` rows. The operator step is documented; the actual content update happens via Settings UI after deploy.
+- Does NOT enable live payments. The three dormancy guards from PR #168 are unchanged.
+- Does NOT add or remove any `paymentIntents.create` call site. Still exactly 1 in `lib/billing/manual-fee-charge.ts`.
+- Does NOT add or remove any `refunds.create` call site. Still 0.
+- Does NOT modify any database table, RLS policy, RPC, or index. No new migration; latest in tree remains `0072_consent_templates_is_live.sql`.
+- Does NOT modify any Stripe key, env var, webhook secret, or Vercel configuration.
+- Does NOT change webhook handler behavior, manual fee charge logic, or SetupIntent creation logic (the `usage: "off_session"` parameter in `lib/stripe/setup-intent.ts:202` is unchanged).
+- Does NOT change UI copy on the existing 7 "Test mode only" strings (PR #171 covers).
+- Does NOT add any SMS or email behavior.
+- Does NOT claim legal approval. The draft body explicitly does not claim legal review; the docs explicitly say legal approval is still required before live payments.
+
+**Alternative considered:** Ship a migration that adds a computed `template_hash` comparison at the DB level via a trigger. Rejected because the snapshot model already records the hash, the comparison is pure business logic (not structural integrity), and the JS-side gate is easier to audit + test. A DB-level hash trigger would be belt-and-suspenders, not a load-bearing safety.
+
+**Honest non-claims:** no schema change, no charge-execution code, no eligibility-helper restructure beyond the version comparison, no UI for session payment (that is PR #181), no webhook handlers, no live-mode flag change, no Stripe key rotation, no RLS / RPC / index work, no SMS / email behavior, no payment-policy change. The Stripe gates are intact (1 allowlisted `paymentIntents.create`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string).
+
 ### Session payment product model (PR #169, docs + guardrails only)
 
 **Decision:** Define the product / payment architecture for live session payments before any money-moving code is written. Document the v1 model in a new §12 of `docs/16_LIVE_PAYMENTS_READINESS.md`, add the payment domain model to `docs/02`, and add guardrail tests that pin the doc contract. No code, no migration, no live-mode change.

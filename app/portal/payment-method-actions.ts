@@ -6,6 +6,7 @@ import {
   createCardOnFileSetupIntent,
   getOrCreateStripeCustomerForCardOnFile,
 } from "@/lib/stripe/setup-intent";
+import { getCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 
 // PR #135. Portal-side server action that produces a Stripe
 // SetupIntent client_secret for the Add card form. The action
@@ -55,6 +56,16 @@ const ERR_NO_AUTHORIZATION_TEMPLATE =
   "Card-on-file authorization is not configured yet. Please contact the studio.";
 const ERR_UNSIGNED_AUTHORIZATION =
   "Please review and sign the card-on-file authorization before adding a card.";
+// PR #170. New error branch for the current-version signature gate:
+// the client signed an older version of the card_authorization
+// template (likely against the historical placeholder body) and
+// must re-sign the updated wording before any new card can be
+// saved. The portal renders a dedicated "re-sign updated card
+// authorization" state for this branch (see PR #158's deep-link
+// pattern); the action's role is to refuse the SetupIntent with a
+// clear visitor-facing message.
+const ERR_AUTHORIZATION_OUT_OF_DATE =
+  "The card-on-file authorization was updated. Please review and sign the new version before adding a card.";
 const ERR_STUDIO_NOT_READY =
   "The studio has not finished setting up payments yet. Please contact the studio.";
 const ERR_TRY_AGAIN = "Couldn't start the card setup. Please try again.";
@@ -88,66 +99,51 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     return { ok: false, error: ERR_CLIENT_ARCHIVED };
   }
 
-  // 2. Active card_authorization template. The owner creates this
-  //    in Settings -> Consent forms; we do NOT auto-create one.
-  //    PR #167 added the is_live clause; before that the SetupIntent
-  //    flow would treat a draft / not-live card_authorization
-  //    template as usable, which is exactly the test-template-in-
-  //    front-of-real-clients risk Chloe reported. With this clause
-  //    the practitioner must explicitly Make Live the template
-  //    before any client can use it to authorize card on file.
-  const { data: template, error: tmplErr } = await admin
-    .from("consent_form_templates")
-    .select("id")
-    .eq("studio_id", session.studioId)
-    .eq("is_live", true)
-    .eq("status", "active")
-    .eq("form_type", "card_authorization")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (tmplErr) {
-    console.error(
-      JSON.stringify({
-        event: "card_setup_template_lookup_failed",
-        code: tmplErr.code,
-        message: tmplErr.message,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return { ok: false, error: ERR_TRY_AGAIN };
-  }
-  if (!template) {
+  // 2 + 3. Card authorization status via the shared helper
+  // (PR #170). The helper resolves the live card_authorization
+  // template (PR #167 is_live=true AND status='active' AND
+  // form_type='card_authorization') and the client's latest
+  // signature, and returns one of four discriminated kinds:
+  //
+  //   no_live_template      -- studio has not authored a live
+  //                            template; portal Add Card surface
+  //                            already hides itself via the
+  //                            existing PR #158 placeholder.
+  //   unsigned              -- live template exists but the
+  //                            client has never signed it.
+  //   signed_out_of_date    -- client signed an older version of
+  //                            the live template. PR #170 gates
+  //                            SetupIntent on this branch so old
+  //                            signatures against the historical
+  //                            placeholder body do NOT satisfy
+  //                            authorization once an owner has
+  //                            updated the template via Settings.
+  //   signed_current        -- the only happy path. signature
+  //                            template_version equals current
+  //                            template version, so the visitor
+  //                            agreed to the current wording.
+  //
+  // The helper centralises the gate so the manual fee eligibility
+  // check (lib/billing/manual-fee-eligibility.ts) and the portal
+  // / practitioner UIs all read the same source of truth.
+  const cardAuth = await getCardAuthorizationStatus({
+    studioId: session.studioId,
+    clientId: session.clientId,
+  });
+  if (cardAuth.kind === "no_live_template") {
     return { ok: false, error: ERR_NO_AUTHORIZATION_TEMPLATE };
   }
-
-  // 3. Latest signature row for that template by this client. We
-  //    accept ANY prior version of the template for v1 (the spec is
-  //    explicit on this). A future PR can opt into "require latest
-  //    version" once the UX of re-sign-on-edit is settled.
-  const { data: signature, error: sigErr } = await admin
-    .from("client_consent_signatures")
-    .select("id")
-    .eq("studio_id", session.studioId)
-    .eq("client_id", session.clientId)
-    .eq("template_id", template.id)
-    .order("signed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (sigErr) {
-    console.error(
-      JSON.stringify({
-        event: "card_setup_signature_lookup_failed",
-        code: sigErr.code,
-        message: sigErr.message,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return { ok: false, error: ERR_TRY_AGAIN };
-  }
-  if (!signature) {
+  if (cardAuth.kind === "unsigned") {
     return { ok: false, error: ERR_UNSIGNED_AUTHORIZATION };
   }
+  if (cardAuth.kind === "signed_out_of_date") {
+    return { ok: false, error: ERR_AUTHORIZATION_OUT_OF_DATE };
+  }
+  // Past this point cardAuth.kind === "signed_current", so the
+  // rest of the function reads templateId and signatureId directly
+  // from the helper's return shape. PR #170 removed the
+  // intermediate `template` / `signature` aliases that older code
+  // carried; the helper is the single source of truth.
 
   // 4. Studio payment settings: the connected account id + livemode
   //    are mandatory; account status must be 'enabled' so we know
@@ -213,7 +209,7 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     clientId: session.clientId,
     stripeAccountId: settings.stripe_account_id as string,
     stripeCustomerId: customer.stripeCustomerId,
-    cardAuthorizationSignatureId: signature.id as string,
+    cardAuthorizationSignatureId: cardAuth.signatureId,
   });
   if (!setup.ok) {
     console.error(
