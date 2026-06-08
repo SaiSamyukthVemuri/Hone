@@ -54,6 +54,31 @@ Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
 2. Click "Deny" (or the equivalent UI button).
 3. SQL: the new `client_consent_signatures` row carries `response='denied'` and a `response_label_snapshot` describing the deny copy. The signature is real, not absent.
 
+## Session payment prepare smoke (PR #172, test mode only)
+
+Manual smoke (cannot be done from the harness because it requires an active card + a signed `signed_current` `card_authorization` for a real client). Steps:
+
+1. As studio owner in `/settings/payments`, confirm Stripe Connect is `enabled` and `stripe_livemode=false`.
+2. Pick a test client who has an active card on file (PR #135 SetupIntent smoke covers adding one) and a `signed_current` card authorization (PR #170).
+3. Book and complete a test appointment for that client; chart a session linked to the appointment.
+4. Open `/clients/<client-id>/sessions/<session-id>`. Confirm the `Session payment` card renders immediately after `SessionInfoCard`.
+5. Confirm the disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."`
+6. Enter an amount (e.g. `$50.00`) and an internal note. Click `Prepare session payment (test mode)`.
+7. Confirm the success state appears with an `Attempt id:` block.
+8. SQL verify the row:
+   ```sql
+   select id, studio_id, client_id, appointment_id, session_id, charge_reason,
+          amount_cents, currency, status, client_payment_method_id,
+          card_authorization_signature_id, stripe_livemode,
+          stripe_payment_intent_id, stripe_charge_id, created_at
+   from public.payment_charge_attempts
+   order by created_at desc
+   limit 5;
+   ```
+   Expected: `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`, `stripe_payment_intent_id IS NULL`, `stripe_charge_id IS NULL`, `client_payment_method_id` populated, `card_authorization_signature_id` populated.
+9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
+10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
+
 ## Live payments dormancy verification (PR #168)
 
 Before running any of the payment smokes below, confirm the dormancy posture is intact:

@@ -50,7 +50,72 @@ Gating order (PR #158 clarifies what the client sees in each state; PR #170 adds
 
 The practitioner-side `PaymentMethodCard` on the client profile mirrors the same five states with practitioner-actionable copy so Chloe can read out exactly what to ask the client to do next. The new branches added by PR #170 are `AuthorizationOutOfDateBlock` (no active card) and `AuthorizationOutOfDateWarning` (alongside an active card).
 
-The shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` is the single source of truth for "is the signature current?". It compares `client_consent_signatures.template_version` (snapshot from migration 0057) to the live template's current `version`. The same helper is used by `createCardSetupIntentAction`; the `lib/billing/manual-fee-eligibility.ts` helper performs the same comparison inline. See [docs/05 §Current-version signature gate (PR #170)](./05_CONSENT_AND_FORMS.md#current-version-signature-gate-pr-170).
+The shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` is the single source of truth for "is the signature current?". It compares `client_consent_signatures.template_version` (snapshot from migration 0057) to the live template's current `version`. The same helper is used by `createCardSetupIntentAction`; the `lib/billing/manual-fee-eligibility.ts` helper performs the same comparison inline; the PR #172 session payment eligibility helper `lib/billing/session-payment-eligibility.ts:getSessionPaymentEligibility` calls the same helper directly. See [docs/05 §Current-version signature gate (PR #170)](./05_CONSENT_AND_FORMS.md#current-version-signature-gate-pr-170).
+
+## 4b. Session payment prepare flow (PR #172, test mode only)
+
+Practitioner-only. Writes one `public.payment_charge_attempts` row with `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`. NO Stripe call. NO PaymentIntent. NO charge. NO refund. NO webhook. NO SMS / email. Execution (the `runManualFeeCharge` counterpart that calls `paymentIntents.create`) is deferred to a separate PR.
+
+```
+practitioner opens /clients/[id]/sessions/[sessionId]
+  -> SessionPaymentPrepareCard renders one of three states:
+       blocked            -> show practitioner-facing blocking reasons
+       existing_attempt   -> show existing payment_charge_attempts row
+       ready              -> show form: amount + internal note + Prepare button
+  -> Prepare button:
+       prepareSessionPaymentChargeAction (server action)
+         getCurrentPractitionerWithStudio() -> studio_id, practitioner_id
+         parse amount_dollars to amount_cents (> 0 AND <= 200000)
+         require internal_note (1..1000 chars)
+         getSessionPaymentEligibility({ studioId, sessionId })
+           gates (each blocks with a practitioner-facing message):
+             1. session exists in this studio
+             2. sessions.appointment_id IS NOT NULL
+                AND appointments.status='completed'
+                AND sessions.started_at IS NOT NULL
+             3. active client_payment_methods row for (studio, client, livemode)
+             4. getCardAuthorizationStatus = signed_current (PR #170)
+             5. studio_payment_settings: account_status='enabled', livemode=false
+             6. no existing active payment_charge_attempts row for
+                (studio, session, charge_reason='session_payment')
+         INSERT payment_charge_attempts row with the full lineage from
+           the eligibility result (client_payment_method_id,
+           card_authorization_signature_id, stripe_account_id,
+           stripe_customer_id, stripe_payment_method_id stamped from
+           the active card row).
+         catch 23505 unique violation -> friendly duplicate message
+           (partial unique payment_charge_attempts_active_session
+            _payment_uniq is the structural backstop).
+         revalidatePath(`/clients/${clientId}/sessions/${sessionId}`)
+       return { ok: true; attemptId } | { ok: false; error; blockingReasons? }
+```
+
+What the row carries vs leaves null:
+
+| Field | Value |
+|---|---|
+| `studio_id` | server-resolved from practitioner session |
+| `charge_reason` | `'session_payment'` |
+| `client_id` | from eligibility (not form) |
+| `appointment_id` | stamped when session is appointment-linked (always in v1 chargeability proxy) |
+| `session_id` | from URL path; required by `reason_shape_check` |
+| `created_by_practitioner_id` | server-resolved |
+| `amount_cents` | practitioner-confirmed; bounded `> 0 AND <= 200000` |
+| `currency` | `'cad'` |
+| `status` | `'ready'` |
+| `client_payment_method_id` | from active card row |
+| `card_authorization_signature_id` | from `signed_current` |
+| `stripe_account_id` | from active card row |
+| `stripe_customer_id` | from active card row |
+| `stripe_payment_method_id` | from active card row |
+| `stripe_livemode` | `false` (explicit; CHECK guarantees it) |
+| `internal_note` | required form field |
+| `stripe_payment_intent_id` | **null** (future execution PR) |
+| `stripe_charge_id` | **null** (future execution PR) |
+| `charged_at` | **null** (future execution PR) |
+| `failed_at` | **null** (future execution PR) |
+
+The prepare card explicitly does NOT render any "Pay now" or "Charge card" affordance. The disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."` Three structural dormancy guards remain intact (key gate / code gate / DB CHECK) plus a fourth from PR #171 (`payment_charge_attempts_livemode_false_check`). The legacy `manual_fee_charge_attempts` runtime is byte-for-byte untouched.
 
 ```
 client opens /portal -> "Add card" entry
