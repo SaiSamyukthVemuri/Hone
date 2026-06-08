@@ -87,7 +87,7 @@ What this baseline is **not**:
 | Step | What happens |
 |---|---|
 | Client requests magic link at `/portal/login` | `requestPortalMagicLinkAction` rate-limits, generates a 32-byte URL-safe-base64 raw token, SHA-256-hashes it, stores the hash + email + studio binding on `client_portal_magic_links`. Returns the SAME generic success regardless of match. |
-| Email arrives | The magic-link URL is `https://hone.care/portal/verify/<raw token>`. Token has a 30-minute TTL. |
+| Email arrives | The magic-link URL is `https://hone.care/portal/verify/<raw token>`. Token has a **60-minute TTL** (raised from 30 minutes in PR #166 to absorb real-world email-delivery + click-time latency; see [docs/13](./13_BACKLOG_AND_DECISIONS.md) "Secure-link expiry raised to 1 hour"). The TTL constant lives in `app/portal/login/actions.ts:MAGIC_LINK_TTL_MS` and is the single source of truth; the email body copy in `lib/email/templates/portal-magic-link.ts` is pinned by `tests/lib/email/portal-magic-link.test.ts` so the two cannot drift. |
 | GET `/portal/verify/<token>` | **NON-consuming.** Validates the token shape + that the row exists + not consumed + not expired + linked to an active client. Renders Continue button or generic unavailable. Reason: email scanners and link-preview bots fetch the URL before the human clicks; the previous one-step verify burned the token against those bots. |
 | POST `/portal/verify/<token>` | **Consuming.** Conditional UPDATE on `consumed_at IS NULL` stamps `consumed_at`. Creates the `hone_portal_session` cookie (httpOnly, secure, SameSite=Lax). Resolves to `(studio_id, client_id)`. |
 | Subsequent `/portal/*` reads | Action resolves the session cookie via `getCurrentPortalSession()`. Archived clients are blocked. |

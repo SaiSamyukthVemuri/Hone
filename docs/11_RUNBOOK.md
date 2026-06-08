@@ -45,11 +45,16 @@ Expected:
 Manual (cannot be done from the harness).
 
 1. Request a magic link at `/portal/login?studio=willow-electrolysis` with a test client's email.
-2. Open the email; click the link.
+2. Open the email; confirm the body says **"This link expires in 1 hour."** (PR #166 raised the TTL from 30 minutes to 60 minutes; a regression to the old copy is caught by `tests/lib/email/portal-magic-link.test.ts`). Click the link.
 3. Confirm `/portal/verify/<token>` shows the Continue form (not the consumed-token surface); i.e. the GET is non-consuming.
 4. Click Continue. Verify the `hone_portal_session` cookie is set (httpOnly, secure).
-5. Land on `/portal`. Verify the two-zone layout (Needs you / Your info).
+5. Land on `/portal`. Verify the two-zone layout (Needs you / Your info) and the top-right cluster (Email <studio> + Sign out side-by-side, PR #166).
 6. Sign out (or wait for cookie expiry) and confirm `/portal/messages` redirects to `/login` (the global app login surface) when anonymous.
+
+If a client reports a magic link that "stopped working":
+- Confirm the link was clicked within 60 minutes of the email being sent. If the email arrived more than 60 minutes ago, the link is expired by design; the remediation is "request a new link from `/portal/login`."
+- If the email arrived within 60 minutes but the link still shows "this secure link can't be used right now," check (a) whether the token was already consumed by a prior click (the row's `consumed_at` is non-null) and (b) whether the client's row is still `status='active'` (archived clients see the same generic surface). Both are visible in `client_portal_magic_links` (look up by SHA-256 hash of the token from the URL) and `clients`.
+- A NEW magic link request invalidates nothing: prior unconsumed rows remain valid until their `expires_at`. Issuing a fresh link is always safe.
 
 ## Stripe card-on-file smoke (test mode)
 

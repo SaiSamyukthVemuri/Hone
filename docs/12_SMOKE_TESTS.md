@@ -24,11 +24,12 @@ Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
 ## 2. Portal smoke
 
 1. Request a magic link at `/portal/login?studio=willow-electrolysis` for a test client.
-2. Confirm the email arrives and the link points to `https://hone.care/portal/verify/<token>`.
+2. Confirm the email arrives and the link points to `https://hone.care/portal/verify/<token>`. Confirm the body text reads `"This link expires in 1 hour."` (PR #166).
 3. Open the link in a fresh incognito window. Confirm GET is non-consuming (page renders the Continue form).
-4. Click Continue. Confirm landing on `/portal` with the two-zone layout (Needs you / Your info).
+4. Click Continue. Confirm landing on `/portal` with the two-zone layout (Needs you / Your info), and confirm the top-right cluster shows the Email <studio> button and the Sign out link as horizontal peers (PR #166 flipped them from stacked to side-by-side).
 5. Verify the cookie `hone_portal_session` is httpOnly + secure.
 6. Sign out by clearing the cookie. Confirm `/portal/messages` redirects when anonymous.
+7. To verify the new 60-minute window: issue a magic link, wait ~35 minutes (well past the old 30-minute TTL), then click. The Continue page must render. A regression to the 30-minute TTL would surface the generic "this secure link can't be used right now" error.
 
 ## 3. Consent smoke (treatment + photo)
 

@@ -21,7 +21,37 @@ import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-li
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAGIC_LINK_TTL_MS = 30 * 60 * 1000;
+// PR #166. Magic-link TTL was 30 minutes in PR #129 and survived
+// every refactor since. Chloe's bug report: "Secure link stopped
+// working under 30 mins." The most common real-world cause is the
+// gap between issue time and click time. Email delivery via Resend
+// has a hard floor of 3-15 seconds on a good day and a soft floor
+// of one to several minutes when the receiving MTA queues the
+// message (Gmail in particular delays new senders and bulk-flagged
+// messages by 1-10 minutes before delivery). On top of that the
+// client typically takes a few minutes to notice the email arrived,
+// open it, and tap the link from a phone. The combined wall-clock
+// gap routinely exceeds 30 minutes for older clients, clients who
+// step away from their phone, or clients whose mail provider
+// applied a transient block; for them the link is dead on arrival
+// and the only remediation is "request a new one."
+//
+// 60 minutes is the new floor. The token is still single-use and
+// still consumed by an atomic UPDATE on POST, so the security
+// guarantees are unchanged; only the legitimate-use window grows.
+// Two-factor and bank login emails are typically 10-15 minutes,
+// but those have a recovery path (resend in one tap); ours is
+// "request another email from the studio login page" so the
+// failure cost is higher and the safe TTL is longer.
+//
+// Implementation: this constant is the SINGLE SOURCE OF TRUTH for
+// the magic-link expiry. The expires_at column on
+// client_portal_magic_links is set from this value at insert time
+// (see line 192 below) and the email body's TTL copy is pinned in
+// lib/email/templates/portal-magic-link.ts; a regression in either
+// is caught by tests/app/portal/login/magic-link-ttl.test.ts and
+// tests/lib/email/portal-magic-link.test.ts.
+const MAGIC_LINK_TTL_MS = 60 * 60 * 1000;
 
 // Generic success message returned for every valid login request,
 // regardless of whether an active client matched. This is the no-

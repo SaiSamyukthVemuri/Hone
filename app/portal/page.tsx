@@ -259,14 +259,26 @@ export default async function PortalHomePage() {
                 Anything you need to handle is at the top. Your appointments and records live below.
               </p>
             </div>
-            {/* PR #159. Contact and sign-out actions move into the
-                top-right cluster so the client can see how to reach
-                the studio without scrolling. The Email button only
-                renders when the studio has a postcare contact email
-                on file (the same gate the bottom Need help block
-                used before this PR); the bottom block is now
-                removed to avoid duplicating the same affordance. */}
-            <div className="flex flex-col items-end gap-3">
+            {/* PR #159 introduced this top-right cluster so the
+                client can see Email + Sign out without scrolling.
+                PR #166 flips the cluster from flex-col to flex-row
+                because Chloe's smoke test surfaced that Sign out
+                stacked BELOW Email Willow read like a secondary
+                affordance of Email rather than a peer action. The
+                row layout keeps both controls visibly anchored to
+                the top-right corner with Sign out as the rightmost
+                element. items-center keeps the underline-only Sign
+                out vertically aligned with the bordered Email
+                button; gap-4 matches the visual breathing room PR
+                #159 used between the two controls. On narrow
+                viewports the outer header still carries flex-wrap,
+                so the right cluster moves below the heading
+                without breaking. The Email button only renders
+                when the studio has a postcare contact email on
+                file (the same gate the bottom Need help block
+                used before PR #159); the bottom block is gone to
+                avoid duplicating the affordance. */}
+            <div className="flex flex-row items-center gap-4">
               {contactHref && (
                 <a
                   href={contactHref}
