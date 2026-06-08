@@ -88,6 +88,55 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Canonical payment_charge_attempts ledger, dormant (PR #171, migration 0073)
+
+**Decision (2026-06-08):** Create the new dormant canonical `payment_charge_attempts` table in production via migration 0073. Leave `manual_fee_charge_attempts` runtime fully untouched. Schema only -- zero rows, no PaymentIntent code, no charge UI, no live-mode change. The future `runChargeAttempt` helper (PR #181) writes the first rows in test mode for `session_payment`; until the legacy `manual_fee_charge_attempts` is unified into or formally deprecated against this ledger, runtime fee charging stays on the legacy table.
+
+**Why now:** PR #169 settled the product model (charge after session, three canonical reasons, one charge primitive). PR #170 shipped the current-version card-authorization gate. The next dependency in the live-payments track is the schema destination for the charge primitive's result rows. Building the helper before the table forces a parallel placeholder; building the table dormant first lets PR #181 write the helper against a stable schema with no further migration coupling.
+
+**Schema highlights (full detail in `supabase/migrations/0073_payment_charge_attempts.sql` and docs/09):**
+
+- **charge_reason enum** carries exactly three values (`session_payment`, `late_cancellation_fee`, `no_show_fee`). A fourth requires a product decision recorded here first.
+- **payment_charge_attempts_reason_shape_check** is the load-bearing per-reason CHECK from the patched PR #171 prompt: `session_payment` requires `session_id` (and `appointment_id` is OPTIONAL so a future chargeable freeform session does not need a migration to relax the FK); `late_cancellation_fee` and `no_show_fee` require `appointment_id` AND forbid `session_id`.
+- **Status enum** mirrors `manual_fee_charge_attempts` exactly (`ready / blocked / cancelled / pending_stripe / succeeded / failed`). No parallel state machine; the future `runChargeAttempt` reuses the proven transitions.
+- **amount_cents** bounded `> 0 AND <= 200000` (the $2,000 CAD ceiling is intentionally larger than manual_fee's $200 cap because session payments represent the full treatment amount; documented in the migration header).
+- **payment_charge_attempts_livemode_false_check** is the NAMED dormancy guard the future live-enablement PR drops deliberately. The constraint name is the search anchor for the live PR's audit.
+- **card_authorization_signature_id** is **nullable** in this dormant PR. Execution PR (PR #181) must refuse to charge unless `lib/consent/current-card-authorization:getCardAuthorizationStatus` returns `signed_current` AND stamps the matching signature id on the row at prepare time.
+- **FK ON DELETE rules**: `studio_id` CASCADE (matches manual_fee + studio_payment_settings + client_payment_methods); composite client + appointment + created_by_practitioner RESTRICT (matches manual_fee); `session_id` RESTRICT (initial 0073 declared SET NULL; corrected via migration 0074 because SET NULL contradicted the reason_shape_check requiring session_payment rows to have non-null session_id -- see PR #171 patch note below). All financial-audit FK pointers preserve their target rows; no charge attempt is ever orphaned.
+- **12 secondary indexes + 4 partial uniques** support eligibility, dashboard, idempotency, and duplicate-prevention. Partial indexes save space on the nullable columns. The active-fee-per-appointment + active-session_payment-per-session uniques are the structural backstop for the application-layer duplicate guard.
+- **RLS** enabled with studio-member SELECT only; no INSERT / UPDATE / DELETE policy. Service-role admin client owns mutations.
+
+**Temporary two-table state (REQUIRED ACKNOWLEDGEMENT):**
+
+- `manual_fee_charge_attempts` remains the existing test-mode runtime ledger for `late_cancel` and `no_show` fee preparations.
+- `payment_charge_attempts` is the future canonical charge ledger for all three reasons.
+- **The two-table state is TEMPORARY.** It exists to keep PR #171 schema-only without coupling to the manual_fee migration.
+- **Runtime fee charging must be migrated or unified onto `payment_charge_attempts` before live `late_cancellation_fee` or `no_show_fee` charging ships.** A separate future PR (TBD; estimated PR #178 in the docs/16 sequence) is responsible for that unification (or formal deprecation of `manual_fee_charge_attempts` if there are no live rows to migrate). The unification PR must land BEFORE the live-mode CHECK relax for fees.
+
+**Gate (do not bypass):**
+
+```text
+Before live late_cancellation_fee or no_show_fee charging,
+manual_fee_charge_attempts must either be migrated into
+payment_charge_attempts or formally deprecated with no
+live-money rows.
+```
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. Three structural dormancy guards from PR #168 unchanged; PR #171 adds a fourth (the named CHECK on the new table) that the future live PR must drop deliberately.
+- Does NOT add any `paymentIntents.create`, `refunds.create`, `charges.create`, or `checkout.sessions` call site. Still exactly 1 `paymentIntents.create` in `lib/billing/manual-fee-charge.ts`.
+- Does NOT add or modify any code that reads or writes the new table. The table is schema-only; the runtime is blind to it.
+- Does NOT touch `manual_fee_charge_attempts`. No ALTER, no UPDATE, no DROP, no RENAME. Runtime fee path is byte-for-byte identical.
+- Does NOT modify any Stripe key, env var, webhook secret, or Vercel config.
+- Does NOT change SMS / email / webhook / RLS-on-other-tables behavior.
+
+**Alternative considered:** rename `manual_fee_charge_attempts` to `payment_charge_attempts` in this PR (the Option B sketch from docs/16 §12.12). Rejected for PR #171 because the patched prompt is explicit: "Leave existing manual_fee_charge_attempts runtime untouched." A rename would require backfilling `charge_reason`, relaxing the manual_fee CHECK on `charge_type`, updating every read/write site, and re-running every test that pins the legacy table shape. Option A (separate table) keeps the proven test-mode runtime stable while the canonical schema lands; the unification can be a deliberate follow-up PR with its own data-migration audit.
+
+**PR #171 patch (2026-06-08, before merge):** the initial 0073 declared `session_id uuid references public.sessions(id) on delete set null`. PR review caught the contradiction with `payment_charge_attempts_reason_shape_check`: for a `session_payment` row, an ON DELETE SET NULL would try to null `session_id` and then fail the CHECK -- functionally a confusing hidden RESTRICT. Migration 0074 (`0074_payment_charge_attempts_session_fk_restrict.sql`) is the corrective ALTER that drops and re-adds the FK with `ON DELETE RESTRICT`. 0073's literal source text is preserved as the historical record (it represents what was actually applied on 2026-06-08); 0074 is the layered correction. The combined effective state after 0073 + 0074 has `session_id` FK with `ON DELETE RESTRICT`. No row-data change (table dormant; 0 rows in production both before and after the patch). The migration discipline lesson recorded here: when a migration is already applied to production and a fix is needed, ship a corrective migration rather than retroactively rewriting the original (matches the [[feedback_apply_additive_migration_before_merge]] discipline; layered corrections are auditable, retroactive rewrites are not).
+
+**Honest non-claims:** no charge-execution code, no eligibility helper for session_payment, no UI, no webhook handlers, no live-mode flag change, no Stripe key rotation, no SMS / email behavior. Stripe gates intact (1 allowlisted `paymentIntents.create`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string). The new table is dormant in production (0 rows confirmed post-migration).
+
 ### Card authorization wording + current-version re-sign gate (PR #170)
 
 **Decision:** Ship the product-ready DRAFT card_authorization body as a TS constant + add a current-version signature gate so old signatures against the production placeholder body (`"test"`, 4 characters) stop counting once the live template is updated. Do NOT mutate production rows in this PR; the operator step (Chloe pasting the body via Settings -> Consent forms) is documented and is what bumps the template version. No live payments enabled. No migration: `client_consent_signatures.template_version` has existed since migration 0057, so the gate is pure application code.
