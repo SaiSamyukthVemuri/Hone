@@ -33,8 +33,10 @@ Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
 
 ## 3. Consent smoke (treatment + photo)
 
-1. As the studio owner in `/settings/consent`, create or activate a `treatment_consent` template.
-2. As a test client in `/portal`, sign the form (type your name + submit).
+1. As the studio owner in `/settings/consent`, create a `treatment_consent` template. PR #167: the new template lands as **Draft** with a **Draft** badge; it is NOT in the client portal yet. Verify the helper copy above the form reads `"New forms are saved as Draft. They are not shown to clients until you mark them Active and then Live in client portal."`
+2. Click **Make active**. The badge stays **Draft** (the template is now in the practitioner's workflow but not yet exposed). Confirm a **Make live in client portal** button appears.
+3. Click **Make live in client portal**. The badge flips to **Live**. The row moves into the **Live in client portal** group.
+4. As a test client in `/portal`, sign the form (type your name + submit).
 3. SQL:
    ```sql
    select id, template_title_snapshot, template_version, template_hash,

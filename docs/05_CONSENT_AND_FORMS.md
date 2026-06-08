@@ -10,9 +10,10 @@ This document describes the mechanism. It does **not** make legal claims. Enforc
 
 ### `consent_form_templates`
 - Studio-authored.
-- Columns: `id`, `studio_id`, `title`, `description`, `body`, `form_type`, `version`, `status`, `created_by_practitioner_id`, timestamps.
+- Columns: `id`, `studio_id`, `title`, `description`, `body`, `form_type`, `version`, `status`, `is_live`, `created_by_practitioner_id`, timestamps.
 - `form_type` ∈ `general / treatment_consent / policy_acknowledgement / card_authorization / photo_consent`.
 - `status` ∈ `active / draft / archived`. Templates are never hard-deleted because `client_consent_signatures` references via ON DELETE RESTRICT.
+- `is_live` (PR #167, migration 0072) ∈ `true / false`, default `false`. The explicit client-portal visibility gate, decoupled from `status`. The portal query requires `is_live = true AND status = 'active'`; the practitioner's Settings UI sees every row regardless of `is_live`. A DB CHECK constraint (`consent_form_templates_live_requires_active_check`) guarantees `is_live = true` implies `status = 'active'`, so a draft or archived row can never be live. Existing rows were backfilled to `is_live = (status = 'active')` to preserve pre-PR behavior; new rows land as `(status='draft', is_live=false)` because `createConsentTemplateAction` now forces both values on insert.
 
 ### `client_consent_signatures`
 - Immutable append-only.
@@ -40,7 +41,8 @@ client opens the unsigned form in /portal
   -> client types their full name + agrees
   -> POST -> createConsentSignatureAction
        resolves portal session (studio_id, client_id)
-       reads the template by id; refuses if status != 'active'
+       reads the template by id; refuses unless is_live=true AND status='active'
+         (PR #167; before PR #167 the gate was only status='active')
        snapshots (title, body, version) onto the new signature row
        computes template_hash = sha256(canonical((title, body, version)))
        writes ip_hash / ua_hash via hashFingerprint (returns null in prod
@@ -49,6 +51,31 @@ client opens the unsigned form in /portal
        INSERT into client_consent_signatures
        returns generic ok
 ```
+
+## Live / Draft client visibility (PR #167)
+
+Practitioners hit this control from `Settings -> Consent forms`. Each template carries a `Live` or `Draft` badge in the list and one of two action buttons:
+
+- `Make live in client portal` -- appears when `status='active'` AND `is_live=false`. Flips `is_live=true`. The DB CHECK constraint rejects the flip if the row is not active, so the server action also pre-flights and surfaces a clear "Mark the template active first" message.
+- `Hide from client portal` -- appears when `is_live=true`. Flips `is_live=false`. The template stays in the practitioner-side `Live in client portal` group disappears; the row moves to the `Active (not live)` group.
+
+Lifecycle (each transition is a deliberate practitioner click):
+
+```
+Draft (new) -> Active (ready for use in the studio) -> Live (clients can see and sign)
+```
+
+- New templates land as `(status='draft', is_live=false)`. `createConsentTemplateAction` forces both server-side, so a hand-crafted form post cannot land in `active` either.
+- Moving back to Draft or Archive auto-flips `is_live=false` so a careless Archive cannot leave a row live in the portal.
+- Moving forward to Active does NOT auto-flip `is_live=true`. The practitioner has to confirm with the explicit Live toggle.
+
+The portal query (`getActiveConsentTemplatesForPortal`) requires both `is_live=true` and `status='active'`. The redundancy is defense-in-depth: the CHECK constraint guarantees the second clause given the first, but if a future migration drops the CHECK the explicit filter keeps draft legal text off the wire. The signing action (`createConsentSignatureAction`) applies the same two-clause gate so a malicious client who guessed a draft template id still gets the generic "no longer available" error.
+
+Card authorization (`form_type='card_authorization'`) and photo consent (`form_type='photo_consent'`) are normal `consent_form_templates` rows. The same Live / Draft control gates them. Willow's currently-active `card_authorization` template was backfilled to `is_live=true` so PR #158's Add card guidance keeps working without operator intervention.
+
+Audience targeting (per-modality / per-service / new-vs-existing-client) is **deferred**. The portal query has no appointment or service context today; adding targeting requires a separate column on templates, a portal-side context resolution, and a fail-open rule (show the live form if context is unknown). PR #167 ships only the Live / Draft gate.
+
+Historical signatures are untouched. `client_consent_signatures` rows snapshot `template_title_snapshot`, `template_body_snapshot`, and `template_version` at sign time (migration 0057); the portal "Completed forms" surface reads signatures directly and never joins the templates table. Flipping a template to draft or archived cannot hide or delete a signed record.
 
 Photo consent (PR #137) extends the form with two buttons ("Accept" / "Deny") and writes the matching `response` + `response_label_snapshot` onto the row. A deny is not unsigned; it is a signed record that the client said no.
 

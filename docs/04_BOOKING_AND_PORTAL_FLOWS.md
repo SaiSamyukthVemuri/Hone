@@ -142,7 +142,7 @@ The portal home (`/portal`) renders one header + one Needs you block + four top-
 
 **Needs you**: anything the client must act on. Renders inline cards (not links to detail pages):
 - Outstanding intake.
-- Outstanding consent forms (treatment, photo, card authorization). The unsigned-forms section carries `id="forms-to-sign"` since PR #158 so the card-authorization placeholder can deep-link to it.
+- Outstanding consent forms (treatment, photo, card authorization). The unsigned-forms section carries `id="forms-to-sign"` since PR #158 so the card-authorization placeholder can deep-link to it. **PR #167:** only templates with `is_live=true` AND `status='active'` reach this list; draft / not-live templates stay editable in `Settings -> Consent forms` but never render in the portal. The signing action applies the same two-clause gate so a client who guessed a draft template id still gets the generic "no longer available" error rather than the legal text.
 - "Card authorization needed before adding a card" placeholder (PR #158) when `card_authorization` template exists, client has not signed, and no active card.
 - Unreviewed messages from the studio.
 - Add card form (when `card_authorization` is signed AND no active card AND publishable key gate resolved).

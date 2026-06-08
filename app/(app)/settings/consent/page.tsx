@@ -3,6 +3,7 @@ import { getConsentTemplatesForStudio } from "@/lib/consent/queries";
 import { ConsentTemplatesEditor } from "./ConsentTemplatesEditor";
 import {
   createConsentTemplateAction,
+  setConsentTemplateLiveAction,
   setConsentTemplateStatusAction,
   updateConsentTemplateAction,
 } from "./actions";
@@ -29,7 +30,8 @@ export default async function ConsentSettingsPage() {
         <h2 className="text-lg font-semibold tracking-tight">Consent forms</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Create consent forms clients can review and sign in their secure
-          portal.
+          portal. Only forms marked <strong>Live in client portal</strong> are
+          shown to clients. Keep new forms off until you have reviewed them.
         </p>
       </header>
 
@@ -38,6 +40,7 @@ export default async function ConsentSettingsPage() {
         createAction={createConsentTemplateAction}
         updateAction={updateConsentTemplateAction}
         setStatusAction={setConsentTemplateStatusAction}
+        setLiveAction={setConsentTemplateLiveAction}
       />
     </section>
   );
