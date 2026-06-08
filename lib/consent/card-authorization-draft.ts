@@ -18,6 +18,20 @@ import "server-only";
 // historical reference. That is intentional -- the database is
 // the source of truth; this constant is the audit trail.
 //
+// IMPORTANT: the "this is a draft / not yet legally approved"
+// posture lives in THIS comment block, in docs/05, docs/13,
+// docs/14, and docs/16. It MUST NOT leak into the body string
+// the client signs. A client-facing authorization that tells the
+// client "this form may still need legal review before live
+// charges" undermines the trust the form is trying to establish
+// and is the wrong place to flag the legal status. The body
+// below was patched (post initial PR #170 commit) to strip the
+// disclaimer sentence and any "software provider" references
+// that placed Hone's role in front of the client; the test in
+// tests/lib/consent/card-authorization-draft.test.ts pins the
+// negative so a future re-draft cannot re-introduce the
+// disclaimer accidentally.
+//
 // Coverage (the v1 draft must address ALL of the following per
 // PR #170 spec, and the tests in
 // tests/lib/consent/card-authorization-draft.test.ts pin each):
@@ -60,11 +74,11 @@ export const CARD_AUTHORIZATION_DRAFT_V1_TITLE = "Card on file authorization";
 
 export const CARD_AUTHORIZATION_DRAFT_V1_BODY = `Card on file authorization
 
-By signing below, I am giving this studio permission to keep my payment card on file and to charge that card for treatment, late cancellations, and missed appointments under the terms below. This is a draft prepared by the studio's software provider; the studio is responsible for its legal review before live charges begin.
+By signing below, I am giving this studio permission to keep my payment card on file and to charge that card for treatment, late cancellations, and missed appointments under the terms below.
 
 1. Card on file
 
-I authorize this studio to save my payment card securely on file. The card is stored through Stripe, the studio's payment processor. The studio and Hone (the studio's software provider) do not store my full card number or security code; only the brand, last four digits, and expiry date are kept for reference. I can replace this card or ask the studio to remove it at any time.
+I authorize this studio to save my payment card securely on file. The card is stored through Stripe, the studio's payment processor. The studio and Hone do not store my full card number or security code; only the brand, last four digits, and expiry date are kept for reference. I can replace this card or ask the studio to remove it at any time.
 
 2. Charges for completed sessions
 

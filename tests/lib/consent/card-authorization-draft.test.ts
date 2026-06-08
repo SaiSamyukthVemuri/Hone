@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   CARD_AUTHORIZATION_DRAFT_V1_TITLE,
   CARD_AUTHORIZATION_DRAFT_V1_BODY,
@@ -136,6 +138,55 @@ describe("CARD_AUTHORIZATION_DRAFT_V1_BODY: risk avoidance", () => {
     expect(CARD_AUTHORIZATION_DRAFT_V1_BODY).not.toMatch(
       /reviewed by counsel/i,
     );
+  });
+
+  it("does NOT carry the draft / pre-legal-review disclaimer in the client-facing body", () => {
+    // PR #170 patch (post initial commit). The disclaimer
+    // sentence ("This is a draft prepared by the studio's
+    // software provider; the studio is responsible for its
+    // legal review before live charges begin.") belongs in code
+    // comments, docs, and operator guidance, not in the form a
+    // client signs. Including it in the body would tell the
+    // client "this form may still need legal review before live
+    // charges," which undermines the trust the form is trying
+    // to establish. The disclaimer survives in the file header
+    // comment + docs/05/13/14/16 (verified by a separate test
+    // below). The user-specified negative list, verbatim:
+    expect(CARD_AUTHORIZATION_DRAFT_V1_BODY).not.toMatch(/draft prepared/i);
+    expect(CARD_AUTHORIZATION_DRAFT_V1_BODY).not.toMatch(/software provider/i);
+    expect(CARD_AUTHORIZATION_DRAFT_V1_BODY).not.toMatch(
+      /legal review before live charges/i,
+    );
+  });
+});
+
+describe("CARD_AUTHORIZATION_DRAFT_V1_BODY: source-of-truth boundary", () => {
+  // The "not legally approved" posture must live SOMEWHERE in the
+  // repo so a reviewer / operator who reads the constant or the
+  // docs sees the boundary clearly. PR #170's patch strips the
+  // disclaimer out of the client-facing body string but keeps it
+  // in the file header comment + the docs. These tests pin that
+  // the boundary is documented in the file header at minimum so
+  // a future engineer cannot lose the disclaimer entirely by
+  // accident.
+
+  it("the file header comment block carries the no-legal-approval boundary", () => {
+    // Read the raw source (not just the body export) so the
+    // comment block is in scope. The header comment is a
+    // belt-and-braces backstop in case docs drift.
+    const src = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../lib/consent/card-authorization-draft.ts",
+      ),
+      "utf8",
+    );
+    expect(src).toMatch(/NOT legally approved/);
+    // The phrase "legal counsel must review" is wrapped across
+    // two comment lines in the file header ("legal\n// counsel
+    // must review"), so the regex tolerates a small amount of
+    // whitespace + comment-prefix punctuation between the words.
+    expect(src).toMatch(/legal[\s\S]{0,10}counsel must review/i);
   });
 });
 
