@@ -135,14 +135,22 @@ export async function signConsentFormAction(
     return { ok: false, error: "This form is no longer available to sign." };
   }
 
-  // Template lookup with the three security clauses. Any mismatch
-  // (forged id from another studio, draft, archived, gone) returns
-  // the same generic error string.
+  // Template lookup with the four security clauses (PR #167 added
+  // the is_live gate). Any mismatch -- forged id from another
+  // studio, draft, archived, not-live-in-portal, or gone -- returns
+  // the same generic error string. The is_live clause matters even
+  // though status = 'active' is also required, because the DB CHECK
+  // is the structural guarantee that is_live = true cannot coexist
+  // with status != 'active'; the application also wants the
+  // opposite property (a status = 'active' row that is not live
+  // must not be signable from the portal even if a malicious
+  // client guessed the template id).
   const { data: template, error: templateErr } = await admin
     .from("consent_form_templates")
     .select("id, title, body, version, status, studio_id, form_type")
     .eq("id", templateId)
     .eq("studio_id", session.studioId)
+    .eq("is_live", true)
     .eq("status", "active")
     .maybeSingle();
   if (templateErr) {

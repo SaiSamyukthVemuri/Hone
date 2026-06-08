@@ -33,23 +33,39 @@ const STATUS_LABELS: Record<ConsentTemplateStatus, string> = {
   archived: "Archived",
 };
 
-// PR #134. Practitioner-side consent template management. List +
-// create + edit + archive only; no drag-and-drop builder, no
-// custom-question builder. Editing bumps the version server-side
-// so old signed records keep their historical hash. Archive flips
-// status='archived'; there is no hard delete (the server-side
-// table has ON DELETE RESTRICT against client_consent_signatures
-// to keep the audit chain intact).
+// PR #134, PR #167. Practitioner-side consent template management.
+// List + create + edit + archive + live-in-portal toggle. No
+// drag-and-drop builder, no custom-question builder. Editing bumps
+// the version server-side so old signed records keep their
+// historical hash. Archive flips status='archived'; there is no
+// hard delete (the table has ON DELETE RESTRICT against
+// client_consent_signatures to keep the audit chain intact).
+//
+// PR #167 added the explicit Live in client portal control. The
+// rule: a template's life cycle is
+//
+//   Draft (new) -> Active (ready for use) -> Live (clients see it)
+//
+// Each transition is a deliberate practitioner click. A new
+// template lands as Draft and is_live=false; the practitioner
+// must click "Make active" then "Make live in client portal" to
+// expose it. Moving back to Draft or Archive automatically pulls
+// it off the portal (server-side; the DB CHECK constraint is the
+// structural backstop). This is the safety property Chloe asked
+// for: "I don't want test forms going out into clients' portal
+// and having them sign random stuff I'm doing."
 export function ConsentTemplatesEditor({
   templates,
   createAction,
   updateAction,
   setStatusAction,
+  setLiveAction,
 }: {
   templates: ConsentFormTemplate[];
   createAction: ActionCreate;
   updateAction: ActionCreate;
   setStatusAction: ActionStatus;
+  setLiveAction: ActionStatus;
 }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -67,7 +83,25 @@ export function ConsentTemplatesEditor({
     });
   }
 
-  const active = templates.filter((t) => t.status === "active");
+  function handleLive(id: string, nextIsLive: boolean) {
+    setError(null);
+    const fd = new FormData();
+    fd.set("id", id);
+    fd.set("is_live", nextIsLive ? "true" : "false");
+    startTransition(async () => {
+      const r = await setLiveAction(fd);
+      if (!r.ok) setError(r.error);
+    });
+  }
+
+  // PR #167 groups templates by client-portal visibility first:
+  // Live (is_live=true) comes before Active not-live, before
+  // Draft, before Archived. The owner's first glance is "what
+  // are my real clients seeing?"
+  const live = templates.filter((t) => t.is_live);
+  const activeNotLive = templates.filter(
+    (t) => !t.is_live && t.status === "active",
+  );
   const draft = templates.filter((t) => t.status === "draft");
   const archived = templates.filter((t) => t.status === "archived");
 
@@ -117,7 +151,8 @@ export function ConsentTemplatesEditor({
       )}
 
       {[
-        { label: "Active", rows: active },
+        { label: "Live in client portal", rows: live },
+        { label: "Active (not live)", rows: activeNotLive },
         { label: "Drafts", rows: draft },
         { label: "Archived", rows: archived },
       ]
@@ -167,6 +202,8 @@ export function ConsentTemplatesEditor({
                           {FORM_TYPE_LABELS[t.form_type]}
                           {" · "}
                           {STATUS_LABELS[t.status]}
+                          {" · "}
+                          <LiveBadge isLive={t.is_live} />
                         </p>
                         {t.description && (
                           <p className="text-xs text-neutral-600 dark:text-neutral-400">
@@ -189,6 +226,26 @@ export function ConsentTemplatesEditor({
                         >
                           Edit
                         </button>
+                        {t.status === "active" && !t.is_live && (
+                          <button
+                            type="button"
+                            onClick={() => handleLive(t.id, true)}
+                            disabled={pending}
+                            className="rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1 font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                          >
+                            Make live in client portal
+                          </button>
+                        )}
+                        {t.is_live && (
+                          <button
+                            type="button"
+                            onClick={() => handleLive(t.id, false)}
+                            disabled={pending}
+                            className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                          >
+                            Hide from client portal
+                          </button>
+                        )}
                         {t.status !== "active" && (
                           <button
                             type="button"
@@ -196,7 +253,7 @@ export function ConsentTemplatesEditor({
                             disabled={pending}
                             className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
                           >
-                            Activate
+                            Make active
                           </button>
                         )}
                         {t.status !== "archived" && (
@@ -218,6 +275,31 @@ export function ConsentTemplatesEditor({
           </section>
         ))}
     </div>
+  );
+}
+
+// Small badge that names the consequence in client terms. PR #167.
+// "Live" -> clients see it in the portal. "Draft" -> clients do not
+// see it. The badge sits next to the form-type label so a glance
+// at any row makes the visibility unambiguous.
+function LiveBadge({ isLive }: { isLive: boolean }) {
+  if (isLive) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-green-900 dark:bg-green-900 dark:text-green-100"
+        aria-label="Live in client portal"
+      >
+        Live
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+      aria-label="Draft, not shown to clients"
+    >
+      Draft
+    </span>
   );
 }
 
@@ -266,7 +348,9 @@ function TemplateForm({
     fd.set("description", description.trim());
     fd.set("body", b);
     fd.set("form_type", formType);
-    if (mode === "create") fd.set("status", "active");
+    // PR #167. Create no longer accepts a status field; the
+    // server forces status='draft' + is_live=false on insert so
+    // a new template cannot land in the client portal by accident.
     startTransition(async () => {
       const ok = await onSubmit(fd);
       if (!ok) return;
@@ -283,6 +367,12 @@ function TemplateForm({
           </span>
         )}
       </p>
+      {mode === "create" && (
+        <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
+          New forms are saved as Draft. They are not shown to clients until
+          you mark them Active and then Live in client portal.
+        </p>
+      )}
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">

@@ -440,6 +440,16 @@ export type ConsentFormTemplate = {
   form_type: ConsentTemplateFormType;
   version: number;
   status: ConsentTemplateStatus;
+  // PR #167. Decouples client-portal visibility from the
+  // practitioner-side status enum. A template only reaches the
+  // portal when is_live = true. The DB CHECK constraint guarantees
+  // is_live = true implies status = 'active', so a draft / archived
+  // row can never be live. Backfill in migration 0072 set is_live
+  // = (status = 'active') for every existing row, preserving
+  // current portal visibility. New templates default to is_live
+  // false on the column and to status 'draft' in
+  // createConsentTemplateAction.
+  is_live: boolean;
   created_by_practitioner_id: string | null;
   created_at: string;
   updated_at: string;

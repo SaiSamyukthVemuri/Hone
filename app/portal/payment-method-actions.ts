@@ -90,10 +90,17 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
 
   // 2. Active card_authorization template. The owner creates this
   //    in Settings -> Consent forms; we do NOT auto-create one.
+  //    PR #167 added the is_live clause; before that the SetupIntent
+  //    flow would treat a draft / not-live card_authorization
+  //    template as usable, which is exactly the test-template-in-
+  //    front-of-real-clients risk Chloe reported. With this clause
+  //    the practitioner must explicitly Make Live the template
+  //    before any client can use it to authorize card on file.
   const { data: template, error: tmplErr } = await admin
     .from("consent_form_templates")
     .select("id")
     .eq("studio_id", session.studioId)
+    .eq("is_live", true)
     .eq("status", "active")
     .eq("form_type", "card_authorization")
     .order("created_at", { ascending: false })

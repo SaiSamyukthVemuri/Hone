@@ -44,10 +44,18 @@ export async function getConsentTemplatesForStudio(
   return (data ?? []) as ConsentFormTemplateForPractitioner[];
 }
 
-// Portal-facing active-template view. Filters to status='active' so
-// the portal "Forms to review" block never surfaces a draft or
-// archived row. The portal-side render scopes by the session
-// studioId; this function never accepts a slug or other key.
+// Portal-facing template view. PR #167 added the explicit is_live
+// gate; before this PR the portal read every status='active' row
+// directly, which meant the moment a practitioner activated a
+// template for their own workflow it landed in the client portal.
+// Now the portal requires is_live = true AND status = 'active' --
+// the second clause is structurally redundant given the CHECK
+// constraint installed in migration 0072 (NOT is_live OR status
+// = 'active'), but we keep it for defense-in-depth so a future
+// migration that drops or weakens the CHECK does not silently
+// re-expose draft text. The portal-side render scopes by the
+// session studioId; this function never accepts a slug or other
+// client-supplied key.
 export type ConsentFormTemplateForPortal = Pick<
   ConsentFormTemplate,
   "id" | "title" | "description" | "body" | "form_type" | "version"
@@ -61,6 +69,7 @@ export async function getActiveConsentTemplatesForPortal(
     .from("consent_form_templates")
     .select("id, title, description, body, form_type, version")
     .eq("studio_id", studioId)
+    .eq("is_live", true)
     .eq("status", "active")
     .order("created_at", { ascending: true });
   if (error) {
