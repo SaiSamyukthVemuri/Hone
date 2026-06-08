@@ -154,9 +154,26 @@ describe("docs/10 deployment doc reaffirms the dormancy posture", () => {
   });
 });
 
-describe("docs/14 AI handoff status line names PR #168", () => {
-  it("status line is updated to PR #168", () => {
-    expect(HANDOFF).toMatch(/Current production status.*PR #168/);
+describe("docs/14 AI handoff references the PR #168 readiness review", () => {
+  it("the status line names a current PR (PR #168 or later)", () => {
+    // The doc's "Current production status (as of PR #N)" line
+    // rolls forward with each docs PR. We assert it is at PR #168
+    // or higher so PR #168's contract holds without locking
+    // future PRs to back-edit this file.
+    const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
+    expect(m).not.toBeNull();
+    if (m) {
+      const n = Number(m[1]);
+      expect(n).toBeGreaterThanOrEqual(168);
+    }
+  });
+
+  it("the PR #168 readiness decision is still referenced in the handoff", () => {
+    // Even when the status line rolls forward, the PR #168
+    // decision (live payments NOT enabled) must remain
+    // searchable in the handoff bullet list.
+    expect(HANDOFF).toMatch(/PR #168/);
+    expect(HANDOFF).toMatch(/Live payments are NOT enabled/);
   });
 
   it("handoff names docs/16 as the live-payments source of truth", () => {
