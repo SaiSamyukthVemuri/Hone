@@ -648,6 +648,28 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
+### 12.5b Canonical payment_charge_attempts ledger (PR #171, migration 0073, 2026-06-08)
+
+PR #171 created the dormant canonical `public.payment_charge_attempts` table in production (migration 0073; 0 rows; first writes land in PR #181 in test mode). The schema is the single destination for all three charge reasons (`session_payment`, `late_cancellation_fee`, `no_show_fee`). Full schema detail lives in `supabase/migrations/0073_payment_charge_attempts.sql` and `docs/09` migration log; full decision rationale lives in `docs/13`.
+
+**Temporary two-table state (dated checkpoint, 2026-06-08):**
+
+- `manual_fee_charge_attempts` (migration 0064 + 0065) remains the test-mode runtime ledger for `late_cancel` and `no_show` fee preparations. The proven helper `lib/billing/manual-fee-charge.ts:runManualFeeCharge` still reads + writes ONLY this table.
+- `payment_charge_attempts` (migration 0073) is the future canonical charge ledger. The future helper (PR #181) writes the first rows here for `session_payment`.
+- The two-table state is temporary.
+- **Runtime fee charging must be migrated or unified onto `payment_charge_attempts` before live `late_cancellation_fee` or `no_show_fee` charging ships.** The unification (or formal deprecation of `manual_fee_charge_attempts`) is a separate PR (PR #178 placeholder in the sequence below); it must land before the live-mode CHECK relax for fees.
+
+**Gate (do not bypass):**
+
+```text
+Before live late_cancellation_fee or no_show_fee charging,
+manual_fee_charge_attempts must either be migrated into
+payment_charge_attempts or formally deprecated with no
+live-money rows.
+```
+
+The `payment_charge_attempts_livemode_false_check` CHECK constraint is the named structural dormancy guard for the new table. The future live-mode-enablement PR (per the §11 sequence) must drop or replace it deliberately, paired with the runtime helper code change. The constraint name is the search anchor.
+
 ### 12.6 Card authorization wording requirement
 
 **PR #170 status (2026-06-08):** the product-ready DRAFT body now lives in code at `lib/consent/card-authorization-draft.ts:CARD_AUTHORIZATION_DRAFT_V1_BODY` (around 2.5 kB; covers all 7 spec topics: card on file, completed-session off-session charges, late cancellation, no-show, receipts/refunds/disputes, payment processing + privacy, scope + revocation; preserves chargeback rights with an explicit "does not waive my dispute rights" line; does not claim legal approval). PR #170 also shipped the current-version signature gate, so once an owner pastes the body into Settings → Consent forms (which bumps the version via `updateConsentTemplateAction`), historical signatures against the placeholder body stop counting for new SetupIntent or manual fee work. The legal review (Chloe + counsel) is still required before any live payment; PR #170 made the draft + the gate available but did not flip the legal-approval state.
