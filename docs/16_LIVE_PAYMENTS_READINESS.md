@@ -648,7 +648,7 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
-### 12.5b Canonical payment_charge_attempts ledger (PR #171, migration 0073, 2026-06-08)
+### 12.5b Canonical payment_charge_attempts ledger (PR #171, migrations 0073 + 0074, 2026-06-08)
 
 PR #171 created the dormant canonical `public.payment_charge_attempts` table in production (migration 0073; 0 rows; first writes land in PR #181 in test mode). The schema is the single destination for all three charge reasons (`session_payment`, `late_cancellation_fee`, `no_show_fee`). Full schema detail lives in `supabase/migrations/0073_payment_charge_attempts.sql` and `docs/09` migration log; full decision rationale lives in `docs/13`.
 

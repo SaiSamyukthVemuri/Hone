@@ -125,7 +125,40 @@ describe("migration 0073: FK ON DELETE rules (audit-aligned)", () => {
     );
   });
 
-  it("session_id SET NULL (matches sessions.appointment_id pattern from migration 0068)", () => {
+  it("session_id FK effectively resolves to ON DELETE RESTRICT after migration 0074", () => {
+    // 0073 originally declared session_id as ON DELETE SET NULL,
+    // but that contradicted the same migration's
+    // payment_charge_attempts_reason_shape_check (which requires
+    // session_payment rows to have a non-null session_id). PR
+    // #171 patch shipped migration 0074 as the corrective
+    // ALTER TABLE that drops + re-adds the FK with ON DELETE
+    // RESTRICT, which is the honest declaration: sessions are
+    // immutable clinical artefacts and a session_payment row
+    // structurally REQUIRES the referenced session to stay put
+    // (the CHECK constraint enforces session_id is not null on
+    // those rows). The 0073 file is preserved as the historical
+    // record; the effective state is verified against 0074.
+    const fs = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../supabase/migrations/0074_payment_charge_attempts_session_fk_restrict.sql",
+      ),
+      "utf8",
+    );
+    expect(fs).toMatch(
+      /foreign key \(session_id\) references public\.sessions\(id\)\s*\n?\s*on delete restrict/i,
+    );
+    expect(fs).toMatch(
+      /drop constraint if exists payment_charge_attempts_session_id_fkey/i,
+    );
+  });
+
+  it("0073 historically declared SET NULL (pinned for the audit trail)", () => {
+    // Pin the historical 0073 declaration so a future "tidy up"
+    // PR that retroactively rewrites 0073 to RESTRICT is caught.
+    // 0073 represents what was actually applied on 2026-06-08;
+    // 0074 is the layered correction. Both files are part of
+    // the migration history.
     expect(SOURCE).toMatch(
       /session_id uuid\s*\n?\s*references public\.sessions\(id\) on delete set null/,
     );
