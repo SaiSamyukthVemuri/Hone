@@ -88,6 +88,83 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Session payment PREPARE flow, test mode only (PR #172)
+
+**Decision (2026-06-08):** Ship the first runtime writer of `public.payment_charge_attempts`. A practitioner viewing a session detail page can now Prepare a `session_payment` charge attempt by submitting an amount + internal note. The action inserts one row with `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`. **No Stripe call. No PaymentIntent. No charge. No refund. No webhook. No SMS or email.** This PR ships the audit-row part of the runtime; the execution helper (the `runManualFeeCharge` counterpart that calls `paymentIntents.create`) is deliberately deferred. No new migration: PR #171's table is the destination; the prepare path is pure application code.
+
+**Why now:** PR #169 settled the product model. PR #170 shipped the current-version card-authorization gate. PR #171 shipped the dormant canonical ledger. PR #172 is the first surface where a practitioner can actually mark "this session should be charged" without coupling to the future Stripe execution path. Shipping prepare first means (a) the audit trail starts accumulating real attempt rows under test mode so an operator can verify the lineage end-to-end without money moving, and (b) the execution helper PR can focus narrowly on the Stripe code path without also having to design the practitioner UI.
+
+**Chargeability proxy (the load-bearing eligibility rule):**
+
+PR #172 audit found there is no `sessions.completed_at` or `sessions.status` column in the schema today. The safest existing proxy is the three-clause rule:
+
+```text
+sessions.appointment_id IS NOT NULL
+AND appointments.status = 'completed'
+AND sessions.started_at IS NOT NULL
+```
+
+The proxy is documented in the eligibility helper header and in docs/02. Freeform (unlinked) sessions are deferred to a future product decision -- migration 0073's `reason_shape_check` deliberately left `appointment_id` OPTIONAL for `session_payment` so a later relaxation of the proxy does not need a schema change.
+
+**Inserted row shape (mirrors PR #171 invariants exactly):**
+
+```text
+studio_id                          server-resolved from practitioner session
+charge_reason                      'session_payment'
+client_id                          eligibility.client.id (NOT from form)
+appointment_id                     stamped when session is appointment-linked
+session_id                         from URL path; required by reason_shape_check
+created_by_practitioner_id         server-resolved
+amount_cents                       practitioner-confirmed via amount_dollars
+                                   form field; parsed Math.round(n * 100);
+                                   bounded > 0 AND <= 200000 by the same
+                                   CHECK + a pre-DB guard in the action
+currency                           'cad'
+status                             'ready'
+client_payment_method_id           from active card row (livemode-scoped)
+card_authorization_signature_id    from PR #170 signed_current branch
+stripe_account_id                  from active card row
+stripe_customer_id                 from active card row
+stripe_payment_method_id           from active card row
+stripe_livemode                    false (explicit; CHECK guarantees it)
+internal_note                      required form field; bounded 1..1000 chars
+```
+
+Fields the prepare action deliberately leaves null (populated by the future execution PR): `stripe_payment_intent_id`, `stripe_charge_id`, `charged_at`, `failed_at`, `cancelled_at`. The row's nullability shape makes "prepared" structurally distinguishable from "charged" without a separate status enum value.
+
+**Eligibility gates (each blocks with a practitioner-facing message):**
+
+1. Session exists in this studio (studio_id + session_id).
+2. Session is appointment-linked AND appointment is `status='completed'`.
+3. Session has `started_at` (not just scheduled but never opened).
+4. Active `client_payment_methods` row for (studio, client, livemode).
+5. `getCardAuthorizationStatus` returns `signed_current` (PR #170 gate).
+6. `studio_payment_settings` row exists with `stripe_account_status='enabled'` and `stripe_livemode=false`.
+7. No existing active `payment_charge_attempts` row for (studio, session, reason) where status in (ready, pending_stripe, succeeded).
+
+The duplicate check has the partial-unique index `payment_charge_attempts_active_session_payment_uniq` (from migration 0073) as a structural backstop. The action catches Postgres code 23505 and returns the same calm duplicate-message that the pre-INSERT eligibility check would have returned.
+
+**UI location:** Session detail page (`app/(app)/clients/[id]/sessions/[sessionId]/page.tsx`), immediately after `SessionInfoCard`. The PR #172 audit confirmed this is the natural slot: the session is the canonical treatment record, the price is already entered here via `SessionInfoCard`, and the appointment detail page is reserved for appointment-level state (cancellation, no-show fees). A new `SessionPaymentPrepareCard` client component renders the eligibility state + the form. The card explicitly tells the practitioner this is a test-mode audit record only, and does NOT render any "Pay now" or "Charge card" affordance.
+
+**Card_authorization template state (PR #170 carry-over):** still at `version=1` for both pilot studios. Existing client signatures match `version=1` and therefore satisfy `signed_current`, so the prepare flow is functional today against the placeholder body. Once Chloe edits the body via Settings (which bumps `version` to 2), client signatures will become `signed_out_of_date` and the prepare card will surface the re-sign block; this is the PR #170 contract holding correctly under the new prepare path.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. The three dormancy guards remain.
+- Does NOT add or remove any `paymentIntents.create` call site. Still exactly 1 in `lib/billing/manual-fee-charge.ts`.
+- Does NOT add `refunds.create`, `charges.create`, or `checkout.sessions` (still zero).
+- Does NOT add any webhook handler change. The `setup_intent.*` arm and the `payment_intent.*` dormancy posture are byte-for-byte identical.
+- Does NOT touch `manual_fee_charge_attempts`. The proven test-mode runtime stays untouched; cancellation + no-show fees keep using the legacy table until a separate unification PR.
+- Does NOT modify any database table, RLS policy, RPC, or index. No new migration; latest in tree remains `0074`.
+- Does NOT add a client-portal payment UI. Sessions are practitioner-only.
+- Does NOT add a "Pay now" or "Charge card" button. The prepare card explicitly omits both.
+- Does NOT change UI copy on the 7 "Test mode only" strings tracked by PR #168 / PR #171 (those remain until the live-mode-enablement PR removes them).
+- Does NOT add SMS or email behavior.
+
+**Alternative considered:** Build the execution helper (`runChargeAttempt`) and the prepare flow in the same PR. Rejected because (a) bundling them means the Stripe code path lands without separate review, and (b) the prepare row gives the operator a real audit surface that can be exercised end-to-end in test mode before any Stripe call exists -- a deliberate "audit-first" sequencing that mirrors how manual_fee shipped (PR #145 prepare, then PR #146 charge).
+
+**Honest non-claims:** no schema change, no Stripe call, no live-mode flag change, no Stripe key rotation, no RLS / RPC / index work, no SMS / email behavior, no webhook handler change, no portal change. Stripe gates intact (1 allowlisted `paymentIntents.create`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string). The `payment_charge_attempts` table is no longer "dormant" in the strictest sense -- the prepare flow can now write `status='ready'` rows -- but no money has moved through Hone and `stripe_livemode=false` rows are the only ones the CHECK constraint permits.
+
 ### Canonical payment_charge_attempts ledger, dormant (PR #171, migration 0073)
 
 **Decision (2026-06-08):** Create the new dormant canonical `payment_charge_attempts` table in production via migration 0073. Leave `manual_fee_charge_attempts` runtime fully untouched. Schema only -- zero rows, no PaymentIntent code, no charge UI, no live-mode change. The future `runChargeAttempt` helper (PR #181) writes the first rows in test mode for `session_payment`; until the legacy `manual_fee_charge_attempts` is unified into or formally deprecated against this ledger, runtime fee charging stays on the legacy table.

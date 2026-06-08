@@ -13,6 +13,9 @@ import {
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
+import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
+import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
+import { prepareSessionPaymentChargeAction } from "./payment-actions";
 import { getClientTags } from "@/lib/client-tags/queries";
 import {
   getActiveTreatmentPlansForClient,
@@ -73,6 +76,18 @@ export default async function SessionDetailPage({
   const performerName = sessionPerformerName(session, clientData.practitioners);
   const audit = await getSessionAudit(session.id);
   const clientTags = await getClientTags(studio.id, id);
+
+  // PR #172. Session payment eligibility resolves whether the
+  // practitioner can prepare a session_payment charge attempt
+  // (test mode only; no Stripe call). The card renders blocked /
+  // existing-attempt / ready states. Computed here so the page
+  // can decide whether to render the card at all (it always
+  // does in v1 -- the card is the surface where blocking
+  // reasons become visible).
+  const sessionPaymentEligibility = await getSessionPaymentEligibility({
+    studioId: studio.id,
+    sessionId: session.id,
+  });
 
   // Electrolysis sessions render through the block-grouped view. We fetch
   // the with-blocks shape only when needed.
@@ -211,6 +226,12 @@ export default async function SessionDetailPage({
         initialPriceCents={session.price_paid_cents}
         updatePriceAction={updateSessionPriceAction}
         updatePerformerAction={updateSessionPerformerAction}
+      />
+
+      <SessionPaymentPrepareCard
+        sessionId={session.id}
+        eligibility={sessionPaymentEligibility}
+        prepareAction={prepareSessionPaymentChargeAction}
       />
 
       {session.modality === "electrolysis" && blockData ? (

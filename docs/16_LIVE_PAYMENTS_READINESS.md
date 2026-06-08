@@ -648,6 +648,24 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
+### 12.5c Session payment PREPARE flow (PR #172, 2026-06-08, test mode only)
+
+PR #172 shipped the first runtime writer of `public.payment_charge_attempts`. A practitioner on the session detail page (`/clients/[id]/sessions/[sessionId]`) can now Prepare a `session_payment` charge attempt by submitting an amount + internal note. The action `prepareSessionPaymentChargeAction` inserts one row with `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`. **No Stripe call. No PaymentIntent. No charge. No refund. No webhook. No SMS or email.**
+
+Chargeability proxy (Audit 1 in the PR #172 audit confirmed there is no `sessions.completed_at` column today):
+
+```text
+sessions.appointment_id IS NOT NULL
+AND appointments.status = 'completed'
+AND sessions.started_at IS NOT NULL
+```
+
+Freeform (unlinked) sessions are deferred to a future product decision. Migration 0073's `reason_shape_check` deliberately left `appointment_id` OPTIONAL for `session_payment` so a later relax does not need a schema change.
+
+Card authorization gate (reused from PR #170): the prepare path calls `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` and requires `kind='signed_current'`. Old signatures against a pre-edit template version do NOT satisfy the gate. The `card_authorization_signature_id` stamped on the row is the same id the helper returned, so the audit trail is unambiguous.
+
+The prepare flow does NOT change the readiness conclusion: live payments are still NOT READY. Every blocker in §5 remains. PR #172 only fills the prepare half of the runtime; the execution helper (the `runManualFeeCharge` counterpart) is deferred to a separate PR. The Stripe gates remain intact (1 allowlisted `paymentIntents.create`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string).
+
 ### 12.5b Canonical payment_charge_attempts ledger (PR #171, migrations 0073 + 0074, 2026-06-08)
 
 PR #171 created the dormant canonical `public.payment_charge_attempts` table in production (migration 0073; 0 rows; first writes land in PR #181 in test mode). The schema is the single destination for all three charge reasons (`session_payment`, `late_cancellation_fee`, `no_show_fee`). Full schema detail lives in `supabase/migrations/0073_payment_charge_attempts.sql` and `docs/09` migration log; full decision rationale lives in `docs/13`.
