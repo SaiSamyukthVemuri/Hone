@@ -117,17 +117,26 @@ describe("createCardSetupIntentAction is SetupIntent only", () => {
   });
 
   it("the action requires a signed card_authorization template before creating the SetupIntent", () => {
-    // PR #135 / PR #167: the action verifies an is_live=true,
-    // status='active' card_authorization template AND a signature
-    // row for the (studio, client) pair before any Stripe call.
-    expect(PORTAL_PAY_ACTIONS).toMatch(
+    // PR #135 / PR #167 / PR #170: the action verifies an
+    // is_live=true, status='active', form_type='card_authorization'
+    // template AND a current-version signature before any Stripe
+    // call. PR #170 moved the predicates from inline .eq() chains
+    // into the shared helper lib/consent/current-card-authorization.ts;
+    // the action calls getCardAuthorizationStatus and dispatches on
+    // the helper's discriminated kinds. The helper file is the
+    // source of truth for the predicates.
+    expect(PORTAL_PAY_ACTIONS).toMatch(/getCardAuthorizationStatus/);
+    expect(PORTAL_PAY_ACTIONS).toMatch(/cardAuth\.kind === "signed_out_of_date"/);
+    const helper = readRepoFile("lib/consent/current-card-authorization.ts");
+    expect(helper).toMatch(
       /\.eq\("form_type",\s*"card_authorization"\)/,
     );
-    expect(PORTAL_PAY_ACTIONS).toMatch(/client_consent_signatures/);
+    expect(helper).toMatch(/client_consent_signatures/);
   });
 
-  it("the card_authorization lookup requires is_live=true (PR #167)", () => {
-    expect(PORTAL_PAY_ACTIONS).toMatch(/\.eq\("is_live",\s*true\)/);
+  it("the card_authorization lookup requires is_live=true (PR #167) in the shared helper", () => {
+    const helper = readRepoFile("lib/consent/current-card-authorization.ts");
+    expect(helper).toMatch(/\.eq\("is_live",\s*true\)/);
   });
 });
 

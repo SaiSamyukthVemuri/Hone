@@ -650,6 +650,8 @@ Replace card (PR #151) reuses the same SetupIntent path, so cards saved via eith
 
 ### 12.6 Card authorization wording requirement
 
+**PR #170 status (2026-06-08):** the product-ready DRAFT body now lives in code at `lib/consent/card-authorization-draft.ts:CARD_AUTHORIZATION_DRAFT_V1_BODY` (around 2.5 kB; covers all 7 spec topics: card on file, completed-session off-session charges, late cancellation, no-show, receipts/refunds/disputes, payment processing + privacy, scope + revocation; preserves chargeback rights with an explicit "does not waive my dispute rights" line; does not claim legal approval). PR #170 also shipped the current-version signature gate, so once an owner pastes the body into Settings → Consent forms (which bumps the version via `updateConsentTemplateAction`), historical signatures against the placeholder body stop counting for new SetupIntent or manual fee work. The legal review (Chloe + counsel) is still required before any live payment; PR #170 made the draft + the gate available but did not flip the legal-approval state.
+
 **Confirmed gap from production query (2026-06-08): Willow's two `card_authorization` templates have `body = "test"` (4 characters).**
 
 ```text

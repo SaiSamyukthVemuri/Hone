@@ -100,7 +100,14 @@ describe("portal replace-card surface (PR #151)", () => {
   });
 
   it("portal payment-method action passes card_authorization_signature_id to the SetupIntent", () => {
-    expect(ACTION_SOURCE).toMatch(/cardAuthorizationSignatureId:\s*signature\.id/);
+    // PR #170 moved the signature lookup into the shared
+    // getCardAuthorizationStatus helper, so the action reads the
+    // signature id from the helper's return shape
+    // (cardAuth.signatureId) instead of an inline `signature.id`
+    // alias.
+    expect(ACTION_SOURCE).toMatch(
+      /cardAuthorizationSignatureId:\s*(signature\.id|cardAuth\.signatureId)/,
+    );
   });
 
   it("portal payment-method action does NOT call paymentIntents.create, charges.create, refunds.create, or checkout.sessions", () => {

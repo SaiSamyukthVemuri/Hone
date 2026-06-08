@@ -203,14 +203,25 @@ export async function getManualFeeChargeEligibility(
     }
   }
 
-  // 3) Card authorization signature lookup. Must match (studio, client).
+  // 3) Card authorization signature lookup. Must match (studio,
+  //    client) AND match the CURRENT live template version
+  //    (PR #170). Before PR #170 the lookup accepted any
+  //    signature row that the card_authorization_signature_id FK
+  //    on client_payment_methods pointed at, which meant a
+  //    signature against the historical placeholder body
+  //    satisfied the gate just as well as a signature against
+  //    the product-ready draft. The current-version gate fixes
+  //    that without invalidating the FK: the card row keeps its
+  //    historical signature reference (audit trail), but the
+  //    eligibility helper refuses to clear the card_authorization
+  //    clause until the client signs the live version.
   let cardAuthorizationSummary: EligibilityCardAuthorizationSummary | null =
     null;
   if (cardSignatureId && clientId) {
     const { data: sigRow } = await admin
       .from("client_consent_signatures")
       .select(
-        "id, signed_at, signature_name, template_title_snapshot, studio_id, client_id",
+        "id, signed_at, signature_name, template_title_snapshot, template_id, template_version, studio_id, client_id",
       )
       .eq("id", cardSignatureId)
       .eq("studio_id", args.studioId)
@@ -221,12 +232,38 @@ export async function getManualFeeChargeEligibility(
         "Card authorization signature missing or not scoped to this client.",
       );
     } else {
-      cardAuthorizationSummary = {
-        signature_id: sigRow.id,
-        signed_at: sigRow.signed_at,
-        signature_name: sigRow.signature_name,
-        template_title_snapshot: sigRow.template_title_snapshot,
-      };
+      // PR #170. Current-version gate. Read the live template's
+      // current version and compare to the signature's stored
+      // template_version (snapshot field from migration 0057).
+      const { data: liveTemplate } = await admin
+        .from("consent_form_templates")
+        .select("id, version")
+        .eq("id", sigRow.template_id)
+        .eq("studio_id", args.studioId)
+        .eq("is_live", true)
+        .eq("status", "active")
+        .eq("form_type", "card_authorization")
+        .maybeSingle();
+      if (!liveTemplate) {
+        // The template the signature points at is no longer live
+        // (archived, draft, or deleted). The client needs to
+        // sign the current live template before any fee can
+        // be charged.
+        reasons.push(
+          "Card authorization template is no longer live. Ask the client to open their portal and sign the current card authorization.",
+        );
+      } else if (sigRow.template_version !== liveTemplate.version) {
+        reasons.push(
+          "Card authorization on file is out of date. Ask the client to open their portal and sign the updated card authorization.",
+        );
+      } else {
+        cardAuthorizationSummary = {
+          signature_id: sigRow.id,
+          signed_at: sigRow.signed_at,
+          signature_name: sigRow.signature_name,
+          template_title_snapshot: sigRow.template_title_snapshot,
+        };
+      }
     }
   }
 

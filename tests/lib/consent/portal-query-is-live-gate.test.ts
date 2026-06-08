@@ -80,16 +80,31 @@ describe("portal-facing consent query (lib/consent/queries.ts)", () => {
   });
 });
 
-describe("portal Add Card flow (app/portal/payment-method-actions.ts)", () => {
-  it("the card_authorization template lookup requires is_live = true", () => {
-    expect(PORTAL_PAY).toMatch(/\.eq\("is_live",\s*true\)/);
+describe("portal Add Card flow (app/portal/payment-method-actions.ts via shared helper)", () => {
+  // PR #170 moved the card_authorization template + signature
+  // lookups into lib/consent/current-card-authorization.ts. The
+  // PR #167 is_live=true requirement is now enforced in the
+  // helper. These tests verify the helper carries the predicates
+  // and that the action delegates to it.
+  const CARD_AUTH_HELPER_PATH = path.resolve(
+    __dirname,
+    "../../../lib/consent/current-card-authorization.ts",
+  );
+  const CARD_AUTH_HELPER = readFileSync(CARD_AUTH_HELPER_PATH, "utf8");
+
+  it("the shared helper requires is_live = true on the card_authorization template lookup", () => {
+    expect(CARD_AUTH_HELPER).toMatch(/\.eq\("is_live",\s*true\)/);
   });
 
-  it("the lookup still requires status='active' and form_type='card_authorization'", () => {
-    expect(PORTAL_PAY).toMatch(/\.eq\("status",\s*"active"\)/);
-    expect(PORTAL_PAY).toMatch(
+  it("the shared helper still requires status='active' and form_type='card_authorization'", () => {
+    expect(CARD_AUTH_HELPER).toMatch(/\.eq\("status",\s*"active"\)/);
+    expect(CARD_AUTH_HELPER).toMatch(
       /\.eq\("form_type",\s*"card_authorization"\)/,
     );
+  });
+
+  it("the SetupIntent action delegates to the helper", () => {
+    expect(PORTAL_PAY).toMatch(/getCardAuthorizationStatus/);
   });
 });
 

@@ -16,18 +16,33 @@ const PORTAL_SOURCE = readFileSync(PORTAL_PAGE_PATH, "utf8");
 
 describe("portal gating computes the new card-authorization-needed placeholder", () => {
   it("exposes a showCardAuthorizationNeeded flag", () => {
+    // PR #170 refined the predicate from !cardAuthSigned to
+    // cardAuthSignatureSummary == null because the gate now
+    // distinguishes "never signed" from "signed an old version".
+    // The flag name and semantic (true when no signature at all)
+    // are preserved.
     expect(PORTAL_SOURCE).toMatch(
-      /const showCardAuthorizationNeeded\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*!cardAuthSigned &&\s*\n?\s*activeCard == null;/,
+      /const showCardAuthorizationNeeded\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignatureSummary == null &&\s*\n?\s*activeCard == null;/,
     );
   });
 
   it("the flag participates in the Needs you visibility decision", () => {
-    expect(PORTAL_SOURCE).toMatch(/const hasNeedsYou =[\s\S]*?\|\| showCardAuthorizationNeeded;/);
+    // PR #170 added showCardAuthorizationOutOfDate as a sibling
+    // clause; the original showCardAuthorizationNeeded must still
+    // appear in the disjunction.
+    expect(PORTAL_SOURCE).toMatch(
+      /const hasNeedsYou =[\s\S]*?\|\| showCardAuthorizationNeeded\b/,
+    );
   });
 
-  it("preserves the original showAddCardInNeedsYou gating shape (still requires signed)", () => {
+  it("preserves the original showAddCardInNeedsYou gating shape (still requires signed at current version)", () => {
+    // PR #170 tightened the gate from cardAuthSigned (any version)
+    // to cardAuthSignedCurrent (matches template.version). Same
+    // semantic intent: Add Card only surfaces when the live
+    // authorization is signed; PR #170 makes "signed" mean "at
+    // the current version."
     expect(PORTAL_SOURCE).toMatch(
-      /const showAddCardInNeedsYou\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSigned &&\s*\n?\s*activeCard == null &&\s*\n?\s*publishableKeyResolution\.ok;/,
+      /const showAddCardInNeedsYou\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignedCurrent &&\s*\n?\s*activeCard == null &&\s*\n?\s*publishableKeyResolution\.ok;/,
     );
   });
 });

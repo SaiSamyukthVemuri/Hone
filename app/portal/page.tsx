@@ -96,9 +96,26 @@ export default async function PortalHomePage() {
       session.clientId,
     ),
   ]);
-  const unsignedConsentTemplates = consentTemplates.filter(
-    (t) => !consentSignaturesByTemplate.has(t.id),
-  );
+  const unsignedConsentTemplates = consentTemplates.filter((t) => {
+    const sig = consentSignaturesByTemplate.get(t.id);
+    if (!sig) return true;
+    // PR #170. Out-of-date card_authorization re-surfaces in the
+    // Review and sign block so the existing PortalConsentForms UI
+    // and createConsentSignatureAction handle the re-sign without
+    // a new form path. We special-case card_authorization here
+    // because that is the only form that ALSO gates a downstream
+    // money-related action (Add Card / future live charges); a
+    // treatment_consent or photo_consent edit by the studio does
+    // not force a re-sign in v1 to avoid annoying every client
+    // every time the studio tweaks wording.
+    if (
+      t.form_type === "card_authorization" &&
+      sig.template_version !== t.version
+    ) {
+      return true;
+    }
+    return false;
+  });
   const signedConsentTemplates = consentTemplates.filter((t) =>
     consentSignaturesByTemplate.has(t.id),
   );
@@ -121,9 +138,41 @@ export default async function PortalHomePage() {
   const cardAuthTemplate =
     consentTemplates.find((t) => t.form_type === "card_authorization") ??
     null;
-  const cardAuthSigned =
+  // PR #170. The card_authorization signature must match the CURRENT
+  // live template version. A signature against a historical body
+  // (e.g. the production "test" placeholder shipped before PR #170)
+  // does NOT unlock the Add Card surface once an owner has updated
+  // the template via Settings -> Consent forms (which bumps the
+  // version via updateConsentTemplateAction's
+  // existing.version + 1 rule). Three states surface in the portal:
+  //
+  //   cardAuthSignedCurrent  -- happy path; Add Card eligible.
+  //   cardAuthOutOfDate      -- signature exists at an older version;
+  //                             portal renders the dedicated re-sign
+  //                             block (showCardAuthorizationOutOfDate)
+  //                             AND surfaces the live template in the
+  //                             unsigned-templates list so the
+  //                             existing Review and sign flow handles
+  //                             the re-sign without a new form path.
+  //   <neither>              -- never signed; PR #158 placeholder
+  //                             (showCardAuthorizationNeeded) handles
+  //                             the unsigned case as before.
+  //
+  // The Map value carries template_version because
+  // getLatestSignaturesByTemplateForPortal selects it (see
+  // lib/consent/queries.ts:PortalSignatureSummary).
+  const cardAuthSignatureSummary =
+    cardAuthTemplate != null
+      ? consentSignaturesByTemplate.get(cardAuthTemplate.id) ?? null
+      : null;
+  const cardAuthSignedCurrent =
     cardAuthTemplate != null &&
-    consentSignaturesByTemplate.has(cardAuthTemplate.id);
+    cardAuthSignatureSummary != null &&
+    cardAuthSignatureSummary.template_version === cardAuthTemplate.version;
+  const cardAuthOutOfDate =
+    cardAuthTemplate != null &&
+    cardAuthSignatureSummary != null &&
+    cardAuthSignatureSummary.template_version !== cardAuthTemplate.version;
   const publishableKeyResolution = resolveStripePublishableKey();
   // Group replies by parent message_id once so each <article> render
   // does not re-filter the full array. We deliberately do NOT pass
@@ -201,7 +250,7 @@ export default async function PortalHomePage() {
   // until the signature is in place.
   const showAddCardInNeedsYou =
     cardAuthTemplate != null &&
-    cardAuthSigned &&
+    cardAuthSignedCurrent &&
     activeCard == null &&
     publishableKeyResolution.ok;
   // PR #158. Calm "Card authorization needed before adding a card"
@@ -218,8 +267,20 @@ export default async function PortalHomePage() {
   // will be made.
   const showCardAuthorizationNeeded =
     cardAuthTemplate != null &&
-    !cardAuthSigned &&
+    cardAuthSignatureSummary == null &&
     activeCard == null;
+  // PR #170. Dedicated "card authorization was updated; please
+  // re-sign" block. Distinct from showCardAuthorizationNeeded
+  // (never signed) so the copy can be specific: the client did
+  // sign an earlier version, the wording was updated, and they
+  // need to re-sign the current version before any new card can
+  // be saved or any fee can be prepared. Visible only when no
+  // active card is on file; if an active card already exists,
+  // the practitioner-side PaymentMethodCard surfaces the
+  // out-of-date state to the owner instead (the card remains
+  // usable for legacy purposes but new live charges are gated).
+  const showCardAuthorizationOutOfDate =
+    cardAuthOutOfDate && activeCard == null;
   // Compact informational message rendered only when payment-method
   // is relevant but cannot be added because no active template
   // exists. Avoids shouting at every client.
@@ -230,7 +291,8 @@ export default async function PortalHomePage() {
     || hasUnsignedForms
     || hasUnreviewedMessages
     || showAddCardInNeedsYou
-    || showCardAuthorizationNeeded;
+    || showCardAuthorizationNeeded
+    || showCardAuthorizationOutOfDate;
 
   const nextAppointment = upcoming[0] ?? null;
   const laterAppointments = upcoming.slice(1);
@@ -507,6 +569,52 @@ export default async function PortalHomePage() {
                     }}
                   >
                     Review card authorization
+                  </a>
+                </section>
+              )}
+
+              {/* PR #170. Dedicated "re-sign updated card
+                  authorization" state. Reached when the client signed
+                  a historical version of the card_authorization
+                  template and the studio has since updated the
+                  wording (which bumps the version via the existing
+                  Settings -> Consent forms edit path). The block
+                  intentionally names the consequence in plain terms
+                  ("until you sign the new version") and deep-links
+                  to the same #forms-to-sign anchor as the
+                  authorization-needed block; the card_authorization
+                  template is added back into unsignedConsentTemplates
+                  above so the existing Review and sign UI accepts
+                  the re-sign and lands a new signature row at the
+                  current version. */}
+              {showCardAuthorizationOutOfDate && (
+                <section className="flex flex-col gap-3">
+                  <p className="text-[15px] font-medium text-[#0A0A0A]">
+                    Card authorization was updated
+                  </p>
+                  <p
+                    className="text-[14px] leading-relaxed"
+                    style={{ color: "#3F3F3F" }}
+                  >
+                    The studio updated the card-on-file authorization. To keep using a card on file, please review and sign the new version.
+                  </p>
+                  <p
+                    className="text-[14px] leading-relaxed"
+                    style={{ color: "#3F3F3F" }}
+                  >
+                    Until you sign the new version, no new card can be added on file. No charge will be made when you sign or when you add a card.
+                  </p>
+                  <a
+                    href="#forms-to-sign"
+                    className="self-start text-[12px] font-medium uppercase"
+                    style={{
+                      backgroundColor: "#0A0A0A",
+                      color: "#FAFAF7",
+                      letterSpacing: "0.1em",
+                      padding: "10px 20px",
+                    }}
+                  >
+                    Review updated authorization
                   </a>
                 </section>
               )}

@@ -25,6 +25,23 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 //
 // Each blocked state carries copy the practitioner can read aloud
 // (or copy/paste) when telling the client what to do next.
+//
+// PR #170. New fourth state: cardAuthorizationOutOfDate. The client
+// signed an older version of the live card_authorization template.
+// The signature is preserved as a historical record (the snapshot
+// is immutable), but the practitioner needs to know that the
+// authorization is stale before any new card setup or live charge.
+// The block appears in two contexts:
+//   * No active card: dedicated "client must re-sign" block.
+//   * Active card on file: a small warning subsection rendered
+//     alongside the existing ActiveCardBlock so the practitioner
+//     sees the card is still saved but is gated for new live work
+//     until the client signs the current version.
+//
+// The portal-side dedicated re-sign block (PR #170, see
+// app/portal/page.tsx:showCardAuthorizationOutOfDate) is what the
+// client sees; this component's job is to make the same state
+// visible to the practitioner.
 
 export function PaymentMethodCard({
   clientName,
@@ -32,6 +49,7 @@ export function PaymentMethodCard({
   authorizationSignedAt,
   cardAuthorizationTemplateExists,
   cardAuthorizationSigned,
+  cardAuthorizationOutOfDate,
 }: {
   clientName: string;
   activeCard: ActiveCardSummary | null;
@@ -42,6 +60,14 @@ export function PaymentMethodCard({
   authorizationSignedAt: string | null;
   cardAuthorizationTemplateExists: boolean;
   cardAuthorizationSigned: boolean;
+  // PR #170. True when the client has a card_authorization
+  // signature but at a template_version older than the current live
+  // template's version. Practitioner-facing copy explains that the
+  // client must re-sign in their portal before new card setup or
+  // live charging can proceed. False when the client either has not
+  // signed at all (handled by cardAuthorizationSigned=false) or has
+  // signed at the current version.
+  cardAuthorizationOutOfDate: boolean;
 }) {
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -56,14 +82,19 @@ export function PaymentMethodCard({
       </div>
 
       {activeCard != null ? (
-        <ActiveCardBlock
-          activeCard={activeCard}
-          authorizationSignedAt={authorizationSignedAt}
-        />
+        <>
+          <ActiveCardBlock
+            activeCard={activeCard}
+            authorizationSignedAt={authorizationSignedAt}
+          />
+          {cardAuthorizationOutOfDate && <AuthorizationOutOfDateWarning />}
+        </>
       ) : !cardAuthorizationTemplateExists ? (
         <NoTemplateBlock />
       ) : !cardAuthorizationSigned ? (
         <AuthorizationNotSignedBlock />
+      ) : cardAuthorizationOutOfDate ? (
+        <AuthorizationOutOfDateBlock />
       ) : (
         <AuthorizedButNoCardBlock />
       )}
@@ -158,6 +189,57 @@ function AuthorizedButNoCardBlock() {
       <p className="text-xs text-neutral-600 dark:text-neutral-400">
         Ask the client to open the portal and add a card. No charge is
         made when a card is added.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #170. State: no active card AND client signed an older version
+// of the live card_authorization template. Practitioner needs to
+// know the client must re-sign the current version before any new
+// card setup or fee preparation can proceed. The historical
+// signature is preserved (snapshot model from migration 0057); we
+// only block new live work.
+// ---------------------------------------------------------------------------
+function AuthorizationOutOfDateBlock() {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+        Card authorization on file is out of date
+      </p>
+      <p className="text-xs text-amber-900 dark:text-amber-200">
+        The client signed an older version of the card authorization.
+        The studio updated the wording since then. Ask the client to
+        open their portal and sign the updated card authorization.
+        Until they do, the Add card option will not appear and no
+        manual fee can be prepared. No charge is made when they
+        re-sign.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #170. Inline warning rendered alongside the active card when
+// the card_authorization is out of date. The card itself remains
+// usable as a historical record; new live charges and SetupIntent
+// (Replace card) are gated by the eligibility + SetupIntent action
+// until the client re-signs. We deliberately do NOT hide the card
+// summary because the historical signature is still valid as audit
+// evidence; we only flag the state.
+// ---------------------------------------------------------------------------
+function AuthorizationOutOfDateWarning() {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+        Authorization needs re-signing
+      </p>
+      <p className="text-xs text-amber-900 dark:text-amber-200">
+        The studio updated the card authorization wording since this
+        client signed it. The card on file is preserved, but new
+        live charges and Replace card are blocked until the client
+        signs the updated authorization in their portal.
       </p>
     </div>
   );

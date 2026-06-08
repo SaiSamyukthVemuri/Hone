@@ -289,9 +289,19 @@ describe("docs/13 decision log has the PR #169 entry", () => {
   });
 });
 
-describe("docs/14 AI handoff reflects PR #169", () => {
-  it("status line is updated to PR #169", () => {
-    expect(HANDOFF).toMatch(/Current production status.*PR #169/);
+describe("docs/14 AI handoff references the PR #169 product model", () => {
+  it("the status line names a current PR (PR #169 or later)", () => {
+    // Same forward-rolling pattern as the PR #168 test: the
+    // status line is allowed to name a later PR so a future docs
+    // PR does not need to back-edit this test file. The PR #169
+    // decision content (the new payments bullet below) must
+    // still be present in the handoff regardless.
+    const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
+    expect(m).not.toBeNull();
+    if (m) {
+      const n = Number(m[1]);
+      expect(n).toBeGreaterThanOrEqual(169);
+    }
   });
 
   it("the new payments bullet references docs/16 §12", () => {
