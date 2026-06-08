@@ -110,6 +110,19 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 ### Studio payment settings (`studio_payment_settings`, migration 0032)
 - One row per studio with `stripe_account_id`, `stripe_account_status` ∈ `pending / restricted / enabled / rejected`, `stripe_charges_enabled`, `stripe_payouts_enabled`, `stripe_onboarding_completed_at`, `require_card_on_file` (defaults `false`; never flipped in any current code path), `default_charge_currency = 'cad'`, `stripe_livemode`.
 
+### Session payment model (PR #169, not yet implemented)
+- **Canonical charge reasons** (the only three the system supports): `session_payment` (client received treatment), `late_cancellation_fee` (client cancelled inside policy window), `no_show_fee` (client did not attend).
+- **One charge primitive** parameterized by `charge_reason`. The proven `runManualFeeCharge` pattern (claim/lock + deterministic idempotency key + Stripe PaymentIntent on connected account + persisted attempt row + webhook reconciliation + ops_alert) is the contract every future charge path follows. `late_cancellation_fee` and `no_show_fee` already use it in test mode (PR #146); `session_payment` will reuse it.
+- **Charge AFTER the session, not at booking.** Electrolysis final pricing varies by actual treatment time, area, practitioner judgement, discounts, and corrections. The booking price is a quote; the charge happens when the practitioner confirms the final amount at session end. Upfront-checkout is a different product and is out of v1 scope.
+- **Practitioner-confirmed amount.** Auto-charge from `services.price_cents`, appointment duration, session duration, treatment area, hair count, or machine settings is forbidden. The amount is entered or confirmed by the practitioner before any Stripe call.
+- **Off-session SetupIntent.** Cards saved via portal Add or Replace use `usage: "off_session"` in `lib/stripe/setup-intent.ts:202`. Every saved card can be charged later without the client present; no SetupIntent rework needed before live charging.
+- **Paid status derived from charge rows.** No `appointments.paid` or `sessions.paid` boolean. The "paid" UI badge reads the existence of a `status='succeeded'` charge attempt row for the `(appointment_id, charge_reason)` pair. `sessions.price_paid_cents` (migration 0003) is a separate historical record of what the client paid, regardless of whether Hone moved the money.
+- **0% Hone platform fee in v1.** `studio_payment_settings.stripe_application_fee_bps` stays null / unused; studio is the merchant of record; 100% of the captured amount (less Stripe processing) goes to the studio's connected account. Hone bills its subscription out of band, not through Stripe `application_fee_amount`.
+- **No tax calculation in v1.** Practitioner enters the all-in gross amount; studio is responsible for tax pricing + remittance. Stripe Tax integration is deferred to a future PR.
+- **Studio is merchant of record.** Client receipt + statement descriptor identify the studio, not Hone. Disputes are filed against the studio's connected account.
+- **Risk-ordered enablement.** Live `session_payment` ships before `late_cancellation_fee` and `no_show_fee` because the client received a service (lower dispute risk vs charging a client who did not receive treatment). The DB CHECK constraint that blocks live writes is per-reason, not all-or-nothing.
+- Full architecture lives in [docs/16 §12 "Session payment product model (PR #169)"](./16_LIVE_PAYMENTS_READINESS.md#12-session-payment-product-model-pr-169).
+
 ## Important security constraints (mental model)
 
 - **Studio is the tenancy unit.** Every studio-scoped table has RLS that gates SELECT on `is_studio_member(studio_id)`. The same email can be a client of two studios; each studio has its own row and no cross-studio leakage.

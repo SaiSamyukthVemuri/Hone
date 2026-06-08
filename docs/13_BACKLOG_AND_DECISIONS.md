@@ -88,6 +88,66 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Session payment product model (PR #169, docs + guardrails only)
+
+**Decision:** Define the product / payment architecture for live session payments before any money-moving code is written. Document the v1 model in a new §12 of `docs/16_LIVE_PAYMENTS_READINESS.md`, add the payment domain model to `docs/02`, and add guardrail tests that pin the doc contract. No code, no migration, no live-mode change.
+
+**Why:** Chloe clarified that "no more cash" means she wants Hone to actually charge cards, not just collect cards on file. The three reasons she wants to charge are completed treatment sessions, late cancellations, and no-shows. The `late_cancellation_fee` + `no_show_fee` paths exist in test mode today (PR #145, PR #146); the `session_payment` path does not exist at all. Before building the session payment code, the product model has to be settled or the implementation drifts: charge after vs at booking, practitioner-confirmed amount vs auto-derived, one charge primitive vs parallel implementations, off-session card requirement, application fee posture, tax handling, paid-status derivation, merchant of record.
+
+**Key v1 decisions:**
+
+- **Charge after the session, not at booking.** Electrolysis final pricing varies by actual treatment time, area, judgement, discounts, and corrections; the booking price is a quote. Upfront-checkout is a different product (deposits, prepayments, refund-on-cancel rules, different Stripe flow) and is out of v1 scope.
+- **Practitioner-confirmed amount.** Auto-charge from `services.price_cents`, appointment duration, session duration, treatment area, hair count, or machine settings is forbidden. The amount is entered or confirmed by the practitioner before any Stripe call.
+- **One charge primitive, three reasons.** The `runManualFeeCharge` pattern (claim/lock + deterministic idempotency key + Stripe PaymentIntent + persisted attempt row + webhook reconciliation + ops_alert) is the contract every future charge path follows. The reason (`session_payment` / `late_cancellation_fee` / `no_show_fee`) is a parameter on the attempt row, NOT a separate money-moving implementation.
+- **Off-session card requirement: already satisfied.** Audit confirmed `lib/stripe/setup-intent.ts:202` already creates SetupIntents with `usage: "off_session"`. Every card on file today can be charged later without the client present. No SetupIntent rework needed.
+- **Card authorization wording: blocker.** Production query confirmed Willow's two `card_authorization` templates have `body = "test"` (4 chars). Before live charging, the body must explicitly authorize off-session charging for completed sessions, late cancellation fees, no-show fees, and the dispute / chargeback posture. CASL + PIPEDA + Ontario consumer-contract review required. This is PR #170 in the renumbered sequence (was PR #169 before this PR consumed the slot).
+- **0% Hone platform fee in v1.** `studio_payment_settings.stripe_application_fee_bps` stays null. Studio is merchant of record; 100% of the captured amount (less Stripe processing) flows to the studio's connected account. Hone bills its subscription out of band, not through Stripe `application_fee_amount`.
+- **No tax calculation in v1.** Practitioner enters the all-in gross amount; studio is responsible for tax. Stripe Tax integration deferred.
+- **Paid status derived from charge rows.** No `appointments.paid` or `sessions.paid` boolean. Avoid dual-write drift between an in-app boolean and the actual evidence (the charge attempt row + Stripe PaymentIntent state).
+- **Studio is merchant of record.** Receipt + statement descriptor identify the studio, not Hone. Disputes are filed against the studio's connected account.
+- **Risk-ordered enablement: session_payment first, then late_cancellation_fee, then no_show_fee.** Lower dispute risk first; the client received a service, defended by chair-time evidence. No-show is highest risk (client did not receive treatment + reachable-evidence dependency) so it goes last. The DB CHECK constraint that blocks live writes is per-reason, not all-or-nothing.
+
+**Schema sketch (informational, defers to future schema PR):** the audit recommended a separate `session_payment_charge_attempts` table; the spec preference (one charge primitive) argues for a unified `payment_charge_attempts` table with a `charge_reason` enum + nullable reason-specific fields. Both shapes are sketched in docs/16 §12.12; the schema PR (estimated #180, confirmed against the actual migration count at build time) picks the winner after its own audit. PR #169 does not commit to either shape.
+
+**Renumbered PR sequence** (docs/16 §11 and §12.13 carry the canonical list):
+
+```text
+PR #169 (this PR)  -- product model + sequence reorganization
+PR #170            -- legal review of card_authorization wording (was original PR #169)
+PR #171            -- remove "Test mode only" UI copy + conditional dormancy disclaimer (was original PR #170)
+PR #172            -- receipt email path (was original PR #171)
+PR #173            -- refund code path + UI (was original PR #172)
+PR #174            -- cancellation / no-show policy alignment if window-based (was original PR #173)
+PR #175            -- charge-path test coverage (was original PR #174)
+PR #176            -- operator runbook + rollback plan (was original PR #175)
+PR #177            -- payment_intent.* + charge.refunded + charge.dispute.* webhook handlers (was original PR #176)
+PR #178            -- cancel + no-show DB CHECK relax (was original PR #177)
+PR #179            -- session_payment track: new service_charge_authorization consent form_type
+PR #180            -- session_payment track: schema migration (table or rename; schema-PR audit decides)
+PR #181            -- session_payment track: eligibility + runSessionPaymentCharge + UI
+PR #182            -- session_payment track: re-add "Mark complete" appointment-detail button
+PR #183            -- session_payment track: DB CHECK relax for session_payment
+Operator track     -- stripe_payouts_enabled=true via Stripe dashboard; application_fee_bps decision; live key rotation
+```
+
+**Why renumber instead of keeping the original sequence:** the existing docs/16 §11 listed PR #169 = "legal review of card_authorization wording." That PR has not happened. PR #169 is now used for the product model (this PR). Renumbering everything by +1 keeps the numbers monotonic with the actual sequence on GitHub. The docs tests from PR #168 (`tests/docs/live-payments-readiness.test.ts`) only assert that PR numbers #169 through #177 appear somewhere in docs/16; the renumber preserves that contract because the new sequence still contains every number in that range plus the new ones.
+
+**Alternative considered:** ship the session payment code in PR #169 directly (skip the product-model doc PR). Rejected because (a) the architectural decisions above are load-bearing for the next 5+ PRs and need a written contract a reviewer can challenge before code lands, (b) Chloe's three charge reasons have different risk profiles and need explicit risk-ordering before any go-live, and (c) the existing manual fee infrastructure has subtle invariants (deterministic idempotency key shape, three-layer duplicate protection, ops_alert payload shape) that the session payment helper must reuse; a doc that names them explicitly reduces the risk of a parallel implementation that quietly drifts.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. The three dormancy guards remain.
+- Does NOT modify any Stripe key, env var, webhook secret, or Vercel configuration.
+- Does NOT add or remove any `paymentIntents.create` call site. Still exactly 1 in `lib/billing/manual-fee-charge.ts`.
+- Does NOT add or remove any `refunds.create` call site. Still 0.
+- Does NOT change webhook handler behavior, manual fee charge logic, or SetupIntent logic.
+- Does NOT change UI copy. The 7 "Test mode only" strings remain (PR #171 covers).
+- Does NOT change the card_authorization consent template (body still says "test"; PR #170 covers).
+- Does NOT modify any database table, RLS policy, RPC, or index. No new migration. Latest in tree remains `0072_consent_templates_is_live.sql`.
+- Does NOT add any SMS or email behavior.
+
+**Honest non-claims:** no schema change, no charge-execution code, no eligibility helper, no UI for session payment, no webhook handlers, no live-mode flag change, no Stripe key rotation, no RLS / RPC / index work, no SMS / email behavior. The Stripe gates are intact (1 allowlisted `paymentIntents.create`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string). The product model is a written contract for the next PRs; PR #169 ships nothing executable.
+
 ### Live payments readiness review (PR #168, docs + guardrails only)
 
 **Decision:** Conclude **NOT READY FOR LIVE PAYMENTS** after a thorough audit of every payment surface (Stripe Connect, card-on-file SetupIntent flow, card_authorization consent template, manual fee charge path, cancellation / no-show policy, receipts, refunds, webhook handlers, environment + config, existing tests). Publish the full audit + go/no-go checklist + 9-PR unblock sequence as `docs/16_LIVE_PAYMENTS_READINESS.md`. Add machine-enforcement tests that pin the three structural dormancy guards (key gate, code gate, DB CHECK) so a future refactor cannot quietly weaken any of them without explicit acknowledgement. **No code behavior changed.** No payment behavior changed. No live-mode behavior changed. No SMS change. No env change. No Stripe key rotation. No webhook secret change.

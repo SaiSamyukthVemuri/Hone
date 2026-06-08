@@ -539,3 +539,317 @@ Sequencing recommendation:
 11. **Week 4**: First live charge is a controlled test against a Chloe-known card.
 
 This sequence is conservative on purpose. Live payments do not benefit from speed; they benefit from every blocker being closed before the first real dollar moves.
+
+---
+
+## 12. Session payment product model (PR #169)
+
+PR #168 audited what was built and concluded NOT READY. PR #169 (this section, added 2026-06-08) defines the product model for what gets built next, before any money-moving code lands. Chloe clarified that "no more cash" means she wants to charge cards through Stripe for three reasons: completed treatment sessions, late cancellation fees, and no-show fees. The manual fee path (PR #145, PR #146) covers the second and third reasons in test mode today. The first reason -- charging the client after the session is delivered -- does not exist yet and is the primary product gap.
+
+This section is **docs only**. No code, no migration, no Stripe behavior change.
+
+### 12.1 Charge after session vs charge at booking
+
+**Decision: charge AFTER the session, with a practitioner-confirmed amount.**
+
+Electrolysis pricing is not knowable at booking time:
+
+- Final treatment duration is determined by what happens in the chair (skin response, area treated, hair density at the actual visit).
+- Practitioner judgement adjusts the price for a difficult area, a discount, a make-good after a mistake.
+- Tax + corrections happen in real time; the booking price is at best a quote.
+
+If Hone auto-charged the service's `services.price_cents` at booking, every meaningful session would need an adjustment after the fact (refund + re-charge, or a credit-and-reapply pattern). Both of those move real money twice and double the dispute surface. The right shape is to defer the charge until the practitioner sits down at the end of the session and confirms what the client owes.
+
+If Chloe ever wants checkout-at-booking (deposits, prepayments, package sales), that is a different product with different cancellation conversion rules, different tax timing, and a different Stripe flow. Do not conflate them.
+
+### 12.2 Canonical charge reasons
+
+The system supports exactly three reasons today and for the foreseeable future:
+
+```text
+session_payment          -- client received a treatment session; practitioner charges the agreed amount
+late_cancellation_fee    -- client cancelled inside the policy window; studio charges the configured fee
+no_show_fee              -- client did not attend; studio charges the configured fee
+```
+
+Any new reason (deposit, package, gift card, store credit) is out of scope for v1 and requires its own design review. The reason is a parameter on the charge attempt row, not a separate code path.
+
+### 12.3 One charge primitive, not parallel implementations
+
+**Architectural decision: one charge-execution helper, parameterized by `charge_reason`.**
+
+The proven pattern from `lib/billing/manual-fee-charge.ts:runManualFeeCharge` is:
+
+1. Claim the row atomically (`claim_*_charge_attempt` RPC under `FOR UPDATE`; transitions to `pending_stripe`; stamps the deterministic idempotency key).
+2. Create a Stripe PaymentIntent on the connected account with `idempotencyKey: 'hone:<reason>:<attemptId>:v1'`.
+3. Persist the result (PI id, charge id, charged_at, failure code) into the attempt row.
+4. On unknown error after claim, park as `needs_manual_review` and emit a `severity=critical` ops_alert; the next click hits a reconciliation path that calls `paymentIntents.retrieve` instead of blindly retrying.
+5. Defense-in-depth: three independent dormancy guards (key gate, code gate, DB CHECK) prevent live writes until each one is deliberately removed.
+
+This pattern is correct. The session payment PR (the future PR #181 in §12.13) must reuse it, not parallel it. The audit recommended a separate table for session payments because the **preconditions** differ (completed appointment vs cancelled/no_show, practitioner-entered amount vs studio default fee, no policy acknowledgement required); the **charge-execution body** is identical and stays in one helper.
+
+Concretely:
+
+- **Same**: the helper that calls `stripe.paymentIntents.create`, the idempotency-key shape, the claim RPC pattern, the ops_alert payload, the test-mode live-mode early return, the metadata layout.
+- **Different**: the **eligibility helper** (one per reason family), the **amount source** (studio fee table vs practitioner input), and the **consent template** that authorizes the charge.
+
+### 12.4 V1 session payment flow
+
+```text
+practitioner starts a session from the appointment detail page
+  -> chart blocks / electrolysis or laser entries as today (no payment-side change)
+session is completed; practitioner enters the final amount on the session detail
+  page (existing sessions.price_paid_cents field; PR #181 will extend this with a
+  "charge this amount" action)
+practitioner clicks "Prepare session charge"
+  -> server-side eligibility check:
+       appointment.status='completed'
+       sessions.appointment_id = appointment.id (linked; PR #156)
+       active client_payment_methods row with non-null
+         service_charge_authorization_signature_id (new template type)
+       amount_cents > 0 and <= studio-configured ceiling
+       client is not archived
+       no in-flight attempt for this (appointment_id, session_id, charge_reason='session_payment')
+  -> inserts row into the charge attempts table with status='ready'
+practitioner reviews the prepared charge (client, session, card, amount)
+  -> clicks "Charge card"
+  -> runChargeAttempt({ attemptId, reason: 'session_payment' })
+  -> Stripe PaymentIntent created off-session against the saved card
+  -> webhook payment_intent.succeeded reconciles the row to status='succeeded'
+  -> receipt is emailed to the client (PR #171 deliverable)
+```
+
+What the system does NOT do automatically:
+
+- Charge from `services.price_cents`. The service price is a quoted reference; the practitioner must confirm.
+- Charge based on appointment duration, session duration, treatment area, hair count, or machine settings.
+- Charge silently in the background after marking an appointment complete.
+- Charge multiple sessions in one PaymentIntent (one PI per session per attempt).
+
+### 12.5 Off-session card requirement
+
+**Positive finding from the audit: the existing SetupIntent flow already uses `usage: "off_session"`.**
+
+From `lib/stripe/setup-intent.ts:202`:
+
+```ts
+const setupIntent = await stripe.setupIntents.create(
+  {
+    customer: params.stripeCustomerId,
+    payment_method_types: ["card"],
+    usage: "off_session",
+    metadata: { ... },
+  },
+  { stripeAccount: ..., idempotencyKey: ... },
+);
+```
+
+This means every card on file today can already be charged later without the client present. **No SetupIntent rework is needed before live session payments.** The card-on-file infrastructure built in PR #135 + PR #151 was designed correctly for this from day one.
+
+Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
+
+### 12.6 Card authorization wording requirement
+
+**Confirmed gap from production query (2026-06-08): Willow's two `card_authorization` templates have `body = "test"` (4 characters).**
+
+```text
+form_type='card_authorization'
+studio_id=9d37c51a-...          body="test"   is_live=true   status=active
+studio_id=38cb3a8b-...          body="test"   is_live=true   status=active
+```
+
+Both are flagged `is_live=true` (PR #167 backfill preserved the pre-PR portal visibility), but the body is a placeholder. Before any live charge:
+
+The body must explicitly authorize, in plain language:
+
+1. **Off-session charging for completed sessions** -- the client agrees that the studio can charge their saved card for treatment after the session ends, without a signature or further consent at charge time.
+2. **Late cancellation fees** -- the client understands the studio's cancellation policy (linked or quoted in the body) and agrees that a fee may be charged on their saved card if they cancel inside the window.
+3. **No-show fees** -- the client agrees that a fee may be charged on their saved card if they do not attend a scheduled appointment.
+4. **Chargeback / dispute posture** -- the client acknowledges the studio's evidence record (signed authorization, appointment history, session notes) in the event of a dispute.
+
+CASL + PIPEDA + Ontario consumer-contract considerations apply; a lawyer review is the only correct way to finalize the wording. The Hone codebase does not validate the body text against required phrases (and should not -- the legal wording is the studio's responsibility, not Hone's); the wording review is a non-code artifact tracked in the go/no-go checklist.
+
+The card_authorization template's title also needs to change from `"test"` to a real product name (for example: `"Card on file authorization"`); the body is the load-bearing piece, but a `"test"`-titled live consent row erodes trust if a client ever sees it in their portal Forms and records list.
+
+### 12.7 Application fee decision
+
+**Decision: 0% Hone platform fee per transaction in v1.**
+
+From PR #168 audit: `studio_payment_settings.stripe_application_fee_bps = null` for both pilot studios. The migration 0032 invariant is that the application MUST NOT pass `application_fee_amount` on PaymentIntent creation; the RPC + the runtime code both enforce zero.
+
+Posture for v1:
+
+- Studio is the merchant of record.
+- Stripe pays out 100% of the captured amount (less Stripe's own processing fees) to the studio's connected account.
+- Hone takes nothing per transaction.
+- Hone bills its own subscription / platform fee out of band, not through Stripe's `application_fee_amount` field.
+
+This is a deliberate business choice, not a default. If Sam decides Hone should take a per-transaction cut later, that is its own PR with its own decision log and requires Chloe + the studio to consent on the connect-onboarding side (Stripe shows the application fee on the studio's payouts dashboard). Do not silently set `stripe_application_fee_bps`.
+
+### 12.8 Tax handling decision
+
+**Decision: practitioner enters the all-in / gross amount; Hone does not calculate tax in v1.**
+
+The session payment helper records the amount charged. The studio remains responsible for tax pricing, tax remittance, and tax line items on receipts. This is consistent with the "no more cash" framing -- the studio was already collecting cash gross of tax and remitting separately; the live charge path matches that.
+
+Hone does NOT in v1:
+
+- Calculate GST / HST / PST.
+- Render tax lines on receipts.
+- Track a separate tax_cents field.
+- Issue tax invoices.
+
+A future PR can layer Stripe Tax on top if Chloe (or a future studio) needs automated tax handling. That is a separate product, requires per-jurisdiction configuration, and is out of v1 scope.
+
+### 12.9 Paid status derivation
+
+**Decision: paid status is DERIVED from successful charge attempt rows. No separate `appointments.paid` or `sessions.paid` boolean.**
+
+Why:
+
+- A boolean dual-writes with the actual evidence (the charge attempt row + Stripe PaymentIntent state). Dual writes drift; the boolean would be wrong every time a webhook is delayed, a charge is refunded, or a manual fee is reconciled.
+- The charge attempt row carries the full audit trail (idempotency key, Stripe PI id, charged_at, failure_code, refund history) that a boolean does not.
+- The portal Forms and records surface (PR #159) already reads signatures directly without joining templates; the same pattern applies: read the charge attempts row directly.
+
+The "paid" UI badge on the appointment detail page (future PR) reads the existence of a `status='succeeded'` charge attempt for the appointment_id + reason='session_payment' pair. If a refund lands later, the refund row recolors the badge to "refunded" without flipping any boolean.
+
+`sessions.price_paid_cents` (migration 0003) is a separate historical field that exists for record-keeping (what the client paid for this session, regardless of whether Hone moved the money or it was paid in cash). It is NOT the source of truth for "did Hone charge this?" -- the charge attempt row is.
+
+### 12.10 Merchant of record and statement descriptor
+
+**Decision: the studio's connected account is the merchant of record.**
+
+On the client's credit-card statement and on the Stripe-issued receipt, the merchant name shown is the studio (Willow Electrolysis), not Hone. This matches the standard Stripe Express + Connect platform pattern and avoids any client confusion about who they paid.
+
+The statement descriptor on the PaymentIntent (the short label that shows on the bank statement) should identify the studio. The session payment PR will set `statement_descriptor_suffix` from the studio's configured short name; Stripe combines this with the connected account's base descriptor at posting time. Hone's name does not appear on the client's statement.
+
+The implications:
+
+- A dispute (chargeback) is filed against the studio's connected account. The studio is the responder.
+- The studio's tax / business registration is what the receipt carries.
+- If Hone later takes an application fee (§12.7), that shows on the studio's Stripe payouts dashboard, not on the client's receipt.
+
+### 12.11 Risk separation: session payments vs cancellation / no-show fees
+
+The three charge reasons have different dispute risk profiles. Enable them in order:
+
+| Reason | Dispute risk | Why | Enable when |
+|---|---|---|---|
+| `session_payment` | Lower | Client received a service. The chair-time is the evidence. | First. Easier to defend, easier to recover from a mistaken charge. |
+| `late_cancellation_fee` | Higher | Client did not receive a service. Defense depends on (a) signed policy acknowledgement, (b) explicit timing classification. | After session_payment is proven in live mode. |
+| `no_show_fee` | Highest | Client did not receive a service, AND the studio cannot prove the client was reachable. Defense depends on the same evidence plus reminder delivery records. | Last. Only after no-show evidence collection is hardened. |
+
+This ordering means **PR #181 (the future session payment build) can ship before the late_cancellation_fee and no_show_fee paths flip to live**. The manual fee CHECK constraint (migration 0065) keeps cancellation+no_show in test mode independently of session_payment. The DB CHECK relaxation PR (#177 in the original sequence) becomes a per-reason decision, not a single switch.
+
+### 12.12 Future schema sketch (informational; defer to schema PR)
+
+The next schema PR (estimated `0073_session_payment_charge_attempts.sql`, confirmed against `supabase/migrations/` at build time) has two viable shapes. PR #169 does not pick a winner; the schema PR's audit will. Both are documented here so the trade-off is searchable.
+
+**Option A: separate `session_payment_charge_attempts` table.**
+
+```sql
+create table public.session_payment_charge_attempts (
+  id                                uuid primary key default gen_random_uuid(),
+  studio_id                         uuid not null references public.studios(id) on delete cascade,
+  session_id                        uuid not null references public.sessions(id) on delete restrict,
+  appointment_id                    uuid not null references public.appointments(id) on delete restrict,
+  client_id                         uuid not null references public.clients(id) on delete restrict,
+  confirmed_by_practitioner_id      uuid not null references public.practitioners(id) on delete restrict,
+  amount_cents                      integer not null check (amount_cents > 0 and amount_cents <= 10_000_00),
+  currency                          text not null default 'cad' check (currency in ('cad')),
+  status                            text not null default 'ready'
+                                      check (status in ('ready','pending_stripe','succeeded','failed','cancelled','needs_manual_review')),
+  client_payment_method_id          uuid not null references public.client_payment_methods(id) on delete restrict,
+  service_charge_authorization_signature_id uuid not null references public.client_consent_signatures(id) on delete restrict,
+  stripe_account_id                 text not null,
+  stripe_livemode                   boolean not null default false check (stripe_livemode = false),
+  stripe_payment_intent_id          text,
+  stripe_charge_id                  text,
+  stripe_idempotency_key            text,
+  charged_at                        timestamptz,
+  failed_at                         timestamptz,
+  failure_code                      text,
+  failure_message_safe              text,
+  cancelled_at                      timestamptz,
+  cancelled_by_practitioner_id      uuid references public.practitioners(id) on delete set null,
+  internal_note                     text not null,
+  created_at                        timestamptz not null default now(),
+  updated_at                        timestamptz not null default now()
+);
+```
+
+Pros: each reason owns its own table; the eligibility helper for each reason has no nullable-field branching; the manual_fee_charge_attempts schema and constraints stay frozen (lower regression risk on the proven test-mode path).
+
+Cons: two tables to keep in sync structurally (constraint shapes, RLS, ops_alert events); two CHECK constraints to relax independently when going live.
+
+**Option B: unified `payment_charge_attempts` table.**
+
+Generalize `manual_fee_charge_attempts` to `payment_charge_attempts` with:
+
+- `charge_reason text not null check (charge_reason in ('session_payment','late_cancellation_fee','no_show_fee'))`
+- `session_id uuid` (nullable; required only when reason='session_payment')
+- `appointment_policy_acknowledgement_id uuid` (nullable; required only when reason in ('late_cancellation_fee','no_show_fee'))
+- `service_charge_authorization_signature_id uuid` (nullable; required only when reason='session_payment')
+- Two partial CHECKs enforcing the nullability rules above.
+
+Pros: one charge primitive code path with a single result table; one CHECK constraint to relax when going live.
+
+Cons: migration is heavier (rename existing table, drop+re-add CHECKs, update RLS policies, update every reference); schema has nullable fields that are required-given-context (CHECK enforces but the type system does not).
+
+**Recommendation (informational, not binding):** prefer Option B (unified table). The argument in §12.3 for a single charge primitive carries through to the data model. The nullable-with-CHECK pattern is already used elsewhere in the schema (PR #167's `is_live` CHECK, PR #156's `appointment_id` nullable FK). A single CHECK + a single set of indexes + a single set of ops_alerts is easier to reason about than two.
+
+But the trade-off depends on how tight the rename migration can be. The schema PR's audit will decide.
+
+### 12.13 Updated MVP sequence
+
+The §11 sequence stays valid for the cancellation + no-show fee track. Session payments add their own track, parallel to (not replacing) it. Both tracks share the live-mode-enablement gate (§8).
+
+| New PR | Track | Depends on | Description |
+|---|---|---|---|
+| PR #169 (this PR) | Both | -- | Product model + go/no-go reorganization; docs + guardrails only. |
+| PR #170 | Both | -- | Legal review of card_authorization template body (was "PR #169" in the original §11; renumbered after this PR consumed the slot). The body must cover all three charge reasons or each reason gets its own template (see §12.6). |
+| PR #171 | Both | PR #170 | Remove "Test mode only" UI copy from the 7 known locations; add a conditional dormancy disclaimer that reads `STRIPE_ALLOW_LIVE_MODE`. |
+| PR #172 | Both | -- | Receipt email path. Required before live charges of any reason because the client must see what they were charged for. |
+| PR #173 | Both | -- | Refund code path + practitioner UI button. Required before live charges of any reason because mistakes happen. |
+| PR #174 | Cancel/no-show | -- | Cancellation / no-show policy alignment (only if Chloe's real policy is window-based). |
+| PR #175 | Both | PR #172, PR #173 | Charge-path test coverage. |
+| PR #176 | Both | PR #172 | Operator runbook + rollback plan. |
+| PR #177 | Both | -- | `payment_intent.*` + `charge.refunded` + `charge.dispute.*` webhook handlers. |
+| PR #178 | Both | PR #170-PR #177 | Cancel + no-show DB CHECK relax (was "PR #177" in the original §11). |
+| **Session payment track** | | | |
+| PR #179 | session_payment | -- | Add `service_charge_authorization` to `consent_form_templates.form_type` CHECK constraint; new template authored per studio. |
+| PR #180 | session_payment | PR #179 | Schema migration: `session_payment_charge_attempts` (Option A) or `payment_charge_attempts` rename (Option B). Schema-PR audit picks the shape. |
+| PR #181 | session_payment | PR #180 | Session payment eligibility helper + `runSessionPaymentCharge` calling the shared charge primitive; "Charge session" UI on appointment + session detail pages; test-mode only. |
+| PR #182 | session_payment | PR #181 | Add the "Mark complete" button to the appointment detail page (today removed per a previous review; needs to come back paired with the session payment flow so the practitioner has a single "finish + charge" path). |
+| PR #183 | session_payment | PR #181, PR #182 | Session payment DB CHECK relax (mirror of PR #178 for the session payment table). |
+| Operator | -- | -- | `stripe_payouts_enabled=true` via Stripe dashboard; `stripe_application_fee_bps` decision (0% per §12.7); live key rotation. |
+
+Sequence rule: session_payment can flip to live ONLY after PR #170 to PR #173 + PR #175 to PR #177 + PR #179 to PR #183 + the operator-side Stripe work. Cancellation + no-show fees flip to live independently after PR #170 to PR #178 + the operator work. Each reason has its own DB CHECK relax PR (PR #178 for cancel/no-show, PR #183 for session_payment) so live-enablement is per-reason, not all-or-nothing.
+
+### 12.14 Readiness conclusion update
+
+The §1 conclusion stands: **NOT READY FOR LIVE PAYMENTS** for any reason.
+
+Refined:
+
+- **Ready to BUILD the session payment infrastructure?** Yes. The audit found no architectural blocker: the SetupIntent is correctly off-session, the manual fee pattern is generalizable, the schema sketch is clear. PR #179 - #183 can ship sequentially.
+- **Ready to FLIP session_payment to live?** No. Same blockers as the cancellation track (legal review, receipt path, refund path, test coverage, runbook, webhook handlers) plus the session payment track's own work (new consent template, new attempts table, charge UI).
+- **Ready to FLIP late_cancellation_fee or no_show_fee to live?** No. Plus higher dispute risk per §12.11 means these two should follow session_payment, not lead.
+
+### 12.15 What this PR does not do
+
+PR #169 is docs + guardrails ONLY. Nothing in this PR:
+
+- Enables live payments. The three dormancy guards from §3 are unchanged.
+- Creates or modifies any database table, RLS policy, RPC, or index. No new migration. The latest migration in tree is still `0072_consent_templates_is_live.sql` from PR #167.
+- Modifies any Stripe key, secret, env var, webhook secret, or Vercel configuration.
+- Adds or removes any `paymentIntents.create` call site. Still exactly one, in `lib/billing/manual-fee-charge.ts`.
+- Adds or removes any `refunds.create` call site. Still zero.
+- Changes webhook handler behavior. Still ignores everything except `setup_intent.*` and account/capability.
+- Changes manual fee charge logic. Still `runManualFeeCharge` with live-mode early return.
+- Changes UI copy. The 7 "Test mode only" strings remain; PR #171 will remove them.
+- Changes the card authorization consent template. Body still says `"test"` in production; PR #170 covers the legal review.
+- Adds any SMS or email behavior.
+- Changes `STRIPE_ALLOW_LIVE_MODE` default. Still unset / `false`.
+
+The Stripe gates remain intact. The only artifacts of this PR are the new section above plus the guardrail tests that pin the section's claims.
