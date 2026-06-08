@@ -4,7 +4,9 @@
 // sendEmailSafely consumes. The email contains:
 //   * a one-line greeting that names the studio
 //   * the magic link as a primary CTA button + the raw URL underneath
-//   * a 30-minute expiry reminder
+//   * a 1-hour expiry reminder (raised from 30 minutes in PR #166;
+//     see the comment block in app/portal/login/actions.ts for the
+//     real-world delivery-latency rationale)
 //   * a not-you opt-out line
 //
 // What this email does NOT include:
@@ -50,7 +52,17 @@ export type PortalMagicLinkEmail = {
   text: string;
 };
 
-const TTL_DESCRIPTION = "30 minutes";
+// PR #166. Copy MUST stay in sync with MAGIC_LINK_TTL_MS in
+// app/portal/login/actions.ts. Today: 60 minutes => "1 hour."
+// The expiry source of truth is the actions.ts constant; this
+// string is purely the human-facing description rendered in the
+// email body. A drift between the two is caught by
+// tests/lib/email/portal-magic-link.test.ts (which pins this
+// string) plus tests/app/portal/login/magic-link-ttl.test.ts
+// (which pins the actions.ts constant). Pick a phrase that reads
+// naturally if a future TTL goes back to minutes (e.g. "45 minutes")
+// or up to hours; the template body interpolates this verbatim.
+const TTL_DESCRIPTION = "1 hour";
 
 function escapeHtml(s: string): string {
   return s

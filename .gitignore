@@ -24,3 +24,8 @@ yarn-error.log*
 *.pem
 
 coverage
+
+# Local harness state (not relevant to repo)
+.claude/scheduled_tasks.lock
+# Per PR #160 closure: pilot tracker lives outside the repo
+Hone_Pilot_Control_Sheet.xlsx

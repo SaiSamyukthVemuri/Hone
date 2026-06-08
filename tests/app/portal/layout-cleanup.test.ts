@@ -34,7 +34,9 @@ describe("header now carries the Email <studio> contact action", () => {
     // The header is the first top-level child after the page main.
     // We pin the relative ordering: the contactHref block must
     // appear ABOVE the portalLogoutAction form, both inside the
-    // header div.
+    // header div. Source order is preserved by the flex-row
+    // cluster (PR #166) so Email Willow sits to the LEFT of Sign
+    // out on screen as well.
     const headerBlock =
       SOURCE.match(/<header[\s\S]*?<\/header>/)?.[0] ?? "";
     expect(headerBlock).toMatch(/\{contactHref && \(/);
@@ -45,6 +47,25 @@ describe("header now carries the Email <studio> contact action", () => {
     const logoutIdx = headerBlock.indexOf("portalLogoutAction");
     expect(contactIdx).toBeGreaterThan(-1);
     expect(logoutIdx).toBeGreaterThan(contactIdx);
+  });
+
+  it("the right cluster is laid out as a horizontal row (PR #166)", () => {
+    // PR #159 originally rendered the cluster as flex-col items-end
+    // so Sign out stacked BELOW Email Willow. Chloe's smoke test
+    // surfaced that this read like a secondary affordance of the
+    // Email button. PR #166 flips it to a horizontal row so the
+    // two controls sit side-by-side at top-right with Sign out as
+    // the rightmost element. The outer header still carries
+    // flex-wrap, so on narrow viewports the cluster wraps below
+    // the heading.
+    const headerBlock =
+      SOURCE.match(/<header[\s\S]*?<\/header>/)?.[0] ?? "";
+    expect(headerBlock).toMatch(
+      /<div className="flex flex-row items-center gap-4">/,
+    );
+    expect(headerBlock).not.toMatch(
+      /<div className="flex flex-col items-end gap-3">/,
+    );
   });
 
   it("the legacy bottom 'Need help?' heading is gone", () => {

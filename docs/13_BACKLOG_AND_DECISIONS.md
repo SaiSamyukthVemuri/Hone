@@ -88,6 +88,26 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Secure-link expiry raised to 1 hour (PR #166)
+
+**Decision:** Raise the portal magic-link TTL from 30 minutes to 60 minutes. The constant `MAGIC_LINK_TTL_MS` in `app/portal/login/actions.ts` is the single source of truth; the email body copy in `lib/email/templates/portal-magic-link.ts` ("This link expires in 1 hour.") is pinned by a test so the two cannot drift. The split GET/POST consumption model (PR #142) is unchanged: GET on `/portal/verify/<token>` still validates without consuming; POST still consumes via the atomic conditional UPDATE on `consumed_at IS NULL`. The portal session cookie TTL (7 days) is unchanged. No migration: existing rows naturally expire under the old 30-minute value; new rows pick up the new value on the first request after deploy.
+
+**Why:** Chloe reported "Secure link stopped working under 30 mins." The audit (read-only sweep across every token surface) found:
+- portal magic link: 30 minutes (application constant) <- the only short-TTL surface
+- portal session cookie: 7 days
+- cancel / reschedule / manage tokens: valid while the appointment is valid (no separate TTL)
+- intake token: 14 days
+
+Only the portal magic link could plausibly produce a "stopped working under 30 mins" experience. Real-world email delivery on the Resend free tier plus Gmail's spam-aware queueing routinely adds several minutes between issue and inbox arrival; on top of that, a client who steps away from their phone or whose inbox notifies late can easily cross 25 to 30 minutes from request to first click. The link is technically valid but feels broken. 60 minutes absorbs the typical worst-case delivery + read window without weakening the security contract: the token is still single-use, still hashed at rest, still consumed by the atomic POST.
+
+**Why not a sliding TTL or auto-resend:** A sliding window per click would require the GET to write, which defeats the email-scanner protection (PR #142). An auto-resend on expiry would let an attacker who learned a victim's email induce repeated outbound emails. A simple longer fixed window is the smallest change with no new attack surface.
+
+**Why also the portal-header layout flip:** PR #159's right-cluster was `flex flex-col items-end`, so Sign out stacked below Email Willow. Chloe's smoke test flagged this as reading like a secondary affordance of Email rather than a peer control. PR #166 flips the cluster to `flex flex-row items-center` so Sign out sits visibly at top-right next to Email Willow. The outer header still carries flex-wrap, so the cluster wraps below the heading on narrow viewports.
+
+**Alternative considered:** Raise to 24 hours. Rejected because magic links are bearer credentials; the longer the window, the larger the blast radius if the link is forwarded or leaks via screenshot. 60 minutes is short enough to bound exposure but long enough to absorb realistic delivery latency. If Chloe reports the link still expires before she can use it after this change, we revisit with concrete timestamps and consider 2-hour.
+
+**Honest non-claims:** no migration. No schema change. No session-cookie TTL change. No GET/POST consumption-model change. No new RPC. No new RLS policy. No new env var. No change to cancel / reschedule / manage / intake token TTLs. No payment / live-mode / webhook / SMS / email-delivery behavior change. The Email + Sign out controls themselves are unchanged; only the flex direction of their container.
+
 ### Fractional thermolysis duration (PR #165, migration 0071)
 
 **Decision:** Widen `electrolysis_entries.thermolysis_duration_seconds` from `integer` to `numeric` (migration 0071). Drop `int: true` from the form parser. Switch the input to `step="0.01"` + `inputMode="decimal"`. Add `lib/sessions/format-seconds.ts:formatSeconds` and route the entry-row display through it.
