@@ -88,6 +88,73 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Reason-agnostic test-mode receipt path (PR #175, migration 0076)
+
+**Decision (2026-06-08):** Add a reason-agnostic Stripe test-mode receipt path on the canonical `payment_charge_attempts` ledger. A practitioner viewing a `succeeded` charge attempt can click "Send test receipt" to deliver one receipt email to the client; the persisted receipt state survives page refresh (mirroring the PR #174 pattern), and the truthful test-mode disclaimer + the no-tax / no-refund posture are pinned in the email template. The path is reason-agnostic: today only `session_payment` rows exist, but when the future `late_cancellation_fee` and `no_show_fee` writers land on the canonical ledger, no code change is needed to send their receipts. Migration 0076 adds five nullable receipt-state columns to the table; the `sendPaymentChargeReceipt` helper claims the row via an atomic `receipt_status IS NULL OR receipt_status = 'failed'` → `'sending'` UPDATE before calling `sendEmailSafely`. No new Stripe call. No live mode. No refund. No webhook business logic. No SMS. No client-portal change. `manual_fee_charge_attempts` runtime untouched.
+
+**Why now:** PR #173 shipped Stripe test-mode execution; PR #174 made the post-refresh succeeded state clearly readable. Receipts are the next blocker per docs/16 §5.4 -- without them, even a test-mode charge leaves the client with no record of what was charged. Shipping receipts test-mode-only on the canonical ledger now lets the operator exercise the end-to-end charge-and-receipt loop in test mode while live-mode receipts remain structurally disabled until the live-enablement PR sequence.
+
+**Migration 0076 (applied to prod before this commit):**
+
+```sql
+alter table public.payment_charge_attempts
+  add column if not exists receipt_status text,
+  add column if not exists receipt_sent_at timestamptz,
+  add column if not exists receipt_email_to text,
+  add column if not exists receipt_failure_code text,
+  add column if not exists receipt_failure_message_safe text;
+-- + receipt_status CHECK (null OR in 'sending'/'sent'/'failed')
+-- + failure-code length CHECK <= 100
+-- + failure-message length CHECK <= 1000
+-- + partial index for stuck-sending dashboards
+```
+
+Every column nullable. All CHECK constraints use DROP+ADD so the migration is re-runnable. Production verified: 5 columns + 3 CHECKs + 1 partial index installed; 0 rows in the table (no smoke yet); no live-mode CHECK relaxed.
+
+**Architecture:**
+
+- `lib/email/templates/payment-receipt.ts` (new). Exports `buildPaymentReceiptEmail({ studioName, studioContactEmail, clientName, chargeReasonLabel, amountCents, currencyCode, chargedAt, stripePaymentIntentId, stripeChargeId }): { subject, html, text }` plus the `chargeReasonLabel(reason)` helper. Both are pure functions; no side effects. The template uses the same branded shell as `portal-magic-link.ts`. Subject prefixed with "TEST MODE". Body carries three disclaimers: "This is a Stripe test-mode receipt. No live card was charged.", "No tax calculation is included on this receipt.", "Refund handling is not enabled in Hone yet." Studio name + reason + amount + charged time + PaymentIntent id + (optional) Charge id are rendered as a key/value block.
+
+- `lib/billing/payment-receipt.ts` (new). Exports `sendPaymentChargeReceipt({attemptId, studioId, practitionerId}): Promise<SendPaymentChargeReceiptResult>`. Imports `server-only`. The helper: (1) loads the attempt row scoped by studio; (2) refuses with typed reasons on `not_succeeded` / `not_authorized` (live-mode row) / `missing_payment_intent` / `already_sent` / `in_flight` / `client_email_missing` / `studio_missing`; (3) atomically claims via a conditional UPDATE matching `status='succeeded' AND (receipt_status IS NULL OR receipt_status='failed')`; (4) builds the email + calls `sendEmailSafely`; (5) persists the outcome -- `'sent'` on success (stamping `receipt_sent_at`, `receipt_email_to`, clearing failure fields), `null` on retryable failure (releases the claim so a manual retry can run), `'failed'` on terminal failure with sanitised `receipt_failure_code` + `receipt_failure_message_safe`. Ops alerts at `warning` severity on retryable failures and `critical` on terminal failures (mirrors the manual-fee charge precedent).
+
+- `app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts` (extended). New `sendPaymentChargeReceiptAction` server action: auth-gated via `getCurrentPractitionerWithStudio`; forwards only `attemptId` + `studioId` + `practitionerId` to the helper; revalidates the session detail path on terminal result. The action accepts NO browser-supplied amount, card id, studio id, or practitioner id.
+
+- `lib/billing/session-payment-types.ts` + `lib/billing/session-payment-eligibility.ts` (extended). `SessionPaymentExistingAttemptSummary` carries the five receipt columns; the eligibility helper's SELECT reads them. No new query path -- the existing eligibility resolver covers it.
+
+- `components/session-payment-prepare-card.tsx` (extended). New `ReceiptSubPanel` renders inside `SucceededPanel` ONLY (negative-tested for ready / pending / failed / cancelled / blocked). Drives off `attempt.receiptStatus`: shows "Receipt already sent to <email> on <date>" when `'sent'`; surfaces failure detail when `'failed'`; shows a calm in-flight notice when `'sending'`; renders the Send test receipt button when `null` or `'failed'`. Button copy: "Sends a Stripe test-mode receipt to the client. No live card was charged." No "Pay now" / "Send invoice" / "Tax receipt" / "Official invoice" / "Payment complete" / "Live payment" anywhere.
+
+**Atomic claim safety:**
+
+The claim UPDATE matches on `status='succeeded' AND (receipt_status IS NULL OR receipt_status = 'failed')`. Two concurrent clicks both pass the pre-INSERT SELECT, but only one wins the UPDATE; the loser sees an empty `claimedRows` array and re-reads the row to surface the correct state (already_sent or in_flight). A failed terminal state can be retried because the claim accepts `receipt_status = 'failed'` as a starting state; the operator clicks Send test receipt again, the helper clears the failure detail and tries again. A retryable failure releases the claim back to `null` so the next click can retry without the operator needing to clear the row by hand.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. The three structural dormancy guards from PR #168 + PR #171's `payment_charge_attempts_livemode_false_check` are intact. Migration 0076 does not relax any live-mode CHECK.
+- Does NOT add or remove any `paymentIntents.create` call site (still 2, both allowlisted).
+- Does NOT add `charges.create`, `refunds.create`, or `checkout.sessions` (still zero).
+- Does NOT add webhook handler changes.
+- Does NOT send receipts automatically from `runSessionPaymentCharge`. The receipt action is a SEPARATE practitioner click. The spec is explicit: "Do not send automatically from PR #173 execution yet."
+- Does NOT add refund or chargeback handling. The receipt body says refunds are not enabled yet.
+- Does NOT calculate tax. The receipt body says no tax calculation is included.
+- Does NOT add SMS or any phone-based receipt.
+- Does NOT touch `manual_fee_charge_attempts` or the legacy receipt-less fee runtime.
+- Does NOT add a client-portal receipt surface. Receipts are sent only to `clients.email`.
+
+**Reason labels (the reason-agnostic map):**
+
+```text
+session_payment        -> "Session payment"
+late_cancellation_fee  -> "Late cancellation fee"
+no_show_fee            -> "No-show fee"
+<anything else / null> -> "Payment"      (calm fallback; never renders "undefined")
+```
+
+The fallback is the future-proofing piece: when a future PR adds a fourth canonical reason, the receipt renders "Payment" until the label map is updated, never crashing the email send.
+
+**Alternative considered:** auto-send the receipt from `runSessionPaymentCharge` on the `succeeded` outcome. Rejected per the spec: "Do not send automatically from PR #173 execution yet unless you explicitly justify it and it remains test-mode only." The deliberate practitioner click keeps the loop simple, testable, and easy to reason about; an auto-send path can be a future PR once the receipt copy and dedup mechanism have proved themselves in production.
+
+**Honest non-claims:** no new Stripe call, no live mode, no refund, no SMS, no client-portal receipt UI, no manual_fee touch, no automatic send. Stripe gates intact (2 allowlisted `paymentIntents.create`; 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string). Migration ledger advanced to 0076 because receipt state must persist for refresh-survival and atomic dedup; no other migration in this PR.
+
 ### Session payment UX hardening, no schema change (PR #174)
 
 **Decision (2026-06-08):** Refactor `SessionPaymentPrepareCard` so every post-refresh state (succeeded, failed, pending_stripe, ready, cancelled, blocked) renders rich detail driven by the persisted `payment_charge_attempts` row. Widen the eligibility helper's SELECT + the `SessionPaymentExistingAttemptSummary` type to carry the post-execute fields (`stripe_payment_intent_id`, `stripe_charge_id`, `charged_at`, `failed_at`, `failure_code`, `failure_message_safe`). Add dedicated per-status subcomponents (`ReadyPanel`, `PendingPanel`, `SucceededPanel`, `FailedPanel`, `CancelledPanel`, `BlockedAttemptPanel`) so the dispatch logic is one switch on `attempt.status`. No new Stripe call. No live-mode change. No webhook. No SMS/email. No client-portal change. No migration; ledger stays at 0075.

@@ -303,11 +303,16 @@ describe("PR #174: SucceededPanel (post-refresh)", () => {
     expect(block).toMatch(/Charged:\s*<FormattedDateTime/);
   });
 
-  it("explicitly names test mode + no live card + no receipt was sent", () => {
+  it("explicitly names test mode + no live card", () => {
+    // PR #175 replaced the "No receipt was sent in this PR" line
+    // with a real ReceiptSubPanel that drives off the persisted
+    // receipt_status column (migration 0076). The test-mode +
+    // no-live-card disclaimer stays; the receipt-not-sent claim
+    // moved to the sub-panel's send-button copy where it belongs.
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(/Stripe test-mode charge/);
     expect(block).toMatch(/No live card was charged/);
-    expect(block).toMatch(/No receipt[\s\S]{0,20}was sent in this PR/);
+    expect(block).toMatch(/<ReceiptSubPanel/);
   });
 
   it("does NOT render the Run test charge button (post-refresh terminal-success state)", () => {

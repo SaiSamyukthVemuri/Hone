@@ -648,6 +648,18 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
+### 12.5f Reason-agnostic test-mode receipt path (PR #175, migration 0076, 2026-06-08)
+
+PR #175 shipped the test-mode receipt path on the canonical `payment_charge_attempts` ledger. A practitioner viewing a `succeeded` row can click "Send test receipt" to deliver one Stripe test-mode receipt email to the client. The path is reason-agnostic: today only `session_payment` rows reach it, but `late_cancellation_fee` and `no_show_fee` rows will work without code changes once those writers land on the canonical ledger.
+
+Migration 0076 adds five nullable receipt-state columns (`receipt_status`, `receipt_sent_at`, `receipt_email_to`, `receipt_failure_code`, `receipt_failure_message_safe`) plus three CHECKs (`receipt_status in {sending, sent, failed}`, failure-code length ≤ 100, failure-message length ≤ 1000) plus a partial index `payment_charge_attempts_receipt_sending_idx` on `where receipt_status = 'sending'` for stuck-receipt dashboards. No live-mode CHECK is relaxed.
+
+The body explicitly says: "This is a Stripe test-mode receipt. No live card was charged.", "No tax calculation is included on this receipt.", and "Refund handling is not enabled in Hone yet." Forbidden copy ("tax receipt", "official invoice", "live payment completed", "payment complete") is absent from both the template and the UI, pinned by negative source-grep tests.
+
+The receipt action is a deliberate practitioner click; `runSessionPaymentCharge` does NOT auto-send. This is intentional per the PR #175 spec; an auto-send PR can land later once the receipt copy + dedup proves itself.
+
+This PR closes the docs/16 §5.4 blocker for test mode only. Live-mode receipts are still deferred; the live-enablement PR sequence in §11 / §12.13 carries them.
+
 ### 12.5e Session payment UX hardening (PR #174, 2026-06-08, no schema change)
 
 PR #174 refactored `SessionPaymentPrepareCard` so every post-refresh state (succeeded / failed / pending_stripe / ready / cancelled / blocked) renders rich detail driven by the persisted `payment_charge_attempts` row, not by React local state. The eligibility helper's SELECT and the `SessionPaymentExistingAttemptSummary` type were widened to carry every post-execute field (`stripe_payment_intent_id`, `stripe_charge_id`, `charged_at`, `failed_at`, `failure_code`, `failure_message_safe`).

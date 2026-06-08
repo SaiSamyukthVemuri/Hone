@@ -27,8 +27,24 @@ type ExecuteResult =
       failureCode?: string | null;
     };
 
+// PR #175. SendPaymentReceiptActionResult shape; the card consumes
+// the discriminated union directly so the per-outcome copy on the
+// succeeded panel can branch on the reason. The string union is
+// loose on purpose: any future outcome added to the action layer
+// renders as a generic failure message rather than crashing.
+type SendReceiptResult =
+  | { ok: true; outcome: "sent"; emailTo: string }
+  | {
+      ok: false;
+      outcome: string;
+      error: string;
+      emailTo?: string;
+      sentAt?: string | null;
+    };
+
 type PrepareAction = (formData: FormData) => Promise<PrepareResult>;
 type ExecuteAction = (formData: FormData) => Promise<ExecuteResult>;
+type SendReceiptAction = (formData: FormData) => Promise<SendReceiptResult>;
 
 // PR #172 + #173 + #174. Practitioner-only session payment surface.
 // Renders one of three top-level branches resolved server-side by
@@ -126,12 +142,14 @@ export function SessionPaymentPrepareCard({
   eligibility,
   prepareAction,
   executeAction,
+  sendReceiptAction,
 }: {
   sessionId: string;
   clientId: string;
   eligibility: SessionPaymentEligibility;
   prepareAction: PrepareAction;
   executeAction: ExecuteAction;
+  sendReceiptAction: SendReceiptAction;
 }) {
   // In-session feedback only. After refresh the persisted row drives
   // the rendering; these are confined to the same page-load.
@@ -200,6 +218,7 @@ export function SessionPaymentPrepareCard({
           sessionId={sessionId}
           clientId={clientId}
           executeAction={executeAction}
+          sendReceiptAction={sendReceiptAction}
         />
       )}
 
@@ -323,11 +342,13 @@ function AttemptStatusPanel({
   sessionId,
   clientId,
   executeAction,
+  sendReceiptAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   executeAction: ExecuteAction;
+  sendReceiptAction: SendReceiptAction;
 }) {
   switch (attempt.status) {
     case "ready":
@@ -342,7 +363,14 @@ function AttemptStatusPanel({
     case "pending_stripe":
       return <PendingPanel attempt={attempt} />;
     case "succeeded":
-      return <SucceededPanel attempt={attempt} />;
+      return (
+        <SucceededPanel
+          attempt={attempt}
+          sessionId={sessionId}
+          clientId={clientId}
+          sendReceiptAction={sendReceiptAction}
+        />
+      );
     case "failed":
       return <FailedPanel attempt={attempt} />;
     case "cancelled":
@@ -540,8 +568,14 @@ function PendingPanel({
 // ---------------------------------------------------------------------------
 function SucceededPanel({
   attempt,
+  sessionId,
+  clientId,
+  sendReceiptAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
+  sessionId: string;
+  clientId: string;
+  sendReceiptAction: SendReceiptAction;
 }) {
   return (
     <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
@@ -564,9 +598,130 @@ function SucceededPanel({
         <p className="mt-1 font-mono">Charge: {attempt.stripeChargeId}</p>
       )}
       <p className="mt-1">
-        This was a Stripe test-mode charge. No live card was charged. No receipt
-        was sent in this PR.
+        This was a Stripe test-mode charge. No live card was charged.
       </p>
+
+      {/* PR #175. Receipt sub-panel. Visible only when the
+          charge is succeeded; reads receipt_status from the
+          persisted row so the already-sent / failed states
+          survive page refresh. */}
+      <ReceiptSubPanel
+        attempt={attempt}
+        sessionId={sessionId}
+        clientId={clientId}
+        sendReceiptAction={sendReceiptAction}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #175. Receipt sub-panel for the succeeded state. Drives off
+// the persisted receipt_status column (migration 0076) so the
+// "already sent" + "failed" states survive page refresh. The
+// "Send test receipt" button only renders when receipt_status is
+// null or 'failed' (the latter so a terminal failure can still be
+// retried after the operator investigates).
+// ---------------------------------------------------------------------------
+function ReceiptSubPanel({
+  attempt,
+  sessionId,
+  clientId,
+  sendReceiptAction,
+}: {
+  attempt: SessionPaymentExistingAttemptSummary;
+  sessionId: string;
+  clientId: string;
+  sendReceiptAction: SendReceiptAction;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [localSent, setLocalSent] = useState<{ emailTo: string } | null>(null);
+
+  // Persisted-state takes precedence; local in-session state is
+  // for immediate feedback before the next render cycle catches
+  // up via the page revalidatePath.
+  const persistedSent = attempt.receiptStatus === "sent";
+  const persistedFailed = attempt.receiptStatus === "failed";
+  const persistedSending = attempt.receiptStatus === "sending";
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-600 dark:text-neutral-400">
+        Receipt
+      </p>
+
+      {(persistedSent || localSent) && (
+        <p className="text-xs text-neutral-700 dark:text-neutral-300">
+          Receipt already sent to{" "}
+          <code>{localSent?.emailTo ?? attempt.receiptEmailTo ?? "(unknown)"}</code>
+          {attempt.receiptSentAt && !localSent && (
+            <>
+              {" "}
+              on <FormattedDateTime iso={attempt.receiptSentAt} />
+            </>
+          )}
+          .
+        </p>
+      )}
+
+      {persistedFailed && !localSent && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+          <p className="font-medium">Receipt send failed.</p>
+          {attempt.receiptFailureMessageSafe && (
+            <p className="mt-1">Reason: {attempt.receiptFailureMessageSafe}</p>
+          )}
+          {attempt.receiptFailureCode && (
+            <p className="mt-1 font-mono">Code: {attempt.receiptFailureCode}</p>
+          )}
+          <p className="mt-1">You can try again below.</p>
+        </div>
+      )}
+
+      {persistedSending && !localSent && (
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          A receipt send is in flight. Refresh to see the latest state.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-700 dark:text-red-400" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!persistedSent &&
+        !persistedSending &&
+        !localSent && (
+          <>
+            <p className="text-xs text-neutral-600 dark:text-neutral-400">
+              Sends a Stripe test-mode receipt to the client. No live card was
+              charged.
+            </p>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                setError(null);
+                const fd = new FormData();
+                fd.set("attempt_id", attempt.id);
+                fd.set("session_id", sessionId);
+                fd.set("client_id", clientId);
+                startTransition(async () => {
+                  const r = await sendReceiptAction(fd);
+                  if (r.ok) {
+                    setLocalSent({ emailTo: r.emailTo });
+                    return;
+                  }
+                  setError(r.error);
+                });
+              }}
+              className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+            >
+              {pending ? "Sending test receipt..." : "Send test receipt"}
+            </button>
+          </>
+        )}
     </div>
   );
 }

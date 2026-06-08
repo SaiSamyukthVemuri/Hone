@@ -18,6 +18,7 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import {
   executeSessionPaymentChargeAction,
   prepareSessionPaymentChargeAction,
+  sendPaymentChargeReceiptAction,
 } from "./payment-actions";
 import { getClientTags } from "@/lib/client-tags/queries";
 import {
@@ -237,6 +238,7 @@ export default async function SessionDetailPage({
         eligibility={sessionPaymentEligibility}
         prepareAction={prepareSessionPaymentChargeAction}
         executeAction={executeSessionPaymentChargeAction}
+        sendReceiptAction={sendPaymentChargeReceiptAction}
       />
 
       {session.modality === "electrolysis" && blockData ? (

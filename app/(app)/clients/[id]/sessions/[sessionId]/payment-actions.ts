@@ -14,6 +14,10 @@ import {
   runSessionPaymentCharge,
   type SessionPaymentChargeResult,
 } from "@/lib/billing/session-payment-charge";
+import {
+  sendPaymentChargeReceipt,
+  type SendPaymentChargeReceiptResult,
+} from "@/lib/billing/payment-receipt";
 
 // ---------------------------------------------------------------------------
 // prepareSessionPaymentChargeAction (PR #172).
@@ -343,5 +347,103 @@ export async function executeSessionPaymentChargeAction(
     error: result.message,
     blockingReasons: result.blockingReasons,
     failureCode: result.failureCode ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// sendPaymentChargeReceiptAction (PR #175).
+// ---------------------------------------------------------------------------
+//
+// Practitioner-only. Sends a test-mode receipt for a succeeded
+// row on payment_charge_attempts. The heavy lifting lives in
+// lib/billing/payment-receipt.ts:sendPaymentChargeReceipt; this
+// action is the server-action entry point that:
+//
+//   * resolves the practitioner + studio from the session so the
+//     browser cannot supply either identity
+//   * forwards only attempt_id (the row carries every other
+//     field the helper needs)
+//   * revalidates the session detail page so the new receipt
+//     state shows up immediately
+//   * surfaces the helper's result to the UI
+//
+// The action is reason-agnostic: the helper itself maps
+// charge_reason to a label. Today only session_payment rows
+// exist; when late_cancellation_fee and no_show_fee start
+// writing to payment_charge_attempts, the same action handles
+// them with no code change.
+
+export type SendPaymentReceiptActionResult =
+  | { ok: true; outcome: "sent"; emailTo: string }
+  | {
+      ok: false;
+      outcome:
+        | "not_found"
+        | "not_succeeded"
+        | "missing_payment_intent"
+        | "already_sent"
+        | "in_flight"
+        | "client_email_missing"
+        | "studio_missing"
+        | "send_failed_retryable"
+        | "send_failed_terminal"
+        | "not_authorized"
+        | "database_error";
+      error: string;
+      emailTo?: string;
+      sentAt?: string | null;
+    };
+
+export async function sendPaymentChargeReceiptAction(
+  formData: FormData,
+): Promise<SendPaymentReceiptActionResult> {
+  let practitionerId: string;
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("payment_receipt_action_auth_failed", { err: String(err) });
+    return {
+      ok: false,
+      outcome: "not_authorized",
+      error: NOT_AUTHORIZED_ERROR,
+    };
+  }
+
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const clientId = strOrEmpty(formData.get("client_id"));
+  const sessionId = strOrEmpty(formData.get("session_id"));
+  if (!attemptId) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+
+  const result: SendPaymentChargeReceiptResult =
+    await sendPaymentChargeReceipt({
+      attemptId,
+      studioId,
+      practitionerId,
+    });
+
+  if (clientId && sessionId) {
+    revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  } else {
+    revalidatePath("/clients");
+  }
+
+  if (result.ok) {
+    return { ok: true, outcome: "sent", emailTo: result.emailTo };
+  }
+  return {
+    ok: false,
+    outcome: result.reason,
+    error: result.message,
+    emailTo: result.emailTo,
+    sentAt: result.sentAt,
   };
 }

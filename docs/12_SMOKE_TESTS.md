@@ -79,6 +79,32 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Session payment test-mode receipt smoke (PR #175, test mode only)
+
+Run after a `succeeded` session_payment row exists.
+
+1. Open the session detail page that produced the `succeeded` attempt.
+2. Confirm the green Succeeded panel renders. Confirm a new `Receipt` sub-panel is visible inside it.
+3. Confirm the sub-panel shows the disclaimer "Sends a Stripe test-mode receipt to the client. No live card was charged." and the `Send test receipt` button.
+4. Confirm a test client with an email on file is associated with the attempt.
+5. Click `Send test receipt`. Wait for the network round-trip.
+6. Confirm the sub-panel flips to "Receipt already sent to <email> on <date>." within the same render.
+7. Reload the page. Confirm the same "already sent" state survives the refresh.
+8. SQL verify the row:
+   ```sql
+   select id, charge_reason, status, receipt_status, receipt_sent_at,
+          receipt_email_to, stripe_livemode, stripe_payment_intent_id,
+          stripe_charge_id
+   from public.payment_charge_attempts
+   order by created_at desc
+   limit 5;
+   ```
+   Expected: `receipt_status='sent'`, `receipt_sent_at` populated, `receipt_email_to` matches the test client's email, `stripe_livemode=false`, `stripe_payment_intent_id` populated.
+9. Verify the actual email arrived at the test client's mailbox. Confirm the subject starts with "TEST MODE" + the studio name + the reason label + the amount. Confirm the body carries the three disclaimers: "This is a Stripe test-mode receipt. No live card was charged.", "No tax calculation is included on this receipt.", "Refund handling is not enabled in Hone yet." Confirm the body does NOT say "tax receipt" / "official invoice" / "payment complete" / "live payment".
+10. Click `Send test receipt` again (should not appear because state is now `sent`; if it does, that's a bug). Verify no new email is delivered and the SQL row remains untouched.
+
+Negative path (no client email): use a test client whose `clients.email` is null or empty. Confirm the action returns the `client_email_missing` outcome and the row's `receipt_status` stays null.
+
 ## Session payment post-refresh state smoke (PR #174, test mode only)
 
 Run after the PR #173 EXECUTE smoke has produced a `succeeded` row.

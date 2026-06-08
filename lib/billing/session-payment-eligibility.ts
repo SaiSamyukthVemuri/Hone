@@ -274,10 +274,16 @@ export async function getSessionPaymentEligibility(
     // by writeSucceededOutcome / writeFailedOutcome in
     // lib/billing/session-payment-charge.ts (PR #173). No
     // migration; no Stripe call.
+    // PR #175 added the receipt_* columns to the SELECT so the
+    // succeeded panel can show the already-sent state across
+    // refreshes (mirroring the PR #174 pattern). All five fields
+    // are nullable on the row and on the summary; populated only
+    // after the sendPaymentChargeReceipt helper claims and
+    // updates the row.
     const { data: attemptRows } = await admin
       .from("payment_charge_attempts")
       .select(
-        "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe",
+        "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe",
       )
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
@@ -296,6 +302,13 @@ export async function getSessionPaymentEligibility(
       failureCode: (row.failure_code as string | null) ?? null,
       failureMessageSafe:
         (row.failure_message_safe as string | null) ?? null,
+      receiptStatus: (row.receipt_status as string | null) ?? null,
+      receiptSentAt: (row.receipt_sent_at as string | null) ?? null,
+      receiptEmailTo: (row.receipt_email_to as string | null) ?? null,
+      receiptFailureCode:
+        (row.receipt_failure_code as string | null) ?? null,
+      receiptFailureMessageSafe:
+        (row.receipt_failure_message_safe as string | null) ?? null,
     }));
     const blockingStatuses = new Set([
       "ready",
