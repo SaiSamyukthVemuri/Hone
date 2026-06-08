@@ -47,7 +47,14 @@ describe('prepare action: "use server" + auth gate', () => {
   });
 
   it("does NOT accept client_id from the form (resolved from eligibility)", () => {
-    expect(ACTION).not.toMatch(/formData\.get\("client_id"\)/);
+    // PR #173 added an execute action to the same file that reads
+    // client_id from the form for revalidatePath context only.
+    // Scope this assertion to the prepare action body.
+    const prepareBlock =
+      ACTION.match(
+        /export async function prepareSessionPaymentChargeAction[\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(prepareBlock).not.toMatch(/formData\.get\("client_id"\)/);
   });
 });
 

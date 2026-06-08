@@ -87,11 +87,19 @@ const RULES = [
       // auth, evidence recheck, claim_manual_fee_charge_attempt RPC,
       // deterministic idempotency key, connected-account context,
       // inferStripeLivemode() test-mode gate, AND the DB CHECK
-      // manual_fee_charge_attempts_livemode_false_check. Any new
-      // paymentIntents.create call site is a deliberate live-mode PR.
+      // manual_fee_charge_attempts_livemode_false_check.
       "lib/billing/manual-fee-charge.ts",
+      // PR #173 test-mode session payment charge. Behind: the same
+      // safety chain plus a PR #170 current-card-authorization
+      // re-check at execution time, the claim_session_payment_charge
+      // _attempt RPC (migration 0075), and the
+      // payment_charge_attempts_livemode_false_check (migration
+      // 0073). Adding a third paymentIntents.create call site is a
+      // deliberate review event; do not loosen this allowlist
+      // without an accompanying decision in docs/13.
+      "lib/billing/session-payment-charge.ts",
     ],
-    exactly: 1,
+    exactly: 2,
   },
   {
     name: "charges.create",

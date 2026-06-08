@@ -88,6 +88,68 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Session payment EXECUTE flow, test mode only (PR #173, migration 0075)
+
+**Decision (2026-06-08):** Add the test-mode execution helper that takes a prepared `session_payment` row (PR #172) and creates ONE Stripe PaymentIntent on the connected account against the saved test card. The helper mirrors `runManualFeeCharge` (PR #146) almost line-for-line, adapted for `payment_charge_attempts`. Migration 0075 adds the atomic claim RPC `claim_session_payment_charge_attempt` (mirror of the manual fee `claim_manual_fee_charge_attempt` from migration 0065). The Stripe gate script + the live-mode blocker test are updated to allow exactly 2 allowlisted `paymentIntents.create` call sites (`lib/billing/manual-fee-charge.ts` and the new `lib/billing/session-payment-charge.ts`). No live mode. No receipt. No refund. No webhook business logic. No SMS or email. `manual_fee_charge_attempts` runtime untouched.
+
+**Why now:** PR #172 shipped the prepare half; this PR ships the execute half. Sequencing prepare-first / execute-second is the same pattern manual_fee used (PR #145 prepare → PR #146 execute) and lets each PR's audit focus on a smaller surface. With execution behind a (now-fourth) named CHECK constraint + the same three structural dormancy guards from PR #168, the test-mode charge path is fully end-to-end exercisable in the studio detail page without any move toward live mode.
+
+**Migration 0075 (applied to prod before this PR commits):**
+
+- `claim_session_payment_charge_attempt(p_attempt_id uuid, p_practitioner_id uuid, p_idempotency_key text) returns table(...)` with the row-level FOR UPDATE lock, conditional UPDATE on status='ready', deterministic idempotency key stamping, reason guard (`charge_reason='session_payment'`), live-mode guard (`stripe_livemode = false`), practitioner-active-in-studio gate, and the six-result vocabulary (`claimed / already_succeeded / already_pending / not_found / not_authorized / not_ready`).
+- `SECURITY DEFINER` + `search_path = pg_catalog, pg_temp`.
+- `REVOKE EXECUTE FROM public, anon, authenticated; GRANT EXECUTE TO service_role`.
+- Production verification: `proname = 'claim_session_payment_charge_attempt'`; service_role EXECUTE granted; `payment_charge_attempts` row count still 0 (table behavior unchanged by the migration; the RPC is purely a code-path addition).
+
+**Execution flow:**
+
+1. `inferStripeLivemode() === true` -> early return `live_mode_blocked`.
+2. Load the attempt row by id + studio_id. Reason guard (`charge_reason='session_payment'`), live-mode row guard, status short-circuits (`succeeded` no-op; `failed / cancelled / blocked` refused).
+3. **PR #170 current-card-authorization recheck.** `getCardAuthorizationStatus({studioId, clientId})` must return `signed_current` AND `signatureId === attemptRow.card_authorization_signature_id`. A signature that became `signed_out_of_date` between prepare and execute (because the studio edited the template) blocks the charge.
+4. Lineage recheck via `loadCardAndVerifyLineage`: card row still active + livemode=false + studio matches + signature matches + Stripe ids match the prepared attempt + studio's connected account unchanged + customer mapping intact.
+5. **Atomic claim** via `claim_session_payment_charge_attempt` RPC. The RPC takes the row lock, transitions `status='ready' -> 'pending_stripe'`, and stamps `stripe_idempotency_key = 'hone:session_payment:<attemptId>:v1'` in one transaction. Stripe is NOT called before the claim returns `claimed`.
+6. `stripe.paymentIntents.create({amount, currency: 'cad', customer, payment_method, confirm: true, off_session: true, description, metadata}, {stripeAccount, idempotencyKey})`. No `application_fee_amount`, no `receipt_email`, no `statement_descriptor_suffix`.
+7. On `succeeded`: write status='succeeded', PI id, latest_charge id, stripe_status, `charged_at=now()`. On Stripe error: write status='failed', failure_code, failure_message_safe (sanitised), `failed_at=now()`; record an `ops_alert` with severity `critical` for `authentication_required` / warning otherwise. On unknown error after claim: leave row `pending_stripe`, record a `severity=critical` ops_alert (`session_payment_needs_manual_review`), surface `needs_manual_review` to the UI.
+
+**Stripe PaymentIntent metadata (verified by source-grep tests):**
+
+```text
+hone_studio_id
+hone_client_id
+hone_session_id
+hone_appointment_id  (may be empty string if session is not appointment-linked)
+hone_session_payment_charge_attempt_id
+hone_charge_reason  (= 'session_payment')
+hone_card_authorization_signature_id
+hone_environment  (= 'test')
+```
+
+**UI changes:** `SessionPaymentPrepareCard` gains the `Run test charge` button on the existing-attempt branch when the active attempt status is `ready`. Two-click confirm pattern (first click changes the button label to `Confirm: run test charge ($X)`; second click submits with `confirm_charge='true'`) to guard against accidental double-taps. The button copy explicitly names Stripe test mode and notes "No live card is charged." On success, the panel shows the PaymentIntent + Charge ids with a note that "No receipt was sent in this PR." On failure, a clear practitioner-facing error message; raw Stripe errors are sanitised before display. The UI deliberately does NOT include any "Pay now" or "Charge card" or "Collect payment" label.
+
+**Stripe gate update (deliberate; documented):**
+
+- `scripts/check-stripe-gates.mjs`: `paymentIntents.create` allowlist expanded from 1 to 2 files (`lib/billing/manual-fee-charge.ts` + `lib/billing/session-payment-charge.ts`); `exactly: 2`. The other negative gates (`charges.create / refunds.create / checkout.sessions / set_studio_require_card_on_file`) remain at 0. `STRIPE_ALLOW_LIVE_MODE=true` remains allowlisted to `lib/stripe/server.ts` only.
+- `tests/lib/billing/live-mode-blockers.test.ts`: the per-file count assertion is now mirrored for the new file so a future PR that adds a second call site to either file is caught. The idempotency-key shape assertions cover both `hone:manual-fee:<attemptId>:v1` and `hone:session_payment:<attemptId>:v1`.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. The three structural dormancy guards from PR #168 are intact + PR #171's `payment_charge_attempts_livemode_false_check`.
+- Does NOT add or remove `STRIPE_ALLOW_LIVE_MODE` references (still 1 allowlisted in `lib/stripe/server.ts`).
+- Does NOT add `charges.create`, `refunds.create`, or `checkout.sessions` (still zero).
+- Does NOT add webhook business logic beyond the existing `setup_intent.*` arm.
+- Does NOT send a receipt email. Receipt path is deferred.
+- Does NOT support failed-row retry. A `failed / cancelled / blocked` row stays terminal; the practitioner prepares a new attempt if needed.
+- Does NOT add refund or chargeback handling.
+- Does NOT add tax calculation.
+- Does NOT change UI copy on the 7 "Test mode only" strings tracked by PR #168.
+- Does NOT add a client-portal payment UI.
+- Does NOT add an SMS or email side effect.
+- Does NOT touch `manual_fee_charge_attempts`.
+
+**Alternative considered:** ship execute + receipt + refund + webhook reconciliation in one PR. Rejected because each of those introduces its own surface area for live-mode risk; bundling them would force the audit to cover all four at once. The PR #172 / PR #173 split keeps each PR's audit focused, with the execute helper being the first PR that actually moves money in test mode.
+
+**Honest non-claims:** no live charge, no receipt, no refund, no SMS, no email, no webhook business logic, no UI copy refresh on the existing test-mode strings. Stripe gates updated deliberately to allow 2 allowlisted `paymentIntents.create` call sites. PR #181 (the next session-payment-track PR per the docs/16 §12.13 sequence) covers receipts + refunds + webhook reconciliation.
+
 ### Session payment PREPARE flow, test mode only (PR #172)
 
 **Decision (2026-06-08):** Ship the first runtime writer of `public.payment_charge_attempts`. A practitioner viewing a session detail page can now Prepare a `session_payment` charge attempt by submitting an amount + internal note. The action inserts one row with `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`. **No Stripe call. No PaymentIntent. No charge. No refund. No webhook. No SMS or email.** This PR ships the audit-row part of the runtime; the execution helper (the `runManualFeeCharge` counterpart that calls `paymentIntents.create`) is deliberately deferred. No new migration: PR #171's table is the destination; the prepare path is pure application code.

@@ -92,15 +92,36 @@ describe("Guard 3: DB CHECK constraint on manual_fee_charge_attempts", () => {
   });
 });
 
-describe("paymentIntents.create stays in the single allowlisted file", () => {
+describe("paymentIntents.create stays in the allowlisted files (PR #173 expanded to 2)", () => {
   it("lib/billing/manual-fee-charge.ts has exactly one paymentIntents.create call", () => {
     const matches = MANUAL_FEE.match(/paymentIntents\.create/g) ?? [];
     expect(matches.length).toBe(1);
   });
 
-  it("the call passes a deterministic idempotency key", () => {
+  it("lib/billing/session-payment-charge.ts has exactly one paymentIntents.create call (PR #173)", () => {
+    // PR #173 added the session payment execution helper. The
+    // Stripe gate script is updated to allow exactly 2 occurrences
+    // across the two allowlisted files; the per-file count is
+    // pinned here so a future refactor that adds a second call
+    // site to either file is caught.
+    const sessionPayment = readRepoFile(
+      "lib/billing/session-payment-charge.ts",
+    );
+    const matches = sessionPayment.match(/paymentIntents\.create/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("manual_fee uses the deterministic 'hone:manual-fee:<attemptId>:v1' idempotency key", () => {
     expect(MANUAL_FEE).toMatch(/buildIdempotencyKey/);
     expect(MANUAL_FEE).toMatch(/hone:manual-fee:\$\{attemptId\}:v1/);
+  });
+
+  it("session_payment uses the 'hone:session_payment:<attemptId>:v1' idempotency key (PR #173)", () => {
+    const sessionPayment = readRepoFile(
+      "lib/billing/session-payment-charge.ts",
+    );
+    expect(sessionPayment).toMatch(/buildIdempotencyKey/);
+    expect(sessionPayment).toMatch(/hone:session_payment:\$\{attemptId\}:v1/);
   });
 
   it("paymentIntents.create does not appear in any portal action file", () => {
