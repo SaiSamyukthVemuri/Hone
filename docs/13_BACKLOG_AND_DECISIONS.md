@@ -88,6 +88,46 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Session payment UX hardening, no schema change (PR #174)
+
+**Decision (2026-06-08):** Refactor `SessionPaymentPrepareCard` so every post-refresh state (succeeded, failed, pending_stripe, ready, cancelled, blocked) renders rich detail driven by the persisted `payment_charge_attempts` row. Widen the eligibility helper's SELECT + the `SessionPaymentExistingAttemptSummary` type to carry the post-execute fields (`stripe_payment_intent_id`, `stripe_charge_id`, `charged_at`, `failed_at`, `failure_code`, `failure_message_safe`). Add dedicated per-status subcomponents (`ReadyPanel`, `PendingPanel`, `SucceededPanel`, `FailedPanel`, `CancelledPanel`, `BlockedAttemptPanel`) so the dispatch logic is one switch on `attempt.status`. No new Stripe call. No live-mode change. No webhook. No SMS/email. No client-portal change. No migration; ledger stays at 0075.
+
+**Why:** PR #173 shipped Stripe test-mode execution but the post-refresh rendering of `succeeded` rows fell through to a bare existing-attempt panel showing only `status` label + amount + created_at. The PaymentIntent id, Charge id, charged-at timestamp, failure message, and "Stripe test mode" disclaimer were only visible during the in-session React local state (the `executeSuccess` panel) and were lost on reload. Chloe needs to be able to refresh the session detail page and immediately see what state the test charge is in and what Stripe ids the attempt produced -- that is the load-bearing readability gap PR #174 closes before receipts, refunds, or live mode are touched.
+
+**Architecture:**
+
+- `AttemptStatusPanel` is the single dispatcher; switches on `attempt.status` and returns one of the six per-status subcomponents (plus `UnknownStatusPanel` as a render-anything safety net for a future status enum value).
+- React local state (`executeSuccess`, `prepareJustSucceeded`) is now used ONLY for in-session feedback during the same render cycle as the action submit. The persisted row drives every other render path. A refresh always shows the persisted state.
+- The latest active attempt (`status in ('ready', 'pending_stripe', 'succeeded')`) takes the active-row slot; older terminal attempts surface in the `AttemptHistory` `<details>` panel.
+
+**Per-status copy contracts (each pinned by source-grep tests):**
+
+- **Ready** ("Session payment prepared" heading + amount + status + prepared timestamp + the "Stripe test mode" amber sub-panel carrying the Run test charge button with its two-click confirm).
+- **Pending Stripe** ("Test charge pending" + may-need-manual-review copy + PaymentIntent id if present; never renders the Run button).
+- **Succeeded** ("Test charge succeeded" + amount + charged_at + PaymentIntent id + Charge id + explicit "This was a Stripe test-mode charge. No live card was charged. No receipt was sent in this PR.").
+- **Failed** ("Test charge failed" + failure_message_safe + failure_code + failed_at + PaymentIntent id if present + "Prepare a new session payment attempt if you need to try again." -- failed is terminal in PR #173).
+- **Cancelled / Blocked** calm name-only panels with "prepare a new attempt" guidance; no charge actions.
+
+**Forbidden copy (pinned by negative source-grep tests):** "Pay now", "Charge card", "Collect payment", "Payment complete", "Live payment", "Receipt sent". The succeeded heading says "Test charge succeeded" specifically because live mode is not enabled.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. Three structural dormancy guards from PR #168 intact + PR #171's `payment_charge_attempts_livemode_false_check`.
+- Does NOT add or remove any `paymentIntents.create` call site (still 2, both allowlisted).
+- Does NOT add `charges.create`, `refunds.create`, or `checkout.sessions` (still zero).
+- Does NOT add webhook handler changes. Manual reconciliation for stuck `pending_stripe` rows still works via the existing PR #173 reconciliation branch on the next click of an action.
+- Does NOT add receipt email. The `SucceededPanel` explicitly notes the receipt path is deferred.
+- Does NOT add refund or cancellation actions. The `CancelledPanel` exists for future-cancel rows; the action is not in this PR.
+- Does NOT change UI copy on the 7 "Test mode only" strings tracked by PR #168.
+- Does NOT add a client-portal payment UI.
+- Does NOT add SMS or email behavior.
+- Does NOT touch `manual_fee_charge_attempts` or any shared payments code path outside the session payment surface.
+- Does NOT modify any DB table, RLS policy, RPC, or index. No new migration; latest in tree remains `0075_claim_session_payment_charge_attempt.sql`.
+
+**Alternative considered:** keep React local state as the source of truth and just enrich the in-session panels. Rejected because the entire UX problem is that local state evaporates on refresh; the cleanest fix is to make the persisted row drive every render.
+
+**Honest non-claims:** no schema change, no Stripe call added, no new ops_alert event, no live-mode flag change, no Stripe key rotation, no RLS / RPC / index work, no SMS / email behavior, no webhook handler change, no portal change. Stripe gates intact (2 allowlisted `paymentIntents.create` sites; 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string).
+
 ### Session payment EXECUTE flow, test mode only (PR #173, migration 0075)
 
 **Decision (2026-06-08):** Add the test-mode execution helper that takes a prepared `session_payment` row (PR #172) and creates ONE Stripe PaymentIntent on the connected account against the saved test card. The helper mirrors `runManualFeeCharge` (PR #146) almost line-for-line, adapted for `payment_charge_attempts`. Migration 0075 adds the atomic claim RPC `claim_session_payment_charge_attempt` (mirror of the manual fee `claim_manual_fee_charge_attempt` from migration 0065). The Stripe gate script + the live-mode blocker test are updated to allow exactly 2 allowlisted `paymentIntents.create` call sites (`lib/billing/manual-fee-charge.ts` and the new `lib/billing/session-payment-charge.ts`). No live mode. No receipt. No refund. No webhook business logic. No SMS or email. `manual_fee_charge_attempts` runtime untouched.
