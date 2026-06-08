@@ -648,6 +648,24 @@ This means every card on file today can already be charged later without the cli
 
 Replace card (PR #151) reuses the same SetupIntent path, so cards saved via either flow inherit the off-session posture.
 
+### 12.5d Session payment EXECUTE flow (PR #173, migration 0075, 2026-06-08, test mode only)
+
+PR #173 shipped the test-mode execution helper that takes a prepared `session_payment` row (PR #172) and creates ONE Stripe PaymentIntent on the connected account against the saved test card. The helper (`lib/billing/session-payment-charge.ts:runSessionPaymentCharge`) is a faithful port of `runManualFeeCharge` adapted for `payment_charge_attempts`. Migration 0075 added the atomic claim RPC `claim_session_payment_charge_attempt` (mirror of the manual fee RPC from migration 0065).
+
+The Stripe gate (`scripts/check-stripe-gates.mjs` + `tests/lib/billing/live-mode-blockers.test.ts`) was updated deliberately to allow exactly 2 allowlisted `paymentIntents.create` call sites (the manual fee charge + the new session payment charge). Every other negative gate stayed at zero. `STRIPE_ALLOW_LIVE_MODE=true` remains allowlisted to `lib/stripe/server.ts` only.
+
+The execution helper is gated by:
+1. `inferStripeLivemode() === true` early return.
+2. Row-level `stripe_livemode = false` re-check.
+3. Reason guard (`charge_reason='session_payment'`).
+4. **PR #170 current-card-authorization recheck at execution time** (the signature stamped at prepare must still match `getCardAuthorizationStatus().signatureId` AND be `kind='signed_current'`).
+5. Full card / studio / customer-mapping lineage recheck.
+6. Atomic claim via the new RPC BEFORE any Stripe call.
+7. Deterministic idempotency key `hone:session_payment:<attemptId>:v1`.
+8. On error after claim, ops_alert at appropriate severity; row stays `pending_stripe` for manual reconciliation.
+
+No live mode. No receipt. No refund. No webhook business logic added. No SMS / email. The readiness conclusion is unchanged: NOT READY FOR LIVE PAYMENTS. The receipt + refund + webhook reconciliation work is still pending (the docs/16 §11 sequence). PR #173 makes the test-mode end-to-end charge path exercisable in the studio detail page.
+
 ### 12.5c Session payment PREPARE flow (PR #172, 2026-06-08, test mode only)
 
 PR #172 shipped the first runtime writer of `public.payment_charge_attempts`. A practitioner on the session detail page (`/clients/[id]/sessions/[sessionId]`) can now Prepare a `session_payment` charge attempt by submitting an amount + internal note. The action `prepareSessionPaymentChargeAction` inserts one row with `charge_reason='session_payment'`, `status='ready'`, `stripe_livemode=false`. **No Stripe call. No PaymentIntent. No charge. No refund. No webhook. No SMS or email.**

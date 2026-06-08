@@ -10,6 +10,10 @@ import {
   SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
   SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH,
 } from "@/lib/billing/session-payment-types";
+import {
+  runSessionPaymentCharge,
+  type SessionPaymentChargeResult,
+} from "@/lib/billing/session-payment-charge";
 
 // ---------------------------------------------------------------------------
 // prepareSessionPaymentChargeAction (PR #172).
@@ -219,4 +223,125 @@ export async function prepareSessionPaymentChargeAction(
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
 
   return { ok: true, attemptId: inserted.id };
+}
+
+// ---------------------------------------------------------------------------
+// executeSessionPaymentChargeAction (PR #173).
+// ---------------------------------------------------------------------------
+//
+// Practitioner-only. Runs a TEST-MODE-ONLY Stripe PaymentIntent
+// against an existing payment_charge_attempts row whose status is
+// 'ready' (or 'pending_stripe' on the reconciliation branch).
+// The heavy lifting lives in lib/billing/session-payment-charge.ts
+// :runSessionPaymentCharge; this action is the server-action entry
+// point that:
+//
+//   * resolves the practitioner + studio from the session, so the
+//     browser cannot supply either identity
+//   * verifies the explicit confirm_charge flag (defence against
+//     accidental double-click charges via a hand-crafted form post)
+//   * forwards the attempt_id only
+//   * surfaces the helper's result to the UI
+//
+// No browser-supplied amount, card id, studio id, client id, or
+// session id is read. Every value comes from the row resolved by
+// attempt_id.
+
+export type ExecuteSessionPaymentResult =
+  | {
+      ok: true;
+      outcome: "succeeded";
+      stripePaymentIntentId: string;
+      stripeChargeId: string | null;
+    }
+  | {
+      ok: false;
+      outcome:
+        | "failed"
+        | "needs_manual_review"
+        | "blocked"
+        | "live_mode_blocked"
+        | "lineage_mismatch"
+        | "authorization_not_current"
+        | "not_found"
+        | "not_authorized";
+      error: string;
+      blockingReasons?: string[];
+      failureCode?: string | null;
+    };
+
+export async function executeSessionPaymentChargeAction(
+  formData: FormData,
+): Promise<ExecuteSessionPaymentResult> {
+  let practitionerId: string;
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("session_payment_execute_auth_failed", { err: String(err) });
+    return {
+      ok: false,
+      outcome: "not_authorized",
+      error: NOT_AUTHORIZED_ERROR,
+    };
+  }
+
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const confirmCharge = strOrEmpty(formData.get("confirm_charge"));
+  // Optional context fields used only to construct the
+  // revalidatePath after a terminal-state result. Never trusted
+  // for any execution decision; the action reads everything from
+  // the row.
+  const clientId = strOrEmpty(formData.get("client_id"));
+  const sessionId = strOrEmpty(formData.get("session_id"));
+
+  if (!attemptId) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+  if (confirmCharge !== "true") {
+    return {
+      ok: false,
+      outcome: "blocked",
+      error: "Confirm the test charge before running it.",
+    };
+  }
+
+  const result: SessionPaymentChargeResult = await runSessionPaymentCharge({
+    attemptId,
+    studioId,
+    practitionerId,
+  });
+
+  // Force the session detail page to re-render so the new status
+  // shows up immediately. We use the path the caller submitted IF
+  // the helper resolved one; otherwise revalidate the broader
+  // /clients path to cover both the session page and any session
+  // list surfaces.
+  if (clientId && sessionId) {
+    revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  } else {
+    revalidatePath("/clients");
+  }
+
+  if (result.ok) {
+    return {
+      ok: true,
+      outcome: "succeeded",
+      stripePaymentIntentId: result.stripePaymentIntentId,
+      stripeChargeId: result.stripeChargeId,
+    };
+  }
+  return {
+    ok: false,
+    outcome: result.outcome,
+    error: result.message,
+    blockingReasons: result.blockingReasons,
+    failureCode: result.failureCode ?? null,
+  };
 }

@@ -79,6 +79,28 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Session payment EXECUTE smoke (PR #173, test mode only)
+
+Run after the PR #172 prepare smoke has produced a `ready` row. The execute action calls Stripe in test mode on the connected account.
+
+1. From the same session detail page that produced the `ready` attempt in the PR #172 smoke, confirm the "Run test charge" button now appears (Stripe-test-mode amber panel under the existing-attempt block).
+2. Click "Run test charge". Confirm the button label changes to "Confirm: run test charge ($X.XX)" (two-click pattern).
+3. Click "Confirm: run test charge". Wait for the network round-trip.
+4. Confirm the green success panel appears with a `PaymentIntent: pi_...` id (and a `Charge: ch_...` id if available).
+5. SQL verify the row:
+   ```sql
+   select id, charge_reason, status, amount_cents, stripe_livemode,
+          stripe_payment_intent_id, stripe_charge_id, charged_at,
+          failed_at, failure_code, failure_message_safe, updated_at
+   from public.payment_charge_attempts
+   order by created_at desc
+   limit 5;
+   ```
+   Expected: `status='succeeded'`, `stripe_livemode=false`, `stripe_payment_intent_id` populated (`pi_...`), `stripe_charge_id` populated, `charged_at` non-null, `failed_at` null, `failure_code` null.
+6. Click "Run test charge" again. Confirm the action short-circuits (the `runSessionPaymentCharge` already-succeeded branch). No new PaymentIntent.
+7. Verify Stripe Dashboard -> Payments on the connected account: exactly one PaymentIntent + Charge.
+8. Negative path: archive the active card row in `client_payment_methods` then click "Run test charge" on a NEW ready attempt. The action should refuse with a `lineage_mismatch` outcome and a practitioner-facing message; the row should remain unchanged (status='ready', no Stripe call).
+
 ## Live payments dormancy verification (PR #168)
 
 Before running any of the payment smokes below, confirm the dormancy posture is intact:

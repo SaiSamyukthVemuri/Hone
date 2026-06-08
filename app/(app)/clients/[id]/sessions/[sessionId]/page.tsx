@@ -15,7 +15,10 @@ import { LaserEntryRow } from "@/components/entry-row";
 import { SessionInfoCard } from "@/components/session-info-card";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
-import { prepareSessionPaymentChargeAction } from "./payment-actions";
+import {
+  executeSessionPaymentChargeAction,
+  prepareSessionPaymentChargeAction,
+} from "./payment-actions";
 import { getClientTags } from "@/lib/client-tags/queries";
 import {
   getActiveTreatmentPlansForClient,
@@ -230,8 +233,10 @@ export default async function SessionDetailPage({
 
       <SessionPaymentPrepareCard
         sessionId={session.id}
+        clientId={id}
         eligibility={sessionPaymentEligibility}
         prepareAction={prepareSessionPaymentChargeAction}
+        executeAction={executeSessionPaymentChargeAction}
       />
 
       {session.modality === "electrolysis" && blockData ? (

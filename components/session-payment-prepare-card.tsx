@@ -5,6 +5,28 @@ import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-ty
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
+type PrepareResult =
+  | { ok: true; attemptId: string }
+  | { ok: false; error: string; blockingReasons?: string[] };
+
+type ExecuteResult =
+  | {
+      ok: true;
+      outcome: "succeeded";
+      stripePaymentIntentId: string;
+      stripeChargeId: string | null;
+    }
+  | {
+      ok: false;
+      outcome: string;
+      error: string;
+      blockingReasons?: string[];
+      failureCode?: string | null;
+    };
+
+type PrepareAction = (formData: FormData) => Promise<PrepareResult>;
+type ExecuteAction = (formData: FormData) => Promise<ExecuteResult>;
+
 // PR #172. Session payment PREPARE card. Practitioner-only.
 // Renders one of three states resolved server-side by
 // getSessionPaymentEligibility:
@@ -26,12 +48,6 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 //     practitioner this is a test-mode audit record only.
 //   * No client-facing surface. Sessions are practitioner-only.
 
-type Result =
-  | { ok: true; attemptId: string }
-  | { ok: false; error: string; blockingReasons?: string[] };
-
-type Action = (formData: FormData) => Promise<Result>;
-
 const CENTS_PER_DOLLAR = 100;
 
 function formatCadFromCents(cents: number | null): string {
@@ -51,17 +67,39 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function SessionPaymentPrepareCard({
   sessionId,
+  clientId,
   eligibility,
   prepareAction,
+  executeAction,
 }: {
   sessionId: string;
+  clientId: string;
   eligibility: SessionPaymentEligibility;
-  prepareAction: Action;
+  prepareAction: PrepareAction;
+  executeAction: ExecuteAction;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [blockingReasons, setBlockingReasons] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
   const [success, setSuccess] = useState<{ attemptId: string } | null>(null);
+  // PR #173. Execute-flow state. The execute action runs against an
+  // existing 'ready' active attempt (the one already in the
+  // existing-attempt branch). The two flows never overlap visually:
+  // showForm is true only when there is no active attempt, and
+  // executeReady is true only when there IS an active 'ready'
+  // attempt. The confirm step is a two-click pattern: the first
+  // click flips confirmExecute=true and changes the button label;
+  // the second click (within the same render) submits with
+  // confirm_charge='true' so a stray double-click on the original
+  // Run button cannot accidentally charge.
+  const [confirmExecute, setConfirmExecute] = useState(false);
+  const [executePending, startExecuteTransition] = useTransition();
+  const [executeError, setExecuteError] = useState<string | null>(null);
+  const [executeBlockingReasons, setExecuteBlockingReasons] = useState<string[]>([]);
+  const [executeSuccess, setExecuteSuccess] = useState<{
+    paymentIntentId: string;
+    chargeId: string | null;
+  } | null>(null);
 
   // Three rendering branches per the spec:
   //   1. Existing active attempt -> show the row; no form.
@@ -123,6 +161,104 @@ export function SessionPaymentPrepareCard({
             {STATUS_LABEL[activeAttempt.status] ?? activeAttempt.status}.
             Created <FormattedDateTime iso={activeAttempt.createdAt} />.
           </p>
+
+          {/* PR #173. Test-mode execute affordance. Visible only when
+              the active attempt is in 'ready' status; a 'pending_stripe'
+              or 'succeeded' row does NOT surface another Run button
+              because the execute action would short-circuit anyway.
+              Two-click confirm guards against accidental double-tap. */}
+          {activeAttempt.status === "ready" && !executeSuccess && (
+            <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-amber-900 dark:text-amber-200">
+                Stripe test mode
+              </p>
+              <p className="text-xs text-amber-900 dark:text-amber-200">
+                Run test charge will create a Stripe PaymentIntent on the
+                connected account in test mode against the saved test card.
+                No live card is charged.
+              </p>
+              {executeError && (
+                <p className="text-xs text-red-700 dark:text-red-400" role="alert">
+                  {executeError}
+                </p>
+              )}
+              {executeBlockingReasons.length > 0 && (
+                <ul className="flex flex-col gap-1 text-xs text-amber-900 dark:text-amber-200">
+                  {executeBlockingReasons.map((r, idx) => (
+                    <li key={idx}>{r}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={executePending}
+                  onClick={() => {
+                    setExecuteError(null);
+                    setExecuteBlockingReasons([]);
+                    if (!confirmExecute) {
+                      setConfirmExecute(true);
+                      return;
+                    }
+                    const fd = new FormData();
+                    fd.set("attempt_id", activeAttempt.id);
+                    fd.set("session_id", sessionId);
+                    fd.set("client_id", clientId);
+                    fd.set("confirm_charge", "true");
+                    startExecuteTransition(async () => {
+                      const r = await executeAction(fd);
+                      if (r.ok) {
+                        setExecuteSuccess({
+                          paymentIntentId: r.stripePaymentIntentId,
+                          chargeId: r.stripeChargeId,
+                        });
+                        setConfirmExecute(false);
+                        return;
+                      }
+                      setExecuteError(r.error);
+                      setExecuteBlockingReasons(r.blockingReasons ?? []);
+                      setConfirmExecute(false);
+                    });
+                  }}
+                  className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+                >
+                  {executePending
+                    ? "Running test charge..."
+                    : confirmExecute
+                      ? `Confirm: run test charge (${formatCadFromCents(activeAttempt.amountCents)})`
+                      : "Run test charge"}
+                </button>
+                {confirmExecute && !executePending && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmExecute(false)}
+                    className="text-xs underline text-neutral-600 dark:text-neutral-400"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {executeSuccess && (
+            <div className="mt-3 rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
+              <p className="font-medium">Test charge succeeded.</p>
+              <p className="mt-1">
+                PaymentIntent: <code>{executeSuccess.paymentIntentId}</code>
+                {executeSuccess.chargeId && (
+                  <>
+                    {" "}
+                    Charge: <code>{executeSuccess.chargeId}</code>
+                  </>
+                )}
+              </p>
+              <p className="mt-1">
+                Refresh to see the updated attempt status. No receipt was
+                sent in this PR.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
