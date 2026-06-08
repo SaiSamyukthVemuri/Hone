@@ -56,6 +56,44 @@ If a client reports a magic link that "stopped working":
 - If the email arrived within 60 minutes but the link still shows "this secure link can't be used right now," check (a) whether the token was already consumed by a prior click (the row's `consumed_at` is non-null) and (b) whether the client's row is still `status='active'` (archived clients see the same generic surface). Both are visible in `client_portal_magic_links` (look up by SHA-256 hash of the token from the URL) and `clients`.
 - A NEW magic link request invalidates nothing: prior unconsumed rows remain valid until their `expires_at`. Issuing a fresh link is always safe.
 
+## Live payments are NOT enabled
+
+Hone's Stripe charge backend is installed but dormant. **No live money has ever moved through Hone.** Three independent guards keep the live-charge path off, documented in [docs/16](./16_LIVE_PAYMENTS_READINESS.md):
+
+- Guard 1 (key gate): `lib/stripe/server.ts` rejects any `sk_live_` Stripe key unless `STRIPE_ALLOW_LIVE_MODE=true` is also set. The flag is unset in production.
+- Guard 2 (code gate): `lib/billing/manual-fee-charge.ts:runManualFeeCharge` short-circuits with `outcome: "live_mode_blocked"` if it ever sees a live-mode key.
+- Guard 3 (database gate): migration 0065 adds `CHECK (stripe_livemode = false)` on `manual_fee_charge_attempts`. The database refuses any live-mode write.
+
+Before any live charge is permitted, every box in [docs/16 §8 go/no-go checklist](./16_LIVE_PAYMENTS_READINESS.md#8-go--no-go-checklist) must be checked. The blocker list is in [docs/16 §5](./16_LIVE_PAYMENTS_READINESS.md#5-what-blocks-live-payments); the readiness status today (PR #168, 2026-06-08) is **NOT READY FOR LIVE PAYMENTS**.
+
+Quick dormancy verification:
+
+```bash
+# Confirm no studio is on live mode.
+supabase db query --linked "
+  select studio_id, stripe_livemode, stripe_charges_enabled, stripe_payouts_enabled
+  from public.studio_payment_settings;
+"
+# Expect: stripe_livemode=false for every row.
+
+# Confirm no live-mode charge attempt exists.
+supabase db query --linked "
+  select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true;
+"
+# Expect: 0.
+
+# Confirm STRIPE_ALLOW_LIVE_MODE is not "true" in production.
+# Check the Vercel dashboard: Project -> Settings -> Environment Variables.
+# Expect: STRIPE_ALLOW_LIVE_MODE absent OR explicitly "false".
+
+# Confirm the Stripe gate script still passes.
+npm run check:stripe-gates
+# Expect: PASS paymentIntents.create (1 occurrence in lib/billing/manual-fee-charge.ts).
+# Expect: PASS STRIPE_ALLOW_LIVE_MODE=true (1 occurrence in lib/stripe/server.ts).
+```
+
+If any of the above looks wrong, **stop, do not attempt a charge, and surface the issue.** Live charging without every checklist item closed is a P0 violation.
+
 ## Stripe card-on-file smoke (test mode)
 
 1. From `/settings/payments`, confirm Stripe Connect is `enabled` with `chargesEnabled=true`.

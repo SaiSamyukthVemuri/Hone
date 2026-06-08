@@ -54,6 +54,31 @@ Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
 2. Click "Deny" (or the equivalent UI button).
 3. SQL: the new `client_consent_signatures` row carries `response='denied'` and a `response_label_snapshot` describing the deny copy. The signature is real, not absent.
 
+## Live payments dormancy verification (PR #168)
+
+Before running any of the payment smokes below, confirm the dormancy posture is intact:
+
+```bash
+npm run check:stripe-gates
+# Expect:
+#   PASS paymentIntents.create -- 1 occurrence in lib/billing/manual-fee-charge.ts
+#   PASS STRIPE_ALLOW_LIVE_MODE=true -- 1 occurrence in lib/stripe/server.ts
+#   PASS refunds.create / charges.create / checkout.sessions -- 0 occurrences
+
+supabase db query --linked "
+  select stripe_livemode, count(*) from public.studio_payment_settings
+  group by stripe_livemode;
+"
+# Expect: every row stripe_livemode=false.
+
+supabase db query --linked "
+  select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true;
+"
+# Expect: 0.
+```
+
+Full readiness review + go/no-go checklist: [docs/16](./16_LIVE_PAYMENTS_READINESS.md). Conclusion (PR #168, 2026-06-08): **NOT READY FOR LIVE PAYMENTS.**
+
 ## 5. Card-on-file smoke (test mode)
 
 See [docs/11 Stripe card-on-file smoke](./11_RUNBOOK.md#stripe-card-on-file-smoke-test-mode). Use Stripe test card `4242 4242 4242 4242`.

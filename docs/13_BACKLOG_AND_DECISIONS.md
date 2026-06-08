@@ -88,6 +88,45 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Alternative considered:** Inline the future-instant check in each of the four reschedule actions. Rejected because that path is exactly how the surfaces drift apart again. The shared `assertReschedulableOriginal` helper and the shared `filterFutureSlots` helper are the only places future PRs need to look at when changing the contract.
 
+### Live payments readiness review (PR #168, docs + guardrails only)
+
+**Decision:** Conclude **NOT READY FOR LIVE PAYMENTS** after a thorough audit of every payment surface (Stripe Connect, card-on-file SetupIntent flow, card_authorization consent template, manual fee charge path, cancellation / no-show policy, receipts, refunds, webhook handlers, environment + config, existing tests). Publish the full audit + go/no-go checklist + 9-PR unblock sequence as `docs/16_LIVE_PAYMENTS_READINESS.md`. Add machine-enforcement tests that pin the three structural dormancy guards (key gate, code gate, DB CHECK) so a future refactor cannot quietly weaken any of them without explicit acknowledgement. **No code behavior changed.** No payment behavior changed. No live-mode behavior changed. No SMS change. No env change. No Stripe key rotation. No webhook secret change.
+
+**Why:** Chloe asked verbatim: "We need a way to start taking live cards now, not just test. No more cash. We have 3 clients signed up already. We need to get everything live." That's real business pressure, but live payments are a different risk category. Before flipping the live-mode flag, the team has to know exactly what is and is not ready, what blocks live money today, and what the operator can fall back to when something goes wrong. PR #168 is the audit; it does not enable anything.
+
+**Blocker summary (full detail in docs/16 §5):**
+
+- **Card authorization template wording** -- Willow's `card_authorization` consent template is titled `"test"`; no evidence in the codebase that it was reviewed by Chloe or legal counsel for Ontario law (CASL, PIPEDA, PCI obligations). Live charging on an unreviewed authorization is a dispute risk. (PR #169.)
+- **"Test mode only" UI copy in 7 locations** -- portal Replace card intro, portal card-on-file disclaimer, three strings in Settings -> Payments, two strings in the practitioner ManualFeeChargeCard. Every one of them would be factually wrong in live mode and could mislead clients into thinking a real charge is a test. (PR #170.)
+- **Stripe payouts not enabled** -- both production studios have `stripe_payouts_enabled=false`. Money would land in the Stripe balance but could not flow to a bank account. (Stripe dashboard, no Hone PR.)
+- **No receipt path** -- `paymentIntents.create` does not set `receipt_email` and Stripe Customer email is not pre-populated, so successful live charges send no automatic receipt. (PR #171.)
+- **No refund path** -- the `refunds.create` call is forbidden by `check-stripe-gates.mjs`; the dormant `stripe_refund_attempts` + `stripe_refunds` tables from migration 0032 have no code path. Operator must use the Stripe dashboard manually. (PR #172.)
+- **Cancellation / no-show policy alignment** -- the fee model today is fixed-amount in `studios.late_cancel_fee_cents` and `studios.no_show_fee_cents`, with `timing_classification = 'practitioner_asserted'`. If Chloe's real policy is window-based (e.g. "50% within 24h, 100% no-show") the structured threshold columns do not exist yet. (PR #173, only if window-based.)
+- **No test coverage on the charge path** -- `runManualFeeCharge`, the webhook handler, and the eligibility helper have no unit tests. A refactor could silently break the charge path. (PR #174.)
+- **No live-charge operator runbook** -- `docs/11` does not yet cover stuck-pending recovery, duplicate-charge proof, or interpretation of common Stripe error codes. (PR #175.)
+- **`payment_intent.*` and `charge.refunded` webhook handlers missing** -- these events are recorded with `ignoredInPhase1: true` and no business logic. Required before live charges. (PR #176.)
+- **DB CHECK blocks live writes** -- `manual_fee_charge_attempts_livemode_false_check` is the third dormancy guard. The live-mode-enablement PR must drop or replace this constraint LAST, paired with the matching code changes. (PR #177.)
+
+**Why machine-enforcement instead of just docs:** Docs go stale. The tests in `tests/lib/billing/live-mode-blockers.test.ts` pin the exact predicate of every guard (the live-mode early return, the key-gate throw message, the CHECK constraint shape, the deterministic idempotency key, the single allowlisted `paymentIntents.create` call site). A future PR that weakens any guard fails CI until docs/16 is updated in lockstep. The tests in `tests/docs/live-payments-readiness.test.ts` pin that docs/16 exists, declares the strict conclusion, names every blocker keyword, and references the 9-PR unblock sequence; docs/10, /11, /14 link back to docs/16; and docs/13 records this decision.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments.
+- Does NOT change `STRIPE_ALLOW_LIVE_MODE` default (still unset / false).
+- Does NOT modify any Stripe key, webhook secret, or env var.
+- Does NOT add or remove `paymentIntents.create` call sites (still exactly 1, in `lib/billing/manual-fee-charge.ts`).
+- Does NOT add or remove `refunds.create` call sites (still 0).
+- Does NOT change webhook handler behavior.
+- Does NOT change manual fee charge logic.
+- Does NOT change UI copy (the 7 "Test mode only" strings remain; PR #170 will remove them).
+- Does NOT change the `card_authorization` consent template (still titled "test"; PR #169 covers legal review).
+- Does NOT modify any database table, RLS policy, RPC, or index.
+- Does NOT add any SMS or email behavior.
+
+**Alternative considered:** Skip the audit and enable live mode behind a feature flag with monitoring. Rejected because (a) live payments have an irreversible failure mode (real money moves) and (b) the operator runbook + receipt + refund gaps would leave Chloe without recovery paths the first time something went wrong. A formal audit + sequential PR plan is slower but safer; live payments do not benefit from speed.
+
+**Honest non-claims:** no migration. No schema change. No payment / live-mode / SMS / webhook / RLS change. No new index. No new env var. The Stripe gates are unchanged (1 allowlisted `paymentIntents.create` in `lib/billing/manual-fee-charge.ts`, 1 allowlisted `STRIPE_ALLOW_LIVE_MODE=true` string in `lib/stripe/server.ts`).
+
 ### Consent template Live / Draft client visibility (PR #167, migration 0072)
 
 **Decision:** Add `consent_form_templates.is_live boolean NOT NULL DEFAULT false` to gate client-portal visibility separately from the practitioner-facing `status` enum (`draft / active / archived`). Backfill `is_live = (status = 'active')` so every pre-migration row keeps its current portal visibility. Add a CHECK constraint `(NOT is_live OR status = 'active')` so a draft or archived row can never be live. The portal query (`lib/consent/queries.ts:getActiveConsentTemplatesForPortal`) filters `is_live=true AND status='active'` (defense-in-depth on the CHECK); the practitioner's Settings UI sees every row regardless of `is_live` so drafts stay editable. `createConsentTemplateAction` forces `status='draft'` and `is_live=false` on insert; `setConsentTemplateStatusAction` auto-sets `is_live=false` when moving to draft or archived. A new `setConsentTemplateLiveAction` is the only path to `is_live=true` and pre-flights the requirement that the row be active first. The Settings UI gains a `Live` / `Draft` badge per row and a `Make live in client portal` / `Hide from client portal` button.
