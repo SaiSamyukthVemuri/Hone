@@ -94,6 +94,115 @@ describe("PR #174: eligibility summary widened", () => {
   });
 });
 
+describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
+  // Bug fixed by the patch: under PR #174 initial, a failed /
+  // cancelled / blocked latest row was treated as the active
+  // attempt (because the fallback `?? existingAttempts[0]` did not
+  // discriminate). That hid the Prepare form and left the
+  // practitioner with no way to try again. The patch separates
+  // "active attempt (drives main panel + blocks new prepare)"
+  // from "latest historical attempt (context)" and limits the
+  // active set to the duplicate-protection statuses that PR #172
+  // pinned in the partial-unique index
+  // payment_charge_attempts_active_session_payment_uniq.
+
+  it("declares an activeAttempt computed from ACTIVE_STATUSES only", () => {
+    expect(CARD).toMatch(
+      /const activeAttempt\s*=\s*\n?\s*eligibility\.existingAttempts\.find\(\(a\) =>\s*\n?\s*ACTIVE_STATUSES\.has\(a\.status\),?\s*\n?\s*\)\s*\?\?\s*null/,
+    );
+  });
+
+  it("the activeAttempt finder does NOT fall back to existingAttempts[0]", () => {
+    // The pre-patch shape had `?? eligibility.existingAttempts[0]
+    // ?? null` which is exactly the bug. Pin the absence of that
+    // fallback on the active-attempt expression.
+    const activeBlock =
+      CARD.match(
+        /const activeAttempt\s*=[\s\S]*?\n[ \t]*const [a-zA-Z]/,
+      )?.[0] ?? "";
+    expect(activeBlock).not.toMatch(/existingAttempts\[0\]/);
+  });
+
+  it("declares latestHistoricalAttempt separately for the previous-attempt callout", () => {
+    expect(CARD).toMatch(
+      /const latestHistoricalAttempt\s*=\s*\n?\s*eligibility\.existingAttempts\[0\]\s*\?\?\s*null/,
+    );
+  });
+
+  it("the Prepare form gates on !activeAttempt, NOT !latestAttempt", () => {
+    expect(CARD).toMatch(
+      /const showPrepareForm\s*=\s*\n?\s*eligibility\.eligible\s*&&\s*!activeAttempt\s*&&\s*!prepareJustSucceeded/,
+    );
+    expect(CARD).not.toMatch(/showPrepareForm\s*=[\s\S]{0,200}!latestAttempt/);
+  });
+
+  it("AttemptStatusPanel is only rendered for activeAttempt (not for terminal-non-success rows)", () => {
+    expect(CARD).toMatch(
+      /\{activeAttempt && \(\s*\n?\s*<AttemptStatusPanel/,
+    );
+  });
+
+  it("renders a PreviousTerminalCallout for failed / cancelled / blocked latest rows when no active attempt", () => {
+    expect(CARD).toMatch(/function PreviousTerminalCallout/);
+    expect(CARD).toMatch(/\{previousTerminalAttempt && \(\s*\n?\s*<PreviousTerminalCallout/);
+  });
+
+  it("PreviousTerminalCallout only matches terminal-retry statuses (failed / cancelled / blocked)", () => {
+    const block = blockFor("PreviousTerminalCallout");
+    expect(block).toMatch(/case "failed":/);
+    expect(block).toMatch(/case "cancelled":/);
+    expect(block).toMatch(/case "blocked":/);
+    // Active statuses are deliberately not handled here.
+    expect(block).not.toMatch(/case "ready":/);
+    expect(block).not.toMatch(/case "pending_stripe":/);
+    expect(block).not.toMatch(/case "succeeded":/);
+  });
+
+  it("declares TERMINAL_RETRY_STATUSES set with exactly failed / cancelled / blocked", () => {
+    expect(CARD).toMatch(
+      /const TERMINAL_RETRY_STATUSES = new Set\(\[\s*\n?\s*"failed",\s*\n?\s*"cancelled",\s*\n?\s*"blocked",\s*\n?\s*\]\)/,
+    );
+  });
+
+  it("the BlockedPanel (no-eligibility) branch also gates on !activeAttempt (not !latestAttempt)", () => {
+    expect(CARD).toMatch(
+      /!eligibility\.eligible && !activeAttempt && !prepareJustSucceeded/,
+    );
+  });
+});
+
+describe("PR #174 patch: failed / cancelled / blocked terminal rows do NOT block new prepare", () => {
+  // The reviewer's required behavior, pinned by source-grep. The
+  // tests above already prove the predicate uses activeAttempt;
+  // these tests pin that none of the three terminal statuses are
+  // ever in ACTIVE_STATUSES (and therefore can never satisfy the
+  // !activeAttempt gate).
+
+  it("ACTIVE_STATUSES does NOT contain 'failed'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"failed"/);
+  });
+
+  it("ACTIVE_STATUSES does NOT contain 'cancelled'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"cancelled"/);
+  });
+
+  it("ACTIVE_STATUSES does NOT contain 'blocked'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"blocked"/);
+  });
+
+  it("ACTIVE_STATUSES matches the PR #172 duplicate-protection partial unique (ready / pending_stripe / succeeded)", () => {
+    expect(CARD).toMatch(
+      /const ACTIVE_STATUSES = new Set\(\[\s*\n?\s*"ready",\s*\n?\s*"pending_stripe",\s*\n?\s*"succeeded",\s*\n?\s*\]\)/,
+    );
+  });
+});
+
 describe("PR #174: status dispatch architecture", () => {
   it("a single AttemptStatusPanel dispatches on attempt.status", () => {
     expect(CARD).toMatch(/function AttemptStatusPanel/);

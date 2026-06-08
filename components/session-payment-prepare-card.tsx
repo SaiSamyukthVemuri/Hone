@@ -96,14 +96,28 @@ const STATUS_LABEL: Record<string, string> = {
   blocked: "Blocked",
 };
 
-// The four "blocking" attempt statuses still consume the active-row
-// slot for duplicate protection but do not allow a new prepare.
-// failed and cancelled are terminal in PR #173 (no retry); a new
-// prepare requires the row to be archived / removed.
+// Active statuses match the PR #172 duplicate-protection set
+// (payment_charge_attempts_active_session_payment_uniq partial
+// unique). A row in one of these statuses takes the active-attempt
+// slot, blocks a new prepare, and drives the main status panel.
+// failed / cancelled / blocked rows are TERMINAL but DO NOT block a
+// new prepare; the PR #174 patch separates "active attempt drives
+// the main panel" from "latest historical attempt for context" so a
+// failed row no longer leaves the practitioner in a dead end (no
+// Run button + no Prepare form).
 const ACTIVE_STATUSES = new Set([
   "ready",
   "pending_stripe",
   "succeeded",
+]);
+// Terminal-non-success statuses that should NOT take over the
+// main slot but DO surface a small callout above the Prepare
+// form so the practitioner sees why they are preparing a new
+// attempt.
+const TERMINAL_RETRY_STATUSES = new Set([
+  "failed",
+  "cancelled",
+  "blocked",
 ]);
 
 export function SessionPaymentPrepareCard({
@@ -130,16 +144,29 @@ export function SessionPaymentPrepareCard({
     { attemptId: string } | null
   >(null);
 
-  // Pick the latest active attempt to feed the status panel. The
-  // eligibility helper orders by created_at DESC, so existingAttempts[0]
-  // is the most recent.
-  const latestAttempt =
-    eligibility.existingAttempts.find((a) => ACTIVE_STATUSES.has(a.status)) ??
-    eligibility.existingAttempts[0] ??
-    null;
+  // PR #174 patch. activeAttempt is the row in ready /
+  // pending_stripe / succeeded that BLOCKS a new prepare and drives
+  // the main status panel. A failed / cancelled / blocked row is
+  // NOT an active attempt; the practitioner must be free to prepare
+  // a new one. latestHistoricalAttempt is purely for the
+  // "previous attempt failed/cancelled" callout that sits above
+  // the Prepare form when there is no active attempt but at least
+  // one prior row exists.
+  const activeAttempt =
+    eligibility.existingAttempts.find((a) =>
+      ACTIVE_STATUSES.has(a.status),
+    ) ?? null;
+  const latestHistoricalAttempt =
+    eligibility.existingAttempts[0] ?? null;
+  const previousTerminalAttempt =
+    !activeAttempt &&
+    latestHistoricalAttempt &&
+    TERMINAL_RETRY_STATUSES.has(latestHistoricalAttempt.status)
+      ? latestHistoricalAttempt
+      : null;
 
   const showPrepareForm =
-    eligibility.eligible && !latestAttempt && !prepareJustSucceeded;
+    eligibility.eligible && !activeAttempt && !prepareJustSucceeded;
   const suggestedAmount =
     eligibility.session?.pricePaidCents != null
       ? formatCadFromCents(eligibility.session.pricePaidCents).replace("$", "")
@@ -161,16 +188,31 @@ export function SessionPaymentPrepareCard({
       </header>
 
       {/* PR #174. Active attempt status panel. Drives the full
-          succeeded / failed / pending / ready rendering from the
-          persisted row so a refresh on the session detail page
-          shows the same state the practitioner saw at submit. */}
-      {latestAttempt && (
+          succeeded / pending / ready rendering from the persisted
+          row so a refresh on the session detail page shows the
+          same state the practitioner saw at submit. The patch on
+          PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
+          so a failed / cancelled / blocked row does NOT take over
+          the main slot; the callout below picks up that case. */}
+      {activeAttempt && (
         <AttemptStatusPanel
-          attempt={latestAttempt}
+          attempt={activeAttempt}
           sessionId={sessionId}
           clientId={clientId}
           executeAction={executeAction}
         />
+      )}
+
+      {/* PR #174 patch. Previous-terminal callout. When the latest
+          historical attempt is failed / cancelled / blocked AND
+          there is no active attempt, surface a compact panel above
+          the Prepare form so the practitioner sees why they are
+          being asked to prepare again. The full failure detail is
+          rendered through the same per-status subcomponent the
+          main slot would use; it is just demoted to a context
+          panel here. */}
+      {previousTerminalAttempt && (
+        <PreviousTerminalCallout attempt={previousTerminalAttempt} />
       )}
 
       {/* PR #172. Just-prepared in-session confirmation. The
@@ -188,7 +230,7 @@ export function SessionPaymentPrepareCard({
         </div>
       )}
 
-      {!eligibility.eligible && !latestAttempt && !prepareJustSucceeded && (
+      {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded && (
         <BlockedPanel reasons={eligibility.blockingReasons} />
       )}
 
@@ -221,6 +263,33 @@ export function SessionPaymentPrepareCard({
       )}
     </section>
   );
+}
+
+// ---------------------------------------------------------------------------
+// PR #174 patch. Compact "previous attempt failed / cancelled /
+// blocked" callout. Sits above the Prepare form when there is no
+// active attempt but the most recent historical row is terminal-
+// non-success. Renders the same FailedPanel / CancelledPanel /
+// BlockedAttemptPanel detail so the practitioner sees the failure
+// message, code, and timestamp; the difference vs the main-slot
+// rendering is that the Prepare form continues to appear below
+// (the panel here is context, not a duplicate-protection block).
+// ---------------------------------------------------------------------------
+function PreviousTerminalCallout({
+  attempt,
+}: {
+  attempt: SessionPaymentExistingAttemptSummary;
+}) {
+  switch (attempt.status) {
+    case "failed":
+      return <FailedPanel attempt={attempt} />;
+    case "cancelled":
+      return <CancelledPanel attempt={attempt} />;
+    case "blocked":
+      return <BlockedAttemptPanel attempt={attempt} />;
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
