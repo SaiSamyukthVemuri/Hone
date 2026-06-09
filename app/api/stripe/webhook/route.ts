@@ -1,24 +1,57 @@
-// Stripe webhook endpoint (Phase 1 + card-on-file Phase 1).
+// Stripe webhook endpoint (Phase 1 + card-on-file Phase 1 + PR #179
+// payment_charge_attempts reconciliation, test mode only).
 //
 // Allowed mutations:
 //   - account.updated, capability.updated -> sync_studio_account_status
 //   - setup_intent.succeeded               -> client_payment_methods INSERT
 //     (PR #135; portal card-on-file)
+//   - PR #179 (test mode only):
+//       payment_intent.succeeded         -> reconcile to status='succeeded'
+//                                            with PI id + Charge id + charged_at,
+//                                            from {ready, pending_stripe} only.
+//                                            Critical ops_alert on terminal-state
+//                                            mismatch.
+//       payment_intent.payment_failed    -> reconcile to status='failed' from
+//                                            {ready, pending_stripe}. Critical
+//                                            ops_alert if local already
+//                                            succeeded.
+//       charge.refunded                  -> reconcile FULL refunds to
+//                                            refund_status='succeeded'. Partial
+//                                            refunds: critical ops_alert + no
+//                                            mutation. Out-of-band full
+//                                            refunds: warning ops_alert.
+//       charge.dispute.created           -> critical ops_alert ONLY (no
+//                                            mutation; no automated dispute
+//                                            response).
 //
 // Note on setup_intent.setup_failed: claimed + recorded with a small
 // summary so the audit chain is complete, but no row is written.
 // The client portal Elements form surfaces the Stripe error to the
 // visitor directly.
 //
-// Forbidden mutations in Phase 1 (these events are claimed for
+// Forbidden mutations even with PR #179 (these events are claimed for
 // idempotency and marked processed with a payload_summary, but they
 // do NOT trigger any business-logic state change):
-//   - payment_intent.*
-//   - charge.*
-//   - refund.*
-//   - charge.dispute.*
+//   - charge.* OTHER THAN refunded / dispute.created
+//   - refund.* (the refund row state mirrors charge.refunded)
+//   - charge.dispute.* OTHER THAN created
 //   - customer.*
 //   - setup_intent.* OTHER THAN succeeded / setup_failed
+//
+// PR #179 reconciliation discipline:
+//   * NO new Stripe API call. The handlers read the event payload
+//     and write to payment_charge_attempts + ops_alerts only.
+//   * event.livemode === true is the hard dormancy guard. A live
+//     event is ignored + warning ops_alert + no row mutation.
+//   * row.stripe_livemode must be false. The DB CHECK is the
+//     structural backstop; the handler also checks defensively.
+//   * Metadata mismatch (studio_id, client_id, charge_reason)
+//     against the resolved row: critical ops_alert + no mutation.
+//   * State transitions are conditional UPDATEs. A row in a
+//     terminal local state is NEVER silently flipped; mismatch
+//     fires a critical ops_alert and the row is left alone.
+//   * Handlers are reason-agnostic. They read row.charge_reason
+//     and never branch on the value.
 //
 // Webhook discipline:
 //   * Raw body via await req.text(). NEVER req.json() before
@@ -42,6 +75,12 @@ import { getStripe } from "@/lib/stripe/server";
 import { accountToStatusSnapshot } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import {
+  handlePaymentIntentSucceeded,
+  handlePaymentIntentPaymentFailed,
+  handleChargeRefunded,
+  handleChargeDisputeCreated,
+} from "@/lib/billing/payment-webhook-reconciliation";
 
 // Force Node runtime — Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -339,10 +378,38 @@ async function handleStripeEvent(
       };
     }
 
-    // Phase 1: every other event class is recorded without side effects.
-    // No appointment state changes, no payment intent / charge / refund
-    // / dispute / customer / other-setup_intent handling. The summary
-    // records the type so the audit trail is complete; no body is logged.
+    // PR #179. Test-mode reconciliation for payment_charge_attempts.
+    // Each handler is responsible for: (1) the live-mode dormancy
+    // guard (no row mutation when event.livemode=true), (2) atomic
+    // status-conditional UPDATE so a concurrent action-layer write
+    // is never silently overwritten, (3) critical ops_alerts on any
+    // local-vs-Stripe state mismatch (terminal-local-state vs
+    // succeeded-stripe, succeeded-local vs failed-stripe, partial-
+    // out-of-band refunds), (4) warning ops_alerts on softer cases
+    // (no-match, live-mode ignored, out-of-band full refund
+    // reconciled). NONE of these handlers create a PaymentIntent,
+    // Charge, Refund, SetupIntent, Checkout session, SMS, email, or
+    // touch manual_fee_charge_attempts. The webhook is a one-way
+    // mirror: Stripe says X, Hone reflects X if safe; otherwise
+    // Hone alerts and leaves the row alone.
+    case "payment_intent.succeeded": {
+      return await handlePaymentIntentSucceeded(event, ctx);
+    }
+    case "payment_intent.payment_failed": {
+      return await handlePaymentIntentPaymentFailed(event, ctx);
+    }
+    case "charge.refunded": {
+      return await handleChargeRefunded(event, ctx);
+    }
+    case "charge.dispute.created": {
+      return await handleChargeDisputeCreated(event, ctx);
+    }
+
+    // Phase 1 + PR #179: every other event class is recorded without
+    // side effects. No appointment state changes, no other payment
+    // intent / charge / refund / dispute / customer / other-setup_
+    // intent handling. The summary records the type so the audit
+    // trail is complete; no body is logged.
     default:
       return {
         eventType: event.type,

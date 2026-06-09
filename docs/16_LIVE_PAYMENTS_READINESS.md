@@ -322,6 +322,28 @@ Before live mode, the webhook must:
 
 **Suggested PR #176 (live-mode webhook handlers).**
 
+**Resolution for the payment_charge_attempts surface (PR #179, 2026-06-09).** Four handlers in `lib/billing/payment-webhook-reconciliation.ts` dispatched from `app/api/stripe/webhook/route.ts`:
+
+| Event | Behavior |
+| --- | --- |
+| `payment_intent.succeeded` | Flip `ready`/`pending_stripe` rows to `succeeded` with PI id + Charge id + `charged_at`. Critical ops_alert on terminal-local-state mismatch; warning ops_alert on no-match. |
+| `payment_intent.payment_failed` | Flip `ready`/`pending_stripe` rows to `failed` with sanitised code/message. Critical ops_alert if local row is already `succeeded`. |
+| `charge.refunded` (full) | Reconcile `pending_stripe` -> `succeeded`; reconcile out-of-band null/failed -> `succeeded` with warning `charge_refunded_out_of_band_reconciled`. |
+| `charge.refunded` (partial) | Critical ops_alert `charge_refunded_partial_out_of_band`; NO row mutation (v1 schema cannot represent partial). |
+| `charge.dispute.created` | Critical ops_alert `payment_charge_dispute_created` with charge/dispute identifiers. No automated dispute response. |
+
+The existing `stripe_events` ledger from migration 0032 provides idempotency (partial unique on `(stripe_account_id, stripe_livemode, stripe_event_id)`); no new ledger table was needed. Row-lookup order: canonical metadata `hone_payment_charge_attempt_id` -> legacy `hone_session_payment_charge_attempt_id` -> fallback by `stripe_payment_intent_id` / `stripe_charge_id`. Metadata mismatch on studio/client/reason fires a critical `stripe_webhook_metadata_mismatch` and refuses to mutate.
+
+Live-mode events are still hard-blocked at the handler entry (`event.livemode===true` -> warning ops_alert + no mutation).
+
+**Still pending for full live-payments readiness:**
+
+- `manual_fee_charge_attempts` webhook reconciliation: the legacy fee runtime still has no webhook handler. PR #171 marked the manual_fee table as the TEMPORARY runtime; live fee charging must move onto `payment_charge_attempts` first (then PR #179's handlers cover it by virtue of being reason-agnostic).
+- Live-mode handling itself: PR #179's dormancy guard returns BEFORE any mutation when `event.livemode=true`. Enabling live mode requires the existing dormancy posture to be re-evaluated and the guard relaxed deliberately (separate live-enablement PR).
+- `charge.refund.updated` / `refund.updated`: not handled. Stripe sends these after Dashboard refunds are modified (rare); the original `charge.refunded` event covers the common case.
+- Refund receipt email: a future PR may add a reason-agnostic mirror of PR #175.
+- Tax / HST, statement_descriptor, off-session SetupIntent legal review still open.
+
 ### 5.11 Stale `client_payment_methods.card_authorization_signature_id` pointer (RESOLVED by PR #177)
 
 > **Status (2026-06-08):** RESOLVED by PR #177 (migration 0077 + refresh helper + tightened charge-only gate). The original audit-history below is preserved verbatim so a future reader sees the finding shape exactly as PR #176 reported it. The resolution clause sits below the finding.

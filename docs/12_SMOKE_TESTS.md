@@ -79,6 +79,55 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Webhook reconciliation smoke (PR #179, test mode only)
+
+Run this after a full Prepare -> Run test charge -> Send receipt -> Refund chain has produced a `succeeded` row with `refund_status='succeeded'`.
+
+### Required (no special tooling)
+
+1. Open the session detail page after running the full chain.
+2. SQL verify the row is fully reconciled by the action layer (no webhook needed for this baseline):
+   ```sql
+   select id, status, stripe_payment_intent_id, stripe_charge_id, charged_at,
+          refund_status, stripe_refund_id, refunded_at, refund_amount_cents
+   from public.payment_charge_attempts
+   order by created_at desc limit 5;
+   ```
+   Expected: `status='succeeded'`, `refund_status='succeeded'`, both `stripe_*_id` populated, `charged_at` + `refunded_at` populated.
+3. SQL verify NO critical ops_alert tied to the chain:
+   ```sql
+   select event, severity, message, created_at from public.ops_alerts
+   where event in (
+     'payment_intent_succeeded_local_terminal_mismatch',
+     'payment_intent_failed_after_local_succeeded',
+     'payment_intent_failed_local_terminal_mismatch',
+     'charge_refunded_partial_out_of_band',
+     'charge_refunded_out_of_band_reconciled',
+     'payment_charge_dispute_created',
+     'stripe_webhook_metadata_mismatch',
+     'stripe_webhook_livemode_event_ignored'
+   )
+   order by created_at desc limit 10;
+   ```
+   Expected: no new critical alert tied to this chain (a `charge_refunded_out_of_band_reconciled` would be warning-severity and would only appear if a Stripe-Dashboard refund happened separately).
+
+### Optional (Stripe CLI replay)
+
+If the Stripe CLI is configured for the studio's connected account:
+
+4. Replay a `payment_intent.succeeded` event for the prepared PaymentIntent. The webhook should:
+   - return 200,
+   - leave the row unchanged (it's already `succeeded`),
+   - NOT fire a duplicate ops_alert.
+5. Replay a `charge.refunded` event. The webhook should:
+   - return 200,
+   - leave the row unchanged (already refunded),
+   - NOT fire a critical ops_alert.
+6. Test the mismatch surface: issue a partial refund via the Stripe Dashboard (test mode) against a fully-refunded charge. The webhook should fire a critical `charge_refunded_partial_out_of_band` and leave the row alone.
+7. Test the dispute surface: trigger a Stripe-test dispute (`charge.dispute.created`). The webhook should fire a critical `payment_charge_dispute_created` with charge / dispute / amount / reason in the safeDetails.
+
+If Stripe CLI is not available, document what was tested via the application path only; the webhook handler correctness is proven by the source-grep test suite + the structural idempotency guarantees of the existing `stripe_events` ledger.
+
 ## Session payment test-mode refund smoke (PR #178, test mode only)
 
 Run after a `succeeded` session_payment row exists. The row must NOT already be refunded (`refund_status IS NULL`).
