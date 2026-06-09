@@ -7,6 +7,69 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getActiveTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import type { Modality } from "@/lib/types/database";
 
+// PR #180. Loaded from a separate scope so the RPC call can use the
+// service role (the mark_appointment_complete RPC is SECURITY DEFINER
+// and expects the service-role context; calling it through the
+// authenticated supabase client would still work but mirrors the
+// pattern in app/(app)/calendar/actions.ts:markAppointmentCompleteAction).
+// Dynamic import keeps the cold-path admin client out of every
+// session-start request.
+async function maybeMarkAppointmentCompletedOnSessionStart(args: {
+  appointmentId: string;
+  studioId: string;
+  practitionerId: string;
+  status: string;
+  endsAt: string;
+}): Promise<void> {
+  // PR #180. Auto-complete contract:
+  //   * Only confirmed appointments are eligible (cancelled / no_show /
+  //     completed are explicitly skipped per the prompt's safety rules).
+  //   * Only past appointments (ends_at <= now()) are sent to the RPC
+  //     because the RPC refuses the future case anyway; calling it
+  //     would just waste a roundtrip + log a noisy error.
+  //   * Failure is fail-soft. The session has already been created;
+  //     the practitioner can still mark the appointment completed by
+  //     hand via the calendar Mark completed button (PR #180 also
+  //     restores that). A failed auto-complete is logged but never
+  //     thrown so the session-start UX is never blocked by it.
+  if (args.status !== "confirmed") {
+    return;
+  }
+  const endsAtMs = new Date(args.endsAt).getTime();
+  if (!Number.isFinite(endsAtMs) || endsAtMs > Date.now()) {
+    return;
+  }
+  try {
+    const { createAdminClient } = await import("@/lib/supabase/admin-server");
+    const admin = createAdminClient();
+    const { error: rpcErr } = await admin.rpc("mark_appointment_complete", {
+      p_appointment_id: args.appointmentId,
+      p_studio_id: args.studioId,
+      p_practitioner_id: args.practitionerId,
+    });
+    if (rpcErr) {
+      console.error(
+        JSON.stringify({
+          event: "session_start_auto_mark_complete_rpc_error",
+          appointmentId: args.appointmentId,
+          code: rpcErr.code,
+          message: rpcErr.message,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "session_start_auto_mark_complete_threw",
+        appointmentId: args.appointmentId,
+        message: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+}
+
 // Two "+ Log session" taps within this window for the same client +
 // practitioner + modality reuse the same session row. Two genuinely
 // separate visits (e.g. morning and afternoon) still produce two sessions.
@@ -49,13 +112,19 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // (studio_id, client_id) match the session being created. The form
   // value is treated as untrusted user input.
   let appointmentId: string | null = null;
+  // PR #180. The auto-complete-on-session-start path also needs the
+  // appointment's current status + ends_at; widen the SELECT here so
+  // we make the decision off a single roundtrip. The values are only
+  // consumed if appointmentId resolves successfully.
+  let appointmentStatus: string | null = null;
+  let appointmentEndsAt: string | null = null;
   if (typeof appointmentIdRaw === "string" && appointmentIdRaw.length > 0) {
     if (!UUID_RE.test(appointmentIdRaw)) {
       throw new Error("Invalid appointment id.");
     }
     const { data: appt, error: apptErr } = await supabase
       .from("appointments")
-      .select("id, studio_id, client_id, practitioner_id")
+      .select("id, studio_id, client_id, practitioner_id, status, ends_at")
       .eq("id", appointmentIdRaw)
       .maybeSingle();
     if (apptErr) {
@@ -93,6 +162,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       throw new Error("Appointment is assigned to a different practitioner.");
     }
     appointmentId = appt.id;
+    appointmentStatus = (appt.status as string | null) ?? null;
+    appointmentEndsAt = (appt.ends_at as string | null) ?? null;
   }
 
   const cutoff = new Date(Date.now() - COALESCE_MINUTES * 60 * 1000).toISOString();
@@ -194,6 +265,26 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       throw new Error(`Failed to start session: ${error.message}`);
     }
     sessionId = data.id;
+  }
+
+  // PR #180. Auto-mark the linked appointment completed BEFORE
+  // revalidate so the calendar / appointment detail page sees the
+  // new terminal status when the practitioner navigates back. The
+  // call is gated to confirmed + past appointments (skipped for
+  // cancelled / no_show / completed, and for future appointments
+  // the RPC would refuse anyway). Fail-soft: the helper logs but
+  // never throws so a failed auto-complete cannot break session
+  // start. The practitioner can still complete the appointment
+  // by hand via the calendar Mark completed button.
+  if (appointmentId && appointmentStatus && appointmentEndsAt) {
+    await maybeMarkAppointmentCompletedOnSessionStart({
+      appointmentId,
+      studioId: studio.id,
+      practitionerId: practitioner.id,
+      status: appointmentStatus,
+      endsAt: appointmentEndsAt,
+    });
+    revalidatePath(`/calendar/${appointmentId}`);
   }
 
   revalidatePath(`/clients/${clientId}`);

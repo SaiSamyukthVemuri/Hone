@@ -1,22 +1,33 @@
 "use client";
 
-// P0-1 + P0-3: practitioner-facing lifecycle actions for an appointment.
+// P0-1 + P0-3 + PR #180: practitioner-facing lifecycle actions for an
+// appointment.
 //
 // Mount this component on the appointment detail / drawer surface so a
 // practitioner can:
-//   * Mark no-show — only available after the appointment end time,
-//                    AND requires an explicit confirmation step before
-//                    invoking the server action.
+//   * Mark completed: only available after the appointment end time,
+//                     AND requires an explicit confirmation step before
+//                     invoking the server action.
+//   * Mark no-show:   same gating as Mark completed.
 //
-// Manual "Mark complete" was removed from the UI per practitioner feedback
-// (Chloe did not want to mark each appointment complete by hand). The
-// completion action and its RPC still exist server-side
-// (`markAppointmentCompleteAction` / `public.mark_appointment_complete`,
-// migration 0032) for the data model and any future automation; this
-// component just no longer surfaces a button for it. No-show routes through
-// the SECURITY DEFINER RPC `public.mark_appointment_no_show` (migration 0033)
-// via `markAppointmentNoShowAction`. Terminal-state appointments present no
-// functional action.
+// PR #180 history. Manual "Mark complete" was originally removed from
+// this surface per pre-payments feedback (Chloe did not want to mark
+// each appointment complete by hand at the time). Re-introduced by
+// PR #180 because the PR #172 session-payment prepare gate REQUIRES
+// `appointment.status='completed'` before a payment can be prepared,
+// and there was no other way for a practitioner to reach the completed
+// state from the UI. The server action `markAppointmentCompleteAction`
+// + the RPC `public.mark_appointment_complete` (migration 0032) were
+// unchanged across the removal/re-introduction cycle; this component
+// just re-surfaces the button. The auto-complete-on-session-start
+// path in `app/(app)/clients/[id]/sessions/new/actions.ts` covers the
+// common case where the practitioner immediately charts the session;
+// the explicit button covers the case where charting happens later.
+//
+// No-show routes through the SECURITY DEFINER RPC
+// `public.mark_appointment_no_show` (migration 0033) via
+// `markAppointmentNoShowAction`. Terminal-state appointments present
+// no functional action.
 //
 // On success, the component calls router.refresh() so the appointment
 // detail page re-fetches and reflects the new terminal status. The
@@ -25,7 +36,10 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { markAppointmentNoShowAction } from "./actions";
+import {
+  markAppointmentCompleteAction,
+  markAppointmentNoShowAction,
+} from "./actions";
 
 export type AppointmentLifecycleActionsProps = {
   appointmentId: string;
@@ -39,6 +53,14 @@ export type AppointmentLifecycleActionsProps = {
 // confirm intent before the row is flipped.
 const NO_SHOW_CONFIRM_MESSAGE =
   "Mark this client as a no-show? This records that the appointment was missed and cannot be undone from this screen.";
+
+// PR #180. Confirmation copy for Mark completed. Less consequential
+// than no-show (a completed appointment is the normal happy path), but
+// still asks for an explicit confirm so the practitioner does not
+// terminate a row by accident. The copy explains why the action matters
+// in the payment workflow.
+const COMPLETE_CONFIRM_MESSAGE =
+  "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting.";
 
 export function AppointmentLifecycleActions({
   appointmentId,
@@ -104,9 +126,50 @@ export function AppointmentLifecycleActions({
     });
   }
 
+  // PR #180. Mark completed. Same gating as Mark no-show (must be a
+  // confirmed appointment whose ends_at has passed); two-click confirm
+  // pattern matches the no-show action. Both buttons share `pending` so
+  // a click on one disables the other while a transition is in flight.
+  function runComplete() {
+    setError(null);
+    setHint(null);
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(COMPLETE_CONFIRM_MESSAGE);
+      if (!ok) {
+        setHint("Cancelled, no change made.");
+        window.setTimeout(() => setHint(null), 2000);
+        return;
+      }
+    }
+    const fd = new FormData();
+    fd.set("appointment_id", appointmentId);
+    startTransition(async () => {
+      const res = await markAppointmentCompleteAction(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setHint("Appointment marked completed.");
+      router.refresh();
+    });
+  }
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={pending || !hasEnded}
+          onClick={runComplete}
+          title={
+            hasEnded
+              ? "Mark this appointment completed. You will be asked to confirm."
+              : "Appointment can be marked completed after the appointment has ended."
+          }
+          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+        >
+          Mark completed
+        </button>
         <button
           type="button"
           disabled={pending || !hasEnded}
