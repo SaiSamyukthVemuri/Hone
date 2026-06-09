@@ -97,7 +97,7 @@ After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run 
 7. (Optional, demonstrates auto-complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must now be `completed` (auto-marked by `maybeMarkAppointmentCompletedOnSessionStart`). SQL verify the same way.
 
 Negative checks (each should leave the appointment status alone):
-- Future confirmed appointment: both buttons are visible but disabled. Hover title for the Mark completed button reads "Appointment can be marked completed after the start time."
+- Future confirmed appointment: both buttons are visible but disabled. Hover title for the Mark completed button reads "Appointment can be marked completed after the appointment has ended."
 - Cancelled appointment: no Mark completed button rendered (the component early-returns null for any non-confirmed status).
 - No-show appointment: no Mark completed button rendered.
 - Already completed appointment: no Mark completed button rendered.

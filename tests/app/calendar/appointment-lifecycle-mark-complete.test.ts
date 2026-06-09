@@ -66,12 +66,16 @@ describe("AppointmentLifecycleActions: Mark completed gating", () => {
   });
 
   it("the disabled-title copy matches the future-appointment guidance", () => {
+    // PR #180 patch. Original copy ("after the start time") was
+    // inaccurate -- the gate is ends_at <= now() (the RPC requires
+    // the appointment to have ENDED, not merely started). Corrected
+    // copy is pinned here.
     const block =
       COMPONENT.match(
         /onClick=\{runComplete\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
     expect(block).toMatch(
-      /Appointment can be marked completed after the start time\./,
+      /Appointment can be marked completed after the appointment has ended\./,
     );
   });
 

@@ -164,7 +164,7 @@ export function AppointmentLifecycleActions({
           title={
             hasEnded
               ? "Mark this appointment completed. You will be asked to confirm."
-              : "Appointment can be marked completed after the start time."
+              : "Appointment can be marked completed after the appointment has ended."
           }
           className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900"
         >
