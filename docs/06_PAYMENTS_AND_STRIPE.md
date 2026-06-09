@@ -158,6 +158,65 @@ The same flow handles the Replace card path. When a client already has an active
 
 Result: exactly one active card per `(studio, client)`; the prior row stays as `status='removed'` (audit trail; never hard-deleted). No PaymentIntent, no charge, no refund, no live-mode change.
 
+## 4c. Session payment refund flow (PR #178, test mode only)
+
+After a `succeeded` row exists on `public.payment_charge_attempts` (PR #173 charge path), a practitioner may issue a test-mode refund. The path is reason-agnostic: today only `session_payment` rows reach `succeeded`, but the same helper covers future `late_cancellation_fee` and `no_show_fee` rows without code change.
+
+- **Helper:** `lib/billing/payment-refund.ts:refundPaymentChargeAttempt`. Single allowlisted `refunds.create` call site in the runtime tree (gate-enforced via `scripts/check-stripe-gates.mjs`).
+- **Action:** `app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts:refundPaymentChargeAttemptAction`. Accepts `attempt_id` + optional `internal_note` + `session_id` / `client_id` for revalidate; never accepts a browser-supplied amount.
+- **UI:** `RefundSubPanel` inside `SucceededPanel` only (`components/session-payment-prepare-card.tsx`). Two-click confirm with the amount in the second button. Reads `refund_status` from the persisted row so the post-refund state survives refresh.
+- **Schema:** migration 0078 adds nine nullable refund columns to `public.payment_charge_attempts` (`refund_status`, `refund_amount_cents`, `refunded_at`, `stripe_refund_id`, `refund_failure_code`, `refund_failure_message_safe`, `refund_internal_note`, `refund_idempotency_key`, `refund_initiated_by_practitioner_id`), 5 CHECK constraints, 1 FK, 2 partial uniques, 1 partial index.
+
+Triple dormancy guard (mirrors PR #173 charge path):
+1. `inferStripeLivemode()` short-circuit at function entry. Live env → `outcome:"live_mode_blocked"` before any DB / Stripe call.
+2. Row-level CHECK `payment_charge_attempts_livemode_false_check` (the charge attempt row itself cannot be live-mode).
+3. Conditional UPDATE claim predicate: `status='succeeded' AND stripe_livemode=false AND (refund_status IS NULL OR refund_status='failed')`. The claim is the only place that flips null/failed → `pending_stripe`.
+
+Idempotency:
+- Deterministic key shape: `hone:payment_refund:<attemptId>:v1`.
+- Partial-unique `payment_charge_attempts_refund_idempotency_uniq` is the DB-level backstop.
+- Network-retry produces the same key; Stripe's 24-hour replay returns the same Refund object.
+
+Stripe call shape:
+```ts
+stripe.refunds.create(
+  {
+    charge: attempt.stripe_charge_id,
+    amount: refundAmountCents,                  // v1: equals amount_cents
+    metadata: {
+      hone_payment_charge_attempt_id,
+      hone_studio_id,
+      hone_client_id,
+      hone_charge_reason,                        // session_payment / late_cancellation_fee / no_show_fee
+      hone_environment: "test",
+    },
+  },
+  {
+    stripeAccount: attempt.stripe_account_id,   // Connect direct-charge mode
+    idempotencyKey,                              // hone:payment_refund:<attemptId>:v1
+  },
+);
+```
+
+No `application_fee_amount`. No `reverse_transfer`. No PaymentIntent / SetupIntent create. No charge create.
+
+Outcomes:
+- **succeeded** → `refund_status='succeeded'`, `stripe_refund_id`, `refunded_at`. UI shows "Test refund succeeded".
+- **Stripe terminal error** → `refund_status='failed'`, sanitised `refund_failure_code` + `refund_failure_message_safe`. UI shows "Test refund failed" with the safe message + code. May be retried.
+- **Unknown outcome (network)** → row stays `pending_stripe`; critical `payment_refund_stripe_unknown_outcome` ops_alert fires with the idempotency key. Operator decides whether to re-query Stripe.
+
+What this flow does NOT do (v1):
+- No live mode.
+- No automatic refund trigger. Manual practitioner click only.
+- No partial refund. Full amount only (the schema's `<= amount_cents` CHECK leaves room for a future partial-refund PR without migration).
+- No multiple refunds per attempt (partial-unique on `stripe_refund_id`).
+- No `charge.refunded` webhook handling. Out-of-band Stripe-dashboard refunds are NOT reconciled into Hone today.
+- No dispute (`charge.dispute.created`) handling.
+- No refund receipt email. (May land later as a reason-agnostic mirror of PR #175.)
+- No SMS.
+- No client-portal refund surface.
+- No `manual_fee_charge_attempts` touch. The dormant 0032 `stripe_refunds` / `stripe_refund_attempts` tables stay dormant; PR #178 ships refund state ON `payment_charge_attempts` directly.
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).

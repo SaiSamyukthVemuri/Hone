@@ -110,8 +110,24 @@ const RULES = [
   {
     name: "refunds.create",
     pattern: /refunds\.create/g,
-    allowlist: [],
-    exactly: 0,
+    allowlist: [
+      // PR #178 test-mode reason-agnostic refund helper. Behind:
+      // (1) the inferStripeLivemode() short-circuit at function
+      // entry, (2) the row-level CHECK constraint
+      // payment_charge_attempts_livemode_false_check (migration
+      // 0073), (3) the conditional UPDATE claim that requires
+      // status='succeeded' AND stripe_livemode=false AND
+      // (refund_status IS NULL OR refund_status='failed') before
+      // the Stripe call runs, (4) the deterministic
+      // hone:payment_refund:<attemptId>:v1 idempotency key + the
+      // partial-unique payment_charge_attempts_refund_idempotency
+      // _uniq (migration 0078). Adding a second refunds.create
+      // call site is a deliberate review event; do not loosen
+      // this allowlist without an accompanying decision in
+      // docs/13.
+      "lib/billing/payment-refund.ts",
+    ],
+    exactly: 1,
   },
   {
     name: "checkout.sessions",

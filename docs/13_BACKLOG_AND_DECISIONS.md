@@ -4,6 +4,69 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Reason-agnostic test-mode refunds on payment_charge_attempts (PR #178, migration 0078)
+
+**Decision (2026-06-09):** Add a manual, practitioner-triggered, test-mode-only refund path on the canonical `payment_charge_attempts` ledger. Reason-agnostic by construction: the helper passes the row's `charge_reason` through as Stripe-refund metadata (`hone_charge_reason`) and never branches on the reason value, so the same helper covers `session_payment` today and `late_cancellation_fee` / `no_show_fee` when those reasons start writing rows. v1 is **full-refund only**, one refund per attempt, no automatic triggers, no webhook reconciliation of `charge.refunded`, no refund receipt email, no live mode, no client-portal refund UI, no `manual_fee_charge_attempts` runtime touch.
+
+**Why:** docs/16 §5.5 was the last critical gap before the PR #175 receipt smoke could prove the full charge-and-undo loop end-to-end in test mode. PR #178 is the smallest fix that closes it: a single allowlisted `refunds.create` site behind a triple dormancy guard (env check + row-level CHECK + claim predicate), one new migration that's purely additive, and a sub-panel under the existing succeeded panel that mirrors the PR #175 receipt sub-panel pattern.
+
+**Migration 0078 (applied to prod 2026-06-09 BEFORE code merge):**
+
+```sql
+alter table public.payment_charge_attempts
+  add column if not exists refund_status text,
+  add column if not exists refund_amount_cents integer,
+  add column if not exists refunded_at timestamptz,
+  add column if not exists stripe_refund_id text,
+  add column if not exists refund_failure_code text,
+  add column if not exists refund_failure_message_safe text,
+  add column if not exists refund_internal_note text,
+  add column if not exists refund_idempotency_key text,
+  add column if not exists refund_initiated_by_practitioner_id uuid;
+-- + 5 CHECK constraints (refund_status enum; amount > 0 AND <= amount_cents;
+--   failure_code <= 100; failure_message_safe <= 1000; internal_note <= 500)
+-- + 1 FK (refund_initiated_by_practitioner_id + studio_id -> practitioners)
+-- + 2 partial uniques (stripe_refund_id; refund_idempotency_key)
+-- + 1 partial index for the "stuck pending refund" operator dashboard
+```
+
+Every column nullable. All CHECK constraints use DROP+ADD so the migration is re-runnable. Production verified: 9 columns + 6 CHECK/FK constraints + 3 indexes. No CHECK relaxed; `payment_charge_attempts_livemode_false_check` and `manual_fee_charge_attempts_livemode_false_check` both intact.
+
+**Architecture:**
+
+- `lib/billing/payment-refund.ts` (new). Exports `refundPaymentChargeAttempt({attemptId, studioId, practitionerId, internalNote?})`. Imports `server-only`. Triple dormancy guard: (1) `inferStripeLivemode()` short-circuit at entry, (2) row-level CHECK, (3) conditional UPDATE claim. Deterministic idempotency key `hone:payment_refund:<attemptId>:v1`. Stripe-refund metadata records the Hone identity tuple + `hone_charge_reason` + `hone_environment:"test"`. Unknown Stripe outcome leaves the row `pending_stripe` and records a critical `payment_refund_stripe_unknown_outcome` ops_alert with the idempotency key so an operator can reconcile.
+
+- `app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts` (extended). New `refundPaymentChargeAttemptAction`: auth-gated; accepts attempt_id + optional internal_note + session/client for revalidate; never accepts a browser-supplied amount; revalidates the session detail page on every outcome.
+
+- `components/session-payment-prepare-card.tsx` (extended). New `RefundSubPanel` renders inside `SucceededPanel` ONLY. Reads `refund_status` from the persisted row so the already-refunded / pending / failed states survive refresh. Two-click confirm with the amount in the second button. Copy strictly avoids "Live refund" / "Refund complete" / "Money returned" / "Official refund receipt".
+
+- `scripts/check-stripe-gates.mjs` (extended). `refunds.create` now `exactly: 1` with allowlist `["lib/billing/payment-refund.ts"]`. A second site is a deliberate review event.
+
+- `lib/billing/session-payment-types.ts` + `lib/billing/session-payment-eligibility.ts` (extended). Summary type carries six new refund fields; eligibility SELECT reads them.
+
+**Idempotency + duplicate safety:** claim conditional UPDATE matches on `(status='succeeded' AND stripe_livemode=false AND (refund_status IS NULL OR refund_status='failed'))`. Two concurrent clicks both pass the pre-claim SELECT; only one wins the UPDATE; the loser returns `outcome:"claim_lost"`. Partial-unique `payment_charge_attempts_refund_idempotency_uniq` is the DB-level backstop. The deterministic key shape `hone:payment_refund:<attemptId>:v1` means a Stripe SDK retry produces the same key + Stripe's 24-hour replay returns the same Refund object.
+
+**Unknown-outcome handling:** if `stripe.refunds.create` throws a non-`StripeError` (network / timeout), the row stays `pending_stripe`, a critical ops_alert fires with the idempotency key in `safeDetails`, and the helper returns `outcome:"needs_manual_review"`. The operator decides whether to re-query Stripe.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. Three structural dormancy guards intact + row CHECK + claim predicate.
+- Does NOT add or remove any `paymentIntents.create` call site (still 2, both allowlisted).
+- Does NOT add `charges.create` / `checkout.sessions` (still zero).
+- Does NOT add automatic refund triggers. Manual click only.
+- Does NOT add `charge.refunded` webhook handling. Out-of-band Stripe-dashboard refunds are NOT reconciled into Hone today.
+- Does NOT add dispute handling.
+- Does NOT add a refund receipt email. May land later as a reason-agnostic mirror of PR #175.
+- Does NOT add SMS.
+- Does NOT add a client-portal refund surface.
+- Does NOT touch `manual_fee_charge_attempts` runtime. The dormant 0032 `stripe_refunds` / `stripe_refund_attempts` tables remain dormant; PR #178 ships refund state ON `payment_charge_attempts` directly.
+- Does NOT support partial refunds in v1 (`refund_amount_cents = amount_cents`). Schema CHECK `refund_amount_cents <= amount_cents` leaves room.
+- Does NOT support multiple refunds per attempt (partial-unique on `stripe_refund_id`).
+
+**Alternative considered:** Use Stripe's `payment_intent` parameter on `refunds.create` instead of `charge`. Rejected: `stripe_charge_id` is the most specific identifier; the charge id eliminates variance over PaymentIntent lifetimes; the Stripe docs describe `charge` as the canonical refund target.
+
+**Honest non-claims:** no new Stripe call beyond the single allowlisted refund site, no live mode, no automatic refund, no dispute automation, no webhook reconciliation, no SMS, no client-portal UI, no `manual_fee_charge_attempts` touch, no live-mode CHECK relaxed. Migration ledger advanced to 0078.
+
 ### Card authorization pointer refresh on re-sign + backfill + charge-gate invariant (PR #177, migration 0077)
 
 **Decision (2026-06-08):** Close the audit-trail gap recorded as `docs/16` §5.11 (PR #176 finding) with three interdependent pieces shipped together: (1) refresh active `client_payment_methods` rows when a fresh `card_authorization` signature lands; (2) one-shot backfill of existing prod rows via migration 0077; (3) tighten the session payment charge gate so a stale `client_payment_methods.card_authorization_signature_id` pointer blocks PREPARE and EXECUTE with a clear "Client must re-sign the current card authorization for the card on file." remedy. Portal re-sign + Add Card + Replace Card paths continue to use the base PR #170 `getCardAuthorizationStatus` so a stale pointer can never deadlock the remedy.

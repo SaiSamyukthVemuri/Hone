@@ -46,6 +46,28 @@ type PrepareAction = (formData: FormData) => Promise<PrepareResult>;
 type ExecuteAction = (formData: FormData) => Promise<ExecuteResult>;
 type SendReceiptAction = (formData: FormData) => Promise<SendReceiptResult>;
 
+// PR #178. RefundPaymentActionResult shape; the card consumes the
+// discriminated union directly so the per-outcome copy on the
+// refund sub-panel can branch on the reason. Loose string union on
+// the failure outcome lets a future action-level reason render as
+// a generic failure message rather than crashing the UI.
+type RefundResult =
+  | {
+      ok: true;
+      outcome: "succeeded";
+      stripeRefundId: string;
+      refundedAt: string;
+      refundAmountCents: number;
+    }
+  | {
+      ok: false;
+      outcome: string;
+      error: string;
+      failureCode?: string | null;
+    };
+
+type RefundAction = (formData: FormData) => Promise<RefundResult>;
+
 // PR #172 + #173 + #174. Practitioner-only session payment surface.
 // Renders one of three top-level branches resolved server-side by
 // getSessionPaymentEligibility:
@@ -77,8 +99,14 @@ type SendReceiptAction = (formData: FormData) => Promise<SendReceiptResult>;
 //      prepare and execute submit/transition.
 //
 // What this card does NOT do:
-//   * No Stripe call. No PaymentIntent create. No charge. No
-//     refund. No webhook handler logic.
+//   * No Stripe charge create. The execute action talks to the
+//     allowlisted Stripe SDK call site in
+//     lib/billing/session-payment-charge.ts. The refund action
+//     talks to the SEPARATE allowlisted Stripe refund call site
+//     in lib/billing/payment-refund.ts (PR #178). The card
+//     itself is a render surface; it only dispatches to the
+//     actions it receives as props.
+//   * No webhook handler logic.
 //   * No "Pay now" affordance. No "Charge card" affordance. No
 //     "Collect payment" label. The only money-moving button is
 //     Run test charge, which is explicitly framed as Stripe test
@@ -143,6 +171,7 @@ export function SessionPaymentPrepareCard({
   prepareAction,
   executeAction,
   sendReceiptAction,
+  refundAction,
 }: {
   sessionId: string;
   clientId: string;
@@ -150,6 +179,7 @@ export function SessionPaymentPrepareCard({
   prepareAction: PrepareAction;
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
+  refundAction: RefundAction;
 }) {
   // In-session feedback only. After refresh the persisted row drives
   // the rendering; these are confined to the same page-load.
@@ -219,6 +249,7 @@ export function SessionPaymentPrepareCard({
           clientId={clientId}
           executeAction={executeAction}
           sendReceiptAction={sendReceiptAction}
+          refundAction={refundAction}
         />
       )}
 
@@ -343,12 +374,14 @@ function AttemptStatusPanel({
   clientId,
   executeAction,
   sendReceiptAction,
+  refundAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
+  refundAction: RefundAction;
 }) {
   switch (attempt.status) {
     case "ready":
@@ -369,6 +402,7 @@ function AttemptStatusPanel({
           sessionId={sessionId}
           clientId={clientId}
           sendReceiptAction={sendReceiptAction}
+          refundAction={refundAction}
         />
       );
     case "failed":
@@ -571,11 +605,13 @@ function SucceededPanel({
   sessionId,
   clientId,
   sendReceiptAction,
+  refundAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   sendReceiptAction: SendReceiptAction;
+  refundAction: RefundAction;
 }) {
   return (
     <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
@@ -610,6 +646,18 @@ function SucceededPanel({
         sessionId={sessionId}
         clientId={clientId}
         sendReceiptAction={sendReceiptAction}
+      />
+
+      {/* PR #178. Refund sub-panel. Also succeeded-only. Reads
+          refund_status from the persisted row so the
+          already-refunded / pending / failed states survive a
+          page refresh. The Refund test charge button only
+          renders when refund_status is null or 'failed'. */}
+      <RefundSubPanel
+        attempt={attempt}
+        sessionId={sessionId}
+        clientId={clientId}
+        refundAction={refundAction}
       />
     </div>
   );
@@ -727,6 +775,200 @@ function ReceiptSubPanel({
             >
               {pending ? "Sending test receipt..." : "Send test receipt"}
             </button>
+          </>
+        )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #178. Refund sub-panel for the succeeded state. Drives off
+// the persisted refund_status column (migration 0078) so the
+// already-refunded + pending + failed-refund states survive a
+// page refresh. The Refund test charge button only renders when
+// refund_status is null or 'failed' (the latter so a terminal
+// failure can be retried after the operator investigates).
+//
+// Copy contract (pinned by source-grep tests):
+//   * Header: "Refund"
+//   * Idle state: "This creates a Stripe test-mode refund for
+//     this charge. No live money is moved."
+//   * Action button: "Refund test charge"
+//   * Confirm button: "Confirm: refund test charge ($X.XX)"
+//   * Succeeded state: "Test refund succeeded."
+//   * Failed state: "Test refund failed."
+//   * Pending state: "Refund pending."
+// Forbidden copy:
+//   "Live refund" / "Refund complete" / "Money returned" /
+//   "Official refund receipt"
+// ---------------------------------------------------------------------------
+function RefundSubPanel({
+  attempt,
+  sessionId,
+  clientId,
+  refundAction,
+}: {
+  attempt: SessionPaymentExistingAttemptSummary;
+  sessionId: string;
+  clientId: string;
+  refundAction: RefundAction;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [localRefunded, setLocalRefunded] = useState<{
+    stripeRefundId: string;
+    refundedAt: string;
+    refundAmountCents: number;
+  } | null>(null);
+
+  // Persisted state takes precedence; local in-session state is
+  // for the same-render-cycle flip before the page revalidatePath
+  // catches up.
+  const persistedSucceeded = attempt.refundStatus === "succeeded";
+  const persistedPending = attempt.refundStatus === "pending_stripe";
+  const persistedFailed = attempt.refundStatus === "failed";
+
+  // v1 refunds are full-only. The amount the practitioner is
+  // confirming equals the charge amount; partial refunds may
+  // land in a future PR without changing the schema (the CHECK
+  // refund_amount_cents <= amount_cents already allows it).
+  const refundAmountFormatted = formatCadFromCents(attempt.amountCents);
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-600 dark:text-neutral-400">
+        Refund
+      </p>
+
+      {(persistedSucceeded || localRefunded) && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">Test refund succeeded.</p>
+          <p className="mt-1">
+            Amount refunded:{" "}
+            {formatCadFromCents(
+              localRefunded?.refundAmountCents ??
+                attempt.refundAmountCents ??
+                attempt.amountCents,
+            )}
+          </p>
+          {(localRefunded?.refundedAt ?? attempt.refundedAt) && (
+            <p className="mt-1">
+              Refunded:{" "}
+              <FormattedDateTime
+                iso={
+                  (localRefunded?.refundedAt ??
+                    attempt.refundedAt ??
+                    "") as string
+                }
+              />
+            </p>
+          )}
+          {(localRefunded?.stripeRefundId ?? attempt.stripeRefundId) && (
+            <p className="mt-1 font-mono">
+              Stripe refund:{" "}
+              {localRefunded?.stripeRefundId ?? attempt.stripeRefundId}
+            </p>
+          )}
+        </div>
+      )}
+
+      {persistedPending && !localRefunded && (
+        <div className="rounded-md border border-neutral-300 bg-neutral-50 p-2 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+          <p className="font-medium">Refund pending.</p>
+          <p className="mt-1">
+            This may need manual review if it stays pending. Refresh to see
+            the latest state.
+          </p>
+        </div>
+      )}
+
+      {persistedFailed && !localRefunded && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+          <p className="font-medium">Test refund failed.</p>
+          {attempt.refundFailureMessageSafe && (
+            <p className="mt-1">Failure: {attempt.refundFailureMessageSafe}</p>
+          )}
+          {attempt.refundFailureCode && (
+            <p className="mt-1 font-mono">Code: {attempt.refundFailureCode}</p>
+          )}
+          <p className="mt-1">You can try again below.</p>
+        </div>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-700 dark:text-red-400" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!persistedSucceeded &&
+        !persistedPending &&
+        !localRefunded && (
+          <>
+            <p className="text-xs text-neutral-600 dark:text-neutral-400">
+              This creates a Stripe test-mode refund for this charge. No live
+              money is moved.
+            </p>
+            {!confirming ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirming(true)}
+                className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              >
+                Refund test charge
+              </button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setError(null);
+                    const fd = new FormData();
+                    fd.set("attempt_id", attempt.id);
+                    fd.set("session_id", sessionId);
+                    fd.set("client_id", clientId);
+                    startTransition(async () => {
+                      const r = await refundAction(fd);
+                      // setLocalRefunded fires ONLY when r.ok ===
+                      // true. The needs_manual_review branch
+                      // returns ok:false so the practitioner sees
+                      // the warning and does not assume the
+                      // refund is complete.
+                      if (r.ok) {
+                        setLocalRefunded({
+                          stripeRefundId: r.stripeRefundId,
+                          refundedAt: r.refundedAt,
+                          refundAmountCents: r.refundAmountCents,
+                        });
+                        setConfirming(false);
+                        return;
+                      }
+                      setError(r.error);
+                      setConfirming(false);
+                    });
+                  }}
+                  className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {pending
+                    ? "Refunding test charge..."
+                    : `Confirm: refund test charge (${refundAmountFormatted})`}
+                </button>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setConfirming(false);
+                    setError(null);
+                  }}
+                  className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </>
         )}
     </div>

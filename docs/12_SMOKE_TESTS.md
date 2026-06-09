@@ -79,6 +79,44 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Session payment test-mode refund smoke (PR #178, test mode only)
+
+Run after a `succeeded` session_payment row exists. The row must NOT already be refunded (`refund_status IS NULL`).
+
+1. Open the session detail page that produced the `succeeded` attempt.
+2. Confirm the Succeeded panel renders with the green border.
+3. Below the Receipt sub-panel, confirm the new Refund sub-panel is visible. It must say "This creates a Stripe test-mode refund for this charge. No live money is moved." and show a "Refund test charge" button.
+4. Click `Refund test charge`. The button must flip to "Confirm: refund test charge ($X.XX)" alongside a Cancel button.
+5. Click the confirm button.
+6. Within a few seconds the sub-panel must flip to "Test refund succeeded." with `Amount refunded: $X.XX`, `Refunded: <date>`, and `Stripe refund: re_...`. The Refund test charge button must disappear.
+7. Reload the page. Confirm the same "Test refund succeeded" state survives.
+8. SQL verify the row:
+   ```sql
+   select id, charge_reason, status, refund_status, refunded_at,
+          stripe_refund_id, refund_amount_cents, stripe_livemode
+   from public.payment_charge_attempts
+   order by created_at desc
+   limit 5;
+   ```
+   Expected: `refund_status='succeeded'`, `refunded_at` populated ≈ now, `stripe_refund_id` starts with `re_`, `refund_amount_cents = amount_cents` (full refund), `stripe_livemode=false`.
+9. Verify the Stripe Dashboard (TEST mode, the studio's connected account). The original test charge must show as Refunded; a Refund object with the matching `re_...` id must exist.
+10. Confirm no critical ops_alert fired:
+    ```sql
+    select event, severity, message, created_at from public.ops_alerts
+    where event in (
+      'payment_refund_stripe_unknown_outcome',
+      'payment_refund_succeeded_write_failed',
+      'payment_refund_failed_write_failed'
+    )
+    order by created_at desc limit 5;
+    ```
+    Expected: no new alert tied to this smoke attempt.
+
+Negative paths (manual variations):
+- Click `Refund test charge` against a `pending_stripe` row: button must be absent (only succeeded rows show it).
+- Click `Refund test charge` against an already-refunded row: button must be absent (the Test refund succeeded state holds).
+- Run the action against a row whose `stripe_charge_id IS NULL`: helper returns `outcome:"missing_charge_id"`; the row's `refund_status` stays null. (This requires an in-DB scenario; not normally reachable from a clean prod row.)
+
 ## Session payment test-mode receipt smoke (PR #175 + PR #177, test mode only)
 
 **PR #177 update (2026-06-08):** PR #177 unblocked this smoke by repairing the stale `client_payment_methods.card_authorization_signature_id` pointer in prod (migration 0077) and tightening the session payment prepare/execute gate so future drifts surface with the clear "Client must re-sign the current card authorization for the card on file." remedy at prepare time. The known prod row at `My Studio` is repaired; the helper auto-maintains the pointer on every future `card_authorization` re-sign. Run the steps below against any `succeeded` session_payment row.

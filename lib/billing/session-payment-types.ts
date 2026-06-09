@@ -97,6 +97,19 @@ export type SessionPaymentExistingAttemptSummary = {
   receiptEmailTo: string | null;
   receiptFailureCode: string | null;
   receiptFailureMessageSafe: string | null;
+  // PR #178 refund-state fields. Populated by the
+  // refundPaymentChargeAttempt helper on payment_charge_attempts
+  // (migration 0078). The succeeded panel reads these so the
+  // already-refunded / pending-refund / failed-refund states
+  // survive a page refresh. v1 is full-refund-only; the
+  // refundAmountCents field is included so a future partial-
+  // refund PR does not require a type change.
+  refundStatus: string | null;
+  refundAmountCents: number | null;
+  refundedAt: string | null;
+  stripeRefundId: string | null;
+  refundFailureCode: string | null;
+  refundFailureMessageSafe: string | null;
 };
 
 // The discriminated union the prepare-card consumes. eligible=true
