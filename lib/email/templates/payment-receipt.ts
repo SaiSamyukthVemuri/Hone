@@ -88,8 +88,15 @@ const TEST_MODE_BODY_DISCLAIMER =
   "This is a Stripe test-mode receipt. No live card was charged.";
 const NO_TAX_BODY_DISCLAIMER =
   "No tax calculation is included on this receipt.";
-const NO_REFUND_BODY_DISCLAIMER =
-  "Refund handling is not enabled in Hone yet. If you have a question about this charge, contact the studio.";
+// PR #181. Updated from the pre-PR-#178 wording. PR #178 shipped a
+// test-mode manual refund path on payment_charge_attempts; the
+// receipt body must reflect that capability honestly. The truthful
+// posture stays test-mode-only: the disclaimer says the
+// PRACTITIONER (not the client) can issue a refund, mirroring the
+// Hone-only audience for the refund affordance, and stays scoped
+// to "test payment" so the test-mode posture is not blurred.
+const REFUND_AVAILABLE_BODY_DISCLAIMER =
+  "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone.";
 
 function escapeHtml(s: string): string {
   return s
@@ -159,7 +166,7 @@ export function buildPaymentReceiptEmail(
   lines.push(
     "",
     NO_TAX_BODY_DISCLAIMER,
-    NO_REFUND_BODY_DISCLAIMER,
+    REFUND_AVAILABLE_BODY_DISCLAIMER,
     "",
     `${studio} via Hone`,
   );
@@ -209,7 +216,7 @@ export function buildPaymentReceiptEmail(
           ${escapeHtml(NO_TAX_BODY_DISCLAIMER)}
         </td></tr>
         <tr><td style="padding-top:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
-          ${escapeHtml(NO_REFUND_BODY_DISCLAIMER)}
+          ${escapeHtml(REFUND_AVAILABLE_BODY_DISCLAIMER)}
         </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${studioH} via Hone

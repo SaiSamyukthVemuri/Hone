@@ -64,9 +64,20 @@ describe("buildPaymentReceiptEmail: body disclaimers (load-bearing)", () => {
     );
   });
 
-  it("text body says refund handling is not enabled yet", () => {
+  it("text body says the practitioner can issue a test-mode refund in Hone (PR #181)", () => {
+    // PR #181. Replaced the stale "Refund handling is not enabled in
+    // Hone yet" copy (pre-PR-#178) because PR #178 shipped a
+    // test-mode manual refund path. The new copy stays test-mode-
+    // truthful and names the practitioner (Hone-only audience).
     const out = buildPaymentReceiptEmail(FIXTURE);
-    expect(out.text).toMatch(/Refund handling is not enabled in Hone yet/);
+    expect(out.text).toMatch(
+      /If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone\./,
+    );
+  });
+
+  it("text body does NOT carry the stale 'Refund handling is not enabled' copy", () => {
+    const out = buildPaymentReceiptEmail(FIXTURE);
+    expect(out.text).not.toMatch(/Refund handling is not enabled/);
   });
 
   it("text body does NOT use 'tax receipt'", () => {
@@ -90,11 +101,14 @@ describe("buildPaymentReceiptEmail: body disclaimers (load-bearing)", () => {
     expect(out.text.toLowerCase()).not.toContain("payment complete");
   });
 
-  it("html body carries every disclaimer as well", () => {
+  it("html body carries every disclaimer as well (PR #181 refund copy)", () => {
     const out = buildPaymentReceiptEmail(FIXTURE);
     expect(out.html).toContain("This is a Stripe test-mode receipt");
     expect(out.html).toContain("No tax calculation");
-    expect(out.html).toMatch(/Refund handling is not enabled/);
+    expect(out.html).toMatch(
+      /If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone\./,
+    );
+    expect(out.html).not.toMatch(/Refund handling is not enabled/);
   });
 });
 

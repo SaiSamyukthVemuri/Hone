@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type {
   SessionPaymentEligibility,
   SessionPaymentExistingAttemptSummary,
@@ -181,6 +182,13 @@ export function SessionPaymentPrepareCard({
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
 }) {
+  // PR #181. router.refresh() is called after a successful prepare
+  // so the persisted row catches up immediately. Without it the
+  // local prepareJustSucceeded banner is the only feedback the
+  // practitioner has until they reload the page; the banner is
+  // truthful at that moment but stays stale once the persisted
+  // row advances past 'ready'.
+  const router = useRouter();
   // In-session feedback only. After refresh the persisted row drives
   // the rendering; these are confined to the same page-load.
   const [prepareError, setPrepareError] = useState<string | null>(null);
@@ -265,17 +273,19 @@ export function SessionPaymentPrepareCard({
         <PreviousTerminalCallout attempt={previousTerminalAttempt} />
       )}
 
-      {/* PR #172. Just-prepared in-session confirmation. The
-          persisted row is also fetched on next refresh, but this
-          panel gives immediate feedback before the user navigates
-          away. */}
-      {prepareJustSucceeded && (
+      {/* PR #172 + PR #181 patch. Just-prepared in-session
+          confirmation, scoped tightly to the brief render window
+          between the action succeeding and router.refresh()
+          re-fetching the persisted ready row. The banner is gated
+          on !activeAttempt so it disappears the moment the
+          persisted row catches up. Without the gate the banner
+          stays visible through later succeeded / refunded states
+          and conflicts with the per-status panels. */}
+      {prepareJustSucceeded && !activeAttempt && (
         <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
           <p className="font-medium">Session payment prepared.</p>
           <p className="mt-1">
-            Attempt id: <code>{prepareJustSucceeded.attemptId}</code>. No charge
-            has been run. Refresh to see the persisted state and the Run test
-            charge affordance.
+            You can now run the test charge.
           </p>
         </div>
       )}
@@ -299,6 +309,12 @@ export function SessionPaymentPrepareCard({
               const r = await prepareAction(fd);
               if (r.ok) {
                 setPrepareJustSucceeded({ attemptId: r.attemptId });
+                // PR #181. Force the persisted ready row to flow
+                // into the page so the AttemptStatusPanel takes
+                // over as the single source of truth. The local
+                // banner is gated on !activeAttempt above so it
+                // disappears as soon as the refresh completes.
+                router.refresh();
                 return;
               }
               setPrepareError(r.error);
@@ -613,11 +629,27 @@ function SucceededPanel({
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
 }) {
+  // PR #181. Top-of-card state model. When the persisted row carries
+  // refund_status='succeeded' the practitioner-facing top status MUST
+  // read "Test payment refunded", not "Test charge succeeded". Without
+  // this promotion Chloe sees a green succeeded heading + the refund
+  // sub-panel saying refunded simultaneously, which reads as
+  // "succeeded but also refunded" -- confusing. The new top heading
+  // is the SINGLE current state; sub-panels handle the rest.
+  const refunded = attempt.refundStatus === "succeeded";
   return (
-    <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
-      <p className="font-medium">Test charge succeeded.</p>
+    <div
+      className={
+        refunded
+          ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+          : "rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200"
+      }
+    >
+      <p className="font-medium">
+        {refunded ? "Test payment refunded." : "Test charge succeeded."}
+      </p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount charged: {formatCadFromCents(attempt.amountCents)}
         {attempt.chargedAt && (
           <>
             {" · "}
@@ -633,7 +665,37 @@ function SucceededPanel({
       {attempt.stripeChargeId && (
         <p className="mt-1 font-mono">Charge: {attempt.stripeChargeId}</p>
       )}
-      <p className="mt-1">
+
+      {/* PR #181. When the row is refunded, surface the refund
+          identifiers + amount + timestamp as a peer detail block
+          right under the charge details. The RefundSubPanel below
+          still renders the same data with its own heading; this
+          block makes the refund a first-class top-card concern
+          rather than something hidden inside a sub-panel. */}
+      {refunded && (
+        <>
+          <p className="mt-2 font-medium">Refund details</p>
+          {attempt.refundAmountCents != null && (
+            <p className="mt-1">
+              Amount refunded:{" "}
+              {formatCadFromCents(attempt.refundAmountCents)}
+              {attempt.refundedAt && (
+                <>
+                  {" · "}
+                  Refunded: <FormattedDateTime iso={attempt.refundedAt} />
+                </>
+              )}
+            </p>
+          )}
+          {attempt.stripeRefundId && (
+            <p className="mt-1 font-mono">
+              Refund: {attempt.stripeRefundId}
+            </p>
+          )}
+        </>
+      )}
+
+      <p className="mt-2">
         This was a Stripe test-mode charge. No live card was charged.
       </p>
 
