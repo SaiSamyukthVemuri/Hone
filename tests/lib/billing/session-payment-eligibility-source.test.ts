@@ -96,11 +96,19 @@ describe("getSessionPaymentEligibility: card + authorization gates", () => {
     );
   });
 
-  it("uses the PR #170 shared getCardAuthorizationStatus helper", () => {
+  it("uses the PR #177 charge-ready helper (which wraps the PR #170 base)", () => {
+    // PR #172 used the base PR #170 helper; PR #177 tightened the
+    // gate so a stale client_payment_methods.card_authorization
+    // _signature_id pointer (the docs/16 §5.11 finding) blocks
+    // prepare with a clear remedy. The charge-ready helper wraps
+    // the base helper and adds the card-row pointer-equality
+    // check; eligibility now imports the charge-ready variant.
     expect(HELPER).toMatch(
-      /import \{ getCardAuthorizationStatus \} from "@\/lib\/consent\/current-card-authorization"/,
+      /import \{ getChargeReadyCardAuthorizationStatus \} from "@\/lib\/consent\/current-card-authorization"/,
     );
-    expect(HELPER).toMatch(/getCardAuthorizationStatus\(\{[\s\S]{0,100}studioId/);
+    expect(HELPER).toMatch(
+      /getChargeReadyCardAuthorizationStatus\(\{[\s\S]{0,100}studioId/,
+    );
   });
 
   it("dispatches on all four card-auth kinds with distinct messages", () => {

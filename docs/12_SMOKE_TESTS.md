@@ -79,7 +79,9 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
-## Session payment test-mode receipt smoke (PR #175, test mode only)
+## Session payment test-mode receipt smoke (PR #175 + PR #177, test mode only)
+
+**PR #177 update (2026-06-08):** PR #177 unblocked this smoke by repairing the stale `client_payment_methods.card_authorization_signature_id` pointer in prod (migration 0077) and tightening the session payment prepare/execute gate so future drifts surface with the clear "Client must re-sign the current card authorization for the card on file." remedy at prepare time. The known prod row at `My Studio` is repaired; the helper auto-maintains the pointer on every future `card_authorization` re-sign. Run the steps below against any `succeeded` session_payment row.
 
 Run after a `succeeded` session_payment row exists.
 

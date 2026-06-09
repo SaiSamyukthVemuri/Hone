@@ -300,7 +300,9 @@ Before live mode, the webhook must:
 
 **Suggested PR #176 (live-mode webhook handlers).**
 
-### 5.11 Stale `client_payment_methods.card_authorization_signature_id` pointer (audit-trail blocker)
+### 5.11 Stale `client_payment_methods.card_authorization_signature_id` pointer (RESOLVED by PR #177)
+
+> **Status (2026-06-08):** RESOLVED by PR #177 (migration 0077 + refresh helper + tightened charge-only gate). The original audit-history below is preserved verbatim so a future reader sees the finding shape exactly as PR #176 reported it. The resolution clause sits below the finding.
 
 **Found:** 2026-06-08 during the PR #175 post-merge receipt smoke gating check.
 
@@ -332,6 +334,28 @@ Option 1 is the natural product behaviour (the card's authorization pointer refl
 **Impact on the PR #175 receipt smoke.** The smoke pauses here. The PR #175 patch (silent-success on DB-update-after-email-success) is already merged + deployed and is provably correct against the test suite. Driving a live Prepare → Execute → Receipt sequence in prod today would do so against a card with a stale authorization pointer, which is exactly the failure mode this finding identifies. The smoke is deferred until either (a) the pointer is repaired, (b) a new card with a fresh post-2026-06-08 signature is added, or (c) the gate is tightened per option 2.
 
 **Suggested PR #177-or-later:** "Card authorization pointer refresh on re-sign + backfill". Pair with a runtime invariant check on Prepare so a future drift is caught at gate time rather than at audit time. (This finding itself is recorded as PR #176, which is docs-only and intentionally does not ship the fix.)
+
+**Resolution (PR #177, 2026-06-08).** Three interdependent pieces shipped together:
+
+1. **Pointer refresh on re-sign** (`lib/payment-methods/refresh-card-authorization-pointer.ts`). The portal sign action (`app/portal/consent-actions.ts`) now calls `refreshActiveCardAuthorizationPointersForSignature` after a successful insert when `template.form_type === 'card_authorization'`. The helper updates every active, non-removed `client_payment_methods` row for `(studio_id, client_id, stripe_livemode=inferStripeLivemode())` so its `card_authorization_signature_id` equals the new signature id. Fail-soft on DB error (records a critical `card_authorization_pointer_refresh_failed` ops_alert; never rolls back the signature). Deliberately does NOT call any auth-status gate so the re-sign path can never deadlock against a stale pointer.
+
+2. **One-shot backfill** (`supabase/migrations/0077_refresh_card_authorization_signature_pointers.sql`). Refreshes existing prod rows so the new charge-time gate does not block known-valid current signatures. Strictly scoped: active + non-removed cards only; only when a current signed signature exists; `IS DISTINCT FROM` for idempotency. No CHECK relaxed; no Stripe; no DML against `manual_fee_charge_attempts` or `payment_charge_attempts`. Applied to prod 2026-06-08 BEFORE PR #177 code merge; NOTICE confirmed `refreshed 1 active client_payment_methods card_authorization_signature_id pointer(s)`.
+
+3. **Tightened charge-only gate** (`lib/consent/current-card-authorization.ts:getChargeReadyCardAuthorizationStatus`). New helper wraps the base PR #170 `getCardAuthorizationStatus` and adds the card-row pointer-equality check. Returns the existing four variants unchanged plus a new `signed_current_but_card_pointer_stale` variant carrying the cardId + stale pointer for debugging. Wired into `lib/billing/session-payment-eligibility.ts` (PREPARE gate) and `lib/billing/session-payment-charge.ts` (EXECUTE recheck). Practitioner-facing remedy copy: "Client must re-sign the current card authorization for the card on file."
+
+**Deadlock prevention (load-bearing):** the charge-ready helper is used ONLY by charge gates (session payment prepare + execute). Portal re-sign (`app/portal/consent-actions.ts`), Add Card / Replace Card (`app/portal/payment-method-actions.ts`), and the manual fee path (`lib/billing/manual-fee-eligibility.ts`, which already had its own pointer check) continue to use the base helper or no gate. A client with a stale pointer can self-heal by re-signing through the portal; the new refresh helper updates the pointer in the same action.
+
+**Known production row repair (verified 2026-06-08 in prod):**
+- Card row: `2cb98ea1-df0c-4900-a9ae-5366c05683b9` (studio `9d37c51a-…2bfa8` / client `910b9fb2-…25a1`)
+- Pointer BEFORE: `a6b1fdbe-5738-4a42-bfef-22703edb0dd4`
+- Pointer AFTER: `cd3af5cb-33b1-4c6b-8ebf-6170b8dfa278` ✅ (matches the latest signed_current signature)
+- Stale pointer count BEFORE: 1
+- Rows updated by migration: 1
+- Stale pointer count AFTER: 0
+
+**Live-mode invariants unchanged:** `manual_fee_charge_attempts_livemode_false_check` and `payment_charge_attempts_livemode_false_check` both intact post-migration (verified by `pg_constraint` lookup). No CHECK constraint was relaxed by 0077.
+
+**Receipt smoke unblock.** The PR #175 receipt smoke can now resume against the repaired prod row (or against any future card whose pointer is auto-maintained by the new refresh helper).
 
 ### 5.10 Manual fee DB CHECK constraint blocks live writes (intentional blocker)
 
