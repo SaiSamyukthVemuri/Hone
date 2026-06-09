@@ -300,6 +300,39 @@ Before live mode, the webhook must:
 
 **Suggested PR #176 (live-mode webhook handlers).**
 
+### 5.11 Stale `client_payment_methods.card_authorization_signature_id` pointer (audit-trail blocker)
+
+**Found:** 2026-06-08 during the PR #175 post-merge receipt smoke gating check.
+
+**State observed (prod, studio `9d37c51a-6237-42ef-b9d3-28a567c2bfa8` "My Studio", client `910b9fb2-…25a1`):**
+
+| Source | Signature id | Template version | Timestamp |
+| --- | --- | --- | --- |
+| latest `client_consent_signatures` row for the live `card_authorization` template (the one `getCardAuthorizationStatus` reads) | `cd3af5cb-33b1-4c6b-8ebf-6170b8dfa278` | 1 | signed 2026-06-08 19:37:18 |
+| `client_payment_methods.card_authorization_signature_id` (the pointer stamped when the card was added) | `a6b1fdbe-5738-4a42-bfef-22703edb0dd4` | (against a pre-2026-06-08 template) | card added 2026-06-04 01:19:54 |
+
+Live template id `70a3aede-…854b9` was created 2026-06-08 19:34:27. The card row pre-dates the current live template by ~4 days.
+
+**Why the prepare gate still passes today.** `getCardAuthorizationStatus` (`lib/consent/current-card-authorization.ts:119-127`) selects the LATEST signature for `(studio_id, client_id, template_id)` by `signed_at desc` and compares its `template_version` to the live template's `version`. It does NOT compare the latest signature id to `client_payment_methods.card_authorization_signature_id`. The helper returns `kind='signed_current'` and PR #172's eligibility helper (`lib/billing/session-payment-eligibility.ts:215-222`) lets Prepare proceed.
+
+**Why this is a live-payments blocker, not just a v1 nit.** When a charge is made against this card in live mode, the legal artefact Hone has on the card row's audit trail is the OLD signature `a6b1fdbe`. The OPERATIONAL artefact that the gate said is current is the NEW signature `cd3af5cb`. They are not the same row. If a dispute or chargeback ever asks "show me the signed authorization for the card that was charged", Hone today returns the old signature (because the card row points to it). The studio's defence rests on a signature whose body may differ from what the practitioner believes was authorized.
+
+This is acceptable in test mode where no money moves; it is not acceptable in live mode.
+
+**Proposed fix (NOT in this PR; ticketed as readiness blocker).**
+
+Two options, either or both:
+
+1. **Refresh the pointer when a fresh signature lands.** In `app/portal/consent-form-actions.ts` (or whichever path inserts `client_consent_signatures` for `form_type='card_authorization'`), after the signature row is created, run an UPDATE against `client_payment_methods` matching `(studio_id, client_id, stripe_livemode, status='active', removed_at IS NULL)` setting `card_authorization_signature_id = <new signature id>`. Backfill once with a script for any existing rows where `latest signature id != pointer`.
+
+2. **Tighten the gate at charge time.** In `getCardAuthorizationStatus`, additionally read the card row and verify `card_authorization_signature_id` is one of the signatures for the live template at the current version. Return `kind='signed_current'` only when both the latest signature is current AND the card row's pointer is current. This is stricter and matches the auditing intent.
+
+Option 1 is the natural product behaviour (the card's authorization pointer reflects the freshest signed body). Option 2 is the gate-side defence-in-depth. The recommended live-payments readiness PR sequence ships option 1 plus a one-shot backfill, then option 2 as a CHECK / runtime assertion. Both are additive: no `paymentIntents.create` change, no live-mode flag change, no migration that relaxes the existing `payment_charge_attempts_livemode_false_check`.
+
+**Impact on the PR #175 receipt smoke.** The smoke pauses here. The PR #175 patch (silent-success on DB-update-after-email-success) is already merged + deployed and is provably correct against the test suite. Driving a live Prepare → Execute → Receipt sequence in prod today would do so against a card with a stale authorization pointer, which is exactly the failure mode this finding identifies. The smoke is deferred until either (a) the pointer is repaired, (b) a new card with a fresh post-2026-06-08 signature is added, or (c) the gate is tightened per option 2.
+
+**Suggested PR #176-or-later:** "Card authorization pointer refresh on re-sign + backfill". Pair with a runtime invariant check on Prepare so a future drift is caught at gate time rather than at audit time.
+
 ### 5.10 Manual fee DB CHECK constraint blocks live writes (intentional blocker)
 
 ```sql
