@@ -331,7 +331,7 @@ Option 1 is the natural product behaviour (the card's authorization pointer refl
 
 **Impact on the PR #175 receipt smoke.** The smoke pauses here. The PR #175 patch (silent-success on DB-update-after-email-success) is already merged + deployed and is provably correct against the test suite. Driving a live Prepare → Execute → Receipt sequence in prod today would do so against a card with a stale authorization pointer, which is exactly the failure mode this finding identifies. The smoke is deferred until either (a) the pointer is repaired, (b) a new card with a fresh post-2026-06-08 signature is added, or (c) the gate is tightened per option 2.
 
-**Suggested PR #176-or-later:** "Card authorization pointer refresh on re-sign + backfill". Pair with a runtime invariant check on Prepare so a future drift is caught at gate time rather than at audit time.
+**Suggested PR #177-or-later:** "Card authorization pointer refresh on re-sign + backfill". Pair with a runtime invariant check on Prepare so a future drift is caught at gate time rather than at audit time. (This finding itself is recorded as PR #176, which is docs-only and intentionally does not ship the fix.)
 
 ### 5.10 Manual fee DB CHECK constraint blocks live writes (intentional blocker)
 
