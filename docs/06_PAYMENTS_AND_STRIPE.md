@@ -217,6 +217,37 @@ What this flow does NOT do (v1):
 - No client-portal refund surface.
 - No `manual_fee_charge_attempts` touch. The dormant 0032 `stripe_refunds` / `stripe_refund_attempts` tables stay dormant; PR #178 ships refund state ON `payment_charge_attempts` directly.
 
+## 4d. Webhook reconciliation for payment_charge_attempts (PR #179, test mode only)
+
+After a charge or refund action runs, the webhook receives the corresponding Stripe event and reconciles state onto the `payment_charge_attempts` row. PR #179 is a one-way mirror: Stripe says X, Hone reflects X if safe; otherwise Hone alerts and leaves the row alone.
+
+- **Module:** `lib/billing/payment-webhook-reconciliation.ts`. Four handlers exported: `handlePaymentIntentSucceeded`, `handlePaymentIntentPaymentFailed`, `handleChargeRefunded`, `handleChargeDisputeCreated`.
+- **Dispatched from:** `app/api/stripe/webhook/route.ts` (extended `handleStripeEvent` switch).
+- **Idempotency:** existing `stripe_events` ledger from migration 0032 + `claim_stripe_event` RPC. No new ledger needed.
+- **Live-mode dormancy guard:** every handler calls `shouldIgnoreLiveModeEvent` first. `event.livemode === true` -> warning ops_alert + return without DB write.
+- **Row lookup order:** canonical metadata `hone_payment_charge_attempt_id` -> legacy `hone_session_payment_charge_attempt_id` (PR #173 backward compat) -> fallback by `stripe_payment_intent_id` (PI events) or `stripe_charge_id` (Charge events).
+- **Metadata consistency:** `hone_studio_id`, `hone_client_id`, `hone_charge_reason` are checked against the resolved row. Mismatch -> critical `stripe_webhook_metadata_mismatch` ops_alert + NO mutation.
+
+### Event matrix
+
+| Event | When local row is `ready`/`pending_stripe` | When local row already in target state | Mismatch handling |
+| --- | --- | --- | --- |
+| `payment_intent.succeeded` | Flip to `succeeded`; stamp PI id, Charge id, `charged_at`; clear failure fields. | Idempotent; may stamp missing charge id only. | Local `failed/cancelled/blocked` -> critical `payment_intent_succeeded_local_terminal_mismatch`. No row -> warning `payment_intent_succeeded_no_match`. |
+| `payment_intent.payment_failed` | Flip to `failed`; stamp sanitised code + message + `failed_at`. | Idempotent; no field refresh. | Local `succeeded` -> critical `payment_intent_failed_after_local_succeeded`. Local `cancelled/blocked` -> critical `payment_intent_failed_local_terminal_mismatch`. |
+| `charge.refunded` (FULL) | `pending_stripe` -> `succeeded` with refund id + `refunded_at`. Out-of-band null/failed -> `succeeded` + warning `charge_refunded_out_of_band_reconciled`. | Idempotent; may stamp missing refund id only. | Partial refund (`amount_refunded < amount`) -> critical `charge_refunded_partial_out_of_band`, NO mutation. |
+| `charge.dispute.created` | No mutation. | (n/a) | Critical `payment_charge_dispute_created` with `attempt_id`, `stripe_charge_id`, `stripe_dispute_id`, `amount`, `currency`, `reason`, `status`. |
+
+### What this flow does NOT do (v1)
+
+- No new Stripe SDK call. The reconciliation module does not import `getStripe`; it reads the event payload only.
+- No live mode (live-mode events ignored at handler entry).
+- No automatic dispute response. Disputes record an ops_alert; operators handle via Stripe Dashboard.
+- No automatic refund. Practitioner click via PR #178 is still the only way to issue a Hone refund; webhook reconciles existing Stripe-side refunds.
+- No partial-refund row representation. The v1 `payment_charge_attempts` schema is full-refund-only; partials fire critical ops_alerts and leave the row alone.
+- No SMS, no email, no client-portal mutation.
+- No `manual_fee_charge_attempts` touch. The legacy fee runtime still has no webhook reconciliation.
+- No new migration. The existing `stripe_events` table + columns from migrations 0073-0078 cover every state PR #179 writes.
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).
