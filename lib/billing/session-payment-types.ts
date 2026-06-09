@@ -87,6 +87,16 @@ export type SessionPaymentExistingAttemptSummary = {
   failedAt: string | null;
   failureCode: string | null;
   failureMessageSafe: string | null;
+  // PR #175 receipt-state fields. Populated by the
+  // sendPaymentChargeReceipt helper on payment_charge_attempts
+  // (migration 0076). The succeeded panel reads these so the
+  // already-sent state survives a page refresh and so the
+  // failure detail is visible after a terminal send error.
+  receiptStatus: string | null;
+  receiptSentAt: string | null;
+  receiptEmailTo: string | null;
+  receiptFailureCode: string | null;
+  receiptFailureMessageSafe: string | null;
 };
 
 // The discriminated union the prepare-card consumes. eligible=true
