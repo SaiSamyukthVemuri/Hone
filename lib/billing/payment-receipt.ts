@@ -83,6 +83,14 @@ export type SendPaymentChargeReceiptResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // PR #175 patch. The Resend call returned ok:true but the
+        // follow-up UPDATE to stamp receipt_status='sent' failed.
+        // Returning ok:true here would lose the truthful state:
+        // the email is in the wild, the row is stuck in 'sending',
+        // and a refresh would render "in flight" forever. Surfacing
+        // this distinct outcome forces the practitioner UI to show
+        // a warning and the operator to reconcile by hand.
+        | "sent_but_record_update_failed"
         | "not_authorized"
         | "database_error";
       message: string;
@@ -377,15 +385,42 @@ export async function sendPaymentChargeReceipt(args: {
       .eq("studio_id", args.studioId)
       .eq("receipt_status", "sending");
     if (writeErr) {
-      logInternal("payment_receipt_sent_write_failed", {
+      // PR #175 patch. Pre-patch this branch only logged and
+      // returned ok:true. That was unsafe: the email landed in
+      // the wild, the row stayed at receipt_status='sending',
+      // future refresh showed "in flight" forever, future sends
+      // were blocked by the stuck claim, AND no ops_alert was
+      // created. The truthful state is "we sent the email but
+      // we could not persist that fact" -- surface it as a
+      // distinct non-clean outcome and force the operator to
+      // reconcile by hand before any further action.
+      logInternal("payment_receipt_sent_record_update_failed", {
         code: writeErr.code,
         message: writeErr.message,
         attemptId: attempt.id,
       });
-      // The email landed; the only operator harm is that the
-      // UI will not immediately show "sent." Surface the
-      // success anyway and let the next page render reconcile
-      // by reading the DB row.
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_receipt_sent_record_update_failed",
+        message:
+          "Receipt email may have been delivered, but Hone failed to persist receipt_status='sent'. Manual reconciliation required before retrying.",
+        studioId: args.studioId,
+        clientId: attempt.client_id,
+        route: "lib/billing/payment-receipt:sendPaymentChargeReceipt",
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          receipt_email_to: clientEmail,
+          db_code: writeErr.code ?? null,
+        },
+      });
+      return {
+        ok: false,
+        reason: "sent_but_record_update_failed",
+        message:
+          "The receipt email may have been sent, but Hone could not record it. Do not send again until this is checked.",
+        emailTo: clientEmail,
+      };
     }
     return { ok: true, status: "sent", emailTo: clientEmail };
   }

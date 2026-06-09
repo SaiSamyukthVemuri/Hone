@@ -197,6 +197,41 @@ describe("PR #175: forbidden copy on the receipt surface", () => {
   });
 });
 
+describe("PR #175 patch: localSent is set ONLY when r.ok === true", () => {
+  // The pre-patch UI flipped localSent on every send result and
+  // showed "Receipt already sent to <email>" as soon as the
+  // action returned, regardless of whether the row was actually
+  // persisted. The patched flow only sets localSent when r.ok
+  // is true. The sent_but_record_update_failed branch returns
+  // ok:false with a warning message; that message must surface
+  // in the error slot, not in the success panel.
+
+  it("setLocalSent only fires on r.ok === true", () => {
+    const block = blockFor("ReceiptSubPanel");
+    // Pin the if(r.ok) guard around setLocalSent.
+    expect(block).toMatch(
+      /if \(r\.ok\)\s*\{\s*\n?\s*setLocalSent\(\{ emailTo: r\.emailTo \}\)/,
+    );
+  });
+
+  it("non-ok results call setError(r.error) instead of setLocalSent", () => {
+    const block = blockFor("ReceiptSubPanel");
+    // The else branch surfaces the warning via setError. The
+    // sent_but_record_update_failed warning message is built
+    // by the action layer; the UI just renders it as-is in the
+    // error slot.
+    expect(block).toMatch(/setError\(r\.error\)/);
+  });
+
+  it("the patch comment explains the load-bearing invariant", () => {
+    // A future refactor that loses the if(r.ok) gate must be a
+    // deliberate decision; the comment block is the search
+    // anchor for the next operator audit.
+    const block = blockFor("ReceiptSubPanel");
+    expect(block).toMatch(/setLocalSent fires ONLY when[\s\S]{0,100}r\.ok === true/);
+  });
+});
+
 describe("PR #175: receipt surface is succeeded-only (negative checks)", () => {
   it("ReadyPanel does NOT render <ReceiptSubPanel", () => {
     const block = blockFor("ReadyPanel");

@@ -387,6 +387,11 @@ export type SendPaymentReceiptActionResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // PR #175 patch. The email landed but the row UPDATE to
+        // receipt_status='sent' failed; the UI surfaces a warning
+        // and tells the practitioner not to send again until an
+        // operator reconciles by hand.
+        | "sent_but_record_update_failed"
         | "not_authorized"
         | "database_error";
       error: string;

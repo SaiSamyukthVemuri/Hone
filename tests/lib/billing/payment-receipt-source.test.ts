@@ -179,6 +179,58 @@ describe("sendPaymentChargeReceipt: write on terminal failure", () => {
   });
 });
 
+describe("PR #175 patch: sent-email but DB-update-failed safety", () => {
+  // Bug fixed by the patch: the initial PR returned ok:true even
+  // when the post-send UPDATE to stamp receipt_status='sent'
+  // failed. That lost the truthful state -- the email was in the
+  // wild, the row stayed at 'sending', and no ops_alert was
+  // recorded. The patch returns a distinct sent_but_record_update
+  // _failed outcome with a critical-severity ops_alert.
+
+  it("the result type declares the new sent_but_record_update_failed reason", () => {
+    expect(HELPER).toMatch(/"sent_but_record_update_failed"/);
+  });
+
+  it("the post-send UPDATE error branch returns ok:false with sent_but_record_update_failed", () => {
+    // The write-failure block must NOT return ok:true. Pin the
+    // shape: when writeErr is truthy on the success-path UPDATE,
+    // the helper returns {ok:false, reason:'sent_but_record_update_failed'}.
+    expect(HELPER).toMatch(
+      /if \(writeErr\)\s*\{[\s\S]{0,2000}reason:\s*"sent_but_record_update_failed"[\s\S]{0,1000}\}/,
+    );
+  });
+
+  it("the failure-message warns the operator NOT to send again until reconciled", () => {
+    expect(HELPER).toMatch(
+      /The receipt email may have been sent, but Hone could not record it\. Do not send again until this is checked\./,
+    );
+  });
+
+  it("records a critical-severity ops_alert for the operator", () => {
+    expect(HELPER).toMatch(
+      /severity:\s*"critical"[\s\S]{0,400}event:\s*"payment_receipt_sent_record_update_failed"/,
+    );
+  });
+
+  it("the ops_alert safeDetails carries attempt_id + receipt_email_to + db_code", () => {
+    const block =
+      HELPER.match(
+        /payment_receipt_sent_record_update_failed[\s\S]{0,2000}safeDetails:\s*\{[\s\S]{0,400}\}/,
+      )?.[0] ?? "";
+    expect(block).toMatch(/attempt_id:\s*attempt\.id/);
+    expect(block).toMatch(/receipt_email_to:\s*clientEmail/);
+    expect(block).toMatch(/db_code:\s*writeErr\.code/);
+  });
+
+  it("returns the recipient address on the failed-record outcome (so the UI can name it)", () => {
+    const block =
+      HELPER.match(
+        /reason:\s*"sent_but_record_update_failed"[\s\S]{0,1000}/,
+      )?.[0] ?? "";
+    expect(block).toMatch(/emailTo:\s*clientEmail/);
+  });
+});
+
 describe("sendPaymentChargeReceipt: NO new Stripe / SMS / live-mode", () => {
   it("does NOT call paymentIntents.create", () => {
     expect(HELPER).not.toMatch(/paymentIntents\.create/);
@@ -247,6 +299,10 @@ describe("sendPaymentChargeReceiptAction (server action)", () => {
       '"studio_missing"',
       '"send_failed_retryable"',
       '"send_failed_terminal"',
+      // PR #175 patch. The action's outcome union mirrors the
+      // helper's; this literal must appear so the UI can switch
+      // on the discriminated reason and surface the warning.
+      '"sent_but_record_update_failed"',
       '"not_authorized"',
       '"database_error"',
     ]) {

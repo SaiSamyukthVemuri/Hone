@@ -709,6 +709,13 @@ function ReceiptSubPanel({
                 fd.set("client_id", clientId);
                 startTransition(async () => {
                   const r = await sendReceiptAction(fd);
+                  // PR #175 patch. setLocalSent fires ONLY when
+                  // r.ok === true. The sent_but_record_update
+                  // _failed branch returns ok:false and a
+                  // warning message; surfacing it as "already
+                  // sent" via local state would let the
+                  // practitioner walk away thinking the row is
+                  // persisted when it is not.
                   if (r.ok) {
                     setLocalSent({ emailTo: r.emailTo });
                     return;
