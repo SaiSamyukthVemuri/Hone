@@ -4,6 +4,71 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Calendar feed token hash-at-rest, phase 1 (PR #182, migration 0079)
+
+**Decision (2026-06-09):** Move the calendar feed route's credential check from raw-token equality to SHA-256 hash equality. Migration 0079 adds a nullable `practitioners.calendar_feed_token_hash` column, backfills it from existing raw tokens via `extensions.digest(...)`, adds a 64-hex-char CHECK + a partial unique index on it. The runtime feed route now hashes the URL token and looks up by `calendar_feed_token_hash`. Rotation writes BOTH the raw column and the hash for phase 1; phase 2 will null the raw column once the settings UI is refactored to stop rendering the URL from a refreshed page.
+
+**Why:** `docs/13` security backlog flagged `Hashed practitioners.calendar_feed_token | Currently stored raw. DB compromise yields usable tokens.` PR #182 closes that gap for the runtime route + future rotations without breaking existing in-the-wild feed URLs. Expand-contract phasing keeps the rollout zero-downtime: migration applied first, backfilled hashes guarantee existing URLs resolve through the deploy boundary, raw column remains until phase 2.
+
+**Migration 0079 (applied to prod 2026-06-09 BEFORE code merge):**
+
+```sql
+alter table public.practitioners
+  add column if not exists calendar_feed_token_hash text;
+
+update public.practitioners
+   set calendar_feed_token_hash = encode(extensions.digest(calendar_feed_token, 'sha256'), 'hex')
+ where calendar_feed_token is not null
+   and calendar_feed_token_hash is null;
+
+-- + practitioners_calendar_feed_token_hash_check (null OR ^[a-f0-9]{64}$)
+-- + partial unique practitioners_calendar_feed_token_hash_uniq on (hash) WHERE hash IS NOT NULL
+```
+
+Verified in prod: 2 practitioners had raw tokens; both now have well-formed 64-hex hashes. Zero raw-without-hash rows, zero hash-without-raw rows. Live-mode CHECKs on payment tables (`manual_fee_charge_attempts_livemode_false_check`, `payment_charge_attempts_livemode_false_check`) intact.
+
+**Architecture:**
+
+- `lib/calendar-feed/token.ts` (new). Two exported functions: `generateCalendarFeedToken()` (32 bytes via `crypto.randomBytes` base64url-encoded, 256 bits entropy, 43 chars) and `hashCalendarFeedToken(token)` (SHA-256 hex, 64 lowercase chars). `import "server-only"`. The pgcrypto-compat tests pin the empty-string + `'abc'` NIST vectors so a future encoding drift is caught.
+
+- `app/calendar-feed/[token]/route.ts` (extended). Imports `hashCalendarFeedToken`. The URL token is hashed BEFORE the practitioner SELECT. Lookup is now `.eq("calendar_feed_token_hash", tokenHash)`. The raw `calendar_feed_token` is no longer in the SELECT list, so a database read that leaks a row to logs does not include the raw bearer token. The hash is never echoed back to the client; the response is still ICS or a generic `Not found`. All other privacy / cache-control / window behaviour is unchanged (30-day backward window, `private, no-store, max-age=0, must-revalidate`, generic 404 on every lookup failure including malformed tokens shorter than 16 chars).
+
+- `app/(app)/settings/profile/actions.ts` (extended). Imports the shared helpers. `rotateCalendarFeedTokenAction` writes BOTH `calendar_feed_token: token` AND `calendar_feed_token_hash: tokenHash` on the same UPDATE. The success return shape still carries only `{ ok: true, token }`; the hash is never returned to the browser. `clearCalendarFeedTokenAction` nulls BOTH columns.
+
+**Phase 1 raw-column retention (deliberate):**
+
+The settings UI (`app/(app)/settings/profile/CalendarFeedCard.tsx`) renders the existing feed URL by reading `practitioner.calendar_feed_token` on page render. Nulling the raw column in this PR would silently break that surface on the deploy boundary. Phase 1 keeps both columns populated; the migration documents this explicitly; the action's docblock and `tests/app/settings/profile/calendar-feed-rotation.test.ts:"the rotation action STILL writes calendar_feed_token (phase 1 transitional)"` test pin it so a future refactor cannot silently strip the raw write without also moving the UI off it.
+
+**Phase 2 plan (separate PR, NOT in #182):**
+
+1. Refactor `CalendarFeedCard.tsx` to display the URL only at rotation time. Page render shows "Calendar feed is enabled" without the URL.
+2. The launch-page readiness check (`hasFeedToken`) switches to `calendar_feed_token_hash is not null` instead of reading the raw column.
+3. New migration nulls every `calendar_feed_token` row in one UPDATE.
+4. Subsequent migration drops the raw column + its partial unique entirely.
+
+**Safety properties (phase 1):**
+
+- Raw tokens are NEVER logged. Existing structured error logs carry only the Postgres error code.
+- Hashes are NEVER returned to the browser. The route's response is ICS or a generic `Not found`. The rotation action's response carries only the raw token (which the caller already knows because they just minted it).
+- The feed route's lookup column changed; the failure mode (generic 404) is unchanged whether the token is malformed, missing, has the wrong shape, or is well-formed but does not match any row. No timing-or-content side channel revealing partial matches.
+- The DB CHECK on the hash column structurally refuses any non-`^[a-f0-9]{64}$` value, so a programmer error writing the wrong digest is caught.
+- Existing in-the-wild feed URLs continue working because the backfill computed the same SHA-256 hex the runtime route now computes.
+
+**What this PR does NOT do:**
+
+- Does NOT enable live payments. No live-mode CHECK relaxed (verified post-migration via `pg_constraint`).
+- Does NOT add any new Stripe SDK call site (`paymentIntents.create` stays at 2 allowlisted, `refunds.create` stays at 1 allowlisted, `charges.create`/`checkout.sessions` stay at 0, `STRIPE_ALLOW_LIVE_MODE=true` allowlist unchanged).
+- Does NOT change payment behaviour. Receipt / refund / webhook reconciliation paths are unchanged.
+- Does NOT touch `payment_charge_attempts` / `manual_fee_charge_attempts` runtime.
+- Does NOT change RLS or add any new policy.
+- Does NOT drop or null the raw `calendar_feed_token` column (phase 1 retention; see above).
+- Does NOT change appointment / session workflows.
+- Does NOT add SMS, email, or client-portal mutation.
+
+**Alternative considered:** Drop the raw column in the same PR via a UI refactor that hides the URL on page render. Rejected: the UI refactor is non-trivial (`CalendarFeedCard.tsx` has 203 lines of state machine around Generate / Copy / Regenerate / Disable). Splitting it into phase 2 keeps PR #182 small + makes the security migration land first; the row-level hash + lookup change is the load-bearing security work, and the raw column remaining in phase 1 is operationally honest.
+
+**Honest non-claims:** raw column still populated for existing + new rotations until phase 2; the in-DB token is therefore still a bearer credential until phase 2 nulls it. The runtime route no longer reads the raw column, which is the load-bearing change for the SQL-injection / read-leak threat model. No payment behaviour change. No Stripe gate change. No live mode.
+
 ### Session completion to billing workflow + payment UI cleanup (PR #181, no migration)
 
 **Decision (2026-06-09):** Two surfaces touched. (a) Calendar appointment detail gets a new `NextStepCard` that replaces the bare `Completed` placeholder with an "Appointment completed" + "Next step: chart the session and bill the client." CTA card whose primary action label depends on linked-session state. (b) Session payment card cleans up the stale `prepareJustSucceeded` banner, calls `router.refresh()` after a successful Prepare, and promotes `refund_status='succeeded'` to the top heading ("Test payment refunded") so the practitioner sees ONE current state instead of conflicting independent banners. The receipt email template's stale "Refund handling is not enabled in Hone yet" disclaimer is replaced with refund-aware copy (PR #178 made refunds available).
@@ -1030,7 +1095,7 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 | Refund code path | Required before any live charging. The 0032 schema has the tables; the action does not exist. |
 | Live webhook handler (`payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`) | Required before any live charging. Must match on `hone_manual_fee_charge_attempt_id` metadata. |
 | Stripe metadata search before pending retry | Required before any live charging. The current 60-minute reconciliation window trusts Stripe idempotency replay; live mode must not. |
-| Hashed `practitioners.calendar_feed_token` | Currently stored raw. DB compromise yields usable tokens. |
+| Hashed `practitioners.calendar_feed_token` | **PARTIALLY RESOLVED by PR #182 (phase 1).** Migration 0079 added `calendar_feed_token_hash` + backfilled existing rows; the runtime feed route now looks up by SHA-256 hash. The raw column is kept for rollout compatibility because the settings UI still renders the URL from it on page render. Phase 2 (a later PR) refactors the UI to show the URL only at rotation time and then nulls the raw column. |
 | Email reminder outbox/claim discipline | Eliminate the rare double-send race. |
 | Automated test suite + CI | Replace manual smoke. |
 
