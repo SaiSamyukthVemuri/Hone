@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { getCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import type {
   SessionPaymentCardAuthorizationSummary,
   SessionPaymentCardSummary,
@@ -184,15 +184,16 @@ export async function getSessionPaymentEligibility(
     }
   }
 
-  // 3) Card authorization gate (PR #170). Reuse the shared helper
-  //    so the session payment path enforces the same current-version
-  //    rule as the SetupIntent action and the manual fee path.
-  //    Blocking message wording mirrors PR #170's portal/practitioner
-  //    surfaces so an operator who has read those docs sees the same
-  //    phrasing here.
+  // 3) Card authorization gate (PR #170 base + PR #177 strict). The
+  //    charge-ready helper extends the base getCardAuthorizationStatus
+  //    with a card-row pointer-equality check so a stale pointer
+  //    (docs/16 §5.11) blocks PREPARE at this surface, not at execute
+  //    time with confusing "signature has changed since prepared"
+  //    copy. Add Card / portal re-sign deliberately keep using the
+  //    BASE helper so a stale pointer never deadlocks the remedy.
   let cardAuthSummary: SessionPaymentCardAuthorizationSummary | null = null;
   if (clientId) {
-    const status = await getCardAuthorizationStatus({
+    const status = await getChargeReadyCardAuthorizationStatus({
       studioId: args.studioId,
       clientId,
     });
@@ -210,6 +211,19 @@ export async function getSessionPaymentEligibility(
       case "signed_out_of_date":
         reasons.push(
           "Card authorization on file is out of date. Ask the client to open their portal and sign the updated card authorization before a session payment can be prepared.",
+        );
+        break;
+      case "signed_current_but_card_pointer_stale":
+        // PR #177. Client has a current signed authorization but
+        // the active card row's audit pointer still references an
+        // older signature. The remedy is a fresh portal re-sign
+        // (which now auto-refreshes the pointer via PR #177's
+        // refresh helper) OR an Add Card flow (which stamps the
+        // current signature directly on the new row). Either is
+        // self-service from the client portal; the practitioner
+        // does not need a backoffice tool.
+        reasons.push(
+          "Client must re-sign the current card authorization for the card on file.",
         );
         break;
       case "signed_current":

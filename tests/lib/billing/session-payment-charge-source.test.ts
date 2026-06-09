@@ -71,11 +71,23 @@ describe("runSessionPaymentCharge: status-machine guards", () => {
   });
 });
 
-describe("runSessionPaymentCharge: PR #170 card-authorization re-check", () => {
-  it("calls getCardAuthorizationStatus and refuses if kind !== 'signed_current'", () => {
-    expect(HELPER).toMatch(/getCardAuthorizationStatus/);
+describe("runSessionPaymentCharge: PR #170 + PR #177 card-authorization re-check", () => {
+  // PR #170 introduced the current-version recheck via
+  // getCardAuthorizationStatus. PR #177 tightened the recheck to
+  // also catch a stale card_authorization_signature_id pointer on
+  // the active card row -- the same gap docs/16 §5.11 found in
+  // production. The execute path now calls the charge-ready helper
+  // and surfaces the explicit "Client must re-sign" remedy.
+  it("calls getChargeReadyCardAuthorizationStatus and refuses if kind !== 'signed_current'", () => {
+    expect(HELPER).toMatch(/getChargeReadyCardAuthorizationStatus/);
     expect(HELPER).toMatch(
       /cardAuth\.kind !== "signed_current"[\s\S]{0,200}outcome:\s*"authorization_not_current"/,
+    );
+  });
+
+  it("refuses on the new signed_current_but_card_pointer_stale variant with the remedy copy", () => {
+    expect(HELPER).toMatch(
+      /cardAuth\.kind === "signed_current_but_card_pointer_stale"[\s\S]{0,800}Client must re-sign the current card authorization for the card on file\./,
     );
   });
 

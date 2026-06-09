@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import { hashFingerprint } from "@/lib/portal/tokens";
 import { buildConsentTemplateSnapshot } from "@/lib/consent/template-snapshot";
+import { refreshActiveCardAuthorizationPointersForSignature } from "@/lib/payment-methods/refresh-card-authorization-pointer";
 
 // PR #134. Portal-side consent sign action. Lives in app/portal so
 // the middleware allowlist does not need to widen; Next.js server
@@ -244,6 +245,53 @@ export async function signConsentFormAction(
       }),
     );
     return { ok: false, error: "Couldn't save your signature. Please try again." };
+  }
+
+  // PR #177. Card authorization pointer refresh.
+  //
+  // After a successful insert of a card_authorization signature
+  // against the current live template, the active card row's
+  // card_authorization_signature_id must be refreshed so its audit
+  // pointer matches the current signed artefact. The helper is
+  // fail-soft: a DB error there does NOT roll back the signature.
+  // The signature is the durable legal record; the pointer is a
+  // reconciliation field. If the refresh fails the helper records
+  // a critical ops_alert; the visitor still sees their signature
+  // saved. We do not surface the refresh failure to the visitor
+  // because (a) they have done their part correctly, (b) the
+  // operator-side alert already names the reconciliation owner.
+  //
+  // Non-card_authorization templates (treatment_consent,
+  // photo_consent, etc.) skip the refresh entirely; the pointer is
+  // a card-row column and is only meaningful when the template is
+  // form_type='card_authorization'.
+  //
+  // Critically: this helper does NOT call any charge-gate helper,
+  // so a stale pointer cannot deadlock the portal re-sign path.
+  // See lib/consent/current-card-authorization.ts (the
+  // getChargeReadyCardAuthorizationStatus block comment) for the
+  // deadlock-prevention reasoning.
+  if (template.form_type === "card_authorization") {
+    const refresh = await refreshActiveCardAuthorizationPointersForSignature({
+      studioId: session.studioId,
+      clientId: session.clientId,
+      signatureId: created.id,
+    });
+    if (!refresh.ok) {
+      // The helper has already recorded the critical ops_alert.
+      // Mirror to the structured stderr log so a Vercel-log-only
+      // operator sees the same line they would have seen if the
+      // alert insert had also failed.
+      console.error(
+        JSON.stringify({
+          event: "consent_sign_pointer_refresh_failed",
+          templateId: template.id,
+          signatureId: created.id,
+          reason: refresh.reason,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 
   revalidatePath("/portal");

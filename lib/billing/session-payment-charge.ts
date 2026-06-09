@@ -3,7 +3,7 @@ import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { getCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -509,15 +509,36 @@ export async function runSessionPaymentCharge(args: {
     };
   }
 
-  // 3. PR #170 current-card-authorization recheck. The signature
-  //    stamped at prepare time may have been the current version
-  //    then but the template could have been edited (version bumped)
-  //    between prepare and execute. We re-verify and refuse if the
-  //    stamped signature is no longer current.
-  const cardAuth = await getCardAuthorizationStatus({
+  // 3. PR #170 + PR #177 current-card-authorization recheck. The
+  //    signature stamped at prepare time may have been the current
+  //    version then but the template could have been re-edited
+  //    (version bumped) between prepare and execute, OR the active
+  //    card row's pointer could have drifted in that window (a
+  //    card replacement / restore path). The charge-ready helper
+  //    is stricter than the base PR #170 helper: it ALSO verifies
+  //    that the active card row's card_authorization_signature_id
+  //    equals the current signed_current signature. The execute
+  //    invariant is the AND of all three:
+  //
+  //      cardAuth.signatureId == active_card.card_authorization_signature_id
+  //      cardAuth.signatureId == attemptRow.card_authorization_signature_id
+  //      active_card.card_authorization_signature_id == attemptRow.card_authorization_signature_id
+  //
+  //    The first equality is enforced by the charge-ready helper.
+  //    The second is enforced here. The third is enforced by
+  //    loadCardAndVerifyLineage below (step 4).
+  const cardAuth = await getChargeReadyCardAuthorizationStatus({
     studioId: attemptRow.studio_id,
     clientId: attemptRow.client_id,
   });
+  if (cardAuth.kind === "signed_current_but_card_pointer_stale") {
+    return {
+      ok: false,
+      outcome: "authorization_not_current",
+      message:
+        "Client must re-sign the current card authorization for the card on file.",
+    };
+  }
   if (cardAuth.kind !== "signed_current") {
     return {
       ok: false,

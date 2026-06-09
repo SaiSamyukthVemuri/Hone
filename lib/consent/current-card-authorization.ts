@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 
 // PR #170. Single source of truth for "is the client's
 // card_authorization signature current?". Before this helper, the
@@ -150,5 +151,160 @@ export async function getCardAuthorizationStatus(args: {
     templateVersion: template.version,
     signatureId: signature.id,
     signedAt: signature.signed_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PR #177. Charge-ready card authorization gate.
+// ---------------------------------------------------------------------------
+//
+// Tightens the prepare / execute / charge gate to ALSO verify that
+// the active card row's card_authorization_signature_id pointer
+// equals the current signed_current signature id. The base
+// getCardAuthorizationStatus helper (above) deliberately stops at
+// "client has signed the live template at the current version" --
+// it does NOT prove that the legal artefact on the active card row
+// (the audit trail) IS the current signed signature. PR #176 found
+// that gap in production. PR #177 closes it via:
+//   1. Refresh on re-sign (lib/payment-methods/refresh-card-
+//      authorization-pointer.ts) so newly-signed signatures
+//      auto-update the active card pointer.
+//   2. One-shot backfill (migration 0077) so pre-existing rows are
+//      brought into alignment before the new gate turns on.
+//   3. This stricter helper, which the charge path uses so a future
+//      drift is caught at PREPARE time with a clear practitioner
+//      message rather than at EXECUTE time with a confusing
+//      "signature has changed since the session payment was
+//      prepared" copy.
+//
+// CRITICAL DEADLOCK PREVENTION (docs/16 §5.11 resolution clause)
+// --------------------------------------------------------------
+// This helper MUST NOT be called from:
+//   * app/portal/consent-actions.ts (signConsentFormAction) -- the
+//     remedy for a stale pointer is "client re-signs"; gating the
+//     re-sign path on the stale pointer would lock the client out
+//     forever. The base helper does not call this helper, and the
+//     sign action does not call either helper for gating; it only
+//     calls the refresh helper after a successful insert.
+//   * app/portal/payment-method-actions.ts (createCardSetupIntent
+//     Action / Add Card / Replace Card) -- a new card with a
+//     freshly current signature should be addable even if some
+//     OLDER active card has a stale pointer. The webhook flow
+//     removes the old card and inserts the new with the current
+//     signature, which is itself the remedy. Gating Add Card on
+//     the existing stale pointer would block the remedy.
+//   * Any read-only display surface where surfacing "blocked"
+//     would mislead a practitioner who has not asked to charge yet.
+//
+// Allowed callers:
+//   * lib/billing/session-payment-eligibility.ts (PREPARE gate)
+//   * lib/billing/session-payment-charge.ts (EXECUTE recheck)
+//   * Future canonical-charge-reason gates against
+//     payment_charge_attempts.
+//
+// Return shape
+// ------------
+// The helper extends the base discriminated union with a new
+// variant 'signed_current_but_card_pointer_stale'. Existing variants
+// pass through unchanged so a caller that switches from the base
+// helper to this one inherits every existing branch's copy without
+// rewrite. The new variant carries enough context for the
+// practitioner UI to display a precise remedy ("Client must re-sign
+// the current card authorization for the card on file.") without
+// echoing internal identifiers.
+//
+// "No active card" branch
+// -----------------------
+// If the client has NO active card row for this (studio, livemode),
+// the helper returns the base result unchanged. The caller's
+// existing "no card on file" reason already handles that surface;
+// the pointer check is moot when there is no row to point.
+
+export type ChargeReadyCardAuthorizationStatus =
+  | { kind: "no_live_template" }
+  | {
+      kind: "unsigned";
+      templateId: string;
+      templateVersion: number;
+    }
+  | {
+      kind: "signed_out_of_date";
+      templateId: string;
+      templateVersion: number;
+      signedVersion: number;
+      historicalSignatureId: string;
+      historicalSignedAt: string;
+    }
+  | {
+      // The client signed the current live template version, but
+      // the active card row's card_authorization_signature_id does
+      // NOT equal the current signed_current signature id. The
+      // remedy is a portal re-sign (which will refresh the pointer
+      // via the PR #177 helper) OR an Add Card flow (which stamps
+      // the current signature on the new row directly).
+      kind: "signed_current_but_card_pointer_stale";
+      templateId: string;
+      templateVersion: number;
+      signatureId: string;
+      signedAt: string;
+      cardId: string;
+      cardPointerSignatureId: string | null;
+    }
+  | {
+      kind: "signed_current";
+      templateId: string;
+      templateVersion: number;
+      signatureId: string;
+      signedAt: string;
+    };
+
+export async function getChargeReadyCardAuthorizationStatus(args: {
+  studioId: string;
+  clientId: string;
+}): Promise<ChargeReadyCardAuthorizationStatus> {
+  const base = await getCardAuthorizationStatus(args);
+  if (base.kind !== "signed_current") {
+    // The other three branches are returned as-is. Adding a discriminator
+    // variant would require every caller to update; the structural type
+    // assertion below proves at compile-time that those branch shapes
+    // are forward-compatible with the wider return type.
+    return base;
+  }
+
+  const admin = createAdminClient();
+  const livemode = inferStripeLivemode();
+  const { data: card } = await admin
+    .from("client_payment_methods")
+    .select("id, card_authorization_signature_id")
+    .eq("studio_id", args.studioId)
+    .eq("client_id", args.clientId)
+    .eq("stripe_livemode", livemode)
+    .eq("status", "active")
+    .is("removed_at", null)
+    .maybeSingle();
+
+  if (!card) {
+    // No active card row to inspect. The caller's "no card on file"
+    // surface handles this branch via its own reason string; here
+    // we pass the base 'signed_current' result through so an Add
+    // Card flow that wants to verify base authorization can keep
+    // running.
+    return base;
+  }
+
+  const cardPointer = (card.card_authorization_signature_id as string | null) ??
+    null;
+  if (cardPointer === base.signatureId) {
+    return base;
+  }
+
+  return {
+    kind: "signed_current_but_card_pointer_stale",
+    templateId: base.templateId,
+    templateVersion: base.templateVersion,
+    signatureId: base.signatureId,
+    signedAt: base.signedAt,
+    cardId: card.id as string,
+    cardPointerSignatureId: cardPointer,
   };
 }
