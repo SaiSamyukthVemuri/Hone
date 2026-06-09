@@ -248,13 +248,35 @@ A future PR must either:
 
 **Suggested PR #171 (receipt email).**
 
-### 5.5 Refund path missing (operator experience blocker)
+### 5.5 Refund path missing (PARTIALLY RESOLVED by PR #178)
 
-There is no `refunds.create` call site in the runtime code. The `stripe_refund_attempts` + `stripe_refunds` tables exist (migration 0032) but are dormant. The `check-stripe-gates.mjs` rule enforces zero occurrences of `refunds.create`.
+> **Status (2026-06-09):** PARTIALLY RESOLVED. PR #178 shipped a reason-agnostic test-mode manual refund path on `payment_charge_attempts` (migration 0078 + `lib/billing/payment-refund.ts` + UI sub-panel). It covers `session_payment` rows today (the only reason with succeeded rows in prod); the same helper refunds future `late_cancellation_fee` / `no_show_fee` rows without code change. Still pending for full live-payments readiness: refunds on `manual_fee_charge_attempts` (the legacy dormant fee runtime), live-mode refunds, automatic refund triggers, dispute response, and webhook reconciliation of `charge.refunded` events for out-of-band refunds.
+
+**Original finding (preserved for audit history):** There is no `refunds.create` call site in the runtime code. The `stripe_refund_attempts` + `stripe_refunds` tables exist (migration 0032) but are dormant. The `check-stripe-gates.mjs` rule enforces zero occurrences of `refunds.create`.
 
 If Chloe needs to refund a charge (accidental duplicate, dispute resolution, mis-classified fee), she must use the Stripe dashboard manually today. That works but introduces operational risk: no audit row in Hone, no link from the original `manual_fee_charge_attempts` row to the refund.
 
-**Suggested PR #172 (refund action + UI button on manual fee attempt rows; mirror the idempotency + atomic-claim pattern from manual-fee-charge.ts).**
+**Resolution (PR #178, 2026-06-09).** Test-mode-only manual refunds on `payment_charge_attempts`:
+
+- `lib/billing/payment-refund.ts:refundPaymentChargeAttempt` (new). Reason-agnostic helper; the discriminator is the row's `charge_reason`, recorded as Stripe-refund metadata (`hone_charge_reason`). Triple dormancy guard: (1) `inferStripeLivemode()` short-circuit at function entry, (2) row-level CHECK `payment_charge_attempts_livemode_false_check`, (3) conditional UPDATE claim requires `status='succeeded' AND stripe_livemode=false AND (refund_status IS NULL OR refund_status='failed')` before the Stripe call runs.
+- Migration 0078 adds 9 nullable refund columns + 5 CHECK constraints + 1 FK + 2 partial uniques + 1 partial index. No live-mode CHECK relaxed.
+- Stripe-gate-script allowlist: `refunds.create` now `exactly: 1` with allowlist `["lib/billing/payment-refund.ts"]`. Adding a second site is a deliberate review event.
+- Deterministic idempotency key: `hone:payment_refund:<attemptId>:v1`. Network-retry produces the same key; Stripe's 24-hour replay catches duplicates. Partial-unique `payment_charge_attempts_refund_idempotency_uniq` is the DB-level backstop.
+- v1 scope: **full refund only** (helper writes `refund_amount_cents = amount_cents`). The schema's `refund_amount_cents <= amount_cents` CHECK leaves room for a future partial-refund PR without migration.
+- One refund per attempt (partial-unique on `stripe_refund_id`). Failed refunds may be retried; succeeded + in-flight refunds are refused.
+- Unknown Stripe outcome (network error after claim) leaves the row at `refund_status='pending_stripe'` and records a critical `payment_refund_stripe_unknown_outcome` ops_alert with the deterministic idempotency key so an operator can re-query Stripe and reconcile.
+- UI: new `RefundSubPanel` inside `SucceededPanel` ONLY. Reads `refund_status` from the persisted row so the already-refunded / pending / failed states survive page refresh (mirrors PR #175 receipt sub-panel). Two-click confirm with the amount in the second button. Copy strictly avoids "Live refund" / "Refund complete" / "Money returned" / "Official refund receipt".
+
+**Still pending for live-payments readiness (NOT shipped in PR #178):**
+
+- Live-mode refunds: blocked at entry by `inferStripeLivemode()` short-circuit. Live mode is a separate readiness gate elsewhere on this doc.
+- Refunds on `manual_fee_charge_attempts`: the legacy dormant fee runtime still has no refund path. The PR #171 docs explicitly mark `manual_fee_charge_attempts` as the TEMPORARY runtime; live `late_cancellation_fee` / `no_show_fee` charging must move onto `payment_charge_attempts` first (then PR #178's helper covers them by virtue of being reason-agnostic).
+- Automatic refund triggers (cancellation-window-cross, no-show-mis-classified): explicit non-goal; manual practitioner click only.
+- Webhook reconciliation of `charge.refunded` for out-of-band Stripe-dashboard refunds: still required for live mode. PR #178 owns only the in-Hone refund path.
+- Refund receipt email: not in v1. May land as a reason-agnostic mirror of PR #175 in a future PR.
+- Dispute response automation: not in v1. Still pending.
+
+**Suggested follow-up PR (post-#178):** webhook reconciliation of `charge.refunded` + `charge.dispute.created` (pair with PR #176-or-later for full live-mode webhook coverage).
 
 ### 5.6 Cancellation / no-show policy alignment (policy blocker)
 

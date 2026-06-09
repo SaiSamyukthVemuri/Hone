@@ -143,7 +143,11 @@ describe("getSessionPaymentEligibility: studio Stripe settings", () => {
 describe("getSessionPaymentEligibility: duplicate attempt check", () => {
   it("reads payment_charge_attempts scoped by studio + session + reason", () => {
     expect(HELPER).toMatch(
-      /\.from\("payment_charge_attempts"\)[\s\S]{0,400}\.eq\("studio_id",\s*args\.studioId\)[\s\S]{0,200}\.eq\("session_id",\s*sessionSummary\.id\)[\s\S]{0,200}\.eq\("charge_reason",\s*"session_payment"\)/,
+      // SELECT body widened by PR #175 (receipt_*) and PR #178
+      // (refund_*); the window between .from and the first .eq
+      // grows when more columns are added. Keep the structural
+      // anchors but widen the slack.
+      /\.from\("payment_charge_attempts"\)[\s\S]{0,1500}\.eq\("studio_id",\s*args\.studioId\)[\s\S]{0,400}\.eq\("session_id",\s*sessionSummary\.id\)[\s\S]{0,400}\.eq\("charge_reason",\s*"session_payment"\)/,
     );
   });
 

@@ -1,0 +1,368 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+// PR #178. Source-grep tests pin the load-bearing shape of the
+// refund helper. The helper is the single allowlisted refunds.create
+// call site in the runtime tree; the gate script (PR #178 update)
+// enforces exactly 1 occurrence here and zero elsewhere.
+
+const HELPER_PATH = path.resolve(
+  __dirname,
+  "../../../lib/billing/payment-refund.ts",
+);
+const HELPER = readFileSync(HELPER_PATH, "utf8");
+
+// codeOnly strips // comment lines so a docblock mention of an
+// SDK call (e.g. "No application_fee_amount.") does not trip
+// negative regexes that look for the actual SDK access.
+function codeOnly(src: string): string {
+  return src
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+}
+const HELPER_CODE = codeOnly(HELPER);
+
+const ACTION_PATH = path.resolve(
+  __dirname,
+  "../../../app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
+);
+const ACTION = readFileSync(ACTION_PATH, "utf8");
+
+describe("refundPaymentChargeAttempt: server boundary", () => {
+  it("imports 'server-only'", () => {
+    expect(HELPER).toMatch(/^import "server-only";/);
+  });
+
+  it("uses createAdminClient (service-role)", () => {
+    expect(HELPER).toMatch(/createAdminClient/);
+  });
+
+  it("uses inferStripeLivemode for the live-mode dormancy guard", () => {
+    expect(HELPER).toMatch(/inferStripeLivemode\(\)/);
+  });
+
+  it("imports recordOpsAlert from the ops alerts helper", () => {
+    expect(HELPER).toMatch(
+      /import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/,
+    );
+  });
+});
+
+describe("refundPaymentChargeAttempt: reason-agnostic by construction", () => {
+  it("does NOT hardcode 'session_payment' anywhere in the eligibility path", () => {
+    // The helper passes charge_reason through to Stripe metadata
+    // without branching on it. A test row's reason flows through
+    // unchanged.
+    expect(HELPER).not.toMatch(
+      /charge_reason\s*===?\s*"session_payment"|charge_reason\s*!==?\s*"session_payment"/,
+    );
+    expect(HELPER).not.toMatch(
+      /charge_reason\s*===?\s*"late_cancellation_fee"|charge_reason\s*===?\s*"no_show_fee"/,
+    );
+  });
+
+  it("records charge_reason as Stripe-refund metadata", () => {
+    expect(HELPER).toMatch(/hone_charge_reason:\s*attempt\.charge_reason/);
+  });
+});
+
+describe("refundPaymentChargeAttempt: eligibility predicates", () => {
+  it("refuses non-succeeded attempt with outcome 'not_succeeded'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.status !== "succeeded"[\s\S]{0,300}outcome:\s*"not_succeeded"/,
+    );
+  });
+
+  it("refuses live-mode row with outcome 'live_mode_blocked'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.stripe_livemode !== false[\s\S]{0,300}outcome:\s*"live_mode_blocked"/,
+    );
+  });
+
+  it("refuses missing stripe_charge_id with outcome 'missing_charge_id'", () => {
+    expect(HELPER).toMatch(
+      /!attempt\.stripe_charge_id[\s\S]{0,300}outcome:\s*"missing_charge_id"/,
+    );
+  });
+
+  it("refuses missing stripe_payment_intent_id", () => {
+    expect(HELPER).toMatch(
+      /!attempt\.stripe_payment_intent_id[\s\S]{0,300}outcome:\s*"missing_payment_intent_id"/,
+    );
+  });
+
+  it("refuses already-refunded with outcome 'already_refunded'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.refund_status === "succeeded"[\s\S]{0,300}outcome:\s*"already_refunded"/,
+    );
+  });
+
+  it("refuses in-flight refund with outcome 'refund_in_flight'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.refund_status === "pending_stripe"[\s\S]{0,300}outcome:\s*"refund_in_flight"/,
+    );
+  });
+
+  it("refuses cross-studio attempt with outcome 'not_authorized'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.studio_id !== args\.studioId[\s\S]{0,300}outcome:\s*"not_authorized"/,
+    );
+  });
+
+  it("refuses amount_cents <= 0 with outcome 'amount_invalid'", () => {
+    expect(HELPER).toMatch(
+      /attempt\.amount_cents <= 0[\s\S]{0,300}outcome:\s*"amount_invalid"/,
+    );
+  });
+});
+
+describe("refundPaymentChargeAttempt: live-mode dormancy guard at entry", () => {
+  it("short-circuits with outcome='live_mode_blocked' before any DB call when env is live", () => {
+    const livemodeBlock =
+      HELPER.match(/if \(inferStripeLivemode\(\)\)\s*\{[\s\S]{0,400}\}/)?.[0] ??
+      "";
+    expect(livemodeBlock).toMatch(/outcome:\s*"live_mode_blocked"/);
+    // The live-mode block must appear before any .from("payment_charge_attempts") call
+    const livemodeIdx = HELPER.indexOf("inferStripeLivemode()");
+    const firstDbIdx = HELPER.indexOf('.from("payment_charge_attempts")');
+    expect(livemodeIdx).toBeGreaterThan(-1);
+    expect(firstDbIdx).toBeGreaterThan(-1);
+    expect(livemodeIdx).toBeLessThan(firstDbIdx);
+  });
+});
+
+describe("refundPaymentChargeAttempt: atomic claim", () => {
+  it("claim conditional UPDATE happens BEFORE refunds.create", () => {
+    // Use HELPER_CODE so a docblock mention of refunds.create or of
+    // refund_status='pending_stripe' does not move the indices.
+    const claimIdx = HELPER_CODE.indexOf(
+      `refund_status: "pending_stripe"`,
+    );
+    const refundIdx = HELPER_CODE.indexOf("stripe.refunds.create(");
+    expect(claimIdx).toBeGreaterThan(-1);
+    expect(refundIdx).toBeGreaterThan(-1);
+    expect(claimIdx).toBeLessThan(refundIdx);
+  });
+
+  it("claim filters by status='succeeded' AND stripe_livemode=false", () => {
+    expect(HELPER).toMatch(/\.eq\("status", "succeeded"\)/);
+    expect(HELPER).toMatch(/\.eq\("stripe_livemode", false\)/);
+  });
+
+  it("claim filters by refund_status null or 'failed'", () => {
+    // The OR uses Supabase's `.or()` shorthand.
+    expect(HELPER).toMatch(
+      /\.or\("refund_status\.is\.null,refund_status\.eq\.failed"\)/,
+    );
+  });
+
+  it("claim stamps the deterministic idempotency key", () => {
+    expect(HELPER).toMatch(/refund_idempotency_key:\s*idempotencyKey/);
+  });
+
+  it("claim clears prior failure fields so a retry starts clean", () => {
+    expect(HELPER).toMatch(/refund_failure_code:\s*null/);
+    expect(HELPER).toMatch(/refund_failure_message_safe:\s*null/);
+    expect(HELPER).toMatch(/refunded_at:\s*null/);
+    expect(HELPER).toMatch(/stripe_refund_id:\s*null/);
+  });
+
+  it("zero-row claim returns outcome='claim_lost' (no duplicate Stripe call)", () => {
+    expect(HELPER).toMatch(
+      /claimedRows\.length === 0[\s\S]{0,400}outcome:\s*"claim_lost"/,
+    );
+  });
+});
+
+describe("refundPaymentChargeAttempt: deterministic idempotency key", () => {
+  it("the key shape is exactly hone:payment_refund:<attemptId>:v1", () => {
+    expect(HELPER).toMatch(
+      /buildRefundIdempotencyKey\(attemptId: string\): string \{[\s\S]{0,200}`hone:payment_refund:\$\{attemptId\}:v1`/,
+    );
+  });
+
+  it("the helper builds the key from attempt.id and passes it to Stripe", () => {
+    expect(HELPER).toMatch(
+      /const idempotencyKey = buildRefundIdempotencyKey\(attempt\.id\);/,
+    );
+    expect(HELPER).toMatch(/idempotencyKey,\s*\n\s*\},\s*\);/);
+  });
+});
+
+describe("refundPaymentChargeAttempt: Stripe refund call shape", () => {
+  it("calls stripe.refunds.create exactly once (code only, comments excluded)", () => {
+    const matches = HELPER_CODE.match(/stripe\.refunds\.create\(/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("passes the connected account context", () => {
+    expect(HELPER).toMatch(
+      /stripeAccount:\s*attempt\.stripe_account_id/,
+    );
+  });
+
+  it("passes charge id + amount + metadata", () => {
+    expect(HELPER).toMatch(
+      /stripe\.refunds\.create\(\s*\{[\s\S]{0,800}charge:\s*attempt\.stripe_charge_id[\s\S]{0,400}amount:\s*refundAmountCents[\s\S]{0,400}metadata:\s*\{/,
+    );
+  });
+
+  it("metadata carries the Hone identity tuple + charge reason + environment=test", () => {
+    expect(HELPER).toMatch(/hone_payment_charge_attempt_id:\s*attempt\.id/);
+    expect(HELPER).toMatch(/hone_studio_id:\s*attempt\.studio_id/);
+    expect(HELPER).toMatch(/hone_client_id:\s*attempt\.client_id/);
+    expect(HELPER).toMatch(/hone_charge_reason:\s*attempt\.charge_reason/);
+    expect(HELPER).toMatch(/hone_environment:\s*"test"/);
+  });
+
+  it("does NOT pass application_fee_amount or transfer/reverse_transfer (code only)", () => {
+    expect(HELPER_CODE).not.toMatch(/application_fee_amount/);
+    expect(HELPER_CODE).not.toMatch(/reverse_transfer/);
+  });
+});
+
+describe("refundPaymentChargeAttempt: outcome writes", () => {
+  it("success writes refund_status='succeeded', stripe_refund_id, refunded_at", () => {
+    expect(HELPER).toMatch(
+      /\.update\(\{\s*\n\s*refund_status:\s*"succeeded"[\s\S]{0,400}stripe_refund_id:\s*refund\.id[\s\S]{0,400}refunded_at:\s*refundedAtIso/,
+    );
+  });
+
+  it("success write matches refund_status='pending_stripe' (no overwrite of a reconciled row)", () => {
+    expect(HELPER).toMatch(
+      /\.update\(\{\s*\n\s*refund_status:\s*"succeeded"[\s\S]{0,800}\.eq\("refund_status", "pending_stripe"\)/,
+    );
+  });
+
+  it("Stripe terminal error writes refund_status='failed' with sanitised code + message", () => {
+    expect(HELPER).toMatch(
+      /\.update\(\{\s*\n\s*refund_status:\s*"failed"[\s\S]{0,400}refund_failure_code:\s*code[\s\S]{0,400}refund_failure_message_safe:\s*safeMessage/,
+    );
+  });
+
+  it("unknown Stripe outcome leaves refund_status='pending_stripe' and records critical ops_alert", () => {
+    expect(HELPER).toMatch(
+      /payment_refund_stripe_unknown_outcome[\s\S]{0,800}severity:\s*"critical"/,
+    );
+    expect(HELPER).toMatch(/outcome:\s*"needs_manual_review"/);
+  });
+
+  it("success-write DB failure records critical ops_alert with the Stripe refund id", () => {
+    // The ops_alert call lists severity before event in this code;
+    // pin both literals + the stripe_refund_id payload separately so
+    // a refactor that reorders the keys still passes.
+    expect(HELPER).toMatch(/event:\s*"payment_refund_succeeded_write_failed"/);
+    const alertBlock =
+      HELPER.match(
+        /payment_refund_succeeded_write_failed[\s\S]{0,2000}stripe_refund_id:\s*refund\.id/,
+      )?.[0] ?? "";
+    expect(alertBlock).toMatch(/severity:\s*"critical"/);
+  });
+});
+
+describe("refundPaymentChargeAttempt: failure handling discriminates Stripe vs unknown errors", () => {
+  it("catches Stripe.errors.StripeError separately from generic errors", () => {
+    expect(HELPER).toMatch(/err instanceof Stripe\.errors\.StripeError/);
+  });
+
+  it("sanitises Stripe failure code via the slice helper", () => {
+    expect(HELPER).toMatch(/sanitizeFailureCode\(err\.code/);
+  });
+
+  it("sanitises Stripe failure message via the strip-and-slice helper", () => {
+    expect(HELPER).toMatch(/sanitizeFailureMessage\(err\.message\)/);
+  });
+});
+
+describe("refundPaymentChargeAttempt: forbidden operations", () => {
+  it("does NOT call paymentIntents.create", () => {
+    expect(HELPER).not.toMatch(/paymentIntents\.create/);
+  });
+
+  it("does NOT call setupIntents.create", () => {
+    expect(HELPER).not.toMatch(/setupIntents\.create/);
+  });
+
+  it("does NOT call charges.create", () => {
+    expect(HELPER).not.toMatch(/charges\.create/);
+  });
+
+  it("does NOT call checkout.sessions", () => {
+    expect(HELPER).not.toMatch(/checkout\.sessions/);
+  });
+
+  it("does NOT touch manual_fee_charge_attempts (code only, comments excluded)", () => {
+    expect(HELPER_CODE).not.toMatch(/manual_fee_charge_attempts/);
+  });
+
+  it("does NOT send email or SMS (code only)", () => {
+    expect(HELPER_CODE).not.toMatch(/sendEmailSafely|sendSms|twilio/i);
+  });
+});
+
+describe("Action layer: refundPaymentChargeAttemptAction", () => {
+  it("declares the action", () => {
+    expect(ACTION).toMatch(
+      /export async function refundPaymentChargeAttemptAction\(/,
+    );
+  });
+
+  it("imports the helper from lib/billing/payment-refund", () => {
+    expect(ACTION).toMatch(
+      /import \{\s*\n?\s*refundPaymentChargeAttempt,\s*\n?\s*type PaymentRefundResult,\s*\n?\s*\} from "@\/lib\/billing\/payment-refund"/,
+    );
+  });
+
+  it("resolves practitioner + studio server-side (never trusts the browser)", () => {
+    const block =
+      ACTION.match(
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+      )?.[0] ?? "";
+    expect(block).toMatch(/getCurrentPractitionerWithStudio/);
+  });
+
+  it("does NOT accept amount from the browser", () => {
+    const block =
+      ACTION.match(
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+      )?.[0] ?? "";
+    expect(block).not.toMatch(/formData\.get\("amount/);
+  });
+
+  it("forwards only attempt_id, internal_note, plus session/client for revalidate", () => {
+    const block =
+      ACTION.match(
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+      )?.[0] ?? "";
+    expect(block).toMatch(/refundPaymentChargeAttempt\(\{[\s\S]{0,400}attemptId/);
+    expect(block).toMatch(/internalNote/);
+    expect(block).toMatch(
+      /revalidatePath\(`\/clients\/\$\{clientId\}\/sessions\/\$\{sessionId\}`\)/,
+    );
+  });
+});
+
+describe("Action layer: discriminated outcome union mirrors the helper", () => {
+  it("includes every helper outcome literal", () => {
+    for (const tok of [
+      '"live_mode_blocked"',
+      '"not_found"',
+      '"not_authorized"',
+      '"not_succeeded"',
+      '"missing_charge_id"',
+      '"missing_payment_intent_id"',
+      '"missing_charged_at"',
+      '"already_refunded"',
+      '"refund_in_flight"',
+      '"amount_invalid"',
+      '"claim_lost"',
+      '"failed"',
+      '"needs_manual_review"',
+      '"database_error"',
+    ]) {
+      expect(ACTION).toContain(tok);
+    }
+  });
+});

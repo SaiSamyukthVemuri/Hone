@@ -18,6 +18,10 @@ import {
   sendPaymentChargeReceipt,
   type SendPaymentChargeReceiptResult,
 } from "@/lib/billing/payment-receipt";
+import {
+  refundPaymentChargeAttempt,
+  type PaymentRefundResult,
+} from "@/lib/billing/payment-refund";
 
 // ---------------------------------------------------------------------------
 // prepareSessionPaymentChargeAction (PR #172).
@@ -450,5 +454,122 @@ export async function sendPaymentChargeReceiptAction(
     error: result.message,
     emailTo: result.emailTo,
     sentAt: result.sentAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// refundPaymentChargeAttemptAction (PR #178).
+// ---------------------------------------------------------------------------
+//
+// Practitioner-only. Refunds a succeeded test-mode row on
+// payment_charge_attempts. The heavy lifting lives in
+// lib/billing/payment-refund.ts:refundPaymentChargeAttempt; this
+// action is the server-action entry point that:
+//
+//   * resolves the practitioner + studio from the session so the
+//     browser cannot supply either identity
+//   * forwards attempt_id and an optional practitioner-supplied
+//     internal_note; the helper itself reads the canonical amount
+//     from the attempt row (never trusts a browser-supplied amount)
+//   * revalidates the session detail page so the new refund
+//     state shows up immediately
+//   * surfaces the helper's result to the UI
+//
+// The action is reason-agnostic: the helper records charge_reason
+// as Stripe-refund metadata. Today only session_payment rows reach
+// status='succeeded', but the same action refunds future
+// late_cancellation_fee and no_show_fee rows without code change.
+
+export type RefundPaymentActionResult =
+  | {
+      ok: true;
+      outcome: "succeeded";
+      stripeRefundId: string;
+      refundedAt: string;
+      refundAmountCents: number;
+    }
+  | {
+      ok: false;
+      outcome:
+        | "live_mode_blocked"
+        | "not_found"
+        | "not_authorized"
+        | "not_succeeded"
+        | "missing_charge_id"
+        | "missing_payment_intent_id"
+        | "missing_charged_at"
+        | "already_refunded"
+        | "refund_in_flight"
+        | "amount_invalid"
+        | "claim_lost"
+        | "failed"
+        | "needs_manual_review"
+        | "database_error";
+      error: string;
+      failureCode?: string | null;
+    };
+
+export async function refundPaymentChargeAttemptAction(
+  formData: FormData,
+): Promise<RefundPaymentActionResult> {
+  let practitionerId: string;
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("payment_refund_action_auth_failed", { err: String(err) });
+    return {
+      ok: false,
+      outcome: "not_authorized",
+      error: NOT_AUTHORIZED_ERROR,
+    };
+  }
+
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const clientId = strOrEmpty(formData.get("client_id"));
+  const sessionId = strOrEmpty(formData.get("session_id"));
+  // The browser cannot supply an amount. The helper reads it from
+  // the attempt row.
+  const internalNoteRaw = strOrEmpty(formData.get("internal_note"));
+  const internalNote =
+    internalNoteRaw.length > 0 ? internalNoteRaw : null;
+
+  if (!attemptId) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+
+  const result: PaymentRefundResult = await refundPaymentChargeAttempt({
+    attemptId,
+    studioId,
+    practitionerId,
+    internalNote,
+  });
+
+  if (clientId && sessionId) {
+    revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  } else {
+    revalidatePath("/clients");
+  }
+
+  if (result.ok) {
+    return {
+      ok: true,
+      outcome: "succeeded",
+      stripeRefundId: result.stripeRefundId,
+      refundedAt: result.refundedAt,
+      refundAmountCents: result.refundAmountCents,
+    };
+  }
+  return {
+    ok: false,
+    outcome: result.outcome,
+    error: result.message,
+    failureCode: result.failureCode ?? null,
   };
 }
