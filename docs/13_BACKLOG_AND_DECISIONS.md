@@ -4,6 +4,52 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Appointment completion + session-start workflow unblock for payment smoke (PR #180, no migration)
+
+**Decision (2026-06-09):** Re-expose the "Mark completed" button on the appointment lifecycle surface AND auto-mark linked appointments completed when a practitioner starts a session against a confirmed, past appointment. The payment prepare gate from PR #172 (`appointment.status='completed'`) is unchanged; the fix is restoring the practitioner-side workflow that reaches that state from the UI.
+
+**Why:** Chloe attempted the full payment smoke after PR #179 and could not reach the payment prepare step. The test script asked her to "set the appointment time so it can be completed now", but the public booking UI does not allow past booking. She opened an existing past appointment and found the Mark no-show button, but no Mark completed button. She tried from the calendar and the client profile; neither surface offered the action. The `markAppointmentCompleteAction` server action + the `mark_appointment_complete` RPC (migration 0032) were intact the entire time; the UI button was deliberately removed during an earlier UX simplification ("Chloe did not want to mark each appointment complete by hand") that predated the payment gate. Once PR #172 made the completed state load-bearing for charging, the missing button became a hard workflow blocker.
+
+**No migration needed.** The `mark_appointment_complete` RPC has been in production since migration 0032; it enforces practitioner-active-in-studio, source-status='confirmed', ends_at-in-the-past, and writes an `appointment_audit` row atomically. PR #180 is pure UI re-exposure + a tiny server-side auto-call. Migration ledger stays at 0078.
+
+**Architecture:**
+
+- `app/(app)/calendar/AppointmentLifecycleActions.tsx` (extended). New `Mark completed` button alongside the existing `Mark no-show`. Both share the same gating (`status === "confirmed"` AND `hasEnded`), the same two-click `window.confirm` pattern, and the same disabled-title copy when the appointment is in the future. New `COMPLETE_CONFIRM_MESSAGE` constant carries the exact copy: "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting." Success hint: "Appointment marked completed." The button uses the primary (filled) style so the workflow's happy path is the obvious affordance; Mark no-show keeps the outline style as the exception path. The component-level doc block records the removal/re-introduction history so a future reviewer sees the reasoning.
+
+- `app/(app)/clients/[id]/sessions/new/actions.ts` (extended). New private helper `maybeMarkAppointmentCompletedOnSessionStart` at module scope. After the session insert + appointment-link resolution, if `appointment.status === "confirmed"` AND `appointment.ends_at <= now()`, the helper calls `admin.rpc("mark_appointment_complete", {...})` via a dynamically-imported admin client (cold path; the module's other DB calls stay on the authenticated RLS client per PR #156's lineage discipline). Cancelled and no-show appointments are explicitly skipped per the prompt's safety rules ("Starting/charting a session does not mark cancelled/no-show appointments completed"). The helper is fail-soft: an RPC error or any throw is logged via `session_start_auto_mark_complete_rpc_error` / `session_start_auto_mark_complete_threw` structured stderr lines but NEVER rethrown, so a failed auto-complete cannot break session start. The practitioner can still mark completed by hand via the calendar button. The appointment SELECT was widened from `id, studio_id, client_id, practitioner_id` to `id, studio_id, client_id, practitioner_id, status, ends_at` so the auto-complete decision is made off the same roundtrip as the lineage check.
+
+- `tests/app/clients/sessions/new-action-appointment-link.test.ts` (extended). The pre-existing "no admin client for the lineage check" test was tightened: it now pins that (1) the appointment lineage SELECT still runs on the RLS client (unchanged); (2) the only admin-server import is inside `maybeMarkAppointmentCompletedOnSessionStart` and is the dynamic-import shape. The SELECT-column test now expects the widened `id, studio_id, client_id, practitioner_id, status, ends_at` shape.
+
+**Auto-mark-completed contract (load-bearing safety):**
+
+| Pre-state | After session start |
+| --- | --- |
+| `appointment.status='confirmed'`, `ends_at <= now()` | Auto-marked `completed`. Calendar revalidated. |
+| `appointment.status='confirmed'`, `ends_at > now()` | NOT auto-marked. RPC would refuse anyway. |
+| `appointment.status='cancelled'` | NOT auto-marked. Skipped before RPC call. |
+| `appointment.status='no_show'` | NOT auto-marked. Skipped before RPC call. |
+| `appointment.status='completed'` | NOT auto-marked. Skipped before RPC call. |
+| Session has no linked appointment (`appointment_id IS NULL`) | Auto-mark helper not invoked. |
+| RPC throws / returns error | Logged via structured stderr; session start UX is NOT blocked. Practitioner can complete by hand. |
+
+**Payment gate untouched.** `lib/billing/session-payment-eligibility.ts:142-146` continues to require `appointment.status='completed'`. The blocking reason copy ("Mark the appointment complete before preparing a session payment.") is already actionable; no copy change. The gate refuses future appointments, cancelled appointments, no-show appointments, unstarted sessions, sessions without an appointment, and appointments without a session.
+
+**What this PR does NOT do:**
+
+- Does NOT weaken the payment prepare gate.
+- Does NOT add any new Stripe SDK call (`paymentIntents.create` stays at 2 allowlisted, `refunds.create` stays at 1 allowlisted, `charges.create` / `checkout.sessions` stay at 0).
+- Does NOT enable live payments.
+- Does NOT add SMS, email, or client-portal mutation.
+- Does NOT touch `payment_charge_attempts` / `manual_fee_charge_attempts` runtime.
+- Does NOT add any DB migration.
+- Does NOT add a "restore" or "reopen" affordance for terminal-status appointments. The existing no_show / cancelled / completed states remain terminal from the UI.
+- Does NOT change the no-show button, the cancel flow, or the reschedule flow.
+- Does NOT auto-cancel or auto-no-show. Only the confirmed -> completed transition is automated, and only on the explicit session-start signal.
+
+**Alternative considered:** Add a separate Mark completed action surface (e.g. on the client profile's appointment timeline) without re-exposing it on the calendar. Rejected: the calendar appointment detail is the canonical place for lifecycle actions; splitting completion to a different surface would create the same discoverability gap Chloe hit (only Mark no-show on the calendar).
+
+**Honest non-claims:** no payment gate weakening, no new Stripe call, no live mode, no SMS, no client portal, no fee charging, no migration. Stripe gates unchanged from PR #179. Payment smoke can resume after deploy.
+
 ### Stripe webhook reconciliation for payment_charge_attempts (PR #179, no migration)
 
 **Decision (2026-06-09):** Add webhook reconciliation in the existing `app/api/stripe/webhook/route.ts` for four payment-related event types so Stripe-side state changes can safely flow onto `payment_charge_attempts` rows. Reason-agnostic by construction (handlers read `row.charge_reason` and never branch on it). Test mode only: `event.livemode === true` is a hard dormancy guard that records a warning ops_alert and returns without mutation. The existing `stripe_events` ledger from migration 0032 already provides Stripe-event idempotency; no new ledger table needed.

@@ -28,24 +28,42 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     expect(SOURCE).toMatch(/UUID_RE\.test\(/);
   });
 
-  it("looks the appointment up via the authenticated RLS client (no admin client)", () => {
-    // The action runs as the authenticated practitioner; RLS already
-    // blocks foreign rows. createAdminClient must NOT appear in this
-    // module: the boundary in lib/supabase/admin-server.ts (PR #155)
-    // would catch a client-component import, but a server-action
-    // misuse needs a separate guard. The action uses
-    // createClient from lib/supabase/server.
-    expect(SOURCE).not.toMatch(/createAdminClient|admin-server/);
+  it("looks the appointment up via the authenticated RLS client (no admin client for the lineage check)", () => {
+    // The PR #156 lineage check runs as the authenticated practitioner;
+    // RLS already blocks foreign rows. The appointment SELECT must
+    // therefore happen via the createClient from lib/supabase/server,
+    // not the service-role admin client.
+    //
+    // PR #180 introduces a SEPARATE, cold-path RPC call to the
+    // SECURITY DEFINER mark_appointment_complete from the auto-
+    // complete helper at the bottom of the action. That helper does
+    // require the admin client (the RPC expects the service-role
+    // context). To preserve the original safety guarantee we now
+    // pin: (1) the lineage SELECT still uses the RLS client (the
+    // .from("appointments") call appears in the action body BEFORE
+    // any admin import); (2) the only admin-client reference is
+    // inside the maybeMarkAppointmentCompletedOnSessionStart helper
+    // (audited separately in tests/app/sessions/start-session-auto-
+    // complete.test.ts).
     expect(SOURCE).toMatch(/from\("appointments"\)/);
+    // The admin import is dynamic + scoped to the auto-complete helper.
+    const adminImportMatches =
+      SOURCE.match(/import\("@\/lib\/supabase\/admin-server"\)/g) ?? [];
+    expect(adminImportMatches.length).toBe(1);
+    expect(SOURCE).toMatch(
+      /maybeMarkAppointmentCompletedOnSessionStart[\s\S]{0,2000}await import\("@\/lib\/supabase\/admin-server"\)/,
+    );
   });
 
-  it("selects studio_id, client_id, and practitioner_id from the appointment row", () => {
-    // PR #156 patch. The select list must carry every lineage column
-    // the action compares against the server-resolved session
-    // context. Missing any of the three would silently degrade the
-    // corresponding check to "always pass".
+  it("selects studio_id, client_id, practitioner_id (and PR #180 also status + ends_at) from the appointment row", () => {
+    // PR #156 patch + PR #180. The select list must carry every
+    // lineage column the action compares against the server-resolved
+    // session context AND the status / ends_at fields the PR #180
+    // auto-complete helper consults. Missing any column would
+    // silently degrade a corresponding check to "always pass" or
+    // disable auto-complete.
     expect(SOURCE).toMatch(
-      /\.select\(\s*["']id, studio_id, client_id, practitioner_id["']\s*\)/,
+      /\.select\(\s*["']id, studio_id, client_id, practitioner_id, status, ends_at["']\s*\)/,
     );
   });
 

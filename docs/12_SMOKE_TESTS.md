@@ -79,6 +79,31 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Appointment completion + session-start smoke (PR #180)
+
+After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run this before the payment smoke chain below.
+
+1. Find or create a confirmed past test appointment (any time before now).
+2. Open it from `/calendar` or the calendar appointment detail.
+3. Confirm two buttons are visible: `Mark completed` (primary / filled) and `Mark no-show` (outline). Both are enabled because the appointment has already ended.
+4. Click `Mark completed`. A browser confirm appears with the exact copy: "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting."
+5. Confirm. Within a moment the appointment detail flips. The hint reads "Appointment marked completed."
+6. SQL verify:
+   ```sql
+   select id, status, ends_at from public.appointments
+   where id = '<appointment_id>';
+   ```
+   Expected: `status='completed'`.
+7. (Optional, demonstrates auto-complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must now be `completed` (auto-marked by `maybeMarkAppointmentCompletedOnSessionStart`). SQL verify the same way.
+
+Negative checks (each should leave the appointment status alone):
+- Future confirmed appointment: both buttons are visible but disabled. Hover title for the Mark completed button reads "Appointment can be marked completed after the start time."
+- Cancelled appointment: no Mark completed button rendered (the component early-returns null for any non-confirmed status).
+- No-show appointment: no Mark completed button rendered.
+- Already completed appointment: no Mark completed button rendered.
+
+After step 6 (or 7) lands, proceed to the payment smoke chain below.
+
 ## Webhook reconciliation smoke (PR #179, test mode only)
 
 Run this after a full Prepare -> Run test charge -> Send receipt -> Refund chain has produced a `succeeded` row with `refund_status='succeeded'`.
