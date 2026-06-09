@@ -79,6 +79,30 @@ Manual smoke (cannot be done from the harness because it requires an active card
 9. Click `Prepare session payment` again on the same session. Confirm the duplicate state appears (`A session payment attempt is already prepared for this session`).
 10. Negative path: archive the active card row, refresh. Confirm the card surfaces the blocking reason `"Client must add a card on file..."`.
 
+## Session completion to billing handoff + payment UI cleanup (PR #181)
+
+After PR #181 ships, the calendar appointment detail and the session payment card both render a clearer current state. Run this between the appointment-completion smoke (PR #180) and the payment smoke chain.
+
+1. Open a confirmed past test appointment.
+2. Click Mark completed and confirm.
+3. The appointment status flips. Below the lifecycle actions the calendar page now renders an "Appointment completed" card with the guidance line **"Next step: chart the session and bill the client."** and one primary CTA whose label depends on linked-session state:
+   - No linked session: **Start session** (forwards to `/clients/<id>/sessions/new?appointment_id=<id>`).
+   - Linked session but not started: **Open session** (forwards to the session page).
+   - Linked started session: **Go to billing** (deep-links to the session page with `#session-payment`).
+4. The previous bare `Completed` placeholder text must NOT appear. The previously-mounted ChartSessionCard ("+ Chart session" / "Session for this appointment") must NOT appear on the completed state (the NextStepCard supersedes it). ChartSessionCard continues to render for confirmed and no_show.
+5. Click the CTA. You should land on the session page; if the CTA was "Go to billing" the URL ends in `#session-payment` and the payment card is in view.
+6. On the session page the payment surface follows the cleaner state model:
+   - When the row is in `status='succeeded'` with no successful refund the top heading reads **Test charge succeeded.**
+   - When the row also carries `refund_status='succeeded'` the top heading reads **Test payment refunded.** with an amber palette + a Refund details block (Amount refunded / Refunded / Refund id) directly under the charge details.
+   - No stale "Session payment prepared / Attempt id: ... No charge has been run" banner appears alongside a succeeded or refunded panel. The local prepare banner is gated on `!activeAttempt` and `router.refresh()` is called after a successful prepare so the persisted ReadyPanel takes over immediately.
+7. SQL verify the row to confirm DB state matches the UI:
+   ```sql
+   select id, status, refund_status, refund_amount_cents, refunded_at, stripe_refund_id
+   from public.payment_charge_attempts
+   order by created_at desc limit 1;
+   ```
+8. Receipt sub-panel + Refund sub-panel still render their own per-section detail and stay reachable.
+
 ## Appointment completion + session-start smoke (PR #180)
 
 After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run this before the payment smoke chain below.
@@ -214,7 +238,7 @@ Run after a `succeeded` session_payment row exists.
    limit 5;
    ```
    Expected: `receipt_status='sent'`, `receipt_sent_at` populated, `receipt_email_to` matches the test client's email, `stripe_livemode=false`, `stripe_payment_intent_id` populated.
-9. Verify the actual email arrived at the test client's mailbox. Confirm the subject starts with "TEST MODE" + the studio name + the reason label + the amount. Confirm the body carries the three disclaimers: "This is a Stripe test-mode receipt. No live card was charged.", "No tax calculation is included on this receipt.", "Refund handling is not enabled in Hone yet." Confirm the body does NOT say "tax receipt" / "official invoice" / "payment complete" / "live payment".
+9. Verify the actual email arrived at the test client's mailbox. Confirm the subject starts with "TEST MODE" + the studio name + the reason label + the amount. Confirm the body carries the three disclaimers: "This is a Stripe test-mode receipt. No live card was charged.", "No tax calculation is included on this receipt.", "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone." (PR #181 replaced the pre-PR-#178 "Refund handling is not enabled in Hone yet." wording.) Confirm the body does NOT say "tax receipt" / "official invoice" / "payment complete" / "live payment".
 10. Click `Send test receipt` again (should not appear because state is now `sent`; if it does, that's a bug). Verify no new email is delivered and the SQL row remains untouched.
 
 Negative path (no client email): use a test client whose `clients.email` is null or empty. Confirm the action returns the `client_email_missing` outcome and the row's `receipt_status` stays null.

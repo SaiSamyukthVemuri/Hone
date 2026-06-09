@@ -275,8 +275,15 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
     expect(CARD).toMatch(/Session payment prepared/);
   });
 
-  it("shows the test-mode-only success state with the attempt id", () => {
+  it("shows the test-mode-only success state with the post-prepare action copy (PR #181 update)", () => {
+    // PR #172 originally exposed the local "Attempt id: <uuid>" banner
+    // as the just-prepared confirmation. PR #181 replaced that with a
+    // cleaner "You can now run the test charge." line + a
+    // router.refresh() call so the persisted ReadyPanel (which says
+    // "Session payment prepared") immediately becomes the single
+    // source of truth. The ReadyPanel's "Session payment prepared"
+    // heading is unchanged; only the local banner copy is updated.
     expect(CARD).toMatch(/Session payment prepared/);
-    expect(CARD).toMatch(/Attempt id:/);
+    expect(CARD).toMatch(/You can now run the test charge\./);
   });
 });

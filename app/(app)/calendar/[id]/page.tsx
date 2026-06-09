@@ -330,7 +330,13 @@ export default async function AppointmentDetailPage({
           single appointment-context write-forward surface in this PR;
           there is intentionally no appointment picker on the
           client-scoped flow. */}
-      {!isCancelled && (
+      {/* PR #181. ChartSessionCard is hidden for completed appointments
+          because the NextStepCard (rendered further down) is the
+          primary CTA surface for that state and shows the same
+          linked-session info in a billing-aware form. Cancelled
+          appointments hide ChartSessionCard as before; no_show /
+          confirmed still see it. */}
+      {!isCancelled && typedStatus !== "completed" && (
         <ChartSessionCard
           appointmentId={id}
           clientId={data.client?.id ?? null}
@@ -403,9 +409,11 @@ export default async function AppointmentDetailPage({
       )}
 
       {typedStatus === "completed" && (
-        <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-          Completed
-        </section>
+        <NextStepCard
+          clientId={data.client?.id ?? null}
+          appointmentId={id}
+          linkedSession={linkedSession}
+        />
       )}
 
       {typedStatus === "no_show" && (
@@ -978,6 +986,102 @@ function ChartSessionCard({
       >
         + Chart session
       </Link>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PR #181. NextStepCard. Replaces the bare "Completed" placeholder
+// section that previously rendered for typedStatus === 'completed'.
+// The card makes the next practitioner action obvious so the
+// appointment-to-billing handoff Chloe found weak after PR #180
+// becomes a guided one-click path.
+//
+// Three sub-states, each with a single primary CTA:
+//   1. No linked session exists yet           -> "Start session"
+//        forwards to /clients/<id>/sessions/new?appointment_id=<id>
+//        which is the same destination ChartSessionCard used; the
+//        session-start action stamps the appointment_id FK and (per
+//        PR #180) auto-marks the appointment completed. Because the
+//       appointment is ALREADY completed here, the auto-mark is a
+//       no-op; the link path stays unchanged so a future regression
+//       is structurally caught.
+//   2. Linked session exists, not started      -> "Open session"
+//        (this case is rare today because sessions.started_at NOT
+//       NULL DEFAULT now() means every inserted row has it; the
+//       branch exists for defensive structural reasons.)
+//   3. Linked session exists, started_at set   -> "Go to billing"
+//       deep-links to the session page with #session-payment so
+//       the practitioner lands on the payment card.
+//
+// No payment-eligibility logic lives here. The session page's
+// SessionPaymentPrepareCard remains the single owner of "is billing
+// ready", "card on file", "card authorization", and all per-status
+// rendering. NextStepCard's only job is to make the next click
+// obvious from the calendar surface.
+// ---------------------------------------------------------------------------
+function NextStepCard({
+  clientId,
+  appointmentId,
+  linkedSession,
+}: {
+  clientId: string | null;
+  appointmentId: string;
+  linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+}) {
+  if (!clientId) {
+    return (
+      <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Appointment completed
+        </p>
+      </section>
+    );
+  }
+
+  const sessionStarted = linkedSession?.started_at != null;
+  const sessionId = linkedSession?.id ?? null;
+
+  let ctaHref: string;
+  let ctaLabel: string;
+  if (!linkedSession) {
+    ctaHref = `/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`;
+    ctaLabel = "Start session";
+  } else if (!sessionStarted) {
+    ctaHref = `/clients/${clientId}/sessions/${sessionId}`;
+    ctaLabel = "Open session";
+  } else {
+    ctaHref = `/clients/${clientId}/sessions/${sessionId}#session-payment`;
+    ctaLabel = "Go to billing";
+  }
+
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          Appointment completed
+        </p>
+        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
+          Next step: chart the session and bill the client.
+        </p>
+      </div>
+      <Link
+        href={ctaHref}
+        className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+      >
+        {ctaLabel}
+      </Link>
+      {linkedSession && (
+        <p className="text-xs text-neutral-500">
+          Linked session: {linkedSession.modality}
+          {linkedSession.started_at && (
+            <>
+              {" · started "}
+              <FormattedDateTime iso={linkedSession.started_at} />
+            </>
+          )}
+        </p>
+      )}
     </section>
   );
 }

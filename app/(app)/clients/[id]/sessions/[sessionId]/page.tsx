@@ -233,15 +233,21 @@ export default async function SessionDetailPage({
         updatePerformerAction={updateSessionPerformerAction}
       />
 
-      <SessionPaymentPrepareCard
-        sessionId={session.id}
-        clientId={id}
-        eligibility={sessionPaymentEligibility}
-        prepareAction={prepareSessionPaymentChargeAction}
-        executeAction={executeSessionPaymentChargeAction}
-        sendReceiptAction={sendPaymentChargeReceiptAction}
-        refundAction={refundPaymentChargeAttemptAction}
-      />
+      {/* PR #181. id="session-payment" anchor so the calendar
+          NextStepCard's "Go to billing" link deep-scrolls into the
+          payment card. The wrapper is a noop visually; the anchor
+          is the entire surface the practitioner is looking for. */}
+      <div id="session-payment">
+        <SessionPaymentPrepareCard
+          sessionId={session.id}
+          clientId={id}
+          eligibility={sessionPaymentEligibility}
+          prepareAction={prepareSessionPaymentChargeAction}
+          executeAction={executeSessionPaymentChargeAction}
+          sendReceiptAction={sendPaymentChargeReceiptAction}
+          refundAction={refundPaymentChargeAttemptAction}
+        />
+      </div>
 
       {session.modality === "electrolysis" && blockData ? (
         <SessionBlocksView

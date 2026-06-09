@@ -4,6 +4,53 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Session completion to billing workflow + payment UI cleanup (PR #181, no migration)
+
+**Decision (2026-06-09):** Two surfaces touched. (a) Calendar appointment detail gets a new `NextStepCard` that replaces the bare `Completed` placeholder with an "Appointment completed" + "Next step: chart the session and bill the client." CTA card whose primary action label depends on linked-session state. (b) Session payment card cleans up the stale `prepareJustSucceeded` banner, calls `router.refresh()` after a successful Prepare, and promotes `refund_status='succeeded'` to the top heading ("Test payment refunded") so the practitioner sees ONE current state instead of conflicting independent banners. The receipt email template's stale "Refund handling is not enabled in Hone yet" disclaimer is replaced with refund-aware copy (PR #178 made refunds available).
+
+**Why:** Chloe successfully reached the payment flow after PR #180 and the payment mechanics worked (charge, receipt, refund all succeeded in test mode), but the UI flow felt disjointed: (1) after marking an appointment completed there was no clear next step toward billing; (2) the session payment card showed a stale green "Session payment prepared / No charge has been run" banner alongside a green "Test charge succeeded" panel AND a refund-succeeded sub-section -- three states stacked simultaneously; (3) the receipt copy still said refund handling was not enabled even though PR #178 added it. PR #181 is a UI/copy/workflow PR with no payment behavior change.
+
+**Architecture:**
+
+- `app/(app)/calendar/[id]/page.tsx` (extended). New `NextStepCard` component appended below `ChartSessionCard` in the source file; mounted from the completed-status branch. Three sub-states (`Start session` / `Open session` / `Go to billing`) chosen off `linkedSession.id` + `linkedSession.started_at`. `Go to billing` deep-links to `/clients/<id>/sessions/<sessionId>#session-payment`. ChartSessionCard mount is gated on `typedStatus !== "completed"` so the two surfaces do not duplicate; ChartSessionCard continues to render for confirmed / no_show.
+
+- `components/session-payment-prepare-card.tsx` (extended). (1) `useRouter` is imported from `next/navigation`. (2) The local `prepareJustSucceeded` banner is gated on `!activeAttempt` so it disappears the moment the persisted row catches up; the verbose "Attempt id: ... No charge has been run. Refresh to see the persisted state..." copy is replaced with a single line "You can now run the test charge." (3) The successful-prepare branch in the form's submit handler calls `router.refresh()` so the persisted ready row replaces the local banner immediately. (4) `SucceededPanel` introduces a `refunded = attempt.refundStatus === "succeeded"` discriminator. When refunded the panel switches the border + background palette from green to amber, the top heading becomes "Test payment refunded.", and a `Refund details` block (Amount refunded / Refunded / Refund id) renders directly under the charge details. The existing `ReceiptSubPanel` + `RefundSubPanel` continue to mount below as per-section detail; the Refund sub-panel already hides its action button when `refund_status='succeeded'`. (5) The Amount line in the succeeded panel is renamed to "Amount charged:" so it reads as a charge total.
+
+- `app/(app)/clients/[id]/sessions/[sessionId]/page.tsx` (extended). `SessionPaymentPrepareCard` is wrapped in `<div id="session-payment">` so the calendar `Go to billing` deep link lands precisely on the payment surface. The wrapper is a noop visually.
+
+- `lib/email/templates/payment-receipt.ts` (extended). `NO_REFUND_BODY_DISCLAIMER` constant renamed to `REFUND_AVAILABLE_BODY_DISCLAIMER` with new copy `"If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone."` Both text and html bodies stamp the new disclaimer in the same position the old one occupied. Tests updated to pin the new copy and explicitly assert the old wording is gone.
+
+**State model (after PR #181):**
+
+| Persisted row | Top heading | Palette | Receipt sub-panel | Refund sub-panel | Stale prepare banner |
+| --- | --- | --- | --- | --- | --- |
+| `refund_status='succeeded'` | "Test payment refunded." | amber | sent state visible | refunded state, no button | hidden (gated by `!activeAttempt`) |
+| `refund_status='pending_stripe'` | "Test charge succeeded." | green | sent state | "Refund pending." | hidden |
+| `refund_status='failed'` | "Test charge succeeded." | green | sent state | failed state, retry available | hidden |
+| `status='succeeded'`, no refund | "Test charge succeeded." | green | active (button if not sent) | active (button) | hidden |
+| `status='pending_stripe'` | "Test charge pending." | amber | hidden | hidden | hidden |
+| `status='ready'` | "Session payment prepared" | neutral | hidden | hidden | hidden once persisted catches up |
+| no attempt + eligible | (prepare form) | n/a | hidden | hidden | shown briefly between submit and refresh |
+| not eligible + no attempt | "Billing not ready" + reasons (existing BlockedPanel + eligibility helper reasons) | red | hidden | hidden | hidden |
+
+**Payment gate untouched.** `lib/billing/session-payment-eligibility.ts` continues to require `appointment.status='completed'` AND `sessions.appointment_id IS NOT NULL` AND `sessions.started_at IS NOT NULL` AND active card on file AND signed_current card authorization AND studio Stripe test mode. The eligibility helper's blocking reasons (already specific: "Mark the appointment complete before preparing a session payment.", "Session has not started yet...", "No card on file...", "Card authorization is not signed...") continue to drive the BlockedPanel surface; PR #181 did not need to invent new copy.
+
+**What this PR does NOT do:**
+
+- No payment behavior change. The prepare / execute / receipt / refund actions are unchanged.
+- No new Stripe SDK call site (`paymentIntents.create` stays at 2 allowlisted, `refunds.create` stays at 1 allowlisted, `charges.create` / `checkout.sessions` stay at 0).
+- No live mode.
+- No SMS / email behavior change beyond the receipt copy update.
+- No client-portal mutation.
+- No `payment_charge_attempts` / `manual_fee_charge_attempts` runtime change.
+- No DB migration.
+- No new payment eligibility logic. The card's BlockedPanel continues to display the helper's blocking reasons unchanged.
+- No scroll/focus behavior added beyond the basic `#session-payment` fragment anchor. Browsers natively scroll on hash navigation; explicit `scrollIntoView` is deferred.
+
+**Alternative considered:** Remove the local `prepareJustSucceeded` banner entirely (no local feedback, rely on `router.refresh()` alone). Rejected: a brief 1-render-window confirmation gives the practitioner an immediate "the click worked" signal before the persisted row catches up; the gate on `!activeAttempt` cleanly removes the conflict without removing the feedback.
+
+**Honest non-claims:** no payment gate weakening, no new Stripe call, no live mode, no migration, no SMS, no client portal, no fee charging, no payment_charge_attempts schema change, no automatic refunds, no automatic dispute response. Stripe gates unchanged from PR #180.
+
 ### Appointment completion + session-start workflow unblock for payment smoke (PR #180, no migration)
 
 **Decision (2026-06-09):** Re-expose the "Mark completed" button on the appointment lifecycle surface AND auto-mark linked appointments completed when a practitioner starts a session against a confirmed, past appointment. The payment prepare gate from PR #172 (`appointment.status='completed'`) is unchanged; the fix is restoring the practitioner-side workflow that reaches that state from the UI.
