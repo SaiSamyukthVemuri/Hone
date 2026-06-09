@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { buildIcsFeed, type IcsEvent } from "@/lib/booking/ical";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
 
 // Private read-only iCal subscription feed.
 //
@@ -65,11 +66,20 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
 
+  // PR #182 phase 1. Lookup the practitioner via the SHA-256 hash of
+  // the URL token instead of the raw token. The hash column was
+  // backfilled by migration 0079 so existing in-the-wild feed URLs
+  // continue to resolve through the deploy boundary. The route no
+  // longer SELECTs the raw column at all -- if a database read leaks
+  // a row to logs, the raw bearer token is not in the row shape.
+  // The hash itself is never echoed back to the client; the response
+  // is only the ICS body or a generic 404.
+  const tokenHash = hashCalendarFeedToken(token);
   const admin = createAdminClient();
   const { data: practitioner, error: pErr } = await admin
     .from("practitioners")
-    .select("id, studio_id, active, calendar_feed_token")
-    .eq("calendar_feed_token", token)
+    .select("id, studio_id, active")
+    .eq("calendar_feed_token_hash", tokenHash)
     .maybeSingle();
   if (pErr) {
     console.error(
