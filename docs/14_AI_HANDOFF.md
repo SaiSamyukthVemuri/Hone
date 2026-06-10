@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #189)
+## Current production status (as of PR #190)
+
+- **Clinical memory moat, phase 1** (PR #190, migration 0082). `session_blocks` gains structured client response (`tolerance_rating` CHECK 1..5, `reaction_type` CHECK 7-value vocabulary, `reaction_notes`, `caution_for_next_session`, `caution_note`); `sessions` gains `next_session_note`. Captured in the charting form's optional "Client response" section and the session page's "Plan for next visit" card. Surfaced at the point of care through the shared unit-tested `lib/sessions/clinical-summary.ts` formatter: upgraded appointment detail "Last session" card (areas, settings, probe, worst tolerance, reactions, caution, next-visit note), new-session "Previous session context" panel, and a "From last visit, for today" charting banner. All additive and nullable; pre-#190 records render unchanged; no RLS change; no payment/Stripe/auth/export/reminder change (gates unchanged from PR #189).
+
+## Earlier production status (as of PR #189)
 
 - **Pilot-safety fixes: email claim, export gate, invite-only login** (PR #189, migration 0080). (1) The 24h/2h reminder cron now claims each row atomically via `claim_email_send` (mirror of the SMS claim from 0049: conditional UPDATE on sent-is-null + 3-attempt cap + 5-minute stale-claim window; new `confirmation/reminder_24h/reminder_2h_claimed_at` columns) before calling Resend, and records outcomes via `record_email_result` (stamps sent_at on success, clears the claim, no double-increment); overlapping cron runs can no longer double-send, and both RPCs are service_role-only. Unclaimed one-shot email paths keep `record_email_attempt`. (2) `exportStudioDataAction` is owner-only with a generic refusal, and every successful export writes a fail-closed `audit_logs` row (`studio_export`, actor, studio, filename + file list + row counts). (3) Practitioner login is invite-only at two layers: the magic-link request runs through a server action gating `shouldCreateUser` on a pending invitation (generic responses, no enumeration oracle), and migration 0081 removed `handle_new_user()`'s no-invite fresh-studio fallback so even Google OAuth (which cannot pass shouldCreateUser) provisions no studio/practitioner for uninvited users; the invited arm (inviting-studio placement + terms stamping) is unchanged. No payment, Stripe (gates unchanged from PR #187), live-mode, portal, SMS, calendar-feed, or availability change.
 

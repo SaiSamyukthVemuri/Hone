@@ -4,6 +4,13 @@ import {
   getClientById,
   getCurrentPractitionerWithStudio,
 } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
+import { localLongDate } from "@/lib/booking/tz";
+import {
+  buildLastSessionSummary,
+  type ClinicalSummaryBlock,
+  type LastSessionSummary,
+} from "@/lib/sessions/clinical-summary";
 import { startSessionAction } from "./actions";
 
 // PR #156 (migration 0068). Sanity match for ?appointment_id=. Empty,
@@ -35,6 +42,46 @@ export default async function NewSessionPage({
       ? sp.appointment_id
       : null;
 
+  // PR #190 (clinical memory). The most recent previous session + its
+  // blocks, condensed into the context panel below. This is the
+  // five-second read before charting a returning client: last area,
+  // settings, tolerance, reaction, caution, and the note left for
+  // today. First-visit clients simply see no panel.
+  const supabase = await createClient();
+  const { data: prevSession } = await supabase
+    .from("sessions")
+    .select("id, started_at, modality, next_session_note")
+    .eq("studio_id", studio.id)
+    .eq("client_id", id)
+    .is("deleted_at", null)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let previousSummary: LastSessionSummary | null = null;
+  let previousMeta: { startedAt: string; modality: string; sessionId: string } | null =
+    null;
+  if (prevSession) {
+    const { data: prevBlocks } = await supabase
+      .from("session_blocks")
+      .select(
+        "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+      )
+      .eq("studio_id", studio.id)
+      .eq("session_id", prevSession.id)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: true });
+    previousSummary = buildLastSessionSummary({
+      blocks: (prevBlocks ?? []) as ClinicalSummaryBlock[],
+      nextSessionNote: prevSession.next_session_note,
+    });
+    previousMeta = {
+      startedAt: prevSession.started_at,
+      modality: prevSession.modality,
+      sessionId: prevSession.id,
+    };
+  }
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8">
       <div>
@@ -56,6 +103,61 @@ export default async function NewSessionPage({
           </p>
         )}
       </div>
+
+      {previousSummary && previousMeta && (
+        <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Previous session context
+          </h2>
+          <p>
+            <Link
+              href={`/clients/${id}/sessions/${previousMeta.sessionId}`}
+              className="font-medium hover:underline"
+            >
+              {localLongDate(new Date(previousMeta.startedAt), studio.timezone)}
+            </Link>
+            <span className="text-neutral-500 capitalize">
+              {" "}
+              · {previousMeta.modality}
+            </span>
+          </p>
+          {previousSummary.areaLine && (
+            <p className="text-neutral-700 dark:text-neutral-300">
+              Treated: {previousSummary.areaLine}
+            </p>
+          )}
+          {previousSummary.settingsLine && (
+            <p className="text-neutral-700 dark:text-neutral-300">
+              Settings: {previousSummary.settingsLine}
+            </p>
+          )}
+          {previousSummary.probeLine && (
+            <p className="text-neutral-700 dark:text-neutral-300">
+              Probe: {previousSummary.probeLine}
+            </p>
+          )}
+          {previousSummary.toleranceLine && (
+            <p className="text-neutral-700 dark:text-neutral-300">
+              Tolerance: {previousSummary.toleranceLine}
+            </p>
+          )}
+          {previousSummary.reactionLine && (
+            <p className="text-neutral-700 dark:text-neutral-300">
+              Response: {previousSummary.reactionLine}
+            </p>
+          )}
+          {previousSummary.cautionFlagged && (
+            <p className="text-amber-700 dark:text-amber-400">
+              Watch today{previousSummary.cautionLine ? `: ${previousSummary.cautionLine}` : ""}
+            </p>
+          )}
+          {previousSummary.nextSessionNote && (
+            <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
+              From last visit, for today: {previousSummary.nextSessionNote}
+            </p>
+          )}
+        </section>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <ModalityCard

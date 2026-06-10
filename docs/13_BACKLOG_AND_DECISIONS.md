@@ -4,6 +4,20 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Clinical memory moat, phase 1 (PR #190, migration 0082)
+
+**Decision (2026-06-10):** Make the returning-client visit the moment Hone visibly beats Jane and paper notes. Hone already captured treatment settings deeply (mode/energy/minutes 0019, structured area 0039, structured probe 0041, split readings 0042) but client tolerance, skin response, and caution lived only in free text, `sessions.session_notes` had no write surface at all, and the appointment "Last session" card showed little more than a date. Three additions:
+
+**1. Structured client response per block (migration 0082).** `session_blocks` gains `tolerance_rating` (CHECK 1..5), `reaction_type` (CHECK against the 7-value vocabulary mirrored in `lib/sessions/clinical-response.ts`), `reaction_notes`, `caution_for_next_session` (default false), `caution_note`. Captured in an optional, calm "Client response" section of the one-page charting form (1-5 tap row, dropdown, textareas, caution checkbox revealing its note). Server-side validation in the combined block actions rejects out-of-range ratings and unknown reactions; a caution note implies the caution flag. Edit round-trips stored values. All fields nullable: every pre-0082 block renders unchanged.
+
+**2. Next-session note (migration 0082).** `sessions.next_session_note`, captured in a "Plan for next visit" card on the session page (`updateNextSessionNoteAction`; empty save clears). Surfaced on the client's next visit as a "From last visit, for today" banner on the charting screen, in the new-session context panel, and on the appointment card.
+
+**3. Point-of-care surfacing.** New pure helper `lib/sessions/clinical-summary.ts:buildLastSessionSummary` condenses the latest session + blocks into compact lines (areas with sides, first block's settings, probe label, WORST tolerance across blocks, unique reactions with a short note, caution flag + joined notes, next-visit note), nulling every absent line. Three consumers: the upgraded appointment detail `LastSessionCard`, the new-session page "Previous session context" panel, and (note only) the charting banner. First-visit clients see no panel; pre-#190 sessions show the same calm card as before.
+
+**Why per-block, not a child table:** the charting form already edits blocks one-to-one and the response is a property of the treatment unit (this area, these settings, this response). A child table would add a join and a second write path for zero modeling gain at pilot scale.
+
+**Honest non-claims:** no payment/Stripe change (gates unchanged from PR #189), no RLS change, no public access to clinical data (all surfaces behind practitioner auth + studio RLS), no reminder/auth/export change, no per-practitioner availability, no Jane integration, no laser-block response capture (laser sessions have no blocks; the summary degrades to date + modality + note).
+
 ### Pilot-safety fixes: email claim, export gate, invite-only login (PR #189, migration 0080)
 
 **Decision (2026-06-10):** Three minimal hardening fixes before Chloe/Laura work with real client data.

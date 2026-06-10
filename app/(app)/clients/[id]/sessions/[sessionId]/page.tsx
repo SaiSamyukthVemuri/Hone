@@ -38,9 +38,11 @@ import { SessionBlocksView } from "./session-blocks-view";
 import {
   addLaserEntryAction,
   deleteLaserEntryAction,
+  updateNextSessionNoteAction,
   updateSessionPerformerAction,
   updateSessionPriceAction,
 } from "./actions";
+import { createClient } from "@/lib/supabase/server";
 import {
   attachChartEntryToPlanAction,
   detachChartEntryFromPlanAction,
@@ -154,6 +156,24 @@ export default async function SessionDetailPage({
     session.modality === "electrolysis"
       ? await getPriorLaserSessionCount(studio.id, id, session.started_at)
       : 0;
+  // PR #190 (clinical memory). The note the practitioner left FOR
+  // this visit while charting the previous one. Narrow select; only
+  // rendered when a note exists, so historical clients see nothing.
+  const supabaseForNote = await createClient();
+  const { data: previousWithNote } = await supabaseForNote
+    .from("sessions")
+    .select("id, started_at, next_session_note")
+    .eq("studio_id", studio.id)
+    .eq("client_id", id)
+    .is("deleted_at", null)
+    .not("next_session_note", "is", null)
+    .lt("started_at", session.started_at)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const fromLastVisit =
+    previousWithNote?.next_session_note?.trim() || null;
+
   const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
   const priorLaserClause =
@@ -221,6 +241,20 @@ export default async function SessionDetailPage({
         />
       </div>
 
+      {/* PR #190 (clinical memory): the plan written at the previous
+          visit, surfaced where Chloe starts working. Renders only
+          when a note exists. */}
+      {fromLastVisit && (
+        <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-blue-900 dark:bg-blue-950/40">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
+            From last visit, for today
+          </h2>
+          <p className="mt-1.5 whitespace-pre-wrap text-blue-950 dark:text-blue-100">
+            {fromLastVisit}
+          </p>
+        </section>
+      )}
+
       <SessionInfoCard
         sessionId={session.id}
         clientId={id}
@@ -285,6 +319,40 @@ export default async function SessionDetailPage({
           </section>
         </>
       )}
+
+      {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
+          sessions.next_session_note and shown as "From last visit"
+          when the client returns. Optional; empty save clears it. */}
+      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+        <div>
+          <h2 className="text-lg font-medium">Plan for next visit</h2>
+          <p className="text-sm text-neutral-500">
+            Optional. Shown to you when {clientFirstName} comes back.
+          </p>
+        </div>
+        <form
+          action={updateNextSessionNoteAction}
+          className="flex flex-col gap-3"
+        >
+          <input type="hidden" name="session_id" value={session.id} />
+          <input type="hidden" name="client_id" value={id} />
+          <textarea
+            name="next_session_note"
+            rows={2}
+            defaultValue={session.next_session_note ?? ""}
+            placeholder="e.g. Start lower on the upper lip and check sensitivity before continuing"
+            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <div>
+            <button
+              type="submit"
+              className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              Save note
+            </button>
+          </div>
+        </form>
+      </section>
 
       <div className="pt-6">
         <DeleteSessionForm sessionId={session.id} clientId={id} />
