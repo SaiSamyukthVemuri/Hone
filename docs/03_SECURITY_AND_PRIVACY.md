@@ -16,7 +16,7 @@ Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_
 
 | Surface | Public? | What protects it |
 |---|---|---|
-| `/`, `/pricing`, `/demo`, `/privacy`, `/terms` | Yes | Static marketing content. No identity data. |
+| `/`, `/pricing`, `/demo`, `/privacy`, `/terms` | Yes | Static marketing content. The waitlist and demo-request forms on these pages submit anonymous server actions that are rate-limited per IP (5/hour) and per normalized email (2/day) via the shared Upstash module, with SHA-256-hashed identifiers and a generic refusal message (PR #187). |
 | `/book/<slug>` | Yes | Slug is the studio's public booking identifier (not a token). Rate-limited via Upstash if configured (fails open). Server resolves studio by slug; client is find-or-created with normalized email. |
 | `/portal/login` | Yes | Generic-success response regardless of email match (no enumeration). Rate-limited per email + per IP. |
 | `/cancel/<token>` | Yes via token | Token IS the credential. See §4. |
@@ -137,11 +137,11 @@ This is the honest list. Do not hide gaps.
 | Risk | Status |
 |---|---|
 | Email reminder outbox / claim discipline | **Deferred.** The 24h / 2h cron currently dispatches reminders directly. A claim-then-send outbox would prevent double-sends in the rare race; the dispatch path already records attempts but does not lock the row. |
-| Hashed `calendar_feed_token` storage | **Deferred.** Practitioners' calendar feed tokens are stored raw in `practitioners.calendar_feed_token`. A DB compromise would yield usable tokens. Migration to hash + raw-token-only-on-rotate is a known follow-up. |
-| Comprehensive automated coverage | **Partial.** Minimal Vitest guard/regression tests and a GitHub Actions CI job (`.github/workflows/ci.yml`, PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR. Full Supabase-local DB integration, an RLS policy suite, and browser E2E coverage remain deferred; manual smoke (docs/12) is still the production-readiness check. |
+| Hashed `calendar_feed_token` storage | **Partially resolved (PR #182, phase 1).** Migration 0079 added `practitioners.calendar_feed_token_hash` (SHA-256 hex, backfilled); the feed route looks up by hash only and no longer SELECTs the raw column. The raw column is kept for rollout compatibility until phase 2 (settings UI shows the URL only at rotation time, then the raw value is nulled). Phase 2 is not started; do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. |
+| Comprehensive automated coverage | **Partial but substantial.** Vitest suite (~1,480 tests as of PR #187) plus the GitHub Actions CI job (`.github/workflows/ci.yml`, PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR. Full Supabase-local DB integration, an RLS policy suite, and browser E2E coverage remain deferred; manual smoke (docs/12) is still the production-readiness check. |
 | Real legal review of consent / cancellation / card-authorization wording | **Required before live payment.** Drafts exist in code (`docs/05_CONSENT_AND_FORMS.md`). Enforceability under Ontario law depends on lawyer-reviewed wording. |
 | Stripe metadata search for stale pending recovery | **Test mode acceptable today.** PR #146 reconciles within a 60-minute window with the deterministic idempotency key; older pending attempts surface "needs manual review." A live-mode PR must add `paymentIntents.search` by metadata before any blind retry. |
-| Receipts / charge notice email | **Not built.** No email is sent on a successful test charge. A live-mode PR must add a receipt path. |
-| Refunds / disputes | **Not built.** No code path issues a refund. The 0032 backend has the SQL but is dormant. |
+| Receipts / charge notice email | **Built in test mode (PR #175)** for session payments on `payment_charge_attempts`: a receipt email is sent on a successful test charge. Still open for live: content/legal review of the template and a charge notice for the legacy manual-fee path. |
+| Refunds / disputes | **Refunds built in test mode (PR #178)**: full-amount, reason-agnostic refunds on `payment_charge_attempts`; the dormant 0032 refund tables remain unused. **Disputes are alert-only (PR #179)**: `charge.dispute.created` fires a critical ops_alert; no automated dispute response exists. |
 | Practitioner-recovery card-add path | **Deferred.** `client_payment_methods.added_via` allows `practitioner` but no UI exists for that yet. |
 | Two-practitioner studio support | **Not exercised.** Code paths are written studio-scoped, not owner-scoped, but the only pilot is single-practitioner. |

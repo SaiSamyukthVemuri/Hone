@@ -2,6 +2,64 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Cumulative status through PR #188 (2026-06-10)
+
+PR #188 is a docs-only cleanup; the most recent runtime change is PR #187. This section is the single current-state summary; the per-PR blocks below are the detailed history.
+
+**Payment status:** Test-mode session payments are built end-to-end. Live payments are still blocked. Fees are not active.
+
+**Stripe gate status** (pinned by `scripts/check-stripe-gates.mjs` + per-PR tests):
+
+```text
+paymentIntents.create   exactly 2  (lib/billing/manual-fee-charge.ts, lib/billing/session-payment-charge.ts)
+refunds.create          exactly 1  (lib/billing/payment-refund.ts)
+charges.create          0
+checkout.sessions       0
+STRIPE_ALLOW_LIVE_MODE  guarded    (string appears only in lib/stripe/server.ts error message)
+```
+
+**Completed (PRs #170-#187):**
+
+```text
+#170  Card authorization current-version gate
+#171  Canonical payment_charge_attempts ledger
+#172  Prepare session payment
+#173  Run Stripe test charge
+#174  Payment status UX
+#175  Test-mode receipts
+#177  Card authorization pointer refresh
+#178  Test-mode refunds
+#179  Webhook reconciliation
+#180  Appointment completion/session-start workflow unblock
+#181  Session completion to billing UI cleanup
+#182  Calendar feed token hash-at-rest phase 1
+#183  Portal last_seen_at fix
+#184  DST two-pass conversion fix
+#185  localTimeString 24:xx normalization
+#186  Explicit server-only dependency
+#187  Waitlist/demo public form rate limits
+```
+
+**Still open:**
+
+```text
+Live payment readiness
+Legal review of card authorization wording
+Tax/HST decision
+Statement descriptor review
+Off-session SetupIntent confirmation before live
+Live runbook
+Dispute response runbook
+Willow live Stripe onboarding
+Supervised first live charge
+Late cancellation/no-show fee charging
+manual_fee_charge_attempts unification/retirement
+Calendar feed phase 2
+Docs/launch checklist final polish
+```
+
+**Calendar feed phase 2:** Not started. A parked WIP commit exists locally (branch `claude/calendar-feed-token-hash-phase-2`, not pushed). Do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. Renumber the old parked PR/migration labels before using.
+
 ## Current production status (as of PR #187)
 
 - **Waitlist + demo request rate limiting** (PR #187, no migration). The anonymous landing-page actions `submitWaitlistEntry` and `submitDemoRequest` previously had no rate limit. Both now route through `lib/rate-limit/public.ts` via new `limitWaitlistSubmit` / `limitDemoRequestSubmit` helpers (shared `limitMarketingForm` implementation): 5/hour per IP + 2/day per normalized email, checked after validation and before the Supabase insert, with namespaced Redis prefixes (`rl:waitlist_*`, `rl:demo_*`), SHA-256-hashed identifiers, the shared generic `RATE_LIMIT_MESSAGE` refusal copy, and the module's standard FAIL-OPEN posture on Upstash outage. No raw body or PII logging. No payment behavior change, no Stripe behavior change (gates unchanged from PR #186), no migration, no email/SMS sending, no portal or calendar feed change.

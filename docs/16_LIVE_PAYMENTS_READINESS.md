@@ -1,6 +1,6 @@
 # 16 Live payments readiness
 
-**Status: NOT READY FOR LIVE PAYMENTS** (PR #168, 2026-06-08).
+**Status: NOT READY FOR LIVE PAYMENTS** (original review PR #168, 2026-06-08; reaffirmed after PRs #170-#187, 2026-06-10). Test-mode session payments are built end-to-end (prepare, charge, receipt, refund, webhook reconciliation, billing UX). Live payments are still blocked. Fees are not active. Several §5 blockers carry resolution notes below; the open ones are: legal review of card-authorization wording, tax/HST decision, statement descriptor review, off-session SetupIntent confirmation review, live runbook, dispute-response runbook, Willow live Stripe onboarding, supervised first live charge, late cancellation/no-show fee charging on `payment_charge_attempts`, and `manual_fee_charge_attempts` unification or retirement.
 
 This document is a snapshot of the live-payments readiness review. It exists because Chloe asked, verbatim: *"We need a way to start taking live cards now, not just test. No more cash. We have 3 clients signed up already. We need to get everything live."*
 
@@ -17,7 +17,7 @@ The Stripe charge backend has been installed in production since PR #146 (migrat
 | Category | Status |
 |---|---|
 | Live card setup (SetupIntent only, no money movement) | **Not ready.** 7 client-facing copy strings advertise "Test mode only" and would be misleading in live mode; the `card_authorization` consent template Willow has on file is titled "test" (not a reviewed legal document); both studios have `stripe_payouts_enabled=false`. |
-| Live manual fees (cancellation + no-show charging) | **Not ready.** Every blocker above plus: no receipt path, no refund code path, no operator runbook for stuck or duplicate charges, no test coverage on the charge path, `manual_fee_charge_attempts.stripe_livemode = false` CHECK constraint blocks live writes structurally. |
+| Live manual fees (cancellation + no-show charging) | **Not ready.** Every blocker above plus: no operator runbook for stuck or duplicate charges, the legacy `manual_fee_charge_attempts` runtime has no receipt/charge-notice email and no webhook reconciliation (unification onto `payment_charge_attempts` still open), and the `manual_fee_charge_attempts.stripe_livemode = false` CHECK constraint blocks live writes structurally. (Receipt, refund, and webhook reconciliation DO exist in test mode for session payments on `payment_charge_attempts`: PRs #175, #178, #179.) |
 | Stripe Connect onboarding + status sync | **Ready.** Both studios have a connected test-mode account with `charges_enabled=true` and `details_submitted=true`. The webhook handler updates these flags atomically via the `sync_studio_account_status` RPC; idempotency is enforced via the `stripe_events` table. |
 
 Estimated effort to unblock live card setup: **1 small PR** (#169, UI copy + template review). Estimated effort to unblock live manual fees: **6 to 8 sequential PRs** plus a separate legal-review cycle.
@@ -81,11 +81,12 @@ The template is currently live in the client portal because PR #167's backfill s
 ### 2.3 paymentIntents.create call sites
 
 ```text
-$ grep -rn 'paymentIntents\.create' app/ lib/ --include='*.ts' --include='*.tsx'
-lib/billing/manual-fee-charge.ts:723:    pi = await stripe.paymentIntents.create(
+$ grep -rln 'paymentIntents\.create' app/ lib/ --include='*.ts' --include='*.tsx'
+lib/billing/manual-fee-charge.ts
+lib/billing/session-payment-charge.ts
 ```
 
-Exactly one occurrence. Allowlisted by `scripts/check-stripe-gates.mjs`. This is the only path that could ever cause money to move.
+Exactly two occurrences as of PR #173 (the section above was written at PR #168 when there was one). Both allowlisted and count-pinned by `scripts/check-stripe-gates.mjs` (`exactly: 2`). These are the only paths that could ever cause money to move; both are behind test-mode livemode gates and `*_livemode_false_check` DB CHECKs.
 
 ### 2.4 "Test mode only" UI copy
 
@@ -248,6 +249,8 @@ A future PR must either:
 
 **Suggested PR #171 (receipt email).**
 
+**Resolution for the payment_charge_attempts surface (PR #175, 2026-06-09).** A Hone-side receipt template (`lib/email/templates/payment-receipt.ts`) is rendered and sent via Resend after a successful test-mode session-payment charge, with an atomic claim so the receipt sends at most once, and a `payment_receipt_sent_record_update_failed` internal log if the sent-record write fails after dispatch. Still open for live: content/legal review of the template, and the legacy manual-fee path still sends nothing (unify fees onto `payment_charge_attempts` or add a separate notice before live fees).
+
 ### 5.5 Refund path missing (PARTIALLY RESOLVED by PR #178)
 
 > **Status (2026-06-09):** PARTIALLY RESOLVED. PR #178 shipped a reason-agnostic test-mode manual refund path on `payment_charge_attempts` (migration 0078 + `lib/billing/payment-refund.ts` + UI sub-panel). It covers `session_payment` rows today (the only reason with succeeded rows in prod); the same helper refunds future `late_cancellation_fee` / `no_show_fee` rows without code change. Still pending for full live-payments readiness: refunds on `manual_fee_charge_attempts` (the legacy dormant fee runtime), live-mode refunds, automatic refund triggers, dispute response, and webhook reconciliation of `charge.refunded` events for out-of-band refunds.
@@ -299,6 +302,8 @@ Before live charging, verify with Chloe:
 - Eligibility edge cases: no active card, no signed authorization, wrong livemode, archived client.
 
 **Suggested PR #174 (charge path test coverage).**
+
+**Partial resolution (PRs #171-#187, 2026-06-09/10).** The Vitest suite now sits at ~1,480 tests with per-PR coverage of the session-payment surface: eligibility helpers, charge/refund/receipt source invariants, webhook reconciliation matrices, Stripe-gate count pins, and live-mode dormancy guards. Most of it is source-grep invariant pinning per project convention rather than mocked-Stripe happy-path execution; a mocked `runManualFeeCharge` happy-path test and a Supabase-local webhook idempotency test remain open before live mode.
 
 ### 5.8 No live-charge operator runbook (operational blocker)
 
