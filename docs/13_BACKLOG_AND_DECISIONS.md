@@ -4,6 +4,12 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Explicit server-only dependency (PR #186, no migration)
+
+**Decision (2026-06-10):** Declare `server-only@0.0.1` in `dependencies`. Twenty-three runtime server modules (billing, portal, consent, supabase admin client, calendar feed token helper, ops alerts, notifications, stripe setup-intent) use `import "server-only"` as a client-bundle boundary, but the package was absent from package.json and the lockfile; it resolved only through Next's internal vendored alias (`next/dist/compiled/server-only`). Relying on a Next internal for a security boundary is brittle: a Next upgrade that drops or renames the alias would weaken the boundary silently. `npm install server-only` added exactly one package.json line and one lockfile entry. The Vitest stub alias (`tests/stubs/server-only.ts`, PR #153) takes precedence over node_modules, so test resolution is unchanged. `tests/dependencies/server-only-explicit.test.ts` pins the declaration and spot-checks the boundary imports so dependency drift is caught by CI.
+
+**Honest non-claims:** no runtime behavior change intended (the import resolved before and resolves now; the enforcement semantics are identical), no payment change, no Stripe change (gates unchanged from PR #185), no migration, no portal logic change, no calendar feed phase 2.
+
 ### localTimeString hour-24 normalization across ICU builds (PR #185, no migration)
 
 **Decision (2026-06-10):** Normalize `lib/booking/tz.ts:localTimeString` so it never returns `24:xx`. Some ICU builds resolve Intl's `hour12: false` to the h24 hour cycle and render hour 0 as "24" ("24:30" for half past midnight); others resolve to h23 and render "00:30". Surfaced by the PR #184 CI run, whose runner ICU emitted 24:xx where dev machines emitted 00:xx (that failure was test-only and was normalized in the test helper at the time; this PR moves the normalization into the production helper where it belongs). A private `normalizeHour24` helper rewrites a leading `24:` to `00:` after formatting; `tzOffsetMinutes` already guarded the same quirk numerically (`if (hour === 24) hour = 0`). `localTimeString12h` (h12 cycle, midnight renders "12:30 AM") and `localDateString` (date-only) are unaffected, verified and pinned by test. `utcInstantFromLocal` untouched.

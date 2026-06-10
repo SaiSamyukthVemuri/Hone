@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #185)
+## Current production status (as of PR #186)
+
+- **Explicit server-only dependency** (PR #186, no migration). `server-only@0.0.1` is now declared in `dependencies`. The 23 runtime server modules using `import "server-only"` as a client-bundle security boundary previously resolved the package only through Next's internal vendored alias; it was missing from package.json and the lockfile, so a Next upgrade could have silently weakened the boundary. No runtime behavior change intended; the Vitest stub alias is unchanged and takes precedence in tests. `tests/dependencies/server-only-explicit.test.ts` pins the declaration. No payment behavior change, no Stripe behavior change (gates unchanged from PR #185), no migration, no portal logic change, no calendar feed phase 2.
+
+## Earlier production status (as of PR #185)
 
 - **localTimeString hour-24 normalization** (PR #185, no migration). Some ICU builds resolve Intl's `hour12: false` to the h24 hour cycle and render hour 0 as "24" ("24:30" instead of "00:30"); the PR #184 CI run surfaced this when its runner ICU emitted 24:xx where dev machines emitted 00:xx. `lib/booking/tz.ts:localTimeString` now rewrites a leading `24:` to `00:` via a private `normalizeHour24` helper, so HH is always 00-23 on every runtime (calendar grid labels, dashboard roster, SMS templates). `tzOffsetMinutes` already guarded the same quirk numerically; `localTimeString12h` (h12 cycle) and `localDateString` (date-only) are unaffected and pinned by test; `utcInstantFromLocal` untouched. The PR #184 DST round-trip tests now exercise the production normalization directly (the test-side copy was removed). No conversion logic change, no payment behavior change, no Stripe behavior change (gates unchanged from PR #184), no migration, no new dependency.
 
