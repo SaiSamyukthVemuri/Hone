@@ -675,26 +675,24 @@ export default async function ClientCheatSheetPage({
 
       {activeTab === "sessions" && (
         <>
-          {/* PR #157. Appointment timeline at the top of the Sessions
-                tab. Surfaces upcoming + past + cancelled + no-show
-                appointments grouped by practitioner urgency, with
-                explicit Chart session / View session affordances per
-                row using the PR #156 appointment_id FK. The legacy
-                uncharted-past-visits section that sat further down
-                has been removed; the new "Needs charting" group
-                inside the timeline subsumes it without losing the
-                same data. */}
-          <ClientAppointmentTimeline
+          {/* PR #191 (Chloe smoke feedback): the Sessions tab order is
+                hers, verbatim:
+                  1. Total electrolysis treatment time
+                  2. Last session memory
+                  3. Appointments (Needs charting first, then Upcoming;
+                     order set inside ClientAppointmentTimeline)
+                  4. Session history
+                Treatment time moved above appointments at her request. */}
+          <TreatmentTimeCard
             clientId={client.id}
-            rows={appointmentTimeline}
+            totals={treatmentTotals}
+            breakdown={treatmentByArea}
+            goal={treatmentGoal}
+            upsertGoalAction={upsertTreatmentGoalAction}
           />
 
-          {/* Sessions tab (split out from the prior combined "Sessions
-                & Treatment Plans" tab after Chloe's launch retest).
-                Holds per-visit memory + progress totals. Treatment
-                Plans is its own tab now.
-                1. Last session; top of the tab. What the practitioner reaches
-                for between visits. */}
+          {/* 2. Last session; what the practitioner reaches for
+                between visits. */}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">Last session</h2>
             {lastSession ? (
@@ -731,29 +729,22 @@ export default async function ClientCheatSheetPage({
             )}
           </section>
 
-          {/* PR #157. The prior uncharted-past-visits section that
-                lived here is now subsumed by the
-                <ClientAppointmentTimeline /> at the top of this tab;
-                its "Needs charting" group surfaces the same rows
-                with the same Chart session affordance and link
-                shape. Removing the duplicate keeps the Sessions tab
-                calm per Chloe's clutter feedback. */}
-
-          {/* 2. Treatment time totals + goal: progress-tracking,
-                lower priority than immediate last-session memory.
-                Lives with Sessions because it summarises session time
-                over the course of treatment. */}
-          <TreatmentTimeCard
+          {/* 3. Appointment timeline (PR #157): Needs charting first,
+                then Upcoming, then charted/cancelled/no-show. The
+                group order lives in ClientAppointmentTimeline. */}
+          <ClientAppointmentTimeline
             clientId={client.id}
-            totals={treatmentTotals}
-            breakdown={treatmentByArea}
-            goal={treatmentGoal}
-            upsertGoalAction={upsertTreatmentGoalAction}
+            rows={appointmentTimeline}
           />
 
-          {/* 3. Full timeline last. */}
+          {/* 4. Full session history last. Renamed from "All
+                sessions" (PR #191): Chloe found that label confusing
+                next to the appointment groups above. */}
           <section className="flex flex-col gap-3">
-            <h2 className="text-lg font-medium">All sessions</h2>
+            <h2 className="text-lg font-medium">Session history</h2>
+            <p className="text-xs text-neutral-500">
+              Every charted session for this client, newest first.
+            </p>
             <SessionTimeline
               clientId={client.id}
               sessions={olderSessions}

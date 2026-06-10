@@ -34,6 +34,7 @@ import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
+import { NextVisitNoteForm } from "./NextVisitNoteForm";
 import { SessionBlocksView } from "./session-blocks-view";
 import {
   addLaserEntryAction,
@@ -185,7 +186,7 @@ export default async function SessionDetailPage({
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
         <Link
-          href={`/clients/${id}`}
+          href={`/clients/${id}?tab=sessions`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {clientData.client.name}
@@ -330,28 +331,12 @@ export default async function SessionDetailPage({
             Optional. Shown to you when {clientFirstName} comes back.
           </p>
         </div>
-        <form
+        <NextVisitNoteForm
+          sessionId={session.id}
+          clientId={id}
+          initialNote={session.next_session_note ?? ""}
           action={updateNextSessionNoteAction}
-          className="flex flex-col gap-3"
-        >
-          <input type="hidden" name="session_id" value={session.id} />
-          <input type="hidden" name="client_id" value={id} />
-          <textarea
-            name="next_session_note"
-            rows={2}
-            defaultValue={session.next_session_note ?? ""}
-            placeholder="e.g. Start lower on the upper lip and check sensitivity before continuing"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
-          <div>
-            <button
-              type="submit"
-              className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Save note
-            </button>
-          </div>
-        </form>
+        />
       </section>
 
       <div className="pt-6">

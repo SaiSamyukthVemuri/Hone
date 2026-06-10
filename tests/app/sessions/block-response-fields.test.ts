@@ -90,10 +90,9 @@ describe("block actions: response validation and persistence", () => {
 });
 
 describe("block form: optional capture, round-trip on edit", () => {
-  it("renders the Client response section with calm copy", () => {
-    expect(FORM).toMatch(/Client response/);
+  it("renders the response section with calm copy (PR #191 bucket headers)", () => {
+    expect(FORM).toMatch(/Client\/skin response/);
     expect(FORM).toMatch(/How did the client tolerate this area\?/);
-    expect(FORM).toMatch(/Skin\/client response/);
     expect(FORM).toMatch(/Caution for next session/);
     expect(FORM).toMatch(/Anything to watch next time\?/);
   });
@@ -101,7 +100,7 @@ describe("block form: optional capture, round-trip on edit", () => {
   it("tolerance is a 1-5 tap control, never required", () => {
     expect(FORM).toMatch(/\["1", "2", "3", "4", "5"\]\.map/);
     expect(FORM).toMatch(/1 = struggled, 5 = very comfortable/);
-    const responseSection = FORM.slice(FORM.indexOf("Client response"));
+    const responseSection = FORM.slice(FORM.indexOf("Client/skin response"));
     expect(responseSection).not.toMatch(/required/);
   });
 

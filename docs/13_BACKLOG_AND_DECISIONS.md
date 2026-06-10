@@ -4,6 +4,21 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Treatment memory UX cleanup from Chloe's practitioner smoke (PR #191, no migration)
+
+**Decision (2026-06-10):** Eight UX fixes from Chloe's real returning-client smoke of PR #190. The feature should feel like "I treated these areas, here is how each went, here is what to do next time," not "I am filling out database blocks." Practitioner-facing copy says "treatment area"; "block" stays internal.
+
+1. **No auto-filled area on a new treatment area.** The plan-area seed (`defaultPrimaryArea`) now applies only to the FIRST area of a session; adding another area starts blank (she charted chin, added an area, got chin again when she wanted upper lip).
+2. **Copy settings is full + area-aware.** Now copies mode, modality, energy, machine frequency, probe, AND minutes (minutes was deliberately excluded before; Chloe expected it). When a treatment area is already selected, the most recent saved area with the same name wins over the most recent block. Inline message states exactly what was copied, including the no-match case. Never copies the area identity or any response field (tolerance/reaction/caution).
+3. **"Plan for next visit" has explicit save feedback.** The action returns a result instead of throwing; a client form shows Saving / Saved just now / Note cleared / Unsaved changes / error. Autosave was considered and deferred (follow-up).
+4. **Back returns to the Sessions tab.** Session detail and new-session back links carry `?tab=sessions` instead of landing on Overview.
+5. **Per-area summaries.** `buildLastSessionSummary` reshaped: `areas[]` (one mini-summary per treatment area: name, settings, probe, tolerance, response) + `watchLines[]` + `nextSessionNote`. The PR #190 "first area" compact line (and its PR-review "Settings (first area)" label) is gone; multi-area sessions show every area. Shared render in `components/last-session-summary.tsx`, used by the appointment card and the new-session panel.
+6. **One combined warning box.** The amber "Watch today" line and the blue "From last visit, for today" box merged into a single amber "From last visit, for today" box with `Watch:` lines (area-prefixed cautions) and a `Plan:` line (next-session note). Two competing boxes never render.
+7. **Bucketed charting form.** Three purpose-labeled sections: "Treatment observations" (what you saw: the existing chips + free text), "Client/skin response" (tolerance/reaction/notes), "For next visit" (caution + note). Same fields, clearer intent.
+8. **Sessions tab in Chloe's order.** Total electrolysis treatment time first, then Last session, then Appointments with "Needs charting" above "Upcoming", then "Session history" (renamed from the confusing "All sessions").
+
+**Honest non-claims:** no migration, no schema change, no payment/Stripe change (gates unchanged from PR #190), no auth/export/reminder change, no public booking or availability change. Follow-ups: debounced autosave for the next-visit note; per-area response trends.
+
 ### Clinical memory moat, phase 1 (PR #190, migration 0082)
 
 **Decision (2026-06-10):** Make the returning-client visit the moment Hone visibly beats Jane and paper notes. Hone already captured treatment settings deeply (mode/energy/minutes 0019, structured area 0039, structured probe 0041, split readings 0042) but client tolerance, skin response, and caution lived only in free text, `sessions.session_notes` had no write surface at all, and the appointment "Last session" card showed little more than a date. Three additions:

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #190)
+## Current production status (as of PR #191)
+
+- **Treatment memory UX cleanup** (PR #191, no migration). Eight fixes from Chloe's practitioner smoke of PR #190: plan-area seed applies only to a session's first treatment area (no auto-filled repeat areas); "Copy settings from last treatment area" copies the full configuration (now incl. minutes), prefers a same-named area, and explains what it copied; "Plan for next visit" shows explicit saved/cleared/error feedback (action returns a result); back navigation from session pages lands on the client's Sessions tab; last-session summaries are PER treatment area (`areas[]` + `watchLines[]` in `lib/sessions/clinical-summary.ts`, shared render in `components/last-session-summary.tsx`); the duplicate amber/blue warning boxes merged into one "From last visit, for today" box (Watch + Plan); the charting form is bucketed into Treatment observations / Client/skin response / For next visit; the Sessions tab is ordered treatment time, last session, Needs charting above Upcoming, then "Session history" (renamed from "All sessions"). Practitioner copy says "treatment area", never "block". No payment/Stripe/auth/export/reminder change (gates unchanged from PR #190).
+
+## Earlier production status (as of PR #190)
 
 - **Clinical memory moat, phase 1** (PR #190, migration 0082). `session_blocks` gains structured client response (`tolerance_rating` CHECK 1..5, `reaction_type` CHECK 7-value vocabulary, `reaction_notes`, `caution_for_next_session`, `caution_note`); `sessions` gains `next_session_note`. Captured in the charting form's optional "Client response" section and the session page's "Plan for next visit" card. Surfaced at the point of care through the shared unit-tested `lib/sessions/clinical-summary.ts` formatter: upgraded appointment detail "Last session" card (areas, settings, probe, worst tolerance, reactions, caution, next-visit note), new-session "Previous session context" panel, and a "From last visit, for today" charting banner. All additive and nullable; pre-#190 records render unchanged; no RLS change; no payment/Stripe/auth/export/reminder change (gates unchanged from PR #189).
 

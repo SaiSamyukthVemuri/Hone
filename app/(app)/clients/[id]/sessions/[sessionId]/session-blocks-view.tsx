@@ -115,7 +115,13 @@ export function SessionBlocksView({
           sessionId={sessionId}
           clientId={clientId}
           previousBlock={previousBlock}
-          defaultPrimaryArea={defaultPrimaryArea}
+          savedBlocks={blocks}
+          // PR #191 (Chloe smoke feedback): the plan-area seed applies
+          // only to the FIRST treatment area of the session. Adding
+          // another area starts blank; a new area is usually a
+          // DIFFERENT area, and silently repeating the previous one
+          // (chin -> chin when she wanted upper lip) fought her.
+          defaultPrimaryArea={blocks.length === 0 ? defaultPrimaryArea : null}
           onCancel={() => setAdding(false)}
         />
       ) : (

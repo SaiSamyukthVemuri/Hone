@@ -59,17 +59,42 @@ describe("capture: updateNextSessionNoteAction", () => {
 });
 
 describe("capture surface: session detail page", () => {
+  const NOTE_FORM = readFileSync(
+    path.join(
+      ROOT,
+      "app/(app)/clients/[id]/sessions/[sessionId]/NextVisitNoteForm.tsx",
+    ),
+    "utf8",
+  );
+
   it("renders the Plan for next visit form bound to the action", () => {
     expect(SESSION_PAGE).toMatch(/Plan for next visit/);
     expect(SESSION_PAGE).toMatch(/action=\{updateNextSessionNoteAction\}/);
     expect(SESSION_PAGE).toMatch(
-      /defaultValue=\{session\.next_session_note \?\? ""\}/,
+      /initialNote=\{session\.next_session_note \?\? ""\}/,
     );
   });
 
   it("the field is optional with practical example copy", () => {
     expect(SESSION_PAGE).toMatch(/Optional\. Shown to you when/);
-    expect(SESSION_PAGE).toMatch(/Start lower on the upper lip/);
+    expect(NOTE_FORM).toMatch(/Start lower on the upper lip/);
+  });
+
+  it("PR #191: saving shows explicit saved / cleared / error feedback", () => {
+    expect(NOTE_FORM).toMatch(/Saved just now\./);
+    expect(NOTE_FORM).toMatch(/Note cleared\./);
+    expect(NOTE_FORM).toMatch(/Unsaved changes/);
+    expect(NOTE_FORM).toMatch(/role="alert"/);
+    expect(NOTE_FORM).toMatch(/\{pending \? "Saving…" : "Save note"\}/);
+  });
+
+  it("PR #191: the action returns a result so failures surface in the form", () => {
+    const CODE = codeOnly(SESSION_ACTIONS);
+    expect(CODE).toMatch(/Promise<NextSessionNoteResult>/);
+    expect(CODE).toMatch(
+      /return \{ ok: false, error: "Could not save the note\. Try again\." \};/,
+    );
+    expect(CODE).toMatch(/return \{ ok: true, cleared: note === null \};/);
   });
 });
 
@@ -89,9 +114,8 @@ describe("surfacing: the latest previous note appears when charting", () => {
   it("new-session page surfaces the previous note inside the context panel", () => {
     expect(NEW_SESSION_PAGE).toMatch(/Previous session context/);
     expect(NEW_SESSION_PAGE).toMatch(
-      /\{previousSummary\.nextSessionNote && \(/,
+      /<FromLastVisitForToday summary=\{previousSummary\} \/>/,
     );
-    expect(NEW_SESSION_PAGE).toMatch(/From last visit, for today:/);
   });
 
   it("new-session panel renders nothing for first-visit clients", () => {
@@ -99,7 +123,7 @@ describe("surfacing: the latest previous note appears when charting", () => {
   });
 
   it("appointment detail card surfaces the note via the shared summary", () => {
-    expect(APPOINTMENT_PAGE).toMatch(/\{summary\?\.nextSessionNote && \(/);
+    expect(APPOINTMENT_PAGE).toMatch(/<FromLastVisitForToday summary=\{summary\} \/>/);
     expect(APPOINTMENT_PAGE).toMatch(/buildLastSessionSummary\(\{/);
   });
 });
@@ -113,21 +137,11 @@ describe("shared summary usage (both context surfaces)", () => {
     }
   });
 
-  it("appointment card prints labeled lines only when present and keeps caution distinct", () => {
-    expect(APPOINTMENT_PAGE).toMatch(/if \(summary\?\.areaLine\) \{\s*\n?\s*detailLines\.push/);
-    expect(APPOINTMENT_PAGE).toMatch(/\{summary\?\.cautionFlagged && \(/);
-    expect(APPOINTMENT_PAGE).toMatch(/\{detailLines\.length > 0 && \(/);
-  });
-
-  it("multi-block sessions are labeled honestly on both surfaces (first-area settings + area count)", () => {
-    expect(APPOINTMENT_PAGE).toMatch(
-      /summary\.blockCount > 1 \? "Settings \(first area\)" : "Settings"/,
-    );
-    expect(APPOINTMENT_PAGE).toMatch(/areas recorded/);
-    expect(NEW_SESSION_PAGE).toMatch(
-      /\? "Settings \(first area\)"\s*\n?\s*: "Settings"/,
-    );
-    expect(NEW_SESSION_PAGE).toMatch(/areas recorded/);
+  it("both surfaces render per-area summaries via the shared component (PR #191)", () => {
+    for (const page of [NEW_SESSION_PAGE, APPOINTMENT_PAGE]) {
+      expect(page).toMatch(/from "@\/components\/last-session-summary"/);
+      expect(page).toMatch(/<AreaSummaries summary=\{/);
+    }
   });
 
   it("blocks are read with a narrow select scoped to studio + session, deleted excluded", () => {

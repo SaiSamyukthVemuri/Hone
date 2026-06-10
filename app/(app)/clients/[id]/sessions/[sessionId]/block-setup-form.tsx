@@ -104,6 +104,11 @@ type Props = {
   clientId: string;
   // For "Copy settings from last treatment area" (create mode only).
   previousBlock: SessionBlock | null;
+  // PR #191: every saved treatment area in this session, in sort
+  // order. Copy settings prefers the most recent area matching the
+  // currently selected treatment area before falling back to the
+  // last one.
+  savedBlocks?: SessionBlock[];
   // When present, the form edits this existing area instead of creating.
   block?: SessionBlock | null;
   // The block's first/primary entry, if any. In edit mode its readings seed
@@ -245,6 +250,7 @@ export function BlockSetupForm({
   sessionId,
   clientId,
   previousBlock,
+  savedBlocks,
   block,
   firstEntry,
   defaultPrimaryArea,
@@ -255,6 +261,9 @@ export function BlockSetupForm({
     initialDraft(block, firstEntry, defaultPrimaryArea),
   );
   const [error, setError] = useState<string | null>(null);
+  // PR #191: inline feedback after "Copy settings" so the
+  // practitioner knows what was copied and from where.
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   // Treatment-area picker is collapsed to a compact summary when an area is
   // already selected (e.g. seeded from the plan, or in edit mode); the full
@@ -268,23 +277,63 @@ export function BlockSetupForm({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
-  // "Copy settings from last treatment area" copies machine configuration
-  // only — never the area identity (primary_area / side / specifics) or
-  // minutes. The practitioner chooses the new area fresh. Local UI state
-  // only; no server/action change.
+  // "Copy settings from last treatment area" (PR #191 rework after
+  // Chloe's smoke). Copies the FULL treatment configuration a
+  // practitioner expects: mode, modality, energy, machine frequency,
+  // probe, and minutes. Never the area identity (the practitioner
+  // chooses the new area fresh) and never the client response
+  // (tolerance / reaction / caution belong to the treatment that
+  // already happened, not the one being set up). Area-aware: when a
+  // treatment area is already selected and this session has a saved
+  // area with the same name, that area's settings win over the most
+  // recent one; the inline message says exactly what was copied.
   function copySettings() {
-    if (!previousBlock) return;
+    const candidates = (savedBlocks && savedBlocks.length > 0
+      ? savedBlocks
+      : previousBlock
+        ? [previousBlock]
+        : []
+    ).filter((b) => !block || b.id !== block.id);
+    if (candidates.length === 0) {
+      setCopyMessage("No previous treatment area to copy from.");
+      return;
+    }
+    const wantedArea = draft.primaryArea.trim().toLowerCase();
+    const areaMatch = wantedArea
+      ? [...candidates]
+          .reverse()
+          .find((b) => (b.primary_area ?? "").trim().toLowerCase() === wantedArea)
+      : undefined;
+    const source = areaMatch ?? candidates[candidates.length - 1];
     setDraft((d) => ({
       ...d,
-      mode: previousBlock.mode ?? "",
-      apilusModality: previousBlock.apilus_modality ?? "",
+      mode: source.mode ?? "",
+      apilusModality: source.apilus_modality ?? "",
       energyLevel:
-        previousBlock.energy_level != null
-          ? String(previousBlock.energy_level)
+        source.energy_level != null ? String(source.energy_level) : "",
+      probeKey: source.probe_key ?? "",
+      machineFrequency: source.machine_frequency ?? "",
+      minutes:
+        source.minutes_performed != null
+          ? String(source.minutes_performed)
           : "",
-      probeKey: previousBlock.probe_key ?? "",
-      machineFrequency: previousBlock.machine_frequency ?? "",
     }));
+    const sourceName = source.primary_area?.trim() || source.block_name?.trim();
+    if (areaMatch) {
+      setCopyMessage(
+        `Copied settings from the last ${sourceName ?? "matching"} treatment.`,
+      );
+    } else if (wantedArea && sourceName) {
+      setCopyMessage(
+        `No earlier ${draft.primaryArea.trim()} settings in this session; copied from ${sourceName}.`,
+      );
+    } else {
+      setCopyMessage(
+        sourceName
+          ? `Copied settings from ${sourceName}.`
+          : "Copied settings from the last treatment area.",
+      );
+    }
   }
 
   function submit() {
@@ -487,6 +536,11 @@ export function BlockSetupForm({
           </button>
         )}
       </div>
+      {copyMessage && (
+        <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
+          {copyMessage}
+        </p>
+      )}
 
       {/* Treatment area first — it's the identity of this section. When an
           area is already selected it collapses to a compact summary with a
@@ -888,10 +942,19 @@ export function BlockSetupForm({
         </label>
       </div>
 
-      {/* Notes — quick-tap comment chips + free text, same controls as the
-          add-another-pass form. */}
+      {/* Treatment observations (PR #191 bucket A): what the
+          practitioner SAW during treatment: follicle/skin/hair
+          characteristics. Quick-tap chips + free text, same controls
+          as the add-another-pass form. Distinct from the client/skin
+          response bucket below (how the client reacted) and the
+          for-next-visit bucket (what to do differently). */}
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <span className="text-sm font-medium">Notes</span>
+        <div>
+          <span className="text-sm font-medium">Treatment observations</span>
+          <p className="text-xs text-neutral-500">
+            What you saw during treatment (follicles, skin, hair).
+          </p>
+        </div>
         <div className="flex flex-wrap gap-2">
           {COMMON_COMMENTS.map((c) => (
             <button
@@ -915,14 +978,16 @@ export function BlockSetupForm({
         />
       </div>
 
-      {/* PR #190 (migration 0082): structured client response. Every
-          field optional; tapping a selected rating again clears it.
-          This is the memory the next visit reads back. */}
+      {/* Client/skin response (PR #191 bucket B, fields from PR #190
+          migration 0082): how the client and skin responded TODAY.
+          Every field optional; tapping a selected rating again clears
+          it. This is the memory the next visit reads back. */}
       <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
-          <span className="text-sm font-medium">Client response</span>
+          <span className="text-sm font-medium">Client/skin response</span>
           <p className="text-xs text-neutral-500">
-            Optional. Takes five seconds; your future self will thank you.
+            How the client and skin responded today. Optional; takes five
+            seconds.
           </p>
         </div>
 
@@ -985,6 +1050,19 @@ export function BlockSetupForm({
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
 
+      </div>
+
+      {/* For next visit (PR #191 bucket C): what to do differently
+          next time for THIS area. The session-level "Plan for next
+          visit" note lives on the session page; this is the per-area
+          caution that surfaces in the From last visit box. */}
+      <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <div>
+          <span className="text-sm font-medium">For next visit</span>
+          <p className="text-xs text-neutral-500">
+            Anything to watch or do differently on this area next time.
+          </p>
+        </div>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"

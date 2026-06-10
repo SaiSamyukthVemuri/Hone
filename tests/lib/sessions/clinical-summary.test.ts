@@ -4,12 +4,14 @@ import {
   type ClinicalSummaryBlock,
 } from "@/lib/sessions/clinical-summary";
 
-// PR #190 (clinical memory). Real unit tests for the pure summary
-// helper shared by the appointment detail Last session card and the
-// new-session Previous session context panel. The contract under
-// test: every line is null when its data is absent (old records show
-// no empty labels), and present lines condense multi-block sessions
-// into compact, decision-ready strings.
+// PR #190 introduced this helper; PR #191 reshaped it to PER-AREA
+// summaries after Chloe's smoke (a first-area-only line made
+// multi-area sessions useless). Contract under test: each treatment
+// area gets its own mini-summary; per-area cautions plus the
+// session-level next note are lifted into watchLines /
+// nextSessionNote for the ONE combined "From last visit, for today"
+// box; every line is null/absent when its data is absent so old
+// records render without empty labels.
 
 function block(
   overrides: Partial<ClinicalSummaryBlock> = {},
@@ -34,196 +36,164 @@ function block(
   };
 }
 
-describe("old records: absent data yields null lines, never empty labels", () => {
-  it("a pre-#190 block (all response fields null) produces no response lines", () => {
+describe("old records render without empty labels", () => {
+  it("a pre-#190 block yields settings memory but no response lines", () => {
     const s = buildLastSessionSummary({
       blocks: [block({ primary_area: "Chin", mode: "thermo" })],
       nextSessionNote: null,
     });
-    expect(s.toleranceLine).toBeNull();
-    expect(s.reactionLine).toBeNull();
-    expect(s.cautionFlagged).toBe(false);
-    expect(s.cautionLine).toBeNull();
+    expect(s.areas).toHaveLength(1);
+    expect(s.areas[0]).toEqual({
+      name: "Chin",
+      settingsLine: "Thermolysis",
+      probeLine: null,
+      toleranceLine: null,
+      reactionLine: null,
+    });
+    expect(s.watchLines).toEqual([]);
     expect(s.nextSessionNote).toBeNull();
-    // But the settings memory still works for old blocks.
-    expect(s.areaLine).toBe("Chin");
-    expect(s.settingsLine).toBe("Thermolysis");
   });
 
-  it("a session with no blocks at all yields all-null lines", () => {
+  it("a session with no blocks yields no areas and no watch lines", () => {
     const s = buildLastSessionSummary({ blocks: [], nextSessionNote: null });
-    expect(s.areaLine).toBeNull();
-    expect(s.settingsLine).toBeNull();
-    expect(s.probeLine).toBeNull();
-    expect(s.toleranceLine).toBeNull();
-    expect(s.reactionLine).toBeNull();
-    expect(s.cautionFlagged).toBe(false);
-    expect(s.cautionLine).toBeNull();
+    expect(s.areas).toEqual([]);
+    expect(s.watchLines).toEqual([]);
+    expect(s.nextSessionNote).toBeNull();
   });
 
-  it("whitespace-only notes collapse to null", () => {
+  it("whitespace-only notes collapse to nothing", () => {
     const s = buildLastSessionSummary({
       blocks: [block({ caution_note: "   ", reaction_notes: " " })],
       nextSessionNote: "  ",
     });
-    expect(s.cautionLine).toBeNull();
+    expect(s.watchLines).toEqual([]);
+    expect(s.areas[0].reactionLine).toBeNull();
     expect(s.nextSessionNote).toBeNull();
   });
 });
 
-describe("areas, settings, probe", () => {
-  it("joins unique area labels with side, in block order", () => {
-    const s = buildLastSessionSummary({
-      blocks: [
-        block({ sort_order: 2, primary_area: "Chin" }),
-        block({ sort_order: 1, primary_area: "Upper lip", side: "left" }),
-        block({ sort_order: 3, primary_area: "Chin" }),
-      ],
-      nextSessionNote: null,
-    });
-    expect(s.areaLine).toBe("Upper lip (Left), Chin");
-  });
-
-  it("settings come from the first block that recorded any", () => {
-    const s = buildLastSessionSummary({
-      blocks: [
-        block({ sort_order: 1 }),
-        block({
-          sort_order: 2,
-          mode: "blend",
-          energy_level: 14,
-          minutes_performed: 30,
-        }),
-      ],
-      nextSessionNote: null,
-    });
-    expect(s.settingsLine).toBe("Blend - EL 14 - 30 min");
-  });
-
-  it("probe line is the first non-null probe_label", () => {
-    const s = buildLastSessionSummary({
-      blocks: [
-        block({ sort_order: 1 }),
-        block({ sort_order: 2, probe_label: "Ballet Gold F3" }),
-      ],
-      nextSessionNote: null,
-    });
-    expect(s.probeLine).toBe("Ballet Gold F3");
-  });
-
-  it("falls back to block_name when no structured area exists (legacy blocks)", () => {
-    const s = buildLastSessionSummary({
-      blocks: [block({ block_name: "Main" })],
-      nextSessionNote: null,
-    });
-    expect(s.areaLine).toBe("Main");
-  });
-});
-
-describe("tolerance, reaction, caution", () => {
-  it("tolerance reports the WORST rating across blocks", () => {
-    const s = buildLastSessionSummary({
-      blocks: [
-        block({ sort_order: 1, tolerance_rating: 5 }),
-        block({ sort_order: 2, tolerance_rating: 2 }),
-      ],
-      nextSessionNote: null,
-    });
-    expect(s.toleranceLine).toBe("2/5 - Difficult");
-  });
-
-  it("reaction joins unique non-none labels and carries a short note", () => {
+describe("per-area summaries (the Chloe fix)", () => {
+  it("a two-area session shows BOTH areas, each with its own settings and response", () => {
     const s = buildLastSessionSummary({
       blocks: [
         block({
           sort_order: 1,
-          reaction_type: "mild_redness",
-          reaction_notes: "Settled within an hour.",
+          primary_area: "Chin",
+          mode: "thermo",
+          energy_level: 12,
+          minutes_performed: 20,
+          probe_label: "Ballet Gold F3",
+          tolerance_rating: 5,
+          reaction_type: "none",
         }),
-        block({ sort_order: 2, reaction_type: "sensitivity" }),
+        block({
+          sort_order: 2,
+          primary_area: "Upper lip",
+          side: "left",
+          mode: "blend",
+          energy_level: 9,
+          tolerance_rating: 3,
+          reaction_type: "mild_redness",
+          reaction_notes: "Settled quickly.",
+        }),
       ],
       nextSessionNote: null,
     });
-    expect(s.reactionLine).toBe(
-      "Mild redness, Sensitivity. Settled within an hour.",
-    );
+    expect(s.areas).toHaveLength(2);
+    expect(s.areas[0].name).toBe("Chin");
+    expect(s.areas[0].settingsLine).toBe("Thermolysis - EL 12 - 20 min");
+    expect(s.areas[0].probeLine).toBe("Ballet Gold F3");
+    expect(s.areas[0].toleranceLine).toBe("5/5 - Very comfortable");
+    expect(s.areas[0].reactionLine).toBe("No visible reaction");
+    expect(s.areas[1].name).toBe("Upper lip (Left)");
+    expect(s.areas[1].settingsLine).toBe("Blend - EL 9");
+    expect(s.areas[1].toleranceLine).toBe("3/5 - Okay");
+    expect(s.areas[1].reactionLine).toBe("Mild redness. Settled quickly.");
   });
 
-  it("an explicit all-clear ('none') surfaces; absent values do not", () => {
-    const explicit = buildLastSessionSummary({
-      blocks: [block({ reaction_type: "none" })],
+  it("areas keep block order via sort_order", () => {
+    const s = buildLastSessionSummary({
+      blocks: [
+        block({ sort_order: 2, primary_area: "Chin" }),
+        block({ sort_order: 1, primary_area: "Upper lip" }),
+      ],
       nextSessionNote: null,
     });
-    expect(explicit.reactionLine).toBe("No visible reaction");
-    const absent = buildLastSessionSummary({
-      blocks: [block()],
+    expect(s.areas.map((a) => a.name)).toEqual(["Upper lip", "Chin"]);
+  });
+
+  it("legacy areas fall back to block_name, then 'Treatment area N'", () => {
+    const s = buildLastSessionSummary({
+      blocks: [
+        block({ sort_order: 1, block_name: "Main" }),
+        block({ sort_order: 2 }),
+      ],
       nextSessionNote: null,
     });
-    expect(absent.reactionLine).toBeNull();
+    expect(s.areas[0].name).toBe("Main");
+    expect(s.areas[1].name).toBe("Treatment area 2");
   });
 
   it("long reaction notes are dropped from the compact line", () => {
     const s = buildLastSessionSummary({
       blocks: [
+        block({ reaction_type: "swelling", reaction_notes: "x".repeat(200) }),
+      ],
+      nextSessionNote: null,
+    });
+    expect(s.areas[0].reactionLine).toBe("Swelling");
+  });
+
+  it("a reaction note without a coded reaction still surfaces", () => {
+    const s = buildLastSessionSummary({
+      blocks: [block({ reaction_notes: "Pinpoint scab on one follicle." })],
+      nextSessionNote: null,
+    });
+    expect(s.areas[0].reactionLine).toBe("Pinpoint scab on one follicle.");
+  });
+});
+
+describe("the combined From last visit box inputs", () => {
+  it("each caution becomes one area-prefixed watch line", () => {
+    const s = buildLastSessionSummary({
+      blocks: [
         block({
-          reaction_type: "swelling",
-          reaction_notes: "x".repeat(200),
+          sort_order: 1,
+          primary_area: "Upper lip",
+          caution_for_next_session: true,
+          caution_note: "Start lower and check sensitivity.",
         }),
+        block({ sort_order: 2, primary_area: "Chin" }),
       ],
-      nextSessionNote: null,
+      nextSessionNote: "Start with chin first.",
     });
-    expect(s.reactionLine).toBe("Swelling");
+    expect(s.watchLines).toEqual([
+      "Upper lip: Start lower and check sensitivity.",
+    ]);
+    expect(s.nextSessionNote).toBe("Start with chin first.");
   });
 
-  it("caution flag is true when ANY block raises it; notes join distinctly", () => {
+  it("a caution flag without a note still produces a watch line", () => {
     const s = buildLastSessionSummary({
       blocks: [
-        block({ sort_order: 1, caution_for_next_session: true, caution_note: "Avoid the scar area." }),
-        block({ sort_order: 2 }),
-        block({ sort_order: 3, caution_for_next_session: true, caution_note: "Avoid the scar area." }),
+        block({ primary_area: "Chin", caution_for_next_session: true }),
       ],
       nextSessionNote: null,
     });
-    expect(s.cautionFlagged).toBe(true);
-    expect(s.cautionLine).toBe("Avoid the scar area.");
+    expect(s.watchLines).toEqual(["Chin: flagged to watch."]);
   });
 
-  it("caution flag without a note keeps cautionLine null (caller shows generic copy)", () => {
+  it("a caution note implies a watch line even without the flag", () => {
     const s = buildLastSessionSummary({
-      blocks: [block({ caution_for_next_session: true })],
-      nextSessionNote: null,
-    });
-    expect(s.cautionFlagged).toBe(true);
-    expect(s.cautionLine).toBeNull();
-  });
-});
-
-describe("multi-block honesty", () => {
-  it("blockCount reports the number of blocks so the UI can label first-area settings", () => {
-    const multi = buildLastSessionSummary({
       blocks: [
-        block({ sort_order: 1, primary_area: "Upper lip", mode: "thermo" }),
-        block({ sort_order: 2, primary_area: "Chin", mode: "blend" }),
-        block({ sort_order: 3, primary_area: "Jawline" }),
+        block({ primary_area: "Chin", caution_note: "Avoid the scar." }),
       ],
       nextSessionNote: null,
     });
-    expect(multi.blockCount).toBe(3);
-    // The settings line is the first block's; the count lets the UI
-    // say "Settings (first area)" instead of implying coverage.
-    expect(multi.settingsLine).toBe("Thermolysis");
-    const single = buildLastSessionSummary({
-      blocks: [block({ primary_area: "Chin" })],
-      nextSessionNote: null,
-    });
-    expect(single.blockCount).toBe(1);
-    const none = buildLastSessionSummary({ blocks: [], nextSessionNote: null });
-    expect(none.blockCount).toBe(0);
+    expect(s.watchLines).toEqual(["Chin: Avoid the scar."]);
   });
-});
 
-describe("next-session note", () => {
-  it("passes the previous visit's note through trimmed", () => {
+  it("the next-session note passes through trimmed", () => {
     const s = buildLastSessionSummary({
       blocks: [],
       nextSessionNote: "  Start lower on the upper lip. ",

@@ -69,14 +69,17 @@ export function ClientAppointmentTimeline({
   rows: ReadonlyArray<ClientAppointmentTimelineRow>;
 }) {
   const nowMs = Date.now();
+  // PR #191 (Chloe smoke feedback): "Needs charting" renders ABOVE
+  // "Upcoming". Charting debt is the actionable item on this tab;
+  // upcoming appointments are reference.
   const groups: Group[] = [
-    { key: "upcoming", heading: "Upcoming", hint: null, rows: [] },
     {
       key: "needsCharting",
       heading: "Needs charting",
       hint: "Past appointments without a session record yet. Charting from here links the session to the appointment.",
       rows: [],
     },
+    { key: "upcoming", heading: "Upcoming", hint: null, rows: [] },
     { key: "charted", heading: "Charted", hint: null, rows: [] },
     { key: "cancelled", heading: "Cancelled", hint: null, rows: [] },
     { key: "noShow", heading: "No-show", hint: null, rows: [] },
