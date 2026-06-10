@@ -102,7 +102,7 @@ const SIDE_OPTIONS = SESSION_BLOCK_SIDE_OPTIONS;
 type Props = {
   sessionId: string;
   clientId: string;
-  // For "Copy settings from last treatment area" (create mode only).
+  // For "Copy settings from another area in this session" (create mode only).
   previousBlock: SessionBlock | null;
   // PR #191: every saved treatment area in this session, in sort
   // order. Copy settings prefers the most recent area matching the
@@ -277,7 +277,7 @@ export function BlockSetupForm({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
-  // "Copy settings from last treatment area" (PR #191 rework after
+  // "Copy settings from another area in this session" (PR #191 rework after
   // Chloe's smoke). Copies the FULL treatment configuration a
   // practitioner expects: mode, modality, energy, machine frequency,
   // probe, and minutes. Never the area identity (the practitioner
@@ -321,7 +321,7 @@ export function BlockSetupForm({
     const sourceName = source.primary_area?.trim() || source.block_name?.trim();
     if (areaMatch) {
       setCopyMessage(
-        `Copied settings from the last ${sourceName ?? "matching"} treatment.`,
+        `Copied settings from the ${sourceName ?? "matching"} area in this session.`,
       );
     } else if (wantedArea && sourceName) {
       setCopyMessage(
@@ -330,8 +330,8 @@ export function BlockSetupForm({
     } else {
       setCopyMessage(
         sourceName
-          ? `Copied settings from ${sourceName}.`
-          : "Copied settings from the last treatment area.",
+          ? `Copied settings from ${sourceName} in this session.`
+          : "Copied settings from the previous area in this session.",
       );
     }
   }
@@ -532,7 +532,7 @@ export function BlockSetupForm({
             disabled={pending}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            Copy settings from last treatment area
+            Copy settings from another area in this session
           </button>
         )}
       </div>

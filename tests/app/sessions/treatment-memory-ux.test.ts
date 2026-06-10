@@ -91,6 +91,19 @@ describe("2. copy settings: full, area-aware, never the response", () => {
     expect(copyFn).toMatch(/No earlier \$\{draft\.primaryArea\.trim\(\)\} settings/);
     expect(FORM).toMatch(/\{copyMessage && \(/);
   });
+
+  it("the wording never implies cross-session copying (review patch)", () => {
+    // The copy source is the CURRENT session only; the button and
+    // every message say so. The old "from last treatment area" label
+    // could read as prior-visit settings.
+    expect(FORM).toMatch(/Copy settings from another area in this session/);
+    expect(FORM).not.toMatch(/Copy settings from last treatment area/);
+    const messages = copyFn.match(/setCopyMessage\([\s\S]*?\);/g) ?? [];
+    expect(messages.length).toBeGreaterThanOrEqual(3);
+    for (const m of messages.filter((x) => x.includes("Copied"))) {
+      expect(m).toMatch(/in this session/);
+    }
+  });
 });
 
 describe("5 + 6. per-area summary and ONE combined warning box", () => {
