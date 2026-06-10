@@ -16,7 +16,9 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Why per-block, not a child table:** the charting form already edits blocks one-to-one and the response is a property of the treatment unit (this area, these settings, this response). A child table would add a join and a second write path for zero modeling gain at pilot scale.
 
-**Honest non-claims:** no payment/Stripe change (gates unchanged from PR #189), no RLS change, no public access to clinical data (all surfaces behind practitioner auth + studio RLS), no reminder/auth/export change, no per-practitioner availability, no Jane integration, no laser-block response capture (laser sessions have no blocks; the summary degrades to date + modality + note).
+**Honest non-claims:** no payment/Stripe change (gates unchanged from PR #189), no RLS change, no public access to clinical data (all surfaces behind practitioner auth + studio RLS), no reminder/auth/export change, no per-practitioner availability, no Jane integration.
+
+**Known phase-2 limits:** laser response capture is not block-based yet (laser sessions have no blocks; the summary degrades to date + modality + note); the multi-block summary is deliberately compact (areas list carries the count, the settings line is labeled "first area", full detail is one click away on the session page); per-area response trends over time are future work.
 
 ### Pilot-safety fixes: email claim, export gate, invite-only login (PR #189, migration 0080)
 

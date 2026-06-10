@@ -35,9 +35,14 @@ export type ClinicalSummaryBlock = Pick<
 >;
 
 export type LastSessionSummary = {
+  // Number of (non-deleted) blocks the session recorded. The settings
+  // line below is the FIRST block's settings; when blockCount > 1 the
+  // UI labels it "first area" so the line never implies it covers the
+  // whole session.
+  blockCount: number;
   // "Upper lip (Left side), Chin"
   areaLine: string | null;
-  // "Thermolysis - Synchro - EL 14 - 30 min"
+  // "Thermolysis - Synchro - EL 14 - 30 min" (first block with settings)
   settingsLine: string | null;
   // "Ballet Gold F3" (denormalized probe_label from 0041)
   probeLine: string | null;
@@ -156,6 +161,7 @@ export function buildLastSessionSummary(input: {
   const cautionLine = cautionNotes.length > 0 ? cautionNotes.join(" ") : null;
 
   return {
+    blockCount: blocks.length,
     areaLine,
     settingsLine,
     probeLine,

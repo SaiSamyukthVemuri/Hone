@@ -124,11 +124,17 @@ export default async function NewSessionPage({
           {previousSummary.areaLine && (
             <p className="text-neutral-700 dark:text-neutral-300">
               Treated: {previousSummary.areaLine}
+              {previousSummary.blockCount > 1
+                ? ` (${previousSummary.blockCount} areas recorded)`
+                : ""}
             </p>
           )}
           {previousSummary.settingsLine && (
             <p className="text-neutral-700 dark:text-neutral-300">
-              Settings: {previousSummary.settingsLine}
+              {previousSummary.blockCount > 1
+                ? "Settings (first area)"
+                : "Settings"}
+              : {previousSummary.settingsLine}
             </p>
           )}
           {previousSummary.probeLine && (

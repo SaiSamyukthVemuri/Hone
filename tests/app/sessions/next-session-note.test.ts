@@ -114,9 +114,20 @@ describe("shared summary usage (both context surfaces)", () => {
   });
 
   it("appointment card prints labeled lines only when present and keeps caution distinct", () => {
-    expect(APPOINTMENT_PAGE).toMatch(/if \(summary\?\.areaLine\) detailLines\.push/);
+    expect(APPOINTMENT_PAGE).toMatch(/if \(summary\?\.areaLine\) \{\s*\n?\s*detailLines\.push/);
     expect(APPOINTMENT_PAGE).toMatch(/\{summary\?\.cautionFlagged && \(/);
     expect(APPOINTMENT_PAGE).toMatch(/\{detailLines\.length > 0 && \(/);
+  });
+
+  it("multi-block sessions are labeled honestly on both surfaces (first-area settings + area count)", () => {
+    expect(APPOINTMENT_PAGE).toMatch(
+      /summary\.blockCount > 1 \? "Settings \(first area\)" : "Settings"/,
+    );
+    expect(APPOINTMENT_PAGE).toMatch(/areas recorded/);
+    expect(NEW_SESSION_PAGE).toMatch(
+      /\? "Settings \(first area\)"\s*\n?\s*: "Settings"/,
+    );
+    expect(NEW_SESSION_PAGE).toMatch(/areas recorded/);
   });
 
   it("blocks are read with a narrow select scoped to studio + session, deleted excluded", () => {

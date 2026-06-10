@@ -943,9 +943,23 @@ function LastSessionCard({
     </>
   );
   const detailLines: Array<{ label: string; value: string }> = [];
-  if (summary?.areaLine) detailLines.push({ label: "Treated", value: summary.areaLine });
+  if (summary?.areaLine) {
+    detailLines.push({
+      label: "Treated",
+      value:
+        summary.blockCount > 1
+          ? `${summary.areaLine} (${summary.blockCount} areas recorded)`
+          : summary.areaLine,
+    });
+  }
   if (summary?.settingsLine)
-    detailLines.push({ label: "Settings", value: summary.settingsLine });
+    detailLines.push({
+      // Multi-block sessions: the compact line is the FIRST area's
+      // settings; the label says so and the View full session link
+      // below carries the rest. Never imply one block is the visit.
+      label: summary.blockCount > 1 ? "Settings (first area)" : "Settings",
+      value: summary.settingsLine,
+    });
   if (summary?.probeLine)
     detailLines.push({ label: "Probe", value: summary.probeLine });
   if (summary?.toleranceLine)

@@ -198,6 +198,30 @@ describe("tolerance, reaction, caution", () => {
   });
 });
 
+describe("multi-block honesty", () => {
+  it("blockCount reports the number of blocks so the UI can label first-area settings", () => {
+    const multi = buildLastSessionSummary({
+      blocks: [
+        block({ sort_order: 1, primary_area: "Upper lip", mode: "thermo" }),
+        block({ sort_order: 2, primary_area: "Chin", mode: "blend" }),
+        block({ sort_order: 3, primary_area: "Jawline" }),
+      ],
+      nextSessionNote: null,
+    });
+    expect(multi.blockCount).toBe(3);
+    // The settings line is the first block's; the count lets the UI
+    // say "Settings (first area)" instead of implying coverage.
+    expect(multi.settingsLine).toBe("Thermolysis");
+    const single = buildLastSessionSummary({
+      blocks: [block({ primary_area: "Chin" })],
+      nextSessionNote: null,
+    });
+    expect(single.blockCount).toBe(1);
+    const none = buildLastSessionSummary({ blocks: [], nextSessionNote: null });
+    expect(none.blockCount).toBe(0);
+  });
+});
+
 describe("next-session note", () => {
   it("passes the previous visit's note through trimmed", () => {
     const s = buildLastSessionSummary({
