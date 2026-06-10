@@ -370,6 +370,98 @@ function portalEmailLimiter(): Ratelimit | null {
   return cachedPortalEmail;
 }
 
+// ---------------------------------------------------------------------------
+// Public marketing forms (waitlist + demo request), PR #187.
+//
+// Both are anonymous landing-page entry points that insert directly into
+// their own tables (waitlist / demo_requests); without a limiter they can
+// be scripted to fill the database or generate ops noise. Same two-window
+// shape as booking/portal-login, with windows tuned for one-shot marketing
+// forms (a legitimate visitor submits each form roughly once ever, so the
+// per-email budget is much tighter than booking's):
+//
+//   * 5 / 1 hour per IP
+//   * 2 / 1 day  per email (callers pass the already-normalized email)
+//
+// IP is checked first; if it's over the limit the email budget is not
+// consumed. Both keys are hashed. Prefixes are namespaced per form so
+// waitlist/demo never collide with each other or with booking/portal
+// buckets. Fails OPEN per this file's design contract: the limiter is a
+// cost/abuse dampener, not an authorization control, and a limiter outage
+// must not block a real lead.
+// ---------------------------------------------------------------------------
+
+const MARKETING_FORM_LIMITS = {
+  ip: { limit: 5, window: "1 h" },
+  email: { limit: 2, window: "1 d" },
+} as const;
+
+type MarketingForm = "waitlist" | "demo";
+
+const marketingLimiterCache = new Map<string, Ratelimit | null>();
+function marketingLimiter(
+  form: MarketingForm,
+  dimension: "ip" | "email",
+): Ratelimit | null {
+  const cacheKey = `${form}:${dimension}`;
+  const cached = marketingLimiterCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const redis = getRedis();
+  const cfg = MARKETING_FORM_LIMITS[dimension];
+  const limiter = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(cfg.limit, cfg.window),
+        prefix: `rl:${form}_${dimension}`,
+        analytics: false,
+      })
+    : null;
+  marketingLimiterCache.set(cacheKey, limiter);
+  return limiter;
+}
+
+async function limitMarketingForm(
+  form: MarketingForm,
+  args: { headers: Headers; email: string },
+): Promise<RateLimitResult> {
+  const ipLimiter = marketingLimiter(form, "ip");
+  const emailLimiter = marketingLimiter(form, "email");
+  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
+  const ip = clientIpFromHeaders(args.headers);
+  try {
+    const ipRes = await ipLimiter.limit(hashId(ip));
+    if (!ipRes.success) {
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded(form, retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    const emailRes = await emailLimiter.limit(hashId(args.email));
+    if (!emailRes.success) {
+      const retry = retryAfterSeconds(emailRes.reset);
+      logRateLimitExceeded(form, retry, "email");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable(form, err);
+    return { allowed: true }; // fail open
+  }
+}
+
+export async function limitWaitlistSubmit(args: {
+  headers: Headers;
+  email: string;
+}): Promise<RateLimitResult> {
+  return limitMarketingForm("waitlist", args);
+}
+
+export async function limitDemoRequestSubmit(args: {
+  headers: Headers;
+  email: string;
+}): Promise<RateLimitResult> {
+  return limitMarketingForm("demo", args);
+}
+
 export async function limitPortalMagicLink(args: {
   headers: Headers;
   email: string;

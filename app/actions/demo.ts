@@ -1,6 +1,11 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import {
+  limitDemoRequestSubmit,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit/public";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -46,6 +51,18 @@ export async function submitDemoRequest(
   const email = payload.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
     return { ok: false, error: "That doesn't look like a valid email." };
+  }
+
+  // Anonymous public form: rate-limit BEFORE the insert (PR #187).
+  // 5/hour per IP + 2/day per normalized email; identifiers are hashed
+  // inside the limiter and the refusal copy is the shared generic
+  // message, so a 429 never reveals prior submissions.
+  const rate = await limitDemoRequestSubmit({
+    headers: await headers(),
+    email,
+  });
+  if (!rate.allowed) {
+    return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
   const supabase = await createClient();
