@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { requestPractitionerMagicLinkAction } from "./actions";
 
 const PALETTE = {
   bg: "#FAFAF7",
@@ -57,16 +58,14 @@ export default function LoginPage() {
     }
     setStatus({ kind: "sending" });
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) {
-      setStatus({ kind: "error", message: error.message });
+    // PR #189 (pilot safety): the magic-link request goes through a
+    // server action that gates auth-user creation on a pending
+    // invitation (shouldCreateUser=false for everyone else). Hone is
+    // invite-only during the pilot; uninvited unknown emails see the
+    // same generic "sent" state and no account or studio is created.
+    const result = await requestPractitionerMagicLinkAction(email);
+    if (!result.ok) {
+      setStatus({ kind: "error", message: result.error });
     } else {
       setStatus({ kind: "sent" });
     }

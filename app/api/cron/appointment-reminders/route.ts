@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
+  claimEmailSend,
   logEmailFailure,
-  recordEmailAttempt,
+  recordEmailResult,
   send24hReminderToClient,
   send2hReminderToClient,
-  type EmailType,
+  type ClaimableEmailType,
 } from "@/lib/email/send-appointment";
 import {
   send24hReminderSmsToClient,
@@ -90,13 +91,18 @@ async function loadAppointmentsForWindow(opts: {
   }));
 }
 
-type RunStats = { attempted: number; succeeded: number; failed: number };
+// PR #189: email passes gained a "skipped" bucket for rows lost to a
+// claim collision (another overlapping cron run holds the row). The
+// pre-existing keys are unchanged for log compatibility.
+type RunStats = {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+};
 
-// SMS pass adds a "skipped" bucket so the operator can see how many
-// rows the consent/toggle/claim gates filtered out without sending,
-// which is the common case when SMS is enabled for a studio but most
-// clients have not opted in yet.
-type SmsRunStats = RunStats & { skipped: number };
+// SMS pass counts consent/toggle/claim skips in the same bucket.
+type SmsRunStats = RunStats;
 
 async function sendReminderPass(opts: {
   kind: "24h" | "2h";
@@ -115,7 +121,7 @@ async function sendReminderPass(opts: {
       : "reminder_2h_send_attempts";
   const studioToggle =
     opts.kind === "24h" ? "send_24h_reminders" : "send_2h_reminders";
-  const emailType: EmailType =
+  const emailType: ClaimableEmailType =
     opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
 
   const appts = await loadAppointmentsForWindow({
@@ -126,7 +132,7 @@ async function sendReminderPass(opts: {
   });
 
   const admin = createAdminClient();
-  const stats: RunStats = { attempted: 0, succeeded: 0, failed: 0 };
+  const stats: RunStats = { attempted: 0, succeeded: 0, failed: 0, skipped: 0 };
 
   for (const appt of appts) {
     if (!appt.studio) continue;
@@ -136,14 +142,26 @@ async function sendReminderPass(opts: {
     }
     if (!appt.client?.email) continue;
 
+    // PR #189 (pilot safety): claim BEFORE the send so two
+    // overlapping cron runs can never both email this row. The claim
+    // RPC atomically increments the attempts counter and stamps
+    // _claimed_at; losing the claim (another run holds it, already
+    // sent, or attempts exhausted) skips the row without a send.
+    const claimed = await claimEmailSend(admin, appt.id, emailType);
+    if (!claimed) {
+      stats.skipped += 1;
+      continue;
+    }
+
     stats.attempted += 1;
     const attemptNumber = (appt[attemptsColumn] as number) + 1;
     const token = appt.cancellation_token;
     if (!token) {
       // Without a token there's no cancel/reschedule URL. Record a failed
-      // attempt via the RPC so we don't loop forever on rows that pre-date
+      // result via the RPC (clears the claim; the claim already counted
+      // the attempt) so we don't loop forever on rows that pre-date
       // the token backfill.
-      await recordEmailAttempt(admin, appt.id, emailType, false);
+      await recordEmailResult(admin, appt.id, emailType, false);
       logEmailFailure({
         appointmentId: appt.id,
         emailType,
@@ -186,7 +204,7 @@ async function sendReminderPass(opts: {
       rescheduleUrl,
       treatmentTimeLine,
     });
-    await recordEmailAttempt(admin, appt.id, emailType, result.ok);
+    await recordEmailResult(admin, appt.id, emailType, result.ok);
     if (result.ok) {
       stats.succeeded += 1;
     } else {

@@ -10,6 +10,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 |---|---|
 | Public booking, new/existing client, next-available | **Production** |
 | Authenticated practitioner app, calendar, charting, postcare | **Production** |
+| Practitioner signup | **Invite-only during the pilot** (PR #189). Magic-link login creates an account only for emails with a pending team invitation |
 | Client portal (magic-link + session cookie, two-zone UX) | **Production** |
 | Portal messages + replies | **Production** |
 | Consent + e-sign (treatment, photo, card authorization, policy ack) | **Production**, draft template wording, **lawyer review required before live use** |

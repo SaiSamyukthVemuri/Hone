@@ -41,9 +41,9 @@ Appointment rows carry attempt counters and stamped timestamps:
 
 Truthful-reporting rule: stamp the `*_sent_at` **only** when the Resend call actually delivered. The 3-strike pattern is on every transactional path: each attempt increments `_attempts`; once Resend confirms success the `_sent_at` is set; if attempts exceed 3 without delivery the cron stops retrying and logs a sanitized failure for the operator.
 
-### Known gap
+### Reminder email claim (PR #189, migration 0080)
 
-Email reminder claim/outbox discipline is **deferred**. The current path uses the attempts counter to bound retries but does not lock the row between read and send. In the rare race where the cron fires twice on the same row within milliseconds, a duplicate send is possible. The truthful counter still catches it after the fact, and the practitioner is the one who actually notices duplicates. Outbox-style claim is on the [backlog](./13_BACKLOG_AND_DECISIONS.md) as P1.
+The double-send gap is closed. The reminder cron now claims each row via `claim_email_send(appointment_id, email_type)` BEFORE calling Resend: one conditional UPDATE that increments the attempts counter and stamps the matching `*_claimed_at`, gated on sent-is-null, attempts under the 3-strike cap, and no fresh claim (claims older than 5 minutes are stale and reclaimable, so a crashed sender never permanently blocks a row). Two overlapping cron runs can no longer both send; the loser counts the row as `skipped` in the response stats. Outcomes are recorded via `record_email_result` (stamps `*_sent_at` on success, clears the claim, never increments). Both RPCs are SECURITY DEFINER with locked search_path, `revoke from public/anon/authenticated`, execute granted to `service_role` only. This mirrors the SMS `claim_sms_send` / `record_sms_result` pair from migration 0049. The unclaimed one-shot paths (booking confirmation, reschedule notices, no-show cron, postcare) keep using `record_email_attempt` (0028); they run inside a single user request and do not race a scheduler.
 
 ## SMS (Twilio)
 
