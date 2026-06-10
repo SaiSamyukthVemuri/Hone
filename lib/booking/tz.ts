@@ -45,10 +45,26 @@ export function utcInstantFromLocal(
   tz: string,
 ): Date {
   // First read: pretend the local string is UTC. The resulting instant is
-  // wrong by exactly the tz offset at that instant; correct it in one pass.
+  // wrong by exactly the tz offset at that instant; correct it. A single
+  // correction pass is not enough when the naive and corrected instants
+  // straddle a DST transition: the offset sampled at the naive instant is
+  // the pre-transition one, so the corrected instant lands an hour off
+  // (PR #184; Toronto 2026-03-08 03:30 was stored as 08:30Z and rendered
+  // back as 04:30). Re-sample the offset at the corrected instant and
+  // re-apply when it differs. Edge conventions, pinned by tests:
+  //   * fall-back ambiguous times (the repeated 01:xx hour) resolve to
+  //     the FIRST, pre-transition occurrence, same as before this fix;
+  //   * spring-forward nonexistent times (the skipped 02:xx hour) map to
+  //     the instant one hour BEFORE the wall-clock string (the input
+  //     does not exist locally, so no convention can round-trip it).
   const naive = new Date(`${localDate}T${localTime}:00.000Z`);
-  const offsetMin = tzOffsetMinutes(naive, tz);
-  return new Date(naive.getTime() - offsetMin * 60_000);
+  const firstOffsetMin = tzOffsetMinutes(naive, tz);
+  let corrected = naive.getTime() - firstOffsetMin * 60_000;
+  const secondOffsetMin = tzOffsetMinutes(new Date(corrected), tz);
+  if (secondOffsetMin !== firstOffsetMin) {
+    corrected = naive.getTime() - secondOffsetMin * 60_000;
+  }
+  return new Date(corrected);
 }
 
 // Renders a UTC Date as the local YYYY-MM-DD in `tz`.

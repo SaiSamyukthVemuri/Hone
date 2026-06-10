@@ -4,6 +4,18 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### DST two-pass offset correction in utcInstantFromLocal (PR #184, no migration)
+
+**Decision (2026-06-10):** Fix the one-hour DST conversion error in `lib/booking/tz.ts:utcInstantFromLocal`. The previous code sampled the timezone offset once, at the naive instant (the local string read as if it were UTC), and applied a single correction. When the naive and corrected instants straddle a DST transition, that sample is the pre-transition offset and the corrected instant lands an hour late. Empirical reproduction on Toronto spring-forward day 2026-03-08: `03:30` local stored as `08:30Z` and rendered back as `04:30`; `05:30` stored as `10:30Z` and rendered back as `06:30`. The fix re-samples the offset at the corrected instant and re-applies the correction when the two samples differ (two-pass). Normal days, already-correct DST-day times, and the fall-back ambiguous hour (resolves to the first, pre-transition occurrence) are byte-identical before and after the fix; all are pinned by `tests/lib/booking/tz-dst-two-pass.test.ts` (15 tests, real round-trip unit tests, not source-grep).
+
+**Why it matters despite low pilot impact:** Willow's business hours never touch the broken window today, but `utcInstantFromLocal` underpins booking slots, blockouts, day-window queries (dashboard, calendar week/month), recurring break materialization, and QuickBook. Fixed before a second studio makes the window reachable.
+
+**Documented edge convention (changed for nonexistent inputs only):** spring-forward gap times (the skipped `02:xx` hour, which never occurs on the wall clock) now map to the instant one hour BEFORE the wall-clock string (`02:30` -> `06:30Z`, renders `01:30`); the pre-fix code mapped them forward (`07:30Z`, renders `03:30`). Neither convention can round-trip an input that does not exist; the new behavior is pinned by test so any future change is a conscious decision.
+
+**Honest non-claims:** no payment change, no Stripe change (gates unchanged from PR #183), no migration, no new dependency (tz.ts stays zero-dependency on Intl), no portal change, no calendar feed phase 2, no behavior change for any wall-clock time that actually exists.
+
+**Alternative considered:** adopting a date library (luxon / date-fns-tz) for zone math. Rejected: the repo's zero-dependency Intl-based helpers are correct with the two-pass loop, the dependency would touch every booking surface for a one-function fix, and bundle cost is nonzero.
+
 ### Client portal session last_seen_at lazy-builder fix (PR #183, no migration)
 
 **Decision (2026-06-09):** Fix the `last_seen_at` touch in `lib/portal/session.ts:getCurrentPortalSession`. The previous code was `void admin.from("client_portal_sessions").update({ last_seen_at: nowIso }).eq("id", data.id);` with a comment calling it fire-and-forget. Supabase/PostgREST builders are lazy thenables: without `await` or `.then(...)` no HTTP request is ever sent, so the actual behavior was never-fire and `last_seen_at` was never written. The fix appends `.then(onFulfilled, onRejected)` to the chain, which executes the request while keeping it un-awaited so a slow update never blocks the portal page render. The fulfilled arm inspects the PostgREST `{ error }` result (Supabase builders resolve with an error field rather than rejecting); the rejected arm covers transport-level throws. Both arms log a sanitized structured event `portal_session_last_seen_update_failed` carrying only the session id, error code/message, and a timestamp.
