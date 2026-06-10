@@ -18,22 +18,17 @@ import {
 
 const TZ = "America/Toronto";
 
-// Some ICU builds render hour 0 as "24" under en-CA + hour12:false
-// (the h24 hour cycle). tz.ts already normalizes this inside
-// tzOffsetMinutes (`if (hour === 24) hour = 0`), but localTimeString
-// returns the raw Intl output. The CI runner's ICU emits "24:30" for
-// half past midnight while other machines emit "00:30"; normalize so
-// the round-trip assertions test the wall time, not the hour cycle.
-function normalizeHour24(time: string): string {
-  return time.startsWith("24:") ? `00:${time.slice(3)}` : time;
-}
-
+// PR #185 moved the ICU hour-24 normalization (some ICU builds render
+// hour 0 as "24" under en-CA + hour12:false) out of this file and
+// into localTimeString itself, so the round trips below now also pin
+// the production normalization: on an h24-cycle ICU these assertions
+// fail without it.
 function roundTrip(date: string, time: string, tz: string) {
   const utc = utcInstantFromLocal(date, time, tz);
   return {
     utcIso: utc.toISOString(),
     localDate: localDateString(utc, tz),
-    localTime: normalizeHour24(localTimeString(utc, tz)),
+    localTime: localTimeString(utc, tz),
   };
 }
 

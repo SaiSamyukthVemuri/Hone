@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #184)
+## Current production status (as of PR #185)
+
+- **localTimeString hour-24 normalization** (PR #185, no migration). Some ICU builds resolve Intl's `hour12: false` to the h24 hour cycle and render hour 0 as "24" ("24:30" instead of "00:30"); the PR #184 CI run surfaced this when its runner ICU emitted 24:xx where dev machines emitted 00:xx. `lib/booking/tz.ts:localTimeString` now rewrites a leading `24:` to `00:` via a private `normalizeHour24` helper, so HH is always 00-23 on every runtime (calendar grid labels, dashboard roster, SMS templates). `tzOffsetMinutes` already guarded the same quirk numerically; `localTimeString12h` (h12 cycle) and `localDateString` (date-only) are unaffected and pinned by test; `utcInstantFromLocal` untouched. The PR #184 DST round-trip tests now exercise the production normalization directly (the test-side copy was removed). No conversion logic change, no payment behavior change, no Stripe behavior change (gates unchanged from PR #184), no migration, no new dependency.
+
+## Earlier production status (as of PR #184)
 
 - **DST two-pass offset correction in utcInstantFromLocal** (PR #184, no migration). `lib/booking/tz.ts:utcInstantFromLocal` previously applied a single offset correction sampled at the naive instant; when the naive and corrected instants straddle a DST transition the sample is the pre-transition offset and local times in the hours after a spring-forward jump were stored one hour late (Toronto 2026-03-08 `03:30` -> `08:30Z` -> rendered back `04:30`; `05:30` -> `10:30Z` -> `06:30`). The fix re-samples the offset at the corrected instant and re-applies when it differs. Behavior is unchanged for every wall-clock time that exists: normal days, already-correct DST-day times, and the fall-back ambiguous hour (still resolves to the first, pre-transition occurrence). Only nonexistent spring-forward gap times changed convention (now map one hour before the wall string; pinned by test). Regression suite `tests/lib/booking/tz-dst-two-pass.test.ts` covers Toronto spring-forward round-trips (03:30, 05:30, 09:00, 00:00), 23/24/25-hour day-window spans, fall-back conventions, and zero-dependency pinning. No payment behavior change, no Stripe behavior change (gates unchanged from PR #183), no migration, no new dependency, no portal or calendar feed change.
 

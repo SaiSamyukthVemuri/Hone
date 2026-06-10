@@ -4,6 +4,16 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### localTimeString hour-24 normalization across ICU builds (PR #185, no migration)
+
+**Decision (2026-06-10):** Normalize `lib/booking/tz.ts:localTimeString` so it never returns `24:xx`. Some ICU builds resolve Intl's `hour12: false` to the h24 hour cycle and render hour 0 as "24" ("24:30" for half past midnight); others resolve to h23 and render "00:30". Surfaced by the PR #184 CI run, whose runner ICU emitted 24:xx where dev machines emitted 00:xx (that failure was test-only and was normalized in the test helper at the time; this PR moves the normalization into the production helper where it belongs). A private `normalizeHour24` helper rewrites a leading `24:` to `00:` after formatting; `tzOffsetMinutes` already guarded the same quirk numerically (`if (hour === 24) hour = 0`). `localTimeString12h` (h12 cycle, midnight renders "12:30 AM") and `localDateString` (date-only) are unaffected, verified and pinned by test. `utcInstantFromLocal` untouched.
+
+**Why it matters:** `localTimeString` feeds the calendar grid labels in `DayColumn.tsx` (where the string also flows into wall-time math, so "24:30" would parse as minute 1470 and misplace a midnight-adjacent block on an h24-cycle runtime), the dashboard roster, SMS templates, and practitioner-facing 24h surfaces. Production runs on whatever ICU Vercel's Node ships, not what dev machines ship.
+
+**Honest non-claims:** no conversion logic change, no payment change, no Stripe change (gates unchanged from PR #184), no migration, no new dependency, no behavior change on h23-cycle runtimes for any time outside the midnight hour.
+
+**Alternative considered:** forcing `hourCycle: "h23"` in the Intl options instead of post-formatting normalization. Rejected in favor of the string rewrite: the rewrite is unconditionally correct on every ICU regardless of how it interprets the option, and keeps the change shape identical to the numeric guard tzOffsetMinutes already uses.
+
 ### DST two-pass offset correction in utcInstantFromLocal (PR #184, no migration)
 
 **Decision (2026-06-10):** Fix the one-hour DST conversion error in `lib/booking/tz.ts:utcInstantFromLocal`. The previous code sampled the timezone offset once, at the naive instant (the local string read as if it were UTC), and applied a single correction. When the naive and corrected instants straddle a DST transition, that sample is the pre-transition offset and the corrected instant lands an hour late. Empirical reproduction on Toronto spring-forward day 2026-03-08: `03:30` local stored as `08:30Z` and rendered back as `04:30`; `05:30` stored as `10:30Z` and rendered back as `06:30`. The fix re-samples the offset at the corrected instant and re-applies the correction when the two samples differ (two-pass). Normal days, already-correct DST-day times, and the fall-back ambiguous hour (resolves to the first, pre-transition occurrence) are byte-identical before and after the fix; all are pinned by `tests/lib/booking/tz-dst-two-pass.test.ts` (15 tests, real round-trip unit tests, not source-grep).
