@@ -377,6 +377,34 @@ export async function updateSessionPriceAction(formData: FormData): Promise<void
   revalidatePath(`/clients/${clientId}`);
 }
 
+// PR #190 (clinical memory, migration 0082). Saves the plan for the
+// client's NEXT visit, written while charting this one. Optional;
+// empty input clears the note. Surfaced as "From last visit" context
+// on the next charting screen and in the previous-session panels.
+export async function updateNextSessionNoteAction(
+  formData: FormData,
+): Promise<void> {
+  const sessionId = formData.get("session_id");
+  const clientId = formData.get("client_id");
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
+  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+
+  const note = nullableString(formData.get("next_session_note"));
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  await assertSessionVisible(studio.id, clientId, sessionId);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("sessions")
+    .update({ next_session_note: note })
+    .eq("id", sessionId)
+    .eq("studio_id", studio.id);
+  if (error) throw new Error(`Failed to save the note: ${error.message}`);
+  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
+  revalidatePath(`/clients/${clientId}`);
+}
+
 export async function updateSessionPerformerAction(
   formData: FormData,
 ): Promise<void> {

@@ -7,6 +7,11 @@ import type {
   TreatmentParams,
 } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
+import {
+  isReactionType,
+  reactionTypeLabel,
+  toleranceLabel,
+} from "@/lib/sessions/clinical-response";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
@@ -237,6 +242,33 @@ function BlockSection({
           {probeLine && (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
               Probe: {probeLine}
+            </p>
+          )}
+
+          {/* PR #190 (migration 0082): structured client response.
+              Lines render only when recorded; legacy blocks show
+              nothing here. */}
+          {(block.tolerance_rating != null ||
+            block.reaction_type ||
+            block.reaction_notes) && (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {[
+                block.tolerance_rating != null
+                  ? `Tolerance ${block.tolerance_rating}/5 (${toleranceLabel(block.tolerance_rating)})`
+                  : null,
+                isReactionType(block.reaction_type)
+                  ? reactionTypeLabel(block.reaction_type)
+                  : null,
+                block.reaction_notes,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+          {(block.caution_for_next_session || block.caution_note) && (
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              Caution for next session
+              {block.caution_note ? `: ${block.caution_note}` : ""}
             </p>
           )}
 

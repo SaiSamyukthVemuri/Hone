@@ -5,6 +5,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { findProbeOptionByKey } from "@/lib/probes";
 import {
+  isReactionType,
+  isToleranceRating,
+  type ReactionType,
+} from "@/lib/sessions/clinical-response";
+import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
@@ -32,6 +37,58 @@ const SIDE_VALUES: ReadonlyArray<SessionBlockSide> = [
 ];
 function isSide(v: string): v is SessionBlockSide {
   return (SIDE_VALUES as ReadonlyArray<string>).includes(v);
+}
+
+// PR #190 (clinical memory, migration 0082). Structured client
+// response per block. All optional; the DB CHECKs are the backstop,
+// this validator surfaces clean errors. A caution note implies the
+// caution flag so a practitioner who types a note but misses the
+// checkbox still gets the flag on the next visit.
+type ClinicalResponseInput = {
+  toleranceRating?: number | null;
+  reactionType?: string | null;
+  reactionNotes?: string | null;
+  cautionForNextSession?: boolean;
+  cautionNote?: string | null;
+};
+
+type ClinicalResponseColumns = {
+  tolerance_rating: number | null;
+  reaction_type: ReactionType | null;
+  reaction_notes: string | null;
+  caution_for_next_session: boolean;
+  caution_note: string | null;
+};
+
+function normalizeClinicalResponse(
+  input: ClinicalResponseInput,
+):
+  | { ok: true; columns: ClinicalResponseColumns }
+  | { ok: false; error: string } {
+  const rating = input.toleranceRating ?? null;
+  if (rating !== null && !isToleranceRating(rating)) {
+    return {
+      ok: false,
+      error: "Tolerance rating must be a whole number from 1 to 5.",
+    };
+  }
+  const reaction = input.reactionType || null;
+  if (reaction !== null && !isReactionType(reaction)) {
+    return { ok: false, error: "Pick a skin response from the list." };
+  }
+  const reactionNotes = input.reactionNotes?.trim() || null;
+  const cautionNote = input.cautionNote?.trim() || null;
+  const cautionFlag = Boolean(input.cautionForNextSession) || cautionNote !== null;
+  return {
+    ok: true,
+    columns: {
+      tolerance_rating: rating,
+      reaction_type: reaction,
+      reaction_notes: reactionNotes,
+      caution_for_next_session: cautionFlag,
+      caution_note: cautionNote,
+    },
+  };
 }
 
 type StructuredArea = {
@@ -557,6 +614,12 @@ export type CreateAreaWithEntryInput = {
   side?: string | null;
   customAreaDetail?: string | null;
   readings?: EntryReadingsInput;
+  // PR #190 (migration 0082): structured client response, all optional.
+  toleranceRating?: number | null;
+  reactionType?: string | null;
+  reactionNotes?: string | null;
+  cautionForNextSession?: boolean;
+  cautionNote?: string | null;
 };
 
 export async function createTreatmentAreaWithEntryAction(
@@ -577,6 +640,9 @@ export async function createTreatmentAreaWithEntryAction(
 
   const probeCheck = resolveStructuredProbe(input.probeOptionKey);
   if (!probeCheck.ok) return probeCheck;
+
+  const responseCheck = normalizeClinicalResponse(input);
+  if (!responseCheck.ok) return responseCheck;
 
   const readings = input.readings ?? {};
   const area = areaCheck.value.primary_area;
@@ -622,6 +688,7 @@ export async function createTreatmentAreaWithEntryAction(
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
       ...probeCheck.columns,
+      ...responseCheck.columns,
     })
     .select("*")
     .single();
@@ -696,6 +763,15 @@ export type UpdateAreaWithEntryInput = {
   side?: string | null;
   customAreaDetail?: string | null;
   readings?: EntryReadingsInput;
+  // PR #190 (migration 0082): structured client response. The edit
+  // form initializes its draft from the block row and always sends
+  // these back, so a save without touching the section round-trips
+  // the stored values unchanged.
+  toleranceRating?: number | null;
+  reactionType?: string | null;
+  reactionNotes?: string | null;
+  cautionForNextSession?: boolean;
+  cautionNote?: string | null;
 };
 
 export async function updateTreatmentAreaWithEntryAction(
@@ -716,6 +792,9 @@ export async function updateTreatmentAreaWithEntryAction(
 
   const probeCheck = resolveStructuredProbe(input.probeOptionKey);
   if (!probeCheck.ok) return probeCheck;
+
+  const responseCheck = normalizeClinicalResponse(input);
+  if (!responseCheck.ok) return responseCheck;
 
   const readings = input.readings ?? {};
   const area = areaCheck.value.primary_area;
@@ -750,6 +829,7 @@ export async function updateTreatmentAreaWithEntryAction(
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
       ...probeCheck.columns,
+      ...responseCheck.columns,
     })
     .eq("id", input.blockId)
     .eq("studio_id", studio.id)

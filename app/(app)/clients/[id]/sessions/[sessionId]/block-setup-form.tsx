@@ -49,6 +49,11 @@ import type {
   SessionMode,
 } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
+import {
+  REACTION_TYPES,
+  reactionTypeLabel,
+  toleranceLabel,
+} from "@/lib/sessions/clinical-response";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
 import {
@@ -137,6 +142,14 @@ type Draft = {
   pulseCount: string;
   hairsTreated: string;
   comments: string;
+  // PR #190 (migration 0082): structured client response. All optional.
+  // toleranceRating is "" or "1".."5"; reactionType is "" or an
+  // allowlisted value from lib/sessions/clinical-response.ts.
+  toleranceRating: string;
+  reactionType: string;
+  reactionNotes: string;
+  cautionForNextSession: boolean;
+  cautionNote: string;
 };
 
 const EMPTY: Draft = {
@@ -158,6 +171,11 @@ const EMPTY: Draft = {
   pulseCount: String(PULSE_COUNT_DEFAULT),
   hairsTreated: "",
   comments: "",
+  toleranceRating: "",
+  reactionType: "",
+  reactionNotes: "",
+  cautionForNextSession: false,
+  cautionNote: "",
 };
 
 function initialDraft(
@@ -212,6 +230,14 @@ function initialDraft(
         ? String(firstEntry.hairs_treated)
         : "",
     comments: firstEntry?.comments ?? "",
+    // PR #190: round-trip the stored response so an edit save that
+    // never touches the section preserves it unchanged.
+    toleranceRating:
+      block.tolerance_rating != null ? String(block.tolerance_rating) : "",
+    reactionType: block.reaction_type ?? "",
+    reactionNotes: block.reaction_notes ?? "",
+    cautionForNextSession: block.caution_for_next_session ?? false,
+    cautionNote: block.caution_note ?? "",
   };
 }
 
@@ -341,6 +367,17 @@ export function BlockSetupForm({
     const pulseStr = draft.pulseCount.trim();
     const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
 
+    // PR #190: structured client response, shared by create + edit.
+    const clinicalResponse = {
+      toleranceRating: draft.toleranceRating
+        ? parseInt(draft.toleranceRating, 10)
+        : null,
+      reactionType: draft.reactionType || null,
+      reactionNotes: draft.reactionNotes.trim() || null,
+      cautionForNextSession: draft.cautionForNextSession,
+      cautionNote: draft.cautionNote.trim() || null,
+    };
+
     const readings = {
       thermolysisIntensityPercent: tInt.value,
       thermolysisDurationSeconds: tDur.value,
@@ -377,6 +414,7 @@ export function BlockSetupForm({
           side: draft.side || null,
           customAreaDetail: trimmedDetail || null,
           readings,
+          ...clinicalResponse,
         });
         if (!res.ok) {
           setError(res.error);
@@ -403,6 +441,7 @@ export function BlockSetupForm({
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
         readings,
+        ...clinicalResponse,
       });
       if (!res.ok) {
         setError(res.error);
@@ -874,6 +913,98 @@ export function BlockSetupForm({
           placeholder="Tap a chip or type a note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
+      </div>
+
+      {/* PR #190 (migration 0082): structured client response. Every
+          field optional; tapping a selected rating again clears it.
+          This is the memory the next visit reads back. */}
+      <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <div>
+          <span className="text-sm font-medium">Client response</span>
+          <p className="text-xs text-neutral-500">
+            Optional. Takes five seconds; your future self will thank you.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-neutral-600 dark:text-neutral-400">
+            How did the client tolerate this area?
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {["1", "2", "3", "4", "5"].map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-pressed={draft.toleranceRating === n}
+                onClick={() =>
+                  update(
+                    "toleranceRating",
+                    draft.toleranceRating === n ? "" : n,
+                  )
+                }
+                className={
+                  draft.toleranceRating === n
+                    ? "h-10 w-10 rounded-md bg-neutral-900 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "h-10 w-10 rounded-md border border-neutral-300 bg-white text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                }
+              >
+                {n}
+              </button>
+            ))}
+            <span className="text-xs text-neutral-500">
+              {draft.toleranceRating
+                ? toleranceLabel(parseInt(draft.toleranceRating, 10))
+                : "1 = struggled, 5 = very comfortable"}
+            </span>
+          </div>
+        </div>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs text-neutral-600 dark:text-neutral-400">
+            Skin/client response
+          </span>
+          <select
+            value={draft.reactionType}
+            onChange={(e) => update("reactionType", e.target.value)}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          >
+            <option value="">Not recorded</option>
+            {REACTION_TYPES.map((r) => (
+              <option key={r} value={r}>
+                {reactionTypeLabel(r)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <textarea
+          rows={2}
+          value={draft.reactionNotes}
+          onChange={(e) => update("reactionNotes", e.target.value)}
+          placeholder="Anything notable about how the skin or client responded"
+          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={draft.cautionForNextSession}
+            onChange={(e) =>
+              update("cautionForNextSession", e.target.checked)
+            }
+            className="h-4 w-4 rounded border-neutral-300"
+          />
+          <span>Caution for next session</span>
+        </label>
+        {(draft.cautionForNextSession || draft.cautionNote.trim() !== "") && (
+          <textarea
+            rows={2}
+            value={draft.cautionNote}
+            onChange={(e) => update("cautionNote", e.target.value)}
+            placeholder="Anything to watch next time?"
+            className="rounded-md border border-amber-300 bg-white px-3 py-3 text-base outline-none focus:border-amber-500 dark:border-amber-800 dark:bg-neutral-950"
+          />
+        )}
       </div>
 
       {error && (

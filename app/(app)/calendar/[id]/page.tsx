@@ -9,6 +9,11 @@ import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { referralSourceLabel } from "@/lib/booking/referral-source";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import {
+  buildLastSessionSummary,
+  type ClinicalSummaryBlock,
+  type LastSessionSummary,
+} from "@/lib/sessions/clinical-summary";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
@@ -187,8 +192,12 @@ export default async function AppointmentDetailPage({
   > = [];
   let lastSession: Pick<
     Session,
-    "id" | "started_at" | "modality" | "session_notes"
+    "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
   > | null = null;
+  // PR #190 (clinical memory): compact clinical summary of the last
+  // session's blocks (areas, settings, tolerance, reaction, caution),
+  // built by the shared lib/sessions/clinical-summary helper.
+  let lastSessionSummary: LastSessionSummary | null = null;
   // PR #156 (migration 0068). The session, if any, that was logged
   // explicitly against THIS appointment via the new appointment_id
   // FK. Distinct from `lastSession` above, which is the most recent
@@ -221,7 +230,7 @@ export default async function AppointmentDetailPage({
       // owner-only view.
       supabase
         .from("sessions")
-        .select("id, started_at, modality, session_notes")
+        .select("id, started_at, modality, session_notes, next_session_note")
         .eq("studio_id", studio.id)
         .eq("client_id", clientId)
         .is("deleted_at", null)
@@ -259,7 +268,10 @@ export default async function AppointmentDetailPage({
       );
     }
     lastSession = (lastSessionRes.data ?? null) as
-      | Pick<Session, "id" | "started_at" | "modality" | "session_notes">
+      | Pick<
+          Session,
+          "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
+        >
       | null;
     if (linkedSessionRes.error) {
       throw new Error(
@@ -269,6 +281,27 @@ export default async function AppointmentDetailPage({
     linkedSession = (linkedSessionRes.data ?? null) as
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
+
+    // PR #190 (clinical memory): the last session's blocks feed the
+    // compact clinical summary on the card below. One extra narrow
+    // read, only when a previous session exists. A block-less session
+    // (e.g. laser) yields a summary of nulls, which renders as the
+    // pre-#190 card plus the next-session note when present.
+    if (lastSession) {
+      const { data: lastBlocks } = await supabase
+        .from("session_blocks")
+        .select(
+          "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        )
+        .eq("studio_id", studio.id)
+        .eq("session_id", lastSession.id)
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: true });
+      lastSessionSummary = buildLastSessionSummary({
+        blocks: (lastBlocks ?? []) as ClinicalSummaryBlock[],
+        nextSessionNote: lastSession.next_session_note,
+      });
+    }
   }
 
   const activePlans = treatmentPlans.filter((p) => p.status === "active");
@@ -316,6 +349,7 @@ export default async function AppointmentDetailPage({
 
       <LastSessionCard
         session={lastSession}
+        summary={lastSessionSummary}
         clientId={data.client?.id ?? null}
       />
 
@@ -870,18 +904,24 @@ function IntakeStatusLine({
 }
 
 // ---------------------------------------------------------------------------
-// Last session memory; one calm row pointing at the previous visit.
-// Session id + client id link to the existing session detail route
-// at /clients/[clientId]/sessions/[sessionId].
+// Last session memory at the point of care. PR #190 upgraded this
+// from a date+modality pointer to a compact clinical summary: areas,
+// settings, probe, tolerance, reaction, caution, and the note the
+// practitioner left for this visit. Lines render only when recorded
+// (lib/sessions/clinical-summary nulls absent data), so pre-#190
+// sessions show the same calm card as before. Session id + client id
+// link to the session detail route.
 // ---------------------------------------------------------------------------
 function LastSessionCard({
   session,
+  summary,
   clientId,
 }: {
   session: Pick<
     Session,
-    "id" | "started_at" | "modality" | "session_notes"
+    "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
   > | null;
+  summary: LastSessionSummary | null;
   clientId: string | null;
 }) {
   if (!session) {
@@ -899,9 +939,33 @@ function LastSessionCard({
       <span className="font-medium">
         <FormattedDateTime iso={session.started_at} />
       </span>
-      <span className="text-neutral-500"> · {session.modality}</span>
+      <span className="text-neutral-500 capitalize"> · {session.modality}</span>
     </>
   );
+  const detailLines: Array<{ label: string; value: string }> = [];
+  if (summary?.areaLine) {
+    detailLines.push({
+      label: "Treated",
+      value:
+        summary.blockCount > 1
+          ? `${summary.areaLine} (${summary.blockCount} areas recorded)`
+          : summary.areaLine,
+    });
+  }
+  if (summary?.settingsLine)
+    detailLines.push({
+      // Multi-block sessions: the compact line is the FIRST area's
+      // settings; the label says so and the View full session link
+      // below carries the rest. Never imply one block is the visit.
+      label: summary.blockCount > 1 ? "Settings (first area)" : "Settings",
+      value: summary.settingsLine,
+    });
+  if (summary?.probeLine)
+    detailLines.push({ label: "Probe", value: summary.probeLine });
+  if (summary?.toleranceLine)
+    detailLines.push({ label: "Tolerance", value: summary.toleranceLine });
+  if (summary?.reactionLine)
+    detailLines.push({ label: "Response", value: summary.reactionLine });
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -919,9 +983,39 @@ function LastSessionCard({
           sessionLine
         )}
       </p>
+      {detailLines.length > 0 && (
+        <dl className="mt-2 flex flex-col gap-1 text-sm text-neutral-700 dark:text-neutral-300">
+          {detailLines.map((line) => (
+            <div key={line.label} className="flex gap-2">
+              <dt className="w-20 shrink-0 text-neutral-500">{line.label}</dt>
+              <dd>{line.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {summary?.cautionFlagged && (
+        <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+          Watch today{summary.cautionLine ? `: ${summary.cautionLine}` : ""}
+        </p>
+      )}
+      {summary?.nextSessionNote && (
+        <p className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
+          From last visit, for today: {summary.nextSessionNote}
+        </p>
+      )}
       {session.session_notes && (
         <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
           {session.session_notes}
+        </p>
+      )}
+      {clientId && (
+        <p className="mt-3 text-xs">
+          <Link
+            href={`/clients/${clientId}/sessions/${session.id}`}
+            className="text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            View full session
+          </Link>
         </p>
       )}
     </section>

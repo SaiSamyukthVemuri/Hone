@@ -642,6 +642,10 @@ export type Session = {
   // appointment may have zero or more sessions; one session belongs
   // to zero or one appointment. No unique constraint on this column.
   appointment_id: string | null;
+  // Migration 0082 (PR #190, clinical memory): plan for the NEXT
+  // visit, written while charting this one. Surfaced as "From last
+  // visit" context when the client returns. Optional.
+  next_session_note: string | null;
 };
 
 export type TreatmentPlanStatus = "active" | "closed";
@@ -821,6 +825,15 @@ export type SessionBlock = {
   probe_size_value: string | null;
   probe_length: string | null;
   probe_label: string | null;
+  // Migration 0082 (PR #190, clinical memory): structured client
+  // response per block. All nullable / safely defaulted; legacy rows
+  // render without these lines. reaction_type allowlist lives in
+  // lib/sessions/clinical-response.ts and the 0082 CHECK constraint.
+  tolerance_rating: number | null;
+  reaction_type: string | null;
+  reaction_notes: string | null;
+  caution_for_next_session: boolean;
+  caution_note: string | null;
 };
 
 export type LaserEntry = {
