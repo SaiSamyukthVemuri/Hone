@@ -4,6 +4,18 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Client portal session last_seen_at lazy-builder fix (PR #183, no migration)
+
+**Decision (2026-06-09):** Fix the `last_seen_at` touch in `lib/portal/session.ts:getCurrentPortalSession`. The previous code was `void admin.from("client_portal_sessions").update({ last_seen_at: nowIso }).eq("id", data.id);` with a comment calling it fire-and-forget. Supabase/PostgREST builders are lazy thenables: without `await` or `.then(...)` no HTTP request is ever sent, so the actual behavior was never-fire and `last_seen_at` was never written. The fix appends `.then(onFulfilled, onRejected)` to the chain, which executes the request while keeping it un-awaited so a slow update never blocks the portal page render. The fulfilled arm inspects the PostgREST `{ error }` result (Supabase builders resolve with an error field rather than rejecting); the rejected arm covers transport-level throws. Both arms log a sanitized structured event `portal_session_last_seen_update_failed` carrying only the session id, error code/message, and a timestamp.
+
+**Why `.then` instead of `await`:** the portal session resolver runs on every portal page render and gates the whole portal surface. `last_seen_at` is a best-effort metric; trading render latency for metric freshness is the wrong direction. The `.then` form keeps the original fire-and-forget intent while actually firing.
+
+**What did NOT change:** session validity rules (hash lookup via `session_token_hash`, revoked/expired checks), token hashing (`lib/portal/tokens.ts`), login timing padding (`app/portal/login/actions.ts`), cookie attributes, RLS posture (the touch already ran through the admin client), schema (`last_seen_at timestamptz` from migration 0052 is unchanged; no migration). No payment, Stripe, SMS, or calendar-feed change; Stripe gates unchanged from PR #182.
+
+**Honest non-claims:** no auth behavior change, no portal redesign, no new index on `last_seen_at` (diagnostic column, not a query path), no retry loop for failed touches (a missed touch self-heals on the next page view).
+
+**Alternative considered:** a shared safe fire-and-forget helper for Supabase builders. Rejected for this PR: there is exactly one bare-void-builder call site in the repo (verified by grep across `lib/` and `app/`), so a helper would be speculative; the source-grep test pinning "no bare void builder in session.ts" guards the regression instead.
+
 ### Calendar feed token hash-at-rest, phase 1 (PR #182, migration 0079)
 
 **Decision (2026-06-09):** Move the calendar feed route's credential check from raw-token equality to SHA-256 hash equality. Migration 0079 adds a nullable `practitioners.calendar_feed_token_hash` column, backfills it from existing raw tokens via `extensions.digest(...)`, adds a 64-hex-char CHECK + a partial unique index on it. The runtime feed route now hashes the URL token and looks up by `calendar_feed_token_hash`. Rotation writes BOTH the raw column and the hash for phase 1; phase 2 will null the raw column once the settings UI is refactored to stop rendering the URL from a refreshed page.

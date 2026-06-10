@@ -73,11 +73,43 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
 
   // Fire-and-forget last_seen_at touch. We deliberately do NOT await
   // this so a slow update never blocks the render; an outdated
-  // last_seen is acceptable.
+  // last_seen is acceptable. Supabase builders are lazy thenables:
+  // no request is sent until the builder is awaited or .then()ed, so
+  // the .then() below is what actually executes the update (PR #183;
+  // a bare `void builder` here previously never fired). PostgREST
+  // failures resolve with { error } rather than rejecting, so the
+  // fulfilled arm inspects error; the rejected arm covers transport
+  // throws. Neither arm logs the cookie token, its hash, or any
+  // client PII; a failed touch never affects the returned session.
   void admin
     .from("client_portal_sessions")
     .update({ last_seen_at: nowIso })
-    .eq("id", data.id);
+    .eq("id", data.id)
+    .then(
+      ({ error: touchError }) => {
+        if (touchError) {
+          console.error(
+            JSON.stringify({
+              event: "portal_session_last_seen_update_failed",
+              sessionId: data.id,
+              code: touchError.code,
+              message: touchError.message,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        }
+      },
+      (err: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: "portal_session_last_seen_update_failed",
+            sessionId: data.id,
+            err: err instanceof Error ? err.message : String(err),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      },
+    );
 
   return {
     id: data.id as string,
