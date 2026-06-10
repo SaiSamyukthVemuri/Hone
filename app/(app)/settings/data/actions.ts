@@ -54,6 +54,13 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot export data." };
   }
+  // PR #189 (pilot safety): the export is the entire studio dataset
+  // (every client's contact info, health notes, charting history).
+  // Only the studio owner may pull it. The refusal copy is generic;
+  // it does not explain the role model to a non-owner.
+  if (practitioner.role !== "owner") {
+    return { ok: false, error: "You do not have permission to export data." };
+  }
 
   const supabase = await createClient();
 
@@ -609,6 +616,50 @@ hello@hone.care
   const bytes = await zip.generateAsync({ type: "uint8array" });
   const base64 = Buffer.from(bytes).toString("base64");
   const filename = `hone-export-${slugify(studio.name)}-${todayStamp()}.zip`;
+
+  // PR #189 (pilot safety): every successful export leaves an audit
+  // trail. Inserted with the user-scoped client (audit_logs RLS from
+  // 0001 allows member insert, never update/delete). Fail closed: if
+  // the audit row cannot be written, the export is not handed out.
+  const { error: auditError } = await supabase.from("audit_logs").insert({
+    studio_id: studio.id,
+    actor_id: practitioner.id,
+    action: "studio_export",
+    entity_type: "studio",
+    entity_id: studio.id,
+    metadata: {
+      filename,
+      files: [
+        "clients.csv",
+        "sessions.csv",
+        "electrolysis_entries.csv",
+        "laser_entries.csv",
+        "practitioners.csv",
+        "client_pricing.csv",
+        "appointments.csv",
+        "treatment_plans.csv",
+        "treatment_plan_stages.csv",
+        "README.txt",
+      ],
+      row_counts: {
+        clients: (clientsRes.data ?? []).length,
+        sessions: (sessionsRes.data ?? []).length,
+        electrolysis_entries: filteredElectrolysis.length,
+        laser_entries: laserRows.length,
+        practitioners: (practitionersRes.data ?? []).length,
+        client_pricing: (pricingRes.data ?? []).length,
+        appointments: appointmentRows.length,
+        treatment_plans: treatmentPlanRows.length,
+        treatment_plan_stages: treatmentPlanStageRows.length,
+      },
+    },
+  });
+  if (auditError) {
+    return {
+      ok: false,
+      error: "Could not record the export audit entry. Try again.",
+    };
+  }
 
   return { ok: true, filename, base64 };
 }

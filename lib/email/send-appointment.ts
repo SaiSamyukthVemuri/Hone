@@ -178,6 +178,76 @@ export async function recordEmailAttempt(
   }
 }
 
+// PR #189 (pilot safety). Email types covered by the claim_email_send
+// RPC (migration 0080). no_show keeps the unclaimed 0028 path;
+// postcare has its own conditional-UPDATE claim (0043).
+export type ClaimableEmailType = "confirmation" | "reminder_24h" | "reminder_2h";
+
+// Atomically reserve the right to send one email of the given type
+// for the given appointment (claim_email_send, migration 0080).
+// Returns true when this process won the claim and should call
+// Resend. Mirrors claimSmsSend (lib/sms/send-appointment.ts): the
+// claim increments _send_attempts and stamps _claimed_at in one
+// statement, so two overlapping cron runs can never both send.
+// Errors are treated as "claim not won" so an RPC outage cannot
+// cause a duplicate send.
+export async function claimEmailSend(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: ClaimableEmailType,
+): Promise<boolean> {
+  const { data, error } = await admin.rpc("claim_email_send", {
+    p_appointment_id: appointmentId,
+    p_email_type: emailType,
+  });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "claim_email_send_failed",
+        appointmentId,
+        emailType,
+        error: String(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return false;
+  }
+  return data === true;
+}
+
+// Record the outcome of a CLAIMED send (record_email_result,
+// migration 0080): success stamps _sent_at, both branches clear
+// _claimed_at. Does NOT increment attempts; claimEmailSend already
+// did. Unclaimed call sites keep using recordEmailAttempt above.
+export async function recordEmailResult(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: ClaimableEmailType,
+  success: boolean,
+): Promise<void> {
+  const { error } = await admin.rpc("record_email_result", {
+    p_appointment_id: appointmentId,
+    p_email_type: emailType,
+    p_success: success,
+  });
+  if (error) {
+    // Do not throw. A failure here leaves the claim in place; the
+    // 5-minute staleness window in claim_email_send bounds how long
+    // the row stays blocked, and _sent_at remaining null means the
+    // next pass may retry under the attempts cap.
+    console.error(
+      JSON.stringify({
+        event: "record_email_result_failed",
+        appointmentId,
+        emailType,
+        success,
+        error: String(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+}
+
 // PR #153. Threshold used to surface a final-failure ops alert.
 // Matches MAX_ATTEMPTS in /api/cron/appointment-reminders/route.ts
 // (which also caps retries at 3). Importing that constant would

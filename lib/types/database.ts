@@ -327,6 +327,13 @@ export type Appointment = {
   sms_reminder_2h_sent_at: string | null;
   sms_reminder_2h_send_attempts: number;
   sms_reminder_2h_claimed_at: string | null;
+  // Migration 0080 (PR #189): email claim columns, parallel to the
+  // SMS _claimed_at columns above. Held by public.claim_email_send
+  // before the Resend call; cleared by public.record_email_result.
+  // Stale claims (>5 minutes) are reclaimable.
+  confirmation_claimed_at: string | null;
+  reminder_24h_claimed_at: string | null;
+  reminder_2h_claimed_at: string | null;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
