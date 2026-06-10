@@ -6,13 +6,15 @@
 |---|---|
 | Stripe Connect Express onboarding | **Production**, test mode |
 | Card-on-file via SetupIntent on connected account | **Production**, test mode |
-| Test-mode manual cancellation/no-show fee charge | **Production**, test mode |
+| Test-mode manual cancellation/no-show fee charge | **Production**, test mode (legacy `manual_fee_charge_attempts` runtime; unification onto `payment_charge_attempts` still open) |
+| Test-mode session payment charge end-to-end (prepare, run, status UX, completion-to-billing handoff) | **Production**, test mode on `payment_charge_attempts` (PRs #171-#174, #180, #181) |
+| Receipts (session-payment test receipt email) | **Production**, test mode (PR #175); manual-fee charge notice still not built |
+| Refunds (full-amount, reason-agnostic, `payment_charge_attempts`) | **Production**, test mode (PR #178) |
+| Webhook reconciliation for `payment_charge_attempts` | **Production**, test mode (PR #179); live events hard-ignored at handler entry |
+| Dispute handling | **Alert-only** (PR #179: `charge.dispute.created` fires a critical ops_alert); no automated response |
 | Automatic charging | **Not built** |
 | Batch charging | **Not built** |
 | Public booking card-required flow | **Schema present (migration 0032), code dormant** |
-| Refunds | **Not built** |
-| Receipts / charge-notice email | **Not built** |
-| Dispute handling | **Not built** |
 | Live mode | **Blocked** by three independent guards (see §3) |
 
 ## 2. Stripe Connect model
@@ -210,8 +212,8 @@ What this flow does NOT do (v1):
 - No automatic refund trigger. Manual practitioner click only.
 - No partial refund. Full amount only (the schema's `<= amount_cents` CHECK leaves room for a future partial-refund PR without migration).
 - No multiple refunds per attempt (partial-unique on `stripe_refund_id`).
-- No `charge.refunded` webhook handling. Out-of-band Stripe-dashboard refunds are NOT reconciled into Hone today.
-- No dispute (`charge.dispute.created`) handling.
+- Webhook handling lives in PR #179 (§4d), not here: full out-of-band Stripe-dashboard refunds ARE reconciled by the `charge.refunded` handler; partial refunds fire a critical ops_alert and leave the row alone.
+- Dispute (`charge.dispute.created`) handling is alert-only via PR #179 (§4d); this refund flow itself does nothing with disputes.
 - No refund receipt email. (May land later as a reason-agnostic mirror of PR #175.)
 - No SMS.
 - No client-portal refund surface.
@@ -382,11 +384,12 @@ STRIPE_ALLOW_LIVE_MODE=true:
   Must be zero unless an explicit live-mode PR.
 
 paymentIntents.create:
-  Exactly one existing occurrence is allowed today:
-    lib/billing/manual-fee-charge.ts
+  Exactly two existing occurrences are allowed today:
+    lib/billing/manual-fee-charge.ts        (test-mode manual fee, legacy)
+    lib/billing/session-payment-charge.ts   (test-mode session payment, PR #173)
 
-  That occurrence is allowed only because it is the test-mode manual fee
-  charge path and is behind:
+  The manual-fee occurrence is allowed only because it is the test-mode
+  manual fee charge path and is behind:
     - practitioner auth
     - evidence recheck via getManualFeeChargeEligibility
     - lineage recheck via loadCardAndVerifyLineage
@@ -401,16 +404,18 @@ paymentIntents.create:
   explicitly reviewed.
 ```
 
-**Do not say** `paymentIntents.create` should be zero. The one allowed occurrence is the legitimate test-mode manual fee path; deleting it would break the feature.
+The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, livemode inference gate, and the `payment_charge_attempts_livemode_false_check` DB CHECK.
+
+**Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 2** occurrences in the two allowlisted files above; both are legitimate test-mode paths and deleting either would break its feature. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
 
 ## 9. Live charging requirements
 
 When a live-mode PR is opened (it is not opened today), it must do all of the following. Cherry-picking is not safe.
 
 1. **Lawyer review of consent + cancellation + card-authorization wording** under Ontario law (CASL / PIPEDA / PCI / contract enforceability).
-2. **Draft and add a receipt / charge-notice email template** that is sent on a successful charge. Include amount, last4, date, the studio's contact, and a way to dispute.
-3. **Add a refund code path.** The 0032 backend has `stripe_refund_attempts` + `stripe_refunds` tables; a live PR must add the action that uses them, with the same atomic-claim + duplicate-protection pattern as the charge path.
-4. **Add a live webhook handler** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Each handler must match on the `hone_manual_fee_charge_attempt_id` metadata, claim via `claim_stripe_event`, and update the matching attempt row.
+2. **Receipt / charge-notice email.** Status: built in test mode for session payments (PR #175, `lib/email/templates/payment-receipt.ts`). Remaining for live: content/legal review of the template and a charge notice for the legacy manual-fee path (or unify fees onto `payment_charge_attempts` first).
+3. **Refund code path.** Status: built in test mode on `payment_charge_attempts` (PR #178; full-amount, reason-agnostic, atomic claim + idempotency). The dormant 0032 `stripe_refund_attempts` / `stripe_refunds` tables remain unused. Remaining for live: deliberate live enablement and a partial-refund decision.
+4. **Webhook handlers** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Status: built reason-agnostic for `payment_charge_attempts` (PR #179, metadata-matched, claimed via `claim_stripe_event`); live events are hard-ignored at handler entry. Remaining for live: deliberately relax the livemode guard and either unify or retire the `manual_fee_charge_attempts` runtime, which still has no webhook reconciliation.
 5. **Strengthen pending reconciliation.** Replace the "trust Stripe idempotency within 60 minutes" path with `paymentIntents.search` by metadata before any retry. The Stripe idempotency window is 24 hours; live mode must never depend on that being long enough.
 6. **Manual smoke against a live test charge** with refund.
 7. **Deliberately replace `manual_fee_charge_attempts_livemode_false_check`** with the live-mode equivalent. The migration must be reviewed.

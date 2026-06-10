@@ -15,8 +15,11 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Consent + e-sign (treatment, photo, card authorization, policy ack) | **Production**, draft template wording, **lawyer review required before live use** |
 | Card-on-file (Stripe SetupIntent on connected account) | **Production, test mode only** |
 | Manual cancellation/no-show fee charge (PaymentIntent off-session) | **Production, test mode only**. Live charging requires a deliberate live-mode PR with legal review |
+| Session payment charge end-to-end: prepare, run, receipt, refund, webhook reconciliation, completion-to-billing UX (`payment_charge_attempts`) | **Production, test mode only** (PRs #171-#181). Live payments remain blocked; fees are not active |
+| Receipts (session-payment test receipt email) | **Production, test mode only** (PR #175) |
+| Refunds (full-amount, test mode, `payment_charge_attempts`) | **Production, test mode only** (PR #178) |
+| Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
 | Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
-| Refunds, dispute handling, receipts | **Not built** |
 | SMS (Twilio) | **Implemented but disabled by default** per studio toggle and per-client consent |
 | Google Calendar sync, intake builder, signed-consent viewer, admin/support dashboard | **Backlog** |
 

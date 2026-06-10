@@ -166,6 +166,7 @@ Per Sam's instruction: do not claim signatures are legally binding. The Hone-sid
 | Card authorization | Yes | **No** |
 | Cancellation policy text | Studio writes their own; default empty | **No** |
 | No-show policy text | Studio writes their own; default empty | **No** |
-| Manual charge notice email | **Not drafted; not sent.** No receipt or charge-notice email is sent today. | N/A |
+| Session-payment receipt email | **Drafted and sent in test mode (PR #175)**: `lib/email/templates/payment-receipt.ts` is dispatched on a successful test session-payment charge. | **No** |
+| Manual-fee charge notice email | **Not drafted; not sent.** The legacy manual cancellation/no-show fee path sends no receipt or charge notice today. | N/A |
 
-All five require Ontario legal review before live use of any fee charging.
+All of the above require Ontario legal review before live use of any fee charging.
