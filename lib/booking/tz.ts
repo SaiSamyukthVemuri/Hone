@@ -78,7 +78,18 @@ export function localDateString(d: Date, tz: string): string {
   return f.format(d);
 }
 
-// Renders a UTC Date as the local HH:MM in `tz` (24h).
+// Some ICU builds resolve `hour12: false` to the h24 hour cycle and
+// render hour 0 as "24" ("24:30" for half past midnight); others
+// resolve it to h23 and render "00:30" (PR #185; surfaced by the PR
+// #184 CI run, whose ICU emitted "24:30" where dev machines emitted
+// "00:30"). tzOffsetMinutes normalizes the same quirk numerically;
+// this normalizes the rendered string so callers always get HH from
+// 00 to 23.
+function normalizeHour24(time: string): string {
+  return time.startsWith("24:") ? `00:${time.slice(3)}` : time;
+}
+
+// Renders a UTC Date as the local HH:MM in `tz` (24h, HH always 00-23).
 export function localTimeString(d: Date, tz: string): string {
   const f = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -86,7 +97,7 @@ export function localTimeString(d: Date, tz: string): string {
     minute: "2-digit",
     hour12: false,
   });
-  return f.format(d);
+  return normalizeHour24(f.format(d));
 }
 
 // 12-hour public-facing time formatter (e.g. "9:00 AM" / "1:30 PM").
