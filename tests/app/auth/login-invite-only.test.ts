@@ -93,16 +93,21 @@ describe("login page: no direct OTP call remains", () => {
 });
 
 describe("invited users still get in (intended invite path intact)", () => {
-  it("handle_new_user trigger migration is untouched (invite match still creates the practitioner)", () => {
+  it("the current handle_new_user (0081) still creates the practitioner on invite match", () => {
+    // 0081 removed the no-invite fresh-studio fallback (the Google
+    // OAuth bypass); the invited arm is unchanged. Detailed pins live
+    // in tests/migrations/0081-invite-only-handle-new-user.test.ts.
     const trigger = readFileSync(
       path.resolve(
         __dirname,
-        "../../../supabase/migrations/0007_pending_invitations.sql",
+        "../../../supabase/migrations/0081_invite_only_handle_new_user.sql",
       ),
       "utf8",
     );
     expect(trigger).toMatch(/create or replace function public\.handle_new_user\(\)/);
     expect(trigger).toMatch(/status = 'pending'/);
+    expect(trigger).toMatch(/insert into public\.practitioners/);
+    expect(trigger).not.toMatch(/insert into public\.studios/);
   });
 
   it("the invite action still inserts pending status rows the gate matches on", () => {

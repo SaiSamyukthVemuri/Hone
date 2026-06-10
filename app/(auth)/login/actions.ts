@@ -22,9 +22,11 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 //     get nothing and no user/studio is created.
 //
 // The response is the same generic success either way so the login
-// form is not an account-enumeration oracle. Known residual: the
-// Google OAuth button cannot pass shouldCreateUser and still creates
-// an auth user on first OAuth login (documented in docs/03).
+// form is not an account-enumeration oracle. The Google OAuth button
+// cannot pass shouldCreateUser and may still create an auth user on
+// first OAuth login, but migration 0081 removed handle_new_user()'s
+// no-invite fallback, so an uninvited OAuth user gets no studio, no
+// practitioner row, and no app access (documented in docs/03).
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
