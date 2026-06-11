@@ -201,7 +201,7 @@ describe("probe lot/batch number in charting", () => {
 });
 
 describe("migration 0085: additive, RLS-enabled, no payment/auth tables", () => {
-  it("creates the three studio-scoped tables with RLS + is_studio_member policies", () => {
+  it("creates the three studio-scoped tables with per-command RLS and NO delete", () => {
     for (const t of [
       "record_keeping_sterile_items",
       "record_keeping_disinfectants",
@@ -213,9 +213,24 @@ describe("migration 0085: additive, RLS-enabled, no payment/auth tables", () => 
       expect(MIGRATION).toMatch(
         new RegExp(`alter table public\\.${t} enable row level security`),
       );
-      expect(MIGRATION).toMatch(new RegExp(`"${t}: members all"`));
+      // Per-command policies: select (USING), insert (WITH CHECK),
+      // update (USING + WITH CHECK).
+      expect(MIGRATION).toMatch(
+        new RegExp(`"${t}: members select"\\s*\\n\\s*on public\\.${t} for select to authenticated\\s*\\n\\s*using \\(public\\.is_studio_member\\(studio_id\\)\\)`),
+      );
+      expect(MIGRATION).toMatch(
+        new RegExp(`"${t}: members insert"\\s*\\n\\s*on public\\.${t} for insert to authenticated\\s*\\n\\s*with check \\(public\\.is_studio_member\\(studio_id\\)\\)`),
+      );
+      expect(MIGRATION).toMatch(
+        new RegExp(`"${t}: members update"\\s*\\n\\s*on public\\.${t} for update to authenticated\\s*\\n\\s*using \\(public\\.is_studio_member\\(studio_id\\)\\)\\s*\\n\\s*with check \\(public\\.is_studio_member\\(studio_id\\)\\)`),
+      );
+      // NO delete policy, and no FOR ALL on these sensitive tables.
+      expect(MIGRATION).not.toMatch(new RegExp(`on public\\.${t} for delete`));
+      expect(MIGRATION).not.toMatch(new RegExp(`on public\\.${t} for all`));
     }
-    expect(MIGRATION.match(/is_studio_member\(studio_id\)/g)?.length).toBe(6);
+    expect(MIGRATION).not.toMatch(/for delete/);
+    // 3 tables x (1 select USING + 1 insert CHECK + 2 update) = 12.
+    expect(MIGRATION.match(/is_studio_member\(studio_id\)/g)?.length).toBe(12);
   });
 
   it("adds the nullable block + session columns; additive only", () => {

@@ -18,9 +18,10 @@
 --      aftercare information provided" stamp for the client record).
 --
 -- All additive; nullable everywhere except identity/audit defaults;
--- no backfill; no payment/auth tables; no public grants. RLS uses the
--- project-standard is_studio_member() for-all policy (same shape as
--- client_personal_notes / session_blocks). Re-runnable throughout.
+-- no backfill; no payment/auth tables; no public grants. RLS uses
+-- per-command is_studio_member() policies (select/insert/update;
+-- NO delete policy, so logbook rows cannot be deleted by normal
+-- authenticated members even outside the UI). Re-runnable throughout.
 -- The "Client Record for Invasive Procedures" view is generated from
 -- existing clients/sessions/session_blocks data; it needs no table.
 
@@ -53,10 +54,27 @@ create trigger record_keeping_sterile_items_set_updated_at
   for each row execute function public.set_updated_at();
 
 alter table public.record_keeping_sterile_items enable row level security;
+-- Per-command policies, deliberately WITHOUT a DELETE policy: these
+-- are health-inspection logbook records and the app intentionally
+-- ships no delete/archive affordance, so normal authenticated studio
+-- members cannot delete rows even via direct Supabase access. (A
+-- FOR ALL policy would have implicitly granted DELETE.)
 drop policy if exists "record_keeping_sterile_items: members all"
   on public.record_keeping_sterile_items;
-create policy "record_keeping_sterile_items: members all"
-  on public.record_keeping_sterile_items for all to authenticated
+drop policy if exists "record_keeping_sterile_items: members select"
+  on public.record_keeping_sterile_items;
+create policy "record_keeping_sterile_items: members select"
+  on public.record_keeping_sterile_items for select to authenticated
+  using (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_sterile_items: members insert"
+  on public.record_keeping_sterile_items;
+create policy "record_keeping_sterile_items: members insert"
+  on public.record_keeping_sterile_items for insert to authenticated
+  with check (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_sterile_items: members update"
+  on public.record_keeping_sterile_items;
+create policy "record_keeping_sterile_items: members update"
+  on public.record_keeping_sterile_items for update to authenticated
   using (public.is_studio_member(studio_id))
   with check (public.is_studio_member(studio_id));
 
@@ -90,10 +108,27 @@ create trigger record_keeping_disinfectants_set_updated_at
   for each row execute function public.set_updated_at();
 
 alter table public.record_keeping_disinfectants enable row level security;
+-- Per-command policies, deliberately WITHOUT a DELETE policy: these
+-- are health-inspection logbook records and the app intentionally
+-- ships no delete/archive affordance, so normal authenticated studio
+-- members cannot delete rows even via direct Supabase access. (A
+-- FOR ALL policy would have implicitly granted DELETE.)
 drop policy if exists "record_keeping_disinfectants: members all"
   on public.record_keeping_disinfectants;
-create policy "record_keeping_disinfectants: members all"
-  on public.record_keeping_disinfectants for all to authenticated
+drop policy if exists "record_keeping_disinfectants: members select"
+  on public.record_keeping_disinfectants;
+create policy "record_keeping_disinfectants: members select"
+  on public.record_keeping_disinfectants for select to authenticated
+  using (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_disinfectants: members insert"
+  on public.record_keeping_disinfectants;
+create policy "record_keeping_disinfectants: members insert"
+  on public.record_keeping_disinfectants for insert to authenticated
+  with check (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_disinfectants: members update"
+  on public.record_keeping_disinfectants;
+create policy "record_keeping_disinfectants: members update"
+  on public.record_keeping_disinfectants for update to authenticated
   using (public.is_studio_member(studio_id))
   with check (public.is_studio_member(studio_id));
 
@@ -127,10 +162,27 @@ create trigger record_keeping_exposure_incidents_set_updated_at
   for each row execute function public.set_updated_at();
 
 alter table public.record_keeping_exposure_incidents enable row level security;
+-- Per-command policies, deliberately WITHOUT a DELETE policy: these
+-- are health-inspection logbook records and the app intentionally
+-- ships no delete/archive affordance, so normal authenticated studio
+-- members cannot delete rows even via direct Supabase access. (A
+-- FOR ALL policy would have implicitly granted DELETE.)
 drop policy if exists "record_keeping_exposure_incidents: members all"
   on public.record_keeping_exposure_incidents;
-create policy "record_keeping_exposure_incidents: members all"
-  on public.record_keeping_exposure_incidents for all to authenticated
+drop policy if exists "record_keeping_exposure_incidents: members select"
+  on public.record_keeping_exposure_incidents;
+create policy "record_keeping_exposure_incidents: members select"
+  on public.record_keeping_exposure_incidents for select to authenticated
+  using (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_exposure_incidents: members insert"
+  on public.record_keeping_exposure_incidents;
+create policy "record_keeping_exposure_incidents: members insert"
+  on public.record_keeping_exposure_incidents for insert to authenticated
+  with check (public.is_studio_member(studio_id));
+drop policy if exists "record_keeping_exposure_incidents: members update"
+  on public.record_keeping_exposure_incidents;
+create policy "record_keeping_exposure_incidents: members update"
+  on public.record_keeping_exposure_incidents for update to authenticated
   using (public.is_studio_member(studio_id))
   with check (public.is_studio_member(studio_id));
 
