@@ -93,6 +93,18 @@ export async function updateClientBirthdayAction(
     return { ok: false, error: "Day must be between 1 and 31." };
   }
 
+  // PR #194 (Chloe retest): optional birth YEAR. When provided it is
+  // stored as the real year on date_of_birth (the column was always a
+  // full date); when blank, any existing real year is preserved and
+  // month/day-only entries keep the sentinel. Bounded sanity range.
+  const yearInput = parseIntOrNull(formData.get("birthday_year"));
+  if (yearInput != null && (yearInput < 1900 || yearInput > new Date().getFullYear())) {
+    return {
+      ok: false,
+      error: "Year must be 1900 or later (and not in the future).",
+    };
+  }
+
   const { studio } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
@@ -108,7 +120,9 @@ export async function updateClientBirthdayAction(
   if (!client) return { ok: false, error: "Client not found." };
 
   let year = SENTINEL_YEAR;
-  if (client.date_of_birth) {
+  if (yearInput != null) {
+    year = yearInput;
+  } else if (client.date_of_birth) {
     const existingYear = parseInt(
       String(client.date_of_birth).slice(0, 4),
       10,

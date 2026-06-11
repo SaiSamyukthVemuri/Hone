@@ -40,8 +40,12 @@ export function TreatmentTimeCard({
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-        Electrolysis treatment time
+        Total electrolysis treatment time
       </h2>
+      <p className="mt-0.5 text-xs text-neutral-500">
+        Time tracked from charted sessions. Treatment goals live in
+        Treatment Plans.
+      </p>
 
       {hasAny ? (
         <div className="mt-3">
@@ -71,13 +75,21 @@ export function TreatmentTimeCard({
         </div>
       )}
 
-      <GoalSection
-        clientId={clientId}
-        goal={goal}
-        totalMinutes={totals.totalMinutes}
-        upsertGoalAction={upsertGoalAction}
-        hasAny={hasAny}
-      />
+      {/* PR #194 (Chloe retest): the goal-setting UI is hidden. "Set
+          treatment goal" here read as a competing treatment-plan
+          surface; this card is a TRACKER. Goal data is preserved in
+          the DB and the GoalSection code stays for a future move
+          into Treatment Plans; only when a goal already exists do we
+          keep showing its progress so prior setups lose nothing. */}
+      {goal && (
+        <GoalSection
+          clientId={clientId}
+          goal={goal}
+          totalMinutes={totals.totalMinutes}
+          upsertGoalAction={upsertGoalAction}
+          hasAny={hasAny}
+        />
+      )}
     </section>
   );
 }

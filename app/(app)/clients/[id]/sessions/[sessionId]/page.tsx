@@ -35,6 +35,7 @@ import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
 import { NextVisitNoteForm } from "./NextVisitNoteForm";
+import { CopyPreviousAreasButton } from "./CopyPreviousAreasButton";
 import { SessionBlocksView } from "./session-blocks-view";
 import {
   addLaserEntryAction,
@@ -175,6 +176,19 @@ export default async function SessionDetailPage({
   const fromLastVisit =
     previousWithNote?.next_session_note?.trim() || null;
 
+  // PR #194: the latest previous session regardless of note, for the
+  // copy-areas-from-last-session affordance on an empty chart.
+  const { data: previousSessionAny } = await supabaseForNote
+    .from("sessions")
+    .select("id")
+    .eq("studio_id", studio.id)
+    .eq("client_id", id)
+    .is("deleted_at", null)
+    .lt("started_at", session.started_at)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
   const priorLaserClause =
@@ -206,21 +220,22 @@ export default async function SessionDetailPage({
             Performed by {performerName}
           </p>
         )}
-        {runningTotal && (
+        {/* PR #194 (Chloe retest): when a treatment plan is attached,
+            the green plan card already carries the visit-progress
+            context, so the "Electrolysis session N for X" line is
+            redundant and hides. Unattached sessions keep it: it is
+            the only session-count context they have. */}
+        {runningTotal && !attachedPlan && (
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {runningTotal.sessionNumber === 1
               ? `First electrolysis session for ${clientFirstName}${priorLaserClause}`
               : `Electrolysis session ${runningTotal.sessionNumber} for ${clientFirstName}${priorLaserClause}`}
           </p>
         )}
-        {/* Treatment plan sits directly under the session title/context,
-            not as a disconnected top banner. */}
+        {/* Treatment plan card + its Detach affordance render as one
+            unit (PR #194); the attachment component's attached state
+            is detach-only now. */}
         {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
-        <SessionEditHistory
-          startedAtOriginal={session.started_at_original}
-          audit={audit}
-          practitioners={clientData.practitioners}
-        />
         <TreatmentPlanAttachment
           sessionId={session.id}
           clientId={id}
@@ -239,6 +254,11 @@ export default async function SessionDetailPage({
           }))}
           attachAction={attachChartEntryToPlanAction}
           detachAction={detachChartEntryFromPlanAction}
+        />
+        <SessionEditHistory
+          startedAtOriginal={session.started_at_original}
+          audit={audit}
+          practitioners={clientData.practitioners}
         />
       </div>
 
@@ -284,6 +304,20 @@ export default async function SessionDetailPage({
         />
       </div>
 
+      {/* PR #194: one-tap seed from the previous session, only when
+          this chart has no treatment areas yet (duplication-proof)
+          and a previous session exists. */}
+      {session.modality === "electrolysis" &&
+        blockData &&
+        blockData.blocks.length === 0 &&
+        previousSessionAny && (
+          <CopyPreviousAreasButton
+            clientId={id}
+            sessionId={session.id}
+            previousSessionId={previousSessionAny.id}
+          />
+        )}
+
       {session.modality === "electrolysis" && blockData ? (
         <SessionBlocksView
           sessionId={session.id}
@@ -326,9 +360,11 @@ export default async function SessionDetailPage({
           when the client returns. Optional; empty save clears it. */}
       <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <div>
-          <h2 className="text-lg font-medium">Plan for next visit</h2>
+          <h2 className="text-lg font-medium">For next visit</h2>
           <p className="text-sm text-neutral-500">
-            Optional. Shown to you when {clientFirstName} comes back.
+            Optional. One note for the whole visit, shown to you when{" "}
+            {clientFirstName} comes back. Area-specific watch notes live with
+            each treatment area above; no need to repeat them here.
           </p>
         </div>
         <NextVisitNoteForm
