@@ -177,7 +177,9 @@ export default async function SessionDetailPage({
     previousWithNote?.next_session_note?.trim() || null;
 
   // PR #194: the latest previous session regardless of note, for the
-  // copy-areas-from-last-session affordance on an empty chart.
+  // copy-areas-from-last-session affordance on an empty chart. The
+  // button only renders when that session actually HAS saved
+  // treatment areas (review condition): a head-count read decides.
   const { data: previousSessionAny } = await supabaseForNote
     .from("sessions")
     .select("id")
@@ -188,6 +190,16 @@ export default async function SessionDetailPage({
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  let previousSessionHasAreas = false;
+  if (previousSessionAny) {
+    const { count } = await supabaseForNote
+      .from("session_blocks")
+      .select("id", { count: "exact", head: true })
+      .eq("studio_id", studio.id)
+      .eq("session_id", previousSessionAny.id)
+      .is("deleted_at", null);
+    previousSessionHasAreas = (count ?? 0) > 0;
+  }
 
   const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
@@ -310,7 +322,8 @@ export default async function SessionDetailPage({
       {session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
-        previousSessionAny && (
+        previousSessionAny &&
+        previousSessionHasAreas && (
           <CopyPreviousAreasButton
             clientId={id}
             sessionId={session.id}

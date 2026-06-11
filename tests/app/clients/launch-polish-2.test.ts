@@ -114,10 +114,11 @@ describe("5. copy areas and settings from last session", () => {
     expect(action).toMatch(/has no treatment areas to copy/);
   });
 
-  it("the button renders only on an empty electrolysis chart with a previous session", () => {
+  it("the button renders only on an empty electrolysis chart with a previous session that HAS areas", () => {
     expect(SESSION_PAGE).toMatch(
-      /blockData\.blocks\.length === 0 &&\s*\n?\s*previousSessionAny && \(/,
+      /blockData\.blocks\.length === 0 &&\s*\n?\s*previousSessionAny &&\s*\n?\s*previousSessionHasAreas && \(/,
     );
+    expect(SESSION_PAGE).toMatch(/previousSessionHasAreas = \(count \?\? 0\) > 0;/);
     expect(COPY_BUTTON).toMatch(/Copy areas and settings from last session/);
     expect(COPY_BUTTON).toMatch(/Copied \{result\.copiedCount\} treatment/);
     expect(COPY_BUTTON).toMatch(/Review and adjust before saving/);
