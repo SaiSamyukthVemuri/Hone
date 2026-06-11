@@ -75,18 +75,23 @@ export function FromLastVisitForToday({
   if (!hasFromLastVisitContent(summary)) {
     return null;
   }
+  // PR #204 (Chloe feedback): BLUE, not amber. This band is
+  // treatment memory/context for today, not an error or caution
+  // alert, so it uses the same blue visual language as the charting
+  // page's "From last visit, for today" box. Both variants switch so
+  // the memory surface is one color everywhere.
   return (
     <section
       className={
         attached
-          ? "rounded-b-lg border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm dark:border-amber-900 dark:bg-amber-950/40"
-          : "rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/40"
+          ? "rounded-b-lg border-t border-blue-200 bg-blue-50 px-5 py-3 text-sm dark:border-blue-900 dark:bg-blue-950/40"
+          : "rounded-md border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm dark:border-blue-900 dark:bg-blue-950/40"
       }
     >
-      <h3 className="text-xs font-medium uppercase tracking-wider text-amber-800 dark:text-amber-300">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
         From last visit, for today
       </h3>
-      <div className="mt-1 flex flex-col gap-1 text-amber-950 dark:text-amber-100">
+      <div className="mt-1 flex flex-col gap-1 text-blue-950 dark:text-blue-100">
         {summary.watchLines.map((line) => (
           <p key={line}>
             <span className="font-medium">Watch:</span> {line}
