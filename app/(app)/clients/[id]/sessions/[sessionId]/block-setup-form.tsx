@@ -118,6 +118,10 @@ type Props = {
   // attached treatment plan's primary_area. UI defaulting only — fully
   // editable; never overrides the practitioner's choice on save.
   defaultPrimaryArea?: string | null;
+  // Create-mode only (PR #203, migration 0084): sticky machine
+  // frequency seeded from the practitioner's last-used value. UI
+  // defaulting only; fully editable per treatment area.
+  defaultMachineFrequency?: string | null;
   onCancel: () => void;
 };
 
@@ -187,11 +191,18 @@ function initialDraft(
   block: SessionBlock | null | undefined,
   firstEntry: ElectrolysisEntry | null | undefined,
   defaultPrimaryArea: string | null | undefined,
+  defaultMachineFrequency?: string | null,
 ): Draft {
   // Create mode: start blank, but seed the treatment area from the attached
-  // plan when provided. Editable; never forced.
+  // plan when provided, and the machine frequency from the practitioner's
+  // sticky last-used default (PR #203, migration 0084). Both editable;
+  // never forced.
   if (!block) {
-    return { ...EMPTY, primaryArea: defaultPrimaryArea?.trim() || "" };
+    return {
+      ...EMPTY,
+      primaryArea: defaultPrimaryArea?.trim() || "",
+      machineFrequency: defaultMachineFrequency?.trim() || "",
+    };
   }
   return {
     mode: block.mode ?? "",
@@ -254,11 +265,12 @@ export function BlockSetupForm({
   block,
   firstEntry,
   defaultPrimaryArea,
+  defaultMachineFrequency,
   onCancel,
 }: Props) {
   const isEdit = !!block;
   const [draft, setDraft] = useState<Draft>(() =>
-    initialDraft(block, firstEntry, defaultPrimaryArea),
+    initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency),
   );
   const [error, setError] = useState<string | null>(null);
   // PR #191: inline feedback after "Copy settings" so the
@@ -1035,7 +1047,9 @@ export function BlockSetupForm({
                   : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
               }
             >
-              {reactionTypeLabel(r)}
+              {/* PR #203: leading + so these read as the same kind of
+                  addable observation chip as the row above. */}
+              + {reactionTypeLabel(r)}
             </button>
           ))}
         </div>

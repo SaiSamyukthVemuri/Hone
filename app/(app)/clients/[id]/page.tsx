@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
@@ -244,6 +245,9 @@ export default async function ClientCheatSheetPage({
   let lastTreatment: (typeof sessions)[number] | null = null;
   let lastTreatmentSummary: LastSessionSummary | null = null;
   let lastTreatmentBlocks: ClinicalSummaryBlock[] = [];
+  // PR #203: pre-client Watch/Plan context for the card's footer band
+  // (may come from a different session than lastTreatment).
+  let preClientWatchPlan: LastSessionSummary | null = null;
   if (recentSessions.length > 0) {
     const supabaseForSummary = await createClient();
     const { data: recentBlocks } = await supabaseForSummary
@@ -273,6 +277,22 @@ export default async function ClientCheatSheetPage({
         nextSessionNote:
           (lastTreatment as { next_session_note?: string | null })
             .next_session_note ?? null,
+      });
+    }
+    // PR #203: the Watch/Plan band uses the same pre-client context
+    // the charting page shows; the newest session carrying any
+    // watch/plan content, even if a newer charted session has none of
+    // its own. Same blocks read; no extra query.
+    const watchPlanSource = pickPreClientWatchPlanSource(
+      recentSessions as Array<
+        (typeof sessions)[number] & { next_session_note?: string | null }
+      >,
+      blocksBySession,
+    );
+    if (watchPlanSource) {
+      preClientWatchPlan = buildLastSessionSummary({
+        blocks: blocksBySession.get(watchPlanSource.id) ?? [],
+        nextSessionNote: watchPlanSource.next_session_note ?? null,
       });
     }
   }
@@ -822,16 +842,18 @@ export default async function ClientCheatSheetPage({
                     the card's flush footer band (attached variant +
                     full-bleed margins), so the pre-client warning
                     reads as PART of the Last treatment context, not a
-                    floating sibling. Rendered for the entries
-                    fallback too, so a plan note on a blocks-less
-                    session is no longer dropped. Omitted cleanly when
-                    there is nothing to say; this is the ONLY
-                    From-last-visit render on the Sessions tab. */}
-                {lastTreatmentSummary &&
-                  hasFromLastVisitContent(lastTreatmentSummary) && (
+                    floating sibling. PR #203: the band's CONTENT is
+                    the pre-client context (the newest session with
+                    any watch/plan, same as the charting page), so a
+                    newer charted session without notes no longer
+                    hides still-relevant guidance. Omitted cleanly
+                    when there is nothing to say anywhere; this is the
+                    ONLY From-last-visit render on the Sessions tab. */}
+                {preClientWatchPlan &&
+                  hasFromLastVisitContent(preClientWatchPlan) && (
                     <div className="-mx-5 -mb-5 mt-4">
                       <FromLastVisitForToday
-                        summary={lastTreatmentSummary}
+                        summary={preClientWatchPlan}
                         attached
                       />
                     </div>

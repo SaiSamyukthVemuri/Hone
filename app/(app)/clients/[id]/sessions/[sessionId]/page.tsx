@@ -59,7 +59,7 @@ export default async function SessionDetailPage({
   params: Promise<{ id: string; sessionId: string }>;
 }) {
   const { id, sessionId } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
   const [clientData, session] = await Promise.all([
     getClientById(studio.id, id),
@@ -407,6 +407,10 @@ export default async function SessionDetailPage({
           // plan, or the client's single active plan when unattached (see
           // above). Never overrides practitioner choice or mutates data.
           defaultPrimaryArea={defaultPrimaryArea}
+          // PR #203 (migration 0084): sticky machine frequency. The
+          // practitioner's last-used value seeds NEW treatment-area
+          // drafts; still editable per area, still saved per block.
+          defaultMachineFrequency={practitioner.default_machine_frequency ?? null}
         />
       ) : (
         <>

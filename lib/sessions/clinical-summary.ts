@@ -170,3 +170,39 @@ export function pickLastTreatment<T extends LastTreatmentCandidate>(
     ) ?? null
   );
 }
+
+// PR #203 (Chloe iPad feedback): the Sessions-tab Last treatment card
+// is the PRE-CLIENT view, so its "From last visit, for today" band
+// must show the same context the charting page shows, not only the
+// last charted session's own note. The charting page surfaces the
+// most recent prior guidance; this picks the same thing: the newest
+// session that carries ANY watch/plan content, i.e. a non-empty
+// next_session_note or a treatment area flagged with caution data.
+// In particular, a newer charted session WITHOUT notes no longer
+// hides the previous session's still-relevant guidance. Sessions
+// must be ordered newest-first. Pure; no I/O.
+export type WatchPlanCandidate = {
+  id: string;
+  next_session_note?: string | null;
+};
+
+export function pickPreClientWatchPlanSource<T extends WatchPlanCandidate>(
+  sessionsNewestFirst: ReadonlyArray<T>,
+  blocksBySession: ReadonlyMap<
+    string,
+    ReadonlyArray<
+      Pick<ClinicalSummaryBlock, "caution_for_next_session" | "caution_note">
+    >
+  >,
+): T | null {
+  return (
+    sessionsNewestFirst.find((s) => {
+      if (s.next_session_note?.trim()) return true;
+      const blocks = blocksBySession.get(s.id) ?? [];
+      return blocks.some(
+        (b) =>
+          b.caution_for_next_session === true || !!b.caution_note?.trim(),
+      );
+    }) ?? null
+  );
+}
