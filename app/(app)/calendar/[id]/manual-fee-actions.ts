@@ -8,10 +8,7 @@ import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-eligibility";
-import {
-  runManualFeeCharge,
-  type ManualFeeChargeResult,
-} from "@/lib/billing/manual-fee-charge";
+import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
 
 // ---------------------------------------------------------------------------
 // prepareManualFeeChargeAction (PR #145).
@@ -137,21 +134,43 @@ export async function prepareManualFeeChargeAction(
   // populated when the appointment lookup succeeded.
   const clientId = eligibility.client.id;
 
+  // PR #196 unification: fee attempts write the CANONICAL
+  // payment_charge_attempts ledger (charge_reason no_show_fee /
+  // late_cancellation_fee) so they inherit receipts, refunds, webhook
+  // reconciliation, and the live-mode guards. The legacy
+  // manual_fee_charge_attempts table gets no new runtime writes.
+  // Stripe lineage is frozen onto the row at prepare time, exactly
+  // like session payments: card row + studio settings re-read here.
   const admin = createAdminClient();
+  const { data: cardRow } = await admin
+    .from("client_payment_methods")
+    .select("id, stripe_account_id, stripe_customer_id, stripe_payment_method_id")
+    .eq("id", eligibility.cardPaymentMethodId)
+    .eq("studio_id", studioId)
+    .maybeSingle();
+  if (!cardRow) {
+    return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  const chargeReason =
+    rawChargeType === "no_show" ? "no_show_fee" : "late_cancellation_fee";
   const { data: inserted, error: insertErr } = await admin
-    .from("manual_fee_charge_attempts")
+    .from("payment_charge_attempts")
     .insert({
       studio_id: studioId,
       appointment_id: appointmentId,
       client_id: clientId,
-      confirmed_by_practitioner_id: practitionerId,
-      charge_type: rawChargeType,
+      created_by_practitioner_id: practitionerId,
+      charge_reason: chargeReason,
       amount_cents: eligibility.amountCents,
       currency: eligibility.currency,
       status: "ready",
+      stripe_livemode: false,
       client_payment_method_id: eligibility.cardPaymentMethodId,
       card_authorization_signature_id:
         eligibility.cardAuthorizationSignatureId,
+      stripe_account_id: cardRow.stripe_account_id,
+      stripe_customer_id: cardRow.stripe_customer_id,
+      stripe_payment_method_id: cardRow.stripe_payment_method_id,
       appointment_policy_acknowledgement_id:
         eligibility.policyAcknowledgementId,
       policy_snapshot_hash: eligibility.policySnapshotHash,
@@ -264,11 +283,19 @@ export async function chargeManualFeeAttemptAction(
     };
   }
 
-  const result: ManualFeeChargeResult = await runManualFeeCharge({
+  // PR #196: fee attempts execute through the unified canonical
+  // executor (claim RPC + idempotency key + live-mode guards +
+  // webhook-reconcilable metadata). authorization_not_current maps to
+  // blocked for the card's existing outcome union.
+  const raw = await runSessionPaymentCharge({
     attemptId,
     studioId,
     practitionerId,
   });
+  const result =
+    !raw.ok && raw.outcome === "authorization_not_current"
+      ? { ...raw, outcome: "blocked" as const }
+      : raw;
 
   // The detail page will read the updated row on next render.
   // We don't know the appointment id from here without another lookup;
@@ -286,7 +313,10 @@ export async function chargeManualFeeAttemptAction(
   }
   return {
     ok: false,
-    outcome: result.outcome,
+    outcome:
+      result.outcome === "authorization_not_current"
+        ? "blocked"
+        : result.outcome,
     error: result.message,
     blockingReasons: result.blockingReasons,
     failureCode: result.failureCode ?? null,
@@ -349,7 +379,7 @@ export async function cancelManualFeeChargeAttemptAction(
   // against a future caller that forgets to pass an attempt scoped
   // to this practitioner's studio.
   const { data, error } = await admin
-    .from("manual_fee_charge_attempts")
+    .from("payment_charge_attempts")
     .update({
       status: "cancelled",
       cancelled_at: new Date().toISOString(),
@@ -377,5 +407,67 @@ export async function cancelManualFeeChargeAttemptAction(
   }
 
   revalidatePath(`/calendar/${data.appointment_id}`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// PR #196: receipt + refund for fee attempts. Thin wrappers over the
+// reason-agnostic canonical helpers; same auth shape as the session
+// payment actions, revalidating the appointment page instead.
+// ---------------------------------------------------------------------------
+import { sendPaymentChargeReceipt } from "@/lib/billing/payment-receipt";
+import { refundPaymentChargeAttempt } from "@/lib/billing/payment-refund";
+
+export type FeeReceiptActionResult = { ok: true } | { ok: false; error: string };
+
+export async function sendFeeReceiptAction(
+  formData: FormData,
+): Promise<FeeReceiptActionResult> {
+  let practitionerId: string, studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch {
+    return { ok: false, error: NOT_AUTHORIZED_ERROR };
+  }
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const appointmentId = strOrEmpty(formData.get("appointment_id"));
+  if (!attemptId || !appointmentId) {
+    return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  const result = await sendPaymentChargeReceipt({
+    attemptId,
+    studioId,
+    practitionerId,
+  });
+  revalidatePath(`/calendar/${appointmentId}`);
+  if (!result.ok) return { ok: false, error: result.message };
+  return { ok: true };
+}
+
+export async function refundFeeAttemptAction(
+  formData: FormData,
+): Promise<FeeReceiptActionResult> {
+  let practitionerId: string, studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    practitionerId = practitioner.id;
+    studioId = studio.id;
+  } catch {
+    return { ok: false, error: NOT_AUTHORIZED_ERROR };
+  }
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  const appointmentId = strOrEmpty(formData.get("appointment_id"));
+  if (!attemptId || !appointmentId) {
+    return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  const result = await refundPaymentChargeAttempt({
+    attemptId,
+    studioId,
+    practitionerId,
+  });
+  revalidatePath(`/calendar/${appointmentId}`);
+  if (!result.ok) return { ok: false, error: result.message };
   return { ok: true };
 }

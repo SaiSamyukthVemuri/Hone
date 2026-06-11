@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
@@ -12,6 +13,8 @@ import {
   prepareManualFeeChargeAction,
   chargeManualFeeAttemptAction,
   cancelManualFeeChargeAttemptAction,
+  sendFeeReceiptAction,
+  refundFeeAttemptAction,
 } from "./manual-fee-actions";
 
 // ---------------------------------------------------------------------------
@@ -580,6 +583,63 @@ function SucceededPanel({
           PaymentIntent: {attempt.stripe_payment_intent_id}
         </p>
       )}
+      {/* PR #196: fee attempts live on the canonical ledger, so test
+          receipts and test refunds work exactly like session
+          payments. Minimal affordances here; outcomes re-render via
+          revalidatePath. */}
+      <FeeReceiptRefundControls attempt={attempt} />
+    </div>
+  );
+}
+
+function FeeReceiptRefundControls({
+  attempt,
+}: {
+  attempt: EligibilityExistingAttemptSummary;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  const router = useRouter();
+  function run(action: (fd: FormData) => Promise<{ ok: boolean } & { error?: string }>) {
+    startTransition(async () => {
+      const fd = new FormData();
+      fd.set("attempt_id", attempt.id);
+      const apptId = window.location.pathname.split("/").pop() ?? "";
+      fd.set("appointment_id", apptId);
+      const r = await action(fd);
+      setMessage(r.ok ? "Done." : (r.error ?? "Something went wrong."));
+      router.refresh();
+    });
+  }
+  const refunded = attempt.refund_status === "succeeded";
+  const receiptSent = !!attempt.receipt_sent_at;
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      {receiptSent ? (
+        <span className="text-xs">Receipt sent.</span>
+      ) : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(sendFeeReceiptAction)}
+          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
+        >
+          Send test receipt
+        </button>
+      )}
+      {refunded ? (
+        <span className="text-xs font-medium">Test payment refunded.</span>
+      ) : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(refundFeeAttemptAction)}
+          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
+        >
+          Refund test charge
+        </button>
+      )}
+      {message && <span className="text-xs">{message}</span>}
     </div>
   );
 }

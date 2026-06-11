@@ -170,13 +170,13 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 | P | Blocker | Where | Why | Fix | PR |
 |---|---|---|---|---|---|
 | ~~P0~~ | ~~No human-visible ops alerting~~ **RESOLVED by PR #193**: `/admin/ops-alerts` dashboard + mark-resolved + critical email (`OPS_ALERT_EMAILS`; set in Production to activate) | `app/admin/ops-alerts/`, `lib/ops/alert-email.ts` | a live dispute would go unseen | shipped | **#193 ✅** |
-| P0 | Fee charging still on legacy `manual_fee_charge_attempts` (no receipt/refund/reconciliation) | `lib/billing/manual-fee-charge.ts`, `ManualFeeChargeCard` | live no-show fee = real charge with no safety net | unify onto `payment_charge_attempts`; freeze/retire legacy + 0032 dormant tables | **#194** |
-| P0 | Receipt template is test-only; live copy unreviewed | `lib/email/templates/payment-receipt.ts` | cannot send the current receipt for a real charge | live variant + legal/accounting review | **#195** |
-| P0 | Legal/accounting review (card auth wording, tax/HST, refund + cancellation policy, statement descriptor, off-session confirmation) | docs/05, docs/16 §5.1 | enforceability + compliance | human review cycle; codify outcomes | **#195** |
-| P0 | "Test mode only" copy across 7+ surfaces would be false in live | docs/16 §2.4 list | misleading client/practitioner copy | conditional copy at enable | **#196** |
-| P1 | Stale `pending_stripe` recovery trusts idempotency window; no `paymentIntents.search` | `lib/billing/session-payment-charge.ts` | live retries must verify before re-charging | metadata search pre-retry | #195/#196 |
-| P1 | Refund/charge permission policy + missing audit_logs entries | payment actions | accountability for money movement | decide owner-vs-practitioner; add audit rows | #194 or #195 |
-| P1 | Stripe payouts not enabled on Willow's account; live onboarding unverified | Stripe dashboard | charges without payouts strand funds | dashboard checklist in runbook | #195/#196 |
+| ~~P0~~ | ~~Fee charging on legacy ledger~~ **RESOLVED by PR #196**: fees unified onto `payment_charge_attempts` (receipts/refunds/reconciliation inherited); legacy table frozen for new writes, historical reads kept; 0032 dormant-table retirement still a cleanup follow-up | `manual-fee-actions.ts`, migration 0083 | live no-show fee = real charge with no safety net | shipped | **#196 ✅** |
+| P0 | Receipt template is test-only; live copy unreviewed | `lib/email/templates/payment-receipt.ts` | cannot send the current receipt for a real charge | live variant + legal/accounting review | **#197** |
+| P0 | Legal/accounting review (card auth wording, tax/HST, refund + cancellation policy, statement descriptor, off-session confirmation) | docs/05, docs/16 §5.1 | enforceability + compliance | human review cycle; codify outcomes | **#197** |
+| P0 | "Test mode only" copy across 7+ surfaces would be false in live | docs/16 §2.4 list | misleading client/practitioner copy | conditional copy at enable | **#198** |
+| P1 | Stale `pending_stripe` recovery trusts idempotency window; no `paymentIntents.search` | `lib/billing/session-payment-charge.ts` | live retries must verify before re-charging | metadata search pre-retry | #197/#198 |
+| P1 | Refund/charge permission policy + missing audit_logs entries | payment actions | accountability for money movement | decide owner-vs-practitioner; add audit rows | #197 |
+| P1 | Stripe payouts not enabled on Willow's account; live onboarding unverified | Stripe dashboard | charges without payouts strand funds | dashboard checklist in runbook | #197/#198 |
 | P2 | Partial refunds unsupported (alert-only via webhook) | 0078 schema ready | dashboard partials reconcile as alerts only | later PR post-live |
 | P2 | Payment rows absent from data export; `refund.updated`/`dispute.closed` unhandled | export action, webhook | completeness | later PR |
 
@@ -190,7 +190,7 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 ## 15. Draft live enablement runbook (FUTURE - DO NOT EXECUTE)
 
 1. **Preconditions:** PRs #193-#195 merged; legal/accounting sign-offs recorded in docs/13; Chloe informed and scheduled; rollback rehearsed in test mode.
-2. **Code changes (PR #196 only):** env `STRIPE_ALLOW_LIVE_MODE=true` in Production only; migration deliberately replacing `payment_charge_attempts_livemode_false_check`; webhook livemode guard relaxed for reconciliation; conditional live copy; live publishable/secret keys.
+2. **Code changes (PR #198 only):** env `STRIPE_ALLOW_LIVE_MODE=true` in Production only; migration deliberately replacing `payment_charge_attempts_livemode_false_check`; webhook livemode guard relaxed for reconciliation; conditional live copy; live publishable/secret keys.
 3. **Approvals:** lawyer (card auth + policies), accountant (receipt/tax), operator (runbook).
 4. **Env checks:** `sk_live_*`/`pk_live_*` set in Production env only; Preview/Dev still refuse live keys; `STRIPE_WEBHOOK_SECRET` points at the LIVE connected-account webhook endpoint.
 5. **Stripe dashboard:** Willow live account: `charges_enabled`, `payouts_enabled`, `details_submitted` all true; statement descriptor set; webhook endpoint live-mode with matching secret; dispute notification email set.
@@ -207,3 +207,5 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 ---
 
 *Audit performed in PR #192. No runtime, gate, migration, env, or production-data change was made.*
+
+> **Roadmap renumbering (PR #196 docs patch):** ops smoke took #195 and ledger unification took #196, so the forward sequence is now **#197 Live Payments Gate Preparation** (live receipt copy, legal/accounting review, refund permission + audit rows, stale-pending paymentIntents.search, payouts readiness), **#198 Controlled Live Payment Enablement** (test-mode copy pass, controlled live charge/refund under the runbook), **#199 Marketing Site Refresh**.

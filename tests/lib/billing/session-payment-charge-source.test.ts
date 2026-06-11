@@ -109,10 +109,11 @@ describe("runSessionPaymentCharge: atomic claim RPC", () => {
     expect(HELPER).toMatch(/p_idempotency_key:\s*idempotencyKey/);
   });
 
-  it("the idempotency key shape is hone:session_payment:<attemptId>:v1", () => {
+  it("the idempotency key is reason-scoped; session_payment keeps its historical shape (PR #196)", () => {
     expect(HELPER).toMatch(
-      /buildIdempotencyKey\(attemptId: string\)[\s\S]{0,200}`hone:session_payment:\$\{attemptId\}:v1`/,
+      /buildIdempotencyKey\(attemptId: string, chargeReason: string\)[\s\S]{0,300}`hone:session_payment:\$\{attemptId\}:v1`/,
     );
+    expect(HELPER).toMatch(/`hone:\$\{chargeReason\}:\$\{attemptId\}:v1`/);
   });
 
   it("the claim happens BEFORE the paymentIntents.create call", () => {
