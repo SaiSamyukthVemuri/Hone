@@ -361,6 +361,12 @@ export async function sendPaymentChargeReceipt(args: {
     chargedAt: new Date(attempt.charged_at),
     stripePaymentIntentId: attempt.stripe_payment_intent_id,
     stripeChargeId: attempt.stripe_charge_id,
+    // PR #201: ALWAYS the test-mode receipt. The livemode guard above
+    // refuses any row whose stripe_livemode !== false, so passing the
+    // row's value would be equivalent, but the explicit literal keeps
+    // the live-copy branch structurally unreachable from this sender
+    // until controlled live enablement (future PR #202).
+    livemode: false,
   });
 
   const sendResult = await sendEmailSafely({

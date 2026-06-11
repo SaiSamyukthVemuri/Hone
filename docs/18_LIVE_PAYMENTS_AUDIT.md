@@ -209,3 +209,69 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 *Audit performed in PR #192. No runtime, gate, migration, env, or production-data change was made.*
 
 > **Roadmap renumbering (PR #196 docs patch):** ops smoke took #195 and ledger unification took #196, so the forward sequence is now **#197 Live Payments Gate Preparation** (live receipt copy, legal/accounting review, refund permission + audit rows, stale-pending paymentIntents.search, payouts readiness), **#198 Controlled Live Payment Enablement** (test-mode copy pass, controlled live charge/refund under the runbook), **#199 Marketing Site Refresh**.
+
+---
+
+## 16. PR #201 gate preparation (2026-06-12)
+
+PR #201 executed the "Live Payments Gate Preparation" step (renumbered: docs said #195, then #197; the actual GitHub PR is **#201**, and controlled enablement is **#202**). **Live payments remain disabled.** No gate, env, CHECK, or executor change was made.
+
+### 16.1 Blocker status updates (supersedes the table in §13 where noted)
+
+| Blocker (from §13) | Status after PR #201 |
+|---|---|
+| P0 receipt template test-only | **Template readiness SHIPPED**: `buildPaymentReceiptEmail` accepts `livemode` (default false; test branch byte-identical, pinned). Live branch uses cautious wording ("Receipt for card payment processed by [Studio]." / "No tax calculation is included on this receipt unless separately stated by the studio." / "For questions about this payment or refund eligibility, contact the studio."), never says TEST MODE, and never claims tax receipt / official invoice / charitable receipt / pay now / send invoice (pinned). The sender passes `livemode: false` explicitly and still refuses any row with `stripe_livemode !== false`, so the live branch is structurally unreachable. **Final live wording: Needs legal/accounting review.** |
+| P0 legal/accounting review | **OPEN. Remains a blocker for PR #202.** Checklist in §16.5. |
+| P0 test-mode copy across surfaces | **Copy map documented (§16.2); runtime unchanged.** Conditional live labels are a PR #202 change, behind the enablement review. |
+| P1 stale pending_stripe recovery | **Already resolved by the PR #196 unification, verified in this audit**: both executors recover `pending_stripe` deterministically (stored PaymentIntent id + deterministic idempotency key + `paymentIntents.retrieve` reconciliation; ambiguous states stay pending and force manual review; ops alerts fire on mismatch). `paymentIntents.search` by metadata remains an OPTIONAL hardening for rows that lost their PI id (none can exist by construction: the id is written before confirm). Not a blocker. Pinned in tests. |
+| P1 refund permission + audit rows | **Refund permission DECIDED + SHIPPED: owner-only** (§16.3). **Audit rows DECIDED: the ledger row IS the audit row** (§16.4); no new table, no migration. |
+| P1 Willow payouts/onboarding | **OPEN. Remains a blocker for PR #202.** Checklist in §16.6. |
+
+### 16.2 Payment UI copy map (test-mode strings, where they live, future live labels)
+
+All current copy is test-mode-truthful and **unchanged by PR #201** (pinned). Conditional live variants are listed for PR #202 planning only.
+
+| Current test-mode string | Where | Future live label (PR #202, after review) |
+|---|---|---|
+| "This prepares a test-mode payment record. It does not charge the client." | `components/session-payment-prepare-card.tsx` header | "This prepares a payment record. The charge runs in the next step." |
+| "Run test charge" (+ confirm variant) | `session-payment-prepare-card.tsx` ready panel; `ManualFeeChargeCard.tsx` ready panel | "Run charge" |
+| "This was a Stripe test-mode charge. No live card was charged." | `session-payment-prepare-card.tsx` succeeded + refunded panels | "Card payment processed via Stripe." |
+| "This was a Stripe test-mode attempt. No live card is charged." | `session-payment-prepare-card.tsx` failure panel | "The charge did not complete. No card was charged." |
+| "Test mode only. No live card will be charged." | `ManualFeeChargeCard.tsx` (x2) | removed (live) |
+| "Ready for test charge" / "Stripe test charge pending." | `ManualFeeChargeCard.tsx` | "Ready to charge" / "Stripe charge pending." |
+| "Send test receipt" / "Refund test charge" | `ManualFeeChargeCard.tsx` succeeded panel | "Send receipt" / "Refund payment" |
+| "TEST MODE receipt from ..." subject + body disclaimers | `lib/email/templates/payment-receipt.ts` | live branch shipped in #201 (pending legal review) |
+| Test-mode framing in portal card forms | `app/portal/PortalPaymentMethodForm.tsx`, `PortalCardOnFileCard.tsx` | review at enablement |
+
+### 16.3 Refund permission decision (SHIPPED)
+
+Audit answer: before PR #201, ANY active practitioner in the studio could refund (actions checked studio membership only; `refund_initiated_by_practitioner_id` recorded the actor). The existing role model (`practitioners.role: owner | practitioner`, migration 0001) supports owner-only cleanly, so PR #201 made refunds **owner-only**, consistently across session payments, no-show fees, and late-cancellation fees: both `refundPaymentChargeAttemptAction` and `refundFeeAttemptAction` re-check `practitioner.role === "owner"` server-side and return the safe error "Only the studio owner can issue a refund." Charging and receipt sending remain any-active-practitioner. Willow impact: Chloe is the Willow owner, so her workflow (including the pending late-cancel smoke refund) is unaffected.
+
+### 16.4 Payment audit rows decision (no new table)
+
+Audit answer: every money movement already has a durable, queryable audit trail ON the canonical ledger row itself: `created_by_practitioner_id` + `created_at` (charge attempted), `status` + `charged_at`/`failed_at` + `stripe_payment_intent_id`/`stripe_charge_id` (charge outcome), `receipt_status`/`receipt_sent_at`/`receipt_email_to` (receipt), `refund_status`/`refunded_at`/`stripe_refund_id`/`refund_initiated_by_practitioner_id`/`refund_internal_note` (refund attempted + outcome + actor), `stripe_livemode`, `amount_cents`, `charge_reason`, studio/client/appointment/session ids. Rows are never deleted by runtime code; webhook mismatches additionally write `ops_alerts`. No card data, secrets, or raw Stripe payloads are stored. **Decision: the ledger row is the audit record for controlled enablement; a separate append-only audit_logs table is a post-live enhancement, not a blocker.**
+
+### 16.5 Legal/accounting checklist (OPEN; needs legal/accounting review; no compliance claim is made)
+
+Decisions required before PR #202: receipt vs invoice wording (current live draft says "Receipt", never "invoice") · HST/GST/tax wording (current draft defers to the studio; confirm whether Willow must show tax on electrolysis services in Ontario) · refund policy text shown to clients · cancellation/no-show policy enforceability of the signed acknowledgement flow · card-on-file authorization wording (consent template v-current) · statement descriptor (what appears on the client's card statement) · off-session charge authorization adequacy under card-network rules · privacy policy/Terms updates for live payment data · retention period for payment records · dispute response process + evidence template · whether payment rows must join the owner data export before live.
+
+### 16.6 Willow / Stripe account readiness checklist (OPEN; verify in Stripe dashboard before PR #202)
+
+- [ ] Stripe account ownership confirmed (Chloe controls the connected account; recovery email/2FA set)
+- [ ] `charges_enabled`, `payouts_enabled`, `details_submitted` all true on the LIVE connected account; bank account verified
+- [ ] Live keys exist but are NOT set in any Hone environment (gate stays sk_test-only)
+- [ ] Statement descriptor reviewed and set
+- [ ] LIVE webhook endpoint configured for the connected account + live signing secret stored (separate from test secret)
+- [ ] Test/live webhook separation confirmed (test events keep flowing to the test endpoint only)
+- [ ] Refund/dispute process understood by the operator (who clicks what, response deadlines)
+- [ ] Operator email alerts verified working (PR #193/#195 smoke re-run within a week of enablement)
+- [ ] Controlled live test card + designated internal test client selected for the $1 charge
+- [ ] Rollback understood: unset env flag, redeploy; key gate re-blocks instantly
+
+### 16.7 PR #196 fee smoke merge gate (BLOCKS PR #201 MERGE)
+
+PR #201 must not merge until BOTH legs are backend-verified clean: no-show **verified 2026-06-11** (attempt `3c0e1c82-...`, reason `no_show_fee`, 5000c, livemode false, PI/charge/receipt/refund all present, final state refunded, zero legacy rows, no unexpected ops alerts) · **late-cancellation leg PENDING** (no ledger row exists yet for appointment `c9bd5f24-...`; practitioner click-through still required, then the same read-only verification). Until then, **PR #201 is BLOCKED from merge.**
+
+### 16.8 Controlled live enablement runbook
+
+The §15 runbook is the final PR #202 runbook (all 14 steps: preconditions, smoke results, env/config, Stripe dashboard, DB, CI, enablement, $1 live charge, receipt, refund, webhook, ops alert, rollback, post-launch monitoring). **FUTURE ONLY. DO NOT EXECUTE IN PR #201.** Where §15 says PR #195/#198, read PR #201/#202.

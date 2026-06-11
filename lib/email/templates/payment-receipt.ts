@@ -71,6 +71,16 @@ export type PaymentReceiptEmailInput = {
   chargedAt: Date;
   stripePaymentIntentId: string;
   stripeChargeId: string | null;
+  // PR #201 (live payments gate preparation). Copy readiness ONLY:
+  // false (the default) renders the unchanged test-mode receipt;
+  // true renders the cautious live-mode wording below. The sender
+  // (lib/billing/payment-receipt.ts) still REFUSES any row whose
+  // stripe_livemode !== false and passes livemode: false explicitly,
+  // and the payment_charge_attempts_livemode_false_check keeps live
+  // rows out of the table entirely, so the live branch is
+  // structurally unreachable until controlled live enablement
+  // (future PR #202).
+  livemode?: boolean;
 };
 
 export type PaymentReceiptEmail = {
@@ -97,6 +107,21 @@ const NO_TAX_BODY_DISCLAIMER =
 // to "test payment" so the test-mode posture is not blurred.
 const REFUND_AVAILABLE_BODY_DISCLAIMER =
   "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone.";
+
+// PR #201. Live-mode receipt copy, PENDING legal/accounting review
+// (docs/18 §10): cautious wording only. It deliberately does NOT
+// say "tax receipt", "official invoice", "charitable receipt",
+// "pay now", or "send invoice", makes no tax-compliance claim, and
+// promises nothing about refund policy beyond pointing at the
+// studio. Final wording must be approved by legal/accounting before
+// controlled live enablement; tests pin the absence of the risky
+// phrases and of all TEST MODE language in this branch.
+const LIVE_BODY_LEAD = (studio: string) =>
+  `Receipt for card payment processed by ${studio}.`;
+const LIVE_NO_TAX_BODY_DISCLAIMER =
+  "No tax calculation is included on this receipt unless separately stated by the studio.";
+const LIVE_SUPPORT_BODY_LINE =
+  "For questions about this payment or refund eligibility, contact the studio.";
 
 function escapeHtml(s: string): string {
   return s
@@ -141,15 +166,32 @@ export function buildPaymentReceiptEmail(
   const piId = input.stripePaymentIntentId;
   const chargeId = input.stripeChargeId;
   const contact = input.studioContactEmail?.trim() || null;
+  const livemode = input.livemode === true;
 
-  // Subject: TEST MODE prefix per the spec; reason + amount so
+  // PR #201: one slot per disclaimer position. The test branch is
+  // byte-identical to the pre-#201 template (pinned); the live
+  // branch swaps in the cautious wording above and never mentions
+  // TEST MODE.
+  const leadDisclaimer = livemode
+    ? LIVE_BODY_LEAD(studio)
+    : TEST_MODE_BODY_DISCLAIMER;
+  const taxDisclaimer = livemode
+    ? LIVE_NO_TAX_BODY_DISCLAIMER
+    : NO_TAX_BODY_DISCLAIMER;
+  const refundOrSupportLine = livemode
+    ? LIVE_SUPPORT_BODY_LINE
+    : REFUND_AVAILABLE_BODY_DISCLAIMER;
+
+  // Subject: TEST MODE prefix while in test mode; reason + amount so
   // an inbox preview shows the salient facts without opening.
-  const subject = `TEST MODE receipt from ${studio}: ${reason} ${amount}`;
+  const subject = livemode
+    ? `Receipt from ${studio}: ${reason} ${amount}`
+    : `TEST MODE receipt from ${studio}: ${reason} ${amount}`;
 
   const lines: string[] = [
     `Hi ${client},`,
     "",
-    `${TEST_MODE_BODY_DISCLAIMER}`,
+    `${leadDisclaimer}`,
     "",
     `Studio: ${studio}`,
     `Reason: ${reason}`,
@@ -165,8 +207,8 @@ export function buildPaymentReceiptEmail(
   }
   lines.push(
     "",
-    NO_TAX_BODY_DISCLAIMER,
-    REFUND_AVAILABLE_BODY_DISCLAIMER,
+    taxDisclaimer,
+    refundOrSupportLine,
     "",
     `${studio} via Hone`,
   );
@@ -195,7 +237,7 @@ export function buildPaymentReceiptEmail(
           Hi ${clientH},
         </td></tr>
         <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#6B6B6B;">
-          ${escapeHtml(TEST_MODE_BODY_DISCLAIMER)}
+          ${escapeHtml(leadDisclaimer)}
         </td></tr>
         <tr><td style="padding:16px 0; border-top:1px solid #E5E2DA; border-bottom:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.8;">
           <strong>Studio:</strong> ${studioH}<br/>
@@ -213,10 +255,10 @@ export function buildPaymentReceiptEmail(
             : ""
         }
         <tr><td style="padding-top:20px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
-          ${escapeHtml(NO_TAX_BODY_DISCLAIMER)}
+          ${escapeHtml(taxDisclaimer)}
         </td></tr>
         <tr><td style="padding-top:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
-          ${escapeHtml(REFUND_AVAILABLE_BODY_DISCLAIMER)}
+          ${escapeHtml(refundOrSupportLine)}
         </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${studioH} via Hone
