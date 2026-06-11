@@ -89,6 +89,8 @@ The ledger is **still split**:
 
 **Classification: acceptable for test mode; BLOCKER for live payments.** A live dispute or a live charge/receipt/refund failure must reach a human without them thinking to run SQL. **Recommendation: PR #193 "Ops Alerts Dashboard + Critical Notifications"** (unresolved-alerts admin page, mark-resolved, critical-severity email via a standalone `lib/ops/alert-email.ts` that does not import the appointment email subsystem).
 
+> **RESOLVED by PR #193 (2026-06-10):** `/admin/ops-alerts` (ADMIN_EMAILS-gated) lists unresolved alerts critical-first with safe metadata expanders and a conditional mark-resolved action (`resolved_at/resolved_by/resolution_note`, the 0067 columns); critical-severity alerts additionally email the operators in `OPS_ALERT_EMAILS` via the standalone `lib/ops/alert-email.ts` (bare Resend client, no appointment-email import, never calls recordOpsAlert, never throws; unset env = row+dashboard still work). Set `OPS_ALERT_EMAILS` in Production to activate notifications.
+
 ---
 
 ## 7. Consent / card authorization findings
@@ -167,7 +169,7 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 
 | P | Blocker | Where | Why | Fix | PR |
 |---|---|---|---|---|---|
-| P0 | No human-visible ops alerting (disputes, webhook mismatches, failed receipts/refunds land in SQL-only `ops_alerts`) | `lib/ops/alerts.ts`, no app reader | a live dispute would go unseen | alerts dashboard + mark-resolved + critical email | **#193** |
+| ~~P0~~ | ~~No human-visible ops alerting~~ **RESOLVED by PR #193**: `/admin/ops-alerts` dashboard + mark-resolved + critical email (`OPS_ALERT_EMAILS`; set in Production to activate) | `app/admin/ops-alerts/`, `lib/ops/alert-email.ts` | a live dispute would go unseen | shipped | **#193 ✅** |
 | P0 | Fee charging still on legacy `manual_fee_charge_attempts` (no receipt/refund/reconciliation) | `lib/billing/manual-fee-charge.ts`, `ManualFeeChargeCard` | live no-show fee = real charge with no safety net | unify onto `payment_charge_attempts`; freeze/retire legacy + 0032 dormant tables | **#194** |
 | P0 | Receipt template is test-only; live copy unreviewed | `lib/email/templates/payment-receipt.ts` | cannot send the current receipt for a real charge | live variant + legal/accounting review | **#195** |
 | P0 | Legal/accounting review (card auth wording, tax/HST, refund + cancellation policy, statement descriptor, off-session confirmation) | docs/05, docs/16 §5.1 | enforceability + compliance | human review cycle; codify outcomes | **#195** |

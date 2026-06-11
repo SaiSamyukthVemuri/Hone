@@ -201,16 +201,26 @@ describe("ops alerts wiring (PR #153)", () => {
     expect(ALERTS_SOURCE).not.toMatch(/sendEmailSafely\s*\(/);
   });
 
-  it("alerts helper does NOT dispatch operator email in PR #153 (deferred)", () => {
-    // The helper should not contain a maybeEmailAlert / dispatch
-    // function. Operator email is reserved for a future PR with a
-    // standalone lib/ops/alert-email.ts.
-    expect(ALERTS_SOURCE).not.toMatch(/function maybeEmailAlert/);
-    expect(ALERTS_SOURCE).not.toMatch(/parseOpsAlertEmails/);
-    // OPS_ALERT_EMAILS is reserved in env docs but the helper does
-    // NOT read it. Reading would be a soft regression toward email
-    // dispatch.
+  it("operator email dispatch lives in the standalone module, never inline (PR #193)", () => {
+    // PR #193 added critical-alert operator email via
+    // lib/ops/alert-email.ts. The env read and Resend call stay in
+    // that module; alerts.ts only invokes notifyCriticalOpsAlert for
+    // severity === "critical" AFTER the durable write attempt.
+    expect(ALERTS_SOURCE).toMatch(
+      /import \{ notifyCriticalOpsAlert \} from "@\/lib\/ops\/alert-email"/,
+    );
+    expect(ALERTS_SOURCE).toMatch(
+      /if \(input\.severity === "critical"\) \{/,
+    );
     expect(ALERTS_SOURCE).not.toMatch(/process\.env\.OPS_ALERT_EMAILS/);
+    expect(ALERTS_SOURCE).not.toMatch(/function maybeEmailAlert/);
+  });
+
+  it("the email dispatch runs AFTER the durable insert attempt (email failure cannot lose the row)", () => {
+    const insertIdx = ALERTS_SOURCE.indexOf('from("ops_alerts").insert(');
+    const emailIdx = ALERTS_SOURCE.indexOf("await notifyCriticalOpsAlert(");
+    expect(insertIdx).toBeGreaterThan(-1);
+    expect(emailIdx).toBeGreaterThan(insertIdx);
   });
 
   it("manual fee charge wires the helper at every needs_manual_review return", () => {
