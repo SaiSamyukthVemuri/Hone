@@ -16,6 +16,11 @@ import { SessionPerformerLine } from "@/components/session-performer-line";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import {
+  resolveSessionPaymentDefault,
+  type SessionPaymentDefaultAmount,
+} from "@/lib/billing/session-payment-default-amount";
+import { todayInTz } from "@/lib/booking/tz";
+import {
   executeSessionPaymentChargeAction,
   prepareSessionPaymentChargeAction,
   refundPaymentChargeAttemptAction,
@@ -94,6 +99,55 @@ export default async function SessionDetailPage({
     studioId: studio.id,
     sessionId: session.id,
   });
+
+  // PR #200 (Chloe iPad retest): default the Session payment amount
+  // from the booked service. Two narrow reads (appointment + service
+  // join, then this client's custom pricing) feed the pure resolver;
+  // custom pricing for the same service name wins over the menu
+  // price, future-dated rows are ignored, and a service without a
+  // price leaves the form on its existing manual behavior. Display
+  // default ONLY: the field stays editable, the prepare action still
+  // validates the submitted amount, and the executor still charges
+  // the prepared row's stored amount.
+  let sessionPaymentDefault: SessionPaymentDefaultAmount | null = null;
+  const paymentApptId = sessionPaymentEligibility.appointment?.id ?? null;
+  if (paymentApptId) {
+    const supabaseForDefault = await createClient();
+    const { data: apptRow } = await supabaseForDefault
+      .from("appointments")
+      .select("duration_minutes, services:service_id(name, price_cents)")
+      .eq("studio_id", studio.id)
+      .eq("id", paymentApptId)
+      .maybeSingle();
+    const svcEmbed = (apptRow as { services?: unknown } | null)?.services;
+    const svcObj = (Array.isArray(svcEmbed) ? svcEmbed[0] : svcEmbed) as {
+      name?: string | null;
+      price_cents?: number | null;
+    } | null;
+    if (svcObj?.name) {
+      const { data: pricingRows } = await supabaseForDefault
+        .from("client_pricing")
+        .select("service_name, price_cents, notes, effective_from")
+        .eq("studio_id", studio.id)
+        .eq("client_id", id);
+      sessionPaymentDefault = resolveSessionPaymentDefault({
+        service: {
+          name: svcObj.name,
+          price_cents: svcObj.price_cents ?? null,
+        },
+        appointmentDurationMinutes:
+          (apptRow as { duration_minutes?: number | null } | null)
+            ?.duration_minutes ?? null,
+        customPricing: (pricingRows ?? []) as Array<{
+          service_name: string;
+          price_cents: number;
+          notes: string | null;
+          effective_from: string;
+        }>,
+        today: todayInTz(studio.timezone),
+      });
+    }
+  }
 
   // Electrolysis sessions render through the block-grouped view. We fetch
   // the with-blocks shape only when needed.
@@ -319,6 +373,7 @@ export default async function SessionDetailPage({
           sessionId={session.id}
           clientId={id}
           eligibility={sessionPaymentEligibility}
+          defaultAmount={sessionPaymentDefault}
           prepareAction={prepareSessionPaymentChargeAction}
           executeAction={executeSessionPaymentChargeAction}
           sendReceiptAction={sendPaymentChargeReceiptAction}

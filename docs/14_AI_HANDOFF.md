@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #199)
+## Current production status (as of PR #200)
+
+- **Last treatment warning placement + service price default** (PR #200, no migration). The "From last visit, for today" Watch/Plan box is now a flush footer band INSIDE the Last treatment card (`attached` variant on `FromLastVisitForToday`; `hasFromLastVisitContent` gate; once per Sessions tab; entries-fallback sessions no longer drop their plan note). Session payment prepare amount defaults from the booked service via the pure `resolveSessionPaymentDefault` (`lib/billing/session-payment-default-amount.ts`): client custom pricing (name-matched, newest effective, future-dated ignored) > service menu price > historical session price > blank; source copy shown, field stays editable, practitioner can override before preparing. Executor/eligibility/gates untouched; no Stripe call in defaulting. **PR #196 fee smoke still pending; live payments still disabled.**
+
+## Earlier production status (as of PR #199)
 
 - **Last treatment + charting redundancy + client info cleanup** (PR #199, no migration). Sessions-tab top card is now **Last treatment**: `pickLastTreatment` (pure helper in `lib/sessions/clinical-summary.ts`) picks the most recent session with charted areas or legacy entries, so a newer empty session can't blank the pre-appointment summary ("Most recent charted treatment" note when that happens; empty state "No charted treatments yet."). ONE "For next visit" surface: per-area next-visit/caution inputs removed from the charting form (caution columns untouched; data round-trips and still renders in watch lines). ONE "Performed by" surface: inline line under the session title with Edit (new `SessionPerformerLine`; `session-info-card.tsx` deleted). Detach renders inside the treatment plan card (`detachSlot`). Birthday is a plain row in Client info (no nested box/helper; edit via the card's Edit link). **PR #196 fee smoke still pending; live payments still disabled.**
 

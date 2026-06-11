@@ -6,6 +6,7 @@ import type {
   SessionPaymentEligibility,
   SessionPaymentExistingAttemptSummary,
 } from "@/lib/billing/session-payment-types";
+import type { SessionPaymentDefaultAmount } from "@/lib/billing/session-payment-default-amount";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
@@ -169,6 +170,7 @@ export function SessionPaymentPrepareCard({
   sessionId,
   clientId,
   eligibility,
+  defaultAmount = null,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -177,6 +179,11 @@ export function SessionPaymentPrepareCard({
   sessionId: string;
   clientId: string;
   eligibility: SessionPaymentEligibility;
+  // PR #200: resolved booked-service / custom-pricing default for the
+  // prepare form's amount field. Display default only; the field
+  // stays editable and the prepare action re-validates the submitted
+  // amount. Null keeps the pre-#200 behavior.
+  defaultAmount?: SessionPaymentDefaultAmount | null;
   prepareAction: PrepareAction;
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
@@ -223,10 +230,18 @@ export function SessionPaymentPrepareCard({
 
   const showPrepareForm =
     eligibility.eligible && !activeAttempt && !prepareJustSucceeded;
+  // PR #200 defaulting order: client custom pricing / booked service
+  // price (resolved server-side into defaultAmount), then the
+  // historical session price, then blank manual entry.
   const suggestedAmount =
-    eligibility.session?.pricePaidCents != null
-      ? formatCadFromCents(eligibility.session.pricePaidCents).replace("$", "")
-      : "";
+    defaultAmount != null
+      ? formatCadFromCents(defaultAmount.amountCents).replace("$", "")
+      : eligibility.session?.pricePaidCents != null
+        ? formatCadFromCents(eligibility.session.pricePaidCents).replace(
+            "$",
+            "",
+          )
+        : "";
 
   return (
     <section
@@ -299,6 +314,7 @@ export function SessionPaymentPrepareCard({
           sessionId={sessionId}
           eligibility={eligibility}
           suggestedAmount={suggestedAmount}
+          defaultAmount={defaultAmount}
           pending={preparePending}
           error={prepareError}
           blockingReasons={prepareBlockingReasons}
@@ -1162,6 +1178,7 @@ function PrepareForm({
   sessionId,
   eligibility,
   suggestedAmount,
+  defaultAmount,
   pending,
   error,
   blockingReasons,
@@ -1170,6 +1187,7 @@ function PrepareForm({
   sessionId: string;
   eligibility: Extract<SessionPaymentEligibility, { eligible: true }>;
   suggestedAmount: string;
+  defaultAmount: SessionPaymentDefaultAmount | null;
   pending: boolean;
   error: string | null;
   blockingReasons: string[];
@@ -1213,12 +1231,45 @@ function PrepareForm({
             className="w-32 rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             aria-label="Amount in Canadian dollars"
           />
-          {eligibility.session?.pricePaidCents != null && (
-            <span className="text-[11px] text-neutral-500">
-              Suggestion from session price
-            </span>
-          )}
+          {defaultAmount == null &&
+            eligibility.session?.pricePaidCents != null && (
+              <span className="text-[11px] text-neutral-500">
+                Suggestion from session price
+              </span>
+            )}
         </div>
+        {/* PR #200: say where the default came from, and that it is
+            editable. Never implies the client has paid or that live
+            payments are on; the test-mode header copy above is
+            unchanged. */}
+        {defaultAmount != null && (
+          <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
+            {defaultAmount.source === "custom_pricing" ? (
+              <>
+                <span>
+                  Defaulted from this client&apos;s custom pricing:{" "}
+                  {defaultAmount.serviceName}
+                  {defaultAmount.durationMinutes != null &&
+                    ` (${defaultAmount.durationMinutes} min)`}
+                  .
+                </span>
+                {defaultAmount.customPricingNote && (
+                  <span>
+                    Custom pricing reminder: {defaultAmount.customPricingNote}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span>
+                Defaulted from booked service: {defaultAmount.serviceName}
+                {defaultAmount.durationMinutes != null &&
+                  ` (${defaultAmount.durationMinutes} min)`}
+                .
+              </span>
+            )}
+            <span>You can adjust before preparing.</span>
+          </div>
+        )}
       </label>
 
       <label className="flex flex-col gap-1">

@@ -130,7 +130,7 @@ describe("Last treatment card (Sessions tab)", () => {
     expect(PAGE).toMatch(/lastTreatmentPerformer/);
     expect(PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
     expect(PAGE).toMatch(
-      /<FromLastVisitForToday summary=\{lastTreatmentSummary\}/,
+      /<FromLastVisitForToday[\s\S]{0,40}summary=\{lastTreatmentSummary\}/,
     );
     expect(PAGE).toMatch(
       /href=\{`\/clients\/\$\{client\.id\}\/sessions\/\$\{lastTreatment\.id\}`\}/,

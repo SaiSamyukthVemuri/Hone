@@ -10,6 +10,7 @@ import {
 import {
   AreaSummaries,
   FromLastVisitForToday,
+  hasFromLastVisitContent,
 } from "@/components/last-session-summary";
 import {
   getAppointmentsForClientProfile,
@@ -800,16 +801,15 @@ export default async function ClientCheatSheetPage({
                     Open →
                   </Link>
                 </div>
-                {/* The same per-area summary + combined From last
-                    visit box the charting screen shows. Charted
-                    laser/legacy sessions without treatment areas fall
-                    back to their raw entries list; a charted session
-                    always has one or the other. */}
+                {/* The same per-area summary the charting screen
+                    shows. Charted laser/legacy sessions without
+                    treatment areas fall back to their raw entries
+                    list; a charted session always has one or the
+                    other. */}
                 {lastTreatmentSummary &&
                 lastTreatmentSummary.areas.length > 0 ? (
-                  <div className="mt-3 flex flex-col gap-3">
+                  <div className="mt-3">
                     <AreaSummaries summary={lastTreatmentSummary} />
-                    <FromLastVisitForToday summary={lastTreatmentSummary} />
                   </div>
                 ) : (
                   <LastSessionEntries
@@ -818,6 +818,24 @@ export default async function ClientCheatSheetPage({
                     laserEntries={lastTreatment.laser_entries}
                   />
                 )}
+                {/* PR #200 (Chloe iPad retest): the Watch/Plan box is
+                    the card's flush footer band (attached variant +
+                    full-bleed margins), so the pre-client warning
+                    reads as PART of the Last treatment context, not a
+                    floating sibling. Rendered for the entries
+                    fallback too, so a plan note on a blocks-less
+                    session is no longer dropped. Omitted cleanly when
+                    there is nothing to say; this is the ONLY
+                    From-last-visit render on the Sessions tab. */}
+                {lastTreatmentSummary &&
+                  hasFromLastVisitContent(lastTreatmentSummary) && (
+                    <div className="-mx-5 -mb-5 mt-4">
+                      <FromLastVisitForToday
+                        summary={lastTreatmentSummary}
+                        attached
+                      />
+                    </div>
+                  )}
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
