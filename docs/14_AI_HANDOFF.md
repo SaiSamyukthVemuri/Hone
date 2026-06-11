@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #209)
+## Current production status (as of PR #210)
+
+- **Client Treatment Intelligence Summary** (PR #210, no migration). Treatment Intelligence card on the profile Overview (pure builder over sessions + session_blocks + entry hairs): overall sessions/areas/minutes/hairs/hairs-min/first-last treated, per-area cards (grouped case-insensitively; latest recorded setup; commonly recorded reaction; watch notes), client-level reaction/tolerance, Notes to remember (latest watch + plan). Recorded-history wording only (overclaim words pinned absent); "Not recorded" for gaps; empty state for uncharted clients. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #209)
 
 - **Header navigation fit** (PR #209, no migration). Top-nav label shortened to "Records" (route /records and the "Record Keeping" page heading unchanged); nav links are whitespace-nowrap with a tighter sub-md gap so the post-#208 header fits without wrapping. UI-only. Live payments still disabled; docs/18 blockers unchanged.
 
