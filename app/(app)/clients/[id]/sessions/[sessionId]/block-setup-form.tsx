@@ -661,8 +661,10 @@ export function BlockSetupForm({
         )}
       </div>
 
-      {/* Machine settings come after the area. Frequency first (it's a
-          property of the machine), then mode and the mode-specific modality. */}
+      {/* Machine settings come after the area, in Chloe's charting
+          order (PR #204): frequency (a property of the machine),
+          then probe, then mode and the mode-specific modality.
+          Minutes performed moved to the end, after the readings. */}
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Machine frequency</span>
         <div className="flex flex-wrap gap-2">
@@ -686,6 +688,17 @@ export function BlockSetupForm({
             );
           })}
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">Probe</span>
+        <span className="text-xs text-neutral-500">
+          Optional. Used for accurate electrolysis charting.
+        </span>
+        <ProbePicker
+          value={draft.probeKey}
+          onChange={(key) => update("probeKey", key)}
+        />
       </div>
 
       <div className="flex flex-col gap-2">
@@ -740,34 +753,6 @@ export function BlockSetupForm({
           onChange={(e) => update("energyLevel", e.target.value)}
           className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
-      </label>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Probe</span>
-        <span className="text-xs text-neutral-500">
-          Optional. Used for accurate electrolysis charting.
-        </span>
-        <ProbePicker
-          value={draft.probeKey}
-          onChange={(key) => update("probeKey", key)}
-        />
-      </div>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Minutes performed (optional)</span>
-        <input
-          type="number"
-          inputMode="numeric"
-          step="1"
-          min={0}
-          max={MINUTES_MAX}
-          value={draft.minutes}
-          onChange={(e) => update("minutes", e.target.value)}
-          className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-        <span className="text-xs text-neutral-500">
-          Used for total treatment time if you track it.
-        </span>
       </label>
 
       {/* Treatment readings — the first pass, captured on this same page so
@@ -953,6 +938,23 @@ export function BlockSetupForm({
           />
         </label>
       </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Minutes performed (optional)</span>
+        <input
+          type="number"
+          inputMode="numeric"
+          step="1"
+          min={0}
+          max={MINUTES_MAX}
+          value={draft.minutes}
+          onChange={(e) => update("minutes", e.target.value)}
+          className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+        <span className="text-xs text-neutral-500">
+          Used for total treatment time if you track it.
+        </span>
+      </label>
 
       {/* Client tolerance (PR #198 order): the 1-5 rating only. The
           reaction vocabulary now lives as chips under Treatment

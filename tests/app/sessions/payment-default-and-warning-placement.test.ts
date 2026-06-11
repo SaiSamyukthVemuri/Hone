@@ -48,7 +48,7 @@ describe("From last visit box is attached to the Last treatment card", () => {
     // The attached variant is a top-bordered footer, not a floating
     // island: square top, rounded bottom, border-t only.
     expect(SUMMARY).toMatch(
-      /attached\s*\?\s*"rounded-b-lg border-t border-amber-200/,
+      /attached\s*\?\s*"rounded-b-lg border-t border-blue-200/,
     );
   });
 

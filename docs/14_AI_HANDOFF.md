@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #203)
+## Current production status (as of PR #204)
+
+- **Charting field order + blue From-last-visit band** (PR #204, no migration). Treatment-area form order matches Chloe's flow: area, frequency, probe, mode, modality (+EL), readings, pulse count, hairs treated, minutes performed (layout-only; payload/copy/sticky unchanged). "From last visit, for today" renders BLUE everywhere (treatment memory, not warning); same PR #203 pre-client source. Live payments still disabled; enablement blockers unchanged (docs/18 §16).
+
+## Earlier production status (as of PR #203)
 
 - **Sticky machine frequency + chip polish + Sessions Watch/Plan source** (PR #203, **migration 0084**: `practitioners.default_machine_frequency`, additive + nullable; apply to prod BEFORE merging). Machine frequency toggle defaults from the practitioner's last-used value (saved best-effort by the treatment-area save actions; editable per area; block row still stores the actual value). Reaction/response chips show leading + like the other observation chips. The Last treatment card's Watch/Plan band uses `pickPreClientWatchPlanSource` (newest session with any watch/plan content), matching the charting page's pre-client context. Live payments still disabled; enablement blockers unchanged (legal/accounting review + Willow Stripe checklist, docs/18 §16).
 
