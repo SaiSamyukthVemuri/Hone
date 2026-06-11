@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #191)
+## Current production status (as of PR #192)
+
+- **Live payments readiness audit** (PR #192, docs + gate-pin tests only; no runtime change). `docs/18_LIVE_PAYMENTS_AUDIT.md` is now the current readiness picture: **NOT READY FOR LIVE PAYMENTS (4/10; internal test-mode only)**. P0 blockers: ops-alert human visibility, fee-ledger unification, live receipt copy, legal/accounting review, test-mode copy pass. Agreed sequence: #193 ops alerts dashboard/notifications, #194 ledger unification, #195 gate preparation, #196 controlled enablement. Stripe gates verified unchanged and strong.
+
+## Earlier production status (as of PR #191)
 
 - **Treatment memory UX cleanup** (PR #191, no migration). Eight fixes from Chloe's practitioner smoke of PR #190: plan-area seed applies only to a session's first treatment area (no auto-filled repeat areas); "Copy settings from last treatment area" copies the full configuration (now incl. minutes), prefers a same-named area, and explains what it copied; "Plan for next visit" shows explicit saved/cleared/error feedback (action returns a result); back navigation from session pages lands on the client's Sessions tab; last-session summaries are PER treatment area (`areas[]` + `watchLines[]` in `lib/sessions/clinical-summary.ts`, shared render in `components/last-session-summary.tsx`); the duplicate amber/blue warning boxes merged into one "From last visit, for today" box (Watch + Plan); the charting form is bucketed into Treatment observations / Client/skin response / For next visit; the Sessions tab is ordered treatment time, last session, Needs charting above Upcoming, then "Session history" (renamed from "All sessions"). Practitioner copy says "treatment area", never "block". No payment/Stripe/auth/export/reminder change (gates unchanged from PR #190).
 

@@ -4,6 +4,10 @@
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.
 
+### Live payments readiness audit (PR #192, docs + gate pins only)
+
+**Decision (2026-06-10):** Full code-grounded audit of live-payment readiness, written to `docs/18_LIVE_PAYMENTS_AUDIT.md`. **Verdict: NOT READY FOR LIVE PAYMENTS; ready for internal test-mode only (overall 4/10).** Test-mode session payments are complete and practitioner-verified (Chloe's $25 prepare/charge/receipt/refund smoke). P0 blockers: (1) no human-visible ops alerting (`ops_alerts` has zero UI readers, no resolved_at writer, no email dispatch); (2) fee charging still on the legacy `manual_fee_charge_attempts` ledger with no receipt/refund/reconciliation; (3) the receipt template is structurally test-only; (4) legal/accounting review (card auth wording, tax/HST, refund/cancellation policy, statement descriptor, off-session confirmation); (5) "Test mode only" copy across 7+ surfaces. Gates verified strong and unchanged (key gate, livemode inference, two DB CHECKs, exact-count CI scans); the 0032 dormant tables confirmed to have zero runtime references. Decided next sequence: **#193 Ops Alerts Dashboard + Critical Notifications -> #194 Payment Ledger Unification -> #195 Live Payments Gate Preparation -> #196 Controlled Live Payment Enablement** (draft runbook in docs/18 §15; future only). No runtime, gate, migration, env, or production change in this PR.
+
 ### Treatment memory UX cleanup from Chloe's practitioner smoke (PR #191, no migration)
 
 **Decision (2026-06-10):** Eight UX fixes from Chloe's real returning-client smoke of PR #190. The feature should feel like "I treated these areas, here is how each went, here is what to do next time," not "I am filling out database blocks." Practitioner-facing copy says "treatment area"; "block" stays internal.
