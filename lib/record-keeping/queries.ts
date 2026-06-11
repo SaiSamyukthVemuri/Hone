@@ -167,3 +167,62 @@ export async function getClientProcedureRecords(
     };
   });
 }
+
+// PR #206 (migration 0086): audit-trail reads. Newest first, grouped
+// by record so the UI can show a small History panel per row. Same
+// studio scoping + RLS backstop as everything above.
+import type { RecordKeepingAuditEvent } from "@/lib/types/database";
+
+export async function getAuditEventsByRecord(
+  studioId: string,
+  recordType: RecordKeepingAuditEvent["record_type"],
+  recordIds: string[],
+): Promise<Map<string, RecordKeepingAuditEvent[]>> {
+  const grouped = new Map<string, RecordKeepingAuditEvent[]>();
+  if (recordIds.length === 0) return grouped;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("record_keeping_audit_events")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("record_type", recordType)
+    .in("record_id", recordIds)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  for (const row of (data ?? []) as RecordKeepingAuditEvent[]) {
+    const list = grouped.get(row.record_id) ?? [];
+    list.push(row);
+    grouped.set(row.record_id, list);
+  }
+  return grouped;
+}
+
+// Procedure-record history: aftercare events keyed by session id, and
+// probe-lot events keyed by the session id carried in metadata.
+export async function getProcedureAuditEvents(
+  studioId: string,
+  sessionIds: string[],
+): Promise<Map<string, RecordKeepingAuditEvent[]>> {
+  const grouped = new Map<string, RecordKeepingAuditEvent[]>();
+  if (sessionIds.length === 0) return grouped;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("record_keeping_audit_events")
+    .select("*")
+    .eq("studio_id", studioId)
+    .in("record_type", ["session_aftercare", "session_block_probe_lot"])
+    .order("created_at", { ascending: false })
+    .limit(500);
+  const wanted = new Set(sessionIds);
+  for (const row of (data ?? []) as RecordKeepingAuditEvent[]) {
+    const sessionId =
+      row.record_type === "session_aftercare"
+        ? row.record_id
+        : ((row.metadata?.session_id as string | undefined) ?? "");
+    if (!wanted.has(sessionId)) continue;
+    const list = grouped.get(sessionId) ?? [];
+    list.push(row);
+    grouped.set(sessionId, list);
+  }
+  return grouped;
+}

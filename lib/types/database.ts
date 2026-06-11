@@ -1061,3 +1061,32 @@ export type RecordKeepingExposureIncident = {
   created_at: string;
   updated_at: string;
 };
+
+// Migration 0086 (PR #206): append-only Record Keeping audit trail.
+// Rows are written ONLY by security-definer triggers; RLS exposes a
+// studio-scoped SELECT and nothing else, so normal users can never
+// insert, edit, or delete events.
+export type RecordKeepingAuditEvent = {
+  id: string;
+  studio_id: string;
+  record_type:
+    | "sterile_item"
+    | "disinfectant"
+    | "exposure_incident"
+    | "session_aftercare"
+    | "session_block_probe_lot";
+  record_id: string;
+  action:
+    | "created"
+    | "updated"
+    | "aftercare_marked"
+    | "aftercare_cleared"
+    | "probe_lot_updated";
+  changed_fields: string[];
+  changes: Record<string, { old: unknown; new: unknown }>;
+  actor_practitioner_id: string | null;
+  actor_user_id: string | null;
+  actor_display_name: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
