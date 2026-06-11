@@ -13,6 +13,11 @@ import {
   FromLastVisitForToday,
   hasFromLastVisitContent,
 } from "@/components/last-session-summary";
+import { TreatmentIntelligenceCard } from "@/components/treatment-intelligence-card";
+import {
+  buildTreatmentIntelligence,
+  type IntelligenceBlockInput,
+} from "@/lib/sessions/treatment-intelligence";
 import {
   getAppointmentsForClientProfile,
   getClientById,
@@ -300,6 +305,44 @@ export default async function ClientCheatSheetPage({
   const lastTreatmentPerformer = lastTreatment
     ? sessionPerformerName(lastTreatment, practitioners)
     : null;
+
+  // PR #210: Treatment Intelligence. One read across ALL the client's
+  // sessions (cap 200) with per-entry hairs; the pure builder turns
+  // recorded history into the Overview summary. Read-only; recorded-
+  // history language only; "Not recorded" for gaps.
+  let treatmentIntelligence = buildTreatmentIntelligence({
+    sessionsNewestFirst: sessions,
+    blocks: [],
+  });
+  if (sessions.length > 0) {
+    const supabaseForIntel = await createClient();
+    const { data: intelBlocks } = await supabaseForIntel
+      .from("session_blocks")
+      .select(
+        "session_id, primary_area, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated)",
+      )
+      .eq("studio_id", studio.id)
+      .in(
+        "session_id",
+        sessions.slice(0, 200).map((sess) => sess.id),
+      )
+      .is("deleted_at", null);
+    treatmentIntelligence = buildTreatmentIntelligence({
+      sessionsNewestFirst: sessions,
+      blocks: ((intelBlocks ?? []) as Array<
+        Omit<IntelligenceBlockInput, "entry_hairs"> & {
+          electrolysis_entries:
+            | Array<{ hairs_treated: number | null }>
+            | null;
+        }
+      >).map((b) => ({
+        ...b,
+        entry_hairs: (b.electrolysis_entries ?? []).map(
+          (e) => e.hairs_treated,
+        ),
+      })),
+    });
+  }
 
   const hasEmergencyContact =
     !!client.emergency_contact_name || !!client.emergency_contact_phone;
@@ -622,6 +665,11 @@ export default async function ClientCheatSheetPage({
             </section>
           )}
           </section>
+
+          {/* PR #210: Treatment Intelligence; recorded-history summary
+              (areas, minutes, hairs, latest setup, reactions, watch/
+              plan). Below Client info, above Pricing. */}
+          <TreatmentIntelligenceCard intelligence={treatmentIntelligence} />
 
           {/* Pricing moved to the end of Overview — it's billing, not
               clinical caution. Same fields, same actions (unchanged),
