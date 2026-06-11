@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #201)
+## Current production status (as of PR #202)
+
+- **Payment default service label** (PR #202, UI/copy only). The Session payment prepare form shows "Booked service: <name> (<N> min)" directly under the Amount field whenever the PR #200 default resolved (both service-price and custom-pricing sources; reminder line kept; field editable; no fake label when no default). No resolver/action/executor/gate change. **Numbering: controlled live enablement (docs/18 "PR #202") shifts to the next available PR number.** PR #196 fee smoke closed; live payments still disabled; remaining enablement blockers: legal/accounting review + Willow live Stripe checklist (docs/18 §16).
+
+## Earlier production status (as of PR #201)
 
 - **Live payments gate preparation** (PR #201, no migration, NO live enablement). Receipt template renders a cautious live-mode variant behind `livemode` (default false; test branch byte-identical; sender pins `livemode: false` and refuses non-test rows, so live copy is unreachable; final wording needs legal/accounting review). **Refunds are owner-only** across session payments and fees ("Only the studio owner can issue a refund."). Audit decision: the ledger row is the audit record (no new table). Stale pending_stripe recovery verified already shipped (deterministic idempotency + reconciliation + ops alerts). docs/18 §16: UI copy map, Willow Stripe readiness checklist, legal/accounting checklist, PR #202 runbook (FUTURE ONLY). **PR #196 fee smoke is fully closed** (both legs backend-verified clean 2026-06-11; gate on PR #201 cleared). Live payments still disabled.
 

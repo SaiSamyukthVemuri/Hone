@@ -241,9 +241,12 @@ describe("Session payment prepare form wiring", () => {
     expect(amountInput).not.toMatch(/readOnly|disabled/);
   });
 
-  it("source copy: booked service / custom pricing reminder / adjustable", () => {
-    expect(CARD).toMatch(/Defaulted from booked service:/);
-    expect(CARD).toMatch(/custom pricing:/);
+  it("source copy: booked service label / custom pricing reminder / adjustable (PR #202 shape)", () => {
+    // PR #202: the booked service name is a visible line of its own
+    // near the amount, for both default sources.
+    expect(CARD).toMatch(/Booked service: \{defaultAmount\.serviceName\}/);
+    expect(CARD).toMatch(/Defaulted from booked service\./);
+    expect(CARD).toMatch(/custom pricing\./);
     expect(CARD).toMatch(/Custom pricing reminder:/);
     expect(CARD).toMatch(/You can adjust before preparing\./);
   });
