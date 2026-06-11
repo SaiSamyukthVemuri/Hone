@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // PR #193. Resolve an ops alert from the admin dashboard. Admin-only
 // (same ADMIN_EMAILS allowlist as every /admin action; the layout
@@ -13,6 +14,34 @@ import { isAdmin } from "@/lib/admin";
 // resolved_by_practitioner_id is the admin's practitioner row when
 // one exists (an admin without a practitioner row resolves with a
 // null resolver id, which the 0067 consistency CHECK allows).
+
+// PR #195. Deterministic app-path smoke for the alert pipeline:
+// exercises the REAL recordOpsAlert path (durable ops_alerts row +
+// critical email to OPS_ALERT_EMAILS) on demand. Admin-only; no
+// Stripe/payment/client surface; reusable for any future
+// alert-channel verification (new operator email, Slack, etc.).
+export async function sendTestCriticalAlertAction(): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isAdmin(user.email)) {
+    throw new Error("Unauthorized.");
+  }
+
+  await recordOpsAlert({
+    severity: "critical",
+    event: "smoke_test_critical_alert_app_path",
+    message: "PR #195 app-path smoke test critical alert",
+    safeDetails: {
+      smoke: true,
+      pr: 195,
+      path: "app",
+    },
+  });
+
+  revalidatePath("/admin/ops-alerts");
+}
 
 export async function resolveOpsAlertAction(
   formData: FormData,
