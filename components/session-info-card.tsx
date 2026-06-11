@@ -13,61 +13,20 @@ type Props = {
   updatePerformerAction: (formData: FormData) => Promise<void>;
 };
 
-function centsToDollarsString(cents: number | null): string {
-  if (cents == null) return "";
-  return (cents / 100).toFixed(2);
-}
 
 export function SessionInfoCard({
   sessionId,
   clientId,
   practitioners,
   initialPerformerId,
-  initialPriceCents,
-  updatePriceAction,
   updatePerformerAction,
 }: Props) {
   const [performerId, setPerformerId] = useState(initialPerformerId ?? "");
-  const [price, setPrice] = useState(centsToDollarsString(initialPriceCents));
-  const [savedPrice, setSavedPrice] = useState(price);
-  const [priceState, setPriceState] = useState<
-    "idle" | "saving" | "saved" | "error"
-  >("idle");
-  const [priceError, setPriceError] = useState<string | null>(null);
   const [performerState, setPerformerState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [performerError, setPerformerError] = useState<string | null>(null);
-  const [, startPriceTransition] = useTransition();
   const [, startPerformerTransition] = useTransition();
-
-  function handlePriceBlur() {
-    if (price === savedPrice) return;
-    if (price.trim() && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
-      setPriceState("error");
-      setPriceError("Must be a non-negative number.");
-      return;
-    }
-    setPriceState("saving");
-    setPriceError(null);
-
-    const fd = new FormData();
-    fd.set("session_id", sessionId);
-    fd.set("client_id", clientId);
-    fd.set("price_dollars", price);
-
-    startPriceTransition(async () => {
-      try {
-        await updatePriceAction(fd);
-        setSavedPrice(price);
-        setPriceState("saved");
-        setTimeout(() => setPriceState("idle"), 1500);
-      } catch (err) {
-        setPriceState("error");
-        setPriceError(err instanceof Error ? err.message : "Failed to save.");
-      }
-    });
-  }
 
   function handlePerformerChange(next: string) {
     setPerformerId(next);
