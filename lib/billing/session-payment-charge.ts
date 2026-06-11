@@ -69,8 +69,14 @@ const GENERIC_LINEAGE_MISMATCH_MESSAGE =
 const AUTHENTICATION_REQUIRED_MESSAGE =
   "The saved card requires customer authentication and could not be charged off-session in this test flow.";
 
-function buildIdempotencyKey(attemptId: string): string {
-  return `hone:session_payment:${attemptId}:v1`;
+// PR #196: reason-scoped deterministic key. session_payment keeps its
+// historical format so in-flight rows replay identically; fee reasons
+// get their own namespace.
+function buildIdempotencyKey(attemptId: string, chargeReason: string): string {
+  if (chargeReason === "session_payment") {
+    return `hone:session_payment:${attemptId}:v1`;
+  }
+  return `hone:${chargeReason}:${attemptId}:v1`;
 }
 
 function logInternal(event: string, detail: unknown) {
@@ -468,13 +474,18 @@ export async function runSessionPaymentCharge(args: {
       message: "Session payment attempt not found.",
     };
   }
-  // Reason guard: this helper is session_payment only. A row of a
-  // different reason cannot be executed here.
-  if (attemptRow.charge_reason !== "session_payment") {
+  // Reason guard (PR #196 unification): the three canonical charge
+  // reasons execute through this one audited path. Anything else
+  // refuses.
+  if (
+    attemptRow.charge_reason !== "session_payment" &&
+    attemptRow.charge_reason !== "no_show_fee" &&
+    attemptRow.charge_reason !== "late_cancellation_fee"
+  ) {
     return {
       ok: false,
       outcome: "blocked",
-      message: "This attempt is not a session payment.",
+      message: "This attempt has an unsupported charge reason.",
     };
   }
   // Row-level live-mode guard (mirror of the RPC guard).
@@ -593,7 +604,7 @@ export async function runSessionPaymentCharge(args: {
 
   // 5. Atomically claim the attempt. Idempotency key is deterministic
   //    so a retry produces the same key.
-  const idempotencyKey = buildIdempotencyKey(attemptRow.id);
+  const idempotencyKey = buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment");
   const { data: claimRows, error: claimErr } = await admin.rpc(
     "claim_session_payment_charge_attempt",
     {

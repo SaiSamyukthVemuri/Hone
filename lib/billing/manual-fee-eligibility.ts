@@ -339,34 +339,69 @@ export async function getManualFeeChargeEligibility(
   }
 
   // 6) Existing attempts. Both for the duplicate-protection check and
-  //    for surfacing history in the UI.
-  const { data: attemptRows } = await admin
-    .from("manual_fee_charge_attempts")
-    .select(
-      "id, charge_type, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message, cancelled_at, cancelled_reason",
-    )
-    .eq("studio_id", args.studioId)
-    .eq("appointment_id", args.appointmentId)
-    .order("created_at", { ascending: false });
-  const existingAttempts: EligibilityExistingAttemptSummary[] = (
-    attemptRows ?? []
-  ).map((row) => ({
-    id: row.id as string,
-    charge_type: row.charge_type as ManualFeeChargeType,
-    status: row.status as string,
-    amount_cents: row.amount_cents as number,
-    currency: row.currency as string,
-    created_at: row.created_at as string,
-    stripe_payment_intent_id:
-      (row.stripe_payment_intent_id as string | null) ?? null,
-    stripe_charge_id: (row.stripe_charge_id as string | null) ?? null,
-    charged_at: (row.charged_at as string | null) ?? null,
-    failed_at: (row.failed_at as string | null) ?? null,
-    failure_code: (row.failure_code as string | null) ?? null,
-    failure_message: (row.failure_message as string | null) ?? null,
-    cancelled_at: (row.cancelled_at as string | null) ?? null,
-    cancelled_reason: (row.cancelled_reason as string | null) ?? null,
-  }));
+  //    for surfacing history in the UI. PR #196 unification: fee
+  //    attempts now live on the canonical payment_charge_attempts
+  //    ledger (charge_reason no_show_fee / late_cancellation_fee);
+  //    the legacy manual_fee_charge_attempts table gets no new
+  //    runtime writes. Legacy rows are read too so historical
+  //    attempts stay visible.
+  const [{ data: canonicalRows }, { data: legacyRows }] = await Promise.all([
+    admin
+      .from("payment_charge_attempts")
+      .select(
+        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason",
+      )
+      .eq("studio_id", args.studioId)
+      .eq("appointment_id", args.appointmentId)
+      .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
+      .order("created_at", { ascending: false }),
+    admin
+      .from("manual_fee_charge_attempts")
+      .select(
+        "id, charge_type, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message, cancelled_at, cancelled_reason",
+      )
+      .eq("studio_id", args.studioId)
+      .eq("appointment_id", args.appointmentId)
+      .order("created_at", { ascending: false }),
+  ]);
+  const reasonToType = (reason: string): ManualFeeChargeType =>
+    reason === "no_show_fee" ? "no_show" : "late_cancel";
+  const existingAttempts: EligibilityExistingAttemptSummary[] = [
+    ...(canonicalRows ?? []).map((row) => ({
+      id: row.id as string,
+      charge_type: reasonToType(row.charge_reason as string),
+      status: row.status as string,
+      amount_cents: row.amount_cents as number,
+      currency: row.currency as string,
+      created_at: row.created_at as string,
+      stripe_payment_intent_id:
+        (row.stripe_payment_intent_id as string | null) ?? null,
+      stripe_charge_id: (row.stripe_charge_id as string | null) ?? null,
+      charged_at: (row.charged_at as string | null) ?? null,
+      failed_at: (row.failed_at as string | null) ?? null,
+      failure_code: (row.failure_code as string | null) ?? null,
+      failure_message: (row.failure_message_safe as string | null) ?? null,
+      cancelled_at: (row.cancelled_at as string | null) ?? null,
+      cancelled_reason: (row.cancelled_reason as string | null) ?? null,
+    })),
+    ...(legacyRows ?? []).map((row) => ({
+      id: row.id as string,
+      charge_type: row.charge_type as ManualFeeChargeType,
+      status: row.status as string,
+      amount_cents: row.amount_cents as number,
+      currency: row.currency as string,
+      created_at: row.created_at as string,
+      stripe_payment_intent_id:
+        (row.stripe_payment_intent_id as string | null) ?? null,
+      stripe_charge_id: (row.stripe_charge_id as string | null) ?? null,
+      charged_at: (row.charged_at as string | null) ?? null,
+      failed_at: (row.failed_at as string | null) ?? null,
+      failure_code: (row.failure_code as string | null) ?? null,
+      failure_message: (row.failure_message as string | null) ?? null,
+      cancelled_at: (row.cancelled_at as string | null) ?? null,
+      cancelled_reason: (row.cancelled_reason as string | null) ?? null,
+    })),
+  ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   const ACTIVE_STATUSES = new Set([
     "ready",
     "pending_stripe",

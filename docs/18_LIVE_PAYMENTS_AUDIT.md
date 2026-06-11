@@ -170,7 +170,7 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 | P | Blocker | Where | Why | Fix | PR |
 |---|---|---|---|---|---|
 | ~~P0~~ | ~~No human-visible ops alerting~~ **RESOLVED by PR #193**: `/admin/ops-alerts` dashboard + mark-resolved + critical email (`OPS_ALERT_EMAILS`; set in Production to activate) | `app/admin/ops-alerts/`, `lib/ops/alert-email.ts` | a live dispute would go unseen | shipped | **#193 ✅** |
-| P0 | Fee charging still on legacy `manual_fee_charge_attempts` (no receipt/refund/reconciliation) | `lib/billing/manual-fee-charge.ts`, `ManualFeeChargeCard` | live no-show fee = real charge with no safety net | unify onto `payment_charge_attempts`; freeze/retire legacy + 0032 dormant tables | **#194** |
+| ~~P0~~ | ~~Fee charging on legacy ledger~~ **RESOLVED by PR #196**: fees unified onto `payment_charge_attempts` (receipts/refunds/reconciliation inherited); legacy table frozen for new writes, historical reads kept; 0032 dormant-table retirement still a cleanup follow-up | `manual-fee-actions.ts`, migration 0083 | live no-show fee = real charge with no safety net | shipped | **#196 ✅** |
 | P0 | Receipt template is test-only; live copy unreviewed | `lib/email/templates/payment-receipt.ts` | cannot send the current receipt for a real charge | live variant + legal/accounting review | **#195** |
 | P0 | Legal/accounting review (card auth wording, tax/HST, refund + cancellation policy, statement descriptor, off-session confirmation) | docs/05, docs/16 §5.1 | enforceability + compliance | human review cycle; codify outcomes | **#195** |
 | P0 | "Test mode only" copy across 7+ surfaces would be false in live | docs/16 §2.4 list | misleading client/practitioner copy | conditional copy at enable | **#196** |

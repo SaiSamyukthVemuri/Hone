@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #195)
+## Current production status (as of PR #196)
+
+- **Payment ledger unification** (PR #196, migration 0083). Fees (no-show / late-cancel) now prepare, charge, receipt, refund, and reconcile on `payment_charge_attempts`; the legacy `manual_fee_charge_attempts` table gets no new runtime writes (historical rows readable). Claim RPC reason guard widened (0083) with three additive evidence columns. Live payments still blocked; gates unchanged. docs/18 P0 #2 closed; remaining blockers: live receipt copy + legal/accounting review, test-mode copy pass, controlled enablement.
+
+## Earlier production status (as of PR #195)
 
 - **Ops alert app-path smoke action** (PR #195, no migration). Admin-only "Send test critical alert" button on `/admin/ops-alerts` calls the real `recordOpsAlert` (event `smoke_test_critical_alert_app_path`), deterministically exercising the durable-row + critical-email pipeline added in PR #193. `OPS_ALERT_EMAILS` is set in Production and baked in via redeploy `8a5a3e3`.
 
