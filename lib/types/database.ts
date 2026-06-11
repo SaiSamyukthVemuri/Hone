@@ -553,6 +553,11 @@ export type Practitioner = {
   // calendar feed at /calendar-feed/<token>.ics. Null until the
   // practitioner generates one; UNIQUE among non-null values.
   calendar_feed_token: string | null;
+  // Migration 0084 (PR #203): sticky machine-frequency default.
+  // Last-used value, written by the treatment-area save actions;
+  // seeds NEW treatment-area drafts. UI default only; the value
+  // actually used stays on session_blocks.machine_frequency.
+  default_machine_frequency: MachineFrequency | null;
   created_at: string;
 };
 

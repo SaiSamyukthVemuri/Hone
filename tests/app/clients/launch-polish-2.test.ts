@@ -203,7 +203,7 @@ describe("9 + back-nav regressions hold", () => {
   it("client page Last session uses the shared summary components", () => {
     expect(CLIENT_PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
     expect(CLIENT_PAGE).toMatch(
-      /<FromLastVisitForToday[\s\S]{0,40}summary=\{lastTreatmentSummary\}/,
+      /<FromLastVisitForToday[\s\S]{0,40}summary=\{preClientWatchPlan\}/,
     );
   });
 });

@@ -63,6 +63,10 @@ type Props = {
   // picker with the attached treatment plan's primary_area (if any). The
   // practitioner can change it; never overrides their choice or saved data.
   defaultPrimaryArea?: string | null;
+  // PR #203 (migration 0084): sticky machine frequency. Seeds NEW
+  // treatment-area drafts from the practitioner's last-used value;
+  // editable per area; the block row still stores the actual value.
+  defaultMachineFrequency?: string | null;
 };
 
 export function SessionBlocksView({
@@ -72,6 +76,7 @@ export function SessionBlocksView({
   orphanEntries,
   clientTagLabels = [],
   defaultPrimaryArea = null,
+  defaultMachineFrequency = null,
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -122,6 +127,9 @@ export function SessionBlocksView({
           // DIFFERENT area, and silently repeating the previous one
           // (chin -> chin when she wanted upper lip) fought her.
           defaultPrimaryArea={blocks.length === 0 ? defaultPrimaryArea : null}
+          // PR #203: unlike the plan-area seed, the frequency seed
+          // applies to EVERY new area; the machine rarely changes.
+          defaultMachineFrequency={defaultMachineFrequency ?? null}
           onCancel={() => setAdding(false)}
         />
       ) : (

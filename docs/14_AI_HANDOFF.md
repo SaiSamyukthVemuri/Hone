@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #202)
+## Current production status (as of PR #203)
+
+- **Sticky machine frequency + chip polish + Sessions Watch/Plan source** (PR #203, **migration 0084**: `practitioners.default_machine_frequency`, additive + nullable; apply to prod BEFORE merging). Machine frequency toggle defaults from the practitioner's last-used value (saved best-effort by the treatment-area save actions; editable per area; block row still stores the actual value). Reaction/response chips show leading + like the other observation chips. The Last treatment card's Watch/Plan band uses `pickPreClientWatchPlanSource` (newest session with any watch/plan content), matching the charting page's pre-client context. Live payments still disabled; enablement blockers unchanged (legal/accounting review + Willow Stripe checklist, docs/18 §16).
+
+## Earlier production status (as of PR #202)
 
 - **Payment default service label** (PR #202, UI/copy only). The Session payment prepare form shows "Booked service: <name> (<N> min)" directly under the Amount field whenever the PR #200 default resolved (both service-price and custom-pricing sources; reminder line kept; field editable; no fake label when no default). No resolver/action/executor/gate change. **Numbering: controlled live enablement (docs/18 "PR #202") shifts to the next available PR number.** PR #196 fee smoke closed; live payments still disabled; remaining enablement blockers: legal/accounting review + Willow live Stripe checklist (docs/18 §16).
 

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { findProbeOptionByKey } from "@/lib/probes";
 import {
@@ -235,6 +236,31 @@ async function assertSessionInStudio(
     .maybeSingle();
   if (error) throw new Error(`Failed to load session: ${error.message}`);
   if (!data) throw new Error("Session not found.");
+}
+
+
+// PR #203 (migration 0084): sticky machine-frequency default.
+// Chloe's machine frequency "pretty much always stays the same unless
+// I change it", so the last value she saves on a treatment area
+// becomes her default for NEW treatment-area drafts (cross-session,
+// cross-device). Best-effort UI preference: it never blocks or fails
+// the treatment-area save, validates against the same two allowed
+// values as the schema CHECK, and writes only the authenticated
+// practitioner's own row.
+async function rememberMachineFrequencyDefault(
+  practitionerId: string,
+  frequency: MachineFrequency | null | undefined,
+): Promise<void> {
+  if (frequency !== "13.56 MHz" && frequency !== "27.12 MHz") return;
+  try {
+    const admin = createAdminClient();
+    await admin
+      .from("practitioners")
+      .update({ default_machine_frequency: frequency })
+      .eq("id", practitionerId);
+  } catch {
+    // UI default only; the block row already saved.
+  }
 }
 
 export async function createSessionBlockAction(
@@ -854,6 +880,10 @@ export async function createTreatmentAreaWithEntryAction(
     }
   }
 
+  await rememberMachineFrequencyDefault(
+    practitioner.id,
+    (input.machineFrequency ?? null) as MachineFrequency | null,
+  );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   revalidatePath(`/clients/${input.clientId}`);
   return { ok: true, block: block as SessionBlock };
@@ -1024,6 +1054,10 @@ export async function updateTreatmentAreaWithEntryAction(
     }
   }
 
+  await rememberMachineFrequencyDefault(
+    practitioner.id,
+    (input.machineFrequency ?? null) as MachineFrequency | null,
+  );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   revalidatePath(`/clients/${input.clientId}`);
   return { ok: true, block: block as SessionBlock };

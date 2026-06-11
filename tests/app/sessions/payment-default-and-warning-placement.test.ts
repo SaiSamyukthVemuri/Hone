@@ -61,7 +61,7 @@ describe("From last visit box is attached to the Last treatment card", () => {
 
   it("is omitted cleanly when there is no watch/plan content", () => {
     // Host gate (no empty footer margins)...
-    expect(cardRegion).toMatch(/hasFromLastVisitContent\(lastTreatmentSummary\)/);
+    expect(cardRegion).toMatch(/hasFromLastVisitContent\(preClientWatchPlan\)/);
     // ...and the component itself still returns null when empty.
     expect(SUMMARY).toMatch(
       /if \(!hasFromLastVisitContent\(summary\)\) \{\s*\n\s*return null;/,
