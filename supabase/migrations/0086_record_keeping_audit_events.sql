@@ -303,3 +303,22 @@ create trigger session_blocks_probe_lot_audit_update
   for each row
   when (old.probe_lot_number is distinct from new.probe_lot_number)
   execute function public.record_keeping_audit_probe_lot();
+
+-- 6. Lock down direct execution of the definer functions -----------------------
+
+-- Postgres grants EXECUTE on new functions to PUBLIC by default.
+-- These four functions must run ONLY via the triggers above (trigger
+-- firing checks function privileges at trigger-creation time, not at
+-- call time, so revoking EXECUTE does not affect the triggers), and
+-- the actor helper must not be callable as an RPC by clients. After
+-- these revokes, no normal role can invoke any of them directly;
+-- audit insertion stays trigger-owned and append-only.
+
+revoke execute on function public.record_keeping_audit_actor(uuid)
+  from public, anon, authenticated;
+revoke execute on function public.record_keeping_audit_row()
+  from public, anon, authenticated;
+revoke execute on function public.record_keeping_audit_session_aftercare()
+  from public, anon, authenticated;
+revoke execute on function public.record_keeping_audit_probe_lot()
+  from public, anon, authenticated;

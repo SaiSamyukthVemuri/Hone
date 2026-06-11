@@ -46,6 +46,43 @@ describe("audit table + immutability (migration 0086)", () => {
     expect(MIGRATION).not.toMatch(/^grant /im);
   });
 
+  it("all four definer functions have explicit REVOKE EXECUTE from public/anon/authenticated", () => {
+    for (const fn of [
+      "record_keeping_audit_actor\\(uuid\\)",
+      "record_keeping_audit_row\\(\\)",
+      "record_keeping_audit_session_aftercare\\(\\)",
+      "record_keeping_audit_probe_lot\\(\\)",
+    ]) {
+      expect(MIGRATION).toMatch(
+        new RegExp(
+          `revoke execute on function public\\.${fn}\\s*\\n\\s*from public, anon, authenticated;`,
+        ),
+      );
+    }
+  });
+
+  it("no app code calls the audit functions directly (triggers are the only writers)", () => {
+    const out = execSync(
+      'grep -rl "record_keeping_audit_actor\\|record_keeping_audit_row\\|record_keeping_audit_session_aftercare\\|record_keeping_audit_probe_lot" app lib components 2>/dev/null || true',
+      { cwd: process.cwd() },
+    )
+      .toString()
+      .trim();
+    expect(out).toBe("");
+    // And no app code inserts into the audit table directly.
+    const inserts = execSync(
+      'grep -rl "record_keeping_audit_events" app lib components 2>/dev/null || true',
+      { cwd: process.cwd() },
+    )
+      .toString()
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    expect(inserts).toEqual(["lib/record-keeping/queries.ts"]);
+    const QUERIES_SRC = read("lib/record-keeping/queries.ts");
+    expect(QUERIES_SRC).not.toMatch(/record_keeping_audit_events"\)\s*\n?\s*\.insert/);
+  });
+
   it("trigger functions are narrow security definer with empty search_path", () => {
     // Four function declarations (actor helper + three triggers); the
     // line-anchored match avoids counting prose comments.
