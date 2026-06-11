@@ -14,6 +14,10 @@ import {
   type ClinicalSummaryBlock,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
+import {
+  AreaSummaries,
+  FromLastVisitForToday,
+} from "@/components/last-session-summary";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
@@ -942,30 +946,6 @@ function LastSessionCard({
       <span className="text-neutral-500 capitalize"> · {session.modality}</span>
     </>
   );
-  const detailLines: Array<{ label: string; value: string }> = [];
-  if (summary?.areaLine) {
-    detailLines.push({
-      label: "Treated",
-      value:
-        summary.blockCount > 1
-          ? `${summary.areaLine} (${summary.blockCount} areas recorded)`
-          : summary.areaLine,
-    });
-  }
-  if (summary?.settingsLine)
-    detailLines.push({
-      // Multi-block sessions: the compact line is the FIRST area's
-      // settings; the label says so and the View full session link
-      // below carries the rest. Never imply one block is the visit.
-      label: summary.blockCount > 1 ? "Settings (first area)" : "Settings",
-      value: summary.settingsLine,
-    });
-  if (summary?.probeLine)
-    detailLines.push({ label: "Probe", value: summary.probeLine });
-  if (summary?.toleranceLine)
-    detailLines.push({ label: "Tolerance", value: summary.toleranceLine });
-  if (summary?.reactionLine)
-    detailLines.push({ label: "Response", value: summary.reactionLine });
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -983,25 +963,18 @@ function LastSessionCard({
           sessionLine
         )}
       </p>
-      {detailLines.length > 0 && (
-        <dl className="mt-2 flex flex-col gap-1 text-sm text-neutral-700 dark:text-neutral-300">
-          {detailLines.map((line) => (
-            <div key={line.label} className="flex gap-2">
-              <dt className="w-20 shrink-0 text-neutral-500">{line.label}</dt>
-              <dd>{line.value}</dd>
-            </div>
-          ))}
-        </dl>
+      {/* PR #191: one compact mini-summary PER treatment area, plus
+          ONE combined From last visit box (watch + plan). Never a
+          first-area-only line, never two competing warning boxes. */}
+      {summary && summary.areas.length > 0 && (
+        <div className="mt-3">
+          <AreaSummaries summary={summary} />
+        </div>
       )}
-      {summary?.cautionFlagged && (
-        <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
-          Watch today{summary.cautionLine ? `: ${summary.cautionLine}` : ""}
-        </p>
-      )}
-      {summary?.nextSessionNote && (
-        <p className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
-          From last visit, for today: {summary.nextSessionNote}
-        </p>
+      {summary && (
+        <div className="mt-3">
+          <FromLastVisitForToday summary={summary} />
+        </div>
       )}
       {session.session_notes && (
         <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">

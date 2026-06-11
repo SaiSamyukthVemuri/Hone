@@ -7,13 +7,17 @@ import {
   toleranceLabel,
 } from "@/lib/sessions/clinical-response";
 
-// PR #190 (clinical memory). Pure formatter that condenses the most
-// recent session + its blocks into the compact lines shown at the
-// point of care (appointment detail "Last session" card and the
-// new-session "Previous session context" panel). Every line is null
-// when its data is absent so old records render without empty labels;
-// callers print only non-null lines. No I/O here: testable in
-// isolation, shared by both surfaces.
+// PR #190 introduced this helper; PR #191 reshaped it after Chloe's
+// practitioner smoke: a first-area-only compact line made multi-area
+// sessions useless at a glance. The summary is now PER TREATMENT
+// AREA: each area carries its own settings/probe/tolerance/response
+// mini-summary, and the per-area cautions plus the session-level
+// next-session note are lifted into ONE combined "From last visit,
+// for today" block (watchLines + nextSessionNote) so the UI never
+// renders two competing warning boxes. Pure formatter, no I/O;
+// shared by the appointment detail card and the new-session panel.
+// Every line is null when its data is absent so old records render
+// without empty labels.
 
 export type ClinicalSummaryBlock = Pick<
   SessionBlock,
@@ -34,26 +38,27 @@ export type ClinicalSummaryBlock = Pick<
   | "caution_note"
 >;
 
-export type LastSessionSummary = {
-  // Number of (non-deleted) blocks the session recorded. The settings
-  // line below is the FIRST block's settings; when blockCount > 1 the
-  // UI labels it "first area" so the line never implies it covers the
-  // whole session.
-  blockCount: number;
-  // "Upper lip (Left side), Chin"
-  areaLine: string | null;
-  // "Thermolysis - Synchro - EL 14 - 30 min" (first block with settings)
+// One treatment area's at-a-glance memory. Practitioner-facing
+// naming: this is a "treatment area", never a "block".
+export type AreaSummary = {
+  // "Upper lip (Left)", legacy block_name, or "Treatment area N".
+  name: string;
+  // "Thermolysis - Synchro - EL 14 - 30 min"
   settingsLine: string | null;
-  // "Ballet Gold F3" (denormalized probe_label from 0041)
   probeLine: string | null;
-  // "3/5 - Okay" (worst rating across blocks: the cautious summary)
+  // "3/5 - Okay"
   toleranceLine: string | null;
   // "Mild redness. Settled within an hour."
   reactionLine: string | null;
-  // True when any block flagged caution; cautionLine may still be
-  // null (flag without a note) and the caller shows generic copy.
-  cautionFlagged: boolean;
-  cautionLine: string | null;
+};
+
+export type LastSessionSummary = {
+  areas: AreaSummary[];
+  // One line per caution raised, prefixed with its area: "Upper lip:
+  // start lower and check sensitivity." A flag without a note becomes
+  // "<area>: flagged to watch." Rendered inside the single combined
+  // "From last visit, for today" box, never as a second warning box.
+  watchLines: string[];
   // sessions.next_session_note from the previous visit, trimmed.
   nextSessionNote: string | null;
 };
@@ -69,11 +74,40 @@ function trimmedOrNull(value: string | null | undefined): string | null {
   return t && t.length > 0 ? t : null;
 }
 
-function blockAreaLabel(block: ClinicalSummaryBlock): string | null {
+function areaName(block: ClinicalSummaryBlock, index: number): string {
   const area = trimmedOrNull(block.primary_area);
-  if (!area) return trimmedOrNull(block.block_name);
-  const side = block.side ? sessionBlockSideLabel(block.side) : null;
-  return side ? `${area} (${side})` : area;
+  if (area) {
+    const side = block.side ? sessionBlockSideLabel(block.side) : null;
+    return side ? `${area} (${side})` : area;
+  }
+  const legacyName = trimmedOrNull(block.block_name);
+  if (legacyName) return legacyName;
+  return `Treatment area ${index + 1}`;
+}
+
+function settingsLine(block: ClinicalSummaryBlock): string | null {
+  const parts: string[] = [];
+  if (block.mode && MODE_LABELS[block.mode]) parts.push(MODE_LABELS[block.mode]);
+  if (block.apilus_modality) parts.push(apilusModalityLabel(block.apilus_modality));
+  if (block.energy_level !== null && block.energy_level !== undefined) {
+    parts.push(`EL ${block.energy_level}`);
+  }
+  if (block.minutes_performed !== null && block.minutes_performed !== undefined) {
+    parts.push(`${block.minutes_performed} min`);
+  }
+  return parts.length > 0 ? parts.join(" - ") : null;
+}
+
+function reactionLine(block: ClinicalSummaryBlock): string | null {
+  if (!isReactionType(block.reaction_type)) {
+    // A note without a coded reaction still carries memory.
+    const noteOnly = trimmedOrNull(block.reaction_notes);
+    return noteOnly && noteOnly.length <= 140 ? noteOnly : null;
+  }
+  const label = reactionTypeLabel(block.reaction_type);
+  const note = trimmedOrNull(block.reaction_notes);
+  if (note && note.length <= 140) return `${label}. ${note}`;
+  return label;
 }
 
 export function buildLastSessionSummary(input: {
@@ -84,91 +118,28 @@ export function buildLastSessionSummary(input: {
     (a, b) => a.sort_order - b.sort_order,
   );
 
-  // Areas: unique labels in block order.
-  const areas: string[] = [];
-  for (const b of blocks) {
-    const label = blockAreaLabel(b);
-    if (label && !areas.includes(label)) areas.push(label);
-  }
-  const areaLine = areas.length > 0 ? areas.join(", ") : null;
+  const areas: AreaSummary[] = blocks.map((b, i) => ({
+    name: areaName(b, i),
+    settingsLine: settingsLine(b),
+    probeLine: trimmedOrNull(b.probe_label),
+    toleranceLine:
+      typeof b.tolerance_rating === "number"
+        ? `${b.tolerance_rating}/5 - ${toleranceLabel(b.tolerance_rating)}`
+        : null,
+    reactionLine: reactionLine(b),
+  }));
 
-  // Settings: the first block that recorded any machine setting. One
-  // block is the overwhelmingly common case; "first area's settings"
-  // keeps the line short on multi-area sessions.
-  let settingsLine: string | null = null;
-  for (const b of blocks) {
-    const parts: string[] = [];
-    if (b.mode && MODE_LABELS[b.mode]) parts.push(MODE_LABELS[b.mode]);
-    if (b.apilus_modality) parts.push(apilusModalityLabel(b.apilus_modality));
-    if (b.energy_level !== null && b.energy_level !== undefined) {
-      parts.push(`EL ${b.energy_level}`);
-    }
-    if (b.minutes_performed !== null && b.minutes_performed !== undefined) {
-      parts.push(`${b.minutes_performed} min`);
-    }
-    if (parts.length > 0) {
-      settingsLine = parts.join(" - ");
-      break;
-    }
-  }
-
-  const probeLine =
-    blocks.map((b) => trimmedOrNull(b.probe_label)).find(Boolean) ?? null;
-
-  // Tolerance: the WORST (lowest) rating across blocks. If the client
-  // struggled anywhere, that is what the next visit needs to know.
-  const ratings = blocks
-    .map((b) => b.tolerance_rating)
-    .filter((r): r is number => typeof r === "number");
-  const worst = ratings.length > 0 ? Math.min(...ratings) : null;
-  const toleranceLine =
-    worst !== null ? `${worst}/5 - ${toleranceLabel(worst)}` : null;
-
-  // Reaction: unique non-"none" reactions in block order; "none" only
-  // surfaces when it is the sole recorded value (an explicit all-clear
-  // is information; an absent value is not). Short notes ride along.
-  const reactionLabels: string[] = [];
-  let sawNone = false;
-  for (const b of blocks) {
-    if (!isReactionType(b.reaction_type)) continue;
-    if (b.reaction_type === "none") {
-      sawNone = true;
-      continue;
-    }
-    const label = reactionTypeLabel(b.reaction_type);
-    if (!reactionLabels.includes(label)) reactionLabels.push(label);
-  }
-  let reactionLine: string | null = null;
-  if (reactionLabels.length > 0) {
-    reactionLine = reactionLabels.join(", ");
-    const note = blocks
-      .map((b) => trimmedOrNull(b.reaction_notes))
-      .find(Boolean);
-    if (note && note.length <= 140) {
-      reactionLine = `${reactionLine}. ${note}`;
-    }
-  } else if (sawNone) {
-    reactionLine = reactionTypeLabel("none");
-  }
-
-  // Caution: flagged when ANY block raised it; distinct notes joined.
-  const cautionFlagged = blocks.some((b) => b.caution_for_next_session);
-  const cautionNotes: string[] = [];
-  for (const b of blocks) {
+  const watchLines: string[] = [];
+  blocks.forEach((b, i) => {
     const note = trimmedOrNull(b.caution_note);
-    if (note && !cautionNotes.includes(note)) cautionNotes.push(note);
-  }
-  const cautionLine = cautionNotes.length > 0 ? cautionNotes.join(" ") : null;
+    if (!b.caution_for_next_session && !note) return;
+    const name = areaName(b, i);
+    watchLines.push(note ? `${name}: ${note}` : `${name}: flagged to watch.`);
+  });
 
   return {
-    blockCount: blocks.length,
-    areaLine,
-    settingsLine,
-    probeLine,
-    toleranceLine,
-    reactionLine,
-    cautionFlagged,
-    cautionLine,
+    areas,
+    watchLines,
     nextSessionNote: trimmedOrNull(input.nextSessionNote),
   };
 }

@@ -381,13 +381,24 @@ export async function updateSessionPriceAction(formData: FormData): Promise<void
 // client's NEXT visit, written while charting this one. Optional;
 // empty input clears the note. Surfaced as "From last visit" context
 // on the next charting screen and in the previous-session panels.
+// PR #191: returns a result instead of throwing so the form can show
+// explicit saved / error feedback (Chloe could not tell whether her
+// note saved).
+export type NextSessionNoteResult =
+  | { ok: true; cleared: boolean }
+  | { ok: false; error: string };
+
 export async function updateNextSessionNoteAction(
   formData: FormData,
-): Promise<void> {
+): Promise<NextSessionNoteResult> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
-  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+  if (typeof sessionId !== "string" || !sessionId) {
+    return { ok: false, error: "Missing session." };
+  }
+  if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: "Missing client." };
+  }
 
   const note = nullableString(formData.get("next_session_note"));
 
@@ -400,9 +411,12 @@ export async function updateNextSessionNoteAction(
     .update({ next_session_note: note })
     .eq("id", sessionId)
     .eq("studio_id", studio.id);
-  if (error) throw new Error(`Failed to save the note: ${error.message}`);
+  if (error) {
+    return { ok: false, error: "Could not save the note. Try again." };
+  }
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+  return { ok: true, cleared: note === null };
 }
 
 export async function updateSessionPerformerAction(
