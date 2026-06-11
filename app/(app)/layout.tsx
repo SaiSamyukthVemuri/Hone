@@ -40,7 +40,7 @@ export default async function AppLayout({
             <span className="select-none text-xl font-semibold tracking-tight">
               Hone
             </span>
-            <nav className="flex items-center gap-1 text-sm">
+            <nav className="flex items-center gap-0.5 whitespace-nowrap text-sm md:gap-1">
               {/* PR #208: the landing page is the practice Dashboard
                   (it contains the Today section). */}
               <Link
@@ -83,12 +83,14 @@ export default async function AppLayout({
               </Link>
               {/* PR #205: health-inspection record keeping. A
                   top-level operational logbook, deliberately NOT
-                  under Settings (Chloe's ask). */}
+                  under Settings (Chloe's ask). PR #209: nav label
+                  shortened to "Records" so the header fits without
+                  wrapping; the page heading stays "Record Keeping". */}
               <Link
                 href="/records"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
-                Record Keeping
+                Records
               </Link>
               <Link
                 href="/settings/profile"

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #208)
+## Current production status (as of PR #209)
+
+- **Header navigation fit** (PR #209, no migration). Top-nav label shortened to "Records" (route /records and the "Record Keeping" page heading unchanged); nav links are whitespace-nowrap with a tighter sub-md gap so the post-#208 header fits without wrapping. UI-only. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #208)
 
 - **Practice Dashboard V1** (PR #208, no migration). /dashboard (nav renamed Dashboard; still the login landing; Today roster preserved as a section) gains a period filter (today/week/month, default week, studio tz), appointment counts, booked/completed SERVICE VALUE (service-menu prices; never "revenue"; required helper copy pinned), an explicit payments-posture card (live Off / test Available / collected revenue not enabled; period test-mode counts), and action cards (incomplete procedure records / missing probe lots / aftercare not marked -> Record Keeping procedures). Clients-with-watch-notes deferred. Live payments still disabled; docs/18 blockers unchanged.
 
