@@ -8,7 +8,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const TAB = read("components/profile-tab.ts");
 const PAGE = read("app/(app)/clients/[id]/page.tsx");
 const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
-const INFO = read("components/session-info-card.tsx");
+const INFO = read("components/session-performer-line.tsx");
 const SUM = read("components/last-session-summary.tsx");
 
 describe("1. Messages tab actually opens", () => {
@@ -24,8 +24,8 @@ describe("1. Messages tab actually opens", () => {
 
 describe("2. Last Session carries cautions + next-visit context", () => {
   it("client page renders watch/plan via FromLastVisitForToday and per-area summaries", () => {
-    expect(PAGE).toMatch(/<AreaSummaries summary=\{lastSessionSummary\}/);
-    expect(PAGE).toMatch(/<FromLastVisitForToday summary=\{lastSessionSummary\}/);
+    expect(PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
+    expect(PAGE).toMatch(/<FromLastVisitForToday summary=\{lastTreatmentSummary\}/);
     expect(SUM).toMatch(/Watch:<\/span>/);
     expect(SUM).toMatch(/Plan:<\/span>/);
     expect(SUM).toMatch(/Tolerance/);
@@ -33,13 +33,14 @@ describe("2. Last Session carries cautions + next-visit context", () => {
 });
 
 describe("3. charting order + chips", () => {
-  it("order: readings ... Client tolerance -> Treatment observations -> For next visit", () => {
+  it("order: readings ... Client tolerance -> Treatment observations (PR #199: area-level For next visit is gone)", () => {
     const tol = FORM.indexOf(">Client tolerance<");
     const obs = FORM.indexOf(">Treatment observations<");
-    const nv = FORM.indexOf(">For next visit<");
     expect(tol).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(tol);
-    expect(nv).toBeGreaterThan(obs);
+    // PR #199: the per-area "For next visit" section was consolidated
+    // into the single session-level note.
+    expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });
   it("no reaction <select> remains; reactions are chips in observations", () => {
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);

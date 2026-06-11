@@ -90,11 +90,15 @@ describe("block actions: response validation and persistence", () => {
 });
 
 describe("block form: optional capture, round-trip on edit", () => {
-  it("renders tolerance + observations + caution sections (PR #198 shape)", () => {
+  it("renders tolerance + observations; area-level caution UI is gone but data round-trips (PR #199 shape)", () => {
     expect(FORM).toMatch(/Client tolerance/);
     expect(FORM).toMatch(/How did the client tolerate this area\?/);
-    expect(FORM).toMatch(/Caution for next session/);
-    expect(FORM).toMatch(/Anything to watch next time\?/);
+    // PR #199: no per-area caution checkbox or note input; the saved
+    // values still load into the draft and save back unchanged.
+    expect(FORM).not.toMatch(/Caution for next session/);
+    expect(FORM).not.toMatch(/Anything to watch next time\?/);
+    expect(FORM).toMatch(/cautionForNextSession: block\.caution_for_next_session \?\? false/);
+    expect(FORM).toMatch(/cautionNote: draft\.cautionNote\.trim\(\) \|\| null/);
   });
 
   it("tolerance is a 1-5 tap control, never required", () => {
