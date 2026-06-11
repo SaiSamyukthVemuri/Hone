@@ -35,6 +35,12 @@ export default async function AdminLayout({
               Overview
             </Link>
             <Link
+              href="/admin/ops-alerts"
+              className="text-neutral-200 hover:text-white"
+            >
+              Ops alerts
+            </Link>
+            <Link
               href="/dashboard"
               className="text-neutral-200 hover:text-white"
             >

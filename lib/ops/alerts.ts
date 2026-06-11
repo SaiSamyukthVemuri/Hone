@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 
 // ===========================================================================
 // recordOpsAlert (PR #153)
@@ -21,15 +22,13 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 //
 // What this helper does NOT do
 // ----------------------------
-// * No operator email dispatch. Earlier draft imported sendEmailSafely
-//   from lib/email/send-appointment.ts to fire critical alerts; that
-//   coupled ops alerting back into the appointment email subsystem
-//   the helper is meant to OBSERVE. Even with an email_* loop guard,
-//   the dependency cycle (ops alerts <- appointment email helper ->
-//   ops alerts) is avoidable. v1 ships durable-row + structured-log
-//   only. OPS_ALERT_EMAILS is reserved for a future PR that adds a
-//   separate ops/alert-email.ts using Resend directly with no path
-//   back into lib/email/send-appointment.ts.
+// * No appointment-email-subsystem coupling. PR #193 added operator
+//   email for CRITICAL alerts via the standalone
+//   lib/ops/alert-email.ts (bare Resend client; reads
+//   OPS_ALERT_EMAILS; never calls back into recordOpsAlert), so the
+//   PR #153 cycle concern (ops alerts <- appointment email helper ->
+//   ops alerts) stays structurally impossible: this module still
+//   never imports lib/email/send-appointment.ts.
 // * No retry. A failure to insert is logged and dropped.
 // * No SMS. SMS alerts are out of scope for this PR.
 // * No payment-moving code. The helper imports nothing from
@@ -174,11 +173,10 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
   }
 }
 
-// Operator email dispatch is intentionally NOT implemented in this
-// module. See the file-top doc block for the rationale (dependency
-// cycle with lib/email/send-appointment.ts). A future PR may add a
-// separate lib/ops/alert-email.ts that uses Resend directly with no
-// path back into the appointment-email helper.
+// Operator email dispatch lives in lib/ops/alert-email.ts (PR #193):
+// critical-severity only, bare Resend client, no path back into the
+// appointment-email helper, never calls recordOpsAlert. This module
+// invokes it after the durable write attempt.
 
 // Main entry point.
 export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
@@ -239,9 +237,34 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
     });
   }
 
-  // Operator email is intentionally deferred (see file-top
-  // comment). OPS_ALERT_EMAILS is reserved for a future PR; until
-  // then the durable ops_alerts row + the structured stderr log
-  // are the operator surfaces. SQL recipes for triage live in
-  // docs/11_RUNBOOK.md.
+  // PR #193: operator email for CRITICAL alerts only, AFTER the
+  // durable write attempt so an email failure can never block or
+  // lose the row. Dispatched via the standalone
+  // lib/ops/alert-email.ts (bare Resend client; no path into
+  // lib/email/send-appointment.ts; never calls recordOpsAlert, so
+  // alert-email failures cannot recurse). Warnings/info stay
+  // row+log only. notifyCriticalOpsAlert never throws; the
+  // try/catch is belt-and-braces.
+  if (input.severity === "critical") {
+    try {
+      await notifyCriticalOpsAlert({
+        event: input.event,
+        message,
+        createdAtIso: new Date().toISOString(),
+        studioId: input.studioId ?? null,
+        appointmentId: input.appointmentId ?? null,
+        clientId: input.clientId ?? null,
+        stripeEventId: input.stripeEventId ?? null,
+        stripePaymentIntentId: input.stripePaymentIntentId ?? null,
+        route: input.route ?? null,
+      });
+    } catch (err) {
+      structuredConsoleLog({
+        event: "ops_alert_email_dispatch_threw",
+        origin_event: input.event,
+        err_message: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
 }

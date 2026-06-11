@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #192)
+## Current production status (as of PR #193)
+
+- **Ops alerts dashboard + critical notifications** (PR #193, no migration). The docs/18 §6 P0 live-payment blocker is closed: `/admin/ops-alerts` (ADMIN_EMAILS-gated) lists unresolved alerts critical-first with safe metadata and a conditional mark-resolved action (0067's `resolved_*` columns; no migration); `recordOpsAlert` dispatches a critical-only operator email AFTER the durable insert via the new standalone `lib/ops/alert-email.ts` (reads `OPS_ALERT_EMAILS`, bare Resend client, no appointment-email import, never calls recordOpsAlert, never throws; unset env = dashboard/rows still work). **Set `OPS_ALERT_EMAILS` in Production to activate emails.** Remaining live-payment blockers: ledger unification (#194), live receipt copy + legal/accounting review (#195), test-mode copy + controlled enablement (#196). Stripe gates unchanged from PR #192.
+
+## Earlier production status (as of PR #192)
 
 - **Live payments readiness audit** (PR #192, docs + gate-pin tests only; no runtime change). `docs/18_LIVE_PAYMENTS_AUDIT.md` is now the current readiness picture: **NOT READY FOR LIVE PAYMENTS (4/10; internal test-mode only)**. P0 blockers: ops-alert human visibility, fee-ledger unification, live receipt copy, legal/accounting review, test-mode copy pass. Agreed sequence: #193 ops alerts dashboard/notifications, #194 ledger unification, #195 gate preparation, #196 controlled enablement. Stripe gates verified unchanged and strong.
 
