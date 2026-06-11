@@ -29,7 +29,7 @@ export default async function AppLayout({
           Solid background plus a higher z-index than every in-page
           element (calendar slot z-10, TimePicker dropdown z-20, etc.)
           guarantees the header sits visually above everything. */}
-      <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+      <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3 md:px-8">
           <div className="flex items-center gap-6">
             {/* Brand wordmark is intentionally non-interactive in the

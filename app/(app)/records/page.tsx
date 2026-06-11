@@ -170,6 +170,9 @@ export default async function RecordKeepingPage({
         </p>
       </div>
 
+      {/* PR #207: inspector-friendly print/export for the ACTIVE
+          section. Opens the protected print view; history is opt-in
+          there. */}
       <nav className="flex flex-wrap gap-2" aria-label="Record keeping sections">
         {SECTIONS.map((s) => (
           <Link
@@ -185,6 +188,12 @@ export default async function RecordKeepingPage({
             {s.label}
           </Link>
         ))}
+        <Link
+          href={`/records/print?section=${section}`}
+          className="ml-auto rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+        >
+          Print / Export
+        </Link>
       </nav>
 
       {section === "sterile" && <SterileItemsSection studioId={studio.id} />}
