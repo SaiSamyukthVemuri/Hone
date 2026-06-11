@@ -432,7 +432,10 @@ export function DayColumn({
       {isToday && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-0 bg-sky-50/70 dark:bg-sky-950/25"
+          // PR #194 (Chloe iPad feedback): stronger wash than the
+          // original sky-50/70, which washed out entirely on iPad
+          // brightness/color profiles. Events still read on top.
+          className="pointer-events-none absolute inset-0 z-0 bg-sky-100/80 dark:bg-sky-950/40"
         />
       )}
 

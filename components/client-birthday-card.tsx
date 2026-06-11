@@ -2,10 +2,13 @@
 
 // Practitioner-only Birthday card on the client profile Overview tab.
 //
-// Month + day only. No year input, no age display. The form submits a
-// month and a day; the server action preserves any existing real year
-// on edit, or uses a 1900 sentinel for fresh entries (see
-// app/(app)/clients/[id]/birthday-actions.ts for the rationale).
+// Month + day + optional YEAR (PR #194, Chloe retest: year must be
+// collectable). The form submits month/day and an optional year; the
+// server action stores a provided year as the real date_of_birth
+// year, preserves an existing real year when the field is blank, and
+// falls back to the sentinel for fresh month/day-only entries (see
+// app/(app)/clients/[id]/birthday-actions.ts). Intake already
+// collects a full Date of birth; this card now matches.
 //
 // Practitioner-facing only. Never imported by public/email/cron/api
 // surfaces (audited by grep in PR #28).
@@ -72,6 +75,18 @@ export function ClientBirthdayCard({
   action,
 }: Props) {
   const md = parseMonthDay(dateOfBirth);
+  // PR #194: surface a REAL stored year (sentinel/placeholder years
+  // outside the plausible range stay hidden) so the year input
+  // round-trips and the display can show it.
+  const storedYear = dateOfBirth
+    ? parseInt(dateOfBirth.slice(0, 4), 10)
+    : NaN;
+  const realYear =
+    Number.isFinite(storedYear) &&
+    storedYear >= 1900 &&
+    storedYear <= new Date().getFullYear()
+      ? storedYear
+      : null;
   const accent = resolveBirthdayColor(accentColor);
   const [editing, setEditing] = useState(false);
 
@@ -148,6 +163,7 @@ export function ClientBirthdayCard({
           {md ? (
             <p className="text-sm text-neutral-800 dark:text-neutral-200">
               {MONTHS[md.month - 1]} {md.day}
+              {realYear ? `, ${realYear}` : ""}
             </p>
           ) : (
             <p className="text-xs text-neutral-500">
@@ -200,6 +216,23 @@ export function ClientBirthdayCard({
                     </option>
                   ))}
                 </select>
+              </label>
+              {/* PR #194 (Chloe retest): year is collected. Optional so
+                  existing month/day-only birthdays keep working; when
+                  set it becomes the real year on date_of_birth. */}
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+                  Year
+                </span>
+                <input
+                  type="number"
+                  name="birthday_year"
+                  min={1900}
+                  max={new Date().getFullYear()}
+                  defaultValue={realYear ?? ""}
+                  placeholder="YYYY"
+                  className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                />
               </label>
               <SaveButton />
               <button

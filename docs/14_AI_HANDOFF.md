@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #193)
+## Current production status (as of PR #194)
+
+- **Chloe launch polish round 2** (PR #194, no migration). Treatment time card reframed as a tracker (goal UI hidden); collapsible session groups (only Needs charting open; Cancelled and no-shows merged; Session history renamed + collapsible); one-tap "Copy areas and settings from last session" onto an empty chart (never copies client response; duplication-proof); client-page Last session uses the shared per-area summary; treatment-plan card owns plan context (detach-only attachment state, redundant session-number line hidden when attached); "Session price" replaces "Price paid"; "For next visit" replaces "Plan for next visit"; Overview puts allergies first and collapses messages; birthday collects an optional real YEAR on date_of_birth (no migration); calendar today contrast strengthened for iPad. Deferred: practitioner portal/intake preview, studio logo upload. **Pre-launch blocker: awaiting Chloe's health inspector documents.** Rollout: Laura after Chloe's real consultations; Teresa (laser) later; Brooks later; calendar sync not required for launch. No payment/Stripe/auth/export/reminder change (gates unchanged from PR #193).
+
+## Earlier production status (as of PR #193)
 
 - **Ops alerts dashboard + critical notifications** (PR #193, no migration). The docs/18 §6 P0 live-payment blocker is closed: `/admin/ops-alerts` (ADMIN_EMAILS-gated) lists unresolved alerts critical-first with safe metadata and a conditional mark-resolved action (0067's `resolved_*` columns; no migration); `recordOpsAlert` dispatches a critical-only operator email AFTER the durable insert via the new standalone `lib/ops/alert-email.ts` (reads `OPS_ALERT_EMAILS`, bare Resend client, no appointment-email import, never calls recordOpsAlert, never throws; unset env = dashboard/rows still work). **Set `OPS_ALERT_EMAILS` in Production to activate emails.** Remaining live-payment blockers: ledger unification (#194), live receipt copy + legal/accounting review (#195), test-mode copy + controlled enablement (#196). Stripe gates unchanged from PR #192.
 

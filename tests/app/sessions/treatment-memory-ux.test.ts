@@ -176,7 +176,10 @@ describe("8. Sessions tab order (Chloe's order, verbatim)", () => {
     const ttt = sessionsTab.indexOf("<TreatmentTimeCard");
     const last = sessionsTab.indexOf(">Last session</h2>");
     const timeline = sessionsTab.indexOf("<ClientAppointmentTimeline");
-    const history = sessionsTab.indexOf(">Session history</h2>");
+    // PR #194: Session history is collapsible; the heading moved into
+    // the <details> summary. Search after the timeline so the intro
+    // comment's mention does not match.
+    const history = sessionsTab.indexOf("Session history", timeline);
     expect(ttt).toBeGreaterThan(-1);
     expect(last).toBeGreaterThan(ttt);
     expect(timeline).toBeGreaterThan(last);
@@ -196,7 +199,7 @@ describe("8. Sessions tab order (Chloe's order, verbatim)", () => {
 
   it("the confusing All sessions heading is renamed Session history", () => {
     expect(CLIENT_PAGE).not.toMatch(/>All sessions</);
-    expect(CLIENT_PAGE).toMatch(/>Session history</);
+    expect(CLIENT_PAGE).toMatch(/Session history/);
   });
 });
 

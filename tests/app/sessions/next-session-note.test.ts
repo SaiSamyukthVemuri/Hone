@@ -67,16 +67,17 @@ describe("capture surface: session detail page", () => {
     "utf8",
   );
 
-  it("renders the Plan for next visit form bound to the action", () => {
-    expect(SESSION_PAGE).toMatch(/Plan for next visit/);
+  it("renders the For next visit form bound to the action (renamed in PR #194)", () => {
+    expect(SESSION_PAGE).toMatch(/>For next visit</);
     expect(SESSION_PAGE).toMatch(/action=\{updateNextSessionNoteAction\}/);
     expect(SESSION_PAGE).toMatch(
       /initialNote=\{session\.next_session_note \?\? ""\}/,
     );
   });
 
-  it("the field is optional with practical example copy", () => {
-    expect(SESSION_PAGE).toMatch(/Optional\. Shown to you when/);
+  it("the field is optional, with copy deduplicating per-area watch notes", () => {
+    expect(SESSION_PAGE).toMatch(/One note for the whole visit/);
+    expect(SESSION_PAGE).toMatch(/no need to repeat them here/);
     expect(NOTE_FORM).toMatch(/Start lower on the upper lip/);
   });
 

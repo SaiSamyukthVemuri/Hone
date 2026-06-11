@@ -71,7 +71,10 @@ export function ClientAppointmentTimeline({
   const nowMs = Date.now();
   // PR #191 (Chloe smoke feedback): "Needs charting" renders ABOVE
   // "Upcoming". Charting debt is the actionable item on this tab;
-  // upcoming appointments are reference.
+  // upcoming appointments are reference. PR #194: everything except
+  // Needs charting is collapsible (Upcoming can be huge when clients
+  // book weeks ahead; charted history grows forever); cancelled and
+  // no-shows share one collapsed group.
   const groups: Group[] = [
     {
       key: "needsCharting",
@@ -81,13 +84,21 @@ export function ClientAppointmentTimeline({
     },
     { key: "upcoming", heading: "Upcoming", hint: null, rows: [] },
     { key: "charted", heading: "Charted", hint: null, rows: [] },
-    { key: "cancelled", heading: "Cancelled", hint: null, rows: [] },
+    { key: "cancelled", heading: "Cancelled and no-shows", hint: null, rows: [] },
     { key: "noShow", heading: "No-show", hint: null, rows: [] },
   ];
   const groupByKey = new Map(groups.map((g) => [g.key, g] as const));
   for (const row of rows) {
     const key = classify(row, nowMs);
     groupByKey.get(key)?.rows.push(row);
+  }
+
+  // PR #194: cancelled + no-show render as ONE collapsed group.
+  const cancelledGroup = groupByKey.get("cancelled");
+  const noShowGroup = groupByKey.get("noShow");
+  if (cancelledGroup && noShowGroup && noShowGroup.rows.length > 0) {
+    cancelledGroup.rows.push(...noShowGroup.rows);
+    noShowGroup.rows = [];
   }
 
   const nonEmpty = groups.filter((g) => g.rows.length > 0);
@@ -130,17 +141,23 @@ function TimelineGroup({
   clientId: string;
   nowMs: number;
 }) {
+  // PR #194 (Chloe retest): only "Needs charting" stays expanded by
+  // default; Upcoming, Charted, and Cancelled/no-shows collapse so a
+  // heavily-booked or long-history client does not bury the tab.
+  // Native <details> keeps this dependency-free and server-rendered.
+  const openByDefault = group.key === "needsCharting";
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 pt-1">
+    <details open={openByDefault} className="flex flex-col gap-2">
+      <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2 pt-1 [&::-webkit-details-marker]:hidden">
         <h3 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+          <span className="mr-1 text-neutral-400">▸</span>
           {group.heading}
           <span className="ml-2 text-neutral-400">({group.rows.length})</span>
         </h3>
         {group.hint && (
           <p className="text-xs text-neutral-500">{group.hint}</p>
         )}
-      </div>
+      </summary>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {group.rows.map((row) => (
           <TimelineRow
@@ -152,7 +169,7 @@ function TimelineGroup({
           />
         ))}
       </ul>
-    </div>
+    </details>
   );
 }
 

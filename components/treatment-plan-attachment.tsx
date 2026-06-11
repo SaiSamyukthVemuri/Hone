@@ -57,24 +57,23 @@ export function TreatmentPlanAttachment({
     });
   }
 
-  // State 4: attached
+  // State 4: attached. PR #194 (Chloe retest): the green
+  // TreatmentPlanBanner is the source of plan context, so this state
+  // no longer repeats "Treatment plan: <name>". It renders ONLY the
+  // detach affordance; the session page nests it directly under the
+  // banner so Detach visually belongs to the plan card.
   if (attachedPlan) {
     return (
-      <div className="flex flex-col gap-1 text-sm">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <span>
-            <span className="text-neutral-500">Treatment plan:</span>{" "}
-            <span className="font-medium">{attachedPlan.name}</span>
-          </span>
-          <button
-            type="button"
-            onClick={submitDetach}
-            disabled={pending}
-            className="text-xs text-neutral-500 underline hover:text-neutral-900 disabled:opacity-50 dark:hover:text-neutral-100"
-          >
-            Detach
-          </button>
-        </div>
+      <div className="-mt-1 flex flex-col items-end gap-1 text-sm">
+        <button
+          type="button"
+          onClick={submitDetach}
+          disabled={pending}
+          aria-label={`Detach treatment plan ${attachedPlan.name}`}
+          className="text-xs text-neutral-500 underline hover:text-neutral-900 disabled:opacity-50 dark:hover:text-neutral-100"
+        >
+          Detach from this plan
+        </button>
         {error && <p className="text-xs text-red-700">{error}</p>}
       </div>
     );

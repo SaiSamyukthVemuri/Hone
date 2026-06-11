@@ -1,5 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import {
+  buildLastSessionSummary,
+  type ClinicalSummaryBlock,
+  type LastSessionSummary,
+} from "@/lib/sessions/clinical-summary";
+import {
+  AreaSummaries,
+  FromLastVisitForToday,
+} from "@/components/last-session-summary";
 import {
   getAppointmentsForClientProfile,
   getClientById,
@@ -222,6 +232,31 @@ export default async function ClientCheatSheetPage({
     (s) => s.price_paid_cents != null,
   ).length;
 
+  // PR #194 (Chloe retest, item 6): the Last session card shows the
+  // SAME per-area clinical summary as the charting screen's Previous
+  // session context. One narrow blocks read, only when a last session
+  // exists; laser/legacy sessions without blocks fall back to the
+  // entries list below.
+  let lastSessionSummary: LastSessionSummary | null = null;
+  if (lastSession) {
+    const supabaseForSummary = await createClient();
+    const { data: lastBlocks } = await supabaseForSummary
+      .from("session_blocks")
+      .select(
+        "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+      )
+      .eq("studio_id", studio.id)
+      .eq("session_id", lastSession.id)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: true });
+    lastSessionSummary = buildLastSessionSummary({
+      blocks: (lastBlocks ?? []) as ClinicalSummaryBlock[],
+      nextSessionNote:
+        (lastSession as { next_session_note?: string | null })
+          .next_session_note ?? null,
+    });
+  }
+
   const lastPerformer = lastSession
     ? sessionPerformerName(lastSession, practitioners)
     : null;
@@ -318,12 +353,36 @@ export default async function ClientCheatSheetPage({
             removeAction={removeClientPinnedNoteAction}
           />
 
+          {/* PR #194 (Chloe retest): allergies live at the TOP of
+              Overview, directly under pinned notes. Messages and
+              billing kept pushing this down; clinical safety wins
+              the first scan. RED per the color convention. */}
+          {client.allergies && (
+            <section className="rounded-lg border border-rose-300 bg-rose-50 p-5 dark:border-rose-700 dark:bg-rose-950/30">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">
+                Allergies
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-rose-900 dark:text-rose-100">
+                {client.allergies}
+              </p>
+            </section>
+          )}
+
           {/* Secure portal messages (migration 0053). One-way
               practitioner → client only; the client reads + can
-              acknowledge from /portal. Placed under pinned notes
-              so the practitioner sees existing message review
-              state alongside the rest of the every-visit
-              priorities. */}
+              acknowledge from /portal. PR #194: collapsed by default
+              so messages stop crowding clinical context out of the
+              first screen; the count keeps unread review state
+              discoverable. */}
+          <details className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+            <summary className="cursor-pointer px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              <span className="mr-1 text-neutral-400">▸</span>
+              Messages
+              <span className="ml-2 text-neutral-400">
+                ({portalMessages.length})
+              </span>
+            </summary>
+            <div className="px-5 pb-5">
           <PortalMessagesCard
             clientId={client.id}
             clientName={client.name}
@@ -336,6 +395,8 @@ export default async function ClientCheatSheetPage({
             markReplySeenAction={markPortalReplySeenAction}
             practitionerNames={practitionerNames}
           />
+            </div>
+          </details>
 
           {/* PR #134. Consent / e-sign per-template signed status for
               this client. Renders active templates only; archived
@@ -414,23 +475,9 @@ export default async function ClientCheatSheetPage({
             );
           })()}
 
-          {/* Allergies/cautions are RED everywhere (see color convention
-              in app/(app)/dashboard/page.tsx). Previously amber here,
-              which collided with amber pinned notes and was inconsistent
-              with the rose allergy banner on the appointment briefing.
-              Allergies render above Birthday on the sidebar so the
-              first thing the practitioner scans on the profile is
-              clinical caution, not a birthday reminder. */}
-          {client.allergies && (
-            <section className="rounded-lg border border-rose-300 bg-rose-50 p-5 dark:border-rose-700 dark:bg-rose-950/30">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">
-                Allergies
-              </h2>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-rose-900 dark:text-rose-100">
-                {client.allergies}
-              </p>
-            </section>
-          )}
+          {/* PR #194: allergies moved to the top of Overview (under
+              pinned notes); see the block above the Messages
+              collapsible. */}
 
           {/* Birthday card. Compact; renders an explicit "Birthday today"
               or "Birthday month" callout when relevant. Practitioner-only;
@@ -706,7 +753,7 @@ export default async function ClientCheatSheetPage({
                       {lastSession.modality}
                       {lastPerformer && ` · ${lastPerformer}`}
                       {lastSession.price_paid_cents != null &&
-                        ` · ${formatPrice(lastSession.price_paid_cents)} paid`}
+                        ` · Session price ${formatPrice(lastSession.price_paid_cents)}`}
                     </div>
                   </div>
                   <Link
@@ -716,11 +763,22 @@ export default async function ClientCheatSheetPage({
                     Open →
                   </Link>
                 </div>
-                <LastSessionEntries
-                  modality={lastSession.modality}
-                  electrolysisEntries={lastSession.electrolysis_entries}
-                  laserEntries={lastSession.laser_entries}
-                />
+                {/* PR #194: the same per-area summary + combined
+                    From last visit box the charting screen shows.
+                    Sessions without treatment areas (laser, legacy)
+                    fall back to the raw entries list. */}
+                {lastSessionSummary && lastSessionSummary.areas.length > 0 ? (
+                  <div className="mt-3 flex flex-col gap-3">
+                    <AreaSummaries summary={lastSessionSummary} />
+                    <FromLastVisitForToday summary={lastSessionSummary} />
+                  </div>
+                ) : (
+                  <LastSessionEntries
+                    modality={lastSession.modality}
+                    electrolysisEntries={lastSession.electrolysis_entries}
+                    laserEntries={lastSession.laser_entries}
+                  />
+                )}
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
@@ -738,19 +796,30 @@ export default async function ClientCheatSheetPage({
           />
 
           {/* 4. Full session history last. Renamed from "All
-                sessions" (PR #191): Chloe found that label confusing
-                next to the appointment groups above. */}
-          <section className="flex flex-col gap-3">
-            <h2 className="text-lg font-medium">Session history</h2>
-            <p className="text-xs text-neutral-500">
-              Every charted session for this client, newest first.
-            </p>
-            <SessionTimeline
-              clientId={client.id}
-              sessions={olderSessions}
-              practitioners={practitioners}
-            />
-          </section>
+                sessions" (PR #191); PR #194 makes it collapsible so a
+                long-history client does not stretch the tab. */}
+          <details className="flex flex-col gap-3">
+            <summary className="cursor-pointer [&::-webkit-details-marker]:hidden">
+              <h2 className="inline text-lg font-medium">
+                <span className="mr-1 text-sm text-neutral-400">▸</span>
+                Session history
+                <span className="ml-2 text-sm font-normal text-neutral-500">
+                  ({olderSessions.length + (lastSession ? 1 : 0)})
+                </span>
+              </h2>
+              <p className="mt-1 text-xs text-neutral-500">
+                Every charted session for this client, newest first. The most
+                recent one is summarized in Last session above.
+              </p>
+            </summary>
+            <div className="mt-3">
+              <SessionTimeline
+                clientId={client.id}
+                sessions={olderSessions}
+                practitioners={practitioners}
+              />
+            </div>
+          </details>
         </>
       )}
 

@@ -121,8 +121,11 @@ export function SessionInfoCard({
           htmlFor="price"
           className="text-sm font-medium text-neutral-700 dark:text-neutral-300"
         >
-          Price paid
+          Session price
         </label>
+        <p className="text-xs text-neutral-500">
+          The price for this session. Charging happens separately below.
+        </p>
         <div className="relative">
           <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-neutral-500">
             $

@@ -263,10 +263,13 @@ export default async function CalendarPage({
                   key={date}
                   className={
                     "border-l border-neutral-100 px-3 py-2.5 dark:border-neutral-800/60" +
-                    // Today's header cell carries the same faint sky tint as
-                    // its column body, so the current day reads as one band
-                    // from the header down. No ring, badge, or extra height.
-                    (isToday ? " bg-sky-50/70 dark:bg-sky-950/25" : "")
+                    // Today's header cell: PR #194 (Chloe iPad feedback)
+                    // strengthened the tint and added a top accent bar
+                    // so the current day is unmistakable on washed-out
+                    // tablet screens. Still calm: one band, no badge.
+                    (isToday
+                      ? " border-t-2 border-t-sky-500 bg-sky-100 dark:border-t-sky-400 dark:bg-sky-950/50"
+                      : "")
                   }
                 >
                   {/* Two-line Google/Fresha header: weekday over date.

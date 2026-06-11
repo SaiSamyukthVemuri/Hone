@@ -403,6 +403,121 @@ export async function updateSessionBlockAction(
   return { ok: true, block: data as SessionBlock };
 }
 
+// ---------------------------------------------------------------------------
+// PR #194 (Chloe retest): copy treatment areas + settings from the
+// client's previous session into THIS session. Returning visits are
+// usually similar; this seeds today's chart in one tap.
+//
+// What copies, per area: area identity (primary_area / side /
+// custom detail / legacy block_name), machine settings (mode,
+// modality, energy, minutes, frequency), and the structured probe.
+// What NEVER copies: tolerance, reaction, reaction notes, caution
+// flag/note (those describe the PREVIOUS visit; today's response is
+// recorded fresh), per-pass entries/readings, and the next-session
+// note. The copied areas are ordinary editable blocks.
+//
+// Duplication safety: refuses unless the current session has ZERO
+// treatment areas, so the practitioner can never double-seed.
+// ---------------------------------------------------------------------------
+export type CopyPreviousAreasResult =
+  | { ok: true; copiedCount: number }
+  | { ok: false; error: string };
+
+export async function copyPreviousSessionAreasAction(input: {
+  clientId: string;
+  sessionId: string;
+  previousSessionId: string;
+}): Promise<CopyPreviousAreasResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot log sessions." };
+  }
+  await assertSessionInStudio(studio.id, input.sessionId);
+
+  const supabase = await createClient();
+
+  // The previous session must belong to the same studio AND client.
+  const { data: prevSession, error: prevErr } = await supabase
+    .from("sessions")
+    .select("id, client_id")
+    .eq("id", input.previousSessionId)
+    .eq("studio_id", studio.id)
+    .eq("client_id", input.clientId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (prevErr) return { ok: false, error: prevErr.message };
+  if (!prevSession) {
+    return { ok: false, error: "Previous session not found." };
+  }
+
+  // Refuse when today's session already has treatment areas.
+  const { count: existingCount, error: countErr } = await supabase
+    .from("session_blocks")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", input.sessionId)
+    .is("deleted_at", null);
+  if (countErr) return { ok: false, error: countErr.message };
+  if ((existingCount ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "This session already has treatment areas. Copy is only available on an empty chart.",
+    };
+  }
+
+  const { data: prevBlocks, error: blocksErr } = await supabase
+    .from("session_blocks")
+    .select(
+      "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label",
+    )
+    .eq("studio_id", studio.id)
+    .eq("session_id", prevSession.id)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: true });
+  if (blocksErr) return { ok: false, error: blocksErr.message };
+  if (!prevBlocks || prevBlocks.length === 0) {
+    return {
+      ok: false,
+      error: "The previous session has no treatment areas to copy.",
+    };
+  }
+
+  const rows = prevBlocks.map((b, i) => ({
+    studio_id: studio.id,
+    session_id: input.sessionId,
+    sort_order: i + 1,
+    block_name: b.block_name,
+    primary_area: b.primary_area,
+    side: b.side,
+    custom_area_detail: b.custom_area_detail,
+    mode: b.mode,
+    apilus_modality: b.apilus_modality,
+    energy_level: b.energy_level,
+    minutes_performed: b.minutes_performed,
+    machine_frequency: b.machine_frequency,
+    probe_key: b.probe_key,
+    probe_brand: b.probe_brand,
+    probe_material: b.probe_material,
+    probe_piece_type: b.probe_piece_type,
+    probe_shank: b.probe_shank,
+    probe_size_value: b.probe_size_value,
+    probe_length: b.probe_length,
+    probe_label: b.probe_label,
+    // Response fields deliberately absent: tolerance_rating,
+    // reaction_type, reaction_notes, caution_note default to null and
+    // caution_for_next_session to false.
+  }));
+
+  const { error: insertErr } = await supabase
+    .from("session_blocks")
+    .insert(rows);
+  if (insertErr) return { ok: false, error: insertErr.message };
+
+  revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
+  revalidatePath(`/clients/${input.clientId}`);
+  return { ok: true, copiedCount: rows.length };
+}
+
 export type SoftDeleteBlockInput = {
   clientId: string;
   sessionId: string;
