@@ -93,6 +93,40 @@ describe("mark resolved", () => {
   });
 });
 
+describe("PR #195: app-path smoke action", () => {
+  it("the test-alert action re-checks isAdmin and calls the REAL recordOpsAlert", () => {
+    const body = ACTIONS_CODE.slice(
+      ACTIONS_CODE.indexOf("export async function sendTestCriticalAlertAction"),
+      ACTIONS_CODE.indexOf("export async function resolveOpsAlertAction"),
+    );
+    expect(body).toMatch(/if \(!user \|\| !isAdmin\(user\.email\)\)/);
+    expect(body).toMatch(/await recordOpsAlert\(\{/);
+    expect(ACTIONS).toMatch(/import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/);
+  });
+
+  it("the payload is exactly the agreed smoke shape", () => {
+    expect(ACTIONS_CODE).toMatch(/severity: "critical",/);
+    expect(ACTIONS_CODE).toMatch(/event: "smoke_test_critical_alert_app_path",/);
+    expect(ACTIONS_CODE).toMatch(
+      /message: "PR #195 app-path smoke test critical alert",/,
+    );
+    expect(ACTIONS_CODE).toMatch(
+      /safeDetails: \{\s*\n?\s*smoke: true,\s*\n?\s*pr: 195,\s*\n?\s*path: "app",\s*\n?\s*\}/,
+    );
+  });
+
+  it("the button renders on the admin page bound to the action", () => {
+    expect(PAGE).toMatch(/action=\{sendTestCriticalAlertAction\}/);
+    expect(PAGE).toMatch(/Send test critical alert/);
+  });
+
+  it("the smoke touches no Stripe/payment/client surface", () => {
+    expect(ACTIONS_CODE).not.toMatch(
+      /paymentIntents|stripe|charge|client_payment|clients\b/i,
+    );
+  });
+});
+
 describe("PR #193 boundaries", () => {
   it("no payment/Stripe runtime surface", () => {
     const all = PAGE + ACTIONS_CODE;

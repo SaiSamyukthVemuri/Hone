@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #194)
+## Current production status (as of PR #195)
+
+- **Ops alert app-path smoke action** (PR #195, no migration). Admin-only "Send test critical alert" button on `/admin/ops-alerts` calls the real `recordOpsAlert` (event `smoke_test_critical_alert_app_path`), deterministically exercising the durable-row + critical-email pipeline added in PR #193. `OPS_ALERT_EMAILS` is set in Production and baked in via redeploy `8a5a3e3`.
+
+## Earlier production status (as of PR #194)
 
 - **Chloe launch polish round 2** (PR #194, no migration). Treatment time card reframed as a tracker (goal UI hidden); collapsible session groups (only Needs charting open; Cancelled and no-shows merged; Session history renamed + collapsible); one-tap "Copy areas and settings from last session" onto an empty chart (never copies client response; duplication-proof); client-page Last session uses the shared per-area summary; treatment-plan card owns plan context (detach-only attachment state, redundant session-number line hidden when attached); "Session price" replaces "Price paid"; "For next visit" replaces "Plan for next visit"; Overview puts allergies first and collapses messages; birthday collects an optional real YEAR on date_of_birth (no migration); calendar today contrast strengthened for iPad. Deferred: practitioner portal/intake preview, studio logo upload. **Pre-launch blocker: awaiting Chloe's health inspector documents.** Rollout: Laura after Chloe's real consultations; Teresa (laser) later; Brooks later; calendar sync not required for launch. No payment/Stripe/auth/export/reminder change (gates unchanged from PR #193).
 

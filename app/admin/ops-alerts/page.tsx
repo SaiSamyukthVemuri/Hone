@@ -1,5 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { resolveOpsAlertAction } from "./actions";
+import {
+  resolveOpsAlertAction,
+  sendTestCriticalAlertAction,
+} from "./actions";
 
 // PR #193. Operator dashboard for ops_alerts: the human-visible
 // surface the live-payments audit (docs/18 §6) flagged as a P0
@@ -99,13 +102,27 @@ export default async function OpsAlertsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Ops alerts</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Unresolved first, critical on top. Resolve once handled; the row
-          stays for history. Critical alerts also email the operators in
-          OPS_ALERT_EMAILS.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Ops alerts</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Unresolved first, critical on top. Resolve once handled; the row
+            stays for history. Critical alerts also email the operators in
+            OPS_ALERT_EMAILS.
+          </p>
+        </div>
+        {/* PR #195: deterministic smoke for the REAL alert pipeline
+            (recordOpsAlert -> durable row -> critical email). The new
+            alert appears in Unresolved below; the email lands in
+            OPS_ALERT_EMAILS inboxes. Resolve it like any alert. */}
+        <form action={sendTestCriticalAlertAction}>
+          <button
+            type="submit"
+            className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium hover:bg-neutral-50"
+          >
+            Send test critical alert
+          </button>
+        </form>
       </div>
 
       <section className="flex flex-col gap-3">
