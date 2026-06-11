@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #206)
+## Current production status (as of PR #207)
+
+- **Record Keeping print / export** (PR #207, no migration). Protected `/records/print?section=...` renders an inspector-friendly print document per section (studio + generated UTC stamp header, all BodySafe fields, "Not recorded" for gaps, created/updated stamps, opt-in ?history=1 audit appendix); window.print() with chrome print:hidden; Print / Export button on each Record Keeping section. No CSV/PDF/email/storage. Not a compliance guarantee; public-health review still needed. Live payments still disabled.
+
+## Earlier production status (as of PR #206)
 
 - **Record Keeping audit trail + edit** (PR #206, **migration 0086**: `record_keeping_audit_events`, SELECT-only RLS, trigger-written via narrow security-definer functions; apply to prod BEFORE merging). Append-only for normal users (no insert/update/delete/for-all policies); events: logbook created/updated diffs, aftercare_marked/cleared, probe_lot_updated (column-scoped, no noise). Edit forms shipped for the three logbooks (no delete/archive anywhere). History expanders in the Record Keeping UI. Not a compliance guarantee; public-health review still needed. Live payments still disabled.
 
