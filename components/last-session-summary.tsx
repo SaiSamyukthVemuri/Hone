@@ -53,16 +53,36 @@ export function AreaSummaries({
   );
 }
 
+// PR #200: shared emptiness check so a host card can decide whether
+// to reserve footer space for the box (the component itself still
+// returns null when there is nothing to say).
+export function hasFromLastVisitContent(summary: LastSessionSummary): boolean {
+  return summary.watchLines.length > 0 || !!summary.nextSessionNote;
+}
+
 export function FromLastVisitForToday({
   summary,
+  attached = false,
 }: {
   summary: LastSessionSummary;
+  // PR #200 (Chloe iPad retest): when true, render as a flush footer
+  // band of the host card (top border only, square top corners) so
+  // the Watch/Plan context reads as PART of the Last treatment card
+  // instead of a floating island. Default keeps the standalone
+  // bordered box used by the charting and appointment surfaces.
+  attached?: boolean;
 }) {
-  if (summary.watchLines.length === 0 && !summary.nextSessionNote) {
+  if (!hasFromLastVisitContent(summary)) {
     return null;
   }
   return (
-    <section className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/40">
+    <section
+      className={
+        attached
+          ? "rounded-b-lg border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm dark:border-amber-900 dark:bg-amber-950/40"
+          : "rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/40"
+      }
+    >
       <h3 className="text-xs font-medium uppercase tracking-wider text-amber-800 dark:text-amber-300">
         From last visit, for today
       </h3>

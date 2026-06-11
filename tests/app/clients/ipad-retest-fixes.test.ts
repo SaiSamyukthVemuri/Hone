@@ -25,7 +25,7 @@ describe("1. Messages tab actually opens", () => {
 describe("2. Last Session carries cautions + next-visit context", () => {
   it("client page renders watch/plan via FromLastVisitForToday and per-area summaries", () => {
     expect(PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
-    expect(PAGE).toMatch(/<FromLastVisitForToday summary=\{lastTreatmentSummary\}/);
+    expect(PAGE).toMatch(/<FromLastVisitForToday[\s\S]{0,40}summary=\{lastTreatmentSummary\}/);
     expect(SUM).toMatch(/Watch:<\/span>/);
     expect(SUM).toMatch(/Plan:<\/span>/);
     expect(SUM).toMatch(/Tolerance/);
