@@ -82,6 +82,7 @@ function Field({
   required = false,
   placeholder,
   wide = false,
+  defaultValue,
 }: {
   label: string;
   name: string;
@@ -89,6 +90,7 @@ function Field({
   required?: boolean;
   placeholder?: string;
   wide?: boolean;
+  defaultValue?: string;
 }) {
   return (
     <label className={`flex flex-col gap-1 ${wide ? "sm:col-span-2" : ""}`}>
@@ -101,17 +103,29 @@ function Field({
         name={name}
         required={required}
         placeholder={placeholder}
+        defaultValue={defaultValue}
         className={INPUT_CLS}
       />
     </label>
   );
 }
 
-function NotesField({ name = "notes" }: { name?: string }) {
+function NotesField({
+  name = "notes",
+  defaultValue,
+}: {
+  name?: string;
+  defaultValue?: string;
+}) {
   return (
     <label className="flex flex-col gap-1 sm:col-span-2">
       <span className={LABEL_CLS}>Notes (optional)</span>
-      <textarea name={name} rows={2} className={INPUT_CLS} />
+      <textarea
+        name={name}
+        rows={2}
+        defaultValue={defaultValue}
+        className={INPUT_CLS}
+      />
     </label>
   );
 }
@@ -227,5 +241,200 @@ export function AftercareExplainedToggle({
         ? "✓ Risks explained and aftercare provided"
         : "Mark: procedure risks explained and aftercare information provided"}
     </button>
+  );
+}
+
+// PR #206: edit forms for the three logbooks. Same shared wrapper as
+// the add forms (audit events are written by the 0086 DB triggers, so
+// these forms carry no audit code and cannot skip it). No delete or
+// archive affordance exists anywhere in this module, by design.
+
+type SterileItemRecord = {
+  id: string;
+  date_purchased: string;
+  item_description: string;
+  manufacturer_name: string;
+  amount_purchased: string;
+  lot_number: string;
+  expiry_date: string | null;
+  notes: string | null;
+};
+
+export function EditSterileItemForm({
+  record,
+  action,
+}: {
+  record: SterileItemRecord;
+  action: Action;
+}) {
+  return (
+    <AddRecordForm action={action} submitLabel="Save changes">
+      <input type="hidden" name="record_id" value={record.id} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Date purchased"
+          name="date_purchased"
+          type="date"
+          required
+          defaultValue={record.date_purchased?.slice(0, 10)}
+        />
+        <Field
+          label="Item description"
+          name="item_description"
+          required
+          defaultValue={record.item_description}
+        />
+        <Field
+          label="Manufacturer"
+          name="manufacturer_name"
+          defaultValue={record.manufacturer_name}
+        />
+        <Field
+          label="Amount purchased"
+          name="amount_purchased"
+          defaultValue={record.amount_purchased}
+        />
+        <Field label="Lot #" name="lot_number" defaultValue={record.lot_number} />
+        <Field
+          label="Expiry date"
+          name="expiry_date"
+          type="date"
+          defaultValue={record.expiry_date?.slice(0, 10)}
+        />
+        <NotesField defaultValue={record.notes ?? ""} />
+      </div>
+    </AddRecordForm>
+  );
+}
+
+type DisinfectantRecord = {
+  id: string;
+  date_prepared: string;
+  disinfectant_name: string;
+  concentration: string;
+  date_discarded: string | null;
+  operator_name: string;
+  notes: string | null;
+};
+
+export function EditDisinfectantForm({
+  record,
+  action,
+}: {
+  record: DisinfectantRecord;
+  action: Action;
+}) {
+  return (
+    <AddRecordForm action={action} submitLabel="Save changes">
+      <input type="hidden" name="record_id" value={record.id} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Date prepared"
+          name="date_prepared"
+          type="date"
+          required
+          defaultValue={record.date_prepared?.slice(0, 10)}
+        />
+        <Field
+          label="Disinfectant name"
+          name="disinfectant_name"
+          required
+          defaultValue={record.disinfectant_name}
+        />
+        <Field
+          label="Concentration"
+          name="concentration"
+          defaultValue={record.concentration}
+        />
+        <Field
+          label="Date discarded"
+          name="date_discarded"
+          type="date"
+          defaultValue={record.date_discarded?.slice(0, 10)}
+        />
+        <Field
+          label="Operator"
+          name="operator_name"
+          defaultValue={record.operator_name}
+        />
+        <NotesField defaultValue={record.notes ?? ""} />
+      </div>
+    </AddRecordForm>
+  );
+}
+
+type ExposureIncidentRecord = {
+  id: string;
+  incident_date: string;
+  exposed_person_full_name: string;
+  exposed_person_address: string;
+  exposed_person_phone: string;
+  exposure_details: string;
+  action_taken: string;
+  staff_involved_name: string;
+  notes: string | null;
+};
+
+export function EditExposureIncidentForm({
+  record,
+  action,
+}: {
+  record: ExposureIncidentRecord;
+  action: Action;
+}) {
+  return (
+    <AddRecordForm action={action} submitLabel="Save changes">
+      <input type="hidden" name="record_id" value={record.id} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Incident date"
+          name="incident_date"
+          type="date"
+          required
+          defaultValue={record.incident_date?.slice(0, 10)}
+        />
+        <Field
+          label="Exposed person's full name"
+          name="exposed_person_full_name"
+          required
+          defaultValue={record.exposed_person_full_name}
+        />
+        <Field
+          label="Address"
+          name="exposed_person_address"
+          wide
+          defaultValue={record.exposed_person_address}
+        />
+        <Field
+          label="Phone"
+          name="exposed_person_phone"
+          defaultValue={record.exposed_person_phone}
+        />
+        <Field
+          label="Staff involved"
+          name="staff_involved_name"
+          defaultValue={record.staff_involved_name}
+        />
+        <label className="flex flex-col gap-1 sm:col-span-2">
+          <span className={LABEL_CLS}>How the exposure occurred</span>
+          <textarea
+            name="exposure_details"
+            rows={3}
+            defaultValue={record.exposure_details}
+            className={INPUT_CLS}
+          />
+        </label>
+        <label className="flex flex-col gap-1 sm:col-span-2">
+          <span className={LABEL_CLS}>Action taken</span>
+          <textarea
+            name="action_taken"
+            rows={3}
+            defaultValue={record.action_taken}
+            className={INPUT_CLS}
+          />
+        </label>
+        <NotesField defaultValue={record.notes ?? ""} />
+      </div>
+    </AddRecordForm>
   );
 }

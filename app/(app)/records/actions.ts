@@ -180,3 +180,125 @@ export async function markAftercareExplainedAction(
   revalidatePath("/records");
   return { ok: true };
 }
+
+// PR #206: edit support for the three logbooks. Same auth/validation
+// posture as the add actions; updates go through the user-scoped
+// client (RLS UPDATE policy enforces studio membership) and the 0086
+// triggers write the audit event with the changed-field diff. No
+// delete action exists anywhere in this module, by design.
+
+export async function updateSterileItemRecordAction(
+  formData: FormData,
+): Promise<RecordActionResult> {
+  let studioId: string;
+  try {
+    const { studio } = await getCurrentPractitionerWithStudio();
+    studioId = studio.id;
+  } catch {
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  const recordId = str(formData.get("record_id"), 60);
+  const datePurchased = dateStr(formData.get("date_purchased"));
+  const itemDescription = str(formData.get("item_description"), 300);
+  if (!recordId || !datePurchased || !itemDescription) {
+    return {
+      ok: false,
+      error: "Date purchased and item description are required.",
+    };
+  }
+  const expiry = dateStr(formData.get("expiry_date"));
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("record_keeping_sterile_items")
+    .update({
+      date_purchased: datePurchased,
+      item_description: itemDescription,
+      manufacturer_name: str(formData.get("manufacturer_name"), 200),
+      amount_purchased: str(formData.get("amount_purchased"), 100),
+      lot_number: str(formData.get("lot_number"), 120),
+      expiry_date: expiry || null,
+      notes: str(formData.get("notes")) || null,
+    })
+    .eq("id", recordId)
+    .eq("studio_id", studioId);
+  if (error) return { ok: false, error: GENERIC_ERROR };
+  revalidatePath("/records");
+  return { ok: true };
+}
+
+export async function updateDisinfectantRecordAction(
+  formData: FormData,
+): Promise<RecordActionResult> {
+  let studioId: string;
+  try {
+    const { studio } = await getCurrentPractitionerWithStudio();
+    studioId = studio.id;
+  } catch {
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  const recordId = str(formData.get("record_id"), 60);
+  const datePrepared = dateStr(formData.get("date_prepared"));
+  const name = str(formData.get("disinfectant_name"), 200);
+  if (!recordId || !datePrepared || !name) {
+    return {
+      ok: false,
+      error: "Date prepared and disinfectant name are required.",
+    };
+  }
+  const discarded = dateStr(formData.get("date_discarded"));
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("record_keeping_disinfectants")
+    .update({
+      date_prepared: datePrepared,
+      disinfectant_name: name,
+      concentration: str(formData.get("concentration"), 100),
+      date_discarded: discarded || null,
+      operator_name: str(formData.get("operator_name"), 200),
+      notes: str(formData.get("notes")) || null,
+    })
+    .eq("id", recordId)
+    .eq("studio_id", studioId);
+  if (error) return { ok: false, error: GENERIC_ERROR };
+  revalidatePath("/records");
+  return { ok: true };
+}
+
+export async function updateExposureIncidentRecordAction(
+  formData: FormData,
+): Promise<RecordActionResult> {
+  let studioId: string;
+  try {
+    const { studio } = await getCurrentPractitionerWithStudio();
+    studioId = studio.id;
+  } catch {
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  const recordId = str(formData.get("record_id"), 60);
+  const incidentDate = dateStr(formData.get("incident_date"));
+  const exposedName = str(formData.get("exposed_person_full_name"), 200);
+  if (!recordId || !incidentDate || !exposedName) {
+    return {
+      ok: false,
+      error: "Incident date and the exposed person's full name are required.",
+    };
+  }
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("record_keeping_exposure_incidents")
+    .update({
+      incident_date: incidentDate,
+      exposed_person_full_name: exposedName,
+      exposed_person_address: str(formData.get("exposed_person_address"), 400),
+      exposed_person_phone: str(formData.get("exposed_person_phone"), 60),
+      exposure_details: str(formData.get("exposure_details")),
+      action_taken: str(formData.get("action_taken")),
+      staff_involved_name: str(formData.get("staff_involved_name"), 200),
+      notes: str(formData.get("notes")) || null,
+    })
+    .eq("id", recordId)
+    .eq("studio_id", studioId);
+  if (error) return { ok: false, error: GENERIC_ERROR };
+  revalidatePath("/records");
+  return { ok: true };
+}

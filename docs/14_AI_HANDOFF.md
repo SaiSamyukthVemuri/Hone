@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #205)
+## Current production status (as of PR #206)
+
+- **Record Keeping audit trail + edit** (PR #206, **migration 0086**: `record_keeping_audit_events`, SELECT-only RLS, trigger-written via narrow security-definer functions; apply to prod BEFORE merging). Append-only for normal users (no insert/update/delete/for-all policies); events: logbook created/updated diffs, aftercare_marked/cleared, probe_lot_updated (column-scoped, no noise). Edit forms shipped for the three logbooks (no delete/archive anywhere). History expanders in the Record Keeping UI. Not a compliance guarantee; public-health review still needed. Live payments still disabled.
+
+## Earlier production status (as of PR #205)
 
 - **Record Keeping tab + probe lot numbers** (PR #205, **migration 0085**: three RLS record tables + `session_blocks.probe_lot_number` + `sessions.aftercare_and_risks_explained_at/_by`; additive; apply to prod BEFORE merging). Top-level `/records` tab (not under Settings) with Sterile Items / Disinfectants / Exposure Incidents (sensitive; studio-RLS) / generated Client Procedure Records ("Not recorded" for missing data; explicit reversible aftercare toggle). Probe lot/batch captured in charting (Probe section), shown in area summaries and procedure records. Record-keeping support, not a compliance guarantee; needs public-health review. Live payments still disabled.
 

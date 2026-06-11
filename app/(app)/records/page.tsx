@@ -1,22 +1,31 @@
 import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
+  getAuditEventsByRecord,
   getClientProcedureRecords,
   getDisinfectantRecords,
   getExposureIncidentRecords,
+  getProcedureAuditEvents,
   getSterileItemRecords,
 } from "@/lib/record-keeping/queries";
+import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import {
   addDisinfectantRecordAction,
   addExposureIncidentRecordAction,
   addSterileItemRecordAction,
   markAftercareExplainedAction,
+  updateDisinfectantRecordAction,
+  updateExposureIncidentRecordAction,
+  updateSterileItemRecordAction,
 } from "./actions";
 import {
   AddDisinfectantForm,
   AddExposureIncidentForm,
   AddSterileItemForm,
   AftercareExplainedToggle,
+  EditDisinfectantForm,
+  EditExposureIncidentForm,
+  EditSterileItemForm,
 } from "./record-forms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
@@ -61,6 +70,84 @@ function dateOnly(d: string | null): string | null {
   if (!d) return null;
   return d.slice(0, 10);
 }
+
+// PR #206 (migration 0086): append-only audit history. Events are
+// written exclusively by DB triggers; this is read-only display.
+const AUDIT_ACTION_LABELS: Record<RecordKeepingAuditEvent["action"], string> = {
+  created: "Created",
+  updated: "Updated",
+  aftercare_marked: "Marked: risks explained and aftercare provided",
+  aftercare_cleared: "Cleared: risks/aftercare mark removed",
+  probe_lot_updated: "Probe lot number updated",
+};
+
+function AuditHistoryList({
+  events,
+}: {
+  events: RecordKeepingAuditEvent[] | undefined;
+}) {
+  if (!events || events.length === 0) {
+    return <p className="text-xs text-neutral-500">No history recorded yet.</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+      {events.map((e) => (
+        <li key={e.id}>
+          <FormattedDateTime iso={e.created_at} />
+          {" · "}
+          <span className="font-medium">
+            {e.actor_display_name ?? "Unknown"}
+          </span>
+          {" · "}
+          {AUDIT_ACTION_LABELS[e.action] ?? e.action}
+          {e.action === "updated" && e.changed_fields.length > 0 && (
+            <span className="text-neutral-500">
+              {" "}
+              ({e.changed_fields.join(", ")})
+            </span>
+          )}
+          {e.action === "probe_lot_updated" && (
+            <span className="text-neutral-500">
+              {" "}
+              ({String(e.changes?.probe_lot_number?.old ?? "none")} {"->"}{" "}
+              {String(e.changes?.probe_lot_number?.new ?? "none")})
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RowTools({
+  editForm,
+  events,
+}: {
+  editForm: React.ReactNode;
+  events: RecordKeepingAuditEvent[] | undefined;
+}) {
+  return (
+    <div className="mt-1 flex flex-col gap-1">
+      <details>
+        <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+          Edit
+        </summary>
+        <div className="mt-3 rounded-md border border-neutral-200 p-4 dark:border-neutral-800">
+          {editForm}
+        </div>
+      </details>
+      <details>
+        <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+          History
+        </summary>
+        <div className="mt-2">
+          <AuditHistoryList events={events} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
 
 export default async function RecordKeepingPage({
   searchParams,
@@ -116,6 +203,11 @@ export default async function RecordKeepingPage({
 
 async function SterileItemsSection({ studioId }: { studioId: string }) {
   const records = await getSterileItemRecords(studioId);
+  const audit = await getAuditEventsByRecord(
+    studioId,
+    "sterile_item",
+    records.map((r) => r.id),
+  );
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -172,6 +264,15 @@ async function SterileItemsSection({ studioId }: { studioId: string }) {
                 {r.notes && (
                   <p className="text-xs text-neutral-500">{r.notes}</p>
                 )}
+                <RowTools
+                  editForm={
+                    <EditSterileItemForm
+                      record={r}
+                      action={updateSterileItemRecordAction}
+                    />
+                  }
+                  events={audit.get(r.id)}
+                />
               </li>
             ))}
           </ul>
@@ -183,6 +284,11 @@ async function SterileItemsSection({ studioId }: { studioId: string }) {
 
 async function DisinfectantsSection({ studioId }: { studioId: string }) {
   const records = await getDisinfectantRecords(studioId);
+  const audit = await getAuditEventsByRecord(
+    studioId,
+    "disinfectant",
+    records.map((r) => r.id),
+  );
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -241,6 +347,15 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
                 {r.notes && (
                   <p className="text-xs text-neutral-500">{r.notes}</p>
                 )}
+                <RowTools
+                  editForm={
+                    <EditDisinfectantForm
+                      record={r}
+                      action={updateDisinfectantRecordAction}
+                    />
+                  }
+                  events={audit.get(r.id)}
+                />
               </li>
             ))}
           </ul>
@@ -252,6 +367,11 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
 
 async function ExposureIncidentsSection({ studioId }: { studioId: string }) {
   const records = await getExposureIncidentRecords(studioId);
+  const audit = await getAuditEventsByRecord(
+    studioId,
+    "exposure_incident",
+    records.map((r) => r.id),
+  );
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -309,6 +429,15 @@ async function ExposureIncidentsSection({ studioId }: { studioId: string }) {
                 {r.notes && (
                   <p className="text-xs text-neutral-500">{r.notes}</p>
                 )}
+                <RowTools
+                  editForm={
+                    <EditExposureIncidentForm
+                      record={r}
+                      action={updateExposureIncidentRecordAction}
+                    />
+                  }
+                  events={audit.get(r.id)}
+                />
               </li>
             ))}
           </ul>
@@ -324,6 +453,10 @@ async function ClientProcedureRecordsSection({
   studioId: string;
 }) {
   const records = await getClientProcedureRecords(studioId);
+  const audit = await getProcedureAuditEvents(
+    studioId,
+    records.map((r) => r.sessionId),
+  );
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -410,6 +543,16 @@ async function ClientProcedureRecordsSection({
                   </ul>
                 )}
               </div>
+              {(audit.get(r.sessionId)?.length ?? 0) > 0 && (
+                <details>
+                  <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+                    History
+                  </summary>
+                  <div className="mt-2">
+                    <AuditHistoryList events={audit.get(r.sessionId)} />
+                  </div>
+                </details>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
                 <AftercareExplainedToggle
                   sessionId={r.sessionId}
