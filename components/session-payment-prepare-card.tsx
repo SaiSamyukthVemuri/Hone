@@ -1241,17 +1241,23 @@ function PrepareForm({
         {/* PR #200: say where the default came from, and that it is
             editable. Never implies the client has paid or that live
             payments are on; the test-mode header copy above is
-            unchanged. */}
+            unchanged. PR #202 (Chloe retest): the booked service
+            name is now a visible line of its own right under the
+            amount, so the practitioner sees WHY that amount loaded;
+            the source copy below it stays small. Rendered only when
+            a default actually resolved, so no fake service label
+            appears for unlinked or unpriced sessions. */}
         {defaultAmount != null && (
           <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
+            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+              Booked service: {defaultAmount.serviceName}
+              {defaultAmount.durationMinutes != null &&
+                ` (${defaultAmount.durationMinutes} min)`}
+            </span>
             {defaultAmount.source === "custom_pricing" ? (
               <>
                 <span>
-                  Defaulted from this client&apos;s custom pricing:{" "}
-                  {defaultAmount.serviceName}
-                  {defaultAmount.durationMinutes != null &&
-                    ` (${defaultAmount.durationMinutes} min)`}
-                  .
+                  Defaulted from this client&apos;s custom pricing.
                 </span>
                 {defaultAmount.customPricingNote && (
                   <span>
@@ -1260,12 +1266,7 @@ function PrepareForm({
                 )}
               </>
             ) : (
-              <span>
-                Defaulted from booked service: {defaultAmount.serviceName}
-                {defaultAmount.durationMinutes != null &&
-                  ` (${defaultAmount.durationMinutes} min)`}
-                .
-              </span>
+              <span>Defaulted from booked service.</span>
             )}
             <span>You can adjust before preparing.</span>
           </div>
