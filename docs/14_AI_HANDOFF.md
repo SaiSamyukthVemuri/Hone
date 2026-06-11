@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of PR #197)
+
+- **Chloe launch polish round 3** (PR #197, no migration). Unified History group (Charted + Session history merged; walk-in fallback list); Last session keeps per-area settings; one free-text box per area in charting (Client tolerance = rating + dropdown; legacy response notes still visible); session price is a collapsed optional disclosure (no more "$0"); dedicated Messages tab (off Overview); Overview ordered pinned/allergies/Skin first; stronger calendar day separators. Backlog: retail/add-on tracking. **PR #196 fee path still needs its production test-mode fee smoke; live payments remain disabled.**
+
 ## Current production status (as of PR #196)
 
 - **Payment ledger unification** (PR #196, migration 0083). Fees (no-show / late-cancel) now prepare, charge, receipt, refund, and reconcile on `payment_charge_attempts`; the legacy `manual_fee_charge_attempts` table gets no new runtime writes (historical rows readable). Claim RPC reason guard widened (0083) with three additive evidence columns. Live payments still blocked; gates unchanged. docs/18 P0 #2 closed; remaining blockers: live receipt copy + legal/accounting review, test-mode copy pass, controlled enablement.

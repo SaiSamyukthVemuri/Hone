@@ -116,13 +116,19 @@ export function SessionInfoCard({
         <SaveHint state={performerState} error={performerError} />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="price"
-          className="text-sm font-medium text-neutral-700 dark:text-neutral-300"
-        >
-          Session price
-        </label>
+      {/* PR #197 (Chloe round 3): no more "Session price $0" beside
+          performed-by. Price is a collapsed optional disclosure; it
+          opens pre-filled when a price was recorded. Custom pricing
+          lives on the client profile. */}
+      <details
+        open={initialPriceCents != null && initialPriceCents > 0}
+        className="flex flex-col gap-1.5"
+      >
+        <summary className="cursor-pointer text-sm font-medium text-neutral-700 [&::-webkit-details-marker]:hidden dark:text-neutral-300">
+          {initialPriceCents != null && initialPriceCents > 0
+            ? "Session price"
+            : "Add session price (optional)"}
+        </summary>
         <p className="text-xs text-neutral-500">
           The price for this session. Charging happens separately below.
         </p>
@@ -144,7 +150,7 @@ export function SessionInfoCard({
           />
         </div>
         <SaveHint state={priceState} error={priceError} />
-      </div>
+      </details>
     </div>
   );
 }

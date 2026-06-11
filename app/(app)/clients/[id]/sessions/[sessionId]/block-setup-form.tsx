@@ -952,7 +952,7 @@ export function BlockSetupForm({
         <div>
           <span className="text-sm font-medium">Treatment observations</span>
           <p className="text-xs text-neutral-500">
-            What you saw during treatment (follicles, skin, hair).
+            What you saw during treatment, including how the skin and client responded.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -984,10 +984,10 @@ export function BlockSetupForm({
           it. This is the memory the next visit reads back. */}
       <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
-          <span className="text-sm font-medium">Client/skin response</span>
+          <span className="text-sm font-medium">Client tolerance</span>
           <p className="text-xs text-neutral-500">
-            How the client and skin responded today. Optional; takes five
-            seconds.
+            Optional. Notes about the response go in Treatment observations
+            above; this is the quick rating.
           </p>
         </div>
 
@@ -1042,13 +1042,19 @@ export function BlockSetupForm({
           </select>
         </label>
 
-        <textarea
-          rows={2}
-          value={draft.reactionNotes}
-          onChange={(e) => update("reactionNotes", e.target.value)}
-          placeholder="Anything notable about how the skin or client responded"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
+        {/* PR #197: ONE free-text box per area (Treatment
+            observations). This response-notes textarea only renders
+            when a saved note already exists, so legacy data stays
+            visible and editable without asking for the same note
+            twice. */}
+        {draft.reactionNotes.trim() !== "" && (
+          <textarea
+            rows={2}
+            value={draft.reactionNotes}
+            onChange={(e) => update("reactionNotes", e.target.value)}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+        )}
 
       </div>
 

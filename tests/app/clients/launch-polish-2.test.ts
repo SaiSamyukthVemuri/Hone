@@ -61,12 +61,13 @@ describe("3 + 4. collapsible session groups", () => {
     );
   });
 
-  it("Session history is collapsible with explainer copy", () => {
-    expect(CLIENT_PAGE).toMatch(/Session history/);
-    expect(CLIENT_PAGE).toMatch(
-      /Every charted session for this client, newest first/,
-    );
+  it("history is unified (PR #197): timeline History group + walk-in fallback only", () => {
+    // "Charted" and "Session history" merged; the appointment
+    // timeline's History group is the single history surface.
     expect(CLIENT_PAGE).not.toMatch(/>All sessions</);
+    expect(CLIENT_PAGE).not.toMatch(/>\s*Session history/);
+    expect(CLIENT_PAGE).toMatch(/Sessions without an appointment/);
+    expect(CLIENT_PAGE).toMatch(/sess\.appointment_id == null/);
   });
 });
 
@@ -145,22 +146,17 @@ describe("7 + 8. plan card and price wording", () => {
 });
 
 describe("10. allergies first, messages collapsed", () => {
-  it("allergies render above the Messages collapsible on Overview", () => {
+  it("PR #197: messages left Overview entirely for their own tab", () => {
     const overview = CLIENT_PAGE.slice(
       CLIENT_PAGE.indexOf('{activeTab === "overview"'),
-      CLIENT_PAGE.indexOf('{activeTab === "personal"'),
+      CLIENT_PAGE.indexOf('{activeTab === "messages"'),
     );
-    const allergies = overview.indexOf("Allergies");
-    const messagesIdx = overview.indexOf("PortalMessagesCard");
-    expect(allergies).toBeGreaterThan(-1);
-    expect(messagesIdx).toBeGreaterThan(allergies);
-  });
-
-  it("messages are a collapsed details section with a count", () => {
-    expect(CLIENT_PAGE).toMatch(
-      /<details className="rounded-lg border border-neutral-200 dark:border-neutral-800">/,
+    expect(overview.indexOf("Allergies")).toBeGreaterThan(-1);
+    expect(overview).not.toMatch(/<PortalMessagesCard/);
+    const messagesTab = CLIENT_PAGE.slice(
+      CLIENT_PAGE.indexOf('{activeTab === "messages"'),
     );
-    expect(CLIENT_PAGE).toMatch(/\(\{portalMessages\.length\}\)/);
+    expect(messagesTab).toMatch(/<PortalMessagesCard/);
   });
 });
 

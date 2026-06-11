@@ -21,6 +21,7 @@ export type ProfileTab =
   | "overview"
   | "sessions"
   | "treatment"
+  | "messages"
   | "health"
   | "personal";
 

@@ -421,7 +421,7 @@ export function DayColumn({
 
   return (
     <div
-      className="relative border-l border-neutral-100 dark:border-neutral-800/60"
+      className="relative border-l border-neutral-300 dark:border-neutral-700"
       style={{ height: GRID_HEIGHT }}
     >
       {/* Today's column gets a faint cool (sky) wash, Google-style, so the
