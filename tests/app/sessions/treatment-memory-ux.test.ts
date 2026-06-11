@@ -151,18 +151,18 @@ describe("4. back navigation returns to the Sessions tab", () => {
 });
 
 describe("7. bucketed charting form", () => {
-  it("the three buckets render in order: observations, response, next visit", () => {
-    const obs = FORM.indexOf("Treatment observations");
+  it("PR #198 order: tolerance, then observations, then next visit", () => {
     const resp = FORM.indexOf("Client tolerance");
+    const obs = FORM.indexOf(">Treatment observations<");
     const next = FORM.indexOf("For next visit");
-    expect(obs).toBeGreaterThan(-1);
-    expect(resp).toBeGreaterThan(obs);
-    expect(next).toBeGreaterThan(resp);
+    expect(resp).toBeGreaterThan(-1);
+    expect(obs).toBeGreaterThan(resp);
+    expect(next).toBeGreaterThan(obs);
   });
 
   it("each bucket explains its purpose", () => {
     expect(FORM).toMatch(/What you saw during treatment/);
-    expect(FORM).toMatch(/this is the quick rating/);
+    expect(FORM).toMatch(/Optional quick rating\./);
     expect(FORM).toMatch(/Anything to watch or do differently on this area next time\./);
   });
 });

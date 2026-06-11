@@ -497,6 +497,21 @@ export default async function ClientCheatSheetPage({
               pinned notes); see the block above the Messages
               collapsible. */}
 
+          {/* PR #198 (Chloe iPad retest): one "Client info" card holding
+              birthday, emergency contact, and address, with an Edit
+              link to the existing edit page. */}
+          <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+                Client info
+              </h2>
+              <Link
+                href={`/clients/${client.id}/edit`}
+                className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+              >
+                Edit
+              </Link>
+            </div>
           {/* Birthday card. Compact; renders an explicit "Birthday today"
               or "Birthday month" callout when relevant. Practitioner-only;
               never exposed to client/public surfaces. Placed below
@@ -530,7 +545,7 @@ export default async function ClientCheatSheetPage({
               ever needs to change it. */}
 
           {hasEmergencyContact && (
-            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <section>
               <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
                 Emergency contact
               </h2>
@@ -559,7 +574,7 @@ export default async function ClientCheatSheetPage({
           {/* PR #197: Skin moved up under Allergies (rendered above). */}
 
           {client.address && (
-            <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <section>
               <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
                 Address
               </h2>
@@ -568,6 +583,7 @@ export default async function ClientCheatSheetPage({
               </p>
             </section>
           )}
+          </section>
 
           {/* Pricing moved to the end of Overview — it's billing, not
               clinical caution. Same fields, same actions (unchanged),

@@ -2,11 +2,15 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #197)
+## Current production status (as of PR #198)
+
+- **Chloe iPad retest fixes** (PR #198, no migration). Messages tab works (`isProfileTab` had omitted "messages"); Last Session pinned to carry cautions/next-visit context; charting order readings -> Client tolerance (rating only) -> Treatment observations (reaction chips, same reaction_type field) -> For next visit; session header price block removed (performed-by editable); Overview "Client info" card (birthday + emergency + address, Edit link); calendar today contrast raised again. **PR #196 fee smoke still pending; live payments still disabled.**
+
+## Earlier production status (as of PR #197)
 
 - **Chloe launch polish round 3** (PR #197, no migration). Unified History group (Charted + Session history merged; walk-in fallback list); Last session keeps per-area settings; one free-text box per area in charting (Client tolerance = rating + dropdown; legacy response notes still visible); session price is a collapsed optional disclosure (no more "$0"); dedicated Messages tab (off Overview); Overview ordered pinned/allergies/Skin first; stronger calendar day separators. Backlog: retail/add-on tracking. **PR #196 fee path still needs its production test-mode fee smoke; live payments remain disabled.**
 
-## Current production status (as of PR #196)
+## Earlier production status (as of PR #196)
 
 - **Payment ledger unification** (PR #196, migration 0083). Fees (no-show / late-cancel) now prepare, charge, receipt, refund, and reconcile on `payment_charge_attempts`; the legacy `manual_fee_charge_attempts` table gets no new runtime writes (historical rows readable). Claim RPC reason guard widened (0083) with three additive evidence columns. Live payments still blocked; gates unchanged. docs/18 P0 #2 closed; remaining blockers: live receipt copy + legal/accounting review, test-mode copy pass, controlled enablement.
 
@@ -96,7 +100,7 @@ Docs/launch checklist final polish
 
 **Calendar feed phase 2:** Not started. A parked WIP commit exists locally (branch `claude/calendar-feed-token-hash-phase-2`, not pushed). Do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. Renumber the old parked PR/migration labels before using.
 
-## Current production status (as of PR #187)
+## Earlier production status (as of PR #187)
 
 - **Waitlist + demo request rate limiting** (PR #187, no migration). The anonymous landing-page actions `submitWaitlistEntry` and `submitDemoRequest` previously had no rate limit. Both now route through `lib/rate-limit/public.ts` via new `limitWaitlistSubmit` / `limitDemoRequestSubmit` helpers (shared `limitMarketingForm` implementation): 5/hour per IP + 2/day per normalized email, checked after validation and before the Supabase insert, with namespaced Redis prefixes (`rl:waitlist_*`, `rl:demo_*`), SHA-256-hashed identifiers, the shared generic `RATE_LIMIT_MESSAGE` refusal copy, and the module's standard FAIL-OPEN posture on Upstash outage. No raw body or PII logging. No payment behavior change, no Stripe behavior change (gates unchanged from PR #186), no migration, no email/SMS sending, no portal or calendar feed change.
 

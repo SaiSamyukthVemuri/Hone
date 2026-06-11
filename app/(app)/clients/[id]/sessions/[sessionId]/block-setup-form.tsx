@@ -942,52 +942,14 @@ export function BlockSetupForm({
         </label>
       </div>
 
-      {/* Treatment observations (PR #191 bucket A): what the
-          practitioner SAW during treatment: follicle/skin/hair
-          characteristics. Quick-tap chips + free text, same controls
-          as the add-another-pass form. Distinct from the client/skin
-          response bucket below (how the client reacted) and the
-          for-next-visit bucket (what to do differently). */}
-      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <div>
-          <span className="text-sm font-medium">Treatment observations</span>
-          <p className="text-xs text-neutral-500">
-            What you saw during treatment, including how the skin and client responded.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {COMMON_COMMENTS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() =>
-                update("comments", appendComment(draft.comments, c))
-              }
-              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
-            >
-              + {c}
-            </button>
-          ))}
-        </div>
-        <textarea
-          rows={2}
-          value={draft.comments}
-          onChange={(e) => update("comments", e.target.value)}
-          placeholder="Tap a chip or type a note"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-      </div>
-
-      {/* Client/skin response (PR #191 bucket B, fields from PR #190
-          migration 0082): how the client and skin responded TODAY.
-          Every field optional; tapping a selected rating again clears
-          it. This is the memory the next visit reads back. */}
+      {/* Client tolerance (PR #198 order): the 1-5 rating only. The
+          reaction vocabulary now lives as chips under Treatment
+          observations; same reaction_type field underneath. */}
       <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
           <span className="text-sm font-medium">Client tolerance</span>
           <p className="text-xs text-neutral-500">
-            Optional. Notes about the response go in Treatment observations
-            above; this is the quick rating.
+            Optional quick rating.
           </p>
         </div>
 
@@ -1024,24 +986,59 @@ export function BlockSetupForm({
           </div>
         </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs text-neutral-600 dark:text-neutral-400">
-            Skin/client response
-          </span>
-          <select
-            value={draft.reactionType}
-            onChange={(e) => update("reactionType", e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          >
-            <option value="">Not recorded</option>
-            {REACTION_TYPES.map((r) => (
-              <option key={r} value={r}>
-                {reactionTypeLabel(r)}
-              </option>
-            ))}
-          </select>
-        </label>
 
+
+      </div>
+
+      {/* Treatment observations (PR #191 bucket A): what the
+          practitioner SAW during treatment: follicle/skin/hair
+          characteristics. Quick-tap chips + free text, same controls
+          as the add-another-pass form. Distinct from the client/skin
+          response bucket below (how the client reacted) and the
+          for-next-visit bucket (what to do differently). */}
+      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <div>
+          <span className="text-sm font-medium">Treatment observations</span>
+          <p className="text-xs text-neutral-500">
+            What you saw during treatment, including how the skin and client responded.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_COMMENTS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() =>
+                update("comments", appendComment(draft.comments, c))
+              }
+              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              + {c}
+            </button>
+          ))}
+        </div>
+        {/* PR #198: skin/client response options live HERE as chips
+            (single-select toggle; still the reaction_type field
+            underneath). Tap again to clear. */}
+        <div className="flex flex-wrap gap-2">
+          {REACTION_TYPES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              aria-pressed={draft.reactionType === r}
+              onClick={() =>
+                update("reactionType", draft.reactionType === r ? "" : r)
+              }
+              className={
+                draft.reactionType === r
+                  ? "rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900"
+                  : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+              }
+            >
+              {reactionTypeLabel(r)}
+            </button>
+          ))}
+        </div>
         {/* PR #197: ONE free-text box per area (Treatment
             observations). This response-notes textarea only renders
             when a saved note already exists, so legacy data stays
@@ -1055,7 +1052,13 @@ export function BlockSetupForm({
             className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         )}
-
+        <textarea
+          rows={2}
+          value={draft.comments}
+          onChange={(e) => update("comments", e.target.value)}
+          placeholder="Tap a chip or type a note"
+          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
       </div>
 
       {/* For next visit (PR #191 bucket C): what to do differently

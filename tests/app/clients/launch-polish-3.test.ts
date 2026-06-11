@@ -49,10 +49,10 @@ describe("4. one free-text box in charting", () => {
 });
 
 describe("5. session price display", () => {
-  it("no Session price $0 beside performed-by: collapsed optional disclosure", () => {
-    expect(INFO).toMatch(/Add session price \(optional\)/);
-    expect(INFO).toMatch(/initialPriceCents != null && initialPriceCents > 0/);
+  it("PR #198: no price UI at all in the session header", () => {
+    expect(INFO).not.toMatch(/Add session price/);
     expect(INFO).not.toMatch(/Price paid/);
+    expect(INFO).toMatch(/Performed by|performer/i);
   });
   it("custom pricing remains on the client profile", () => {
     expect(PAGE).toMatch(/AddPricingForm|client_pricing|Pricing/);
@@ -86,6 +86,6 @@ describe("8. calendar day separation", () => {
   it("stronger vertical separators + strong today tint retained", () => {
     expect(CAL).toMatch(/border-l border-neutral-300/);
     expect(DAY).toMatch(/border-l border-neutral-300/);
-    expect(CAL).toMatch(/border-t-sky-500 bg-sky-100/);
+    expect(CAL).toMatch(/border-t-sky-600 bg-sky-200/);
   });
 });
