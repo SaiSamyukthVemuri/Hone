@@ -143,3 +143,30 @@ export function buildLastSessionSummary(input: {
     nextSessionNote: trimmedOrNull(input.nextSessionNote),
   };
 }
+
+// PR #199 (Chloe iPad retest): the "Last session" card used to show
+// sessions[0] even when that session had no treatment details, so the
+// pre-appointment card could read as empty while a useful charted
+// treatment sat one row below. This picks the most recent session
+// that actually has treatment details: charted areas (session_blocks)
+// or, for laser/legacy sessions, raw entries. Sessions must already
+// be ordered newest-first (the profile loader's order). Pure; no I/O.
+export type LastTreatmentCandidate = {
+  id: string;
+  electrolysis_entries: ReadonlyArray<unknown>;
+  laser_entries: ReadonlyArray<unknown>;
+};
+
+export function pickLastTreatment<T extends LastTreatmentCandidate>(
+  sessionsNewestFirst: ReadonlyArray<T>,
+  blocksBySession: ReadonlyMap<string, ReadonlyArray<unknown>>,
+): T | null {
+  return (
+    sessionsNewestFirst.find(
+      (s) =>
+        (blocksBySession.get(s.id)?.length ?? 0) > 0 ||
+        s.electrolysis_entries.length > 0 ||
+        s.laser_entries.length > 0,
+    ) ?? null
+  );
+}

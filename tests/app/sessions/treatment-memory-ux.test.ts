@@ -151,19 +151,24 @@ describe("4. back navigation returns to the Sessions tab", () => {
 });
 
 describe("7. bucketed charting form", () => {
-  it("PR #198 order: tolerance, then observations, then next visit", () => {
+  it("PR #199 order: tolerance, then observations; next visit moved to the session level", () => {
     const resp = FORM.indexOf("Client tolerance");
     const obs = FORM.indexOf(">Treatment observations<");
-    const next = FORM.indexOf("For next visit");
     expect(resp).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(resp);
-    expect(next).toBeGreaterThan(obs);
+    // PR #199: the per-area For next visit bucket is gone; the
+    // session-level note is the single next-visit surface.
+    expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });
 
   it("each bucket explains its purpose", () => {
     expect(FORM).toMatch(/What you saw during treatment/);
     expect(FORM).toMatch(/Optional quick rating\./);
-    expect(FORM).toMatch(/Anything to watch or do differently on this area next time\./);
+    // PR #199: the per-area For next visit bucket is consolidated into
+    // the session-level note.
+    expect(FORM).not.toMatch(
+      /Anything to watch or do differently on this area next time\./,
+    );
   });
 });
 
@@ -174,7 +179,7 @@ describe("8. Sessions tab order (Chloe's order, verbatim)", () => {
       CLIENT_PAGE.indexOf('{activeTab === "treatment"'),
     );
     const ttt = sessionsTab.indexOf("<TreatmentTimeCard");
-    const last = sessionsTab.indexOf(">Last session</h2>");
+    const last = sessionsTab.indexOf(">Last treatment</h2>");
     const timeline = sessionsTab.indexOf("<ClientAppointmentTimeline");
     // PR #194: Session history is collapsible; the heading moved into
     // the <details> summary. Search after the timeline so the intro

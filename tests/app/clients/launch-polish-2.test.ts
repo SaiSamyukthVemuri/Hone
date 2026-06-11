@@ -20,7 +20,7 @@ const BLOCK_ACTIONS = read(
 const COPY_BUTTON = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/CopyPreviousAreasButton.tsx",
 );
-const INFO_CARD = read("components/session-info-card.tsx");
+const INFO_CARD = read("components/session-performer-line.tsx");
 const ATTACHMENT = read("components/treatment-plan-attachment.tsx");
 const BIRTHDAY_ACTION = read("app/(app)/clients/[id]/birthday-actions.ts");
 const BIRTHDAY_CARD = read("components/client-birthday-card.tsx");
@@ -160,9 +160,9 @@ describe("10. allergies first, messages collapsed", () => {
 });
 
 describe("11. birthday year", () => {
-  it("the card collects an optional year bounded 1900..current", () => {
-    expect(BIRTHDAY_CARD).toMatch(/name="birthday_year"/);
-    expect(BIRTHDAY_CARD).toMatch(/min=\{1900\}/);
+  it("the row still surfaces a stored real year (PR #199: display-only row; editing via the edit page)", () => {
+    expect(BIRTHDAY_CARD).toMatch(/realYear/);
+    expect(BIRTHDAY_CARD).toMatch(/storedYear >= 1900/);
   });
 
   it("the action stores a provided year, preserves an existing one when blank", () => {
@@ -201,9 +201,9 @@ describe("9 + back-nav regressions hold", () => {
   });
 
   it("client page Last session uses the shared summary components", () => {
-    expect(CLIENT_PAGE).toMatch(/<AreaSummaries summary=\{lastSessionSummary\}/);
+    expect(CLIENT_PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
     expect(CLIENT_PAGE).toMatch(
-      /<FromLastVisitForToday summary=\{lastSessionSummary\}/,
+      /<FromLastVisitForToday summary=\{lastTreatmentSummary\}/,
     );
   });
 });

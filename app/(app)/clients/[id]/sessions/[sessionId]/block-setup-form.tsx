@@ -1061,38 +1061,14 @@ export function BlockSetupForm({
         />
       </div>
 
-      {/* For next visit (PR #191 bucket C): what to do differently
-          next time for THIS area. The session-level "Plan for next
-          visit" note lives on the session page; this is the per-area
-          caution that surfaces in the From last visit box. */}
-      <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <div>
-          <span className="text-sm font-medium">For next visit</span>
-          <p className="text-xs text-neutral-500">
-            Anything to watch or do differently on this area next time.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={draft.cautionForNextSession}
-            onChange={(e) =>
-              update("cautionForNextSession", e.target.checked)
-            }
-            className="h-4 w-4 rounded border-neutral-300"
-          />
-          <span>Caution for next session</span>
-        </label>
-        {(draft.cautionForNextSession || draft.cautionNote.trim() !== "") && (
-          <textarea
-            rows={2}
-            value={draft.cautionNote}
-            onChange={(e) => update("cautionNote", e.target.value)}
-            placeholder="Anything to watch next time?"
-            className="rounded-md border border-amber-300 bg-white px-3 py-3 text-base outline-none focus:border-amber-500 dark:border-amber-800 dark:bg-neutral-950"
-          />
-        )}
-      </div>
+      {/* PR #199 (Chloe iPad retest): the per-area next-visit and
+          caution inputs are gone. The session-level note on the
+          session page is the ONE place to write next-visit
+          instructions (it can name specific areas). The draft still
+          carries any previously saved caution flag/note and the save
+          payload still round-trips them, so old area-level caution
+          data is never lost and keeps rendering in the From last
+          visit summaries. */}
 
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">

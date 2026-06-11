@@ -57,7 +57,7 @@ export function NextVisitNoteForm({
           setNote(e.target.value);
           if (status.kind !== "dirty") setStatus({ kind: "dirty" });
         }}
-        placeholder="e.g. Start lower on the upper lip and check sensitivity before continuing"
+        placeholder="e.g. Upper lip: start lower and check sensitivity. Chin: continue same settings."
         className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
       />
       <div className="flex items-center gap-3">

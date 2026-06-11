@@ -12,7 +12,7 @@ import {
 } from "@/lib/supabase/queries";
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
-import { SessionInfoCard } from "@/components/session-info-card";
+import { SessionPerformerLine } from "@/components/session-performer-line";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import {
@@ -30,7 +30,6 @@ import { getSessionNumberForClient } from "@/lib/treatment-time/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
-import { sessionPerformerName } from "@/lib/supabase/queries";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
@@ -42,7 +41,6 @@ import {
   deleteLaserEntryAction,
   updateNextSessionNoteAction,
   updateSessionPerformerAction,
-  updateSessionPriceAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -82,7 +80,6 @@ export default async function SessionDetailPage({
       ? await getLaserTreatmentCountsForClient(studio.id, id)
       : {};
 
-  const performerName = sessionPerformerName(session, clientData.practitioners);
   const audit = await getSessionAudit(session.id);
   const clientTags = await getClientTags(studio.id, id);
 
@@ -227,11 +224,19 @@ export default async function SessionDetailPage({
             startedAtIso={session.started_at}
           />
         </div>
-        {performerName && (
-          <p className="text-sm text-neutral-500">
-            Performed by {performerName}
-          </p>
-        )}
+        {/* PR #199 (Chloe iPad retest): the inline line under the
+            title is the ONLY performer surface. The separate
+            "Performed by" card/dropdown is gone; this line carries a
+            small Edit affordance backed by the same server action. */}
+        <SessionPerformerLine
+          sessionId={session.id}
+          clientId={id}
+          practitioners={clientData.practitioners}
+          initialPerformerId={
+            session.performed_by_practitioner_id ?? session.practitioner_id
+          }
+          updatePerformerAction={updateSessionPerformerAction}
+        />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,
             the green plan card already carries the visit-progress
             context, so the "Electrolysis session N for X" line is
@@ -244,29 +249,42 @@ export default async function SessionDetailPage({
               : `Electrolysis session ${runningTotal.sessionNumber} for ${clientFirstName}${priorLaserClause}`}
           </p>
         )}
-        {/* Treatment plan card + its Detach affordance render as one
-            unit (PR #194); the attachment component's attached state
-            is detach-only now. */}
-        {attachedPlan && <TreatmentPlanBanner plan={attachedPlan} />}
-        <TreatmentPlanAttachment
-          sessionId={session.id}
-          clientId={id}
-          attachedPlan={
-            attachedPlan
-              ? {
+        {/* PR #199 (Chloe iPad retest): the Detach affordance renders
+            INSIDE the treatment plan card via the banner's detachSlot,
+            so the plan card owns all plan context and actions. When no
+            plan is attached, the attachment widget keeps its spot
+            under the title. */}
+        {attachedPlan ? (
+          <TreatmentPlanBanner
+            plan={attachedPlan}
+            detachSlot={
+              <TreatmentPlanAttachment
+                sessionId={session.id}
+                clientId={id}
+                attachedPlan={{
                   id: attachedPlan.id,
                   name: attachedPlan.name,
                   status: attachedPlan.status,
-                }
-              : null
-          }
-          activePlans={activePlansForClient.map((p) => ({
-            id: p.id,
-            name: p.name,
-          }))}
-          attachAction={attachChartEntryToPlanAction}
-          detachAction={detachChartEntryFromPlanAction}
-        />
+                }}
+                activePlans={[]}
+                attachAction={attachChartEntryToPlanAction}
+                detachAction={detachChartEntryFromPlanAction}
+              />
+            }
+          />
+        ) : (
+          <TreatmentPlanAttachment
+            sessionId={session.id}
+            clientId={id}
+            attachedPlan={null}
+            activePlans={activePlansForClient.map((p) => ({
+              id: p.id,
+              name: p.name,
+            }))}
+            attachAction={attachChartEntryToPlanAction}
+            detachAction={detachChartEntryFromPlanAction}
+          />
+        )}
         <SessionEditHistory
           startedAtOriginal={session.started_at_original}
           audit={audit}
@@ -288,17 +306,9 @@ export default async function SessionDetailPage({
         </section>
       )}
 
-      <SessionInfoCard
-        sessionId={session.id}
-        clientId={id}
-        practitioners={clientData.practitioners}
-        initialPerformerId={
-          session.performed_by_practitioner_id ?? session.practitioner_id
-        }
-        initialPriceCents={session.price_paid_cents}
-        updatePriceAction={updateSessionPriceAction}
-        updatePerformerAction={updateSessionPerformerAction}
-      />
+      {/* PR #199: the separate "Performed by" card is gone; the
+          inline SessionPerformerLine under the title is the single
+          performer surface. */}
 
       {/* PR #181. id="session-payment" anchor so the calendar
           NextStepCard's "Go to billing" link deep-scrolls into the
@@ -374,10 +384,12 @@ export default async function SessionDetailPage({
       <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <div>
           <h2 className="text-lg font-medium">For next visit</h2>
+          {/* PR #199: this is now the ONE place to write next-visit
+              instructions; the per-area "For next visit / Caution for
+              next session" inputs are gone from the charting form. */}
           <p className="text-sm text-neutral-500">
-            Optional. One note for the whole visit, shown to you when{" "}
-            {clientFirstName} comes back. Area-specific watch notes live with
-            each treatment area above; no need to repeat them here.
+            Anything to remember, watch, or do differently next time. Shown to
+            you when {clientFirstName} comes back.
           </p>
         </div>
         <NextVisitNoteForm

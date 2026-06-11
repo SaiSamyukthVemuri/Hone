@@ -75,10 +75,11 @@ describe("capture surface: session detail page", () => {
     );
   });
 
-  it("the field is optional, with copy deduplicating per-area watch notes", () => {
-    expect(SESSION_PAGE).toMatch(/One note for the whole visit/);
-    expect(SESSION_PAGE).toMatch(/no need to repeat them here/);
-    expect(NOTE_FORM).toMatch(/Start lower on the upper lip/);
+  it("the field is the ONE next-visit surface (PR #199 copy)", () => {
+    expect(SESSION_PAGE).toMatch(
+      /Anything to remember, watch, or do differently next time\./,
+    );
+    expect(NOTE_FORM).toMatch(/Upper lip: start lower and check sensitivity/);
   });
 
   it("PR #191: saving shows explicit saved / cleared / error feedback", () => {

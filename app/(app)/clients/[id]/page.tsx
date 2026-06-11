@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
+  pickLastTreatment,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
@@ -91,7 +92,6 @@ import {
 import { updateClientPersonalNotesAction } from "./personal-notes-actions";
 import { getClientPersonalNotes } from "@/lib/clients/personal-notes-queries";
 import { ClientPersonalNotesEditor } from "@/components/client-personal-notes-editor";
-import { updateClientBirthdayAction } from "./birthday-actions";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
@@ -139,8 +139,6 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners } = data;
-  const lastSession = sessions[0];
-  const olderSessions = sessions.slice(1);
   // PR Willow launch fixes: surface past appointments that the
   // practitioner has not charted yet under the Sessions tab. The
   // helper filters out appointments that already have a session
@@ -232,33 +230,54 @@ export default async function ClientCheatSheetPage({
     (s) => s.price_paid_cents != null,
   ).length;
 
-  // PR #194 (Chloe retest, item 6): the Last session card shows the
-  // SAME per-area clinical summary as the charting screen's Previous
-  // session context. One narrow blocks read, only when a last session
-  // exists; laser/legacy sessions without blocks fall back to the
-  // entries list below.
-  let lastSessionSummary: LastSessionSummary | null = null;
-  if (lastSession) {
+  // PR #199 (Chloe iPad retest): "Last session" used to be sessions[0]
+  // even when that session had no treatment details, so the card Chloe
+  // checks before starting a client could read as empty
+  // while a useful charted treatment sat one row below. The card is now
+  // "Last treatment": one narrow blocks read across the recent
+  // sessions, and the newest session that actually has treatment areas
+  // (or, for laser/legacy sessions, raw entries) wins. An uncharted
+  // newer session still appears under Needs charting; it just can't
+  // blank out the summary.
+  const recentSessions = sessions.slice(0, 25);
+  let lastTreatment: (typeof sessions)[number] | null = null;
+  let lastTreatmentSummary: LastSessionSummary | null = null;
+  let lastTreatmentBlocks: ClinicalSummaryBlock[] = [];
+  if (recentSessions.length > 0) {
     const supabaseForSummary = await createClient();
-    const { data: lastBlocks } = await supabaseForSummary
+    const { data: recentBlocks } = await supabaseForSummary
       .from("session_blocks")
       .select(
-        "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
       )
       .eq("studio_id", studio.id)
-      .eq("session_id", lastSession.id)
+      .in(
+        "session_id",
+        recentSessions.map((s) => s.id),
+      )
       .is("deleted_at", null)
       .order("sort_order", { ascending: true });
-    lastSessionSummary = buildLastSessionSummary({
-      blocks: (lastBlocks ?? []) as ClinicalSummaryBlock[],
-      nextSessionNote:
-        (lastSession as { next_session_note?: string | null })
-          .next_session_note ?? null,
-    });
+    const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
+    for (const block of recentBlocks ?? []) {
+      const sessionId = (block as { session_id: string }).session_id;
+      const list = blocksBySession.get(sessionId) ?? [];
+      list.push(block as ClinicalSummaryBlock);
+      blocksBySession.set(sessionId, list);
+    }
+    lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
+    if (lastTreatment) {
+      lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
+      lastTreatmentSummary = buildLastSessionSummary({
+        blocks: lastTreatmentBlocks,
+        nextSessionNote:
+          (lastTreatment as { next_session_note?: string | null })
+            .next_session_note ?? null,
+      });
+    }
   }
 
-  const lastPerformer = lastSession
-    ? sessionPerformerName(lastSession, practitioners)
+  const lastTreatmentPerformer = lastTreatment
+    ? sessionPerformerName(lastTreatment, practitioners)
     : null;
 
   const hasEmergencyContact =
@@ -512,17 +531,15 @@ export default async function ClientCheatSheetPage({
                 Edit
               </Link>
             </div>
-          {/* Birthday card. Compact; renders an explicit "Birthday today"
-              or "Birthday month" callout when relevant. Practitioner-only;
-              never exposed to client/public surfaces. Placed below
-              allergies so a clinical alert always wins the top scan
-              position when one exists. */}
+          {/* Birthday row (PR #199: plain row, no nested box, no
+              helper text; edited via the card's single Edit link).
+              Renders an explicit "Birthday today" or "Birthday month"
+              callout when relevant. Practitioner-only; never exposed
+              to client/public surfaces. */}
           <ClientBirthdayCard
-            clientId={client.id}
             dateOfBirth={client.date_of_birth}
             studioToday={parseStudioToday(today)}
             accentColor={studio.birthday_reminder_color}
-            action={updateClientBirthdayAction}
           />
 
           {/* Tags removed from the main profile per pilot feedback.
@@ -748,51 +765,63 @@ export default async function ClientCheatSheetPage({
             upsertGoalAction={upsertTreatmentGoalAction}
           />
 
-          {/* 2. Last session; what the practitioner reaches for
-                between visits. */}
+          {/* 2. Last treatment; what the practitioner reaches for
+                between visits. PR #199: the most recent CHARTED
+                treatment, never an empty newer session. */}
           <section className="flex flex-col gap-3">
-            <h2 className="text-lg font-medium">Last session</h2>
-            {lastSession ? (
+            <h2 className="text-lg font-medium">Last treatment</h2>
+            {lastTreatment ? (
               <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium">
-                      <FormattedDateTime iso={lastSession.started_at} />
+                      <FormattedDateTime iso={lastTreatment.started_at} />
                     </div>
                     <div className="text-xs text-neutral-500">
-                      {lastSession.modality}
-                      {lastPerformer && ` · ${lastPerformer}`}
-                      {lastSession.price_paid_cents != null &&
-                        ` · Session price ${formatPrice(lastSession.price_paid_cents)}`}
+                      {lastTreatment.modality}
+                      {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
+                      {lastTreatment.price_paid_cents != null &&
+                        ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
                     </div>
+                    {/* A newer uncharted session exists; say so quietly
+                        instead of letting it blank out this card. It
+                        still shows under Needs charting below. */}
+                    {lastTreatment.id !== sessions[0]?.id && (
+                      <p className="mt-1 text-xs text-neutral-500">
+                        Most recent charted treatment. A newer session has no
+                        treatment details yet.
+                      </p>
+                    )}
                   </div>
                   <Link
-                    href={`/clients/${client.id}/sessions/${lastSession.id}`}
+                    href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
                     className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
                     Open →
                   </Link>
                 </div>
-                {/* PR #194: the same per-area summary + combined
-                    From last visit box the charting screen shows.
-                    Sessions without treatment areas (laser, legacy)
-                    fall back to the raw entries list. */}
-                {lastSessionSummary && lastSessionSummary.areas.length > 0 ? (
+                {/* The same per-area summary + combined From last
+                    visit box the charting screen shows. Charted
+                    laser/legacy sessions without treatment areas fall
+                    back to their raw entries list; a charted session
+                    always has one or the other. */}
+                {lastTreatmentSummary &&
+                lastTreatmentSummary.areas.length > 0 ? (
                   <div className="mt-3 flex flex-col gap-3">
-                    <AreaSummaries summary={lastSessionSummary} />
-                    <FromLastVisitForToday summary={lastSessionSummary} />
+                    <AreaSummaries summary={lastTreatmentSummary} />
+                    <FromLastVisitForToday summary={lastTreatmentSummary} />
                   </div>
                 ) : (
                   <LastSessionEntries
-                    modality={lastSession.modality}
-                    electrolysisEntries={lastSession.electrolysis_entries}
-                    laserEntries={lastSession.laser_entries}
+                    modality={lastTreatment.modality}
+                    electrolysisEntries={lastTreatment.electrolysis_entries}
+                    laserEntries={lastTreatment.laser_entries}
                   />
                 )}
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-                No sessions logged yet for this client.
+                No charted treatments yet.
               </div>
             )}
           </section>
@@ -812,7 +841,7 @@ export default async function ClientCheatSheetPage({
               from History, so they keep a small collapsible of their
               own, rendered only when any exist. */}
           {(() => {
-            const walkIns = [lastSession, ...olderSessions].filter(
+            const walkIns = sessions.filter(
               (sess) => !!sess && sess.appointment_id == null,
             );
             if (walkIns.length === 0) return null;
@@ -866,11 +895,13 @@ function LastSessionEntries({
   electrolysisEntries: import("@/lib/types/database").ElectrolysisEntry[];
   laserEntries: import("@/lib/types/database").LaserEntry[];
 }) {
+  // PR #199: the empty fallbacks are gone. This component only renders
+  // for the Last treatment card, and a session only qualifies as the
+  // last treatment when it has areas or entries, so the old
+  // database-flavored empty line is unreachable.
   if (modality === "electrolysis") {
     if (electrolysisEntries.length === 0) {
-      return (
-        <p className="mt-4 text-xs text-neutral-500">No entries logged.</p>
-      );
+      return null;
     }
     const sorted = [...electrolysisEntries].sort(
       (a, b) =>
@@ -887,7 +918,7 @@ function LastSessionEntries({
     );
   }
   if (laserEntries.length === 0) {
-    return <p className="mt-4 text-xs text-neutral-500">No entries logged.</p>;
+    return null;
   }
   const sorted = [...laserEntries].sort(
     (a, b) =>

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { TreatmentPlanWithCount } from "@/lib/treatment-plans/queries";
 import {
   formatTimelineMonths,
@@ -17,8 +18,13 @@ import {
 // lost.
 export function TreatmentPlanBanner({
   plan,
+  detachSlot,
 }: {
   plan: TreatmentPlanWithCount;
+  // PR #199 (Chloe iPad retest): the plan card owns ALL plan context
+  // and actions, so the session page passes its Detach affordance in
+  // here instead of floating it below the card.
+  detachSlot?: ReactNode;
 }) {
   const isClosed = plan.status === "closed";
   const wrapper = isClosed
@@ -83,6 +89,7 @@ export function TreatmentPlanBanner({
       <p className={`mt-0.5 tabular-nums ${sub}`}>
         {plan.attached_count} of {plan.suggested_visit_count} estimated visits
       </p>
+      {detachSlot && <div className="mt-2">{detachSlot}</div>}
     </section>
   );
 }

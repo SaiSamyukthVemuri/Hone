@@ -204,22 +204,22 @@ describe("prepare action: no payment / live-mode / SMS behavior added", () => {
   });
 });
 
-describe("session detail page wires the new card after SessionInfoCard", () => {
+describe("session detail page wires the new card after the performer line", () => {
   it("imports SessionPaymentPrepareCard + the eligibility helper + the action", () => {
     expect(PAGE).toMatch(/SessionPaymentPrepareCard/);
     expect(PAGE).toMatch(/getSessionPaymentEligibility/);
     expect(PAGE).toMatch(/prepareSessionPaymentChargeAction/);
   });
 
-  it("renders the card immediately after SessionInfoCard", () => {
-    // Pin the relative order: SessionInfoCard then
+  it("renders the card after the inline performer line (PR #199)", () => {
+    // Pin the relative order: SessionPerformerLine then
     // SessionPaymentPrepareCard. A refactor that hides the
     // session payment card or moves it below the entries
     // section is caught here.
-    const sessionInfoIdx = PAGE.search(/<SessionInfoCard/);
+    const performerIdx = PAGE.search(/<SessionPerformerLine/);
     const paymentIdx = PAGE.search(/<SessionPaymentPrepareCard/);
-    expect(sessionInfoIdx).toBeGreaterThan(-1);
-    expect(paymentIdx).toBeGreaterThan(sessionInfoIdx);
+    expect(performerIdx).toBeGreaterThan(-1);
+    expect(paymentIdx).toBeGreaterThan(performerIdx);
   });
 });
 

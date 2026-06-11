@@ -8,7 +8,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const PAGE = read("app/(app)/clients/[id]/page.tsx");
 const TIMELINE = read("components/client-appointment-timeline.tsx");
 const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
-const INFO = read("components/session-info-card.tsx");
+const INFO = read("components/session-performer-line.tsx");
 const TABBAR = read("components/profile-tab-bar.tsx");
 const CAL = read("app/(app)/calendar/page.tsx");
 const DAY = read("app/(app)/calendar/DayColumn.tsx");
@@ -27,7 +27,7 @@ describe("2. unified history", () => {
 
 describe("3. Last session shows per-area settings (shared component)", () => {
   it("client page renders AreaSummaries (settings/probe/tolerance per area)", () => {
-    expect(PAGE).toMatch(/<AreaSummaries summary=\{lastSessionSummary\}/);
+    expect(PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
     const SUM = read("components/last-session-summary.tsx");
     expect(SUM).toMatch(/Settings/);
     expect(SUM).toMatch(/Probe/);
@@ -36,11 +36,11 @@ describe("3. Last session shows per-area settings (shared component)", () => {
 });
 
 describe("4. one free-text box in charting", () => {
-  it("Treatment observations appears once; tolerance + for-next-visit remain", () => {
+  it("Treatment observations appears once; tolerance remains (PR #199: per-area for-next-visit is gone)", () => {
     // One rendered heading (the other mentions are a comment + helper copy).
     expect(FORM.match(/>Treatment observations</g)?.length).toBe(1);
     expect(FORM).toMatch(/Client tolerance/);
-    expect(FORM).toMatch(/For next visit/);
+    expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });
   it("response-notes textarea only renders for existing saved notes (data preserved)", () => {
     expect(FORM).toMatch(/\{draft\.reactionNotes\.trim\(\) !== "" && \(/);
