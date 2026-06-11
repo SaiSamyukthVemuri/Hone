@@ -268,9 +268,9 @@ Decisions required before PR #202: receipt vs invoice wording (current live draf
 - [ ] Controlled live test card + designated internal test client selected for the $1 charge
 - [ ] Rollback understood: unset env flag, redeploy; key gate re-blocks instantly
 
-### 16.7 PR #196 fee smoke merge gate (BLOCKS PR #201 MERGE)
+### 16.7 PR #196 fee smoke merge gate (CLEARED 2026-06-11)
 
-PR #201 must not merge until BOTH legs are backend-verified clean: no-show **verified 2026-06-11** (attempt `3c0e1c82-...`, reason `no_show_fee`, 5000c, livemode false, PI/charge/receipt/refund all present, final state refunded, zero legacy rows, no unexpected ops alerts) · **late-cancellation leg PENDING** (no ledger row exists yet for appointment `c9bd5f24-...`; practitioner click-through still required, then the same read-only verification). Until then, **PR #201 is BLOCKED from merge.**
+Both legs are backend-verified clean and the **PR #196 fee path is fully smoke-closed**: no-show verified 2026-06-11 14:33 UTC (attempt `3c0e1c82-...`, reason `no_show_fee`, 5000c, livemode false, PI `pi_3Th9f3...`, charge/receipt/refund present, final state refunded) · late-cancellation verified 2026-06-11 17:36 UTC (attempt `b4d8ea32-...`, reason `late_cancellation_fee`, 5000c, livemode false, PI `pi_3ThCWY...` matching the practitioner screen, charge/receipt/refund present, final state refunded). Zero `manual_fee_charge_attempts` rows, zero stale ready/pending rows, zero unexpected ops alerts, zero Vercel runtime errors, gates 6/6. The PR #201 merge gate is cleared.
 
 ### 16.8 Controlled live enablement runbook
 
