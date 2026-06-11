@@ -750,6 +750,9 @@ export type CreateAreaWithEntryInput = {
   energyLevel?: number | null;
   minutesPerformed?: number | null;
   probeOptionKey?: string | null;
+  // PR #205 (migration 0085): probe lot/batch number for the
+  // health-inspection client procedure record. Optional free text.
+  probeLotNumber?: string | null;
   machineFrequency?: MachineFrequency | null;
   primaryArea?: string | null;
   side?: string | null;
@@ -825,6 +828,8 @@ export async function createTreatmentAreaWithEntryAction(
       energy_level: input.energyLevel ?? null,
       minutes_performed: input.minutesPerformed ?? null,
       machine_frequency: input.machineFrequency ?? null,
+      probe_lot_number:
+        (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
@@ -903,6 +908,9 @@ export type UpdateAreaWithEntryInput = {
   energyLevel?: number | null;
   minutesPerformed?: number | null;
   probeOptionKey?: string | null;
+  // PR #205 (migration 0085): probe lot/batch number for the
+  // health-inspection client procedure record. Optional free text.
+  probeLotNumber?: string | null;
   machineFrequency?: MachineFrequency | null;
   primaryArea?: string | null;
   side?: string | null;
@@ -970,6 +978,8 @@ export async function updateTreatmentAreaWithEntryAction(
       energy_level: input.energyLevel ?? null,
       minutes_performed: input.minutesPerformed ?? null,
       machine_frequency: input.machineFrequency ?? null,
+      probe_lot_number:
+        (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,

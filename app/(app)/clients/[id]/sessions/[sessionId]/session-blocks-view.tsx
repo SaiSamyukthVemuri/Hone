@@ -192,10 +192,19 @@ function BlockSection({
   // label (migration 0041); fall back to the legacy probe_type / probe_size
   // free text so older blocks still show their probe.
   const probeLine = useMemo(() => {
-    if (block.probe_label) return block.probe_label;
+    // PR #205: append the lot/batch number wherever probe details
+    // show, so the health-inspection lot is visible at a glance.
+    // Null-lot blocks (all legacy rows) render exactly as before.
+    const lot = block.probe_lot_number?.trim()
+      ? `Lot #${block.probe_lot_number.trim()}`
+      : null;
+    if (block.probe_label) {
+      return lot ? `${block.probe_label} · ${lot}` : block.probe_label;
+    }
     const legacy: string[] = [];
     if (block.probe_type) legacy.push(block.probe_type);
     if (block.probe_size) legacy.push(block.probe_size);
+    if (lot) legacy.push(lot);
     return legacy.length > 0 ? legacy.join(" · ") : null;
   }, [block]);
 

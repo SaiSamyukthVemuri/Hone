@@ -651,6 +651,12 @@ export type Session = {
   // visit, written while charting this one. Surfaced as "From last
   // visit" context when the client returns. Optional.
   next_session_note: string | null;
+  // Migration 0085 (PR #205): explicit, practitioner-marked stamp
+  // that procedure/risks were explained and aftercare info provided.
+  // Required line on the health-inspection "Client Record for
+  // Invasive Procedures" form. Never auto-set.
+  aftercare_and_risks_explained_at: string | null;
+  aftercare_and_risks_explained_by: string | null;
 };
 
 export type TreatmentPlanStatus = "active" | "closed";
@@ -830,6 +836,10 @@ export type SessionBlock = {
   probe_size_value: string | null;
   probe_length: string | null;
   probe_label: string | null;
+  // Migration 0085 (PR #205): lot/batch number of the probe used on
+  // this treatment area, read off the box while charting. Required
+  // by the health-inspection client procedure record. Optional text.
+  probe_lot_number: string | null;
   // Migration 0082 (PR #190, clinical memory): structured client
   // response per block. All nullable / safely defaulted; legacy rows
   // render without these lines. reaction_type allowlist lives in
@@ -998,4 +1008,56 @@ export type PractitionerNotification = {
   href: string | null;
   read_at: string | null;
   created_at: string;
+};
+
+// Migration 0085 (PR #205): health-inspection record keeping.
+// Studio-scoped operational logbooks behind is_studio_member RLS.
+// Practitioner-facing only; never exposed on public/portal surfaces.
+
+export type RecordKeepingSterileItem = {
+  id: string;
+  studio_id: string;
+  date_purchased: string;
+  item_description: string;
+  manufacturer_name: string;
+  amount_purchased: string;
+  lot_number: string;
+  expiry_date: string | null;
+  notes: string | null;
+  created_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecordKeepingDisinfectant = {
+  id: string;
+  studio_id: string;
+  date_prepared: string;
+  disinfectant_name: string;
+  concentration: string;
+  date_discarded: string | null;
+  operator_practitioner_id: string | null;
+  operator_name: string;
+  notes: string | null;
+  created_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// SENSITIVE: personal/health information. Studio RLS only; no public
+// or client-portal surface may ever import readers of this table.
+export type RecordKeepingExposureIncident = {
+  id: string;
+  studio_id: string;
+  incident_date: string;
+  exposed_person_full_name: string;
+  exposed_person_address: string;
+  exposed_person_phone: string;
+  exposure_details: string;
+  action_taken: string;
+  staff_involved_name: string;
+  notes: string | null;
+  created_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
 };

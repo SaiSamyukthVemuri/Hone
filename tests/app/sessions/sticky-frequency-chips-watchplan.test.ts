@@ -33,9 +33,11 @@ const MIGRATION = read(
 
 describe("machine frequency: tap toggle with a sticky last-used default", () => {
   it("renders as a tap-friendly two-value toggle (no free text input)", () => {
+    // PR #204 moved Probe (and PR #205 added its lot input) between
+    // frequency and Mode; slice only the frequency section.
     const region = FORM.slice(
       FORM.indexOf(">Machine frequency<"),
-      FORM.indexOf(">Mode<"),
+      FORM.indexOf(">Probe<"),
     );
     expect(region).toMatch(/MACHINE_FREQUENCIES\.map/);
     expect(region).toMatch(/type="button"/);

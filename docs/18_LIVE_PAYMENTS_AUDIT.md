@@ -275,3 +275,5 @@ Both legs are backend-verified clean and the **PR #196 fee path is fully smoke-c
 ### 16.8 Controlled live enablement runbook
 
 The §15 runbook is the final PR #202 runbook (all 14 steps: preconditions, smoke results, env/config, Stripe dashboard, DB, CI, enablement, $1 live charge, receipt, refund, webhook, ops alert, rollback, post-launch monitoring). **FUTURE ONLY. DO NOT EXECUTE IN PR #201.** Where §15 says PR #195/#198, read PR #201/#202.
+
+> **Health-inspection note (PR #205, 2026-06-12):** record keeping (sterile items, disinfectants, exposure incidents, client procedure records + probe lot capture) has STARTED in Hone, built from Chloe's BodySafe sample forms. It still needs Chloe/public-health review before being relied on operationally; it is not a legal compliance guarantee. Unrelated to payments; all live-payment blockers above unchanged.

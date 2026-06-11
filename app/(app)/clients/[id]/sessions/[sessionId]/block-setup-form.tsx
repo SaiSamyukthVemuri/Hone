@@ -133,6 +133,7 @@ type Draft = {
   // (lib/probes.ts). Empty string = no probe. Replaces the old flat
   // probeType / probeSize dropdowns.
   probeKey: string;
+  probeLotNumber: string;
   machineFrequency: string;
   minutes: string;
   // Treatment area (0039). All optional; empty → null on save.
@@ -166,6 +167,7 @@ const EMPTY: Draft = {
   apilusModality: "",
   energyLevel: "",
   probeKey: "",
+  probeLotNumber: "",
   machineFrequency: "",
   minutes: "",
   primaryArea: "",
@@ -209,6 +211,7 @@ function initialDraft(
     apilusModality: block.apilus_modality ?? "",
     energyLevel: block.energy_level != null ? String(block.energy_level) : "",
     probeKey: block.probe_key ?? "",
+    probeLotNumber: block.probe_lot_number ?? "",
     machineFrequency: block.machine_frequency ?? "",
     minutes:
       block.minutes_performed != null ? String(block.minutes_performed) : "",
@@ -468,6 +471,7 @@ export function BlockSetupForm({
           energyLevel: elNum,
           minutesPerformed: minutesNum,
           probeOptionKey: draft.probeKey || null,
+          probeLotNumber: draft.probeLotNumber.trim() || null,
           machineFrequency: (draft.machineFrequency || null) as
             | MachineFrequency
             | null,
@@ -495,6 +499,7 @@ export function BlockSetupForm({
         energyLevel: elNum,
         minutesPerformed: minutesNum,
         probeOptionKey: draft.probeKey || null,
+        probeLotNumber: draft.probeLotNumber.trim() || null,
         machineFrequency: (draft.machineFrequency || null) as
           | MachineFrequency
           | null,
@@ -699,6 +704,23 @@ export function BlockSetupForm({
           value={draft.probeKey}
           onChange={(key) => update("probeKey", key)}
         />
+        {/* PR #205 (migration 0085): lot/batch number off the probe
+            box, required by the health-inspection client procedure
+            record. Optional; saved on this treatment area. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Probe lot/batch number</span>
+          <input
+            type="text"
+            value={draft.probeLotNumber}
+            onChange={(e) => update("probeLotNumber", e.target.value)}
+            placeholder="e.g. 460941"
+            maxLength={120}
+            className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-xs text-neutral-500">
+            Used for health inspection and client procedure records.
+          </span>
+        </label>
       </div>
 
       <div className="flex flex-col gap-2">

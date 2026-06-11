@@ -79,6 +79,15 @@ export default async function AppLayout({
                   </span>
                 )}
               </Link>
+              {/* PR #205: health-inspection record keeping. A
+                  top-level operational logbook, deliberately NOT
+                  under Settings (Chloe's ask). */}
+              <Link
+                href="/records"
+                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                Record Keeping
+              </Link>
               <Link
                 href="/settings/profile"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
