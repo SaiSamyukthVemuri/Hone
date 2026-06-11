@@ -47,6 +47,9 @@ const GENERIC_PRACTITIONER_ERROR =
   "We couldn't prepare this fee charge. Please refresh and try again.";
 const NOT_AUTHORIZED_ERROR =
   "You don't have permission to prepare a fee charge for this appointment.";
+// PR #201: refunds are owner-only across all charge reasons.
+const OWNER_ONLY_REFUND_ERROR =
+  "Only the studio owner can issue a refund.";
 const NOTE_REQUIRED_ERROR =
   "Add an internal note explaining the reason for this charge.";
 const NOTE_TOO_LONG_ERROR =
@@ -452,6 +455,12 @@ export async function refundFeeAttemptAction(
   let practitionerId: string, studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // PR #201 (live payments gate preparation): refunds are
+    // OWNER-ONLY, consistently across session payments and fees
+    // (same rule as refundPaymentChargeAttemptAction).
+    if (practitioner.role !== "owner") {
+      return { ok: false, error: OWNER_ONLY_REFUND_ERROR };
+    }
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch {

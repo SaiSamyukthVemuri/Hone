@@ -68,6 +68,9 @@ const GENERIC_PRACTITIONER_ERROR =
   "We couldn't prepare this session payment. Please refresh and try again.";
 const NOT_AUTHORIZED_ERROR =
   "You don't have permission to prepare a session payment in this studio.";
+// PR #201: refunds are owner-only across all charge reasons.
+const OWNER_ONLY_REFUND_ERROR =
+  "Only the studio owner can issue a refund.";
 const NOTE_REQUIRED_ERROR =
   "Add an internal note explaining the reason for this session payment.";
 const NOTE_TOO_LONG_ERROR =
@@ -516,6 +519,18 @@ export async function refundPaymentChargeAttemptAction(
   let studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // PR #201 (live payments gate preparation): refunds are
+    // OWNER-ONLY, consistently across session payments and fees.
+    // Any active practitioner can still charge and send receipts;
+    // moving money back out of the studio's balance is restricted
+    // to the studio owner ahead of controlled live enablement.
+    if (practitioner.role !== "owner") {
+      return {
+        ok: false,
+        outcome: "not_authorized",
+        error: OWNER_ONLY_REFUND_ERROR,
+      };
+    }
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch (err) {

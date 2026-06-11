@@ -1,0 +1,221 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildPaymentReceiptEmail } from "@/lib/email/templates/payment-receipt";
+
+// PR #201: Live Payments Gate Preparation. NO live enablement.
+//
+// 1. Receipt copy readiness: the template can render a cautious
+//    live-mode receipt, but the test branch is unchanged and the
+//    sender keeps the live branch structurally unreachable.
+// 2. Payment UI copy map: test-mode strings stay present while live
+//    mode is disabled.
+// 3. Refund permission: owner-only, consistently across session
+//    payments and fees.
+// 4. Stale pending_stripe recovery: already shipped; pinned here.
+// 5. Live mode stays blocked everywhere.
+
+function read(rel: string): string {
+  return readFileSync(join(process.cwd(), rel), "utf8");
+}
+
+const FIXTURE = {
+  studioName: "Willow Electrolysis",
+  studioContactEmail: "studio@example.com",
+  clientName: "Chloe Testing",
+  chargeReasonLabel: "Session payment",
+  amountCents: 12000,
+  currencyCode: "cad",
+  chargedAt: new Date("2026-06-12T15:00:00Z"),
+  stripePaymentIntentId: "pi_test_123",
+  stripeChargeId: "ch_test_123",
+};
+
+const RISKY_LIVE_PHRASES = [
+  /tax receipt/i,
+  /official invoice/i,
+  /charitable receipt/i,
+  /pay now/i,
+  /send invoice/i,
+];
+
+describe("receipt template: test-mode branch unchanged", () => {
+  it("default (no livemode) renders the exact pre-#201 test-mode receipt", () => {
+    const out = buildPaymentReceiptEmail(FIXTURE);
+    expect(out.subject).toBe(
+      "TEST MODE receipt from Willow Electrolysis: Session payment $120.00 CAD",
+    );
+    expect(out.text).toContain(
+      "This is a Stripe test-mode receipt. No live card was charged.",
+    );
+    expect(out.text).toContain(
+      "No tax calculation is included on this receipt.",
+    );
+    expect(out.text).toContain(
+      "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone.",
+    );
+  });
+
+  it("livemode: false is byte-identical to the default", () => {
+    const a = buildPaymentReceiptEmail(FIXTURE);
+    const b = buildPaymentReceiptEmail({ ...FIXTURE, livemode: false });
+    expect(b.subject).toBe(a.subject);
+    expect(b.text).toBe(a.text);
+    expect(b.html).toBe(a.html);
+  });
+});
+
+describe("receipt template: live branch (copy readiness only; unreachable at runtime)", () => {
+  const live = buildPaymentReceiptEmail({ ...FIXTURE, livemode: true });
+
+  it("contains no TEST MODE language anywhere", () => {
+    for (const part of [live.subject, live.text, live.html]) {
+      expect(part).not.toMatch(/test.mode/i);
+      expect(part).not.toMatch(/TEST MODE/);
+      expect(part).not.toMatch(/no live card was charged/i);
+    }
+  });
+
+  it("uses the cautious live wording (pending legal/accounting review)", () => {
+    expect(live.text).toContain(
+      "Receipt for card payment processed by Willow Electrolysis.",
+    );
+    expect(live.text).toContain(
+      "No tax calculation is included on this receipt unless separately stated by the studio.",
+    );
+    expect(live.text).toContain(
+      "For questions about this payment or refund eligibility, contact the studio.",
+    );
+    const TEMPLATE = read("lib/email/templates/payment-receipt.ts");
+    expect(TEMPLATE).toMatch(/PENDING legal\/accounting review/);
+  });
+
+  it("never claims tax receipt / official invoice / charitable receipt / pay now / send invoice", () => {
+    for (const part of [live.subject, live.text, live.html]) {
+      for (const phrase of RISKY_LIVE_PHRASES) {
+        expect(part).not.toMatch(phrase);
+      }
+    }
+  });
+
+  it("still carries the factual payment details", () => {
+    expect(live.text).toContain("Amount: $120.00 CAD");
+    expect(live.text).toContain("PaymentIntent: pi_test_123");
+  });
+});
+
+describe("receipt sender: live branch structurally unreachable", () => {
+  const SENDER = read("lib/billing/payment-receipt.ts");
+
+  it("refuses any row whose stripe_livemode is not false", () => {
+    expect(SENDER).toMatch(/attempt\.stripe_livemode !== false/);
+  });
+
+  it("passes livemode: false explicitly to the template", () => {
+    expect(SENDER).toMatch(/livemode: false,/);
+  });
+});
+
+describe("payment UI copy map: test-mode strings stay while live is disabled", () => {
+  const CARD = read("components/session-payment-prepare-card.tsx");
+  const FEE_CARD = read("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx");
+
+  it("session payment card keeps its test-mode framing", () => {
+    expect(CARD).toMatch(
+      /This prepares a test-mode payment record\. It does not charge the\s*\n?\s*client\./,
+    );
+    expect(CARD).toMatch(/Run test charge/);
+    expect(CARD).toMatch(
+      /This was a Stripe test-mode charge\. No live card was charged\./,
+    );
+  });
+
+  it("fee card keeps its test-mode framing", () => {
+    expect(FEE_CARD).toMatch(/Test mode only\. No live card will be charged\./);
+    expect(FEE_CARD).toMatch(/Run test charge/);
+    expect(FEE_CARD).toMatch(/Send test receipt/);
+    expect(FEE_CARD).toMatch(/Refund test charge/);
+  });
+
+  it("the copy map is documented in docs/18 §16", () => {
+    const DOCS = read("docs/18_LIVE_PAYMENTS_AUDIT.md");
+    expect(DOCS).toMatch(/Payment UI copy map/);
+    expect(DOCS).toMatch(/PR #201 gate preparation/);
+  });
+});
+
+describe("refund permission: owner-only across all charge reasons", () => {
+  const SESSION_ACTIONS = read(
+    "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
+  );
+  const FEE_ACTIONS = read("app/(app)/calendar/[id]/manual-fee-actions.ts");
+
+  it("session payment refund re-checks owner role server-side", () => {
+    const fn = SESSION_ACTIONS.slice(
+      SESSION_ACTIONS.indexOf("export async function refundPaymentChargeAttemptAction"),
+    );
+    expect(fn).toMatch(/practitioner\.role !== "owner"/);
+    expect(fn).toMatch(/OWNER_ONLY_REFUND_ERROR/);
+    expect(SESSION_ACTIONS).toMatch(
+      /Only the studio owner can issue a refund\./,
+    );
+  });
+
+  it("fee refund re-checks owner role server-side (same rule, same copy)", () => {
+    const fn = FEE_ACTIONS.slice(
+      FEE_ACTIONS.indexOf("export async function refundFeeAttemptAction"),
+    );
+    expect(fn).toMatch(/practitioner\.role !== "owner"/);
+    expect(fn).toMatch(/OWNER_ONLY_REFUND_ERROR/);
+    expect(FEE_ACTIONS).toMatch(/Only the studio owner can issue a refund\./);
+  });
+
+  it("charging and receipts are NOT owner-gated (no silent permission expansion or contraction)", () => {
+    const prepare = SESSION_ACTIONS.slice(
+      SESSION_ACTIONS.indexOf("export async function prepareSessionPaymentChargeAction"),
+      SESSION_ACTIONS.indexOf("export async function refundPaymentChargeAttemptAction"),
+    );
+    expect(prepare).not.toMatch(/role !== "owner"/);
+  });
+});
+
+describe("stale pending_stripe recovery (already shipped; pinned)", () => {
+  it("both executors reconcile pending rows from the stored PaymentIntent", () => {
+    const SESSION = read("lib/billing/session-payment-charge.ts");
+    const FEE = read("lib/billing/manual-fee-charge.ts");
+    for (const src of [SESSION, FEE]) {
+      expect(src).toMatch(/pending_stripe/);
+      expect(src).toMatch(/idempotency/i);
+    }
+    // Ambiguity never silently re-charges: an unknown post-claim error
+    // leaves the row pending and forces manual review.
+    expect(SESSION).toMatch(
+      /row stays pending_stripe\. Reconcile via Stripe dashboard\./,
+    );
+    expect(FEE).toMatch(
+      /row stays pending_stripe\. Reconcile via Stripe dashboard\./,
+    );
+  });
+});
+
+describe("live mode stays blocked", () => {
+  it("STRIPE_ALLOW_LIVE_MODE appears in lib/stripe/server.ts only as the error string", () => {
+    const STRIPE_SERVER = read("lib/stripe/server.ts");
+    expect(STRIPE_SERVER).toMatch(/STRIPE_ALLOW_LIVE_MODE/);
+    const RUNTIME_FILES = [
+      "lib/billing/session-payment-charge.ts",
+      "lib/billing/manual-fee-charge.ts",
+      "lib/billing/payment-refund.ts",
+      "lib/billing/payment-receipt.ts",
+      "lib/email/templates/payment-receipt.ts",
+    ];
+    for (const f of RUNTIME_FILES) {
+      expect(read(f)).not.toMatch(/STRIPE_ALLOW_LIVE_MODE\s*=/);
+    }
+  });
+
+  it("the livemode_false DB CHECK migrations are untouched", () => {
+    const M73 = read("supabase/migrations/0073_payment_charge_attempts.sql");
+    expect(M73).toMatch(/stripe_livemode boolean not null default false/);
+  });
+});
