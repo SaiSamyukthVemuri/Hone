@@ -83,7 +83,7 @@ export function ClientAppointmentTimeline({
       rows: [],
     },
     { key: "upcoming", heading: "Upcoming", hint: null, rows: [] },
-    { key: "charted", heading: "Charted", hint: null, rows: [] },
+    { key: "charted", heading: "History", hint: null, rows: [] },
     { key: "cancelled", heading: "Cancelled and no-shows", hint: null, rows: [] },
     { key: "noShow", heading: "No-show", hint: null, rows: [] },
   ];

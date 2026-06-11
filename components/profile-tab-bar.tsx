@@ -16,6 +16,7 @@ const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "overview", label: "Overview" },
   { value: "sessions", label: "Sessions" },
   { value: "treatment", label: "Treatment Plans" },
+  { value: "messages", label: "Messages" },
   { value: "health", label: "Health & Forms" },
   { value: "personal", label: "Personal Notes" },
 ];

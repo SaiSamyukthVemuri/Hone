@@ -262,7 +262,7 @@ export default async function CalendarPage({
                 <div
                   key={date}
                   className={
-                    "border-l border-neutral-100 px-3 py-2.5 dark:border-neutral-800/60" +
+                    "border-l border-neutral-300 px-3 py-2.5 dark:border-neutral-700" +
                     // Today's header cell: PR #194 (Chloe iPad feedback)
                     // strengthened the tint and added a top accent bar
                     // so the current day is unmistakable on washed-out

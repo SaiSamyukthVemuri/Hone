@@ -153,7 +153,7 @@ describe("4. back navigation returns to the Sessions tab", () => {
 describe("7. bucketed charting form", () => {
   it("the three buckets render in order: observations, response, next visit", () => {
     const obs = FORM.indexOf("Treatment observations");
-    const resp = FORM.indexOf("Client/skin response");
+    const resp = FORM.indexOf("Client tolerance");
     const next = FORM.indexOf("For next visit");
     expect(obs).toBeGreaterThan(-1);
     expect(resp).toBeGreaterThan(obs);
@@ -162,7 +162,7 @@ describe("7. bucketed charting form", () => {
 
   it("each bucket explains its purpose", () => {
     expect(FORM).toMatch(/What you saw during treatment/);
-    expect(FORM).toMatch(/How the client and skin responded today/);
+    expect(FORM).toMatch(/this is the quick rating/);
     expect(FORM).toMatch(/Anything to watch or do differently on this area next time\./);
   });
 });

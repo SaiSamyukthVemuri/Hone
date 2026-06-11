@@ -368,35 +368,53 @@ export default async function ClientCheatSheetPage({
             </section>
           )}
 
-          {/* Secure portal messages (migration 0053). One-way
-              practitioner → client only; the client reads + can
-              acknowledge from /portal. PR #194: collapsed by default
-              so messages stop crowding clinical context out of the
-              first screen; the count keeps unread review state
-              discoverable. */}
-          <details className="rounded-lg border border-neutral-200 dark:border-neutral-800">
-            <summary className="cursor-pointer px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
-              <span className="mr-1 text-neutral-400">▸</span>
-              Messages
-              <span className="ml-2 text-neutral-400">
-                ({portalMessages.length})
-              </span>
-            </summary>
-            <div className="px-5 pb-5">
-          <PortalMessagesCard
-            clientId={client.id}
-            clientName={client.name}
-            clientHasEmail={!!client.email && client.email.length > 0}
-            clientIsArchived={client.archived_at != null}
-            messages={portalMessages}
-            replies={portalMessageReplies}
-            createAction={createPortalMessageAction}
-            archiveAction={archivePortalMessageAction}
-            markReplySeenAction={markPortalReplySeenAction}
-            practitionerNames={practitionerNames}
-          />
-            </div>
-          </details>
+          {/* Skin is its own card now (was previously grid-paired with
+              Pricing). Skin context + Fitzpatrick belong with clinical
+              caution; billing rates belong in their own footer card.
+              Fitzpatrick is intentionally rendered as two separate
+              rows so the practitioner-confirmed clinical value
+              (client.fitzpatrick_type) is never visually conflated
+              with the client's self-reported intake estimate. */}
+          <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Skin
+            </h2>
+            <dl className="mt-3 flex flex-col gap-2 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">
+                  Fitzpatrick · practitioner confirmed
+                </dt>
+                <dd className="font-medium">
+                  {fitzpatrickLabel(client.fitzpatrick_type)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-neutral-500">
+                  Fitzpatrick · self-reported intake
+                </dt>
+                <dd className="font-medium text-neutral-700 dark:text-neutral-300">
+                  {selfReportedFitzpatrick
+                    ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
+                    : "Not completed"}
+                </dd>
+              </div>
+            </dl>
+            {selfReportedFitzpatrick && (
+              <p className="mt-2 text-xs text-neutral-500">
+                Self-reported intake estimate. Not a clinical
+                assessment; the practitioner-confirmed value above is
+                the canonical record.
+              </p>
+            )}
+            {client.skin_notes && (
+              <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                {client.skin_notes}
+              </p>
+            )}
+          </section>
+
+          {/* PR #197 (Chloe round 3): portal messages moved to the
+              dedicated Messages tab; Overview stays clinical-first. */}
 
           {/* PR #134. Consent / e-sign per-template signed status for
               this client. Renders active templates only; archived
@@ -538,50 +556,7 @@ export default async function ClientCheatSheetPage({
             </section>
           )}
 
-          {/* Skin is its own card now (was previously grid-paired with
-              Pricing). Skin context + Fitzpatrick belong with clinical
-              caution; billing rates belong in their own footer card.
-              Fitzpatrick is intentionally rendered as two separate
-              rows so the practitioner-confirmed clinical value
-              (client.fitzpatrick_type) is never visually conflated
-              with the client's self-reported intake estimate. */}
-          <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-              Skin
-            </h2>
-            <dl className="mt-3 flex flex-col gap-2 text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-neutral-500">
-                  Fitzpatrick · practitioner confirmed
-                </dt>
-                <dd className="font-medium">
-                  {fitzpatrickLabel(client.fitzpatrick_type)}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-neutral-500">
-                  Fitzpatrick · self-reported intake
-                </dt>
-                <dd className="font-medium text-neutral-700 dark:text-neutral-300">
-                  {selfReportedFitzpatrick
-                    ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
-                    : "Not completed"}
-                </dd>
-              </div>
-            </dl>
-            {selfReportedFitzpatrick && (
-              <p className="mt-2 text-xs text-neutral-500">
-                Self-reported intake estimate. Not a clinical
-                assessment; the practitioner-confirmed value above is
-                the canonical record.
-              </p>
-            )}
-            {client.skin_notes && (
-              <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-                {client.skin_notes}
-              </p>
-            )}
-          </section>
+          {/* PR #197: Skin moved up under Allergies (rendered above). */}
 
           {client.address && (
             <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -658,6 +633,25 @@ export default async function ClientCheatSheetPage({
           }}
           action={updateClientPersonalNotesAction}
         />
+      )}
+
+      {activeTab === "messages" && (
+        <>
+          {/* PR #197: dedicated Messages tab (moved off Overview at
+              Chloe's request). Same card, same actions. */}
+          <PortalMessagesCard
+            clientId={client.id}
+            clientName={client.name}
+            clientHasEmail={!!client.email && client.email.length > 0}
+            clientIsArchived={client.archived_at != null}
+            messages={portalMessages}
+            replies={portalMessageReplies}
+            createAction={createPortalMessageAction}
+            archiveAction={archivePortalMessageAction}
+            markReplySeenAction={markPortalReplySeenAction}
+            practitionerNames={practitionerNames}
+          />
+        </>
       )}
 
       {activeTab === "health" && (
@@ -795,31 +789,38 @@ export default async function ClientCheatSheetPage({
             rows={appointmentTimeline}
           />
 
-          {/* 4. Full session history last. Renamed from "All
-                sessions" (PR #191); PR #194 makes it collapsible so a
-                long-history client does not stretch the tab. */}
-          <details className="flex flex-col gap-3">
-            <summary className="cursor-pointer [&::-webkit-details-marker]:hidden">
-              <h2 className="inline text-lg font-medium">
-                <span className="mr-1 text-sm text-neutral-400">▸</span>
-                Session history
-                <span className="ml-2 text-sm font-normal text-neutral-500">
-                  ({olderSessions.length + (lastSession ? 1 : 0)})
-                </span>
-              </h2>
-              <p className="mt-1 text-xs text-neutral-500">
-                Every charted session for this client, newest first. The most
-                recent one is summarized in Last session above.
-              </p>
-            </summary>
-            <div className="mt-3">
-              <SessionTimeline
-                clientId={client.id}
-                sessions={olderSessions}
-                practitioners={practitioners}
-              />
-            </div>
-          </details>
+          {/* PR #197 (Chloe round 3): "Charted" and "Session history"
+              were the same thing; the appointment timeline's History
+              group is now the single history surface. Walk-in /
+              legacy sessions with no linked appointment would vanish
+              from History, so they keep a small collapsible of their
+              own, rendered only when any exist. */}
+          {(() => {
+            const walkIns = [lastSession, ...olderSessions].filter(
+              (sess) => !!sess && sess.appointment_id == null,
+            );
+            if (walkIns.length === 0) return null;
+            return (
+              <details className="flex flex-col gap-3">
+                <summary className="cursor-pointer [&::-webkit-details-marker]:hidden">
+                  <h2 className="inline text-lg font-medium">
+                    <span className="mr-1 text-sm text-neutral-400">▸</span>
+                    Sessions without an appointment
+                    <span className="ml-2 text-sm font-normal text-neutral-500">
+                      ({walkIns.length})
+                    </span>
+                  </h2>
+                </summary>
+                <div className="mt-3">
+                  <SessionTimeline
+                    clientId={client.id}
+                    sessions={walkIns}
+                    practitioners={practitioners}
+                  />
+                </div>
+              </details>
+            );
+          })()}
         </>
       )}
 
