@@ -30,6 +30,7 @@ export function isProfileTab(value: string | null | undefined): value is Profile
     value === "overview" ||
     value === "sessions" ||
     value === "treatment" ||
+    value === "messages" ||
     value === "health" ||
     value === "personal"
   );

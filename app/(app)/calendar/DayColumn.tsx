@@ -435,7 +435,7 @@ export function DayColumn({
           // PR #194 (Chloe iPad feedback): stronger wash than the
           // original sky-50/70, which washed out entirely on iPad
           // brightness/color profiles. Events still read on top.
-          className="pointer-events-none absolute inset-0 z-0 bg-sky-100/80 dark:bg-sky-950/40"
+          className="pointer-events-none absolute inset-0 z-0 bg-sky-200/60 dark:bg-sky-900/40"
         />
       )}
 

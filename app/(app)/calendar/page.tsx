@@ -268,7 +268,7 @@ export default async function CalendarPage({
                     // so the current day is unmistakable on washed-out
                     // tablet screens. Still calm: one band, no badge.
                     (isToday
-                      ? " border-t-2 border-t-sky-500 bg-sky-100 dark:border-t-sky-400 dark:bg-sky-950/50"
+                      ? " border-t-[3px] border-t-sky-600 bg-sky-200 dark:border-t-sky-400 dark:bg-sky-900/60"
                       : "")
                   }
                 >

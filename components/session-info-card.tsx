@@ -13,61 +13,20 @@ type Props = {
   updatePerformerAction: (formData: FormData) => Promise<void>;
 };
 
-function centsToDollarsString(cents: number | null): string {
-  if (cents == null) return "";
-  return (cents / 100).toFixed(2);
-}
 
 export function SessionInfoCard({
   sessionId,
   clientId,
   practitioners,
   initialPerformerId,
-  initialPriceCents,
-  updatePriceAction,
   updatePerformerAction,
 }: Props) {
   const [performerId, setPerformerId] = useState(initialPerformerId ?? "");
-  const [price, setPrice] = useState(centsToDollarsString(initialPriceCents));
-  const [savedPrice, setSavedPrice] = useState(price);
-  const [priceState, setPriceState] = useState<
-    "idle" | "saving" | "saved" | "error"
-  >("idle");
-  const [priceError, setPriceError] = useState<string | null>(null);
   const [performerState, setPerformerState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [performerError, setPerformerError] = useState<string | null>(null);
-  const [, startPriceTransition] = useTransition();
   const [, startPerformerTransition] = useTransition();
-
-  function handlePriceBlur() {
-    if (price === savedPrice) return;
-    if (price.trim() && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
-      setPriceState("error");
-      setPriceError("Must be a non-negative number.");
-      return;
-    }
-    setPriceState("saving");
-    setPriceError(null);
-
-    const fd = new FormData();
-    fd.set("session_id", sessionId);
-    fd.set("client_id", clientId);
-    fd.set("price_dollars", price);
-
-    startPriceTransition(async () => {
-      try {
-        await updatePriceAction(fd);
-        setSavedPrice(price);
-        setPriceState("saved");
-        setTimeout(() => setPriceState("idle"), 1500);
-      } catch (err) {
-        setPriceState("error");
-        setPriceError(err instanceof Error ? err.message : "Failed to save.");
-      }
-    });
-  }
 
   function handlePerformerChange(next: string) {
     setPerformerId(next);
@@ -116,41 +75,11 @@ export function SessionInfoCard({
         <SaveHint state={performerState} error={performerError} />
       </div>
 
-      {/* PR #197 (Chloe round 3): no more "Session price $0" beside
-          performed-by. Price is a collapsed optional disclosure; it
-          opens pre-filled when a price was recorded. Custom pricing
-          lives on the client profile. */}
-      <details
-        open={initialPriceCents != null && initialPriceCents > 0}
-        className="flex flex-col gap-1.5"
-      >
-        <summary className="cursor-pointer text-sm font-medium text-neutral-700 [&::-webkit-details-marker]:hidden dark:text-neutral-300">
-          {initialPriceCents != null && initialPriceCents > 0
-            ? "Session price"
-            : "Add session price (optional)"}
-        </summary>
-        <p className="text-xs text-neutral-500">
-          The price for this session. Charging happens separately below.
-        </p>
-        <div className="relative">
-          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-neutral-500">
-            $
-          </span>
-          <input
-            id="price"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            onBlur={handlePriceBlur}
-            placeholder="0"
-            type="number"
-            step="1"
-            min="0"
-            inputMode="decimal"
-            className="w-full rounded-md border border-neutral-300 bg-white py-2 pl-7 pr-3 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-          />
-        </div>
-        <SaveHint state={priceState} error={priceError} />
-      </details>
+      {/* PR #198 (Chloe iPad retest): the session price block is gone
+          from charting entirely. Custom pricing lives on the client
+          profile; billing reminders belong near payment, not beside
+          the performer. updateSessionPriceAction remains for future
+          billing surfaces. */}
     </div>
   );
 }

@@ -136,10 +136,9 @@ describe("7 + 8. plan card and price wording", () => {
     expect(SESSION_PAGE).toMatch(/\{runningTotal && !attachedPlan && \(/);
   });
 
-  it("Price paid is renamed Session price with non-payment copy", () => {
-    expect(INFO_CARD).toMatch(/Session price/);
+  it("PR #198: the price block left the session header entirely", () => {
     expect(INFO_CARD).not.toMatch(/Price paid/);
-    expect(INFO_CARD).toMatch(/Charging happens separately below\./);
+    expect(INFO_CARD).not.toMatch(/Add session price/);
     expect(CLIENT_PAGE).toMatch(/Session price \$\{formatPrice/);
     expect(CLIENT_PAGE).not.toMatch(/\)\} paid`/);
   });
@@ -182,11 +181,11 @@ describe("11. birthday year", () => {
 
 describe("13. calendar today contrast", () => {
   it("today's header uses a stronger tint plus an accent bar", () => {
-    expect(CALENDAR_PAGE).toMatch(/border-t-2 border-t-sky-500 bg-sky-100/);
+    expect(CALENDAR_PAGE).toMatch(/border-t-\[3px\] border-t-sky-600 bg-sky-200/);
   });
 
   it("today's column wash is stronger than the old 50/70 tint", () => {
-    expect(DAY_COLUMN).toMatch(/bg-sky-100\/80 dark:bg-sky-950\/40/);
+    expect(DAY_COLUMN).toMatch(/bg-sky-200\/60 dark:bg-sky-900\/40/);
     expect(DAY_COLUMN).not.toMatch(/bg-sky-50\/70/);
   });
 });
