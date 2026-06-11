@@ -41,11 +41,13 @@ export default async function AppLayout({
               Hone
             </span>
             <nav className="flex items-center gap-1 text-sm">
+              {/* PR #208: the landing page is the practice Dashboard
+                  (it contains the Today section). */}
               <Link
                 href="/dashboard"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
-                Today
+                Dashboard
               </Link>
               <Link
                 href="/clients"

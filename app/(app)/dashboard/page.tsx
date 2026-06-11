@@ -21,6 +21,12 @@ import {
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
+import { PracticeSnapshot } from "./practice-snapshot";
+import {
+  getPracticeDashboardMetrics,
+  isDashboardPeriod,
+  type DashboardPeriod,
+} from "@/lib/dashboard/practice-metrics";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
   Appointment,
@@ -68,7 +74,16 @@ type TodayAppointment = Pick<
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
+  const sp = await searchParams;
+  // PR #208: practice-snapshot period filter. Default: this week.
+  const period: DashboardPeriod = isDashboardPeriod(sp.period)
+    ? sp.period
+    : "week";
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
@@ -206,6 +221,13 @@ export default async function DashboardPage() {
       })
     : null;
 
+  // PR #208: read-only practice metrics for the selected period.
+  const practiceMetrics = await getPracticeDashboardMetrics(
+    studio.id,
+    studio.timezone,
+    period,
+  );
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -213,12 +235,14 @@ export default async function DashboardPage() {
         <p className="text-xs uppercase tracking-wider text-neutral-500">
           <FormattedToday format="weekday-date" />
         </p>
-        <h1 className="text-3xl font-semibold tracking-tight">Today</h1>
-        <DaySummary
-          appointmentCount={visibleAppointments.length}
-          clientCount={todayClientIds.length}
-        />
+        <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
       </section>
+
+      {/* PR #208: practice snapshot (period filter + appointment
+          counts + service value + test-mode payment posture + action
+          cards). Read-only; never labeled revenue while live payments
+          are disabled. */}
+      <PracticeSnapshot metrics={practiceMetrics} />
 
       <NeedsAttention
         isOwner={isOwner}
@@ -243,7 +267,13 @@ export default async function DashboardPage() {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">Appointments</h2>
+          <div>
+            <h2 className="text-lg font-medium">Today</h2>
+            <DaySummary
+              appointmentCount={visibleAppointments.length}
+              clientCount={todayClientIds.length}
+            />
+          </div>
           {/* The primary action in the appointments area is booking, not
               adding a client (Chloe: she'd never add a client here). Links
               to the calendar, where the quick-book flow lives. */}
