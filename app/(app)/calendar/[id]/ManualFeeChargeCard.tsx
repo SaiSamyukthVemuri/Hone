@@ -611,24 +611,34 @@ function FeeReceiptRefundControls({
       router.refresh();
     });
   }
+  const refunded = attempt.refund_status === "succeeded";
+  const receiptSent = !!attempt.receipt_sent_at;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => run(sendFeeReceiptAction)}
-        className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
-      >
-        Send test receipt
-      </button>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => run(refundFeeAttemptAction)}
-        className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
-      >
-        Refund test charge
-      </button>
+      {receiptSent ? (
+        <span className="text-xs">Receipt sent.</span>
+      ) : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(sendFeeReceiptAction)}
+          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
+        >
+          Send test receipt
+        </button>
+      )}
+      {refunded ? (
+        <span className="text-xs font-medium">Test payment refunded.</span>
+      ) : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(refundFeeAttemptAction)}
+          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
+        >
+          Refund test charge
+        </button>
+      )}
       {message && <span className="text-xs">{message}</span>}
     </div>
   );

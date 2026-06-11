@@ -73,6 +73,10 @@ export type EligibilityExistingAttemptSummary = {
   failure_message: string | null;
   cancelled_at: string | null;
   cancelled_reason: string | null;
+  // PR #196: canonical-ledger fee attempts carry refund/receipt state;
+  // legacy rows leave these undefined.
+  refund_status?: string | null;
+  receipt_sent_at?: string | null;
 };
 
 export type ManualFeeEligibility =
