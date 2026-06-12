@@ -25,10 +25,18 @@
 //   - javascript: and data: URLs (the link helper rejects them)
 //   - headings, blockquotes, tables, code blocks
 //
-// This is an EMAIL renderer; do not use it for un-trusted
-// browser-side HTML. For the practitioner preview modal we render
-// the plain-text version, not the HTML, so the same renderer is
-// not exposed through dangerouslySetInnerHTML in the app UI.
+// Browser-side use (comment corrected in PR #219): the practitioner
+// postcare preview modal
+// (app/(app)/settings/studio/PostcareEditingHelpers.tsx) DOES render
+// this helper's HTML output via dangerouslySetInnerHTML, so the
+// preview matches the real email byte for byte. That is safe under
+// the same model as the email path: input is escaped FIRST, only the
+// fixed tag set above is ever injected, and link URLs must pass the
+// allowed-scheme check, so practitioner-typed markup or script can
+// never reach the DOM as live HTML. That preview modal is the ONLY
+// approved browser surface for this renderer's HTML; do not pipe its
+// output into dangerouslySetInnerHTML anywhere else without a
+// security review.
 
 export function escapeHtml(s: string): string {
   return s

@@ -1,0 +1,162 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+// PR #219. Docs drift cleanup pins. After the PR #196 ledger
+// unification and the PR #217/#218 hardening, several docs and one
+// runtime header comment still described the OLD world (no refunds,
+// legacy fee executor as live runtime, OPS_ALERT_EMAILS unread,
+// preview modal not using the HTML renderer). These tests pin the
+// corrected claims so the docs cannot silently drift back, and pin
+// that the cleanup did NOT overclaim live-payment readiness.
+
+function read(rel: string): string {
+  return readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+}
+
+const OVERVIEW = read("docs/00_PRODUCT_OVERVIEW.md");
+const AUDIT = read("docs/18_LIVE_PAYMENTS_AUDIT.md");
+const SECURITY = read("docs/03_SECURITY_AND_PRIVACY.md");
+const MARKDOWN_LITE = read("lib/email/markdown-lite.ts");
+
+describe("docs/00: payment claims match the shipped state", () => {
+  it("no longer claims that no code path issues a refund", () => {
+    expect(OVERVIEW).not.toMatch(/No code path issues a refund/);
+    expect(OVERVIEW).not.toMatch(/No receipt or charge notice email is sent/);
+  });
+
+  it("describes test-mode receipts and owner-only refunds as built on the unified ledger", () => {
+    expect(OVERVIEW).toMatch(
+      /Test-mode receipts and full-amount, owner-only refunds ARE built on the unified `payment_charge_attempts` ledger/,
+    );
+  });
+
+  it("livemode CHECK claim names the canonical ledger, not only the legacy table", () => {
+    expect(OVERVIEW).toMatch(
+      /canonical `payment_charge_attempts` ledger \(and the legacy, read-only `manual_fee_charge_attempts` table\) has a DB CHECK/,
+    );
+  });
+
+  it("the Soon list no longer defers things that already shipped", () => {
+    // The stale list deferred receipts/refunds, email claim discipline,
+    // hashed feed tokens, and tests + CI to "soon"; all are live now.
+    expect(OVERVIEW).not.toMatch(
+      /Soon:[^\n]*(Receipts and refunds|outbox\/claim discipline|Hashed calendar feed tokens|Automated tests \+ CI)/,
+    );
+    expect(OVERVIEW).toMatch(/Email sends use atomic claim discipline/);
+    expect(OVERVIEW).toMatch(/Calendar feed tokens are hashed at rest/);
+  });
+
+  it("broad SaaS launch no longer lists refund + receipt code as missing", () => {
+    expect(OVERVIEW).not.toMatch(/refund \+ receipt code/);
+  });
+
+  it("still does NOT claim live-payment readiness (no overclaim)", () => {
+    expect(OVERVIEW).toMatch(/\| Live payment \| \*\*Not ready/);
+    expect(OVERVIEW).toMatch(/legal\/accounting review/);
+    expect(OVERVIEW).toMatch(/Willow live Stripe checklist/);
+  });
+});
+
+describe("docs/18: legacy fee executor is no longer presented as runtime", () => {
+  it("never cites manual-fee-charge.ts as a runtime writer path", () => {
+    // The stale inventory row read "`lib/billing/manual-fee-charge.ts`
+    // via `app/...`"; the file was deleted in PR #218 and may only be
+    // mentioned as removed/dead history.
+    expect(AUDIT).not.toMatch(/`lib\/billing\/manual-fee-charge\.ts` via/);
+    // Present-tense form only; the §3 resolution note legitimately says
+    // the table "was still the live runtime" at audit time.
+    expect(AUDIT).not.toMatch(/is still the live runtime/);
+    expect(AUDIT).not.toMatch(/\): still the live runtime/);
+    expect(AUDIT).not.toMatch(/The ledger is \*\*still split\*\*/);
+  });
+
+  it("inventory row marks the legacy table as read-only history with no runtime writers", () => {
+    expect(AUDIT).toMatch(/\*\*none since PR #196\*\*/);
+    expect(AUDIT).toMatch(/LEGACY, read-only history/);
+  });
+
+  it("fee flow row points at the unified executor and canonical ledger", () => {
+    expect(AUDIT).toMatch(
+      /No-show \/ late-cancel fee[^\n]*session-payment-charge\.ts[^\n]*unified executor since PR #196/,
+    );
+  });
+
+  it("gate counts state exactly ONE paymentIntents.create call site", () => {
+    expect(AUDIT).toMatch(/`paymentIntents\.create` exactly 1 allowlisted/);
+    expect(AUDIT).not.toMatch(/`paymentIntents\.create` exactly 2 allowlisted/);
+  });
+
+  it("dual-ledger section is marked resolved without dropping the 0032 cleanup follow-up", () => {
+    expect(AUDIT).toMatch(/RESOLVED \(PR #196 unification \+ PR #218 cleanup/);
+    expect(AUDIT).toMatch(/still exist in prod with zero runtime references/);
+  });
+
+  it("still does NOT claim live payments are enabled or unblocked", () => {
+    expect(AUDIT).toMatch(/NOT READY FOR LIVE PAYMENTS/);
+    expect(AUDIT).toMatch(/Live payments remain disabled/);
+  });
+});
+
+describe("docs/03: OPS_ALERT_EMAILS language matches lib/ops/alert-email.ts", () => {
+  it("no longer claims the env var is unread or that email dispatch is deferred", () => {
+    expect(SECURITY).not.toMatch(/not read today/);
+    expect(SECURITY).not.toMatch(
+      /Operator email dispatch is deferred to a future PR/,
+    );
+  });
+
+  it("states the variable IS read, by which helper, and that it is optional", () => {
+    expect(SECURITY).toMatch(
+      /`OPS_ALERT_EMAILS` \(comma-separated recipient list\) IS read by that helper and is optional/,
+    );
+    expect(SECURITY).toMatch(/`lib\/ops\/alert-email\.ts`/);
+    expect(SECURITY).toMatch(
+      /once-per-instance warning is logged and the email is skipped/,
+    );
+    expect(SECURITY).toMatch(/durable row and the dashboard are unaffected/);
+  });
+
+  it("matches the runtime helper: alert-email.ts really reads OPS_ALERT_EMAILS", () => {
+    const helper = read("lib/ops/alert-email.ts");
+    expect(helper).toMatch(/process\.env\.OPS_ALERT_EMAILS/);
+    // The helper's comments mention send-appointment.ts only to say it
+    // is never imported; pin the absence of an actual import.
+    expect(helper).not.toMatch(/from "@\/lib\/email\/send-appointment"/);
+  });
+});
+
+describe("lib/email/markdown-lite.ts: header comment matches actual usage", () => {
+  it("no longer claims the preview renders plain text instead of the HTML", () => {
+    expect(MARKDOWN_LITE).not.toMatch(/the plain-text version, not the HTML/);
+    expect(MARKDOWN_LITE).not.toMatch(
+      /not exposed through dangerouslySetInnerHTML/,
+    );
+  });
+
+  it("names the preview modal surface and the dangerouslySetInnerHTML exposure", () => {
+    expect(MARKDOWN_LITE).toMatch(/PostcareEditingHelpers\.tsx/);
+    expect(MARKDOWN_LITE).toMatch(
+      /DOES render\s*(\/\/\s*)?this helper's HTML output via dangerouslySetInnerHTML/,
+    );
+    expect(MARKDOWN_LITE).toMatch(
+      /ONLY\s*(\/\/\s*)?approved browser surface/,
+    );
+  });
+
+  it("the claimed usage is real: the preview modal consumes markdownLiteToHtml via dangerouslySetInnerHTML", () => {
+    const preview = read("app/(app)/settings/studio/PostcareEditingHelpers.tsx");
+    expect(preview).toMatch(/markdownLiteToHtml\(/);
+    expect(preview).toMatch(/dangerouslySetInnerHTML/);
+  });
+
+  it("renderer behavior is unchanged: escape-first order and scheme allowlist intact", () => {
+    // Comment-only PR: the escape happens before any transform and the
+    // scheme allowlist still rejects javascript:/data: URLs.
+    expect(MARKDOWN_LITE).toMatch(
+      /const escaped = escapeHtml\(text\);/,
+    );
+    expect(MARKDOWN_LITE).toMatch(/lower\.startsWith\("https:\/\/"\)/);
+    expect(MARKDOWN_LITE).toMatch(/lower\.startsWith\("mailto:"\)/);
+  });
+});
