@@ -119,7 +119,7 @@ describe("placement + page", () => {
     expect(PAGE).not.toMatch(/"use client"/);
   });
 
-  it("all checklist surfaces render: sections + first consultation + next practitioner", () => {
+  it("all checklist surfaces render: sections + first consultation (no future-onboarding section)", () => {
     expect(PAGE).toMatch(/Ready for first real consultation/);
     for (const line of [
       "Client can book",
@@ -129,9 +129,11 @@ describe("placement + page", () => {
     ]) {
       expect(PAGE).toMatch(new RegExp(line));
     }
-    expect(PAGE).toMatch(/Before onboarding another practitioner or studio/);
-    expect(PAGE).toMatch(/Chloe has completed a real consultation test/);
-    expect(PAGE).toMatch(/Live payments status explained/);
+    // PR #216: the future-onboarding section was removed; Getting
+    // Started is about the current user's setup only.
+    expect(PAGE).not.toMatch(/Before onboarding another practitioner or studio/);
+    expect(PAGE).not.toMatch(/Chloe has completed a real consultation test/);
+    expect(PAGE).not.toMatch(/onboarding another/i);
   });
 
   it("items render status badges, explanations, and Open links", () => {
