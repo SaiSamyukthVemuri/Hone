@@ -32,7 +32,7 @@ import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 // * No retry. A failure to insert is logged and dropped.
 // * No SMS. SMS alerts are out of scope for this PR.
 // * No payment-moving code. The helper imports nothing from
-//   `lib/stripe/*` or `lib/billing/manual-fee-charge.ts`.
+//   `lib/stripe/*` or the payment executor (lib/billing/session-payment-charge.ts).
 // * No raw token / client_secret / card / CVC / API-key storage.
 //   The redactor below strips known dangerous keys and values
 //   defensively even if a caller forgot.

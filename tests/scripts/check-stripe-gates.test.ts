@@ -38,9 +38,9 @@ describe("check-stripe-gates script (PR #154)", () => {
     expect(stdout).toMatch(/^PASS checkout\.sessions:/m);
     expect(stdout).toMatch(/^PASS set_studio_require_card_on_file:/m);
     expect(stdout).toMatch(/^PASS STRIPE_ALLOW_LIVE_MODE=true:/m);
-    // The PI rule is "exactly one allowed location". The script
-    // reports the allowlisted path on success.
-    expect(stdout).toContain("lib/billing/manual-fee-charge.ts");
+    // The PI rule's single allowed location (PR #218 removed the
+    // legacy manual-fee executor; the unified executor remains).
+    expect(stdout).toContain("lib/billing/session-payment-charge.ts");
     // The STRIPE_ALLOW_LIVE_MODE=true rule allowlists the
     // assertStripeKeyAllowed error-message location.
     expect(stdout).toContain("lib/stripe/server.ts");
@@ -90,8 +90,10 @@ describe("check-stripe-gates script (PR #154)", () => {
 
   it("declares the documented allowlists for paymentIntents.create and STRIPE_ALLOW_LIVE_MODE=true", () => {
     expect(SCRIPT_SOURCE).toMatch(
-      /name:\s*"paymentIntents\.create"[\s\S]{0,800}allowlist:\s*\[[\s\S]{0,500}"lib\/billing\/manual-fee-charge\.ts"/,
+      /name:\s*"paymentIntents\.create"[\s\S]{0,1200}allowlist:\s*\[[\s\S]{0,1200}"lib\/billing\/session-payment-charge\.ts"/,
     );
+    // The dead legacy executor must never return to the allowlist.
+    expect(SCRIPT_SOURCE).not.toMatch(/manual-fee-charge\.ts"/);
     expect(SCRIPT_SOURCE).toMatch(
       /name:\s*"STRIPE_ALLOW_LIVE_MODE=true"[\s\S]{0,800}allowlist:\s*\[[\s\S]{0,500}"lib\/stripe\/server\.ts"/,
     );

@@ -32,7 +32,7 @@ import {
 //     withdraws the attempt without ever touching Stripe.
 //   * status='pending_stripe' -> calm "pending" message; the practitioner
 //     refreshes or clicks Run test charge again, which routes through
-//     the reconciliation path in lib/billing/manual-fee-charge.ts.
+//     the reconciliation path in the unified executor (lib/billing/session-payment-charge.ts).
 //   * status='succeeded' -> success surface with the PaymentIntent id.
 //   * status='failed' -> failure surface with sanitized code/message.
 //   * status='cancelled' -> the prepared-fee-cancelled surface.

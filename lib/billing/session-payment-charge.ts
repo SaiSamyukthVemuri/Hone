@@ -11,7 +11,7 @@ import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-car
 //
 // Test-mode-only execution helper for a prepared session_payment
 // payment_charge_attempts row. Faithful port of
-// lib/billing/manual-fee-charge.ts:runManualFeeCharge (PR #146)
+// lib/billing/the (removed, PR #218) legacy manual-fee executor:runManualFeeCharge (PR #146)
 // adapted for the canonical payment_charge_attempts ledger
 // (migration 0073 + 0074 + the PR #173 claim RPC migration 0075).
 //

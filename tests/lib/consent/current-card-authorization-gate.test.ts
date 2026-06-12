@@ -208,11 +208,8 @@ describe("client profile page computes the prop", () => {
 });
 
 describe("no payment / live-mode / SMS behavior added by this PR", () => {
-  it("manual-fee-charge.ts is unchanged: still exactly 1 paymentIntents.create", () => {
-    // We do not touch lib/billing/manual-fee-charge.ts in this PR;
-    // mirror the PR #168 gate so a regression is loud.
-    const manualFee = readSrc("lib/billing/manual-fee-charge.ts");
-    expect(manualFee.match(/paymentIntents\.create/g)?.length).toBe(1);
+  it("the legacy manual-fee executor stays removed (PR #218)", () => {
+    expect(() => readSrc("lib/billing/manual-fee-charge.ts")).toThrow();
   });
 
   it("STRIPE_ALLOW_LIVE_MODE=true string still lives in lib/stripe/server.ts only", () => {
