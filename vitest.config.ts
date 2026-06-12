@@ -18,9 +18,10 @@ import path from "node:path";
 // ----------------
 // * Not an end-to-end browser test. Playwright / Cypress are not set
 //   up; manual smoke remains the way we exercise the live system.
-// * Not a database harness. DB-touching tests would need a separate
-//   Supabase local stack. The DB RPC guard added in migration 0066
-//   is verified by reading pg_get_functiondef and by manual SQL.
+// * Not a database harness. DB-touching tests live in tests/db/ and
+//   run through vitest.db.config.ts (`npm run test:db`, PR #220)
+//   against a LOCAL Supabase stack only; they are excluded here so
+//   the unit lane stays fast and Docker-free.
 // * Not a coverage gate. The PR template's review checklist is the
 //   gate; tests added here are spot checks, not a comprehensive
 //   harness.
@@ -28,7 +29,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    exclude: ["node_modules/**", ".next/**"],
+    exclude: ["node_modules/**", ".next/**", "tests/db/**"],
     pool: "forks",
     reporters: "default",
   },

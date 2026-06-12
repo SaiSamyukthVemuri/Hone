@@ -107,3 +107,54 @@ jobs:
 
       - name: Stripe / payment safety grep gates
         run: npm run check:stripe-gates
+
+  # PR #220. DB/RLS integration lane: applies the FULL migration
+  # chain (0001-current) to a throwaway LOCAL Supabase Postgres in
+  # the runner and exercises real RLS policies, triggers, claim
+  # RPCs, and constraints as the `authenticated` role (tests/db/).
+  #
+  # Safety:
+  #   * No secrets. The only database is the supabase CLI's local
+  #     Docker stack on 127.0.0.1; the harness itself refuses any
+  #     non-localhost or hosted-looking connection string
+  #     (tests/db/helpers/harness.ts), so this job CANNOT be pointed
+  #     at production by an env change alone.
+  #   * `supabase db reset` runs WITHOUT --linked against the local
+  #     stack only. No project ref, no access token, no push.
+  #   * Runs as a separate job so the fast unit/static lane above is
+  #     untouched; a Docker hiccup here never blocks typecheck/lint.
+  db-integration:
+    name: db integration (local supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase database
+        run: supabase db start
+
+      - name: Apply full migration chain from scratch
+        # Fails the job if ANY migration 0001-current cannot apply to
+        # an empty database, or if any policy/function/trigger SQL
+        # fails to compile. This is itself a guarantee no static test
+        # could give.
+        run: supabase db reset --local
+
+      - name: DB/RLS integration tests
+        run: npm run test:db
