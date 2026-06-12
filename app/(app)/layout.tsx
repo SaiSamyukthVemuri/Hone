@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MobileMenu } from "./MobileMenu";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
@@ -65,26 +66,10 @@ export default async function AppLayout({
               >
                 Calendar
               </Link>
-              {/* PR #164. Practitioner notification center. Badge
-                  renders when unread count is positive; otherwise
-                  the link reads as plain "Notifications". The
-                  count itself lives on the server-rendered layout
-                  so the badge is correct on initial page load
-                  without client-side polling. */}
-              <Link
-                href="/notifications"
-                className="relative rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                Notifications
-                {unreadNotifications > 0 && (
-                  <span
-                    aria-label={`${unreadNotifications} unread`}
-                    className="ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-semibold text-white"
-                  >
-                    {unreadNotifications > 99 ? "99+" : unreadNotifications}
-                  </span>
-                )}
-              </Link>
+              {/* PR #229: Notifications moved out of the main tab
+                  row to the header bell (right side, both
+                  breakpoints), so the primary nav competes less and
+                  fits phones better. */}
               {/* PR #205: health-inspection record keeping. A
                   top-level operational logbook, deliberately NOT
                   under Settings (Chloe's ask). PR #209: nav label
@@ -113,6 +98,7 @@ export default async function AppLayout({
             </nav>
           </div>
           <div className="hidden items-center gap-4 md:flex">
+            <NotificationsBell unread={unreadNotifications} />
             <Link
               href="/settings/profile"
               aria-label="Open your profile settings"
@@ -131,67 +117,19 @@ export default async function AppLayout({
             </form>
           </div>
 
-          {/* PR #228 compact mobile menu (no JS: details/summary).
-              Contains every main nav destination plus Sign out, so
-              nothing is unreachable on a phone. The unread badge
-              rides on the Menu button so notifications stay visible
-              without the full nav row. */}
-          <details className="relative md:hidden">
-            <summary
-              aria-label="Open navigation menu"
-              className="flex min-h-[44px] cursor-pointer select-none list-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden dark:border-neutral-700"
-            >
-              Menu
-              {unreadNotifications > 0 && (
-                <span
-                  aria-label={`${unreadNotifications} unread notifications`}
-                  className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-semibold text-white"
-                >
-                  {unreadNotifications > 99 ? "99+" : unreadNotifications}
-                </span>
-              )}
-            </summary>
-            <nav
-              aria-label="Mobile navigation"
-              className="absolute right-0 z-40 mt-2 flex w-60 flex-col gap-0.5 rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
-            >
-              {[
-                { href: "/dashboard", label: "Dashboard" },
-                { href: "/clients", label: "Clients" },
-                { href: "/calendar", label: "Calendar" },
-                { href: "/notifications", label: "Notifications" },
-                { href: "/records", label: "Records" },
-                { href: "/settings/profile", label: "Settings" },
-                ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
-              ].map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="flex min-h-[44px] items-center justify-between rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                >
-                  {item.label}
-                  {item.href === "/notifications" && unreadNotifications > 0 && (
-                    <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-semibold text-white">
-                      {unreadNotifications > 99 ? "99+" : unreadNotifications}
-                    </span>
-                  )}
-                </Link>
-              ))}
-              <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-                <p className="px-3 pb-1 text-xs text-neutral-500">
-                  {practitioner.display_name} · {studio.name}
-                </p>
-                <form action={signOut}>
-                  <button
-                    type="submit"
-                    className="flex min-h-[44px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                  >
-                    Sign out
-                  </button>
-                </form>
-              </div>
-            </nav>
-          </details>
+          {/* PR #229: mobile right side is bell + Menu. The menu is
+              a small client component that closes itself on link
+              taps (the no-JS details element from PR #228 stayed
+              open across client-side navigations because this
+              layout persists). */}
+          <div className="flex items-center gap-2 md:hidden">
+            <NotificationsBell unread={unreadNotifications} />
+            <MobileMenu
+              admin={admin}
+              displayName={practitioner.display_name}
+              studioName={studio.name}
+            />
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-10">
@@ -225,4 +163,42 @@ async function loadUnreadNotificationCount(studioId: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// PR #229: Notifications bell. A plain server-rendered link (no
+// client JS): inline SVG bell + the same server-computed unread
+// badge the old nav tab carried. The accessible name communicates
+// the count ("Notifications, 3 unread").
+function NotificationsBell({ unread }: { unread: number }) {
+  const label =
+    unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
+  return (
+    <Link
+      href="/notifications"
+      aria-label={label}
+      className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
+    >
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-5 w-5"
+      >
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+      {unread > 0 && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-semibold leading-[18px] text-white"
+        >
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+    </Link>
+  );
 }

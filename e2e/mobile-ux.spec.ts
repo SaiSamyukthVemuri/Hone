@@ -113,29 +113,57 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "dashboard");
   });
 
-  await test.step("mobile menu: all destinations + Sign out", async () => {
-    const menu = page.getByRole("group").filter({ hasText: "Menu" }).first();
-    await page.locator("summary", { hasText: "Menu" }).click();
+  await test.step("header bell opens Notifications (with badge slot)", async () => {
+    const bell = page.getByRole("link", { name: /^Notifications/ });
+    await expect(bell).toBeVisible();
+    await bell.click();
+    await page.waitForURL(/notifications/);
+  });
+
+  await test.step("notifications: fits the viewport", async () => {
+    await expectNoPageOverflow(page, "notifications");
+  });
+
+  await test.step("mobile menu: contents + auto-close on link tap", async () => {
+    await page.goto("/dashboard");
+    const menuButton = page.getByRole("button", {
+      name: "Open navigation menu",
+    });
     const nav = page.getByRole("navigation", { name: "Mobile navigation" });
+
+    await menuButton.click();
+    await expect(menuButton).toHaveAttribute("aria-expanded", "true");
     for (const label of [
       "Dashboard",
       "Clients",
       "Calendar",
-      "Notifications",
       "Records",
       "Settings",
     ]) {
       await expect(nav.getByRole("link", { name: label })).toBeVisible();
     }
     await expect(nav.getByRole("button", { name: "Sign out" })).toBeVisible();
-    // Navigate through the menu to prove it works.
-    await nav.getByRole("link", { name: "Notifications" }).click();
-    await page.waitForURL(/notifications/);
-    void menu;
-  });
+    // Notifications lives on the bell now, not in the menu.
+    await expect(nav.getByRole("link", { name: "Notifications" })).toHaveCount(
+      0,
+    );
 
-  await test.step("notifications: fits the viewport", async () => {
-    await expectNoPageOverflow(page, "notifications");
+    // Tap Records: the menu must close itself and navigate.
+    await nav.getByRole("link", { name: "Records" }).click();
+    await page.waitForURL(/records/);
+    await expect(nav).toHaveCount(0);
+
+    // Again with Calendar.
+    await menuButton.click();
+    await nav.getByRole("link", { name: "Calendar" }).click();
+    await page.waitForURL(/calendar/);
+    await expect(nav).toHaveCount(0);
+
+    // Tapping the CURRENT page's link must also close the menu.
+    await menuButton.click();
+    await nav.getByRole("link", { name: "Calendar" }).click();
+    await expect(nav).toHaveCount(0);
+    await expect(page).toHaveURL(/calendar/);
   });
 
   await test.step("records: fits the viewport", async () => {
