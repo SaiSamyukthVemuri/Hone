@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getClientsForStudio,
+  getCurrentPractitionerWithStudio,
+} from "@/lib/supabase/queries";
 import {
   getAuditEventsByRecord,
   getClientProcedureRecords,
@@ -7,6 +10,8 @@ import {
   getExposureIncidentRecords,
   getProcedureAuditEvents,
   getSterileItemRecords,
+  normalizeProcedureRecordFilter,
+  utcInstantsForLocalDayRange,
 } from "@/lib/record-keeping/queries";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
@@ -99,7 +104,13 @@ function FieldLine({ label, value }: { label: string; value: string }) {
 export default async function RecordKeepingPrintPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; history?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    history?: string;
+    clientId?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
@@ -109,20 +120,38 @@ export default async function RecordKeepingPrintPage({
   // 0088); the print surface mirrors that with an explicit note.
   const isOwner = practitioner.role === "owner";
   const generatedAt = utcStamp(new Date());
+  // PR #223: the procedures section accepts the same per-client
+  // filter as the Records page so a printed pull matches the screen.
+  const procedureFilter = normalizeProcedureRecordFilter({
+    clientId: sp.clientId,
+    from: sp.from,
+    to: sp.to,
+  });
+  const procedureFilterQuery = [
+    procedureFilter.clientId ? `&clientId=${procedureFilter.clientId}` : "",
+    procedureFilter.from ? `&from=${procedureFilter.from}` : "",
+    procedureFilter.to ? `&to=${procedureFilter.to}` : "",
+  ].join("");
+  const filteredClient =
+    section === "procedures" && procedureFilter.clientId
+      ? ((await getClientsForStudio(studio.id)).find(
+          (c) => c.id === procedureFilter.clientId,
+        ) ?? null)
+      : null;
 
   return (
     <div className="flex flex-col gap-5 bg-white text-neutral-900">
       {/* Screen-only toolbar. */}
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link
-          href={`/records?section=${section}`}
+          href={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
           className="text-sm text-neutral-500 hover:text-neutral-900"
         >
           ← Record Keeping
         </Link>
         <div className="flex flex-wrap items-center gap-3">
           <Link
-            href={`/records/print?section=${section}${includeHistory ? "" : "&history=1"}`}
+            href={`/records/print?section=${section}${includeHistory ? "" : "&history=1"}${section === "procedures" ? procedureFilterQuery : ""}`}
             className="rounded-md border border-neutral-300 px-4 py-3 text-sm text-neutral-700 hover:bg-neutral-50"
           >
             {includeHistory ? "Hide history" : "Include history"}
@@ -138,6 +167,18 @@ export default async function RecordKeepingPrintPage({
           {studio.name} · Generated {generatedAt}
           {includeHistory ? " · Includes edit history" : ""}
         </p>
+        {section === "procedures" &&
+          (procedureFilter.clientId ||
+            procedureFilter.from ||
+            procedureFilter.to) && (
+            <p className="mt-1 text-sm font-medium">
+              Filtered: client{" "}
+              {filteredClient?.name ?? "(not found in this studio)"}
+              {procedureFilter.from || procedureFilter.to
+                ? ` · recorded sessions from ${procedureFilter.from ?? "the first record"} to ${procedureFilter.to ?? "today"}`
+                : ""}
+            </p>
+          )}
         <p className="text-[11px] text-neutral-500">
           Record-keeping support generated from Hone records. Missing
           information is shown as Not recorded.
@@ -166,7 +207,12 @@ export default async function RecordKeepingPrintPage({
           </p>
         ))}
       {section === "procedures" && (
-        <ProceduresPrint studioId={studio.id} includeHistory={includeHistory} />
+        <ProceduresPrint
+          studioId={studio.id}
+          includeHistory={includeHistory}
+          timezone={studio.timezone}
+          filter={procedureFilter}
+        />
       )}
     </div>
   );
@@ -310,11 +356,24 @@ async function IncidentsPrint({
 async function ProceduresPrint({
   studioId,
   includeHistory,
+  timezone,
+  filter,
 }: {
   studioId: string;
   includeHistory: boolean;
+  timezone: string;
+  filter: { clientId: string | null; from: string | null; to: string | null };
 }) {
-  const records = await getClientProcedureRecords(studioId);
+  const { fromUtc, toUtcExclusive } = utcInstantsForLocalDayRange(
+    filter.from,
+    filter.to,
+    timezone,
+  );
+  const records = await getClientProcedureRecords(studioId, {
+    clientId: filter.clientId,
+    fromUtc,
+    toUtcExclusive,
+  });
   const audit = includeHistory
     ? await getProcedureAuditEvents(
         studioId,
@@ -322,7 +381,13 @@ async function ProceduresPrint({
       )
     : new Map();
   if (records.length === 0)
-    return <p className="text-sm">No sessions recorded.</p>;
+    return (
+      <p className="text-sm">
+        {filter.clientId || filter.from || filter.to
+          ? "No recorded sessions match this filter."
+          : "No sessions recorded."}
+      </p>
+    );
   return (
     <ul className="flex flex-col divide-y divide-neutral-300 text-sm">
       {records.map((r) => (
@@ -347,7 +412,9 @@ async function ProceduresPrint({
                 {r.areas.map((a, i) => (
                   <li key={`${r.sessionId}-${i}`}>
                     {a.name}
-                    {a.probeLabel ? ` · ${a.probeLabel}` : ""} · Lot #:{" "}
+                    {a.probeLabel ? ` · ${a.probeLabel}` : ""}
+                    {a.machineFrequency ? ` · ${a.machineFrequency}` : ""} · Lot
+                    #:{" "}
                     {notRecorded(a.probeLotNumber)}
                     {a.minutesPerformed != null
                       ? ` · ${a.minutesPerformed} min`

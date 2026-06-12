@@ -126,7 +126,7 @@ function record(over: Partial<ClientProcedureRecord>): ClientProcedureRecord {
     operatorName: "Chloe Vemuri LE",
     aftercareExplainedAt: "2026-06-10T11:00:00Z",
     areas: [
-      { name: "Chin", probeLabel: "F3", probeLotNumber: "460941", minutesPerformed: 15 },
+      { name: "Chin", probeLabel: "F3", probeLotNumber: "460941", minutesPerformed: 15, machineFrequency: null },
     ],
     ...over,
   };
@@ -147,8 +147,8 @@ describe("summarizeProcedureCompleteness", () => {
     const m = summarizeProcedureCompleteness([
       record({
         areas: [
-          { name: "Chin", probeLabel: null, probeLotNumber: null, minutesPerformed: null },
-          { name: "Lip", probeLabel: null, probeLotNumber: "1", minutesPerformed: null },
+          { name: "Chin", probeLabel: null, probeLotNumber: null, minutesPerformed: null, machineFrequency: null },
+          { name: "Lip", probeLabel: null, probeLotNumber: "1", minutesPerformed: null, machineFrequency: null },
         ],
       }),
       record({ aftercareExplainedAt: null }),

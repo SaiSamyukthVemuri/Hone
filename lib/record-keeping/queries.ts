@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import type {
   RecordKeepingDisinfectant,
   RecordKeepingExposureIncident,
@@ -74,20 +75,87 @@ export type ClientProcedureRecord = {
     probeLabel: string | null;
     probeLotNumber: string | null;
     minutesPerformed: number | null;
+    // PR #223: machine frequency where recorded (session_blocks
+    // column from migration 0084-era charting; never invented).
+    machineFrequency: string | null;
   }>;
 };
 
+// PR #223: optional per-client filter (+ studio-timezone date range)
+// for the inspection/transfer workflow. The shape is sanitized by
+// normalizeProcedureRecordFilter below; UTC instants are computed by
+// the caller from the studio's IANA timezone. Unfiltered behavior is
+// byte-identical to before (most recent `limit` sessions studio-wide).
+export type ProcedureRecordFilter = {
+  clientId?: string | null;
+  // Inclusive lower / exclusive upper bound, ISO UTC instants.
+  fromUtc?: string | null;
+  toUtcExclusive?: string | null;
+  limit?: number;
+};
+
+// Sanitize raw URL params for the procedure-record filter. Returns
+// nulls for anything that is not a plausible UUID / YYYY-MM-DD date,
+// and drops an inverted date range. Pure; unit-tested directly.
+export function normalizeProcedureRecordFilter(raw: {
+  clientId?: string;
+  from?: string;
+  to?: string;
+}): { clientId: string | null; from: string | null; to: string | null } {
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const clientId = raw.clientId && uuid.test(raw.clientId) ? raw.clientId : null;
+  let from = raw.from && day.test(raw.from) ? raw.from : null;
+  let to = raw.to && day.test(raw.to) ? raw.to : null;
+  if (from && to && from > to) {
+    from = null;
+    to = null;
+  }
+  return { clientId, from, to };
+}
+
+// Convert a sanitized YYYY-MM-DD day range to UTC instants using the
+// STUDIO's timezone: from 00:00 on `from` up to (but not including)
+// 00:00 the day after `to`. Shared by the Records screen and the
+// print view so the printed pull always matches the screen.
+export function utcInstantsForLocalDayRange(
+  from: string | null,
+  to: string | null,
+  timezone: string,
+): { fromUtc: string | null; toUtcExclusive: string | null } {
+  return {
+    fromUtc: from
+      ? utcInstantFromLocal(from, "00:00", timezone).toISOString()
+      : null,
+    toUtcExclusive: to
+      ? utcInstantFromLocal(addDays(to, 1), "00:00", timezone).toISOString()
+      : null,
+  };
+}
+
+// Cap for a filtered (per-client) pull: high enough for a realistic
+// inspection/transfer artifact, still bounded.
+export const FILTERED_PROCEDURE_RECORD_LIMIT = 200;
+
 export async function getClientProcedureRecords(
   studioId: string,
-  limit = 30,
+  filter: ProcedureRecordFilter = {},
 ): Promise<ClientProcedureRecord[]> {
+  const limit =
+    filter.limit ?? (filter.clientId ? FILTERED_PROCEDURE_RECORD_LIMIT : 30);
   const supabase = await createClient();
-  const { data: sessions } = await supabase
+  let query = supabase
     .from("sessions")
     .select(
       "id, started_at, modality, practitioner_id, performed_by_practitioner_id, aftercare_and_risks_explained_at, clients:client_id(id, name, date_of_birth, phone, email, address)",
     )
-    .eq("studio_id", studioId)
+    .eq("studio_id", studioId);
+  if (filter.clientId) query = query.eq("client_id", filter.clientId);
+  if (filter.fromUtc) query = query.gte("started_at", filter.fromUtc);
+  if (filter.toUtcExclusive)
+    query = query.lt("started_at", filter.toUtcExclusive);
+  const { data: sessions } = await query
     .order("started_at", { ascending: false })
     .limit(limit);
   if (!sessions || sessions.length === 0) return [];
@@ -97,7 +165,7 @@ export async function getClientProcedureRecords(
     supabase
       .from("session_blocks")
       .select(
-        "session_id, sort_order, primary_area, block_name, probe_label, probe_lot_number, minutes_performed",
+        "session_id, sort_order, primary_area, block_name, probe_label, probe_lot_number, minutes_performed, machine_frequency",
       )
       .eq("studio_id", studioId)
       .in("session_id", sessionIds)
@@ -131,6 +199,7 @@ export async function getClientProcedureRecords(
       probeLabel: (b.probe_label as string | null) ?? null,
       probeLotNumber: (b.probe_lot_number as string | null) ?? null,
       minutesPerformed: (b.minutes_performed as number | null) ?? null,
+      machineFrequency: (b.machine_frequency as string | null) ?? null,
     });
     blocksBySession.set(sid, list);
   }

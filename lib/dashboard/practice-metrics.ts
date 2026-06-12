@@ -202,7 +202,9 @@ export async function getPracticeDashboardMetrics(
         .eq("studio_id", studioId)
         .gte("created_at", startUtc.toISOString())
         .lt("created_at", endUtc.toISOString()),
-      getClientProcedureRecords(studioId, 100),
+      // Same 100-session window as before; only the parameter shape
+      // changed when PR #223 added the per-client filter option.
+      getClientProcedureRecords(studioId, { limit: 100 }),
     ]);
 
   const appointments = summarizeAppointments(
