@@ -110,6 +110,25 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+describe("client page mobile polish (PR #233)", () => {
+  it("tabs are a contained one-row scroller, not a wrapping grid", () => {
+    const TABBAR = read("components/profile-tab-bar.tsx");
+    expect(TABBAR).toMatch(/overflow-x-auto whitespace-nowrap/);
+    expect(TABBAR).not.toMatch(/flex-wrap/);
+  });
+
+  it("client header is compact on phones with paired actions", () => {
+    const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
+    expect(CLIENT_PAGE).toMatch(/text-2xl font-semibold tracking-tight md:text-3xl/);
+    // Actions sit together in one row (stacked on phones).
+    expect(CLIENT_PAGE).toMatch(/flex flex-col gap-2 sm:flex-row sm:items-center/);
+    expect(CLIENT_PAGE).toMatch(/\+ Log session/);
+    expect(CLIENT_PAGE).toMatch(/<BookAppointment/);
+    // The oversized centered button + detached booking block are gone.
+    expect(CLIENT_PAGE).not.toMatch(/px-5 py-3 text-base font-medium text-white/);
+  });
+});
+
 describe("calendar touch safety", () => {
   it("drag/click-create is mouse-only at the pointer handler", () => {
     expect(DAY_COLUMN).toMatch(

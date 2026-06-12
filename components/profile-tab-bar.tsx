@@ -51,7 +51,10 @@ export function ProfileTabBar({ active }: Props) {
       aria-label="Client profile sections"
       className="border-b border-neutral-200 dark:border-neutral-800"
     >
-      <div className="flex flex-wrap gap-x-6 gap-y-1">
+      {/* PR #233: one row that scrolls INSIDE the tab bar on phones
+          (the wrapped two-row layout felt cramped at 390px). Desktop
+          fits in one row anyway, so md+ is visually unchanged. */}
+      <div className="flex gap-x-5 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:gap-x-6">
         {TABS.map((tab) => {
           const isActive = tab.value === active;
           return (

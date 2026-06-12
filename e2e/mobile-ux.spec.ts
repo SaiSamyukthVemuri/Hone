@@ -229,12 +229,48 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "records procedures");
   });
 
-  await test.step("clients + client detail: fit the viewport", async () => {
+  await test.step("clients + client detail: fit the viewport with usable actions", async () => {
     await page.goto("/clients");
     await expectNoPageOverflow(page, "clients");
     await page.goto(`/clients/${clientId}`);
     await expect(page.getByText(seed.clientName).first()).toBeVisible();
     await expectNoPageOverflow(page, "client detail");
+
+    // PR #233: header actions are all reachable on a phone.
+    await expect(page.getByRole("link", { name: "Edit" }).first()).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "+ Log session" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "+ Book appointment" }),
+    ).toBeVisible();
+
+    // All six sections stay reachable through the one-row tab bar
+    // (it scrolls inside itself; the page never scrolls sideways).
+    const tabBar = page.getByRole("navigation", {
+      name: "Client profile sections",
+    });
+    for (const label of [
+      "Overview",
+      "Sessions",
+      "Treatment Plans",
+      "Messages",
+      "Health & Forms",
+      "Personal Notes",
+    ]) {
+      await expect(tabBar.getByRole("button", { name: label })).toBeAttached();
+    }
+    await tabBar.getByRole("button", { name: "Sessions" }).click();
+    await page.waitForURL(/tab=sessions/);
+    await expectNoPageOverflow(page, "client detail sessions tab");
+    await tabBar.getByRole("button", { name: "Personal Notes" }).click();
+    await page.waitForURL(/tab=personal/);
+    await expectNoPageOverflow(page, "client detail personal tab");
+    await page.goto(`/clients/${clientId}`);
+
+    // Pinned notes card (first thing on Overview) fits the viewport.
+    await expect(page.getByText(/Pinned notes/i).first()).toBeVisible();
+    await expectNoPageOverflow(page, "client detail pinned notes");
   });
 
   await test.step("wordmark navigates home from anywhere", async () => {

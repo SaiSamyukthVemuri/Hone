@@ -387,10 +387,17 @@ export default async function ClientCheatSheetPage({
         >
           ← Clients
         </Link>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-baseline gap-3">
-              <h1 className="text-3xl font-semibold tracking-tight">
+        {/* PR #233: compact mobile-first header. The name no longer
+            shares a baseline row with Edit (it crowded and wrapped at
+            phone widths); contacts stack on phones; the action row
+            puts Log session and Book appointment side by side with a
+            single short helper line instead of a floating oversized
+            button plus a detached booking block. Identical actions,
+            identical business logic. */}
+        <div className="mt-2 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>
               {/* PR Willow launch fixes: when the client is archived
@@ -403,20 +410,14 @@ export default async function ClientCheatSheetPage({
                   Archived
                 </span>
               )}
-              <Link
-                href={`/clients/${client.id}/edit`}
-                className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
-              >
-                Edit
-              </Link>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
+            <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
               {client.pronouns && <span>{client.pronouns}</span>}
-              {client.phone && <span>· {client.phone}</span>}
-              {client.email && <span>· {client.email}</span>}
+              {client.phone && <span>{client.phone}</span>}
+              {client.email && <span className="break-all">{client.email}</span>}
             </div>
             {sessionsWithPrice > 0 && (
-              <p className="mt-2 text-sm text-neutral-500">
+              <p className="mt-1.5 text-xs text-neutral-500 sm:text-sm">
                 <span className="font-medium text-neutral-700 dark:text-neutral-300">
                   {formatPrice(lifetimeCents)}
                 </span>{" "}
@@ -425,33 +426,38 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <Link
-              href={`/clients/${client.id}/sessions/new`}
-              className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-            >
-              + Log session
-            </Link>
-            {/* PR #157. Helper copy demoting this button to the
-                "no appointment context" path now that the
-                appointment timeline on the Sessions tab carries a
-                per-row "Chart session" affordance that stamps the
-                PR #156 appointment_id FK. The button stays so the
-                practitioner can still log walk-ins / off-book
-                sessions that have no booking attached. */}
-            <p className="max-w-[16rem] text-right text-[11px] leading-snug text-neutral-500">
-              For a session that is not tied to a booked appointment. Otherwise,
-              chart from the appointment row in the Sessions tab.
-            </p>
+          <Link
+            href={`/clients/${client.id}/edit`}
+            className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            Edit
+          </Link>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Link
+            href={`/clients/${client.id}/sessions/new`}
+            className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          >
+            + Log session
+          </Link>
+          {/* Collapsed: a compact "+ Book appointment" button paired
+              with Log session. Expanded: the booking card grows into
+              the remaining row width (full-width on phones). */}
+          <div className="min-w-0 flex-1">
+            <BookAppointment
+              clientId={client.id}
+              services={services}
+              defaultDate={today}
+            />
           </div>
         </div>
-        <div className="mt-4">
-          <BookAppointment
-            clientId={client.id}
-            services={services}
-            defaultDate={today}
-          />
-        </div>
+        {/* PR #157 helper, shortened for phones: the per-row "Chart
+            session" affordance on the Sessions tab remains the booked-
+            appointment path; this button is for walk-ins. */}
+        <p className="mt-1.5 text-[11px] leading-snug text-neutral-500">
+          Log session is for walk-ins without a booked appointment; otherwise
+          chart from the appointment row in Sessions.
+        </p>
       </section>
 
       <ProfileTabBar active={activeTab} />
