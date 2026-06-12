@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #231)
+## Current production status (as of PR #232)
+
+- **Global Search V1** (PR #232, no migration). Header search on both breakpoints (desktop inline input; mobile magnifier icon + panel): clients (name/email/phone), appointments (client/service/status keyword), treatment memory (areas, cautions, reactions, probe labels/lots, next-session notes; safe labels), Records (sterile lots w/ traceability link, disinfectants), page shortcuts. Single user-scoped "use server" action, explicit studio_id on every query, caps (12 total), app-internal hrefs only; exposure incidents/audit payloads/payment internals/tokens excluded and pinned. No AI/index/external service; trigram-index follow-up documented. E2E coverage in both specs. Live payments still disabled.
+
+## Earlier production status (as of PR #231)
 
 - **Account menu + header navigation polish** (PR #231, no migration). Desktop primary nav = Dashboard/Clients/Calendar/Records; Settings/Admin/Sign out moved into a new account dropdown (first-name trigger, aria-expanded, profile block with name/studio/role, Settings + Getting Started + Admin + Sign out; same dismissal model as MobileMenu). Mobile Menu reordered as an account panel (profile block on top, nav, then Settings/Getting Started/Admin/Sign out). Bell unchanged on both breakpoints. All PR #228-#230 header/calendar behaviors retained and E2E-asserted. Live payments still disabled.
 

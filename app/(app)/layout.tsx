@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
+import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
@@ -92,6 +93,10 @@ export default async function AppLayout({
             </nav>
           </div>
           <div className="hidden items-center gap-3 md:flex">
+            {/* PR #232: global search (clients, appointments, treatment
+                memory, records, page shortcuts). Studio-scoped,
+                authenticated-only; see global-search-actions.ts. */}
+            <GlobalSearch variant="desktop" />
             <NotificationsBell unread={unreadNotifications} />
             {/* PR #231: account dropdown (Settings / Getting Started /
                 Admin / Sign out + profile block) replaces the always-
@@ -109,7 +114,8 @@ export default async function AppLayout({
               taps (the no-JS details element from PR #228 stayed
               open across client-side navigations because this
               layout persists). */}
-          <div className="flex items-center gap-2 md:hidden">
+          <div className="flex items-center gap-1.5 md:hidden">
+            <GlobalSearch variant="mobile" />
             <NotificationsBell unread={unreadNotifications} />
             <MobileMenu
               admin={admin}
