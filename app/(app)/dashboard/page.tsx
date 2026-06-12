@@ -31,6 +31,7 @@ import {
   getBeforeTodayPreviews,
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
+import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
   Appointment,
@@ -240,6 +241,10 @@ export default async function DashboardPage({
     visibleAppointments.map((a) => a.client_id),
   );
 
+  // PR #214: recorded-history attention list (two batched reads over
+  // the 200 most recent sessions; unique clients counted once).
+  const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -254,7 +259,7 @@ export default async function DashboardPage({
           counts + service value + test-mode payment posture + action
           cards). Read-only; never labeled revenue while live payments
           are disabled. */}
-      <PracticeSnapshot metrics={practiceMetrics} />
+      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} />
 
       <NeedsAttention
         isOwner={isOwner}
