@@ -110,6 +110,29 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+describe("mobile charting comfort (PR #235)", () => {
+  it("the risks/aftercare stamp is markable on the session page via the SAME action", () => {
+    const SESSION_PAGE = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+    expect(SESSION_PAGE).toMatch(/Risks &amp; aftercare/);
+    expect(SESSION_PAGE).toMatch(/<AftercareExplainedToggle/);
+    expect(SESSION_PAGE).toMatch(/action=\{markAftercareExplainedAction\}/);
+    // No new write path: the records action is reused as-is.
+    expect(SESSION_PAGE).toMatch(/from "@\/app\/\(app\)\/records\/actions"/);
+  });
+
+  it("side chips are comfortable touch targets", () => {
+    const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
+    expect(FORM).toMatch(/rounded-full border px-3 py-1\.5 text-xs/);
+    expect(FORM).not.toMatch(/rounded-full border px-2\.5 py-1 text-xs/);
+  });
+
+  it("the e2e mobile spec charts at phone width", () => {
+    const spec = read("e2e/mobile-ux.spec.ts");
+    expect(spec).toMatch(/mobile charting: comfortable and complete at 390px/);
+    expect(spec).toMatch(/iPad charting page/);
+  });
+});
+
 describe("mobile sheets (PR #234)", () => {
   it("mobile search and menu panels are viewport-fixed sheets, not icon-anchored dropdowns", () => {
     const SEARCH = read("app/(app)/GlobalSearch.tsx");

@@ -626,7 +626,9 @@ export function BlockSetupForm({
                           onClick={() => update("side", selected ? "" : opt.value)}
                           aria-pressed={selected}
                           className={
-                            "rounded-full border px-2.5 py-1 text-xs " +
+                            // PR #235: px-3 py-1.5 (was px-2.5 py-1) so the side chips
+                          // are comfortable touch targets on phones.
+                          "rounded-full border px-3 py-1.5 text-xs " +
                             (selected
                               ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
                               : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")

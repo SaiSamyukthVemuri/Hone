@@ -41,6 +41,7 @@ test.use({
 
 let seed: E2eSeed;
 let clientId: string;
+let sessionPath: string;
 
 // PR #234: a sheet/panel must sit fully inside the viewport.
 async function expectInsideViewport(
@@ -363,6 +364,77 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "dashboard via wordmark");
   });
 
+  await test.step("mobile charting: comfortable and complete at 390px (PR #235)", async () => {
+    // Enter charting from the client page action.
+    await page.goto(`/clients/${clientId}`);
+    await page.getByRole("link", { name: "+ Log session" }).click();
+    await page.getByRole("button", { name: /electrolysis/i }).click();
+    // Wait for the CREATED session URL (a UUID), not /sessions/new.
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/, { timeout: 20_000 });
+    sessionPath = new URL(page.url()).pathname;
+    await expectNoPageOverflow(page, "charting page");
+
+    // Every charting control the workflow needs is reachable.
+    const controls: Array<[ReturnType<typeof page.locator>, string]> = [
+      [page.getByRole("button", { name: "Chin", exact: true }), "treatment area"],
+      [page.getByRole("button", { name: "13.56 MHz" }), "machine frequency"],
+      [page.getByPlaceholder("e.g. 460941"), "probe lot"],
+      [page.getByRole("spinbutton", { name: /minutes performed/i }), "minutes"],
+      [page.getByRole("button", { name: "4", exact: true }), "tolerance"],
+      [page.getByRole("button", { name: "+ Mild redness" }), "reaction chip"],
+      [
+        page.getByPlaceholder(/start lower and check sensitivity/i),
+        "next-visit note",
+      ],
+      [
+        page.getByRole("button", { name: /procedure risks explained/i }),
+        "aftercare mark",
+      ],
+      [page.getByRole("button", { name: /save treatment area/i }), "save"],
+    ];
+    for (const [locator, label] of controls) {
+      await locator.scrollIntoViewIfNeeded();
+      await expect(locator, `${label} reachable at 390px`).toBeVisible();
+      await expectInsideViewport(page, locator, label);
+    }
+
+    // Chart for real: area, settings, lot, minutes, response, save.
+    await page.getByRole("button", { name: "Chin", exact: true }).click();
+    await page.getByRole("button", { name: "13.56 MHz" }).click();
+    await page.getByPlaceholder("e.g. 460941").fill(`E2E-M-${seed.runId}`);
+    await page
+      .getByRole("spinbutton", { name: /minutes performed/i })
+      .fill("10");
+    await page.getByRole("button", { name: "4", exact: true }).click();
+    await page.getByRole("button", { name: "+ Mild redness" }).click();
+    await page.getByRole("button", { name: /save treatment area/i }).click();
+    await expect(page.getByText(`E2E-M-${seed.runId}`).first()).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // Next-visit note + aftercare mark, right on the charting page.
+    await page
+      .getByPlaceholder(/start lower and check sensitivity/i)
+      .fill("E2E mobile caution: check chin sensitivity");
+    await page.getByRole("button", { name: /save note/i }).click();
+    await expect(
+      page.getByText("E2E mobile caution: check chin sensitivity").first(),
+    ).toBeVisible({ timeout: 20_000 });
+    await page
+      .getByRole("button", { name: /procedure risks explained/i })
+      .click();
+    await expect(
+      page.getByText(/✓ Risks explained and aftercare provided/).first(),
+    ).toBeVisible({ timeout: 20_000 });
+    await expectNoPageOverflow(page, "charting page after save");
+
+    // The memory loop holds: Before Today surfaces the note.
+    await page.goto(`/clients/${clientId}`);
+    await expect(
+      page.getByText("E2E mobile caution: check chin sensitivity").first(),
+    ).toBeVisible({ timeout: 20_000 });
+  });
+
   await test.step("calendar: loads without page-wide overflow", async () => {
     await page.goto("/calendar");
     await expect(
@@ -417,6 +489,13 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       ipadPage.getByRole("button", { name: /open quick-book draft/i }).first(),
     ).toBeAttached();
     await expectNoPageOverflow(ipadPage, "iPad calendar");
+    // PR #235: the charting page fits iPad width too.
+    await ipadPage.goto(sessionPath);
+    await expect(
+      ipadPage.getByRole("heading", { name: /risks & aftercare/i }),
+    ).toBeVisible();
+    await expectNoPageOverflow(ipadPage, "iPad charting page");
+    await ipadPage.goto("/calendar");
     await syntheticDrag(ipadPage, "touch");
     await ipadPage.waitForTimeout(600);
     await expect(DRAWER(ipadPage)).toHaveCount(0);

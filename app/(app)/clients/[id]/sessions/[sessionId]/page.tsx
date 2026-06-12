@@ -15,6 +15,8 @@ import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
+import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
+import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
 import {
   resolveSessionPaymentDefault,
   type SessionPaymentDefaultAmount,
@@ -456,6 +458,24 @@ export default async function SessionDetailPage({
           clientId={id}
           initialNote={session.next_session_note ?? ""}
           action={updateNextSessionNoteAction}
+        />
+      </section>
+
+      {/* PR #235: the risks/aftercare stamp is markable right where
+          charting happens, instead of only from the Records page.
+          SAME toggle component and SAME server action as the Records
+          procedure row (PR #205); no new write path. */}
+      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+        <div>
+          <h2 className="text-lg font-medium">Risks &amp; aftercare</h2>
+          <p className="text-sm text-neutral-500">
+            Recorded on the client procedure record for this session.
+          </p>
+        </div>
+        <AftercareExplainedToggle
+          sessionId={session.id}
+          explainedAt={session.aftercare_and_risks_explained_at ?? null}
+          action={markAftercareExplainedAction}
         />
       </section>
 
