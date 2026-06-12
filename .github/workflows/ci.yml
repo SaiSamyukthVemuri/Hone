@@ -174,3 +174,71 @@ jobs:
         # hand-rolled lib/types/database.ts for every curated table.
         # Local stack only; same safety posture as the steps above.
         run: npm run check:db-types
+
+  # PR #227. Browser E2E lane: ONE browser (Chromium), ONE core flow
+  # (the treatment-memory loop: public booking -> intake ->
+  # practitioner magic-link login via the local Mailpit-captured
+  # email -> charting -> Before Today memory -> Record Keeping
+  # filtered print -> anonymous lockout), against a LOCAL Next
+  # production build and the LOCAL Supabase stack only.
+  #
+  # Safety: same posture as db-integration. No secrets (the only
+  # keys involved are the public supabase-demo local JWTs and the
+  # same dummy provider values the fast lane uses); the harness
+  # refuses hosted URLs by construction (e2e/helpers/local-env.ts);
+  # no external service is called; live payments stay structurally
+  # disabled. Separate job: a flake here never blocks the fast lane.
+  browser-e2e:
+    name: browser e2e (local stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          # Same pin and rationale as db-integration (grants parity).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        # supabase/config.toml is untracked (CLI convention via
+        # supabase/.gitignore), so CI materializes the default config
+        # and allow-lists the local E2E app origin for the magic-link
+        # redirect. Local-only setting; no production project involved.
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      - name: Start local Supabase stack (db + auth + mail capture)
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser E2E (core memory loop)
+        run: npm run test:e2e
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
