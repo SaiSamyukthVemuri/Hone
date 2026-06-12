@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #212)
+## Current production status (as of PR #213)
+
+- **Probe lot traceability** (PR #213, no migration). Record Keeping -> Sterile Items gains a lot search + per-record Trace usage (`/records?section=sterile&lot=...`): matching sterile-item details + every treatment area recorded with the lot (client/date/area/operator/setup/aftercare status, linked). Exact normalized matching (trim + case-insensitive escaped ILIKE; never fuzzy). Traceability, not causation (pinned). Print/export for traceability deferred (screen-only v1). Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #212)
 
 - **Before Today previews on Dashboard Today** (PR #212, no migration). Each Today roster row shows a compact briefing (Remember line with Watch-over-Plan, Latest setup, Records reminder count) rendered from the exact PR #211 pipeline via three batched reads (never per-appointment). Full Before today card unchanged on the client Overview. Read-only; recorded-history wording. Live payments still disabled; docs/18 blockers unchanged.
 
