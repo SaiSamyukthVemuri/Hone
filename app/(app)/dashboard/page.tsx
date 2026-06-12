@@ -32,6 +32,10 @@ import {
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
+import {
+  buildGettingStarted,
+  getGettingStartedSignals,
+} from "@/lib/onboarding/getting-started";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
   Appointment,
@@ -245,6 +249,14 @@ export default async function DashboardPage({
   // the 200 most recent sessions; unique clients counted once).
   const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
 
+  // PR #215: Getting Started progress for the dashboard card.
+  const gettingStarted = buildGettingStarted(
+    await getGettingStartedSignals(
+      { id: studio.id, name: studio.name, slug: studio.slug },
+      practitioner.display_name?.trim() || practitioner.email,
+    ),
+  );
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -254,6 +266,19 @@ export default async function DashboardPage({
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
       </section>
+
+      {/* PR #215: setup/readiness checklist entry point. A normal
+          link card, never a blocking modal. */}
+      <Link
+        href="/getting-started"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
+      >
+        <span className="text-sm font-medium">Getting started</span>
+        <span className="text-xs text-neutral-500">
+          {gettingStarted.autoDone} of {gettingStarted.autoTotal} steps
+          complete →
+        </span>
+      </Link>
 
       {/* PR #208: practice snapshot (period filter + appointment
           counts + service value + test-mode payment posture + action
