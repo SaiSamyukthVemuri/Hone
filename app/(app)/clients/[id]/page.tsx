@@ -14,6 +14,8 @@ import {
   hasFromLastVisitContent,
 } from "@/components/last-session-summary";
 import { TreatmentIntelligenceCard } from "@/components/treatment-intelligence-card";
+import { BeforeTodayCard } from "@/components/before-today-card";
+import { buildBeforeToday } from "@/lib/sessions/before-today";
 import {
   buildTreatmentIntelligence,
   type IntelligenceBlockInput,
@@ -258,7 +260,7 @@ export default async function ClientCheatSheetPage({
     const { data: recentBlocks } = await supabaseForSummary
       .from("session_blocks")
       .select(
-        "session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -343,6 +345,35 @@ export default async function ClientCheatSheetPage({
       })),
     });
   }
+
+  // PR #211: "Before today" pre-treatment briefing, assembled from
+  // data this page already loads (last charted treatment, pre-client
+  // watch/plan, treatment intelligence, client record fields).
+  // Read-only; recorded-history wording only.
+  const beforeToday = buildBeforeToday({
+    lastTreatment: lastTreatment
+      ? {
+          startedAt: lastTreatment.started_at,
+          modality: lastTreatment.modality,
+          areaNames: lastTreatmentSummary?.areas.map((a) => a.name) ?? [],
+          aftercareExplainedAt:
+            (lastTreatment as { aftercare_and_risks_explained_at?: string | null })
+              .aftercare_and_risks_explained_at ?? null,
+          blockLots: lastTreatmentBlocks.map(
+            (b) =>
+              (b as { probe_lot_number?: string | null }).probe_lot_number ??
+              null,
+          ),
+        }
+      : null,
+    watchPlan: preClientWatchPlan,
+    intelligence: treatmentIntelligence,
+    client: {
+      dateOfBirth: client.date_of_birth,
+      phone: client.phone,
+      address: client.address,
+    },
+  });
 
   const hasEmergencyContact =
     !!client.emergency_contact_name || !!client.emergency_contact_phone;
@@ -665,6 +696,10 @@ export default async function ClientCheatSheetPage({
             </section>
           )}
           </section>
+
+          {/* PR #211: "Before today" pre-treatment briefing; below
+              Client info, above Treatment Intelligence. */}
+          <BeforeTodayCard briefing={beforeToday} />
 
           {/* PR #210: Treatment Intelligence; recorded-history summary
               (areas, minutes, hairs, latest setup, reactions, watch/
