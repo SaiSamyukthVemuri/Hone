@@ -3,6 +3,8 @@ import {
   seedE2eStudio,
   getClientIdByEmail,
   getAppointmentsForClient,
+  getCancellationToken,
+  getIntakeTokenForClient,
   type E2eSeed,
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner } from "./helpers/flows";
@@ -116,6 +118,49 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await bookAppointment(page, seed);
     clientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
     expect(clientId).toBeTruthy();
+  });
+
+  await test.step("public client surfaces fit a phone (PR #234 sanity pass)", async () => {
+    // Booking + its confirmation already ran in THIS viewport in the
+    // step above; assert the confirmation state explicitly.
+    await expectNoPageOverflow(page, "booking confirmation");
+
+    const appointments = await getAppointmentsForClient(seed.studioId, clientId);
+    const token = await getCancellationToken(seed.studioId, appointments[0].id);
+    expect(token).toBeTruthy();
+
+    const publicPages: Array<[string, string]> = [
+      [`/book/${seed.slug}`, "public booking"],
+      [`/manage/${token}`, "manage appointment"],
+      [`/cancel/${token}`, "cancel appointment"],
+      [`/reschedule/${token}`, "reschedule appointment"],
+      ["/cancel/not-a-real-token", "invalid token state"],
+    ];
+    const intakeToken = await getIntakeTokenForClient(
+      seed.studioId,
+      seed.clientEmail,
+    );
+    if (intakeToken) {
+      publicPages.push([`/intake/${intakeToken}`, "intake form"]);
+      publicPages.push(["/intake/thank-you", "intake thank-you"]);
+    }
+    for (const [path, label] of publicPages) {
+      await page.goto(path);
+      await expectNoPageOverflow(page, label);
+      // The authenticated shell must never leak onto public pages.
+      await expect(
+        page.getByRole("button", { name: "Open navigation menu" }),
+        `${label}: no app menu`,
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Search Hone" }),
+        `${label}: no app search`,
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("link", { name: /^Notifications/ }),
+        `${label}: no app bell`,
+      ).toHaveCount(0);
+    }
   });
 
   await test.step("login at phone width", async () => {
