@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #220)
+## Current production status (as of PR #221)
+
+- **Generated types drift check** (PR #221, no migration). `scripts/check-db-types.mjs` (`npm run check:db-types`; runs in the `db-integration` CI job after `npm run test:db`) regenerates types from the LOCAL migrated database (`supabase gen types typescript --local`, hardcoded local) and exact-matches column sets both directions for 15 curated tables vs the hand-rolled `lib/types/database.ts`, pins 11 recent columns individually, and asserts DB-side presence of the relied-upon payment/webhook columns. First run caught six live columns missing from the app types (calendar_feed_token_hash, terms/privacy stamps, normalized_email); declarations added (types-only, additive). Hosted/non-localhost env URLs refused; no production access. Pins in `tests/scripts/db-types-drift.test.ts`. Deferred: nullability comparison, non-curated tables. Live payments still disabled.
+
+## Earlier production status (as of PR #220)
 
 - **DB/RLS integration test harness** (PR #220, no migration). `tests/db/` + `npm run test:db` (vitest.db.config.ts) run against a LOCAL Supabase Postgres only: `supabase db start && supabase db reset --local` applies migrations 0001-current from scratch, then the suites exercise real RLS/triggers/claim-RPCs/constraints as the `authenticated` role (request.jwt.claims simulation). v1 covers cross-studio isolation, audit immutability + triggers, the 0087 delete posture, the double-booking constraint (incl. buffer trigger), and claim_email_send / claim_session_payment_charge_attempt. New CI job `db-integration` (separate from the fast lane; no secrets, no --linked). The harness refuses non-localhost/hosted URLs by construction; guardrails pinned in `tests/scripts/db-harness-guardrails.test.ts`. Deferred: generated-types drift check, portal/anon token-route policies, storage policies, browser E2E. Live payments still disabled; payment runtime untouched.
 

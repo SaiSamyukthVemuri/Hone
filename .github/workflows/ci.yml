@@ -166,3 +166,11 @@ jobs:
 
       - name: DB/RLS integration tests
         run: npm run test:db
+
+      - name: Generated types drift check
+        # PR #221. Regenerates types from the just-migrated LOCAL
+        # database (supabase gen types typescript --local) and
+        # compares column sets exactly, both directions, against the
+        # hand-rolled lib/types/database.ts for every curated table.
+        # Local stack only; same safety posture as the steps above.
+        run: npm run check:db-types

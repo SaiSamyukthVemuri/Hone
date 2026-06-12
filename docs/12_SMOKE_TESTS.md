@@ -819,6 +819,7 @@ Since PR #220 there is also a DB/RLS integration lane (separate CI job `db-integ
 supabase db start          # local Docker stack (db port 54322)
 supabase db reset --local  # applies migrations 0001-current from scratch
 npm run test:db            # tests/db/: RLS, triggers, claim RPCs, constraints
+npm run check:db-types     # PR #221: lib/types/database.ts vs migrated schema
 ```
 
 Lighter manual checks the reviewer can run by hand for spot-checking:
