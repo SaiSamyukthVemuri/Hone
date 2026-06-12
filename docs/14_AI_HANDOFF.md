@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #234)
+## Current production status (as of PR #235)
+
+- **Mobile charting comfort** (PR #235, no migration). The session page gains a "Risks & aftercare" section (same AftercareExplainedToggle + markAftercareExplainedAction as the Records row; no new write path) so the stamp is markable where charting happens; side chips bumped to comfortable touch size; sticky save bar deferred (documented). Mobile E2E now charts end to end at 390px with per-control reachability + viewport assertions and confirms the Before Today loop; iPad opens the charted session page with overflow asserted. Live payments still disabled.
+
+## Earlier production status (as of PR #234)
 
 - **Mobile header and search sheet polish** (PR #234, no migration). Mobile Search and Menu panels are viewport-fixed sheets under the header (fixed inset-x-3 top-16; the old icon-anchored absolute panel pushed the search input off-screen left). Menu identity block compact ("My account" headline when the display name is an email; studio · role; address as small tertiary text). Desktop search/account dropdown untouched. E2E geometry assertions (panels/input/Close fully inside viewport) + Close/Escape dismissal added. Also: a public-surface mobile sanity sweep (booking, confirmation, manage/cancel/reschedule, invalid token, intake) asserting no overflow and no authenticated-shell leakage; zero fixes needed; deeper /portal mobile polish deferred. Live payments still disabled.
 
