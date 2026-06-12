@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #211)
+## Current production status (as of PR #212)
+
+- **Before Today previews on Dashboard Today** (PR #212, no migration). Each Today roster row shows a compact briefing (Remember line with Watch-over-Plan, Latest setup, Records reminder count) rendered from the exact PR #211 pipeline via three batched reads (never per-appointment). Full Before today card unchanged on the client Overview. Read-only; recorded-history wording. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #211)
 
 - **Before Today card** (PR #211, no migration). Pre-treatment briefing on the client Overview (below Client info, above Treatment Intelligence): last treated areas+date, Remember today (watch/plan + latest reaction/tolerance, blue memory styling), latest recorded setup, and record reminders using the procedure-completeness field rules (missing lot/aftercare/DOB/phone/address). Pure assembler over data the page already loads; recorded-history wording only (overclaim words pinned absent); clean empty states. Live payments still disabled; docs/18 blockers unchanged.
 

@@ -27,6 +27,10 @@ import {
   isDashboardPeriod,
   type DashboardPeriod,
 } from "@/lib/dashboard/practice-metrics";
+import {
+  getBeforeTodayPreviews,
+  type BeforeTodayPreview,
+} from "@/lib/dashboard/before-today-previews";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
   Appointment,
@@ -228,6 +232,14 @@ export default async function DashboardPage({
     period,
   );
 
+  // PR #212: compact Before-today previews for the Today roster.
+  // THREE batched reads for all of today's clients (never per-row);
+  // exactly the PR #211 briefing pipeline, compacted.
+  const beforeTodayPreviews = await getBeforeTodayPreviews(
+    studio.id,
+    visibleAppointments.map((a) => a.client_id),
+  );
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -297,6 +309,7 @@ export default async function DashboardPage({
                     pinnedByClient.get(appt.client_id)?.text ?? null
                   }
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
+                  beforeToday={beforeTodayPreviews.get(appt.client_id) ?? null}
                   tz={studio.timezone}
                 />
               </li>
@@ -336,11 +349,13 @@ function AppointmentRow({
   appt,
   pinnedNoteText,
   intakeStatus,
+  beforeToday,
   tz,
 }: {
   appt: TodayAppointment;
   pinnedNoteText: string | null;
   intakeStatus: ClientIntakeForm["status"] | null;
+  beforeToday: BeforeTodayPreview | null;
   tz: string;
 }) {
   const time = localTimeString(new Date(appt.starts_at), tz);
@@ -408,6 +423,42 @@ function AppointmentRow({
                 Pinned
               </span>{" "}
               {truncate(pinnedNoteText, 50)}
+            </div>
+          )}
+          {/* PR #212: compact Before-today preview; the full card
+              lives on the client Overview. Recorded-history wording
+              only; subdued styling so rows stay short. */}
+          {beforeToday && (
+            <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                Before today
+              </span>
+              {!beforeToday.hasHistory ? (
+                <span className="text-neutral-500">
+                  No charted history yet.
+                </span>
+              ) : (
+                <>
+                  {beforeToday.rememberLine ? (
+                    <span
+                      className="truncate text-blue-900 dark:text-blue-200"
+                      title={beforeToday.rememberLine}
+                    >
+                      Remember: {truncate(beforeToday.rememberLine, 70)}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-500">
+                      No watch/plan note.
+                    </span>
+                  )}
+                  <span className="truncate text-neutral-600 dark:text-neutral-400">
+                    Latest setup: {beforeToday.setupLine ?? "Not recorded"}
+                  </span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {beforeToday.recordsLine}
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
