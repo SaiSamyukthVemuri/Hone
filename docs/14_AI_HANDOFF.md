@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #229)
+## Current production status (as of PR #230)
+
+- **Mobile menu outside-tap dismissal** (PR #230, no migration). MobileMenu closes on any pointerdown outside its root (listener active only while open); link-tap/current-page/Escape/Sign-out dismissal from PR #229 unchanged; bell stays independently usable. Also: the authenticated Hone wordmark is a Dashboard link again (aria-label "Go to Dashboard"; old Today-tab conflict no longer applies; marketing header untouched). E2E outside-tap + wordmark-navigation steps added; all PR #228/#229 mobile assertions retained. Live payments still disabled.
+
+## Earlier production status (as of PR #229)
 
 - **Mobile header polish** (PR #229, no migration). Mobile Menu is now a client component that auto-closes on every link tap (incl. current page), Escape, and Sign out (`app/(app)/MobileMenu.tsx`; the PR #228 details element stayed open across client-side navigations). Notifications moved from a nav tab to a header bell on both breakpoints (server-rendered link + unread badge; accessible name carries the count); desktop Notifications tab removed. Notifications page/badge logic and PR #228 calendar touch-safety unchanged (E2E regression green). Live payments still disabled.
 

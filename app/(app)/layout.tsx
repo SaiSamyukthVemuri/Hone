@@ -33,14 +33,19 @@ export default async function AppLayout({
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 md:px-8">
           <div className="flex items-center gap-6">
-            {/* Brand wordmark is intentionally non-interactive in the
-                authenticated app. Chloe flagged that a clickable "Hone"
-                competed with "Today" as the dashboard link. "Today" is
-                the dashboard link; this is a plain label (no href, no
-                onClick, no pointer cursor). */}
-            <span className="select-none text-xl font-semibold tracking-tight">
+            {/* PR #230: the wordmark is a Dashboard link again,
+                reversing the earlier deliberate-non-interactive
+                decision. Context changed: the old conflict was with a
+                nav tab labeled "Today" (since renamed "Dashboard"),
+                and on phones the wordmark is the only always-visible
+                way home now that the tab row lives inside the Menu. */}
+            <Link
+              href="/dashboard"
+              aria-label="Go to Dashboard"
+              className="select-none text-xl font-semibold tracking-tight"
+            >
               Hone
-            </span>
+            </Link>
             {/* PR #228: the full horizontal nav is DESKTOP/TABLET
                 only. On phones the whitespace-nowrap row was wider
                 than the viewport and dragged the whole page sideways;
