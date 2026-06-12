@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #233)
+## Current production status (as of PR #234)
+
+- **Mobile header and search sheet polish** (PR #234, no migration). Mobile Search and Menu panels are viewport-fixed sheets under the header (fixed inset-x-3 top-16; the old icon-anchored absolute panel pushed the search input off-screen left). Menu identity block compact ("My account" headline when the display name is an email; studio · role; address as small tertiary text). Desktop search/account dropdown untouched. E2E geometry assertions (panels/input/Close fully inside viewport) + Close/Escape dismissal added. Also: a public-surface mobile sanity sweep (booking, confirmation, manage/cancel/reschedule, invalid token, intake) asserting no overflow and no authenticated-shell leakage; zero fixes needed; deeper /portal mobile polish deferred. Live payments still disabled.
+
+## Earlier production status (as of PR #233)
 
 - **Mobile client page polish** (PR #233, no migration). Client detail header is mobile-first (compact name, small Edit button, stacked contacts); Log session + Book appointment paired in one action row with a short helper; profile tab bar is a contained one-row scroller on phones (desktop unchanged). No action/business-logic change. E2E client-detail step extended (actions reachable, six tabs reachable, pinned notes visible, overflow assertions). Live payments still disabled.
 

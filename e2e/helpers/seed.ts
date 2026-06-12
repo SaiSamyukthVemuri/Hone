@@ -191,3 +191,15 @@ export async function getAppointmentsForClient(
     [studioId, clientId],
   );
 }
+
+export async function getCancellationToken(
+  studioId: string,
+  appointmentId: string,
+): Promise<string | null> {
+  const rows = await sql<{ cancellation_token: string | null }>(
+    `select cancellation_token from public.appointments
+      where studio_id = $1 and id = $2`,
+    [studioId, appointmentId],
+  );
+  return rows[0]?.cancellation_token ?? null;
+}
