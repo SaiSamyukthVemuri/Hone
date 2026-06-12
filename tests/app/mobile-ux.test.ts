@@ -110,6 +110,25 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+describe("mobile sheets (PR #234)", () => {
+  it("mobile search and menu panels are viewport-fixed sheets, not icon-anchored dropdowns", () => {
+    const SEARCH = read("app/(app)/GlobalSearch.tsx");
+    expect(SEARCH).toMatch(/fixed inset-x-3 top-16 z-40 max-h-\[75vh\]/);
+    expect(SEARCH).not.toMatch(/absolute right-0 top-full[^"]*w-\[calc\(100vw/);
+    expect(MENU).toMatch(/fixed inset-x-3 top-16 z-40/);
+    expect(MENU).not.toMatch(/absolute right-0 z-40 mt-2 flex w-60/);
+  });
+
+  it("a long email is never the bold menu headline", () => {
+    expect(MENU).toMatch(/displayName\.includes\("@"\) \? "My account" : displayName/);
+  });
+
+  it("no profile/logo upload was introduced", () => {
+    const LAYOUT_ALL = LAYOUT + MENU + read("app/(app)/AccountMenu.tsx");
+    expect(LAYOUT_ALL).not.toMatch(/upload|avatar|profile.photo/i);
+  });
+});
+
 describe("client page mobile polish (PR #233)", () => {
   it("tabs are a contained one-row scroller, not a wrapping grid", () => {
     const TABBAR = read("components/profile-tab-bar.tsx");

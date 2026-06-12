@@ -74,7 +74,14 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
       className={
         variant === "desktop"
           ? "absolute left-0 right-0 top-full z-40 mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
-          : "absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm overflow-y-auto rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
+          : // PR #234: a viewport-FIXED sheet under the header. The old
+            // absolute right-0 panel was anchored to the search ICON,
+            // which sits left of the bell and Menu, so a
+            // calc(100vw-2rem) panel extended past the LEFT edge of
+            // the screen and clipped the input. Fixed positioning is
+            // relative to the viewport, so the sheet is always fully
+            // on-screen regardless of where the trigger sits.
+            "fixed inset-x-3 top-16 z-40 max-h-[75vh] overflow-y-auto rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
       }
     >
       {variant === "mobile" && (

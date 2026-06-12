@@ -68,15 +68,28 @@ export function MobileMenu({
       {open && (
         <nav
           aria-label="Mobile navigation"
-          className="absolute right-0 z-40 mt-2 flex w-60 flex-col gap-0.5 rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
+          // PR #234: same viewport-fixed sheet treatment as mobile
+          // search, so both panels share width, position, and feel.
+          className="fixed inset-x-3 top-16 z-40 flex max-h-[75vh] flex-col gap-0.5 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
         >
           {/* PR #231: app-style account panel. Profile/studio block
               on top, then navigation, then account actions. */}
+          {/* PR #234: compact identity block. A long email must never
+              be the bold headline: when the display name looks like an
+              email, lead with "My account" and demote the address to
+              small secondary text. */}
           <div className="border-b border-neutral-200 px-3 pb-2 pt-1 dark:border-neutral-800">
-            <p className="font-medium">{displayName}</p>
-            <p className="text-xs text-neutral-500">
+            <p className="truncate text-sm font-medium">
+              {displayName.includes("@") ? "My account" : displayName}
+            </p>
+            <p className="truncate text-xs text-neutral-500">
               {studioName} · {role === "owner" ? "Owner" : "Practitioner"}
             </p>
+            {displayName.includes("@") && (
+              <p className="truncate text-[11px] text-neutral-400">
+                {displayName}
+              </p>
+            )}
           </div>
           {[
             { href: "/dashboard", label: "Dashboard" },

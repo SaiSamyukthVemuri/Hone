@@ -40,6 +40,21 @@ test.use({
 let seed: E2eSeed;
 let clientId: string;
 
+// PR #234: a sheet/panel must sit fully inside the viewport.
+async function expectInsideViewport(
+  page: Page,
+  locator: ReturnType<Page["locator"]>,
+  label: string,
+) {
+  const box = (await locator.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.x, `${label}: left edge on-screen`).toBeGreaterThanOrEqual(0);
+  expect(
+    box.x + box.width,
+    `${label}: right edge on-screen`,
+  ).toBeLessThanOrEqual(viewport.width + 0.5);
+}
+
 async function expectNoPageOverflow(page: Page, label: string) {
   const widths = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
@@ -125,6 +140,22 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page.getByRole("button", { name: "Search Hone" }).click();
     const searchInput = page.getByRole("searchbox", { name: "Search Hone" });
     await expect(searchInput).toBeVisible();
+
+    // PR #234: the sheet, its input, and Close are fully on-screen.
+    await expectInsideViewport(page, searchInput, "search input");
+    const closeButton = page.getByRole("button", { name: "Close" });
+    await expect(closeButton).toBeVisible();
+    await expectInsideViewport(page, closeButton, "search close");
+    await expectNoPageOverflow(page, "mobile search sheet");
+
+    // Close button and Escape both dismiss; reopen for the search.
+    await closeButton.click();
+    await expect(searchInput).toHaveCount(0);
+    await page.getByRole("button", { name: "Search Hone" }).click();
+    await page.keyboard.press("Escape");
+    await expect(searchInput).toHaveCount(0);
+    await page.getByRole("button", { name: "Search Hone" }).click();
+
     await searchInput.fill(seed.clientName);
     // The client result is the one whose subtitle is the email
     // (appointment results share the client NAME as their title).
@@ -182,6 +213,8 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     await menuButton.click();
     await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    // PR #234: the menu sheet is fully inside the viewport.
+    await expectInsideViewport(page, nav, "menu sheet");
     // PR #231: profile/studio block at the top of the panel.
     await expect(nav.getByText(seed.studioName)).toBeVisible();
     await expect(nav.getByText(/· Owner/)).toBeVisible();
