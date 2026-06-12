@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "e2e:server": "next build && next start -p 3111",
     "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
     "check:db-types": "node scripts/check-db-types.mjs",
     "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
@@ -32,6 +35,7 @@
     "stripe": "^22.1.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.5",
     "@types/pg": "^8.20.0",

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #226)
+## Current production status (as of PR #227)
+
+- **Browser E2E core memory loop** (PR #227, no migration). Playwright (Chromium, one spec) drives the full treatment-memory loop against a LOCAL production build + LOCAL Supabase stack: booking, intake, REAL magic-link login via Mailpit (no auth bypass; invite-path account), dashboard + charted-24h wording, charting with clinical-memory fields, second booking, Before Today memory, filtered procedure record + print + aftercare mark, anonymous lockout. New separate `browser-e2e` CI job (local stack, no secrets, traces on failure only); `npm run test:e2e` locally after `supabase start` + `db reset`. Local-only by construction (hosted URLs refused; supabase-demo JWTs only; dummy provider keys). supabase/config.toml allow-lists the localhost:3111 E2E origin (local-only setting). Pins in tests/scripts/e2e-guardrails.test.ts. Live payments still disabled.
+
+## Earlier production status (as of PR #226)
 
 - **Post-hardening docs drift cleanup** (PR #226, docs/source-pin only). Root-level and operational docs corrected to the post-#218/#220/#221/#222/#223/#224/#225 reality: canonical charge path `session-payment-charge.ts` (CONTRIBUTING, docs/11, docs/14 guidance blocks), `payment_charge_attempts` as the canonical CHECK-pinned ledger (README), db-integration lane + types drift check acknowledged (README, docs/00, docs/03), supervised-pilot vs paid-launch line stated (docs/00), docs/11 dormancy recipes fixed to query both ledgers and expect the right gate output. 11 pins in tests/docs/docs-drift-pr226.test.ts. No runtime change. Live payments still disabled.
 

@@ -822,6 +822,19 @@ npm run test:db            # tests/db/: RLS, triggers, claim RPCs, constraints
 npm run check:db-types     # PR #221: lib/types/database.ts vs migrated schema
 ```
 
+And since PR #227 a browser E2E lane (separate CI job `browser-e2e`; LOCAL stack only, never production):
+
+```bash
+supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+supabase db reset --local
+npm run test:e2e           # PR #227: Chromium, the core treatment-memory loop
+npm run test:e2e:ui        # interactive debugging
+```
+
+One-time local setup for the E2E login: `supabase/config.toml` (untracked) must allow-list the E2E app origin for the magic-link redirect. Set `additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]` in the `[auth]` section and restart the stack. The CI `browser-e2e` job materializes the same setting itself.
+
+The E2E flow covers: public booking, intake wizard, REAL practitioner magic-link login (GoTrue email captured by local Mailpit; no auth bypass), Dashboard incl. the Charted-within-24h card wording, charting a treatment area (area, machine frequency, probe brand + lot, minutes, tolerance, reaction), the For-next-visit note, a second booking, Before Today memory on the client page, the filtered Client Procedure Record + print (incl. the aftercare mark), and anonymous lockout of Records/print/Dashboard. It assumes a DISPOSABLE local database and deliberately does not cover payments, SMS/email providers, multi-practitioner permissions, or cross-browser variants.
+
 Record Keeping per-client pull (PR #223), manual smoke: on /records → Client Procedure Records, select a client (optionally a date range), Apply filter, confirm only that client's recorded sessions show with the active-filter line; Print / Export must carry the same filter (header shows "Filtered: client ..." and the range) and a filter with no matches must print the empty state, not a broken page. Clear filters must restore the default most-recent view.
 
 New-studio setup (PR #224): when creating a second real studio, follow docs/20_NEW_STUDIO_SETUP_RUNBOOK.md end to end; its sections 2.5 (surface verification), 3 (isolation checks), and 4 (smoke workflow) are the smoke catalogue for that operation.
