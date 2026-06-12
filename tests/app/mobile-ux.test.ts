@@ -11,6 +11,7 @@ function read(rel: string): string {
 }
 
 const LAYOUT = read("app/(app)/layout.tsx");
+const MENU = read("app/(app)/MobileMenu.tsx");
 const DAY_COLUMN = read("app/(app)/calendar/DayColumn.tsx");
 const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const GLOBALS = read("app/globals.css");
@@ -22,26 +23,41 @@ describe("app shell: responsive navigation", () => {
     );
   });
 
-  it("the mobile menu exists with an accessible label", () => {
-    expect(LAYOUT).toMatch(/<details className="relative md:hidden">/);
-    expect(LAYOUT).toMatch(/aria-label="Open navigation menu"/);
-    expect(LAYOUT).toMatch(/aria-label="Mobile navigation"/);
+  it("the mobile menu is a client component with an accessible, stateful button", () => {
+    expect(MENU).toMatch(/"use client"/);
+    expect(MENU).toMatch(/aria-label="Open navigation menu"/);
+    expect(MENU).toMatch(/aria-expanded=\{open\}/);
+    expect(MENU).toMatch(/aria-label="Mobile navigation"/);
   });
 
-  it("the mobile menu contains every destination plus Sign out", () => {
-    const menu = LAYOUT.slice(LAYOUT.indexOf("<details"));
+  it("the mobile menu contains every destination plus Sign out, and closes on tap", () => {
     for (const dest of [
       '"/dashboard"',
       '"/clients"',
       '"/calendar"',
-      '"/notifications"',
       '"/records"',
       '"/settings/profile"',
     ]) {
-      expect(menu).toContain(dest);
+      expect(MENU).toContain(dest);
     }
-    expect(menu).toMatch(/Sign out/);
-    expect(menu).toMatch(/form action=\{signOut\}/);
+    // Notifications moved to the header bell (PR #229).
+    expect(MENU).not.toContain('"/notifications"');
+    expect(MENU).toMatch(/Sign out/);
+    expect(MENU).toMatch(/form action=\{signOut\}/);
+    // PR #229: every link tap closes the menu; Escape closes too.
+    expect(MENU).toMatch(/onClick=\{close\}/);
+    expect(MENU).toMatch(/e\.key === "Escape"/);
+  });
+
+  it("the notifications bell carries the destination and the unread count", () => {
+    expect(LAYOUT).toMatch(/function NotificationsBell/);
+    expect(LAYOUT).toMatch(/Notifications, \$\{unread\} unread/);
+    expect(LAYOUT).toMatch(/href="\/notifications"/);
+    // Bell renders in BOTH the desktop group and the mobile group.
+    expect((LAYOUT.match(/<NotificationsBell unread=\{unreadNotifications\} \/>/g) ?? []).length).toBe(2);
+    // The old full-width Notifications tab is gone from the nav row.
+    const navRow = LAYOUT.slice(LAYOUT.indexOf("<nav"), LAYOUT.indexOf("</nav>"));
+    expect(navRow).not.toContain('"/notifications"');
   });
 
   it("no page-wide overflow-x-hidden band-aid was added", () => {

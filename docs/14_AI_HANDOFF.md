@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #228)
+## Current production status (as of PR #229)
+
+- **Mobile header polish** (PR #229, no migration). Mobile Menu is now a client component that auto-closes on every link tap (incl. current page), Escape, and Sign out (`app/(app)/MobileMenu.tsx`; the PR #228 details element stayed open across client-side navigations). Notifications moved from a nav tab to a header bell on both breakpoints (server-rendered link + unread badge; accessible name carries the count); desktop Notifications tab removed. Notifications page/badge logic and PR #228 calendar touch-safety unchanged (E2E regression green). Live payments still disabled.
+
+## Earlier production status (as of PR #228)
 
 - **Mobile and iPad UX stabilization** (PR #228, no migration). Phone nav overflow fixed: full nav row is md+ only; phones get a details/summary Menu (all destinations + badge + Sign out). Calendar touch safety: grid drag/click-create is mouse-only, `touch-action: manipulation` restores native scrolling, explicit coarse-pointer-only "+" button per day column opens the quick-book drawer (time editable); week grid scrolls inside its card on phones (min-w + existing overflow-x-auto). No booking/business-rule change. Proven by e2e/mobile-ux.spec.ts (iPhone + iPad + desktop-regression contexts) plus 10 source pins; manual native-gesture smoke in docs/12. Live payments still disabled.
 
