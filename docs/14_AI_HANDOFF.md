@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #222)
+## Current production status (as of PR #223)
+
+- **Per-client procedure record filter + print** (PR #223, no migration). Records → Client Procedure Records: client select + optional studio-timezone date range (GET form, shareable URL); print accepts the same params (`/records/print?section=procedures&clientId&from&to`) with a "Filtered: client ..." header line and a clear empty state. Default 30-most-recent view unchanged; filtered pulls capped at 200 (cap explained in UI). Shared `utcInstantsForLocalDayRange` keeps screen and print identical; params sanitized via `normalizeProcedureRecordFilter`. machine_frequency now shown on items lines where recorded. No RLS change; studio scoping + user-scoped client unchanged; PR #222 exposure tier untouched. Live payments still disabled.
+
+## Earlier production status (as of PR #222)
 
 - **Exposure incident owner access tier** (PR #222, **migration 0088, policy-only; apply to prod BEFORE merge after SQL approval**). `record_keeping_exposure_incidents`: SELECT/UPDATE owner-only (`is_studio_owner`), INSERT stays member-wide (staff can report without browsing history), still no DELETE. Audit SELECT carve-out: exposure-incident audit rows owner-only (they carry old/new values); other record types unchanged; immutability untouched. UI: owner-only note for non-owners on Records + Print (Add form stays); update action role-checks. Privacy hardening before multi-practitioner studios; no change for solo Willow. 10 new DB-lane tests. Live payments still disabled.
 

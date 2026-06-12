@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getClientsForStudio,
+  getCurrentPractitionerWithStudio,
+} from "@/lib/supabase/queries";
 import {
   getAuditEventsByRecord,
   getLotTraceability,
@@ -9,6 +12,9 @@ import {
   getExposureIncidentRecords,
   getProcedureAuditEvents,
   getSterileItemRecords,
+  normalizeProcedureRecordFilter,
+  utcInstantsForLocalDayRange,
+  FILTERED_PROCEDURE_RECORD_LIMIT,
 } from "@/lib/record-keeping/queries";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import {
@@ -154,7 +160,13 @@ function RowTools({
 export default async function RecordKeepingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; lot?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    lot?: string;
+    clientId?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
@@ -164,6 +176,19 @@ export default async function RecordKeepingPage({
   // PR #222: exposure incident HISTORY is owner-only (RLS-enforced by
   // migration 0088); any member may still file a new incident.
   const isOwner = practitioner.role === "owner";
+  // PR #223: per-client procedure record filter (inspection/transfer
+  // pull). Params are sanitized; date bounds are interpreted in the
+  // STUDIO timezone so a day means the studio's day, not UTC's.
+  const procedureFilter = normalizeProcedureRecordFilter({
+    clientId: sp.clientId,
+    from: sp.from,
+    to: sp.to,
+  });
+  const procedureFilterQuery = [
+    procedureFilter.clientId ? `&clientId=${procedureFilter.clientId}` : "",
+    procedureFilter.from ? `&from=${procedureFilter.from}` : "",
+    procedureFilter.to ? `&to=${procedureFilter.to}` : "",
+  ].join("");
 
   return (
     <div className="flex flex-col gap-6">
@@ -196,7 +221,7 @@ export default async function RecordKeepingPage({
           </Link>
         ))}
         <Link
-          href={`/records/print?section=${section}`}
+          href={`/records/print?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
           className="ml-auto rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
         >
           Print / Export
@@ -213,7 +238,11 @@ export default async function RecordKeepingPage({
         <ExposureIncidentsSection studioId={studio.id} isOwner={isOwner} />
       )}
       {section === "procedures" && (
-        <ClientProcedureRecordsSection studioId={studio.id} />
+        <ClientProcedureRecordsSection
+          studioId={studio.id}
+          timezone={studio.timezone}
+          filter={procedureFilter}
+        />
       )}
     </div>
   );
@@ -544,28 +573,137 @@ async function ExposureIncidentsSection({
 
 async function ClientProcedureRecordsSection({
   studioId,
+  timezone,
+  filter,
 }: {
   studioId: string;
+  timezone: string;
+  filter: { clientId: string | null; from: string | null; to: string | null };
 }) {
-  const records = await getClientProcedureRecords(studioId);
+  const { fromUtc, toUtcExclusive } = utcInstantsForLocalDayRange(
+    filter.from,
+    filter.to,
+    timezone,
+  );
+  const clients = await getClientsForStudio(studioId);
+  const filteredClient = filter.clientId
+    ? (clients.find((c) => c.id === filter.clientId) ?? null)
+    : null;
+  const records = await getClientProcedureRecords(studioId, {
+    clientId: filter.clientId,
+    fromUtc,
+    toUtcExclusive,
+  });
   const audit = await getProcedureAuditEvents(
     studioId,
     records.map((r) => r.sessionId),
   );
+  const filterActive = Boolean(filter.clientId || filter.from || filter.to);
   return (
     <div className="flex flex-col gap-3">
       <div>
         <h2 className="text-lg font-medium">Client procedure records</h2>
         <p className="mt-1 text-xs text-neutral-500">
-          Generated from your existing client and session records (most recent
-          {" "}
-          {records.length} sessions). Missing information shows as Not
-          recorded; add it on the client or session page.
+          Generated from your existing client and session records. Missing
+          information shows as Not recorded; add it on the client or session
+          page.
         </p>
       </div>
+
+      {/* PR #223: per-client filter for inspection/transfer pulls. A
+          plain GET form so the URL stays shareable with the print
+          view; no client-side JS required. */}
+      <form
+        method="get"
+        action="/records"
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800"
+      >
+        <input type="hidden" name="section" value="procedures" />
+        <label className="flex flex-col gap-1 text-xs">
+          <span className="font-medium text-neutral-600 dark:text-neutral-400">
+            Client
+          </span>
+          <select
+            name="clientId"
+            defaultValue={filter.clientId ?? ""}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          >
+            <option value="">All clients (most recent sessions)</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs">
+          <span className="font-medium text-neutral-600 dark:text-neutral-400">
+            From (optional)
+          </span>
+          <input
+            type="date"
+            name="from"
+            defaultValue={filter.from ?? ""}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs">
+          <span className="font-medium text-neutral-600 dark:text-neutral-400">
+            To (optional)
+          </span>
+          <input
+            type="date"
+            name="to"
+            defaultValue={filter.to ?? ""}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </label>
+        <button
+          type="submit"
+          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+        >
+          Apply filter
+        </button>
+        {filterActive && (
+          <Link
+            href="/records?section=procedures"
+            className="px-2 py-2 text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            Clear filters
+          </Link>
+        )}
+      </form>
+
+      {filterActive ? (
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          Showing {records.length} recorded session
+          {records.length === 1 ? "" : "s"} for{" "}
+          <span className="font-medium">
+            {filteredClient?.name ?? "all clients"}
+          </span>
+          {filter.from || filter.to ? (
+            <>
+              {" "}
+              between <span className="font-medium">{filter.from ?? "the first record"}</span> and{" "}
+              <span className="font-medium">{filter.to ?? "today"}</span>
+            </>
+          ) : null}
+          {records.length >= FILTERED_PROCEDURE_RECORD_LIMIT &&
+            ` (capped at the ${FILTERED_PROCEDURE_RECORD_LIMIT} most recent; narrow the date range for older sessions)`}
+          . Use Print / Export above to print this filtered record.
+        </p>
+      ) : (
+        <p className="text-xs text-neutral-500">
+          Showing the {records.length} most recent recorded session
+          {records.length === 1 ? "" : "s"} across all clients.
+        </p>
+      )}
+
       {records.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
-          No sessions recorded yet.
+          {filterActive
+            ? "No recorded sessions match this filter."
+            : "No sessions recorded yet."}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -625,6 +763,7 @@ async function ClientProcedureRecordsSection({
                       <li key={`${r.sessionId}-${i}`}>
                         {a.name}
                         {a.probeLabel ? ` · ${a.probeLabel}` : ""}
+                        {a.machineFrequency ? ` · ${a.machineFrequency}` : ""}
                         {" · Lot #: "}
                         {a.probeLotNumber ? (
                           <span className="font-medium">{a.probeLotNumber}</span>
