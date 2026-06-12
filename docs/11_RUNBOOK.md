@@ -61,10 +61,10 @@ If a client reports a magic link that "stopped working":
 Hone's Stripe charge backend is installed but dormant. **No live money has ever moved through Hone.** Three independent guards keep the live-charge path off, documented in [docs/16](./16_LIVE_PAYMENTS_READINESS.md):
 
 - Guard 1 (key gate): `lib/stripe/server.ts` rejects any `sk_live_` Stripe key unless `STRIPE_ALLOW_LIVE_MODE=true` is also set. The flag is unset in production.
-- Guard 2 (code gate): `lib/billing/manual-fee-charge.ts:runManualFeeCharge` short-circuits with `outcome: "live_mode_blocked"` if it ever sees a live-mode key.
-- Guard 3 (database gate): migration 0065 adds `CHECK (stripe_livemode = false)` on `manual_fee_charge_attempts`. The database refuses any live-mode write.
+- Guard 2 (code gate): the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` early-returns on any live-mode signal (`inferStripeLivemode` mismatch); the legacy `manual-fee-charge.ts` executor was deleted in PR #218. The claim RPC additionally refuses any row with `stripe_livemode <> false`.
+- Guard 3 (database gate): `CHECK (stripe_livemode = false)` on the canonical `payment_charge_attempts` ledger (0073-era) AND on the legacy, read-only `manual_fee_charge_attempts` table (0065). The database refuses any live-mode write.
 
-Before any live charge is permitted, every box in [docs/16 §8 go/no-go checklist](./16_LIVE_PAYMENTS_READINESS.md#8-go--no-go-checklist) must be checked. The blocker list is in [docs/16 §5](./16_LIVE_PAYMENTS_READINESS.md#5-what-blocks-live-payments); the readiness status today (PR #168, 2026-06-08) is **NOT READY FOR LIVE PAYMENTS**.
+Before any live charge is permitted, the current authority is [docs/18 (live payments audit)](./18_LIVE_PAYMENTS_AUDIT.md) section 16: code-side blockers are resolved, the remaining blockers are human (legal/accounting review + the Willow live Stripe checklist), and the status remains **NOT READY FOR LIVE PAYMENTS**. docs/16 stays as the historical checklist source.
 
 Quick dormancy verification:
 
@@ -76,9 +76,10 @@ supabase db query --linked "
 "
 # Expect: stripe_livemode=false for every row.
 
-# Confirm no live-mode charge attempt exists.
+# Confirm no live-mode charge attempt exists (canonical ledger + legacy table).
 supabase db query --linked "
-  select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true;
+  select (select count(*) from public.payment_charge_attempts where stripe_livemode = true)
+       + (select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true);
 "
 # Expect: 0.
 
@@ -88,7 +89,7 @@ supabase db query --linked "
 
 # Confirm the Stripe gate script still passes.
 npm run check:stripe-gates
-# Expect: PASS paymentIntents.create (1 occurrence in lib/billing/manual-fee-charge.ts).
+# Expect: PASS paymentIntents.create (1 occurrence in lib/billing/session-payment-charge.ts).
 # Expect: PASS STRIPE_ALLOW_LIVE_MODE=true (1 occurrence in lib/stripe/server.ts).
 ```
 
@@ -289,7 +290,7 @@ Critical alerts that need same-day investigation:
 
 | Event | Surface | Most likely cause | Investigate |
 |---|---|---|---|
-| `manual_fee_needs_manual_review` | `lib/billing/manual-fee-charge.ts` (reconcile + run) | Pending `manual_fee_charge_attempts` row past 60-min reconciliation window; PI retrieve failed; unknown error after claim | Match `manual_fee_attempt_id` to the `manual_fee_charge_attempts` row; cross-check Stripe Dashboard PaymentIntent search by metadata `hone_manual_fee_charge_attempt_id` |
+| `manual_fee_needs_manual_review` | LEGACY (producer `lib/billing/manual-fee-charge.ts` deleted in PR #218; historical rows only) | Pending `manual_fee_charge_attempts` row past 60-min reconciliation window; PI retrieve failed; unknown error after claim | Match `manual_fee_attempt_id` to the `manual_fee_charge_attempts` row; cross-check Stripe Dashboard PaymentIntent search by metadata `hone_manual_fee_charge_attempt_id` |
 | `manual_fee_charge_failed` | Same module | StripeError caught (declined / authentication_required) or PI status post-create was `requires_action` / `canceled` / `requires_payment_method` | Read `failure_code` + `stripe_status` in `safe_details`; the attempt row already has sanitized `failure_code` / `failure_message` |
 | `card_on_file_setup_failed` | `app/api/stripe/webhook` `setup_intent.succeeded` arm | Lineage mismatch / customer mismatch / signature mismatch / PaymentMethod retrieve failure / insert failure | Stripe Dashboard → SetupIntents on the connected account → match `stripe_event_id`; the client probably believes their card was saved but Hone has no `client_payment_methods` row |
 | `stripe_webhook_processing_failed` | Same route, other event types | Generic webhook handler exception | Read `safe_details.event_type` + `safe_details.stripe_account_id`; `stripe_events.processing_error` carries the matching error string |

@@ -92,13 +92,13 @@ Reviewers should block a behavior-changing PR that leaves docs stale.
 
 ## Payment review expectations
 
-- Stripe grep gates (PR #147 template):
+- Stripe grep gates (enforced by `scripts/check-stripe-gates.mjs`, run in `npm run ci` and CI; counts updated for the post-PR #218 posture):
+  - `paymentIntents.create`: **exactly one runtime occurrence, in `lib/billing/session-payment-charge.ts`** (the canonical charge executor for session payments AND cancellation/no-show fees since the PR #196 unification; the legacy `lib/billing/manual-fee-charge.ts` executor was deleted in PR #218). Any new occurrence anywhere is high-risk and must be explicitly reviewed with a docs/13 decision.
+  - `refunds.create`: exactly one occurrence, in `lib/billing/payment-refund.ts` (full-amount, owner-only, test mode).
   - `charges.create`: must be zero.
   - `checkout.sessions`: must be zero unless explicit Checkout PR.
-  - `refunds.create`: must be zero unless explicit refund PR.
   - `set_studio_require_card_on_file`: must be zero unless explicit card-required booking PR.
-  - `STRIPE_ALLOW_LIVE_MODE=true`: must be zero unless explicit live-mode PR.
-  - `paymentIntents.create`: **exactly one existing occurrence is allowed in `lib/billing/manual-fee-charge.ts`** (test-mode manual fee path, behind every protection listed in [docs/06](./docs/06_PAYMENTS_AND_STRIPE.md)). Any new occurrence elsewhere is high-risk and must be explicitly reviewed.
+  - `STRIPE_ALLOW_LIVE_MODE=true`: exactly one occurrence, inside the error message in `lib/stripe/server.ts`; must never appear as a code path that flips the flag. Live payments remain disabled.
 - No raw card / CVC / `client_secret` in any new code.
 - No automatic, batch, background, or public-triggered charge.
 
