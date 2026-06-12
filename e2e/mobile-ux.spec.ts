@@ -120,6 +120,25 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page.waitForURL(/notifications/);
   });
 
+  await test.step("mobile global search finds the client and navigates", async () => {
+    await page.goto("/dashboard");
+    await page.getByRole("button", { name: "Search Hone" }).click();
+    const searchInput = page.getByRole("searchbox", { name: "Search Hone" });
+    await expect(searchInput).toBeVisible();
+    await searchInput.fill(seed.clientName);
+    // The client result is the one whose subtitle is the email
+    // (appointment results share the client NAME as their title).
+    const clientResult = page.getByRole("link", {
+      name: new RegExp(seed.clientEmail),
+    });
+    await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
+    await expectNoPageOverflow(page, "mobile search open");
+    await clientResult.first().click();
+    await page.waitForURL(new RegExp(`/clients/${clientId}`));
+    // Panel closed itself on result tap.
+    await expect(searchInput).toHaveCount(0);
+  });
+
   await test.step("notifications: fits the viewport", async () => {
     await expectNoPageOverflow(page, "notifications");
   });
@@ -312,6 +331,31 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(
       desktopPage.getByRole("link", { name: /^Notifications/ }),
     ).toBeVisible();
+
+    // Global search: input visible, finds the client, page shortcut
+    // works, Escape and outside click close the dropdown.
+    const search = desktopPage.getByRole("searchbox", { name: "Search Hone" });
+    await expect(search).toBeVisible();
+    await search.fill(seed.clientName);
+    const clientResult = desktopPage.getByRole("link", {
+      name: new RegExp(seed.clientEmail),
+    });
+    await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
+    await desktopPage.keyboard.press("Escape");
+    await expect(clientResult).toHaveCount(0);
+    await search.fill("Getting");
+    await expect(
+      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await desktopPage.getByText("Charted within 24h").first().click();
+    await expect(
+      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
+    ).toHaveCount(0);
+    await search.fill(seed.clientName);
+    await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
+    await clientResult.first().click();
+    await desktopPage.waitForURL(new RegExp(`/clients/${clientId}`));
+    await desktopPage.goto("/dashboard");
 
     // Account dropdown: opens, shows profile block + actions, closes
     // on outside click and on Escape.
