@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #223)
+## Current production status (as of PR #224)
+
+- **New studio setup runbook** (PR #224, docs-only). `docs/20_NEW_STUDIO_SETUP_RUNBOOK.md`: internal operator checklist for safely creating Studio #2 (inputs; two approved SQL inserts: studio + owner invitation via the 0081 invite path; in-app config for the rest; surface verification; Willow isolation checks; ZZ-TEST smoke with delete-hardening-respecting cleanup; do-not-touch list; known limitations). Not a user-facing onboarding surface; no runtime/migration/RLS/payment change. Safety content pinned in tests/docs/new-studio-runbook.test.ts. Live payments still disabled.
+
+## Earlier production status (as of PR #223)
 
 - **Per-client procedure record filter + print** (PR #223, no migration). Records → Client Procedure Records: client select + optional studio-timezone date range (GET form, shareable URL); print accepts the same params (`/records/print?section=procedures&clientId&from&to`) with a "Filtered: client ..." header line and a clear empty state. Default 30-most-recent view unchanged; filtered pulls capped at 200 (cap explained in UI). Shared `utcInstantsForLocalDayRange` keeps screen and print identical; params sanitized via `normalizeProcedureRecordFilter`. machine_frequency now shown on items lines where recorded. No RLS change; studio scoping + user-scoped client unchanged; PR #222 exposure tier untouched. Live payments still disabled.
 
