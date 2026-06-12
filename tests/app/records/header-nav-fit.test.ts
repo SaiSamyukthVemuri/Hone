@@ -29,11 +29,20 @@ describe("header fit", () => {
     expect(RECORDS_PAGE).toMatch(/>\s*\n?\s*Record Keeping\s*\n?\s*<\/h1>/);
   });
 
-  it("Dashboard, Settings, Admin, account, and sign out remain", () => {
+  it("Dashboard, Settings, Admin, account, and sign out remain reachable", () => {
+    // PR #231 moved Settings/Admin/Sign out from the layout's nav row
+    // into the account dropdown (desktop) and the account section of
+    // the mobile menu; Dashboard stays in the primary nav. The
+    // destinations remain reachable, just from the menu components.
+    const ACCOUNT = read("app/(app)/AccountMenu.tsx");
+    const MOBILE = read("app/(app)/MobileMenu.tsx");
     expect(LAYOUT).toMatch(/>\s*Dashboard\s*</);
-    expect(LAYOUT).toMatch(/>\s*Settings\s*</);
-    expect(LAYOUT).toMatch(/>\s*Admin\s*</);
-    expect(LAYOUT).toMatch(/Sign out/);
+    expect(LAYOUT).toMatch(/<AccountMenu/);
+    for (const menu of [ACCOUNT, MOBILE]) {
+      expect(menu).toContain('"/settings/profile"');
+      expect(menu).toMatch(/Admin/);
+      expect(menu).toMatch(/Sign out/);
+    }
   });
 
   it("the header stays hidden in print mode for the print/export views", () => {

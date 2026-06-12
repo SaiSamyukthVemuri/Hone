@@ -15,10 +15,12 @@ export function MobileMenu({
   admin,
   displayName,
   studioName,
+  role,
 }: {
   admin: boolean;
   displayName: string;
   studioName: string;
+  role: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -68,13 +70,19 @@ export function MobileMenu({
           aria-label="Mobile navigation"
           className="absolute right-0 z-40 mt-2 flex w-60 flex-col gap-0.5 rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-950"
         >
+          {/* PR #231: app-style account panel. Profile/studio block
+              on top, then navigation, then account actions. */}
+          <div className="border-b border-neutral-200 px-3 pb-2 pt-1 dark:border-neutral-800">
+            <p className="font-medium">{displayName}</p>
+            <p className="text-xs text-neutral-500">
+              {studioName} · {role === "owner" ? "Owner" : "Practitioner"}
+            </p>
+          </div>
           {[
             { href: "/dashboard", label: "Dashboard" },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
             { href: "/records", label: "Records" },
-            { href: "/settings/profile", label: "Settings" },
-            ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
           ].map((item) => (
             <Link
               key={item.href}
@@ -85,10 +93,21 @@ export function MobileMenu({
               {item.label}
             </Link>
           ))}
-          <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-            <p className="px-3 pb-1 text-xs text-neutral-500">
-              {displayName} · {studioName}
-            </p>
+          <div className="mt-0.5 flex flex-col gap-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
+            {[
+              { href: "/settings/profile", label: "Settings" },
+              { href: "/getting-started", label: "Getting Started" },
+              ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
+            ].map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={close}
+                className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                {item.label}
+              </Link>
+            ))}
             <form action={signOut}>
               <button
                 type="submit"

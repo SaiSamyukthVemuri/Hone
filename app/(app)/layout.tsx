@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { MobileMenu } from "./MobileMenu";
+import { AccountMenu } from "./AccountMenu";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
-import { signOut } from "./dashboard/actions";
 
 export default async function AppLayout({
   children,
@@ -86,40 +86,22 @@ export default async function AppLayout({
               >
                 Records
               </Link>
-              <Link
-                href="/settings/profile"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                Settings
-              </Link>
-              {admin && (
-                <Link
-                  href="/admin"
-                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                >
-                  Admin
-                </Link>
-              )}
+              {/* PR #231: Settings and Admin moved into the account
+                  dropdown; the primary nav is the four working
+                  surfaces. */}
             </nav>
           </div>
-          <div className="hidden items-center gap-4 md:flex">
+          <div className="hidden items-center gap-3 md:flex">
             <NotificationsBell unread={unreadNotifications} />
-            <Link
-              href="/settings/profile"
-              aria-label="Open your profile settings"
-              className="rounded-md text-right text-xs leading-tight hover:opacity-80"
-            >
-              <div className="font-medium">{practitioner.display_name}</div>
-              <div className="text-neutral-500">{studio.name}</div>
-            </Link>
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
-                Sign out
-              </button>
-            </form>
+            {/* PR #231: account dropdown (Settings / Getting Started /
+                Admin / Sign out + profile block) replaces the always-
+                visible Sign out button and profile link. */}
+            <AccountMenu
+              displayName={practitioner.display_name}
+              studioName={studio.name}
+              role={practitioner.role}
+              admin={admin}
+            />
           </div>
 
           {/* PR #229: mobile right side is bell + Menu. The menu is
@@ -133,6 +115,7 @@ export default async function AppLayout({
               admin={admin}
               displayName={practitioner.display_name}
               studioName={studio.name}
+              role={practitioner.role}
             />
           </div>
         </div>
