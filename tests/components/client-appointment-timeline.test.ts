@@ -178,11 +178,10 @@ describe("client profile Sessions tab embeds the appointment timeline", () => {
   });
 
   it("top-level + Log session button carries the secondary-path helper text", () => {
-    // The button stays for walk-in / off-book session logging; the
-    // helper copy makes that explicit so the practitioner does not
-    // reach for it on a booked appointment.
-    expect(PAGE_SOURCE).toMatch(
-      /For a session that is not tied to a booked appointment\./,
-    );
+    // PR #233 shortened the helper for phones; same meaning: the
+    // button is the walk-in path, booked appointments chart from the
+    // Sessions tab row.
+    expect(PAGE_SOURCE).toMatch(/Log session is for walk-ins without a booked appointment/);
+    expect(PAGE_SOURCE).toMatch(/chart from the appointment row in Sessions/);
   });
 });

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #232)
+## Current production status (as of PR #233)
+
+- **Mobile client page polish** (PR #233, no migration). Client detail header is mobile-first (compact name, small Edit button, stacked contacts); Log session + Book appointment paired in one action row with a short helper; profile tab bar is a contained one-row scroller on phones (desktop unchanged). No action/business-logic change. E2E client-detail step extended (actions reachable, six tabs reachable, pinned notes visible, overflow assertions). Live payments still disabled.
+
+## Earlier production status (as of PR #232)
 
 - **Global Search V1** (PR #232, no migration). Header search on both breakpoints (desktop inline input; mobile magnifier icon + panel): clients (name/email/phone), appointments (client/service/status keyword), treatment memory (areas, cautions, reactions, probe labels/lots, next-session notes; safe labels), Records (sterile lots w/ traceability link, disinfectants), page shortcuts. Single user-scoped "use server" action, explicit studio_id on every query, caps (12 total), app-internal hrefs only; exposure incidents/audit payloads/payment internals/tokens excluded and pinned. No AI/index/external service; trigram-index follow-up documented. E2E coverage in both specs. Live payments still disabled.
 
