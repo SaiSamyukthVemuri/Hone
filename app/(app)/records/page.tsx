@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getAuditEventsByRecord,
+  getLotTraceability,
+  normalizeLotSearch,
   getClientProcedureRecords,
   getDisinfectantRecords,
   getExposureIncidentRecords,
@@ -152,10 +154,12 @@ function RowTools({
 export default async function RecordKeepingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string }>;
+  searchParams: Promise<{ section?: string; lot?: string }>;
 }) {
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
+  // PR #213: probe lot traceability search (exact normalized match).
+  const lotSearch = normalizeLotSearch(sp.lot);
   const { studio } = await getCurrentPractitionerWithStudio();
 
   return (
@@ -196,7 +200,9 @@ export default async function RecordKeepingPage({
         </Link>
       </nav>
 
-      {section === "sterile" && <SterileItemsSection studioId={studio.id} />}
+      {section === "sterile" && (
+        <SterileItemsSection studioId={studio.id} lotSearch={lotSearch} />
+      )}
       {section === "disinfectants" && (
         <DisinfectantsSection studioId={studio.id} />
       )}
@@ -210,8 +216,18 @@ export default async function RecordKeepingPage({
   );
 }
 
-async function SterileItemsSection({ studioId }: { studioId: string }) {
+async function SterileItemsSection({
+  studioId,
+  lotSearch,
+}: {
+  studioId: string;
+  lotSearch: string | null;
+}) {
   const records = await getSterileItemRecords(studioId);
+  // PR #213: traceability for the searched/selected lot.
+  const trace = lotSearch
+    ? await getLotTraceability(studioId, lotSearch)
+    : null;
   const audit = await getAuditEventsByRecord(
     studioId,
     "sterile_item",
@@ -219,6 +235,45 @@ async function SterileItemsSection({ studioId }: { studioId: string }) {
   );
   return (
     <div className="flex flex-col gap-5">
+      {/* PR #213: probe lot traceability. Search a lot number (exact
+          normalized match; trim + case-insensitive; never fuzzy) or
+          tap Trace usage on a record below. Traceability only; never
+          implies causation or any conclusion about a lot. */}
+      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+          Lot traceability
+        </h2>
+        <form method="get" action="/records" className="flex flex-wrap items-end gap-2">
+          <input type="hidden" name="section" value="sterile" />
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Search lot number
+            </span>
+            <input
+              type="text"
+              name="lot"
+              defaultValue={lotSearch ?? ""}
+              placeholder="Enter lot number, for example 460941"
+              className="w-72 max-w-full rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          >
+            Trace usage
+          </button>
+        </form>
+        {!trace ? (
+          <p className="text-xs text-neutral-500">
+            Search a lot number or choose a Sterile Item record to see where
+            it was used.
+          </p>
+        ) : (
+          <LotTraceabilityPanel trace={trace} />
+        )}
+      </section>
+
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
           Add sterile item purchase
@@ -246,8 +301,16 @@ async function SterileItemsSection({ studioId }: { studioId: string }) {
               <li key={r.id} className="flex flex-col gap-1 p-4 text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">{r.item_description}</span>
-                  <span className="text-xs text-neutral-500">
-                    Purchased {dateOnly(r.date_purchased)}
+                  <span className="flex items-baseline gap-3 text-xs text-neutral-500">
+                    <span>Purchased {dateOnly(r.date_purchased)}</span>
+                    {r.lot_number && (
+                      <Link
+                        href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}`}
+                        className="font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                      >
+                        Trace usage
+                      </Link>
+                    )}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
@@ -581,6 +644,120 @@ async function ClientProcedureRecordsSection({
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// PR #213: lot traceability result panel. Lot details from any
+// matching Sterile Item record + every treatment area recorded with
+// the same lot, with compact aftercare status and links into the
+// client/session. Traceability wording only; never causation.
+function LotTraceabilityPanel({
+  trace,
+}: {
+  trace: import("@/lib/record-keeping/queries").LotTraceability;
+}) {
+  return (
+    <div className="flex flex-col gap-3 text-sm">
+      <h3 className="font-medium">Lot #{trace.lot}</h3>
+
+      <div>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+          Matching sterile item record
+        </p>
+        {trace.sterileItems.length === 0 ? (
+          <p className="mt-0.5 text-xs text-neutral-500">
+            No matching sterile item record found for this lot number.
+          </p>
+        ) : (
+          <ul className="mt-0.5 flex flex-col gap-1">
+            {trace.sterileItems.map((r) => (
+              <li key={r.id} className="text-xs text-neutral-700 dark:text-neutral-300">
+                <span className="font-medium">{r.item_description}</span>
+                {r.manufacturer_name && ` · ${r.manufacturer_name}`}
+                {r.amount_purchased && ` · ${r.amount_purchased}`}
+                {" · Purchased "}
+                {dateOnly(r.date_purchased)}
+                {" · Expires "}
+                {dateOnly(r.expiry_date) ?? "Not recorded"}
+                {r.notes && ` · ${r.notes}`}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+          Used in
+        </p>
+        {trace.usages.length === 0 ? (
+          <p className="mt-0.5 text-xs text-neutral-500">
+            {trace.sterileItems.length > 0
+              ? "No charted treatment areas have used this lot yet."
+              : "No usage found for this lot number."}
+          </p>
+        ) : (
+          <>
+            {trace.sterileItems.length === 0 && (
+              <p className="mt-0.5 text-xs text-neutral-500">
+                Used in charting, but no matching Sterile Item record was
+                found.
+              </p>
+            )}
+            <ul className="mt-1 flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
+              {trace.usages.map((u) => (
+                <li
+                  key={u.blockId}
+                  className="flex flex-wrap items-baseline justify-between gap-2 py-1.5 text-xs"
+                >
+                  <span className="text-neutral-700 dark:text-neutral-300">
+                    {u.clientId ? (
+                      <Link
+                        href={`/clients/${u.clientId}`}
+                        className="font-medium hover:underline"
+                      >
+                        {u.clientName ?? "Client"}
+                      </Link>
+                    ) : (
+                      <span className="font-medium">
+                        {u.clientName ?? "Client not recorded"}
+                      </span>
+                    )}
+                    {u.startedAt && (
+                      <>
+                        {" · "}
+                        <FormattedDateTime iso={u.startedAt} format="date" />
+                      </>
+                    )}
+                    {u.areaName && ` · ${u.areaName}`}
+                    {u.modality && (
+                      <span className="capitalize"> · {u.modality}</span>
+                    )}
+                    {u.operatorName && ` · ${u.operatorName}`}
+                    {(u.machineFrequency || u.probeLabel) &&
+                      ` · ${[u.machineFrequency, u.probeLabel]
+                        .filter(Boolean)
+                        .join(" · ")}`}
+                    {" · "}
+                    {u.aftercareExplainedAt
+                      ? "Aftercare marked"
+                      : "Aftercare not marked"}
+                  </span>
+                  {u.clientId && (
+                    <Link
+                      href={`/clients/${u.clientId}/sessions/${u.sessionId}`}
+                      className="font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                    >
+                      Open session →
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
     </div>
   );
 }

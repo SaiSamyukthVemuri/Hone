@@ -226,3 +226,160 @@ export async function getProcedureAuditEvents(
   }
   return grouped;
 }
+
+// PR #213: probe lot traceability. "Where was this lot used?" --
+// connects Sterile Items records to the treatment areas that recorded
+// the same lot number. Matching is EXACT normalized matching (trim +
+// case-insensitive via an escaped ILIKE; never fuzzy, never guessed):
+// stored values are already trimmed at write time, the search input
+// is trimmed here, and ILIKE special characters are escaped so the
+// pattern can only match the literal lot. Traceability only; nothing
+// here implies causation or any conclusion about a lot.
+
+// Escape ILIKE wildcards so the pattern is a literal, case-insensitive
+// equality match. Exported for tests.
+export function escapeIlikeExact(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+export function normalizeLotSearch(raw: string | undefined | null): string | null {
+  const t = raw?.trim();
+  return t && t.length > 0 ? t : null;
+}
+
+export type LotUsage = {
+  blockId: string;
+  sessionId: string;
+  clientId: string | null;
+  clientName: string | null;
+  startedAt: string | null;
+  modality: string | null;
+  areaName: string | null;
+  probeLabel: string | null;
+  machineFrequency: string | null;
+  operatorName: string | null;
+  aftercareExplainedAt: string | null;
+};
+
+export type LotTraceability = {
+  lot: string;
+  sterileItems: RecordKeepingSterileItem[];
+  usages: LotUsage[];
+};
+
+export async function getLotTraceability(
+  studioId: string,
+  lotRaw: string,
+): Promise<LotTraceability | null> {
+  const lot = normalizeLotSearch(lotRaw);
+  if (!lot) return null;
+  const pattern = escapeIlikeExact(lot);
+
+  const supabase = await createClient();
+  const [{ data: items }, { data: blockRows }, { data: practitioners }] =
+    await Promise.all([
+      supabase
+        .from("record_keeping_sterile_items")
+        .select("*")
+        .eq("studio_id", studioId)
+        .ilike("lot_number", pattern)
+        .order("date_purchased", { ascending: false })
+        .limit(50),
+      supabase
+        .from("session_blocks")
+        .select(
+          "id, session_id, primary_area, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
+        )
+        .eq("studio_id", studioId)
+        .ilike("probe_lot_number", pattern)
+        .is("deleted_at", null)
+        .limit(200),
+      supabase
+        .from("practitioners")
+        .select("id, display_name, email")
+        .eq("studio_id", studioId),
+    ]);
+
+  const practitionerName = new Map<string, string>(
+    ((practitioners ?? []) as Array<{
+      id: string;
+      display_name: string | null;
+      email: string;
+    }>).map((p) => [p.id, p.display_name?.trim() || p.email]),
+  );
+
+  type RawUsage = {
+    id: string;
+    session_id: string;
+    primary_area: string | null;
+    block_name: string | null;
+    sort_order: number;
+    probe_label: string | null;
+    machine_frequency: string | null;
+    session:
+      | {
+          id: string;
+          started_at: string;
+          modality: string;
+          client_id: string;
+          aftercare_and_risks_explained_at: string | null;
+          performed_by_practitioner_id: string | null;
+          practitioner_id: string | null;
+          client:
+            | { id: string; name: string }
+            | { id: string; name: string }[]
+            | null;
+        }
+      | {
+          id: string;
+          started_at: string;
+          modality: string;
+          client_id: string;
+          aftercare_and_risks_explained_at: string | null;
+          performed_by_practitioner_id: string | null;
+          practitioner_id: string | null;
+          client:
+            | { id: string; name: string }
+            | { id: string; name: string }[]
+            | null;
+        }[]
+      | null;
+  };
+
+  const usages: LotUsage[] = ((blockRows ?? []) as RawUsage[])
+    .map((b) => {
+      const sess = Array.isArray(b.session) ? (b.session[0] ?? null) : b.session;
+      const client = sess
+        ? Array.isArray(sess.client)
+          ? (sess.client[0] ?? null)
+          : sess.client
+        : null;
+      const operatorId =
+        sess?.performed_by_practitioner_id ?? sess?.practitioner_id ?? null;
+      return {
+        blockId: b.id,
+        sessionId: sess?.id ?? b.session_id,
+        clientId: client?.id ?? null,
+        clientName: client?.name ?? null,
+        startedAt: sess?.started_at ?? null,
+        modality: sess?.modality ?? null,
+        areaName:
+          b.primary_area?.trim() ||
+          b.block_name?.trim() ||
+          `Treatment area ${b.sort_order}`,
+        probeLabel: b.probe_label,
+        machineFrequency: b.machine_frequency,
+        operatorName: operatorId
+          ? (practitionerName.get(operatorId) ?? null)
+          : null,
+        aftercareExplainedAt: sess?.aftercare_and_risks_explained_at ?? null,
+      };
+    })
+    .sort((a, b) => ((a.startedAt ?? "") < (b.startedAt ?? "") ? 1 : -1));
+
+  return {
+    lot,
+    sterileItems: (items ?? []) as RecordKeepingSterileItem[],
+    usages,
+  };
+}
