@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
     "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
   },
@@ -32,11 +33,13 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.5",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.18.0",
     "eslint-config-next": "^15.1.4",
+    "pg": "^8.21.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
     "vitest": "^4.1.8"

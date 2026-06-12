@@ -813,6 +813,14 @@ npm run ci    # typecheck + lint + build + test + check:stripe-gates
 git diff --check
 ```
 
+Since PR #220 there is also a DB/RLS integration lane (separate CI job `db-integration`; LOCAL database only, never production):
+
+```bash
+supabase db start          # local Docker stack (db port 54322)
+supabase db reset --local  # applies migrations 0001-current from scratch
+npm run test:db            # tests/db/: RLS, triggers, claim RPCs, constraints
+```
+
 Lighter manual checks the reviewer can run by hand for spot-checking:
 
 ```bash
@@ -838,3 +846,5 @@ When opening a PR, the report MUST explicitly call out which smoke steps were no
 - Anything requiring a real Stripe test charge against the connected account.
 - Anything requiring a real client portal session cookie.
 - Anything requiring the Vercel production env dashboard.
+
+The DB/RLS integration lane (PR #220) removed several items from this list: cross-studio RLS isolation, audit-trail immutability and trigger behavior, the clinical delete posture, the double-booking constraint, and the claim RPCs are now exercised on a real local database in CI instead of requiring manual SQL against production. What the DB lane still cannot verify: production-specific state (data drift, policies edited outside migrations: the prod catalog audit recipe in docs/09 remains the check for that), Stripe/Resend/Twilio behavior, and the browser.
