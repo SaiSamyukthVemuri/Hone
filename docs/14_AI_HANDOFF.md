@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #214)
+## Current production status (as of PR #215)
+
+- **Getting Started checklist** (PR #215, no migration). `/getting-started` + Dashboard progress card: six sections (basics/booking/charting/records/daily/payments) with auto-detected Done/To-do from existing data + Review guidance badges; honest progress counts auto items only; first-consultation and Laura-readiness lists; payments posture explicit (live off, reviews pending). No manual mark-done persistence in V1 (migration deliberately deferred). Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #214)
 
 - **Clients needing attention** (PR #214, no migration). Fourth Action-needed card + compact list on the Dashboard (top 5, "+ N more"): clients flagged by their newest watch/caution note or next-visit plan (PR #203 per-client rule) or a notable recorded reaction on the most recent charted session; tolerance shown only alongside another reason; watch-first sorting; two batched reads, 200-session cap. Recorded-history surfacing only (unsafe wording pinned absent). All deferred Dashboard follow-ups now closed except record-keeping CSV export + traceability print. Live payments still disabled; docs/18 blockers unchanged.
 
