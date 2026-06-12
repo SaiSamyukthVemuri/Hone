@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #230)
+## Current production status (as of PR #231)
+
+- **Account menu + header navigation polish** (PR #231, no migration). Desktop primary nav = Dashboard/Clients/Calendar/Records; Settings/Admin/Sign out moved into a new account dropdown (first-name trigger, aria-expanded, profile block with name/studio/role, Settings + Getting Started + Admin + Sign out; same dismissal model as MobileMenu). Mobile Menu reordered as an account panel (profile block on top, nav, then Settings/Getting Started/Admin/Sign out). Bell unchanged on both breakpoints. All PR #228-#230 header/calendar behaviors retained and E2E-asserted. Live payments still disabled.
+
+## Earlier production status (as of PR #230)
 
 - **Mobile menu outside-tap dismissal** (PR #230, no migration). MobileMenu closes on any pointerdown outside its root (listener active only while open); link-tap/current-page/Escape/Sign-out dismissal from PR #229 unchanged; bell stays independently usable. Also: the authenticated Hone wordmark is a Dashboard link again (aria-label "Go to Dashboard"; old Today-tab conflict no longer applies; marketing header untouched). E2E outside-tap + wordmark-navigation steps added; all PR #228/#229 mobile assertions retained. Live payments still disabled.
 

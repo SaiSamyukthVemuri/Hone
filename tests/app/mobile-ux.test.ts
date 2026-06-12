@@ -12,6 +12,7 @@ function read(rel: string): string {
 
 const LAYOUT = read("app/(app)/layout.tsx");
 const MENU = read("app/(app)/MobileMenu.tsx");
+const ACCOUNT = read("app/(app)/AccountMenu.tsx");
 const DAY_COLUMN = read("app/(app)/calendar/DayColumn.tsx");
 const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const GLOBALS = read("app/globals.css");
@@ -40,6 +41,10 @@ describe("app shell: responsive navigation", () => {
     ]) {
       expect(MENU).toContain(dest);
     }
+    // PR #231: Getting Started joins the account actions; the
+    // profile/studio/role block sits at the top of the panel.
+    expect(MENU).toContain('"/getting-started"');
+    expect(MENU).toMatch(/role === "owner" \? "Owner" : "Practitioner"/);
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
@@ -73,6 +78,35 @@ describe("app shell: responsive navigation", () => {
   it("no page-wide overflow-x-hidden band-aid was added", () => {
     expect(LAYOUT).not.toMatch(/overflow-x-hidden|overflow-x:\s*hidden/);
     expect(GLOBALS).not.toMatch(/overflow-x:\s*hidden/);
+  });
+});
+
+describe("desktop account dropdown (PR #231)", () => {
+  it("is a client dropdown with the same dismissal model as the mobile menu", () => {
+    expect(ACCOUNT).toMatch(/"use client"/);
+    expect(ACCOUNT).toMatch(/aria-label="Open account menu"/);
+    expect(ACCOUNT).toMatch(/aria-expanded=\{open\}/);
+    expect(ACCOUNT).toMatch(/e\.key === "Escape"/);
+    expect(ACCOUNT).toMatch(/!rootRef\.current\.contains\(e\.target as Node\)/);
+    expect(ACCOUNT).toMatch(/onClick=\{close\}/);
+  });
+
+  it("contains the account destinations, the profile block, and Sign out", () => {
+    expect(ACCOUNT).toContain('"/settings/profile"');
+    expect(ACCOUNT).toContain('"/getting-started"');
+    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
+    expect(ACCOUNT).toMatch(/Sign out/);
+    expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
+  });
+
+  it("the primary nav row is the four working surfaces; Settings/Admin moved into the dropdown", () => {
+    const navRow = LAYOUT.slice(LAYOUT.indexOf("<nav"), LAYOUT.indexOf("</nav>"));
+    for (const dest of ['"/dashboard"', '"/clients"', '"/calendar"', '"/records"']) {
+      expect(navRow).toContain(dest);
+    }
+    expect(navRow).not.toContain('"/settings/profile"');
+    expect(navRow).not.toContain('"/admin"');
+    expect(LAYOUT).toMatch(/<AccountMenu/);
   });
 });
 
@@ -120,7 +154,7 @@ describe("e2e coverage exists for the mobile behavior", () => {
     expect(spec).toMatch(/touch tap on empty grid does nothing/);
     expect(spec).toMatch(/touch drag does not open create flow/);
     expect(spec).toMatch(/explicit \+ Book button is the deliberate create path/);
-    expect(spec).toMatch(/desktop: mouse drag-create still works/);
+    expect(spec).toMatch(/desktop: header nav, account dropdown, wordmark, drag-create/);
     expect(spec).toMatch(/iPad: calendar fits and touch drag stays inert/);
   });
 });

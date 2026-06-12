@@ -163,12 +163,16 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     await menuButton.click();
     await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    // PR #231: profile/studio block at the top of the panel.
+    await expect(nav.getByText(seed.studioName)).toBeVisible();
+    await expect(nav.getByText(/· Owner/)).toBeVisible();
     for (const label of [
       "Dashboard",
       "Clients",
       "Calendar",
       "Records",
       "Settings",
+      "Getting Started",
     ]) {
       await expect(nav.getByRole("link", { name: label })).toBeVisible();
     }
@@ -287,10 +291,57 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await ipad.close();
   });
 
-  await test.step("desktop: mouse drag-create still works", async () => {
-    const desktop = await browser.newContext(); // default desktop viewport, no touch
+  await test.step("desktop: header nav, account dropdown, wordmark, drag-create", async () => {
+    const desktop = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    }); // explicit desktop viewport, no touch
     const desktopPage = await desktop.newPage();
     await loginAsOwner(desktopPage, seed);
+
+    // Primary nav is the four working surfaces; Settings moved into
+    // the account dropdown (PR #231).
+    const header = desktopPage.locator("header");
+    for (const label of ["Dashboard", "Clients", "Calendar", "Records"]) {
+      await expect(
+        header.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
+    }
+    await expect(
+      header.getByRole("link", { name: "Settings", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      desktopPage.getByRole("link", { name: /^Notifications/ }),
+    ).toBeVisible();
+
+    // Account dropdown: opens, shows profile block + actions, closes
+    // on outside click and on Escape.
+    const trigger = desktopPage.getByRole("button", {
+      name: "Open account menu",
+    });
+    const accountNav = desktopPage.getByRole("navigation", {
+      name: "Account menu",
+    });
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(accountNav.getByText(seed.studioName)).toBeVisible();
+    await expect(accountNav.getByText(/· Owner/)).toBeVisible();
+    for (const label of ["Settings", "Getting Started"]) {
+      await expect(accountNav.getByRole("link", { name: label })).toBeVisible();
+    }
+    await expect(
+      accountNav.getByRole("button", { name: "Sign out" }),
+    ).toBeVisible();
+    await desktopPage.getByText("Charted within 24h").first().click();
+    await expect(accountNav).toHaveCount(0);
+    await trigger.click();
+    await desktopPage.keyboard.press("Escape");
+    await expect(accountNav).toHaveCount(0);
+
+    // Wordmark goes home on desktop too.
+    await desktopPage.goto("/records");
+    await desktopPage.getByRole("link", { name: "Go to Dashboard" }).click();
+    await desktopPage.waitForURL(/dashboard/);
+
     await desktopPage.goto("/calendar");
     await syntheticDrag(desktopPage, "mouse");
     await expect(CHOOSER(desktopPage)).toBeVisible({ timeout: 10_000 });
