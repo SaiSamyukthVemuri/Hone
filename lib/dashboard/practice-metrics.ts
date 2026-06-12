@@ -154,6 +154,49 @@ export function summarizeProcedureCompleteness(
   };
 }
 
+// PR #225: charted-within-24h, the treatment-memory loop health
+// metric. v1 definition (documented in docs/13):
+//   Denominator: appointments with status 'completed' whose ends_at
+//     falls in the ROLLING last 7 days (independent of the period
+//     selector, so the denominator stays stable).
+//   Numerator: those whose first treatment-area save (the earliest
+//     non-deleted session_block.created_at on a LINKED, non-deleted
+//     session) is at most 24 hours after the appointment's ends_at.
+//   "Charted" requires at least one treatment area: a session row
+//     with zero areas has no recorded treatment details and does not
+//     count. Unlinked sessions are not counted (the charting flow
+//     that completes an appointment also stamps the link, so a
+//     completed appointment charted normally is always linked).
+// Boundary: exactly 24h counts as within. This is practice-health
+// feedback for the studio as a whole; it is never grouped or ranked
+// by practitioner.
+export const CHARTED_WINDOW_DAYS = 7;
+export const CHARTED_WITHIN_MS = 24 * 60 * 60 * 1000;
+
+export type ChartedWithin24hInput = ReadonlyArray<{
+  endsAt: string;
+  firstChartedAt: string | null;
+}>;
+
+export type ChartedWithin24hMetrics = {
+  completedCount: number;
+  chartedWithin24hCount: number;
+};
+
+export function summarizeChartedWithin24h(
+  rows: ChartedWithin24hInput,
+): ChartedWithin24hMetrics {
+  let charted = 0;
+  for (const r of rows) {
+    if (!r.firstChartedAt) continue;
+    const endsMs = new Date(r.endsAt).getTime();
+    const chartedMs = new Date(r.firstChartedAt).getTime();
+    if (!Number.isFinite(endsMs) || !Number.isFinite(chartedMs)) continue;
+    if (chartedMs - endsMs <= CHARTED_WITHIN_MS) charted += 1;
+  }
+  return { completedCount: rows.length, chartedWithin24hCount: charted };
+}
+
 export type TestPaymentMetrics = {
   prepared: number;
   charged: number;
@@ -166,6 +209,7 @@ export type PracticeDashboardMetrics = {
   appointments: AppointmentMetrics;
   testPayments: TestPaymentMetrics;
   actions: ProcedureActionMetrics;
+  chartedWithin24h: ChartedWithin24hMetrics;
 };
 
 export async function getPracticeDashboardMetrics(
@@ -183,8 +227,16 @@ export async function getPracticeDashboardMetrics(
   );
 
   const supabase = await createClient();
-  const [{ data: apptRows }, { data: paymentRows }, procedureRecords] =
-    await Promise.all([
+  const nowIso = new Date().toISOString();
+  const windowStartIso = new Date(
+    Date.now() - CHARTED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const [
+    { data: apptRows },
+    { data: paymentRows },
+    procedureRecords,
+    { data: completedAppts },
+  ] = await Promise.all([
       supabase
         .from("appointments")
         .select(
@@ -205,7 +257,63 @@ export async function getPracticeDashboardMetrics(
       // Same 100-session window as before; only the parameter shape
       // changed when PR #223 added the per-client filter option.
       getClientProcedureRecords(studioId, { limit: 100 }),
+      // PR #225 charted-within-24h denominator: completed
+      // appointments that ENDED in the rolling last 7 days.
+      supabase
+        .from("appointments")
+        .select("id, ends_at")
+        .eq("studio_id", studioId)
+        .eq("status", "completed")
+        .gte("ends_at", windowStartIso)
+        .lte("ends_at", nowIso),
     ]);
+
+  // PR #225 numerator: earliest non-deleted treatment-area save on a
+  // linked, non-deleted session, per completed appointment. Two
+  // batched reads; no N+1.
+  const completedRows = (completedAppts ?? []) as Array<{
+    id: string;
+    ends_at: string;
+  }>;
+  const firstChartedByAppointment = new Map<string, string>();
+  if (completedRows.length > 0) {
+    const { data: linkedSessions } = await supabase
+      .from("sessions")
+      .select("id, appointment_id")
+      .eq("studio_id", studioId)
+      .in("appointment_id", completedRows.map((r) => r.id))
+      .is("deleted_at", null);
+    const sessionToAppointment = new Map(
+      ((linkedSessions ?? []) as Array<{ id: string; appointment_id: string }>).map(
+        (s) => [s.id, s.appointment_id],
+      ),
+    );
+    if (sessionToAppointment.size > 0) {
+      const { data: blockRows } = await supabase
+        .from("session_blocks")
+        .select("session_id, created_at")
+        .eq("studio_id", studioId)
+        .in("session_id", [...sessionToAppointment.keys()])
+        .is("deleted_at", null);
+      for (const b of (blockRows ?? []) as Array<{
+        session_id: string;
+        created_at: string;
+      }>) {
+        const apptId = sessionToAppointment.get(b.session_id);
+        if (!apptId) continue;
+        const existing = firstChartedByAppointment.get(apptId);
+        if (!existing || b.created_at < existing) {
+          firstChartedByAppointment.set(apptId, b.created_at);
+        }
+      }
+    }
+  }
+  const chartedWithin24h = summarizeChartedWithin24h(
+    completedRows.map((r) => ({
+      endsAt: r.ends_at,
+      firstChartedAt: firstChartedByAppointment.get(r.id) ?? null,
+    })),
+  );
 
   const appointments = summarizeAppointments(
     ((apptRows ?? []) as Array<{
@@ -247,5 +355,6 @@ export async function getPracticeDashboardMetrics(
     appointments,
     testPayments,
     actions: summarizeProcedureCompleteness(procedureRecords),
+    chartedWithin24h,
   };
 }

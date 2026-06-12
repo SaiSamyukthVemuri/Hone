@@ -123,6 +123,36 @@ export function PracticeSnapshot({
             Collected revenue will appear after live payments are enabled.
           </p>
         </Card>
+
+        {/* PR #225: treatment-memory loop health. Studio-level only;
+            never grouped or ranked by practitioner. */}
+        <Card title="Charted within 24h">
+          {metrics.chartedWithin24h.completedCount === 0 ? (
+            <>
+              <p className="text-sm text-neutral-500">
+                No recent completed sessions yet.
+              </p>
+              <p className="text-[11px] text-neutral-500">
+                Once appointments are completed, this shows how many were
+                charted within 24 hours (last 7 days).
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-3xl font-semibold tabular-nums">
+                {metrics.chartedWithin24h.chartedWithin24hCount}/
+                {metrics.chartedWithin24h.completedCount}
+              </p>
+              <p className="text-xs text-neutral-500">
+                Recently completed sessions with charting saved within 24
+                hours (last 7 days).
+              </p>
+            </>
+          )}
+          <p className="text-[11px] text-neutral-500">
+            Keeps Before Today and Treatment Intelligence current.
+          </p>
+        </Card>
       </div>
 
       <section className="flex flex-col gap-2">
