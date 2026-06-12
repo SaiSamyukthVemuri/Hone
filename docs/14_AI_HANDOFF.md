@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #215)
+## Current production status (as of PR #216)
+
+- **Getting Started future-onboarding section removed** (PR #216, no migration). /getting-started keeps the six sections + first-consultation readiness; the "Before onboarding another practitioner or studio" section is gone (scale checklist, not user setup); the record-keeping public-health caveat relocated into the first-consultation section; live-payments-off posture unchanged; Dashboard card and honest progress counts unchanged. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #215)
 
 - **Getting Started checklist** (PR #215, no migration). `/getting-started` + Dashboard progress card: six sections (basics/booking/charting/records/daily/payments) with auto-detected Done/To-do from existing data + Review guidance badges; honest progress counts auto items only; first-consultation and Laura-readiness lists; payments posture explicit (live off, reviews pending). No manual mark-done persistence in V1 (migration deliberately deferred). Live payments still disabled; docs/18 blockers unchanged.
 

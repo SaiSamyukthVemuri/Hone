@@ -7,8 +7,9 @@ import {
 } from "@/lib/onboarding/getting-started";
 
 // PR #215: Getting Started / onboarding checklist. A practical setup
-// and readiness checklist for the pilot (Chloe today, practitioners
-// like Laura next). Protected app route inside the (app) layout; a
+// and readiness checklist for the current user (PR #216 removed the
+// future-onboarding section; this page is about setting up and
+// learning Hone, not scaling). Protected app route inside the (app) layout; a
 // normal page, never a blocking modal. Mostly auto-detected status +
 // static "Review" guidance; no manual mark-as-done persistence in V1
 // (would need a migration; deliberately deferred). Pilot wording
@@ -66,15 +67,6 @@ const FIRST_CONSULTATION = [
   "Live payments remain off",
 ];
 
-const NEXT_PRACTITIONER = [
-  "Chloe has completed a real consultation test",
-  "Core workflow is stable",
-  "Services/booking setup documented",
-  "Record Keeping setup documented",
-  "Known limitations documented",
-  "Live payments status explained",
-];
-
 export default async function GettingStartedPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const signals = await getGettingStartedSignals(
@@ -124,22 +116,14 @@ export default async function GettingStartedPage() {
             <li key={line}>{line}</li>
           ))}
         </ul>
-      </section>
-
-      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-          Before onboarding another practitioner or studio
-        </h2>
-        <ul className="mt-2 list-disc pl-5 text-sm text-neutral-700 dark:text-neutral-300">
-          {NEXT_PRACTITIONER.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+        {/* PR #216: caveat kept here (it relates to first real use);
+            the future-onboarding section was removed. */}
         <p className="mt-2 text-xs text-neutral-500">
           Record-keeping support still needs public-health/legal review
           before relying on it operationally. Live payments remain off.
         </p>
       </section>
+
     </div>
   );
 }
