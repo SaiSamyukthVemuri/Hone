@@ -262,8 +262,16 @@ export async function createTreatmentPlanAction(
     .insert(stageRows);
   if (stagesErr) {
     // Best-effort cleanup so a stage-insert failure doesn't leave a confusing
-    // stageless plan behind. Same user-scoped client + RLS; no admin/RPC.
-    await supabase.from("treatment_plans").delete().eq("id", createdPlan.id);
+    // stageless plan behind. PR #217 investigation: the previous .delete()
+    // here has been a SILENT NO-OP since migration 0024 (treatment_plans
+    // never had an authenticated DELETE policy), so the rollback never
+    // actually removed the plan. Close it instead; a closed stageless plan
+    // is inert and visible as historical, matching the app's no-hard-delete
+    // posture. Same user-scoped client + RLS; no admin/RPC.
+    await supabase
+      .from("treatment_plans")
+      .update({ status: "closed" })
+      .eq("id", createdPlan.id);
     return {
       ok: false,
       error: `Failed to set up plan stages: ${stagesErr.message}`,

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #216)
+## Current production status (as of PR #217)
+
+- **Clinical RLS delete hardening** (PR #217, **migration 0087, policy-only; apply to prod BEFORE merge after SQL approval**). Production catalog confirmed live FOR ALL policies let authenticated members hard-delete clinical history; 0087 replaces them with per-command policies: NO DELETE on clients/sessions/session_blocks/photos/probe_lots/intake/tags/goals/personal-notes; DELETE kept explicitly only for entries/plan-stages/client-pricing (real UI affordances). App fixes: block-cleanup soft-deletes; plan rollback closes (old delete was a silent no-op since 0024). DB/RLS integration harness still an open follow-up. Live payments still disabled.
+
+## Earlier production status (as of PR #216)
 
 - **Getting Started future-onboarding section removed** (PR #216, no migration). /getting-started keeps the six sections + first-consultation readiness; the "Before onboarding another practitioner or studio" section is gone (scale checklist, not user setup); the record-keeping public-health caveat relocated into the first-consultation section; live-payments-off posture unchanged; Dashboard card and honest progress counts unchanged. Live payments still disabled; docs/18 blockers unchanged.
 

@@ -116,3 +116,5 @@ Use this list every time before opening a migration PR.
 - [ ] Rollback considered (`drop … if exists` shape).
 - [ ] Updated this doc's migration table in the same PR.
 - [ ] Audit table touched if the migration changes state-mutation behavior.
+
+> **Clinical delete posture (PR #217, migration 0087):** core clinical/client-history tables (clients, sessions, session_blocks, photos, probe_lots, client_intake_forms, client_tags, treatment_goals, client_personal_notes) are no longer hard-deletable by normal authenticated studio members; the app archives or soft-deletes instead, and treatment memory is preserved because it is the product moat. DELETE remains, explicitly per-command, only where a reviewed UI affordance exists (electrolysis_entries, laser_entries, treatment_plan_stages, client_pricing). Record Keeping logbooks and audit events were already non-deletable (PR #205/#206). Future deletion needs should use archive/correction workflows. A DB/RLS integration test harness is still an open follow-up; current coverage is static SQL tests plus a production catalog audit.

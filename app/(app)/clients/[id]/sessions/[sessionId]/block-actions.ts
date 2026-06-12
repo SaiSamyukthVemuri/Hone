@@ -870,12 +870,15 @@ export async function createTreatmentAreaWithEntryAction(
         ...snap,
       });
     if (entryErr) {
-      // Cleanup: remove the just-created block so its minutes_performed
-      // can't pollute TTT and no orphan treatment area is left behind. The
-      // block is brand-new with no other entries, so a hard delete is safe.
+      // Cleanup: retire the just-created block so its minutes_performed
+      // can't pollute TTT and no orphan treatment area is left behind.
+      // PR #217: SOFT delete (deleted_at), matching the app's delete
+      // posture everywhere else; the RLS hardening removed the
+      // authenticated DELETE path on session_blocks, and every read
+      // already filters deleted_at.
       await supabase
         .from("session_blocks")
-        .delete()
+        .update({ deleted_at: new Date().toISOString() })
         .eq("id", block.id)
         .eq("studio_id", studio.id);
       return {
