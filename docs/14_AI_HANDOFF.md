@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #221)
+## Current production status (as of PR #222)
+
+- **Exposure incident owner access tier** (PR #222, **migration 0088, policy-only; apply to prod BEFORE merge after SQL approval**). `record_keeping_exposure_incidents`: SELECT/UPDATE owner-only (`is_studio_owner`), INSERT stays member-wide (staff can report without browsing history), still no DELETE. Audit SELECT carve-out: exposure-incident audit rows owner-only (they carry old/new values); other record types unchanged; immutability untouched. UI: owner-only note for non-owners on Records + Print (Add form stays); update action role-checks. Privacy hardening before multi-practitioner studios; no change for solo Willow. 10 new DB-lane tests. Live payments still disabled.
+
+## Earlier production status (as of PR #221)
 
 - **Generated types drift check** (PR #221, no migration). `scripts/check-db-types.mjs` (`npm run check:db-types`; runs in the `db-integration` CI job after `npm run test:db`) regenerates types from the LOCAL migrated database (`supabase gen types typescript --local`, hardcoded local) and exact-matches column sets both directions for 15 curated tables vs the hand-rolled `lib/types/database.ts`, pins 11 recent columns individually, and asserts DB-side presence of the relied-upon payment/webhook columns. First run caught six live columns missing from the app types (calendar_feed_token_hash, terms/privacy stamps, normalized_email); declarations added (types-only, additive). Hosted/non-localhost env URLs refused; no production access. Pins in `tests/scripts/db-types-drift.test.ts`. Deferred: nullability comparison, non-curated tables. Live payments still disabled.
 

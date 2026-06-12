@@ -160,7 +160,10 @@ export default async function RecordKeepingPage({
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
   // PR #213: probe lot traceability search (exact normalized match).
   const lotSearch = normalizeLotSearch(sp.lot);
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // PR #222: exposure incident HISTORY is owner-only (RLS-enforced by
+  // migration 0088); any member may still file a new incident.
+  const isOwner = practitioner.role === "owner";
 
   return (
     <div className="flex flex-col gap-6">
@@ -207,7 +210,7 @@ export default async function RecordKeepingPage({
         <DisinfectantsSection studioId={studio.id} />
       )}
       {section === "incidents" && (
-        <ExposureIncidentsSection studioId={studio.id} />
+        <ExposureIncidentsSection studioId={studio.id} isOwner={isOwner} />
       )}
       {section === "procedures" && (
         <ClientProcedureRecordsSection studioId={studio.id} />
@@ -437,8 +440,17 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
   );
 }
 
-async function ExposureIncidentsSection({ studioId }: { studioId: string }) {
-  const records = await getExposureIncidentRecords(studioId);
+async function ExposureIncidentsSection({
+  studioId,
+  isOwner,
+}: {
+  studioId: string;
+  isOwner: boolean;
+}) {
+  // Non-owners get no list query: RLS (migration 0088) would return
+  // zero rows anyway, but skipping the read keeps the UI honest (an
+  // owner-only note instead of a misleading "no incidents" state).
+  const records = isOwner ? await getExposureIncidentRecords(studioId) : [];
   const audit = await getAuditEventsByRecord(
     studioId,
     "exposure_incident",
@@ -452,10 +464,20 @@ async function ExposureIncidentsSection({ studioId }: { studioId: string }) {
         </h2>
         <p className="mb-4 mt-1 text-xs text-neutral-500">
           Accidental blood or body fluid exposures. This record contains
-          sensitive personal information and is visible to your studio only.
+          sensitive personal information; the incident history is visible to
+          the studio owner only.
         </p>
         <AddExposureIncidentForm action={addExposureIncidentRecordAction} />
       </section>
+      {!isOwner ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-medium">Exposure incident records</h2>
+          <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
+            Exposure incident history is owner-only. You can still report a
+            new incident above.
+          </p>
+        </section>
+      ) : (
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">
           Exposure incident records{" "}
@@ -515,6 +537,7 @@ async function ExposureIncidentsSection({ studioId }: { studioId: string }) {
           </ul>
         )}
       </section>
+      )}
     </div>
   );
 }

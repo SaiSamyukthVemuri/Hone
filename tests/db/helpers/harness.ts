@@ -177,6 +177,30 @@ export async function seedStudio(label: string): Promise<SeededStudio> {
   return { studioId, userId, practitionerId, clientId };
 }
 
+// Seed an additional NON-OWNER practitioner (role 'practitioner')
+// into an existing studio, backed by its own fake local auth user.
+// Used by owner-tier tests (PR #222) to exercise the owner/member
+// distinction.
+export async function seedMember(
+  studio: SeededStudio,
+  label: string,
+): Promise<{ userId: string; practitionerId: string }> {
+  const userId = randomUUID();
+  const practitionerId = randomUUID();
+  const email = `${label}-${userId.slice(0, 8)}@harness.local`;
+  await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
+    userId,
+    email,
+  ]);
+  await adminQuery(
+    `insert into public.practitioners
+       (id, studio_id, user_id, display_name, email, role, active)
+     values ($1, $2, $3, $4, $5, 'practitioner', true)`,
+    [practitionerId, studio.studioId, userId, `Member ${label}`, email],
+  );
+  return { userId, practitionerId };
+}
+
 // Seed a session (electrolysis) for a studio's client; returns ids.
 export async function seedSession(
   studio: SeededStudio,

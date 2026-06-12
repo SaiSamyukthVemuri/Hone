@@ -104,7 +104,10 @@ export default async function RecordKeepingPrintPage({
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
   const includeHistory = sp.history === "1";
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // PR #222: exposure incident history is owner-only (RLS, migration
+  // 0088); the print surface mirrors that with an explicit note.
+  const isOwner = practitioner.role === "owner";
   const generatedAt = utcStamp(new Date());
 
   return (
@@ -150,9 +153,18 @@ export default async function RecordKeepingPrintPage({
           includeHistory={includeHistory}
         />
       )}
-      {section === "incidents" && (
-        <IncidentsPrint studioId={studio.id} includeHistory={includeHistory} />
-      )}
+      {section === "incidents" &&
+        (isOwner ? (
+          <IncidentsPrint
+            studioId={studio.id}
+            includeHistory={includeHistory}
+          />
+        ) : (
+          <p className="text-sm">
+            Exposure incident history is owner-only and is not included in
+            this export.
+          </p>
+        ))}
       {section === "procedures" && (
         <ProceduresPrint studioId={studio.id} includeHistory={includeHistory} />
       )}

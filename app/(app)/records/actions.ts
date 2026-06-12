@@ -269,7 +269,16 @@ export async function updateExposureIncidentRecordAction(
 ): Promise<RecordActionResult> {
   let studioId: string;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // PR #222: editing exposure incidents is owner-only. RLS
+    // (migration 0088) is the backstop; this check exists so a
+    // non-owner gets an honest error instead of a silent no-op.
+    if (practitioner.role !== "owner") {
+      return {
+        ok: false,
+        error: "Exposure incident history is owner-only.",
+      };
+    }
     studioId = studio.id;
   } catch {
     return { ok: false, error: GENERIC_ERROR };
