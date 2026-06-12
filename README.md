@@ -16,8 +16,8 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Portal messages + replies | **Production** |
 | Consent + e-sign (treatment, photo, card authorization, policy ack) | **Production**, draft template wording, **lawyer review required before live use** |
 | Card-on-file (Stripe SetupIntent on connected account) | **Production, test mode only** |
-| Manual cancellation/no-show fee charge (PaymentIntent off-session) | **Production, test mode only**. Live charging requires a deliberate live-mode PR with legal review |
-| Session payment charge end-to-end: prepare, run, receipt, refund, webhook reconciliation, completion-to-billing UX (`payment_charge_attempts`) | **Production, test mode only** (PRs #171-#181). Live payments remain blocked; fees are not active |
+| Cancellation/no-show fee charge (PaymentIntent off-session; unified onto `payment_charge_attempts` via the canonical `session-payment-charge.ts` executor since PR #196) | **Production, test mode only**. Live charging requires a deliberate live-mode PR with legal review |
+| Session payment charge end-to-end: prepare, run, receipt, refund, webhook reconciliation, completion-to-billing UX (`payment_charge_attempts`) | **Production, test mode only** (PRs #171-#181; fees unified onto the same ledger in PR #196). Live payments remain blocked |
 | Receipts (session-payment test receipt email) | **Production, test mode only** (PR #175) |
 | Refunds (full-amount, test mode, `payment_charge_attempts`) | **Production, test mode only** (PR #178) |
 | Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
@@ -56,7 +56,7 @@ Or the shortcut that chains the first five:
 npm run ci
 ```
 
-GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
+GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154), plus a separate `db-integration` job (PR #220/#221) that applies the FULL migration chain from scratch to a local Supabase Postgres, runs the DB/RLS behavior tests (`npm run test:db`: cross-studio isolation, audit immutability + triggers, clinical delete posture, double-booking constraint, claim RPCs, exposure owner tier), and runs the generated types drift check (`npm run check:db-types`). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
 
 ## Required services
 
@@ -97,7 +97,7 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 
 ## Warnings
 
-- **Do not flip live payments.** Live mode is structurally blocked: the Stripe key gate refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`, and the `manual_fee_charge_attempts` DB row has a CHECK constraint that pins `stripe_livemode = false`. Both must be deliberately altered in a reviewed live-mode PR.
+- **Do not flip live payments.** Live mode is structurally blocked: the Stripe key gate refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`, and the canonical `payment_charge_attempts` ledger (plus the legacy, read-only `manual_fee_charge_attempts` table) has a CHECK constraint that pins `stripe_livemode = false`. All of it must be deliberately altered in a reviewed live-mode PR; controlled live payment enablement has not started.
 - **Do not enable auto-charge.** No automatic, background, batch, or public-triggered charge path exists. Charging is one manual practitioner click on a `ready` attempt. Anything different is a new design that needs review.
 - **Do not bypass RLS or security review.** Every public route, token route, RPC grant, and `SECURITY DEFINER` function in this repo was chosen carefully. See [docs/03](./docs/03_SECURITY_AND_PRIVACY.md) before changing.
 - **Do not expose tokenized routes to analytics.** PR #142 removed Vercel Analytics from `/portal/verify/[token]`, `/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/calendar-feed/[token]` structurally. Adding analytics to those subtrees re-leaks the token to a third party.

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #225)
+## Current production status (as of PR #226)
+
+- **Post-hardening docs drift cleanup** (PR #226, docs/source-pin only). Root-level and operational docs corrected to the post-#218/#220/#221/#222/#223/#224/#225 reality: canonical charge path `session-payment-charge.ts` (CONTRIBUTING, docs/11, docs/14 guidance blocks), `payment_charge_attempts` as the canonical CHECK-pinned ledger (README), db-integration lane + types drift check acknowledged (README, docs/00, docs/03), supervised-pilot vs paid-launch line stated (docs/00), docs/11 dormancy recipes fixed to query both ledgers and expect the right gate output. 11 pins in tests/docs/docs-drift-pr226.test.ts. No runtime change. Live payments still disabled.
+
+## Earlier production status (as of PR #225)
 
 - **Charted-within-24h metric** (PR #225, no migration). Practice Snapshot card: completed appointments (status `completed`, `ends_at` in the rolling last 7 days) vs those whose earliest non-deleted linked session_block was created within 24h of `ends_at` (inclusive). Pure `summarizeChartedWithin24h` + three batched user-scoped reads in `getPracticeDashboardMetrics`; sessions with zero areas do not count as charted; studio-level only, never per-practitioner; no score/compliance wording (pinned). Empty state "No recent completed sessions yet." No RLS/payment change. Live payments still disabled.
 
@@ -148,7 +152,7 @@
 
 ## Cumulative status through PR #188 (2026-06-10)
 
-PR #188 is a docs-only cleanup; the most recent runtime change is PR #187. This section is the single current-state summary; the per-PR blocks below are the detailed history.
+HISTORICAL snapshot as of PR #188; the rolling "Current production status" entries at the top of this doc supersede it. Kept for the detailed per-PR history below.
 
 **Payment status:** Test-mode session payments are built end-to-end. Live payments are still blocked. Fees are not active.
 
@@ -156,6 +160,7 @@ PR #188 is a docs-only cleanup; the most recent runtime change is PR #187. This 
 
 ```text
 paymentIntents.create   exactly 2  (lib/billing/manual-fee-charge.ts, lib/billing/session-payment-charge.ts)
+                                   [superseded: exactly 1 in session-payment-charge.ts since PR #218]
 refunds.create          exactly 1  (lib/billing/payment-refund.ts)
 charges.create          0
 checkout.sessions       0
@@ -363,12 +368,15 @@ GitHub Actions runs the same six steps automatically on every PR and on every pu
 ```
 charges.create:                       zero
 checkout.sessions:                    zero unless explicit Checkout PR
-refunds.create:                       zero unless explicit refund PR
+refunds.create:                       exactly one (lib/billing/payment-refund.ts, PR #178)
 set_studio_require_card_on_file:      zero unless explicit card-required booking PR
 STRIPE_ALLOW_LIVE_MODE=true:          zero unless explicit live-mode PR
 
 paymentIntents.create:                exactly one occurrence allowed today:
-                                      lib/billing/manual-fee-charge.ts
+                                      lib/billing/session-payment-charge.ts
+                                      (the canonical executor; the legacy
+                                      manual-fee-charge.ts was deleted in
+                                      PR #218)
 
                                       Any new paymentIntents.create
                                       occurrence is high-risk and must be
@@ -425,7 +433,7 @@ Repeat the list in the PR you open, every time:
 - "Do not merge until reviewed."
 - "Do not start the next PR until deploy is READY."
 - Stripe dormancy: no charges, no `require_card_on_file=true`, no live-mode enable, exactly one `paymentIntents.create`.
-- Grep gates: `paymentIntents.create` (allowed only in `lib/billing/manual-fee-charge.ts`), `charges.create`, `refunds.create`, `checkout.sessions`, `set_studio_require_card_on_file`, `STRIPE_ALLOW_LIVE_MODE=true`. Enforced by `scripts/check-stripe-gates.mjs` + the `npm run check:stripe-gates` script in CI (PR #154). The `STRIPE_ALLOW_LIVE_MODE=true` rule allowlists `lib/stripe/server.ts` because the string appears in an operator-facing error message there, NOT as a code path that flips the flag.
+- Grep gates: `paymentIntents.create` (allowed only in `lib/billing/session-payment-charge.ts`, the canonical executor since PR #196/#218), `charges.create` (zero), `refunds.create` (only `lib/billing/payment-refund.ts`), `checkout.sessions` (zero), `set_studio_require_card_on_file` (zero), `STRIPE_ALLOW_LIVE_MODE=true`. Enforced by `scripts/check-stripe-gates.mjs` + the `npm run check:stripe-gates` script in CI (PR #154). The `STRIPE_ALLOW_LIVE_MODE=true` rule allowlists `lib/stripe/server.ts` because the string appears in an operator-facing error message there, NOT as a code path that flips the flag.
 - **CSP discipline (PR #150).** The global CSP in `next.config.ts` (via `lib/security/headers.ts`) is the single source of truth. Any new third-party browser integration MUST extend the CSP source lists in the same PR. Never weaken `frame-ancestors 'none'` or `X-Frame-Options: DENY`. Never add wildcard `*`. Never add Sentry domains unless that PR actually installs Sentry. Token routes keep `Referrer-Policy: no-referrer`.
 - **Ops alert hygiene (PR #153).** `lib/ops/alerts.ts:recordOpsAlert` is the single entry point for silent-failure alerts. NEVER throw from the helper to the caller; DB failures are swallowed and surface only as additional structured logs. NEVER put raw tokens / `client_secret` / Stripe secret keys / card data / CVC / API keys in `safe_details`; the helper has a defensive redactor but the contract is "the caller already redacted". **The helper MUST NOT import `lib/email/send-appointment.ts` or any module that imports it.** Operator email is intentionally deferred; the same module observes the email subsystem and cycling back through it (even with a loop guard) is avoidable. A future PR may add a standalone `lib/ops/alert-email.ts` that uses Resend directly. New silent-failure surfaces should reuse the helper and a stable event name (`<surface>_<state>`).
 
