@@ -15,6 +15,7 @@ function read(rel: string): string {
 const ENV = read("e2e/helpers/local-env.ts");
 const SEED = read("e2e/helpers/seed.ts");
 const SPEC = read("e2e/core-memory-loop.spec.ts");
+const FLOWS = read("e2e/helpers/flows.ts");
 const CONFIG = read("playwright.config.ts");
 const CI = read(".github/workflows/ci.yml");
 const PKG = read("package.json");
@@ -57,8 +58,11 @@ describe("e2e lane is local-only by construction", () => {
 
 describe("no auth bypass and no runtime change", () => {
   it("login happens through the REAL magic-link UI + Mailpit capture", () => {
-    expect(SPEC).toMatch(/send magic link/i);
-    expect(SPEC).toMatch(/waitForMagicLink/);
+    // The login flow moved to the shared flows helper in PR #228 so
+    // the mobile spec reuses the identical real flow.
+    expect(FLOWS).toMatch(/send magic link/i);
+    expect(FLOWS).toMatch(/waitForMagicLink/);
+    expect(SPEC).toMatch(/loginAsOwner/);
     expect(SEED).toMatch(/pending_invitations/);
     expect(SEED).toMatch(/handle_new_user/);
   });
