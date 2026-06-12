@@ -124,6 +124,36 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "notifications");
   });
 
+  await test.step("mobile menu: outside tap dismisses without navigating", async () => {
+    await page.goto("/dashboard");
+    const menuButton = page.getByRole("button", {
+      name: "Open navigation menu",
+    });
+    const nav = page.getByRole("navigation", { name: "Mobile navigation" });
+
+    // A non-interactive text node well below the right-aligned
+    // panel: a safe "outside" tap target that cannot navigate.
+    // (The wordmark is no longer safe for this: PR #230 made it a
+    // Dashboard link.)
+    const outside = page.getByText("Charted within 24h").first();
+
+    await menuButton.click();
+    await expect(nav).toBeVisible();
+    await outside.tap();
+    await expect(nav).toHaveCount(0);
+    await expect(page).toHaveURL(/dashboard/);
+
+    // Reliably repeatable: open again, dismiss again, reopen works.
+    await menuButton.click();
+    await expect(nav).toBeVisible();
+    await outside.tap();
+    await expect(nav).toHaveCount(0);
+    await menuButton.click();
+    await expect(nav).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(nav).toHaveCount(0);
+  });
+
   await test.step("mobile menu: contents + auto-close on link tap", async () => {
     await page.goto("/dashboard");
     const menuButton = page.getByRole("button", {
@@ -182,6 +212,18 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page.goto(`/clients/${clientId}`);
     await expect(page.getByText(seed.clientName).first()).toBeVisible();
     await expectNoPageOverflow(page, "client detail");
+  });
+
+  await test.step("wordmark navigates home from anywhere", async () => {
+    const home = page.getByRole("link", { name: "Go to Dashboard" });
+    await page.goto("/calendar");
+    await expect(home).toBeVisible();
+    await home.tap();
+    await page.waitForURL(/dashboard/);
+    await page.goto("/records");
+    await home.tap();
+    await page.waitForURL(/dashboard/);
+    await expectNoPageOverflow(page, "dashboard via wordmark");
   });
 
   await test.step("calendar: loads without page-wide overflow", async () => {

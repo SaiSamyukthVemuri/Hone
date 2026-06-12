@@ -47,6 +47,16 @@ describe("app shell: responsive navigation", () => {
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
+    // PR #230: outside taps dismiss; the listener exists only while
+    // the menu is open and checks containment against the root.
+    expect(MENU).toMatch(/if \(!open\) return;[\s\S]*?onPointerDown/);
+    expect(MENU).toMatch(/!rootRef\.current\.contains\(e\.target as Node\)/);
+    expect(MENU).toMatch(/removeEventListener\("pointerdown", onPointerDown\)/);
+  });
+
+  it("the wordmark is an accessible Dashboard link (PR #230)", () => {
+    expect(LAYOUT).toMatch(/aria-label="Go to Dashboard"/);
+    expect(LAYOUT).toMatch(/href="\/dashboard"[\s\S]{0,200}Hone/);
   });
 
   it("the notifications bell carries the destination and the unread count", () => {

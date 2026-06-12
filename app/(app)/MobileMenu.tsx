@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
 
@@ -21,6 +21,7 @@ export function MobileMenu({
   studioName: string;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -31,10 +32,28 @@ export function MobileMenu({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
+  // PR #230: tapping OUTSIDE the menu dismisses it, like a native
+  // dropdown. The listener exists only while the menu is open and
+  // checks containment against the root (button + panel), so taps
+  // inside the panel (links, Sign out) are untouched, and a tap on
+  // the header bell both closes the menu and still navigates. Using
+  // pointerdown (not click) so the menu is gone before any tapped
+  // element acts, without preventing that element's own behavior.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
   const close = () => setOpen(false);
 
   return (
-    <div className="relative md:hidden">
+    <div ref={rootRef} className="relative md:hidden">
       <button
         type="button"
         aria-label="Open navigation menu"
