@@ -8,17 +8,32 @@ import { E2E_MAILPIT_URL } from "./local-env";
 
 type MailpitMessage = { ID: string; To: Array<{ Address: string }> };
 
+async function searchMessages(email: string): Promise<MailpitMessage[]> {
+  const list = await fetch(
+    `${E2E_MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
+  ).then((r) => r.json() as Promise<{ messages: MailpitMessage[] }>);
+  return list.messages ?? [];
+}
+
+// Snapshot the ids already in the inbox so a SECOND login for the
+// same address never re-reads the first (single-use, now-consumed)
+// magic link.
+export async function listMessageIds(email: string): Promise<string[]> {
+  return (await searchMessages(email)).map((m) => m.ID);
+}
+
 export async function waitForMagicLink(
   email: string,
   appOrigin: string,
-  timeoutMs = 30_000,
+  options: { excludeIds?: string[]; timeoutMs?: number } = {},
 ): Promise<string> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const exclude = new Set(options.excludeIds ?? []);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const list = await fetch(
-      `${E2E_MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
-    ).then((r) => r.json() as Promise<{ messages: MailpitMessage[] }>);
-    const message = list.messages?.[0];
+    const message = (await searchMessages(email)).find(
+      (m) => !exclude.has(m.ID),
+    );
     if (message) {
       const full = await fetch(
         `${E2E_MAILPIT_URL}/api/v1/message/${message.ID}`,

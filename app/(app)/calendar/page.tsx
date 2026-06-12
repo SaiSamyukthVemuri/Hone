@@ -254,7 +254,7 @@ export default async function CalendarPage({
 
       <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
         <div className="min-w-[840px]">
-          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
+          <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0 border-b border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
             <div />
             {days.map((date, i) => {
               const isToday = date === today;
@@ -310,7 +310,7 @@ export default async function CalendarPage({
               grid-row stretch entirely. Row math is unchanged:
               top = (h - HOUR_START) * 2 * ROW_HEIGHT_PX lines each label
               up with the DayColumn hour boundaries. */}
-          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]">
+          <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0">
             <div
               className="relative border-r border-neutral-200 dark:border-neutral-800"
               style={{ height: GRID_HEIGHT }}

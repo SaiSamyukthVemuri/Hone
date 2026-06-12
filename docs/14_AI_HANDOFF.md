@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #227)
+## Current production status (as of PR #228)
+
+- **Mobile and iPad UX stabilization** (PR #228, no migration). Phone nav overflow fixed: full nav row is md+ only; phones get a details/summary Menu (all destinations + badge + Sign out). Calendar touch safety: grid drag/click-create is mouse-only, `touch-action: manipulation` restores native scrolling, explicit coarse-pointer-only "+" button per day column opens the quick-book drawer (time editable); week grid scrolls inside its card on phones (min-w + existing overflow-x-auto). No booking/business-rule change. Proven by e2e/mobile-ux.spec.ts (iPhone + iPad + desktop-regression contexts) plus 10 source pins; manual native-gesture smoke in docs/12. Live payments still disabled.
+
+## Earlier production status (as of PR #227)
 
 - **Browser E2E core memory loop** (PR #227, no migration). Playwright (Chromium, one spec) drives the full treatment-memory loop against a LOCAL production build + LOCAL Supabase stack: booking, intake, REAL magic-link login via Mailpit (no auth bypass; invite-path account), dashboard + charted-24h wording, charting with clinical-memory fields, second booking, Before Today memory, filtered procedure record + print + aftercare mark, anonymous lockout. New separate `browser-e2e` CI job (local stack, no secrets, traces on failure only); `npm run test:e2e` locally after `supabase start` + `db reset`. Local-only by construction (hosted URLs refused; supabase-demo JWTs only; dummy provider keys). supabase/config.toml allow-lists the localhost:3111 E2E origin (local-only setting). Pins in tests/scripts/e2e-guardrails.test.ts. Live payments still disabled.
 

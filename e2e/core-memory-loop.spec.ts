@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import {
   seedE2eStudio,
   getIntakeTokenForClient,
@@ -6,8 +6,7 @@ import {
   getAppointmentsForClient,
   type E2eSeed,
 } from "./helpers/seed";
-import { waitForMagicLink } from "./helpers/mail";
-import { E2E_APP_ORIGIN } from "./helpers/local-env";
+import { bookAppointment, loginAsOwner } from "./helpers/flows";
 
 // PR #227: the core treatment-memory loop, end to end in a real
 // browser against the LOCAL stack: public booking -> intake ->
@@ -27,36 +26,6 @@ let seed: E2eSeed;
 let clientId: string;
 let firstAppointmentId: string;
 
-async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
-  await page.goto(`/book/${s.slug}`);
-  await expect(page.getByText(s.studioName).first()).toBeVisible();
-  await page.getByRole("button", { name: /new client/i }).click();
-  // Single seeded consultation service is preselected; pick the first
-  // available slot, jumping forward if the default day has none.
-  const slotButton = page.getByRole("button", {
-    name: /^\d{1,2}:\d{2} (AM|PM)$/,
-  });
-  const nextDay = page.getByRole("button", { name: /next available day/i });
-  await expect(async () => {
-    const slots = await slotButton.count();
-    const next = await nextDay.count();
-    expect(slots + next).toBeGreaterThan(0);
-  }).toPass({ timeout: 20_000 });
-  if ((await slotButton.count()) === 0) {
-    await nextDay.click();
-    await expect(slotButton.first()).toBeVisible({ timeout: 20_000 });
-  }
-  await slotButton.first().click();
-  await page.getByLabel(/your name/i).fill(s.clientName);
-  await page.getByLabel(/^email/i).fill(s.clientEmail);
-  await page.getByLabel(/phone/i).fill("+1 555 555 0123");
-  await page.getByRole("button", { name: /book appointment/i }).click();
-  // Confirmation state replaces the form.
-  await expect(
-    page.getByRole("heading", { name: /your appointment is booked/i }),
-  ).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(s.clientEmail).first()).toBeVisible();
-}
 
 test("core memory loop: booking to next-appointment memory", async ({
   page,
@@ -123,15 +92,7 @@ test("core memory loop: booking to next-appointment memory", async ({
   });
 
   await test.step("practitioner logs in via REAL magic link", async () => {
-    await page.goto("/login");
-    await page
-      .getByLabel("Agree to Terms of Service and Privacy Policy")
-      .check();
-    await page.locator("#login-email").fill(seed.ownerEmail);
-    await page.getByRole("button", { name: /send magic link/i }).click();
-    const link = await waitForMagicLink(seed.ownerEmail, E2E_APP_ORIGIN);
-    await page.goto(link);
-    await page.waitForURL(/dashboard/, { timeout: 30_000 });
+    await loginAsOwner(page, seed);
   });
 
   await test.step("dashboard renders snapshot + charted-24h card", async () => {

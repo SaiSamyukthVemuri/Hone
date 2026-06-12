@@ -325,9 +325,13 @@ export function DayColumn({
   );
 
   function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
-    // Left mouse button + primary touch only. Ignore right/middle
-    // click and any non-primary touch so contextmenu and multi-finger
-    // gestures still work normally.
+    // PR #228: MOUSE-ONLY. On touch devices (Chloe's iPhone/iPad)
+    // the old behavior turned every scroll-flick over the grid into
+    // a drag-create and every stray tap into the booking drawer.
+    // Touch/pen pointers are ignored entirely here; touch devices
+    // create appointments through the explicit per-day "+ Book"
+    // button below instead. Left mouse button only.
+    if (e.pointerType !== "mouse") return;
     if (e.button !== 0) return;
     const y = pointerLocalY(e.clientY);
     // Capture the pointer so subsequent moves/up still fire on this
@@ -504,9 +508,32 @@ export function DayColumn({
         // drags inside the cell; we run our own drag-selection model
         // and don't want the cursor to switch to the no-drop sigil.
         onDragStart={(e) => e.preventDefault()}
-        style={{ touchAction: "none" }}
+        style={{
+          // PR #228: was "none", which blocked ALL touch scrolling
+          // over the grid and routed flicks into the drag handlers.
+          // "manipulation" restores native pan/pinch on touch; mouse
+          // drag-create is unaffected (touch-action only governs
+          // touch input).
+          touchAction: "manipulation",
+        }}
         className="absolute inset-0 z-0 cursor-pointer select-none rounded-none outline-none transition-colors hover:bg-sky-100/40 focus-visible:bg-sky-100/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300 dark:hover:bg-sky-900/20 dark:focus-visible:bg-sky-900/20 dark:focus-visible:ring-sky-700"
       />
+
+      {/* PR #228: the EXPLICIT create affordance for touch devices.
+          Drag/click-create above is mouse-only, so coarse-pointer
+          devices (phones, iPads) get a deliberate button instead:
+          tapping it opens the same quick-book drawer at the top of
+          the visible range, where the start time and duration are
+          editable. Hidden wherever a fine pointer (mouse/trackpad)
+          is primary, so the desktop workflow is unchanged. */}
+      <button
+        type="button"
+        aria-label={`Book on ${date}`}
+        onClick={() => openDraftAtY(0)}
+        className="absolute left-1 top-1 z-[7] hidden h-7 min-w-7 items-center justify-center rounded-md border border-neutral-300 bg-white/95 px-1.5 text-xs font-semibold text-neutral-700 shadow-sm [@media(pointer:coarse)]:flex dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-neutral-200"
+      >
+        +
+      </button>
 
       {/* Live drag-selection overlay. Translucent block + time-range
           label that tracks the snapped start/end as the practitioner
