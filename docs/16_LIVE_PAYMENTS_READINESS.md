@@ -1038,7 +1038,7 @@ PR #169 is docs + guardrails ONLY. Nothing in this PR:
 - Enables live payments. The three dormancy guards from §3 are unchanged.
 - Creates or modifies any database table, RLS policy, RPC, or index. No new migration. The latest migration in tree is still `0072_consent_templates_is_live.sql` from PR #167.
 - Modifies any Stripe key, secret, env var, webhook secret, or Vercel configuration.
-- Adds or removes any `paymentIntents.create` call site. Still exactly one, in `lib/billing/manual-fee-charge.ts`.
+- Adds or removes any `paymentIntents.create` call site. Still exactly one; since PR #196 unification (and PR #218's removal of the dead legacy executor `lib/billing/manual-fee-charge.ts`) it lives in `lib/billing/session-payment-charge.ts`.
 - Adds or removes any `refunds.create` call site. Still zero.
 - Changes webhook handler behavior. Still ignores everything except `setup_intent.*` and account/capability.
 - Changes manual fee charge logic. Still `runManualFeeCharge` with live-mode early return.

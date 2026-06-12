@@ -230,9 +230,9 @@ describe("docs/16 §12.15: PR #169 honest non-claims", () => {
     expect(READINESS).toMatch(/0072_consent_templates_is_live\.sql/);
   });
 
-  it("declares paymentIntents.create call site count unchanged (still 1)", () => {
+  it("declares paymentIntents.create call site count unchanged (still 1; unified executor since PR #218)", () => {
     expect(READINESS).toMatch(
-      /Still exactly one,? in.{0,50}lib\/billing\/manual-fee-charge\.ts/i,
+      /Still exactly one[\s\S]{0,200}lib\/billing\/session-payment-charge\.ts/i,
     );
   });
 
@@ -323,9 +323,10 @@ describe("PR #169 changes nothing in the runtime tree (docs + tests only)", () =
   // included code changes. The detailed guards live in that
   // file; here we just confirm the baseline did not move.
 
+  // PR #218 removed lib/billing/manual-fee-charge.ts; the unified
+  // executor's single call site is pinned in the gates tests.
   const RUNTIME_FILES_THAT_SHOULD_BE_UNCHANGED = [
     "lib/stripe/server.ts",
-    "lib/billing/manual-fee-charge.ts",
     "lib/billing/manual-fee-eligibility.ts",
     "lib/stripe/setup-intent.ts",
     "app/portal/payment-method-actions.ts",
@@ -336,12 +337,7 @@ describe("PR #169 changes nothing in the runtime tree (docs + tests only)", () =
     it(`${rel} still does not contain a NEW paymentIntents.create call`, () => {
       const src = readDoc(rel);
       const matches = src.match(/paymentIntents\.create/g) ?? [];
-      if (rel === "lib/billing/manual-fee-charge.ts") {
-        // The single allowlisted occurrence.
-        expect(matches.length).toBe(1);
-      } else {
-        expect(matches.length).toBe(0);
-      }
+      expect(matches.length).toBe(0);
     });
   }
 

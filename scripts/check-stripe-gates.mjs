@@ -83,23 +83,23 @@ const RULES = [
     name: "paymentIntents.create",
     pattern: /paymentIntents\.create/g,
     allowlist: [
-      // PR #146 test-mode manual fee charge. Behind: practitioner
-      // auth, evidence recheck, claim_manual_fee_charge_attempt RPC,
-      // deterministic idempotency key, connected-account context,
+      // PR #173 test-mode session payment charge; since PR #196 the
+      // unified executor for ALL three charge reasons (session
+      // payment, no-show fee, late-cancellation fee). Behind:
+      // practitioner auth, eligibility + current-card-authorization
+      // re-checks at execution time, the claim_session_payment_charge
+      // _attempt RPC (migration 0075, reasons widened in 0083),
+      // deterministic reason-scoped idempotency keys,
       // inferStripeLivemode() test-mode gate, AND the DB CHECK
-      // manual_fee_charge_attempts_livemode_false_check.
-      "lib/billing/manual-fee-charge.ts",
-      // PR #173 test-mode session payment charge. Behind: the same
-      // safety chain plus a PR #170 current-card-authorization
-      // re-check at execution time, the claim_session_payment_charge
-      // _attempt RPC (migration 0075), and the
       // payment_charge_attempts_livemode_false_check (migration
-      // 0073). Adding a third paymentIntents.create call site is a
-      // deliberate review event; do not loosen this allowlist
-      // without an accompanying decision in docs/13.
+      // 0073). PR #218 removed the dead legacy manual-fee executor
+      // (lib/billing/manual-fee-charge.ts), so this is the ONLY
+      // PaymentIntent call site. Adding a second one is a deliberate
+      // review event; do not loosen this allowlist without an
+      // accompanying decision in docs/13.
       "lib/billing/session-payment-charge.ts",
     ],
-    exactly: 2,
+    exactly: 1,
   },
   {
     name: "charges.create",

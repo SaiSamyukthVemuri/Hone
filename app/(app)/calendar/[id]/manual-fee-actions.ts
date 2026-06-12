@@ -215,7 +215,7 @@ export async function prepareManualFeeChargeAction(
 // Runs a TEST-MODE-ONLY Stripe PaymentIntent against an existing
 // manual_fee_charge_attempts row whose status is 'ready' (or
 // pending_stripe under the recovery branch). The heavy lifting lives
-// in lib/billing/manual-fee-charge.ts:runManualFeeCharge; this action
+// in the removed legacy executor (PR #218); this action
 // is the server-action entry point that:
 //
 //   * resolves the practitioner + studio from the session, so the

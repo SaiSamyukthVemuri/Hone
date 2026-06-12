@@ -37,9 +37,9 @@ describe("check-stripe-gates: refunds.create allowlist", () => {
 });
 
 describe("check-stripe-gates: other gates unchanged in PR #178", () => {
-  it("paymentIntents.create still declares exactly 2", () => {
+  it("paymentIntents.create declares exactly 1 (PR #218 removed the legacy fee executor)", () => {
     expect(GATE).toMatch(
-      /name:\s*"paymentIntents\.create"[\s\S]{0,3000}exactly:\s*2/,
+      /name:\s*"paymentIntents\.create"[\s\S]{0,3000}exactly:\s*1/,
     );
   });
 

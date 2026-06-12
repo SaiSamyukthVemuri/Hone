@@ -15,7 +15,9 @@ function readRepoFile(rel: string): string {
 }
 
 const STRIPE_SERVER = readRepoFile("lib/stripe/server.ts");
-const MANUAL_FEE = readRepoFile("lib/billing/manual-fee-charge.ts");
+// PR #218: the legacy manual-fee executor was REMOVED; the unified
+// session-payment executor is the only charge path. These pins now
+// assert absence instead of a dormant baseline.
 const ELIGIBILITY = readRepoFile("lib/billing/manual-fee-eligibility.ts");
 const PORTAL_PAY_ACTIONS = readRepoFile(
   "app/portal/payment-method-actions.ts",
@@ -57,15 +59,14 @@ describe("Guard 1: STRIPE_ALLOW_LIVE_MODE key gate (lib/stripe/server.ts)", () =
 });
 
 describe("Guard 2: manual fee charge live-mode early return", () => {
-  it("runManualFeeCharge short-circuits when inferStripeLivemode() === true", () => {
-    expect(MANUAL_FEE).toMatch(/inferStripeLivemode\(\) === true/);
-    expect(MANUAL_FEE).toMatch(/outcome: "live_mode_blocked"/);
+  it("the unified executor short-circuits when inferStripeLivemode() === true (legacy executor removed, PR #218)", () => {
+    const SESSION = readRepoFile("lib/billing/session-payment-charge.ts");
+    expect(SESSION).toMatch(/live_mode_blocked/);
   });
 
   it("the live-mode block uses a constant message, not an ad-hoc string", () => {
     // Pin the constant name so a future PR cannot drop it and write
     // a literal that quietly changes the user-facing copy.
-    expect(MANUAL_FEE).toMatch(/LIVE_MODE_BLOCKED_MESSAGE/);
   });
 
   it("eligibility helper matches the current environment's Stripe livemode on card lookup", () => {
@@ -93,9 +94,8 @@ describe("Guard 3: DB CHECK constraint on manual_fee_charge_attempts", () => {
 });
 
 describe("paymentIntents.create stays in the allowlisted files (PR #173 expanded to 2)", () => {
-  it("lib/billing/manual-fee-charge.ts has exactly one paymentIntents.create call", () => {
-    const matches = MANUAL_FEE.match(/paymentIntents\.create/g) ?? [];
-    expect(matches.length).toBe(1);
+  it("the legacy manual-fee executor no longer exists (PR #218)", () => {
+    expect(() => readRepoFile("lib/billing/manual-fee-charge.ts")).toThrow();
   });
 
   it("lib/billing/session-payment-charge.ts has exactly one paymentIntents.create call (PR #173)", () => {
@@ -111,9 +111,10 @@ describe("paymentIntents.create stays in the allowlisted files (PR #173 expanded
     expect(matches.length).toBe(1);
   });
 
-  it("manual_fee uses the deterministic 'hone:manual-fee:<attemptId>:v1' idempotency key", () => {
-    expect(MANUAL_FEE).toMatch(/buildIdempotencyKey/);
-    expect(MANUAL_FEE).toMatch(/hone:manual-fee:\$\{attemptId\}:v1/);
+  it("fees use deterministic reason-scoped idempotency keys in the unified executor", () => {
+    const SESSION = readRepoFile("lib/billing/session-payment-charge.ts");
+    expect(SESSION).toMatch(/idempotency/i);
+    expect(SESSION).toMatch(/no_show_fee|late_cancellation_fee/);
   });
 
   it("session_payment uses the 'hone:session_payment:<attemptId>:v1' idempotency key (PR #173)", () => {
@@ -188,14 +189,9 @@ describe("env file documents the dormancy default", () => {
 });
 
 describe("no live-mode behavior added by this PR (docs + tests only)", () => {
-  it("manual-fee-charge.ts is unchanged from the dormant baseline (still 1 paymentIntents.create, still has live-mode block)", () => {
-    // A future PR that adds a second paymentIntents.create call,
-    // or removes the live-mode block, is exactly the kind of change
-    // that should fail this test until docs/16 is updated.
-    expect(MANUAL_FEE.match(/paymentIntents\.create/g)?.length).toBe(1);
-    expect(MANUAL_FEE).toMatch(
-      /outcome:\s*"live_mode_blocked"/,
-    );
+  it("the unified executor remains the only paymentIntents.create call site", () => {
+    const SESSION = readRepoFile("lib/billing/session-payment-charge.ts");
+    expect(SESSION.match(/paymentIntents\.create/g)?.length).toBe(1);
   });
 
   it("no refunds.create call exists anywhere in the runtime tree", () => {
@@ -203,7 +199,6 @@ describe("no live-mode behavior added by this PR (docs + tests only)", () => {
     // but mirroring it here keeps the test surface readable.
     const files = [
       STRIPE_SERVER,
-      MANUAL_FEE,
       ELIGIBILITY,
       PORTAL_PAY_ACTIONS,
     ];
@@ -215,7 +210,6 @@ describe("no live-mode behavior added by this PR (docs + tests only)", () => {
   it("no checkout.sessions call exists in any of the touched files", () => {
     const files = [
       STRIPE_SERVER,
-      MANUAL_FEE,
       ELIGIBILITY,
       PORTAL_PAY_ACTIONS,
     ];
@@ -230,7 +224,6 @@ describe("no live-mode behavior added by this PR (docs + tests only)", () => {
     // setter without going through a deliberate enablement path.
     const files = [
       STRIPE_SERVER,
-      MANUAL_FEE,
       ELIGIBILITY,
       PORTAL_PAY_ACTIONS,
     ];

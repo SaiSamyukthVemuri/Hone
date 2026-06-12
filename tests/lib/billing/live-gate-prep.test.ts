@@ -180,21 +180,17 @@ describe("refund permission: owner-only across all charge reasons", () => {
 });
 
 describe("stale pending_stripe recovery (already shipped; pinned)", () => {
-  it("both executors reconcile pending rows from the stored PaymentIntent", () => {
+  it("the unified executor reconciles pending rows from the stored PaymentIntent", () => {
+    // PR #218 removed the dead legacy manual-fee executor; the
+    // unified session-payment executor (all three charge reasons
+    // since PR #196) is the only charge path.
     const SESSION = read("lib/billing/session-payment-charge.ts");
-    const FEE = read("lib/billing/manual-fee-charge.ts");
-    for (const src of [SESSION, FEE]) {
-      expect(src).toMatch(/pending_stripe/);
-      expect(src).toMatch(/idempotency/i);
-    }
-    // Ambiguity never silently re-charges: an unknown post-claim error
-    // leaves the row pending and forces manual review.
+    expect(SESSION).toMatch(/pending_stripe/);
+    expect(SESSION).toMatch(/idempotency/i);
     expect(SESSION).toMatch(
       /row stays pending_stripe\. Reconcile via Stripe dashboard\./,
     );
-    expect(FEE).toMatch(
-      /row stays pending_stripe\. Reconcile via Stripe dashboard\./,
-    );
+    expect(() => read("lib/billing/manual-fee-charge.ts")).toThrow();
   });
 });
 
@@ -204,7 +200,6 @@ describe("live mode stays blocked", () => {
     expect(STRIPE_SERVER).toMatch(/STRIPE_ALLOW_LIVE_MODE/);
     const RUNTIME_FILES = [
       "lib/billing/session-payment-charge.ts",
-      "lib/billing/manual-fee-charge.ts",
       "lib/billing/payment-refund.ts",
       "lib/billing/payment-receipt.ts",
       "lib/email/templates/payment-receipt.ts",

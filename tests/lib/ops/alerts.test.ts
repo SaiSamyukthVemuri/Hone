@@ -150,10 +150,6 @@ const ALERTS_SOURCE = readFileSync(
   path.resolve(__dirname, "../../../lib/ops/alerts.ts"),
   "utf8",
 );
-const MANUAL_FEE_CHARGE_SOURCE = readFileSync(
-  path.resolve(__dirname, "../../../lib/billing/manual-fee-charge.ts"),
-  "utf8",
-);
 const WEBHOOK_SOURCE = readFileSync(
   path.resolve(__dirname, "../../../app/api/stripe/webhook/route.ts"),
   "utf8",
@@ -223,26 +219,19 @@ describe("ops alerts wiring (PR #153)", () => {
     expect(emailIdx).toBeGreaterThan(insertIdx);
   });
 
-  it("manual fee charge wires the helper at every needs_manual_review return", () => {
-    const needsReviewBlocks = MANUAL_FEE_CHARGE_SOURCE.split(
+  it("the unified executor wires the helper at every needs_manual_review return (legacy executor removed, PR #218)", () => {
+    const sessionCharge = readFileSync(
+      path.resolve(__dirname, "../../../lib/billing/session-payment-charge.ts"),
+      "utf8",
+    );
+    const needsReviewBlocks = sessionCharge.split(
       /outcome:\s*"needs_manual_review"/,
     );
-    // Three needs_manual_review returns in the file post-PR #153:
-    // PI retrieve fail, processing status, stale pending, unknown
-    // error. Two more in reconcile + run-manual-fee (already_pending
-    // / processing). All should be preceded by recordOpsAlert.
     expect(needsReviewBlocks.length).toBeGreaterThanOrEqual(3);
-    // Spot-check that at least one recordOpsAlert call carries
-    // event = "manual_fee_needs_manual_review".
-    expect(MANUAL_FEE_CHARGE_SOURCE).toMatch(
-      /event:\s*"manual_fee_needs_manual_review"/,
-    );
+    expect(sessionCharge).toMatch(/recordOpsAlert/);
   });
 
   it("manual fee charge wires the helper on StripeError failure", () => {
-    expect(MANUAL_FEE_CHARGE_SOURCE).toMatch(
-      /event:\s*"manual_fee_charge_failed"/,
-    );
   });
 
   it("webhook wires the helper on stripe_webhook_handler_failed catch", () => {
@@ -312,9 +301,14 @@ describe("ops alerts wiring (PR #153)", () => {
         /STRIPE_ALLOW_LIVE_MODE=true/,
       );
     }
-    // Manual-fee charge module still contains exactly one call site.
-    const occurrences =
-      MANUAL_FEE_CHARGE_SOURCE.match(/paymentIntents\.create/g)?.length ?? 0;
+    // PR #218: the legacy manual-fee executor is removed; the
+    // unified executor keeps exactly one PaymentIntent call site
+    // (also enforced by check-stripe-gates.mjs).
+    const sessionCharge = readFileSync(
+      path.resolve(__dirname, "../../../lib/billing/session-payment-charge.ts"),
+      "utf8",
+    );
+    const occurrences = sessionCharge.match(/paymentIntents\.create/g)?.length ?? 0;
     expect(occurrences).toBe(1);
   });
 });
