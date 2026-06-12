@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #224)
+## Current production status (as of PR #225)
+
+- **Charted-within-24h metric** (PR #225, no migration). Practice Snapshot card: completed appointments (status `completed`, `ends_at` in the rolling last 7 days) vs those whose earliest non-deleted linked session_block was created within 24h of `ends_at` (inclusive). Pure `summarizeChartedWithin24h` + three batched user-scoped reads in `getPracticeDashboardMetrics`; sessions with zero areas do not count as charted; studio-level only, never per-practitioner; no score/compliance wording (pinned). Empty state "No recent completed sessions yet." No RLS/payment change. Live payments still disabled.
+
+## Earlier production status (as of PR #224)
 
 - **New studio setup runbook** (PR #224, docs-only). `docs/20_NEW_STUDIO_SETUP_RUNBOOK.md`: internal operator checklist for safely creating Studio #2 (inputs; two approved SQL inserts: studio + owner invitation via the 0081 invite path; in-app config for the rest; surface verification; Willow isolation checks; ZZ-TEST smoke with delete-hardening-respecting cleanup; do-not-touch list; known limitations). Not a user-facing onboarding surface; no runtime/migration/RLS/payment change. Safety content pinned in tests/docs/new-studio-runbook.test.ts. Live payments still disabled.
 

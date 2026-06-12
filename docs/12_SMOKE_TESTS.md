@@ -826,6 +826,8 @@ Record Keeping per-client pull (PR #223), manual smoke: on /records → Client P
 
 New-studio setup (PR #224): when creating a second real studio, follow docs/20_NEW_STUDIO_SETUP_RUNBOOK.md end to end; its sections 2.5 (surface verification), 3 (isolation checks), and 4 (smoke workflow) are the smoke catalogue for that operation.
 
+Charted-within-24h card (PR #225), manual smoke: Dashboard shows the "Charted within 24h" card; with no completed appointments in the last 7 days it reads "No recent completed sessions yet."; after completing and charting an appointment the fraction increments (e.g. 1/1); completing an appointment without charting raises only the denominator.
+
 Lighter manual checks the reviewer can run by hand for spot-checking:
 
 ```bash
