@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #213)
+## Current production status (as of PR #214)
+
+- **Clients needing attention** (PR #214, no migration). Fourth Action-needed card + compact list on the Dashboard (top 5, "+ N more"): clients flagged by their newest watch/caution note or next-visit plan (PR #203 per-client rule) or a notable recorded reaction on the most recent charted session; tolerance shown only alongside another reason; watch-first sorting; two batched reads, 200-session cap. Recorded-history surfacing only (unsafe wording pinned absent). All deferred Dashboard follow-ups now closed except record-keeping CSV export + traceability print. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #213)
 
 - **Probe lot traceability** (PR #213, no migration). Record Keeping -> Sterile Items gains a lot search + per-record Trace usage (`/records?section=sterile&lot=...`): matching sterile-item details + every treatment area recorded with the lot (client/date/area/operator/setup/aftercare status, linked). Exact normalized matching (trim + case-insensitive escaped ILIKE; never fuzzy). Traceability, not causation (pinned). Print/export for traceability deferred (screen-only v1). Live payments still disabled; docs/18 blockers unchanged.
 
