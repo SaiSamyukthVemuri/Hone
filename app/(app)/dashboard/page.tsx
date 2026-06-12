@@ -28,6 +28,9 @@ import {
   type DashboardPeriod,
 } from "@/lib/dashboard/practice-metrics";
 import {
+  resolveNextAction,
+} from "@/lib/dashboard/next-action";
+import {
   getBeforeTodayPreviews,
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
@@ -240,6 +243,45 @@ export default async function DashboardPage({
   // PR #212: compact Before-today previews for the Today roster.
   // THREE batched reads for all of today's clients (never per-row);
   // exactly the PR #211 briefing pipeline, compacted.
+  // PR #236: linked-session facts for the Today next actions. Two
+  // batched reads (same shape as the charted-24h loader); no N+1.
+  const apptIds = todayAppointments.map((a) => a.id);
+  const sessionByAppointment = new Map<
+    string,
+    { sessionId: string; hasChartedArea: boolean }
+  >();
+  if (apptIds.length > 0) {
+    const { data: linkedSessions } = await supabase
+      .from("sessions")
+      .select("id, appointment_id")
+      .eq("studio_id", studio.id)
+      .in("appointment_id", apptIds)
+      .is("deleted_at", null);
+    const sessions = (linkedSessions ?? []) as Array<{
+      id: string;
+      appointment_id: string;
+    }>;
+    if (sessions.length > 0) {
+      const { data: blockRows } = await supabase
+        .from("session_blocks")
+        .select("session_id")
+        .eq("studio_id", studio.id)
+        .in("session_id", sessions.map((s) => s.id))
+        .is("deleted_at", null);
+      const sessionsWithAreas = new Set(
+        ((blockRows ?? []) as Array<{ session_id: string }>).map(
+          (b) => b.session_id,
+        ),
+      );
+      for (const s of sessions) {
+        sessionByAppointment.set(s.appointment_id, {
+          sessionId: s.id,
+          hasChartedArea: sessionsWithAreas.has(s.id),
+        });
+      }
+    }
+  }
+
   const beforeTodayPreviews = await getBeforeTodayPreviews(
     studio.id,
     visibleAppointments.map((a) => a.client_id),
@@ -340,6 +382,7 @@ export default async function DashboardPage({
                   }
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   beforeToday={beforeTodayPreviews.get(appt.client_id) ?? null}
+                  linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   tz={studio.timezone}
                 />
               </li>
@@ -380,14 +423,26 @@ function AppointmentRow({
   pinnedNoteText,
   intakeStatus,
   beforeToday,
+  linkedSession,
   tz,
 }: {
   appt: TodayAppointment;
   pinnedNoteText: string | null;
   intakeStatus: ClientIntakeForm["status"] | null;
   beforeToday: BeforeTodayPreview | null;
+  linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   tz: string;
 }) {
+  // PR #236: ONE obvious primary action per row, resolved from
+  // existing facts (pure helper; existing routes only).
+  const nextAction = resolveNextAction({
+    status: appt.status,
+    clientId: appt.client_id,
+    appointmentId: appt.id,
+    hasHistory: beforeToday?.hasHistory ?? false,
+    sessionId: linkedSession?.sessionId ?? null,
+    hasChartedArea: linkedSession?.hasChartedArea ?? false,
+  });
   const time = localTimeString(new Date(appt.starts_at), tz);
   const performerName = appt.practitioner?.display_name?.trim();
   const performerColor = resolvePractitionerColor(appt.practitioner?.color);
@@ -398,11 +453,14 @@ function AppointmentRow({
   const showAllergyFlag = !!appt.client?.allergies;
 
   return (
-    <Link
-      href={`/calendar/${appt.id}`}
-      className="flex items-start justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-    >
-      <div className="flex min-w-0 flex-1 gap-4">
+    // PR #236: the row body still opens the appointment (calendar
+    // detail), and a separate primary-action button sits beside it,
+    // wrapping below the content on phones. No nested anchors.
+    <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900">
+      <Link
+        href={`/calendar/${appt.id}`}
+        className="flex min-w-0 flex-1 basis-64 gap-4"
+      >
         <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
           {time}
         </div>
@@ -412,6 +470,17 @@ function AppointmentRow({
               {appt.client?.name ?? "Client deleted"}
             </span>
             <AppointmentStatusPill status={appt.status} />
+            {nextAction.chip && (
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                  nextAction.chip === "Charting needed"
+                    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+                    : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+                }`}
+              >
+                {nextAction.chip}
+              </span>
+            )}
           </div>
           <div className="mt-0.5 truncate text-xs text-neutral-500">
             {serviceName && <span>{serviceName}</span>}
@@ -492,9 +561,14 @@ function AppointmentRow({
             </div>
           )}
         </div>
-      </div>
-      <span className="self-center text-sm text-neutral-400">›</span>
-    </Link>
+      </Link>
+      <Link
+        href={nextAction.href}
+        className="self-center rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
+      >
+        {nextAction.label}
+      </Link>
+    </div>
   );
 }
 
