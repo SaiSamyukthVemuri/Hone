@@ -49,7 +49,7 @@ Redaction rules (enforced before any DB insert OR stderr log):
 - Keys matching `token`, `raw_token`, `client_secret`, `secret`, `password`, `cookie`, `authorization`, `auth`, `api_key`, `apikey`, `stripe_secret_key`, `private_key`, `card_number`, `pan`, `cvc`, `cvv`, `ssn`, `bearer` are replaced with `[redacted]`.
 - Values matching the Stripe secret-key shape (`sk_test_*` / `sk_live_*`), a JWT shape, or a long bearer-token shape (>= 32 alnum/underscore/hyphen, excluding UUIDs) are replaced with `[redacted]` regardless of key name.
 - String values longer than 500 chars are truncated with a `...[truncated]` sentinel so a paste-bomb cannot fill the column.
-- The helper itself never throws to the caller; DB insert failures are swallowed and surface only as additional structured stderr logs. (Operator email is deferred in PR #153, so there is no email path here to fail.)
+- The helper itself never throws to the caller; DB insert failures are swallowed and surface only as additional structured stderr logs. (Since PR #193, critical alerts also trigger a best-effort operator email AFTER the durable insert; that email helper also never throws and never calls back into `recordOpsAlert`, so an email failure cannot recurse into more alerts.)
 
 RLS posture for `ops_alerts`:
 
@@ -58,7 +58,7 @@ RLS posture for `ops_alerts`:
 - No INSERT/UPDATE policy is granted to anon/authenticated; the helper writes via the service-role admin client only.
 - No DELETE policy; resolve via `resolved_at` + `resolution_note`.
 
-Operator notification channel: **SQL against `ops_alerts` + Vercel logs** for this PR. Operator email dispatch is deferred to a future PR (the helper deliberately does NOT import `lib/email/send-appointment.ts` to avoid a dependency cycle with the same email subsystem the helper observes). `OPS_ALERT_EMAILS` is reserved in env docs but not read today. See [docs/11_RUNBOOK.md](./11_RUNBOOK.md) for the full SQL recipes and incident workflow.
+Operator notification channel (updated PR #219; originally SQL-only when 0067 shipped): durable `ops_alerts` rows are the source of truth, surfaced in the `/admin/ops-alerts` dashboard (PR #193) and via the SQL recipes in [docs/11_RUNBOOK.md](./11_RUNBOOK.md). Since PR #193, CRITICAL alerts additionally send a best-effort operator email through the standalone `lib/ops/alert-email.ts` helper. That helper imports only the bare Resend client and deliberately does NOT import `lib/email/send-appointment.ts` (no dependency cycle with the email subsystem the alerts observe), and it never calls `recordOpsAlert`, so alert-email failures cannot recurse. `OPS_ALERT_EMAILS` (comma-separated recipient list) IS read by that helper and is optional: when unset or empty, a once-per-instance warning is logged and the email is skipped; the durable row and the dashboard are unaffected either way. Email content carries only the already-redacted message plus safe ids.
 
 ### Token routes collapse error states
 

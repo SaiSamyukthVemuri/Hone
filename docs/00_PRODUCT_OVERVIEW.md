@@ -40,8 +40,8 @@ Hone collapses that into one practice surface where the calendar is informed by 
 ## What is explicitly NOT built yet
 
 - **Automatic charging.** Hone does not charge cards on a schedule, in batches, or without a deliberate practitioner click. Manual fee charging exists but only in test mode.
-- **Refunds, dispute handling, receipts.** No code path issues a refund. No receipt or charge notice email is sent.
-- **Live-mode payment.** The Stripe key gate refuses `sk_live_*` without `STRIPE_ALLOW_LIVE_MODE=true`; the `manual_fee_charge_attempts` DB row has a CHECK that pins `stripe_livemode = false`. Live charging needs a deliberate live-mode PR with legal review.
+- **Dispute handling and reviewed live receipt wording.** Test-mode receipts and full-amount, owner-only refunds ARE built on the unified `payment_charge_attempts` ledger (fees inherit them since PR #196), but disputes only surface as webhook ops alerts (no dispute workflow), and the live receipt wording is drafted-only, PENDING legal/accounting review.
+- **Live-mode payment.** The Stripe key gate refuses `sk_live_*` without `STRIPE_ALLOW_LIVE_MODE=true`; the canonical `payment_charge_attempts` ledger (and the legacy, read-only `manual_fee_charge_attempts` table) has a DB CHECK that pins `stripe_livemode = false`. Live charging needs a deliberate live-mode PR plus legal/accounting review and the Willow live Stripe checklist (docs/18 §16).
 - **Auto-generated charge notices, late-cancel detection from policy text.** The system cannot mechanically decide "this cancellation crossed the late window" because the policy is free-form text; the practitioner asserts the timing classification manually (PR #145).
 - **Public booking card-required flow.** The 0032 Stripe backend has the SQL for this but it stays dormant.
 - **Comprehensive automated coverage.** Minimal Vitest guard/regression tests and a GitHub Actions CI job (`.github/workflows/ci.yml`, PR #154) run `typecheck`, `lint`, `build`, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR and every push to the default branch. Full Supabase-local DB integration coverage, an RLS policy suite, and browser E2E coverage are NOT yet built; manual smoke (docs/12) remains the production-readiness check.
@@ -64,14 +64,14 @@ A booking system can be replaced. The studio's accumulated treatment memory is w
 |---|---|
 | Controlled pilot at Willow Electrolysis | **Active**. Chloe runs real bookings, intake, charting (with appointment-linked sessions per PR #156/#157), postcare, portal messages, cancellation/reschedule, and an appointment timeline on every client profile. |
 | Card-on-file (test mode) | **Production-deployed, exercised end-to-end** via portal SetupIntent. No live charging. |
-| Manual fee charging (test mode) | **Production-deployed.** Practitioner can test-charge a `ready` attempt with full evidence stack. |
-| Broad SaaS launch | **Not ready.** Self-serve onboarding, intake builder, payment legal review, refund + receipt code, and deeper automated coverage (Supabase-local DB integration, RLS policy suite, browser E2E) all required first. Minimal Vitest + GitHub Actions CI exist as of PR #154. |
-| Live payment | **Not ready.** Requires legal review of Ontario CASL/PCI obligations, a deliberate live-mode PR replacing the `livemode_false_check` constraint, a stronger pending-reconciliation path (Stripe metadata search before any retry), and explicit receipt / charge-notice flows. See [docs/06](./06_PAYMENTS_AND_STRIPE.md) §8. |
+| Manual fee charging (test mode) | **Production-deployed.** Practitioner can test-charge a `ready` attempt with full evidence stack; since PR #196 fees ride the unified `payment_charge_attempts` ledger and inherit receipts, refunds, and webhook reconciliation. |
+| Broad SaaS launch | **Not ready.** Self-serve onboarding, intake builder, payment legal review, and deeper automated coverage (Supabase-local DB integration, RLS policy suite, browser E2E) all required first. The Vitest suite + GitHub Actions CI exist (PR #154 onward). |
+| Live payment | **Not ready, by policy.** The code-side blockers are resolved: unified ledger with test-mode receipts, full-amount owner-only refunds, and webhook reconciliation; Stripe call sites pinned by CI gates. Remaining blockers are human: legal/accounting review of the consent / cancellation / card-authorization / receipt wording, the Willow live Stripe checklist, then a deliberate live-mode PR replacing the `livemode_false_check` constraints. See [docs/18](./18_LIVE_PAYMENTS_AUDIT.md) §16. |
 
 ## Where the line is between "Hone today" and "Hone soon"
 
-Today: Hone is a usable practice surface for one studio. Bookings run through it. Reminders go out. Intake is captured. Consent and photo-consent live in the portal. Card-on-file persists. Manual fees can be prepared and (in test) charged.
+Today: Hone is a usable practice surface for one studio. Bookings run through it. Reminders go out. Intake is captured. Consent and photo-consent live in the portal. Card-on-file persists. Manual fees can be prepared and (in test) charged. Test-mode receipts and refunds run on the unified payment ledger. Email sends use atomic claim discipline (migration 0080). Calendar feed tokens are hashed at rest (migration 0079). Automated tests + GitHub Actions CI run on every PR.
 
-Soon: legal review of the consent + cancellation + card-authorization wording. Real live-mode payment. Receipts and refunds. Email outbox/claim discipline. Hashed calendar feed tokens. Automated tests + CI. Then a second pilot studio.
+Soon: legal/accounting review of the consent + cancellation + card-authorization + receipt wording. Real live-mode payment, only after that review and the Willow live Stripe checklist (docs/18 §16). Then a second pilot studio.
 
 Far: self-serve onboarding, multi-studio team accounts, mobile app, Google Calendar sync, intake builder, billing dashboard.
