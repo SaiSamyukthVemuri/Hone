@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #210)
+## Current production status (as of PR #211)
+
+- **Before Today card** (PR #211, no migration). Pre-treatment briefing on the client Overview (below Client info, above Treatment Intelligence): last treated areas+date, Remember today (watch/plan + latest reaction/tolerance, blue memory styling), latest recorded setup, and record reminders using the procedure-completeness field rules (missing lot/aftercare/DOB/phone/address). Pure assembler over data the page already loads; recorded-history wording only (overclaim words pinned absent); clean empty states. Live payments still disabled; docs/18 blockers unchanged.
+
+## Earlier production status (as of PR #210)
 
 - **Client Treatment Intelligence Summary** (PR #210, no migration). Treatment Intelligence card on the profile Overview (pure builder over sessions + session_blocks + entry hairs): overall sessions/areas/minutes/hairs/hairs-min/first-last treated, per-area cards (grouped case-insensitively; latest recorded setup; commonly recorded reaction; watch notes), client-level reaction/tolerance, Notes to remember (latest watch + plan). Recorded-history wording only (overclaim words pinned absent); "Not recorded" for gaps; empty state for uncharted clients. Live payments still disabled; docs/18 blockers unchanged.
 

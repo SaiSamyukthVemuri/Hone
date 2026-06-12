@@ -277,6 +277,6 @@ describe("safety wording", () => {
 
   it("read-only: builder is pure (no imports of supabase) and page query is a select", () => {
     expect(BUILDER).not.toMatch(/supabase|createClient/);
-    expect(PAGE).toMatch(/from\("session_blocks"\)[\s\S]{0,400}\.is\("deleted_at", null\)/);
+    expect(PAGE).toMatch(/from\("session_blocks"\)[\s\S]{0,700}\.is\("deleted_at", null\)/);
   });
 });
