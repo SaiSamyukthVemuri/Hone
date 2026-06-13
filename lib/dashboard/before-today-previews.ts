@@ -33,6 +33,15 @@ export type BeforeTodayPreview = {
   setupLine: string | null;
   // "Records look complete." or "Records: N reminders".
   recordsLine: string;
+  // PR #241: structured passthrough facts the Daily Prep Brief needs,
+  // all already computed by buildBeforeToday (no new query). The
+  // Today row preview ignores these; they let the brief split the
+  // "for next visit" note from the caution note and list the granular
+  // missing-record reminders. nextVisitNote = the next_session_note;
+  // cautionNote = the first recorded watch line.
+  nextVisitNote: string | null;
+  cautionNote: string | null;
+  reminders: string[];
 };
 
 // Pure: collapse a full briefing into the three preview lines. Watch
@@ -44,6 +53,9 @@ export function compactBeforeToday(briefing: BeforeToday): BeforeTodayPreview {
       rememberLine: null,
       setupLine: null,
       recordsLine: "",
+      nextVisitNote: null,
+      cautionNote: null,
+      reminders: [],
     };
   }
   const remember =
@@ -57,6 +69,9 @@ export function compactBeforeToday(briefing: BeforeToday): BeforeTodayPreview {
       n === 0
         ? "Records look complete."
         : `Records: ${n} ${n === 1 ? "reminder" : "reminders"}`,
+    nextVisitNote: briefing.remember.plan,
+    cautionNote: briefing.remember.watchLines[0] ?? null,
+    reminders: [...briefing.reminders],
   };
 }
 

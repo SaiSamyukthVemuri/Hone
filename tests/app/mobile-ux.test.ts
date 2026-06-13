@@ -110,6 +110,19 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+describe("Daily Prep Brief V1 (PR #241)", () => {
+  it("the card wraps cleanly on phones (no nowrap, no fixed widths)", () => {
+    const CARD = read("app/(app)/dashboard/daily-prep-brief.tsx");
+    expect((CARD.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(CARD).not.toMatch(/whitespace-nowrap|w-\[\d/);
+  });
+
+  it("the e2e specs assert the brief renders with recorded memory", () => {
+    expect(read("e2e/mobile-ux.spec.ts")).toMatch(/Daily prep brief/);
+    expect(read("e2e/core-memory-loop.spec.ts")).toMatch(/Daily prep brief/);
+  });
+});
+
 describe("Before Today hierarchy (PR #237)", () => {
   it("chips wrap and long notes break instead of overflowing on phones", () => {
     const CARD = read("components/before-today-card.tsx");
