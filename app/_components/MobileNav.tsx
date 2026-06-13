@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MARKETING_NAV, MARKETING_PALETTE } from "./marketingNav";
+import { MARKETING_CTA, MARKETING_NAV, MARKETING_PALETTE } from "./marketingNav";
 
 // Mobile-only nav: a "Menu" text trigger + a full-viewport overlay
 // holding the same four links stacked vertically. The overlay is always
@@ -73,18 +73,33 @@ export function MobileNav() {
               Close
             </button>
           </div>
-          <nav className="flex flex-1 flex-col items-start justify-center gap-y-6 px-6">
+          <nav className="flex flex-1 flex-col items-start justify-center gap-y-5 px-6">
             {MARKETING_NAV.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setOpen(false)}
-                className="font-[var(--font-fraunces)] text-[40px] font-bold leading-none"
+                className="font-[var(--font-fraunces)] text-[32px] font-bold leading-none"
                 style={{ letterSpacing: "-0.03em" }}
               >
                 {item.label}
               </Link>
             ))}
+            {/* PR #242: the Book walkthrough CTA stays reachable on
+                phone and tablet, styled as a button at the bottom of
+                the overlay. */}
+            <Link
+              href={MARKETING_CTA.href}
+              onClick={() => setOpen(false)}
+              className="mt-4 inline-flex items-center justify-center px-6 py-3.5 text-[13px] font-medium uppercase"
+              style={{
+                backgroundColor: MARKETING_PALETTE.ink,
+                color: MARKETING_PALETTE.bg,
+                letterSpacing: "0.16em",
+              }}
+            >
+              {MARKETING_CTA.label}
+            </Link>
           </nav>
         </div>
       </div>

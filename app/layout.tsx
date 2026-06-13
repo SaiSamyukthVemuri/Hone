@@ -34,41 +34,44 @@ const inter = Inter({
 // reads like a YC company page rather than a product tagline. The
 // previous "practice memory" tagline still appears in the marketing
 // footer; this just clarifies what Hone is for crawlers and AI search.
+// PR #242: metadata leads with the category (treatment memory) rather
+// than booking software, matching the homepage overhaul. No
+// overclaimed AI phrasing in the SERP/OG snippet.
 export const metadata: Metadata = {
   title: {
-    default: "Hone | Electrolysis Practice Software",
+    default: "Hone | Treatment Memory for Electrologists",
     template: "%s · Hone",
   },
   description:
-    "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
+    "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
   authors: [{ name: "Hone" }],
   keywords: [
-    "electrolysis practice software",
-    "electrolysis booking software",
+    "treatment memory for electrologists",
+    "electrolysis treatment memory",
     "electrolysis charting software",
     "electrologist software",
+    "electrolysis procedure records",
+    "electrolysis practice software",
     "electrolysis treatment plans",
-    "electrolysis intake form",
-    "electrolysis postcare",
-    "laser hair removal software",
     "permanent hair removal software",
+    "laser hair removal software",
   ],
   openGraph: {
     type: "website",
-    title: "Hone | Electrolysis Practice Software",
+    title: "Hone | Treatment Memory for Electrologists",
     description:
-      "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
+      "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
     url: "https://hone.care",
     siteName: "Hone",
     locale: "en_CA",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Hone | Electrolysis Practice Software",
+    title: "Hone | Treatment Memory for Electrologists",
     description:
-      "Booking, intake, treatment plans, session charting, client history, and postcare software for electrolysis and permanent hair removal studios.",
+      "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
   },
   robots: {
     index: true,
