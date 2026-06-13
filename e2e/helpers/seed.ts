@@ -5,6 +5,7 @@ import {
   E2E_SUPABASE_URL,
   E2E_SERVICE_ROLE_KEY,
 } from "./local-env";
+import { timezoneWithLocalMorning } from "./timezone";
 
 // Seed helpers for the browser E2E lane (PR #227). Direct SQL against
 // the LOCAL database only (E2E_DB_URL is hardcoded localhost), plus
@@ -53,16 +54,18 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   const clientName = `E2E Client ${runId}`;
   const clientEmail = `e2e-client-${runId}@harness.local`;
 
-  // Studio: buffer 0 so slot math in the test is exact; Toronto tz
-  // (the project default); confirmation emails ON so the booking
-  // flow exercises its real path (Resend has a dummy key, the send
-  // fails gracefully, and the booking still succeeds by design).
+  // Studio: buffer 0 so slot math in the test is exact; a local-
+  // morning timezone so today always has slots (see
+  // ./timezone.ts); confirmation emails ON so the
+  // booking flow exercises its real path (Resend has a dummy key,
+  // the send fails gracefully, and the booking still succeeds by
+  // design).
   await sql(
     `insert into public.studios
        (id, name, owner_email, slug, timezone, buffer_minutes,
         default_appointment_duration_minutes)
-     values ($1, $2, $3, $4, 'America/Toronto', 0, 30)`,
-    [studioId, studioName, ownerEmail, slug],
+     values ($1, $2, $3, $4, $5, 0, 30)`,
+    [studioId, studioName, ownerEmail, slug, timezoneWithLocalMorning()],
   );
 
   // Weekly availability: open every day with a wide window so the
