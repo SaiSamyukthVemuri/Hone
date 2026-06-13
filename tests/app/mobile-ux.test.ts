@@ -110,6 +110,23 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+describe("Before Today hierarchy (PR #237)", () => {
+  it("chips wrap and long notes break instead of overflowing on phones", () => {
+    const CARD = read("components/before-today-card.tsx");
+    expect(CARD).toMatch(/flex flex-wrap gap-1\.5/);
+    expect((CARD.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(CARD).toMatch(/whitespace-pre-wrap break-words/);
+    // No fixed widths or nowrap that could push the client page wide.
+    expect(CARD).not.toMatch(/whitespace-nowrap|w-\[\d/);
+  });
+
+  it("the e2e mobile spec checks the card and overflow on the client page", () => {
+    const spec = read("e2e/mobile-ux.spec.ts");
+    expect(spec).toMatch(/Remember today/);
+    expect(spec).toMatch(/client page Before Today/);
+  });
+});
+
 describe("mobile charting comfort (PR #235)", () => {
   it("the risks/aftercare stamp is markable on the session page via the SAME action", () => {
     const SESSION_PAGE = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");

@@ -188,6 +188,10 @@ export async function getBeforeTodayPreviews(
             aftercareExplainedAt:
               lastTreatment.aftercare_and_risks_explained_at ?? null,
             blockLots: lastBlocks.map((b) => b.probe_lot_number ?? null),
+            blockMinutes: lastBlocks.map((b) => b.minutes_performed ?? null),
+            blockReactionNotes: lastBlocks.map(
+              (b) => b.reaction_notes ?? null,
+            ),
           }
         : null,
       watchPlan,

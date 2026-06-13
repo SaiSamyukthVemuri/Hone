@@ -435,11 +435,18 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     ).toBeVisible({ timeout: 20_000 });
     await expectNoPageOverflow(page, "charting page after save");
 
-    // The memory loop holds: Before Today surfaces the note.
+    // The memory loop holds: Before Today surfaces the note, with
+    // the PR #237 hierarchy (Remember today band first) fitting the
+    // phone viewport.
     await page.goto(`/clients/${clientId}`);
     await expect(
       page.getByText("E2E mobile caution: check chin sensitivity").first(),
     ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Remember today").first()).toBeVisible();
+    await expect(
+      page.getByText("Client response (last recorded)").first(),
+    ).toBeVisible();
+    await expectNoPageOverflow(page, "client page Before Today");
 
     // PR #236: this charting entered from the CLIENT page (no
     // appointment context), so the session is unlinked and the Today

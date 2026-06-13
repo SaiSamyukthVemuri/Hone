@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #236)
+## Current production status (as of PR #237)
+
+- **Before Today visual hierarchy** (PR #237, no migration). The client-page briefing card now reads in pre-treatment order: Remember today (watch + For-next-visit note) first as the dominant blue band; Last treatment snapshot (date, areas, wrapping chips: modality, frequency, probe, lot, energy level, minutes); Client response (last recorded) with tolerance/reaction chips and the last treatment's reaction notes; Record reminders last. Pure reorder of lib/sessions/before-today.ts + components/before-today-card.tsx; two new pure input fields (blockMinutes, blockReactionNotes) mapped from already-selected block columns; no new queries, no rule changes. New-client empty state explains memory appears after the first charted session. Dashboard Today compact preview deliberately unchanged (latestSetupLine kept for it). Both E2E specs assert the new sections + phone overflow. Live payments still disabled.
+
+## Earlier production status (as of PR #236)
 
 - **Dashboard Today next actions** (PR #236, no migration). Each Today row shows ONE primary action from a pure resolver (lib/dashboard/next-action.ts): linked charted session -> View session + Charted chip; linked empty session -> Continue charting; completed uncharted -> Chart appointment + Charting needed chip; cancelled/no-show -> Open client; upcoming returning -> Review Before Today; upcoming new -> Open client. Two batched session/blocks reads; row body keeps the calendar link, action is a sibling button. Both E2E specs assert the action branches. Live payments still disabled.
 

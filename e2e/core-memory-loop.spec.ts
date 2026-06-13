@@ -174,6 +174,15 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByText(/E2E caution: shorter intervals next visit/).first(),
     ).toBeVisible({ timeout: 20_000 });
+    // PR #237 hierarchy: the Remember today band leads, the last
+    // treatment snapshot carries the probe lot chip, and the client
+    // response section surfaces the recorded tolerance and reaction.
+    await expect(page.getByText("Remember today").first()).toBeVisible();
+    await expect(
+      page.getByText(`Lot E2E-LOT-${seed.runId}`).first(),
+    ).toBeVisible();
+    await expect(page.getByText("Tolerance 4/5").first()).toBeVisible();
+    await expect(page.getByText("Mild redness").first()).toBeVisible();
   });
 
   await test.step("Record Keeping shows the procedure record, filtered print works", async () => {

@@ -8,6 +8,9 @@ import {
 
 // PR #211: "Before today" pre-treatment briefing. Pure assembler over
 // data the Overview already loads; recorded-history wording only.
+// PR #237: briefing reading order (Remember today first, then the
+// last treatment snapshot, then client response, then record
+// reminders) with chips and wrapping notes.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -25,6 +28,8 @@ function input(over: Partial<BeforeTodayInput> = {}): BeforeTodayInput {
       areaNames: ["Upper lip", "Chin"],
       aftercareExplainedAt: "2026-06-11T01:00:00Z",
       blockLots: ["460941", "460941"],
+      blockMinutes: [15, 15],
+      blockReactionNotes: [null, "Settled within an hour."],
     },
     watchPlan: {
       watchLines: ["start lower next time and check sensitivity"],
@@ -66,6 +71,8 @@ describe("buildBeforeToday", () => {
     const b = buildBeforeToday(input({ lastTreatment: null }));
     expect(b.hasHistory).toBe(false);
     expect(b.lastTreated).toBeNull();
+    expect(b.setup).toBeNull();
+    expect(b.response.hasAny).toBe(false);
     expect(b.reminders).toEqual([]);
   });
 
@@ -84,15 +91,13 @@ describe("buildBeforeToday", () => {
     expect(single.lastTreated?.areasLine).toBe("Chin");
   });
 
-  it("remember today carries watch/plan/reaction/tolerance; empty watch+plan flags hasNotes false", () => {
+  it("remember today carries watch/plan only; empty watch+plan flags hasNotes false", () => {
     const b = buildBeforeToday(input());
     expect(b.remember.hasNotes).toBe(true);
     expect(b.remember.watchLines).toEqual([
       "start lower next time and check sensitivity",
     ]);
     expect(b.remember.plan).toBe("Start lower on upper lip.");
-    expect(b.remember.latestReactionLabel).toBe("Mild redness");
-    expect(b.remember.latestToleranceRating).toBe(3);
     const none = buildBeforeToday(
       input({ watchPlan: { watchLines: [], nextSessionNote: null } }),
     );
@@ -100,14 +105,63 @@ describe("buildBeforeToday", () => {
     expect(none.remember.plan).toBeNull();
   });
 
+  it("client response carries tolerance, reaction, and the last treatment's reaction notes", () => {
+    const b = buildBeforeToday(input());
+    expect(b.response).toEqual({
+      toleranceRating: 3,
+      reactionLabel: "Mild redness",
+      reactionNotes: "Settled within an hour.",
+      hasAny: true,
+    });
+    const none = buildBeforeToday(
+      input({
+        intelligence: {
+          latestReactionLabel: null,
+          latestToleranceRating: null,
+          areas: input().intelligence.areas,
+        },
+        lastTreatment: {
+          ...input().lastTreatment!,
+          blockReactionNotes: [null, "  "],
+        },
+      }),
+    );
+    expect(none.response.hasAny).toBe(false);
+    expect(none.response.reactionNotes).toBeNull();
+  });
+
+  it("last treatment snapshot sums recorded minutes and keeps distinct probe lots", () => {
+    const b = buildBeforeToday(input());
+    expect(b.lastTreated?.minutes).toBe(30);
+    expect(b.lastTreated?.probeLot).toBe("460941");
+    const mixed = buildBeforeToday(
+      input({
+        lastTreatment: {
+          ...input().lastTreatment!,
+          blockLots: ["A1", "B2", null],
+          blockMinutes: [null, 0, -5],
+        },
+      }),
+    );
+    expect(mixed.lastTreated?.probeLot).toBe("A1, B2");
+    expect(mixed.lastTreated?.minutes).toBeNull();
+  });
+
   it("latest recorded setup comes from the most recently treated area; missing -> null", () => {
     const b = buildBeforeToday(input());
+    expect(b.setup).toEqual({
+      frequency: "27.12 MHz",
+      probe: "Ballet F3",
+      modeLabel: "Thermolysis",
+      energyLevel: 14,
+    });
     expect(b.latestSetupLine).toBe("27.12 MHz · Ballet F3 · Thermolysis · EL 14");
     const empty = buildBeforeToday(
       input({
         intelligence: { ...input().intelligence, areas: [] },
       }),
     );
+    expect(empty.setup).toBeNull();
     expect(empty.latestSetupLine).toBeNull();
   });
 
@@ -163,6 +217,17 @@ describe("placement + card", () => {
     expect(read("app/(app)/records/page.tsx")).not.toMatch(/BeforeToday/);
   });
 
+  it("PR #237: briefing reading order is Remember today, Last treatment, Client response, Record reminders", () => {
+    const remember = CARD.indexOf("Remember today");
+    const last = CARD.indexOf("Last treatment</SectionLabel>");
+    const response = CARD.indexOf("Client response (last recorded)");
+    const reminders = CARD.indexOf("Record reminders");
+    expect(remember).toBeGreaterThan(-1);
+    expect(last).toBeGreaterThan(remember);
+    expect(response).toBeGreaterThan(last);
+    expect(reminders).toBeGreaterThan(response);
+  });
+
   it("title, helper, and the required empty states render", () => {
     expect(CARD).toMatch(/>\s*\n?\s*Before today\s*\n?\s*<\/h2>/);
     expect(CARD).toMatch(
@@ -173,22 +238,47 @@ describe("placement + card", () => {
     );
     expect(CARD).toMatch(/No charted treatment history yet\./);
     expect(CARD).toMatch(
+      /Treatment memory will appear here after the first charted session\./,
+    );
+    expect(CARD).toMatch(
       /Use intake, consultation notes, and professional judgment\./,
     );
     expect(CARD).toMatch(
       /No watch or plan notes recorded from the last treatment\./,
     );
     expect(CARD).toMatch(/Not recorded/);
+    expect(CARD).toMatch(/Setup not recorded/);
     expect(CARD).toMatch(
       /Procedure record looks complete based on recorded fields\./,
     );
   });
 
-  it("uses the blue treatment-memory styling for Remember today", () => {
+  it("uses the blue treatment-memory styling for Remember today, first in the body", () => {
     expect(CARD).toMatch(/Remember today/);
     expect(CARD).toMatch(/border-blue-200 bg-blue-50/);
     expect(CARD).toMatch(/Watch:<\/span>/);
-    expect(CARD).toMatch(/Plan:<\/span>/);
+    expect(CARD).toMatch(/For next visit:<\/span>/);
+  });
+
+  it("snapshot and response render as wrapping chips; long notes wrap", () => {
+    expect(CARD).toMatch(/flex flex-wrap gap-1\.5/);
+    expect(CARD).toMatch(/Lot \{last\.probeLot\}/);
+    expect(CARD).toMatch(/EL \{setup\.energyLevel\}/);
+    expect(CARD).toMatch(/\{last\.minutes\} min/);
+    expect(CARD).toMatch(/Tolerance \{response\.toleranceRating\}\/5/);
+    expect(CARD).toMatch(/\{response\.reactionLabel\}/);
+    expect(CARD).toMatch(/\{response\.reactionNotes\}/);
+    // Notes and reminders wrap instead of overflowing on phones.
+    expect(CARD.match(/break-words/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(CARD).toMatch(/whitespace-pre-wrap break-words/);
+  });
+
+  it("callsites pass the last treatment's minutes and reaction notes through", () => {
+    expect(PAGE).toMatch(/blockMinutes: lastTreatmentBlocks\.map/);
+    expect(PAGE).toMatch(/blockReactionNotes: lastTreatmentBlocks\.map/);
+    const previews = read("lib/dashboard/before-today-previews.ts");
+    expect(previews).toMatch(/blockMinutes: lastBlocks\.map/);
+    expect(previews).toMatch(/blockReactionNotes: lastBlocks\.map/);
   });
 });
 
@@ -201,6 +291,7 @@ describe("safety", () => {
       expect(src).not.toMatch(/\bcaused\b/i);
       expect(src).not.toMatch(/diagnos/i);
       expect(src).not.toMatch(/predicted|clinically proven|should use|\bsuccess\b/i);
+      expect(src).not.toMatch(/\bsafe\b|\bunsafe\b/i);
     }
   });
 

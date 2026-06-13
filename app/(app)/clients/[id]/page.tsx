@@ -364,6 +364,12 @@ export default async function ClientCheatSheetPage({
               (b as { probe_lot_number?: string | null }).probe_lot_number ??
               null,
           ),
+          blockMinutes: lastTreatmentBlocks.map(
+            (b) => b.minutes_performed ?? null,
+          ),
+          blockReactionNotes: lastTreatmentBlocks.map(
+            (b) => b.reaction_notes ?? null,
+          ),
         }
       : null,
     watchPlan: preClientWatchPlan,
