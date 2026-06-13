@@ -149,6 +149,23 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByText("E2E caution: shorter intervals next visit").first(),
     ).toBeVisible({ timeout: 20_000 });
+
+    // PR #238: the Finish up section makes the end of charting
+    // obvious. This session HAS appointment context, so both exits
+    // render: Done charting and the appointment/billing review link.
+    await expect(
+      page.getByRole("heading", { name: "Finish up" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Done charting" }),
+    ).toBeVisible();
+    const reviewLink = page.getByRole("link", {
+      name: "Review appointment & billing",
+    });
+    await expect(reviewLink).toBeVisible();
+    expect(await reviewLink.getAttribute("href")).toBe(
+      `/calendar/${firstAppointmentId}`,
+    );
   });
 
   await test.step("dashboard Today row knows the appointment is charted (PR #236)", async () => {
@@ -192,6 +209,14 @@ test("core memory loop: booking to next-appointment memory", async ({
         new RegExp(`Showing 1 recorded session for\\s+${seed.clientName}`),
       ),
     ).toBeVisible({ timeout: 20_000 });
+    // PR #238: friendlier section copy around the per-client filter.
+    await expect(
+      page.getByRole("heading", { name: "Procedure records" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Use this when you need a procedure record for one client/),
+    ).toBeVisible();
+    await expect(page.getByText("Choose a client")).toBeVisible();
     await expect(page.getByText(`E2E-LOT-${seed.runId}`).first()).toBeVisible();
 
     // Mark risks/aftercare explained from the procedure record row.

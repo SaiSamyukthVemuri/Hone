@@ -16,7 +16,13 @@ export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
   const slotButton = page.getByRole("button", {
     name: /^\d{1,2}:\d{2} (AM|PM)$/,
   });
-  const nextDay = page.getByRole("button", { name: /next available day/i });
+  // The form has TWO jump buttons that never render together: "Next
+  // available" on a day with zero slots and "Next available day"
+  // under a populated slot list. Match both: late-evening runs land
+  // on the empty-day path once today's last slot is taken.
+  const nextDay = page.getByRole("button", {
+    name: /^next available( day)?$/i,
+  });
   await expect(async () => {
     const slots = await slotButton.count();
     const next = await nextDay.count();

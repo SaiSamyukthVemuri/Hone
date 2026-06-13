@@ -479,6 +479,40 @@ export default async function SessionDetailPage({
         />
       </section>
 
+      {/* PR #238 (Chloe pilot): "How do I save and complete the
+          session?" Everything on this page already saves per piece
+          (each treatment area, the next-visit note, the risks &
+          aftercare stamp), so there is nothing left to submit at the
+          end; this section says that plainly and gives an obvious
+          way OUT of charting. Links only: no new write path, no
+          duplicate submit buttons, nothing sticky covering fields. */}
+      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+        <div>
+          <h2 className="text-lg font-medium">Finish up</h2>
+          <p className="text-sm text-neutral-500">
+            Everything above is already saved as you go: each treatment area,
+            the next-visit note, and the risks &amp; aftercare stamp save with
+            their own buttons. There is no separate session save.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Link
+            href={`/clients/${id}?tab=sessions`}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          >
+            Done charting
+          </Link>
+          {paymentApptId && (
+            <Link
+              href={`/calendar/${paymentApptId}`}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-900 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100"
+            >
+              Review appointment &amp; billing
+            </Link>
+          )}
+        </div>
+      </section>
+
       <div className="pt-6">
         <DeleteSessionForm sessionId={session.id} clientId={id} />
       </div>

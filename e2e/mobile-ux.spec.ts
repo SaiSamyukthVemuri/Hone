@@ -172,6 +172,16 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page.goto("/dashboard");
     await expect(page.getByText("Charted within 24h").first()).toBeVisible();
     await expectNoPageOverflow(page, "dashboard");
+    // PR #238: worklist first. The Today section renders ABOVE the
+    // Practice Snapshot (its Charted-within-24h card is the marker).
+    const todayBox = await page
+      .getByRole("heading", { name: "Today", exact: true })
+      .boundingBox();
+    const snapshotBox = await page
+      .getByText("Charted within 24h")
+      .first()
+      .boundingBox();
+    expect(todayBox && snapshotBox && todayBox.y < snapshotBox.y).toBe(true);
     // PR #236: the booked appointment shows ONE obvious action. The
     // client is brand new (no history yet), so it reads Open client.
     const action = page.getByRole("link", { name: "Open client" }).first();
@@ -196,6 +206,12 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     // PR #234: the sheet, its input, and Close are fully on-screen.
     await expectInsideViewport(page, searchInput, "search input");
+    // PR #238: 16px input so iOS Safari does not auto-zoom the page
+    // when the field gains focus (Chloe's retest: the site zoomed in
+    // on tap and stayed zoomed).
+    expect(
+      await searchInput.evaluate((el) => getComputedStyle(el).fontSize),
+    ).toBe("16px");
     const closeButton = page.getByRole("button", { name: "Close" });
     await expect(closeButton).toBeVisible();
     await expectInsideViewport(page, closeButton, "search close");
@@ -331,26 +347,36 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       page.getByRole("button", { name: "+ Book appointment" }),
     ).toBeVisible();
 
-    // All six sections stay reachable through the one-row tab bar
-    // (it scrolls inside itself; the page never scrolls sideways).
-    const tabBar = page.getByRole("navigation", {
-      name: "Client profile sections",
-    });
-    for (const label of [
+    // PR #238: on phones the sections are a stable native select
+    // (the draggable tab row felt unstable in Chloe's retest). All
+    // six sections are options; picking one navigates; the select
+    // always shows the active section.
+    const sectionSelect = page
+      .getByRole("navigation", { name: "Client profile sections" })
+      .locator("select");
+    await expect(sectionSelect).toBeVisible();
+    const optionLabels = await sectionSelect
+      .locator("option")
+      .allTextContents();
+    expect(optionLabels).toEqual([
       "Overview",
       "Sessions",
       "Treatment Plans",
       "Messages",
       "Health & Forms",
       "Personal Notes",
-    ]) {
-      await expect(tabBar.getByRole("button", { name: label })).toBeAttached();
-    }
-    await tabBar.getByRole("button", { name: "Sessions" }).click();
+    ]);
+    // 16px-safe: the focused select must not trigger iOS page zoom.
+    expect(
+      await sectionSelect.evaluate((el) => getComputedStyle(el).fontSize),
+    ).toBe("16px");
+    await sectionSelect.selectOption("sessions");
     await page.waitForURL(/tab=sessions/);
+    await expect(sectionSelect).toHaveValue("sessions");
     await expectNoPageOverflow(page, "client detail sessions tab");
-    await tabBar.getByRole("button", { name: "Personal Notes" }).click();
+    await sectionSelect.selectOption("personal");
     await page.waitForURL(/tab=personal/);
+    await expect(sectionSelect).toHaveValue("personal");
     await expectNoPageOverflow(page, "client detail personal tab");
     await page.goto(`/clients/${clientId}`);
 
@@ -434,6 +460,27 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       page.getByText(/✓ Risks explained and aftercare provided/).first(),
     ).toBeVisible({ timeout: 20_000 });
     await expectNoPageOverflow(page, "charting page after save");
+
+    // PR #238: the Finish up section answers "how do I save and
+    // complete?": it says everything already saved per piece and the
+    // Done charting link is reachable and exits to the client's
+    // Sessions tab. (This walk-in session has no linked appointment,
+    // so the appointment/billing link correctly does not render.)
+    const finishHeading = page.getByRole("heading", { name: "Finish up" });
+    await finishHeading.scrollIntoViewIfNeeded();
+    await expect(finishHeading).toBeVisible();
+    await expect(
+      page.getByText(/Everything above is already saved as you go/),
+    ).toBeVisible();
+    const doneCharting = page.getByRole("link", { name: "Done charting" });
+    await expect(doneCharting).toBeVisible();
+    await expectInsideViewport(page, doneCharting, "done charting link");
+    await expect(
+      page.getByRole("link", { name: /Review appointment & billing/ }),
+    ).toHaveCount(0);
+    await doneCharting.tap();
+    await page.waitForURL(/tab=sessions/);
+    await expectNoPageOverflow(page, "client sessions after done charting");
 
     // The memory loop holds: Before Today surfaces the note, with
     // the PR #237 hierarchy (Remember today band first) fitting the

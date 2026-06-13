@@ -299,6 +299,15 @@ export default async function DashboardPage({
     ),
   );
 
+  // PR #238 (Chloe pilot): the dashboard reads as a daily worklist.
+  // Today moved to the top (it sat below the snapshot, attention,
+  // booking, and birthday cards); once every auto-detected setup
+  // step is done, the Getting started card collapses to a one-line
+  // footer link so finished setup stops occupying the prime spot.
+  const setupComplete =
+    gettingStarted.autoTotal > 0 &&
+    gettingStarted.autoDone === gettingStarted.autoTotal;
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -308,46 +317,6 @@ export default async function DashboardPage({
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
       </section>
-
-      {/* PR #215: setup/readiness checklist entry point. A normal
-          link card, never a blocking modal. */}
-      <Link
-        href="/getting-started"
-        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
-      >
-        <span className="text-sm font-medium">Getting started</span>
-        <span className="text-xs text-neutral-500">
-          {gettingStarted.autoDone} of {gettingStarted.autoTotal} steps
-          complete →
-        </span>
-      </Link>
-
-      {/* PR #208: practice snapshot (period filter + appointment
-          counts + service value + test-mode payment posture + action
-          cards). Read-only; never labeled revenue while live payments
-          are disabled. */}
-      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} />
-
-      <NeedsAttention
-        isOwner={isOwner}
-        intakesAwaitingReviewCount={intakesAwaitingReviewCount}
-        activeServicesCount={activeServicesCount}
-        paymentStatus={paymentStatus}
-      />
-
-      {isOwner && bookingReadiness && (
-        <BookingSetupCard
-          readiness={bookingReadiness}
-          studioSlug={studio.slug}
-          appOrigin={getRequiredAppOrigin()}
-        />
-      )}
-
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -390,6 +359,65 @@ export default async function DashboardPage({
           </ul>
         )}
       </section>
+
+      {/* PR #215: setup/readiness checklist entry point. A normal
+          link card, never a blocking modal. PR #238: shown here, under
+          Today, only while auto-detected steps remain; the full
+          checklist always lives on /getting-started. */}
+      {!setupComplete && (
+        <Link
+          href="/getting-started"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
+        >
+          <span className="text-sm font-medium">Getting started</span>
+          <span className="text-xs text-neutral-500">
+            {gettingStarted.autoDone} of {gettingStarted.autoTotal} steps
+            complete →
+          </span>
+        </Link>
+      )}
+
+      {/* PR #208: practice snapshot (period filter + appointment
+          counts + service value + test-mode payment posture + action
+          cards). Read-only; never labeled revenue while live payments
+          are disabled. */}
+      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} />
+
+      <NeedsAttention
+        isOwner={isOwner}
+        intakesAwaitingReviewCount={intakesAwaitingReviewCount}
+        activeServicesCount={activeServicesCount}
+        paymentStatus={paymentStatus}
+      />
+
+      {isOwner && bookingReadiness && (
+        <BookingSetupCard
+          readiness={bookingReadiness}
+          studioSlug={studio.slug}
+          appOrigin={getRequiredAppOrigin()}
+        />
+      )}
+
+      <BirthdaysThisMonth
+        birthdays={birthdaysThisMonth}
+        today={todayLocal}
+        accentColor={studio.birthday_reminder_color}
+      />
+
+      {/* PR #238: completed setup collapses to a quiet footer link;
+          the /getting-started route stays reachable (also in the
+          account/mobile menus). */}
+      {setupComplete && (
+        <p className="text-xs text-neutral-500">
+          Setup complete.{" "}
+          <Link
+            href="/getting-started"
+            className="underline decoration-neutral-300 underline-offset-2 hover:text-neutral-900 hover:decoration-neutral-700 dark:hover:text-neutral-100"
+          >
+            Getting started checklist →
+          </Link>
+        </p>
+      )}
     </div>
   );
 }
