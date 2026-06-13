@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { timezoneWithLocalMorning } from "../../e2e/helpers/seed";
+// Imported from the dependency-free module: seed.ts pulls in
+// local-env.ts, whose local-only guard throws by design in the fast
+// CI lane (hosted env vars).
+import { timezoneWithLocalMorning } from "../../e2e/helpers/timezone";
 
 // Post-PR #238 fix: the browser E2E lane must pass at any real-world
 // hour. The specs book through the REAL public flow and assert the

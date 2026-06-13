@@ -5,6 +5,7 @@ import {
   E2E_SUPABASE_URL,
   E2E_SERVICE_ROLE_KEY,
 } from "./local-env";
+import { timezoneWithLocalMorning } from "./timezone";
 
 // Seed helpers for the browser E2E lane (PR #227). Direct SQL against
 // the LOCAL database only (E2E_DB_URL is hardcoded localhost), plus
@@ -43,25 +44,6 @@ async function sql<T = Record<string, unknown>>(
   }
 }
 
-// Time-of-day independence (post-PR #238 fix): the specs book through
-// the REAL public flow and then assert the appointment on the
-// Dashboard "Today" roster, so the studio's LOCAL day must still have
-// bookable slots whenever the run starts. The previous fixed
-// America/Toronto zone broke nightly: after 21:30 Toronto the last
-// 06:00-22:00 slot was gone, the booking correctly rolled to
-// tomorrow, and every Today assertion failed (first seen on the
-// PR #238 post-merge run). Seed a fixed-offset zone where the studio
-// clock reads ~09:00 right now, so the local day ahead is full of
-// slots at any real-world hour. Note: IANA Etc/GMT naming is
-// POSIX-inverted (Etc/GMT-5 means UTC+5); both Postgres and Intl
-// accept these zone names.
-export function timezoneWithLocalMorning(now: Date = new Date()): string {
-  let offset = 9 - now.getUTCHours();
-  if (offset > 12) offset -= 24;
-  if (offset < -11) offset += 24;
-  return offset >= 0 ? `Etc/GMT-${offset}` : `Etc/GMT+${-offset}`;
-}
-
 export async function seedE2eStudio(): Promise<E2eSeed> {
   const runId = randomUUID().slice(0, 8);
   const studioId = randomUUID();
@@ -74,7 +56,7 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
 
   // Studio: buffer 0 so slot math in the test is exact; a local-
   // morning timezone so today always has slots (see
-  // timezoneWithLocalMorning above); confirmation emails ON so the
+  // ./timezone.ts); confirmation emails ON so the
   // booking flow exercises its real path (Resend has a dummy key,
   // the send fails gracefully, and the booking still succeeds by
   // design).
