@@ -4,6 +4,10 @@ This is the catalogue of manual smoke tests every operator and reviewer should k
 
 Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
 
+## 0. Marketing homepage smoke (PR #242)
+
+The public homepage (`/`) is repositioned around treatment memory. Open `https://hone.care/` on a phone (~390px) and on desktop and confirm: the hero reads "Treatment memory for permanent hair removal studios." within five seconds; the page does not scroll sideways at either width; the Book walkthrough CTA is visible and reachable (header button on desktop, menu on mobile) and lands on `/demo`; Sign in is reachable and lands on `/login`; the calendar-vs-Hone comparison, Before Today, Daily Prep Brief (described as live and rules-based), charting, Record Keeping (with the local public-health responsibility caveat), mobile/iPad, agentic support, and agentic safety sections all render; pricing shows $19/month founding pilot; all product visuals use only anonymized demo data (Maya R., Demo Studio, lot L-204, Sterex), never a real client or studio; and there are no medical, compliance, or AI overclaims (no HIPAA/public-health-certified/medical-grade/guaranteed-compliance, no autonomous clinical decisions claimed as a feature). The Playwright lane (`e2e/marketing-homepage.spec.ts`) covers the overflow + CTA + sign-in checks at phone and desktop widths.
+
 ## 1. Public booking smoke
 
 1. Open `https://hone.care/book/willow-electrolysis`. Expect `200`.
