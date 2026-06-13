@@ -47,7 +47,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 //   2. Disinfectants       ("Disinfectant Records")
 //   3. Exposure Incidents  ("Accidental Blood/Body Fluid Exposure
 //                            Records"; SENSITIVE, never public)
-//   4. Client Procedure Records ("Client Record for Invasive
+//   4. Procedure records   (prints as "Client Record for Invasive
 //      Procedures"; GENERATED from existing client/session/treatment
 //      area data, including probe lot numbers; missing values render
 //      as "Not recorded", never invented)
@@ -57,7 +57,10 @@ const SECTIONS = [
   { key: "sterile", label: "Sterile Items" },
   { key: "disinfectants", label: "Disinfectants" },
   { key: "incidents", label: "Exposure Incidents" },
-  { key: "procedures", label: "Client Procedure Records" },
+  // PR #238 (Chloe pilot): friendlier section label; the printed
+  // document keeps its formal "Client Record for Invasive
+  // Procedures" title required for inspections.
+  { key: "procedures", label: "Procedure records" },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
@@ -602,11 +605,18 @@ async function ClientProcedureRecordsSection({
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <h2 className="text-lg font-medium">Client procedure records</h2>
+        <h2 className="text-lg font-medium">Procedure records</h2>
         <p className="mt-1 text-xs text-neutral-500">
           Generated from your existing client and session records. Missing
           information shows as Not recorded; add it on the client or session
           page.
+        </p>
+        {/* PR #238 (Chloe pilot): say what the filter is FOR before
+            showing the controls. */}
+        <p className="mt-1 text-xs text-neutral-500">
+          Use this when you need a procedure record for one client: choose the
+          client below, then use Print / Export to print this client&apos;s
+          procedure record.
         </p>
       </div>
 
@@ -621,7 +631,7 @@ async function ClientProcedureRecordsSection({
         <input type="hidden" name="section" value="procedures" />
         <label className="flex flex-col gap-1 text-xs">
           <span className="font-medium text-neutral-600 dark:text-neutral-400">
-            Client
+            Choose a client
           </span>
           <select
             name="clientId"
@@ -690,7 +700,11 @@ async function ClientProcedureRecordsSection({
           ) : null}
           {records.length >= FILTERED_PROCEDURE_RECORD_LIMIT &&
             ` (capped at the ${FILTERED_PROCEDURE_RECORD_LIMIT} most recent; narrow the date range for older sessions)`}
-          . Use Print / Export above to print this filtered record.
+          . Use Print / Export above to print{" "}
+          {filteredClient
+            ? "this client's procedure record"
+            : "this filtered record"}
+          .
         </p>
       ) : (
         <p className="text-xs text-neutral-500">

@@ -2,7 +2,11 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of PR #237)
+## Current production status (as of PR #238)
+
+- **Chloe pilot feedback cleanup** (PR #238, no migration). Her retest was strongly positive ("in a heartbeat now"); five UX-only fixes closed the remaining friction: mobile search input is text-base so iOS stops auto-zooming on focus (user zoom untouched); client page sections are a native select on phones (md+ keeps the tab row; same pick() navigation); the session page gains a Finish up section (explains per-piece saving, Done charting -> client Sessions tab, Review appointment & billing -> /calendar/<appt> when linked; links only, no new write path); Records section reads "Procedure records" with "Choose a client" + one-client helper (filter/print behavior unchanged, formal printed title unchanged); Dashboard puts Today first and collapses the Getting started card to a "Setup complete" footer link once all auto steps are done (incomplete keeps the card below Today; /getting-started route unchanged). Live payments still disabled.
+
+## Earlier production status (as of PR #237)
 
 - **Before Today visual hierarchy** (PR #237, no migration). The client-page briefing card now reads in pre-treatment order: Remember today (watch + For-next-visit note) first as the dominant blue band; Last treatment snapshot (date, areas, wrapping chips: modality, frequency, probe, lot, energy level, minutes); Client response (last recorded) with tolerance/reaction chips and the last treatment's reaction notes; Record reminders last. Pure reorder of lib/sessions/before-today.ts + components/before-today-card.tsx; two new pure input fields (blockMinutes, blockReactionNotes) mapped from already-selected block columns; no new queries, no rule changes. New-client empty state explains memory appears after the first charted session. Dashboard Today compact preview deliberately unchanged (latestSetupLine kept for it). Both E2E specs assert the new sections + phone overflow. Live payments still disabled.
 

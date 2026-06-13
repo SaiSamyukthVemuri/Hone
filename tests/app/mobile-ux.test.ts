@@ -170,9 +170,15 @@ describe("mobile sheets (PR #234)", () => {
 });
 
 describe("client page mobile polish (PR #233)", () => {
-  it("tabs are a contained one-row scroller, not a wrapping grid", () => {
+  it("tabs: select on phones (PR #238), contained one-row scroller on md+, never a wrapping grid", () => {
     const TABBAR = read("components/profile-tab-bar.tsx");
-    expect(TABBAR).toMatch(/overflow-x-auto whitespace-nowrap/);
+    // PR #238 (Chloe pilot): the phone scroller moved under the
+    // finger and felt unstable; phones get a native select instead.
+    expect(TABBAR).toMatch(/<select/);
+    expect(TABBAR).toMatch(/md:hidden/);
+    // md+ keeps the underlined row, hidden on phones.
+    expect(TABBAR).toMatch(/hidden gap-x-5 overflow-x-auto whitespace-nowrap/);
+    expect(TABBAR).toMatch(/md:flex/);
     expect(TABBAR).not.toMatch(/flex-wrap/);
   });
 

@@ -86,6 +86,11 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
     >
       {variant === "mobile" && (
         <div className="mb-2 flex items-center gap-2">
+          {/* PR #238 (Chloe pilot): text-base, not text-sm. iOS Safari
+              auto-zooms the page when a focused input's font size is
+              under 16px, and it stays zoomed after typing. A 16px
+              input is the accessibility-friendly fix; user zoom stays
+              enabled (no viewport meta tricks). */}
           <input
             ref={inputRef}
             type="search"
@@ -93,7 +98,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search clients, appointments, notes..."
             aria-label="Search Hone"
-            className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:focus:border-neutral-100"
+            className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:focus:border-neutral-100"
           />
           <button
             type="button"

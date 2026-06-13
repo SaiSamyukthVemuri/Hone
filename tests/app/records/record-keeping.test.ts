@@ -43,7 +43,10 @@ describe("Record Keeping navigation", () => {
     expect(PAGE).toMatch(/Sterile Items/);
     expect(PAGE).toMatch(/Disinfectants/);
     expect(PAGE).toMatch(/Exposure Incidents/);
-    expect(PAGE).toMatch(/Client Procedure Records/);
+    // PR #238 (Chloe pilot): friendlier nav label; the printed
+    // document keeps its formal title.
+    expect(PAGE).toMatch(/label: "Procedure records"/);
+    expect(PAGE).not.toMatch(/label: "Client Procedure Records"/);
   });
 });
 
