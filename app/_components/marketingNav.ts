@@ -8,7 +8,6 @@ export type NavItem = { href: string; label: string };
 
 export const MARKETING_NAV: ReadonlyArray<NavItem> = [
   { href: "/#product", label: "Product" },
-  { href: "/#how-it-works", label: "How it works" },
   { href: "/#records", label: "Records" },
   { href: "/#agentic", label: "Agentic support" },
   { href: "/pricing", label: "Pricing" },
