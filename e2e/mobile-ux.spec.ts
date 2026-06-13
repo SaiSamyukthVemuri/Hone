@@ -168,10 +168,17 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await loginAsOwner(page, seed);
   });
 
-  await test.step("dashboard: no horizontal overflow", async () => {
+  await test.step("dashboard: no horizontal overflow + Today next action", async () => {
     await page.goto("/dashboard");
     await expect(page.getByText("Charted within 24h").first()).toBeVisible();
     await expectNoPageOverflow(page, "dashboard");
+    // PR #236: the booked appointment shows ONE obvious action. The
+    // client is brand new (no history yet), so it reads Open client.
+    const action = page.getByRole("link", { name: "Open client" }).first();
+    await expect(action).toBeVisible();
+    await expectInsideViewport(page, action, "today next action");
+    await action.click();
+    await page.waitForURL(new RegExp(`/clients/${clientId}`));
   });
 
   await test.step("header bell opens Notifications (with badge slot)", async () => {
@@ -433,6 +440,18 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(
       page.getByText("E2E mobile caution: check chin sensitivity").first(),
     ).toBeVisible({ timeout: 20_000 });
+
+    // PR #236: this charting entered from the CLIENT page (no
+    // appointment context), so the session is unlinked and the Today
+    // row's action flips from "Open client" to "Review Before Today"
+    // (the client now has charted history). The linked-session
+    // branches (View session / Continue charting) are covered by the
+    // core spec, which charts with appointment context.
+    await page.goto("/dashboard");
+    await expect(
+      page.getByRole("link", { name: "Review Before Today" }).first(),
+    ).toBeVisible();
+    await expectNoPageOverflow(page, "dashboard after charting");
   });
 
   await test.step("calendar: loads without page-wide overflow", async () => {

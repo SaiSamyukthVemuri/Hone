@@ -151,6 +151,16 @@ test("core memory loop: booking to next-appointment memory", async ({
     ).toBeVisible({ timeout: 20_000 });
   });
 
+  await test.step("dashboard Today row knows the appointment is charted (PR #236)", async () => {
+    await page.goto("/dashboard");
+    await expect(
+      page.getByRole("link", { name: "View session" }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Charted", { exact: true }).first(),
+    ).toBeVisible();
+  });
+
   await test.step("book a second appointment for the same client", async () => {
     const bookingPage = await browser.newPage();
     await bookAppointment(bookingPage, seed);
