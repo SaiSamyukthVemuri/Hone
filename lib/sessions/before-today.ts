@@ -11,6 +11,13 @@ import type { TreatmentIntelligence } from "@/lib/sessions/treatment-intelligenc
 // invented; record reminders use the same field rules as the
 // Dashboard / Record Keeping completeness sweep and are NOT a legal
 // compliance guarantee.
+//
+// PR #237: the briefing is structured as a pre-treatment reading
+// order: Remember today first, then the last treatment snapshot
+// (date, areas, modality, setup, probe lot, minutes), then the
+// client response (tolerance, reaction, reaction notes), then record
+// reminders. Same sources, same rules; only the shape changed so the
+// card can render each section distinctly.
 
 export type BeforeTodayInput = {
   lastTreatment: {
@@ -19,6 +26,11 @@ export type BeforeTodayInput = {
     areaNames: ReadonlyArray<string>;
     aftercareExplainedAt: string | null;
     blockLots: ReadonlyArray<string | null>;
+    // Per-area recorded minutes on the last treatment, same order as
+    // blockLots; summed for the snapshot.
+    blockMinutes: ReadonlyArray<number | null>;
+    // Per-area recorded reaction notes on the last treatment.
+    blockReactionNotes: ReadonlyArray<string | null>;
   } | null;
   watchPlan: Pick<LastSessionSummary, "watchLines" | "nextSessionNote"> | null;
   intelligence: Pick<
@@ -38,17 +50,39 @@ export type BeforeToday = {
     startedAt: string;
     modality: string;
     areasLine: string | null;
+    // Total recorded minutes on the last treatment; null when none
+    // were recorded.
+    minutes: number | null;
+    // Distinct recorded probe lot(s) on the last treatment; null when
+    // none were recorded.
+    probeLot: string | null;
   } | null;
+  // Watch and plan notes only; the client response moved to its own
+  // section (PR #237).
   remember: {
     watchLines: string[];
     plan: string | null;
-    latestReactionLabel: string | null;
-    latestToleranceRating: number | null;
     hasNotes: boolean;
   };
-  // "27.12 MHz · Ballet F3 · Thermolysis · EL 14" from the most
-  // recently treated area's latest recorded setup; null when nothing
-  // was recorded.
+  // Client response, last recorded: tolerance and reaction from the
+  // treatment intelligence (latest recorded across history), reaction
+  // notes from the last treatment when present.
+  response: {
+    toleranceRating: number | null;
+    reactionLabel: string | null;
+    reactionNotes: string | null;
+    hasAny: boolean;
+  };
+  // Last recorded setup from the most recently treated area, split
+  // for chip rendering; null when nothing was recorded.
+  setup: {
+    frequency: string | null;
+    probe: string | null;
+    modeLabel: string | null;
+    energyLevel: number | null;
+  } | null;
+  // "27.12 MHz · Ballet F3 · Thermolysis · EL 14" joined form, kept
+  // for the Dashboard Today compact preview (PR #212).
   latestSetupLine: string | null;
   reminders: string[];
 };
@@ -60,6 +94,14 @@ function joinAreas(names: ReadonlyArray<string>): string | null {
   return `${clean.slice(0, -1).join(", ")} and ${clean[clean.length - 1]}`;
 }
 
+const EMPTY_REMEMBER = { watchLines: [], plan: null, hasNotes: false };
+const EMPTY_RESPONSE = {
+  toleranceRating: null,
+  reactionLabel: null,
+  reactionNotes: null,
+  hasAny: false,
+};
+
 export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   const { lastTreatment, watchPlan, intelligence, client } = input;
 
@@ -67,13 +109,9 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
     return {
       hasHistory: false,
       lastTreated: null,
-      remember: {
-        watchLines: [],
-        plan: null,
-        latestReactionLabel: null,
-        latestToleranceRating: null,
-        hasNotes: false,
-      },
+      remember: { ...EMPTY_REMEMBER, watchLines: [] },
+      response: { ...EMPTY_RESPONSE },
+      setup: null,
       latestSetupLine: null,
       reminders: [],
     };
@@ -87,18 +125,61 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   // Latest recorded setup: the most recently treated area's latest
   // block (intelligence.areas is sorted newest-first by lastTreated).
   const latestArea = intelligence.areas[0] ?? null;
-  const latestSetupLine = latestArea
+  const setup =
+    latestArea &&
+    (latestArea.latestFrequency ||
+      latestArea.latestProbe ||
+      latestArea.latestModeLabel ||
+      latestArea.latestEnergyLevel != null)
+      ? {
+          frequency: latestArea.latestFrequency,
+          probe: latestArea.latestProbe,
+          modeLabel: latestArea.latestModeLabel,
+          energyLevel: latestArea.latestEnergyLevel,
+        }
+      : null;
+  const latestSetupLine = setup
     ? [
-        latestArea.latestFrequency,
-        latestArea.latestProbe,
-        latestArea.latestModeLabel,
-        latestArea.latestEnergyLevel != null
-          ? `EL ${latestArea.latestEnergyLevel}`
-          : null,
+        setup.frequency,
+        setup.probe,
+        setup.modeLabel,
+        setup.energyLevel != null ? `EL ${setup.energyLevel}` : null,
       ]
         .filter(Boolean)
         .join(" · ") || null
     : null;
+
+  // Last treatment snapshot extras: total recorded minutes and the
+  // distinct recorded probe lot(s), both from data already loaded.
+  const minutesTotal = lastTreatment.blockMinutes.reduce<number>(
+    (sum, m) =>
+      typeof m === "number" && Number.isFinite(m) && m > 0 ? sum + m : sum,
+    0,
+  );
+  const distinctLots = [
+    ...new Set(
+      lastTreatment.blockLots
+        .map((l) => l?.trim())
+        .filter((l): l is string => !!l),
+    ),
+  ];
+  const probeLot = distinctLots.length > 0 ? distinctLots.join(", ") : null;
+
+  // Client response, last recorded. Reaction notes: the first
+  // recorded note on the last treatment's areas.
+  const reactionNotes =
+    lastTreatment.blockReactionNotes
+      .map((n) => n?.trim())
+      .find((n): n is string => !!n) ?? null;
+  const response = {
+    toleranceRating: intelligence.latestToleranceRating,
+    reactionLabel: intelligence.latestReactionLabel,
+    reactionNotes,
+    hasAny:
+      intelligence.latestToleranceRating != null ||
+      intelligence.latestReactionLabel != null ||
+      reactionNotes != null,
+  };
 
   // Record reminders: same field rules as the procedure-record
   // completeness sweep, scoped to THIS client's most recent charted
@@ -128,14 +209,16 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
       startedAt: lastTreatment.startedAt,
       modality: lastTreatment.modality,
       areasLine: joinAreas(lastTreatment.areaNames),
+      minutes: minutesTotal > 0 ? minutesTotal : null,
+      probeLot,
     },
     remember: {
       watchLines,
       plan,
-      latestReactionLabel: intelligence.latestReactionLabel,
-      latestToleranceRating: intelligence.latestToleranceRating,
       hasNotes: watchLines.length > 0 || !!plan,
     },
+    response,
+    setup,
     latestSetupLine,
     reminders,
   };
