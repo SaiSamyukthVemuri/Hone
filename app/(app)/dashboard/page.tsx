@@ -17,6 +17,7 @@ import type { BirthdayReminderColor } from "@/lib/types/database";
 import {
   addDays,
   localTimeString,
+  localTimeString12h,
   todayInTz,
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
@@ -35,6 +36,13 @@ import {
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
+import {
+  buildDailyPrepBrief,
+  type DailyPrepCharting,
+  type DailyPrepInput,
+  type DailyPrepIntake,
+} from "@/lib/dashboard/daily-prep-brief";
+import { DailyPrepBriefCard } from "./daily-prep-brief";
 import {
   buildGettingStarted,
   getGettingStartedSignals,
@@ -287,6 +295,41 @@ export default async function DashboardPage({
     visibleAppointments.map((a) => a.client_id),
   );
 
+  // PR #241: Daily Prep Brief V1. Rules-based only (no AI, no model,
+  // no provider, no action): a pure helper turns facts already loaded
+  // above (visible appointments, the Before Today previews, the
+  // linked-session charting state, intake status) into a deterministic
+  // prep list. No new query. Studio-scoped, recorded-history wording.
+  const dailyPrepInputs: DailyPrepInput[] = visibleAppointments.map((appt) => {
+    const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+    const linked = sessionByAppointment.get(appt.id) ?? null;
+    const charting: DailyPrepCharting = linked
+      ? linked.hasChartedArea
+        ? "charted"
+        : "started"
+      : appt.status === "completed"
+        ? "needs"
+        : "none";
+    const intakeStatus = intakeByClient.get(appt.client_id) ?? null;
+    const intake: DailyPrepIntake = intakeStatus ?? "none";
+    return {
+      appointmentId: appt.id,
+      clientId: appt.client_id,
+      clientName: appt.client?.name ?? "Client",
+      timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
+      status: appt.status,
+      serviceName: appt.service?.name ?? null,
+      hasHistory: preview?.hasHistory ?? false,
+      nextVisitNote: preview?.nextVisitNote ?? null,
+      cautionNote: preview?.cautionNote ?? null,
+      setupLine: preview?.setupLine ?? null,
+      reminders: preview?.reminders ?? [],
+      intake,
+      charting,
+    };
+  });
+  const dailyPrepBrief = buildDailyPrepBrief(dailyPrepInputs);
+
   // PR #214: recorded-history attention list (two batched reads over
   // the 200 most recent sessions; unique clients counted once).
   const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
@@ -359,6 +402,12 @@ export default async function DashboardPage({
           </ul>
         )}
       </section>
+
+      {/* PR #241: Daily Prep Brief V1, directly under Today so the
+          day's recorded memory and follow-up items are right where the
+          practitioner is already looking. Rules-based, read-only,
+          links only. */}
+      <DailyPrepBriefCard brief={dailyPrepBrief} />
 
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown here, under

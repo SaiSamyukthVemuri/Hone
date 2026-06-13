@@ -161,6 +161,8 @@ A read-only brief the practitioner opens before the day. Assembled from existing
 
 Output is a presentational brief. It sends nothing and changes nothing. It is the most likely first agentic PR after this plan.
 
+**Status: implemented in PR #241, rules-based only.** No AI, no model call, no provider integration, no chatbot, no autonomous action. The pure helper `lib/dashboard/daily-prep-brief.ts` turns facts the Dashboard already loads (today's appointments, the Before Today preview pipeline, the linked-session charting state, and intake status) into a deterministic, priority-ordered prep list rendered as a compact card under Today. It reads no sensitive surface and links only to existing client routes; nothing is sent, charged, or mutated. The remaining two workflows below are still future PRs.
+
 ### 2. Missing Records / Follow-up Assistant
 
 A read-only assistant that surfaces record-keeping and follow-up gaps already computable today:
