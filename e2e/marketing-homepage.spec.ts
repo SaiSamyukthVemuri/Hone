@@ -44,9 +44,11 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(page.getByText("$19").first()).toBeVisible();
     await expect(page.getByText(/Founding pilot/).first()).toBeVisible();
 
-    // Agentic section visible.
+    // Agentic section visible (support + safety merged, PR #243).
     await expect(
-      page.getByRole("heading", { name: "Built for agentic practice support." }),
+      page.getByRole("heading", {
+        name: "Agentic support, but practitioner-controlled.",
+      }),
     ).toBeVisible();
     await expect(page.getByText("Assistant, not decider").first()).toBeVisible();
 

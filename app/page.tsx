@@ -6,20 +6,18 @@ import { SafeAnalytics } from "./_components/SafeAnalytics";
 import { EyebrowCaption } from "./_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 
-// Public marketing homepage. PR #242: repositioned around the product
-// thesis: Hone is the treatment memory system for permanent hair
-// removal studios, not booking software, not generic practice
-// management, not AI treatment advice. The page follows the arc:
-// calendar knows the appointment -> Hone remembers the treatment ->
-// before the appointment Hone prepares the practitioner -> during it
-// captures the right details -> after it keeps the record clean ->
-// over time structured memory enables safe, practitioner-controlled
-// agentic support. All product visuals are coded mockups with
-// anonymized demo data only (Maya R. / Jordan L. / Alex P. / Demo
-// Studio / lot L-204 / Sterex), never real clients or studios. Copy
-// stays within the docs/22 safety boundary: assistant not decider,
-// draft not send, flag not diagnose; no medical or compliance
-// overclaims. Primary CTA is "Book a walkthrough" -> /demo.
+// Public marketing homepage. PR #242 repositioned the site around
+// treatment memory; PR #243 tightens it to a YC-style landing page:
+// say what it is, who it is for, the pain, the product solving it,
+// one primary CTA, fewer sections, less repetition. Eight sections:
+// Hero, Problem/comparison, How Hone works, Product proof, Record
+// keeping, Agentic support (support + safety merged), Privacy/trust,
+// Pricing/CTA. One hero visual; product proof uses compact cards
+// instead of a full section per surface. All visuals are coded
+// mockups with anonymized demo data only (Maya R. / Demo Studio /
+// lot L-204 / Sterex), never real clients. Copy stays inside the
+// docs/22 safety boundary (assistant not decider, draft not send,
+// flag not diagnose) with no medical, compliance, or AI overclaims.
 export default function HomePage() {
   return (
     <main
@@ -33,17 +31,12 @@ export default function HomePage() {
       <MarketingHeader />
       <Hero />
       <ProblemSection />
-      <BeforeDuringAfter />
-      <BeforeTodaySection />
-      <DailyPrepBriefSection />
-      <ChartingSection />
+      <HowHoneWorks />
+      <ProductProof />
       <RecordKeepingSection />
-      <DevicesSection />
-      <AgenticSupportSection />
-      <AgenticSafetySection />
+      <AgenticSection />
       <TrustSection />
-      <PricingSection />
-      <FinalCTA />
+      <PricingCTA />
       <MarketingFooter />
       {/* PR #142. Safe marketing page (no token in URL). */}
       <SafeAnalytics />
@@ -66,7 +59,7 @@ function SectionShell({
     <Reveal
       as="section"
       id={id}
-      className={`scroll-mt-24 px-6 py-20 md:px-12 md:py-28 lg:px-16 ${className}`}
+      className={`scroll-mt-24 px-6 py-18 md:px-12 md:py-24 lg:px-16 ${className}`}
     >
       <div className="mx-auto max-w-[1400px]">{children}</div>
     </Reveal>
@@ -76,7 +69,7 @@ function SectionShell({
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
-      className="font-[var(--font-fraunces)] mt-8 max-w-[860px] text-[32px] font-bold leading-[1.05] md:text-[44px]"
+      className="font-[var(--font-fraunces)] mt-8 max-w-[860px] text-[30px] font-bold leading-[1.05] md:text-[42px]"
       style={{ letterSpacing: "-0.03em" }}
     >
       {children}
@@ -151,13 +144,7 @@ function MockLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function RememberBand({
-  heading = "Remember today",
-  children,
-}: {
-  heading?: string;
-  children: React.ReactNode;
-}) {
+function RememberBand({ children }: { children: React.ReactNode }) {
   // Echoes the app's blue treatment-memory band.
   return (
     <div
@@ -171,7 +158,7 @@ function RememberBand({
         className="text-[10px] font-semibold uppercase"
         style={{ letterSpacing: "0.16em", color: PALETTE.blueInk }}
       >
-        {heading}
+        Remember today
       </p>
       <div className="mt-1.5 text-[13px]" style={{ color: PALETTE.blueInk }}>
         {children}
@@ -188,48 +175,43 @@ function DemoTag() {
   );
 }
 
-/* Section: Hero ────────────────────────────────────────────────────────── */
+/* Section 1: Hero ──────────────────────────────────────────────────────── */
 
 function Hero() {
   return (
-    <Reveal as="section" className="px-6 pb-20 pt-16 md:px-12 md:pb-24 md:pt-20 lg:px-16">
-      <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-14 gap-y-14 lg:grid-cols-12">
+    <Reveal as="section" className="px-6 pb-16 pt-14 md:px-12 md:pb-20 md:pt-18 lg:px-16">
+      <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-14 gap-y-12 lg:grid-cols-12">
         <div className="lg:col-span-6">
           <EyebrowCaption>
             Treatment memory for permanent hair removal studios
           </EyebrowCaption>
 
           <h1
-            className="font-[var(--font-fraunces)] mt-8 max-w-[760px] text-[44px] font-bold leading-[0.98] md:text-[68px]"
+            className="font-[var(--font-fraunces)] mt-8 max-w-[760px] text-[44px] font-bold leading-[0.98] md:text-[64px]"
             style={{ letterSpacing: "-0.04em" }}
           >
             Treatment memory for permanent hair removal studios.
           </h1>
 
           <p
-            className="mt-8 max-w-[600px] text-[18px] leading-[1.55] md:text-[20px]"
+            className="mt-8 max-w-[560px] text-[18px] leading-[1.5] md:text-[21px]"
             style={{ color: PALETTE.ink }}
           >
-            Hone helps electrologists prepare for each appointment, chart what
-            happened, and keep procedure records clean. It is the operating
-            memory layer for your studio, built for safe, practitioner-controlled
-            agentic support over time.
+            Hone helps electrologists see what happened last time, chart what
+            matters today, and keep procedure records clean.
           </p>
 
           <p
-            className="mt-6 max-w-[600px] text-[16px] leading-[1.6]"
+            className="mt-5 max-w-[560px] text-[16px] leading-[1.55]"
             style={{ color: PALETTE.muted }}
           >
-            Before the client sits down, Hone shows what happened last time: last
-            setup, tolerance, reaction, caution notes, next-session plan, and
-            record reminders.
+            Your calendar tells you who is coming. Hone tells you what to
+            remember.
           </p>
 
-          <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
+          <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
             <PrimaryCta href="/demo">Book a walkthrough</PrimaryCta>
-            <SecondaryCta href="#product">
-              See how treatment memory works
-            </SecondaryCta>
+            <SecondaryCta href="#product">See how it works</SecondaryCta>
           </div>
 
           <p className="mt-7 text-[13px]" style={{ color: PALETTE.muted }}>
@@ -239,24 +221,23 @@ function Hero() {
         </div>
 
         <div className="lg:col-span-6">
-          <HeroComposition />
+          <HeroVisual />
         </div>
       </div>
     </Reveal>
   );
 }
 
-// A realistic anonymized composition: a Today appointment, a Daily
-// Prep Brief item, the Before Today "Remember today" band, treatment
-// memory chips, a record reminder, and the next-action chip.
-function HeroComposition() {
+// One hero card: a Today appointment, the Before Today memory, a
+// record reminder, and the Daily Prep Brief in a single readable view.
+function HeroVisual() {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col">
       <MockCard>
         <div className="flex items-center justify-between">
           <MockLabel>Today · Demo Studio</MockLabel>
           <span className="text-[11px]" style={{ color: PALETTE.muted }}>
-            Tue
+            Daily prep brief · 3 to review
           </span>
         </div>
         <div className="mt-3 flex items-baseline justify-between gap-3">
@@ -280,56 +261,31 @@ function HeroComposition() {
           <Chip tone="green">Tolerance 4/5</Chip>
           <Chip>Mild redness</Chip>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mt-3">
           <Chip tone="amber">Aftercare not marked last session</Chip>
-          <Chip tone="blue">Review Before Today</Chip>
         </div>
       </MockCard>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <MockCard>
-          <MockLabel>Daily prep brief</MockLabel>
-          <p className="mt-2 text-[13px] font-medium">3 to review</p>
-          <p className="mt-1 text-[12px]" style={{ color: PALETTE.muted }}>
-            Recorded memory and follow-up items, ordered by what needs attention.
-          </p>
-        </MockCard>
-        <MockCard>
-          <MockLabel>Charted within 24h</MockLabel>
-          <p className="mt-2 text-[22px] font-semibold tabular-nums">92%</p>
-          <p className="mt-1 text-[12px]" style={{ color: PALETTE.muted }}>
-            Recorded sessions charted on time.
-          </p>
-        </MockCard>
-      </div>
       <DemoTag />
     </div>
   );
 }
 
-/* Section: Problem (calendar does not remember) ────────────────────────── */
+/* Section 2: Problem / comparison ──────────────────────────────────────── */
 
 function ProblemSection() {
   return (
     <SectionShell>
       <EyebrowCaption>The gap</EyebrowCaption>
-      <SectionTitle>
-        Your calendar does not remember what happened last time.
-      </SectionTitle>
-      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.65] md:text-[19px]">
-        Generic booking tools know when the client is coming. Hone remembers
-        what you did, what they tolerated, what needs caution, and what should
-        happen next.
-      </p>
+      <SectionTitle>Your calendar does not remember the treatment.</SectionTitle>
 
-      <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
+      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
         <MockCard>
           <MockLabel>Calendar-only</MockLabel>
           <ul className="mt-4 flex flex-col gap-3 text-[15px]">
-            {["Time", "Client", "Service"].map((row) => (
+            {["client", "time", "service"].map((row) => (
               <li
                 key={row}
-                className="border-b pb-3"
+                className="border-b pb-3 capitalize"
                 style={{ borderColor: PALETTE.rule }}
               >
                 {row}
@@ -341,13 +297,12 @@ function ProblemSection() {
           <MockLabel>Hone</MockLabel>
           <ul className="mt-4 flex flex-col gap-3 text-[15px]">
             {[
-              "Last treatment area",
-              "Probe and lot",
-              "Tolerance and reaction",
-              "Caution note",
-              "Next-session plan",
-              "Record reminders",
-              "Daily prep item",
+              "last area",
+              "probe and lot",
+              "tolerance and reaction",
+              "caution note",
+              "next-session note",
+              "record reminders",
             ].map((row) => (
               <li
                 key={row}
@@ -360,62 +315,40 @@ function ProblemSection() {
           </ul>
         </MockCard>
       </div>
-      <p
-        className="mt-8 font-[var(--font-fraunces)] text-[20px] italic"
-        style={{ color: PALETTE.ink }}
-      >
-        Calendar-only gives you the appointment. Hone gives you the memory.
-      </p>
     </SectionShell>
   );
 }
 
-/* Section: Before / During / After ─────────────────────────────────────── */
+/* Section 3: How Hone works (before / during / after) ──────────────────── */
 
-const WORKFLOW: ReadonlyArray<{ kicker: string; title: string; items: string[] }> = [
+const WORKFLOW: ReadonlyArray<{
+  kicker: string;
+  title: string;
+  items: string[];
+}> = [
   {
     kicker: "Before",
-    title: "Review the client before they sit down.",
-    items: [
-      "Daily Prep Brief",
-      "Before Today",
-      "last treatment",
-      "watch notes",
-      "next-session plan",
-      "intake status",
-    ],
+    title: "Review the memory.",
+    items: ["Daily Prep Brief", "Before Today", "intake status", "last treatment context"],
   },
   {
     kicker: "During",
-    title: "Chart the details that matter.",
-    items: [
-      "treatment area",
-      "settings",
-      "probe and lot",
-      "tolerance and reaction",
-      "caution",
-      "aftercare",
-    ],
+    title: "Chart the details.",
+    items: ["area", "probe and lot", "tolerance and reaction", "caution", "aftercare"],
   },
   {
     kicker: "After",
-    title: "Keep the record ready.",
-    items: [
-      "procedure record",
-      "lot traceability",
-      "audit history",
-      "print and export",
-      "charted within 24h",
-    ],
+    title: "Keep the record.",
+    items: ["procedure records", "lot traceability", "audit history", "print and export"],
   },
 ];
 
-function BeforeDuringAfter() {
+function HowHoneWorks() {
   return (
-    <SectionShell id="how-it-works">
+    <SectionShell>
       <EyebrowCaption>How it works</EyebrowCaption>
-      <SectionTitle>Before, during, and after every appointment.</SectionTitle>
-      <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-3">
+      <SectionTitle>How Hone fits into the treatment day.</SectionTitle>
+      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-3">
         {WORKFLOW.map((card) => (
           <MockCard key={card.kicker} className="flex flex-col">
             <p
@@ -439,185 +372,95 @@ function BeforeDuringAfter() {
   );
 }
 
-/* Section: Before Today ────────────────────────────────────────────────── */
+/* Section 4: Product proof ─────────────────────────────────────────────── */
 
-function BeforeTodaySection() {
+function ProductProof() {
   return (
     <SectionShell id="product">
-      <div className="grid grid-cols-1 gap-x-14 gap-y-10 md:grid-cols-12">
-        <div className="md:col-span-6">
-          <EyebrowCaption>Before Today</EyebrowCaption>
-          <SectionTitle>
-            Start every returning appointment with context.
-          </SectionTitle>
-          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
-            Before Today turns recorded history into a pre-treatment briefing:
-            what to remember, what was done last time, how the client responded,
-            and what is missing from the record.
+      <EyebrowCaption>Product</EyebrowCaption>
+      <SectionTitle>
+        Built around the details electrologists actually need.
+      </SectionTitle>
+
+      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* Before Today */}
+        <MockCard className="flex flex-col">
+          <MockLabel>Before Today</MockLabel>
+          <p className="mt-2 text-[15px] leading-[1.5]">
+            Before the client sits down, Hone shows the last treatment, caution
+            notes, and what to record today.
           </p>
-          <div className="mt-6 flex flex-wrap gap-1.5">
-            <Chip>recorded</Chip>
-            <Chip>last recorded</Chip>
-            <Chip>for next visit</Chip>
-            <Chip>caution noted</Chip>
-            <Chip>not recorded</Chip>
+          <div className="mt-4">
+            <RememberBand>
+              <p>
+                <span className="font-medium">Watch:</span> sensitive on upper
+                lip.
+              </p>
+              <p className="mt-1">
+                <span className="font-medium">For next visit:</span> shorter
+                passes.
+              </p>
+            </RememberBand>
           </div>
-        </div>
-        <div className="md:col-span-6">
-          <MockCard>
-            <MockLabel>Before today · Maya R.</MockLabel>
-            <div className="mt-3">
-              <RememberBand>
-                <p>
-                  <span className="font-medium">Watch:</span> sensitive on upper
-                  lip, start lower.
-                </p>
-                <p className="mt-1">
-                  <span className="font-medium">For next visit:</span> shorter
-                  passes near upper lip.
-                </p>
-              </RememberBand>
-            </div>
-            <div className="mt-4">
-              <MockLabel>Last treatment</MockLabel>
-              <p className="mt-1.5 text-[14px]">Upper lip · Jun 2</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Chip>Electrolysis</Chip>
-                <Chip>Sterex probe</Chip>
-                <Chip>Lot L-204</Chip>
-                <Chip>15 min</Chip>
-              </div>
-            </div>
-            <div className="mt-4">
-              <MockLabel>Client response (last recorded)</MockLabel>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Chip tone="green">Tolerance 4/5</Chip>
-                <Chip>Mild redness</Chip>
-              </div>
-            </div>
-            <div className="mt-4">
-              <MockLabel>Record reminders</MockLabel>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Chip tone="amber">Aftercare not marked</Chip>
-              </div>
-            </div>
-          </MockCard>
-          <DemoTag />
-        </div>
-      </div>
-    </SectionShell>
-  );
-}
+        </MockCard>
 
-/* Section: Daily Prep Brief (live, rules-based) ────────────────────────── */
-
-function DailyPrepBriefSection() {
-  return (
-    <SectionShell>
-      <div className="grid grid-cols-1 gap-x-14 gap-y-10 md:grid-cols-12">
-        <div className="md:col-span-6">
-          <EyebrowCaption>Daily Prep Brief · Live</EyebrowCaption>
-          <SectionTitle>
-            Know what needs attention before the day starts.
-          </SectionTitle>
-          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
-            Daily Prep Brief uses recorded Hone data to surface today&apos;s
-            appointments, treatment memory, intake gaps, charting gaps, and
-            record reminders before the day begins.
+        {/* Charting */}
+        <MockCard className="flex flex-col">
+          <MockLabel>Charting</MockLabel>
+          <p className="mt-2 text-[15px] leading-[1.5]">
+            Chart the area, probe, lot, tolerance, reaction, and next-session
+            note once. Hone brings it back next time.
           </p>
-          <ul className="mt-6 flex flex-col gap-2 text-[15px]" style={{ color: PALETTE.muted }}>
-            <li>Rules-based today: no AI model call required for V1.</li>
-            <li>Built only from recorded studio data.</li>
-            <li>Ordered by what needs attention first.</li>
-          </ul>
-        </div>
-        <div className="md:col-span-6">
-          <MockCard>
-            <MockLabel>Daily prep brief</MockLabel>
-            <div
-              className="mt-3 rounded-md p-3.5"
-              style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
-            >
-              <div className="flex items-baseline justify-between gap-3">
-                <p className="text-[14px] font-medium">Maya R.</p>
-                <span className="text-[12px] tabular-nums" style={{ color: PALETTE.muted }}>
-                  10:00 AM
-                </span>
-              </div>
-              <ul className="mt-2 flex flex-col gap-1 text-[13px]">
-                <li>For next visit: review upper lip sensitivity note</li>
-                <li>Last recorded: upper lip · Sterex probe · lot L-204</li>
-                <li style={{ color: PALETTE.amberInk }}>
-                  Record reminder: aftercare not marked last session
-                </li>
-              </ul>
-              <div className="mt-2.5">
-                <Chip tone="blue">Action: Review Before Today</Chip>
-              </div>
-            </div>
-          </MockCard>
-          <DemoTag />
-        </div>
-      </div>
-    </SectionShell>
-  );
-}
+          <div className="mt-4 flex flex-col gap-2 text-[14px]">
+            <ChartRow label="Area" value="Upper lip" />
+            <ChartRow label="Probe / lot" value="Sterex · L-204" />
+            <ChartRow label="Tolerance / reaction" value="4/5 · Mild redness" />
+          </div>
+          <div className="mt-3">
+            <Chip tone="green">Risks explained and aftercare provided</Chip>
+          </div>
+        </MockCard>
 
-/* Section: Charting ────────────────────────────────────────────────────── */
-
-const CHARTING_BULLETS: ReadonlyArray<string> = [
-  "treatment areas and session blocks",
-  "electrolysis and laser entries",
-  "probe and lot number",
-  "tolerance and reaction",
-  "caution and next-session note",
-  "risks explained and aftercare provided stamp",
-];
-
-function ChartingSection() {
-  return (
-    <SectionShell>
-      <div className="grid grid-cols-1 gap-x-14 gap-y-10 md:grid-cols-12">
-        <div className="md:col-span-6">
-          <EyebrowCaption>Charting</EyebrowCaption>
-          <SectionTitle>Chart once. Reuse the memory next time.</SectionTitle>
-          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.65] md:text-[19px]">
-            Hone captures the details that matter across repeated treatment
-            visits, then brings them back when the client returns.
+        {/* Procedure records */}
+        <MockCard className="flex flex-col">
+          <MockLabel>Procedure records</MockLabel>
+          <p className="mt-2 text-[15px] leading-[1.5]">
+            Pull one client&apos;s procedure record without digging through
+            notebooks.
           </p>
-          <ul className="mt-6 flex flex-col gap-2.5 text-[15px]">
-            {CHARTING_BULLETS.map((b) => (
-              <li
-                key={b}
-                className="border-b pb-2.5"
-                style={{ borderColor: PALETTE.rule }}
-              >
-                {b}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="md:col-span-6">
-          <MockCard>
-            <MockLabel>New treatment area</MockLabel>
-            <p className="mt-2 text-[16px] font-medium">Upper lip</p>
-            <div className="mt-3 flex flex-col gap-2 text-[14px]">
-              <ChartRow label="Probe" value="Sterex" />
-              <ChartRow label="Lot" value="L-204" />
-              <ChartRow label="Tolerance" value="4/5" />
-              <ChartRow label="Reaction" value="Mild redness" />
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            <Chip>Per-client record</Chip>
+            <Chip>Lot L-204</Chip>
+            <Chip>Audit history</Chip>
+            <Chip>Print and export</Chip>
+          </div>
+        </MockCard>
+
+        {/* Daily Prep Brief */}
+        <MockCard className="flex flex-col">
+          <MockLabel>Daily Prep Brief · Live</MockLabel>
+          <p className="mt-2 text-[15px] leading-[1.5]">
+            Daily Prep Brief surfaces today&apos;s memory, intake gaps, and
+            record reminders, ordered by what needs attention. Rules-based
+            today, no AI model call.
+          </p>
+          <div
+            className="mt-4 rounded-md p-3"
+            style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-[13px] font-medium">Maya R.</p>
+              <span className="text-[11px] tabular-nums" style={{ color: PALETTE.muted }}>
+                10:00 AM
+              </span>
             </div>
-            <div className="mt-3">
-              <MockLabel>For next visit</MockLabel>
-              <p className="mt-1.5 text-[14px]">Shorter passes near upper lip.</p>
-            </div>
-            <div className="mt-4">
-              <Chip tone="green">Risks explained and aftercare provided</Chip>
-            </div>
-          </MockCard>
-          <DemoTag />
-        </div>
+            <p className="mt-1 text-[12px]" style={{ color: PALETTE.amberInk }}>
+              Record reminder: aftercare not marked last session
+            </p>
+          </div>
+        </MockCard>
       </div>
+      <DemoTag />
     </SectionShell>
   );
 }
@@ -631,17 +474,7 @@ function ChartRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* Section: Record Keeping ──────────────────────────────────────────────── */
-
-const RECORDS_BULLETS: ReadonlyArray<string> = [
-  "sterile items",
-  "disinfectants",
-  "exposure incident records",
-  "audit history",
-  "per-client procedure records",
-  "lot traceability",
-  "print and export",
-];
+/* Section 5: Record keeping ────────────────────────────────────────────── */
 
 function RecordKeepingSection() {
   return (
@@ -650,18 +483,12 @@ function RecordKeepingSection() {
       <SectionTitle>
         Procedure records without scrambling before inspection.
       </SectionTitle>
-      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.65] md:text-[19px]">
-        Hone keeps treatment records, sterile item logs, disinfectant records,
-        exposure incident reporting, lot traceability, and audit history
-        together.
+      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
+        Hone keeps procedure records, sterile item logs, disinfectants, exposure
+        incident reporting, audit history, and lot traceability in one place.
       </p>
-      <div className="mt-10 flex flex-wrap gap-2">
-        {RECORDS_BULLETS.map((b) => (
-          <Chip key={b}>{b}</Chip>
-        ))}
-      </div>
       <p
-        className="mt-8 max-w-[680px] text-[14px] leading-[1.6]"
+        className="mt-6 max-w-[680px] text-[14px] leading-[1.6]"
         style={{ color: PALETTE.muted }}
       >
         Hone supports record keeping workflows, but studios remain responsible
@@ -671,161 +498,52 @@ function RecordKeepingSection() {
   );
 }
 
-/* Section: Mobile / iPad ───────────────────────────────────────────────── */
+/* Section 6: Agentic support (support + safety merged) ─────────────────── */
 
-const DEVICES: ReadonlyArray<{ label: string; title: string; chips: string[] }> = [
-  {
-    label: "Phone",
-    title: "Search and prep on the go.",
-    chips: ["Search", "Daily prep brief", "Client page"],
-  },
-  {
-    label: "iPad",
-    title: "Chart at the chair.",
-    chips: ["Calendar", "Charting", "Before Today"],
-  },
-  {
-    label: "Desktop",
-    title: "Run the day from the dashboard.",
-    chips: ["Today", "Records", "Audit history"],
-  },
-];
-
-function DevicesSection() {
-  return (
-    <SectionShell>
-      <EyebrowCaption>Built for the device in your hand</EyebrowCaption>
-      <SectionTitle>Built for the device in your hand.</SectionTitle>
-      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.65] md:text-[19px]">
-        Hone works on phone, iPad, and desktop, with mobile-safe calendar,
-        search, client pages, charting, and record views.
-      </p>
-      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-3">
-        {DEVICES.map((d) => (
-          <MockCard key={d.label} className="flex flex-col">
-            <MockLabel>{d.label}</MockLabel>
-            <h3 className="font-[var(--font-fraunces)] mt-3 text-[20px] font-normal leading-[1.25]">
-              {d.title}
-            </h3>
-            <div className="mt-4 flex flex-wrap gap-1.5">
-              {d.chips.map((c) => (
-                <Chip key={c}>{c}</Chip>
-              ))}
-            </div>
-          </MockCard>
-        ))}
-      </div>
-    </SectionShell>
-  );
-}
-
-/* Section: Agentic practice support ────────────────────────────────────── */
-
-const AGENTIC_SUPPORT: ReadonlyArray<string> = [
-  "Daily prep from recorded treatment history",
-  "Follow-up reminders from missing records and next-session notes",
-  "Draft-only client communication, reviewed before sending",
-  "Human confirmation before any external action",
-  "No treatment recommendations as medical advice",
-  "No auto-sending, auto-charging, or silent record changes",
-];
-
-function AgenticSupportSection() {
-  return (
-    <SectionShell id="agentic">
-      <EyebrowCaption>Agentic support</EyebrowCaption>
-      <SectionTitle>Built for agentic practice support.</SectionTitle>
-      <p className="mt-6 max-w-[760px] text-[17px] leading-[1.65] md:text-[19px]">
-        Hone is not adding a chatbot on top of a calendar. Hone structures
-        treatment memory first: areas treated, probe lots, tolerance, reaction,
-        caution notes, next-session plans, and record reminders. That structured
-        memory creates the foundation for safe agentic workflows that prepare the
-        practitioner, flag missing records, and draft follow-ups without making
-        clinical decisions.
-      </p>
-      <div className="mt-10 grid grid-cols-1 gap-x-10 gap-y-4 md:grid-cols-2">
-        {AGENTIC_SUPPORT.map((b) => (
-          <p
-            key={b}
-            className="border-b pb-4 text-[16px] leading-[1.5]"
-            style={{ borderColor: PALETTE.rule }}
-          >
-            {b}
-          </p>
-        ))}
-      </div>
-      <p className="mt-8 text-[15px] font-medium">
-        Practitioner-controlled. Record-based. No autonomous clinical decisions.
-      </p>
-    </SectionShell>
-  );
-}
-
-/* Section: Agentic safety ──────────────────────────────────────────────── */
-
-const AGENTIC_SAFETY: ReadonlyArray<string> = [
+const AGENTIC_BULLETS: ReadonlyArray<string> = [
   "Assistant, not decider",
   "Draft, not send",
   "Flag, not diagnose",
   "Summarize recorded history, do not invent",
-  "Human confirmation before messages, exports, appointments, or payments",
-  "Sensitive surfaces like exposure incidents, payment internals, and raw tokens are excluded from V1 agentic workflows",
+  "Human confirmation before external actions",
 ];
 
-function AgenticSafetySection() {
+function AgenticSection() {
   return (
-    <SectionShell>
-      <EyebrowCaption>Agentic safety</EyebrowCaption>
-      <SectionTitle>Agentic, but controlled.</SectionTitle>
-      <p className="mt-6 max-w-[760px] text-[17px] leading-[1.65] md:text-[19px]">
-        Hone&apos;s agentic roadmap is designed around practitioner control.
-        Future AI-assisted workflows should summarize recorded history, flag
-        missing information, and draft messages for review. They should not
-        diagnose, recommend treatment settings, send messages, charge cards, or
-        modify clinical records without human confirmation.
+    <SectionShell id="agentic">
+      <EyebrowCaption>Practitioner control</EyebrowCaption>
+      <SectionTitle>Agentic support, but practitioner-controlled.</SectionTitle>
+      <p className="mt-6 max-w-[760px] text-[17px] leading-[1.6] md:text-[19px]">
+        Hone structures treatment history first. That makes safe agentic
+        workflows possible: daily prep, missing-record reminders, and draft-only
+        follow-ups. Hone does not make clinical decisions, recommend treatment
+        settings, send messages, charge cards, or change records without
+        confirmation.
       </p>
-      <div className="mt-10 grid grid-cols-1 gap-x-10 gap-y-4 md:grid-cols-2">
-        {AGENTIC_SAFETY.map((b) => (
+      <div className="mt-9 grid grid-cols-1 gap-x-10 gap-y-3 md:grid-cols-2">
+        {AGENTIC_BULLETS.map((b) => (
           <p
             key={b}
-            className="border-b pb-4 text-[16px] leading-[1.5]"
+            className="border-b pb-3 text-[16px] leading-[1.45]"
             style={{ borderColor: PALETTE.rule }}
           >
             {b}
           </p>
         ))}
       </div>
+      <p className="mt-7 text-[15px] font-medium">No autonomous clinical decisions.</p>
     </SectionShell>
   );
 }
 
-/* Section: Trust / privacy ─────────────────────────────────────────────── */
+/* Section 7: Privacy / trust ───────────────────────────────────────────── */
 
-const TRUST_POINTS: ReadonlyArray<{ headline: string; body: string }> = [
-  {
-    headline: "Your client records stay yours.",
-    body: "Export the full history of your studio at any time. If you cancel, your data goes with you.",
-  },
-  {
-    headline: "No advertising use of health records.",
-    body: "Client health, intake, and treatment records are never used for advertising or behavioral tracking.",
-  },
-  {
-    headline: "No AI training on your records.",
-    body: "Hone does not train machine learning models on practitioner or client records.",
-  },
-  {
-    headline: "Studio data is isolated.",
-    body: "Row-level security keeps each studio's data scoped to its own studio. One studio never sees another's records.",
-  },
-  {
-    headline: "Secure sign in.",
-    body: "Magic link or Google sign in. No shared passwords floating around the studio.",
-  },
-  {
-    headline: "Export available.",
-    body: "Export a ZIP of your studio any time. Private practitioner notes are excluded from the general export.",
-  },
+const TRUST_POINTS: ReadonlyArray<string> = [
+  "Studio data stays isolated.",
+  "Records stay exportable.",
+  "No advertising use of health records.",
+  "No AI training on practitioner or client records.",
+  "Secure sign-in.",
 ];
 
 function TrustSection() {
@@ -833,25 +551,18 @@ function TrustSection() {
     <SectionShell>
       <EyebrowCaption>Privacy and trust</EyebrowCaption>
       <SectionTitle>Built carefully for sensitive client records.</SectionTitle>
-      <div className="mt-12 grid grid-cols-1 gap-x-12 gap-y-9 md:grid-cols-2">
+      <div className="mt-9 grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
         {TRUST_POINTS.map((t) => (
-          <div key={t.headline} className="flex flex-col">
-            <h3 className="text-[17px] font-medium leading-[1.35]">
-              {t.headline}
-            </h3>
-            <p
-              className="mt-2 text-[15px] leading-[1.6]"
-              style={{ color: PALETTE.muted }}
-            >
-              {t.body}
-            </p>
-          </div>
+          <p
+            key={t}
+            className="border-b pb-4 text-[16px] leading-[1.45]"
+            style={{ borderColor: PALETTE.rule }}
+          >
+            {t}
+          </p>
         ))}
       </div>
-      <p
-        className="mt-10 text-[14px] leading-[1.55]"
-        style={{ color: PALETTE.muted }}
-      >
+      <p className="mt-8 text-[14px]" style={{ color: PALETTE.muted }}>
         Full detail in the{" "}
         <Link href="/privacy" className="underline">
           privacy policy
@@ -862,22 +573,23 @@ function TrustSection() {
   );
 }
 
-/* Section: Pricing ─────────────────────────────────────────────────────── */
+/* Section 8: Pricing / CTA ─────────────────────────────────────────────── */
 
-const PRICING_INCLUDES: ReadonlyArray<string> = [
+const PRICING_CHIPS: ReadonlyArray<string> = [
   "Founder-led setup",
   "Cancel anytime",
   "Full data export",
+  "Limited pilot availability",
 ];
 
-function PricingSection() {
+function PricingCTA() {
   return (
     <SectionShell id="pricing">
       <EyebrowCaption>Founding pilot</EyebrowCaption>
-      <SectionTitle>One price for the whole workflow.</SectionTitle>
+      <SectionTitle>Founding pilot.</SectionTitle>
 
       <div
-        className="mt-12 grid grid-cols-1 gap-10 p-8 md:grid-cols-12 md:p-10"
+        className="mt-10 grid grid-cols-1 gap-10 p-8 md:grid-cols-12 md:p-10"
         style={{ border: `2px solid ${PALETTE.ink}` }}
       >
         <div className="md:col-span-5">
@@ -894,56 +606,23 @@ function PricingSection() {
             </span>
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            {PRICING_INCLUDES.map((p) => (
+            {PRICING_CHIPS.map((p) => (
               <Chip key={p}>{p}</Chip>
             ))}
           </div>
-          <p
-            className="mt-5 text-[15px] leading-[1.6]"
-            style={{ color: PALETTE.muted }}
-          >
-            Founding pilot pricing while we onboard the first wave of studios.
-            Early pilot onboarding is limited. Pricing may change later.
-          </p>
         </div>
         <div className="md:col-span-7">
-          <p className="text-[17px] leading-[1.65]">
-            Treatment memory, Before Today, Daily Prep Brief, charting, procedure
-            records, and lot traceability. Founder-led setup and onboarding. The
-            product claim is the memory layer, not payment processing.
+          <p className="text-[18px] leading-[1.55] md:text-[20px]">
+            Bring one real treatment workflow. We will show how Hone handles the
+            appointment, charting, treatment memory, and records.
           </p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <PrimaryCta href="/demo">Book a walkthrough</PrimaryCta>
+            <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>
             <SecondaryCta href="/pricing">See pricing</SecondaryCta>
           </div>
         </div>
       </div>
     </SectionShell>
-  );
-}
-
-/* Section: Final CTA ───────────────────────────────────────────────────── */
-
-function FinalCTA() {
-  return (
-    <Reveal as="section" className="px-6 py-20 md:px-12 md:py-28 lg:px-16">
-      <div className="mx-auto max-w-[820px]">
-        <h2
-          className="font-[var(--font-fraunces)] text-[34px] font-bold leading-[1.05] md:text-[48px]"
-          style={{ letterSpacing: "-0.03em" }}
-        >
-          See if Hone fits your studio.
-        </h2>
-        <p className="mt-6 text-[18px] leading-[1.65] md:text-[21px]">
-          Bring one real treatment workflow. We will walk through how Hone would
-          handle the appointment, charting, treatment memory, and records.
-        </p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
-          <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>
-          <SecondaryCta href="/pricing">See pricing</SecondaryCta>
-        </div>
-      </div>
-    </Reveal>
   );
 }
 

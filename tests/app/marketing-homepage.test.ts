@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #242: marketing site repositioned around treatment memory. These
+// PR #242 repositioned the marketing site around treatment memory;
+// PR #243 tightened it to a YC-style landing page (eight sections,
+// less repetition, the two agentic sections merged into one). These
 // pins keep the category positioning, the required sections, the
 // agentic safety language (aligned with docs/22), the demo-data-only
 // discipline, and the absence of medical / compliance / AI overclaims
-// from eroding. Source pins on the homepage + shared header/nav +
-// SEO metadata.
+// from eroding.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -23,11 +24,16 @@ const NAV = NAV_RAW.replace(/\s+/g, " ");
 const HEADER = read("app/_components/MarketingHeader.tsx");
 
 describe("category positioning", () => {
-  it("leads with treatment memory for permanent hair removal studios", () => {
+  it("leads with treatment memory and the calendar contrast", () => {
     expect(PAGE).toMatch(/Treatment memory for permanent hair removal studios\./);
-    expect(PAGE).toMatch(/operating memory layer/);
+    expect(PAGE).toMatch(
+      /Hone helps electrologists see what happened last time, chart what matters today, and keep procedure records clean\./,
+    );
+    expect(PAGE).toMatch(
+      /Your calendar tells you who is coming\. Hone tells you what to remember\./,
+    );
     expect(PAGE).toMatch(/Book a walkthrough/);
-    expect(PAGE).toMatch(/See how treatment memory works/);
+    expect(PAGE).toMatch(/See how it works/);
     expect(PAGE).toMatch(/No autonomous treatment decisions\./);
   });
 
@@ -40,29 +46,32 @@ describe("category positioning", () => {
   });
 });
 
-describe("required homepage sections", () => {
+describe("required homepage sections (YC-tightened)", () => {
   it("calendar-vs-Hone comparison", () => {
-    expect(PAGE).toMatch(/Your calendar does not remember what happened last time\./);
+    expect(PAGE).toMatch(/Your calendar does not remember the treatment\./);
     expect(PAGE).toMatch(/Calendar-only/);
-    expect(PAGE).toMatch(/Calendar-only gives you the appointment\. Hone gives you the memory\./);
+    expect(PAGE).toMatch(/probe and lot/);
+    expect(PAGE).toMatch(/record reminders/);
   });
 
-  it("Before Today section", () => {
-    expect(PAGE).toMatch(/Start every returning appointment with context\./);
-    expect(PAGE).toMatch(/Remember today/);
-    expect(PAGE).toMatch(/Client response \(last recorded\)/);
+  it("how it works section (before / during / after)", () => {
+    expect(PAGE).toMatch(/How Hone fits into the treatment day\./);
+    expect(PAGE).toMatch(/Review the memory\./);
+    expect(PAGE).toMatch(/Chart the details\./);
+    expect(PAGE).toMatch(/Keep the record\./);
   });
 
-  it("Daily Prep Brief section (live, rules-based)", () => {
-    expect(PAGE).toMatch(/Know what needs attention before the day starts\./);
-    expect(PAGE).toMatch(/Daily Prep Brief uses recorded Hone data/);
-    expect(PAGE).toMatch(/Rules-based today: no AI model call required for V1\./);
-    expect(PAGE).toMatch(/Action: Review Before Today/);
-  });
-
-  it("charting section", () => {
-    expect(PAGE).toMatch(/Chart once\. Reuse the memory next time\./);
-    expect(PAGE).toMatch(/risks explained and aftercare provided stamp/);
+  it("product proof section with compact cards", () => {
+    expect(PAGE).toMatch(/Built around the details electrologists actually need\./);
+    expect(PAGE).toMatch(
+      /Before the client sits down, Hone shows the last treatment, caution notes, and what to record today\./,
+    );
+    expect(PAGE).toMatch(
+      /Pull one client&apos;s procedure record without digging through notebooks\./,
+    );
+    // Daily Prep Brief described live + rules-based (matches PR #241).
+    expect(PAGE).toMatch(/Daily Prep Brief · Live/);
+    expect(PAGE).toMatch(/Rules-based today, no AI model call\./);
   });
 
   it("Record Keeping section with the responsibility caveat", () => {
@@ -73,43 +82,54 @@ describe("required homepage sections", () => {
     );
   });
 
-  it("mobile / iPad section", () => {
-    expect(PAGE).toMatch(/Built for the device in your hand\./);
-    expect(PAGE).toMatch(/phone, iPad, and desktop/);
-  });
-
-  it("agentic practice support section", () => {
-    expect(PAGE).toMatch(/Built for agentic practice support\./);
-    expect(PAGE).toMatch(/not adding a chatbot on top of a calendar/);
-    expect(PAGE).toMatch(/Draft-only client communication, reviewed before sending/);
+  it("agentic support section (support + safety merged into one)", () => {
+    expect(PAGE).toMatch(/Agentic support, but practitioner-controlled\./);
+    expect(PAGE).toMatch(/That makes safe agentic workflows possible/);
+    expect(PAGE).toMatch(/draft-only follow-ups/);
+    // No separate "Agentic, but controlled." or "Built for agentic
+    // practice support." sections remain.
+    expect(PAGE).not.toMatch(/Agentic, but controlled\./);
+    expect(PAGE).not.toMatch(/Built for agentic practice support\./);
   });
 
   it("agentic safety language aligned with docs/22", () => {
-    expect(PAGE).toMatch(/Agentic, but controlled\./);
     expect(PAGE).toMatch(/Assistant, not decider/);
     expect(PAGE).toMatch(/Draft, not send/);
     expect(PAGE).toMatch(/Flag, not diagnose/);
     expect(PAGE).toMatch(/Summarize recorded history, do not invent/);
+    expect(PAGE).toMatch(/Human confirmation before external actions/);
     expect(PAGE).toMatch(/No autonomous clinical decisions/);
   });
 
   it("privacy / trust section with true claims only", () => {
     expect(PAGE).toMatch(/Built carefully for sensitive client records\./);
-    expect(PAGE).toMatch(/Your client records stay yours\./);
-    expect(PAGE).toMatch(/No AI training on your records\./);
-    expect(PAGE).toMatch(/Studio data is isolated\./);
+    expect(PAGE).toMatch(/Studio data stays isolated\./);
+    expect(PAGE).toMatch(/No AI training on practitioner or client records\./);
   });
 
-  it("pricing section", () => {
-    expect(PAGE).toMatch(/Founding pilot/);
+  it("pricing + CTA section", () => {
+    expect(PAGE).toMatch(/Founding pilot\./);
     expect(PAGE).toMatch(/\$19/);
     expect(PAGE).toMatch(/\/month/);
     expect(PAGE).toMatch(/Cancel anytime/);
+    expect(PAGE).toMatch(/Book a 15-minute walkthrough/);
+    expect(PAGE).toMatch(
+      /Bring one real treatment workflow\. We will show how Hone handles the appointment, charting, treatment memory, and records\./,
+    );
+  });
+});
+
+describe("YC tightening: fewer sections, less repetition", () => {
+  it("dropped the standalone Daily Prep Brief, charting, and device sections", () => {
+    expect(PAGE).not.toMatch(/Know what needs attention before the day starts\./);
+    expect(PAGE).not.toMatch(/Chart once\. Reuse the memory next time\./);
+    expect(PAGE).not.toMatch(/Built for the device in your hand\./);
   });
 
-  it("final CTA", () => {
-    expect(PAGE).toMatch(/See if Hone fits your studio\./);
-    expect(PAGE).toMatch(/Book a 15-minute walkthrough/);
+  it("the page renders eight content sections (Hero plus seven shells)", () => {
+    const shells = (PAGE_RAW.match(/<SectionShell/g) ?? []).length;
+    expect(shells).toBe(7);
+    expect(PAGE_RAW).toMatch(/<Hero \/>/);
   });
 });
 
@@ -123,11 +143,13 @@ describe("navigation and CTAs", () => {
     expect(NAV).toMatch(/href: "\/login", label: "Sign in"/);
   });
 
-  it("the story-section anchors are homepage-relative", () => {
-    for (const id of ["product", "how-it-works", "records", "agentic"]) {
+  it("the nav is short: Product, Records, Agentic support, Pricing, Sign in", () => {
+    for (const id of ["product", "records", "agentic"]) {
       expect(NAV).toMatch(new RegExp(`href: "/#${id}"`));
       expect(PAGE).toMatch(new RegExp(`id="${id}"`));
     }
+    // The how-it-works anchor was dropped (no matching section id).
+    expect(NAV).not.toMatch(/how-it-works/);
   });
 });
 
@@ -140,7 +162,6 @@ describe("demo data discipline", () => {
 
   it("never uses real pilot names or real client data", () => {
     expect(PAGE_RAW).not.toMatch(/chloe|laura|willow/i);
-    // No real email or phone-number patterns in the homepage copy.
     expect(PAGE_RAW).not.toMatch(/@gmail|@hone\.care/i);
     expect(PAGE_RAW).not.toMatch(/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/);
   });
@@ -165,7 +186,5 @@ describe("no forbidden medical / compliance / AI overclaims", () => {
 
   it("does not claim live payments are active", () => {
     expect(PAGE).not.toMatch(/payments are (live|active)|live payments are|accept payments|process payments/i);
-    // The product claim is explicitly the memory layer, not payments.
-    expect(PAGE).toMatch(/not payment processing\./);
   });
 });
