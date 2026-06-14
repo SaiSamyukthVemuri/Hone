@@ -86,6 +86,10 @@ const CURATED_TABLES = {
   record_keeping_disinfectants: "RecordKeepingDisinfectant",
   record_keeping_exposure_incidents: "RecordKeepingExposureIncident",
   record_keeping_audit_events: "RecordKeepingAuditEvent",
+  // Migration 0089 (PR #252): Imported Treatment Memory.
+  import_batches: "ImportBatch",
+  imported_treatment_memories: "ImportedTreatmentMemory",
+  imported_treatment_memory_audit_events: "ImportedTreatmentMemoryAuditEvent",
 };
 
 // Recently added columns that MUST exist in both the database and
