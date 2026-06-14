@@ -14,18 +14,20 @@ import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 // Eight sections: Hero, Calendar vs Hone, Before/during/after, What
 // Hone remembers, Records and lot traceability, Smarter prep without
 // autopilot, Privacy/trust, Pricing/walkthrough. One hero visual;
-// the "what it remembers" section uses compact cards. A follow-up pass
-// raised the visual density (pilot feedback: the human copy was right
-// but the page felt too sparse): the Records and Smarter-prep sections
-// each gained a product mockup (a printable procedure record; the live,
-// rules-based Daily Prep "tomorrow morning" brief), the hero card gained
-// two proof tiles, and section padding was tightened. All visuals are
-// coded mockups with anonymized demo data only (Maya R. / Jordan L. /
-// Alex P. / Demo Studio / lot L-204 / Sterex), never real clients. The
-// forward-looking section keeps the docs/22 safety boundary in plain
-// words (help with prep and drafts; never send, charge, diagnose, or
-// change records without you), with no medical, compliance, or AI
-// overclaims.
+// the "what it remembers" section leads with a Before Today centerpiece.
+// PR #246 added a visual system for Jane-level polish without copying
+// Jane: an app-window chrome frame (AppWindow) on the hero and the
+// Before Today mockup so they read as real app screens; the calendar-vs-
+// Hone contrast rebuilt as a thin dashed card vs a checkmarked card; a
+// credible proof strip under the hero (real signals only, nothing
+// invented); the privacy section as check cards; and alternating
+// faint band backgrounds (SectionShell tone="band") for section rhythm.
+// All visuals are coded mockups with anonymized demo data only (Maya R.
+// / Jordan L. / Alex P. / Demo Studio / lot L-204 / Sterex), never real
+// clients. The forward-looking section keeps the docs/22 safety boundary
+// in plain words (help with prep and drafts; never send, charge,
+// diagnose, or change records without you), with no medical, compliance,
+// or AI overclaims.
 export default function HomePage() {
   return (
     <main
@@ -38,6 +40,7 @@ export default function HomePage() {
     >
       <MarketingHeader />
       <Hero />
+      <ProofStrip />
       <ProblemSection />
       <HowHoneWorks />
       <ProductProof />
@@ -58,16 +61,22 @@ function SectionShell({
   id,
   children,
   className = "",
+  tone = "default",
 }: {
   id?: string;
   children: React.ReactNode;
   className?: string;
+  // "band" paints a faint full-bleed warm panel behind the section so
+  // the page alternates surfaces and reads with rhythm, not as one flat
+  // sheet of whitespace.
+  tone?: "default" | "band";
 }) {
   return (
     <Reveal
       as="section"
       id={id}
       className={`scroll-mt-24 px-6 py-14 md:px-12 md:py-20 lg:px-16 ${className}`}
+      style={tone === "band" ? { backgroundColor: PALETTE.band } : undefined}
     >
       <div className="mx-auto max-w-[1400px]">{children}</div>
     </Reveal>
@@ -183,6 +192,85 @@ function DemoTag() {
   );
 }
 
+// App-window chrome: wraps a mockup so it reads as a real product
+// screen (traffic-light dots + a title bar) rather than a floating
+// card. Same radius / border / shadow language as MockCard.
+function AppWindow({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`overflow-hidden rounded-xl ${className}`}
+      style={{
+        backgroundColor: PALETTE.card,
+        border: `1px solid ${PALETTE.rule}`,
+        boxShadow: "0 1px 2px rgba(10,10,10,0.04), 0 16px 40px rgba(10,10,10,0.08)",
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-4 py-2.5"
+        style={{ backgroundColor: PALETTE.chrome, borderBottom: `1px solid ${PALETTE.rule}` }}
+      >
+        <span className="flex gap-1.5" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: PALETTE.rule }}
+            />
+          ))}
+        </span>
+        <span
+          className="ml-1 text-[11px] font-medium uppercase"
+          style={{ letterSpacing: "0.14em", color: PALETTE.muted }}
+        >
+          {title}
+        </span>
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+
+// A recorded-field row with a green check; the visual proof that Hone
+// carries memory the calendar does not.
+function CheckRow({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex items-center gap-2.5 text-[15px]">
+      <span
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+        style={{ backgroundColor: PALETTE.greenBg, color: PALETTE.greenInk }}
+        aria-hidden="true"
+      >
+        ✓
+      </span>
+      {children}
+    </li>
+  );
+}
+
+// A muted, dashed row for the deliberately-thin "calendar only" card.
+function DashRow({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex items-center gap-2.5 text-[15px]" style={{ color: PALETTE.muted }}>
+      <span
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-[12px]"
+        style={{ color: PALETTE.muted }}
+        aria-hidden="true"
+      >
+        –
+      </span>
+      {children}
+    </li>
+  );
+}
+
 /* Section 1: Hero ──────────────────────────────────────────────────────── */
 
 function Hero() {
@@ -239,9 +327,9 @@ function Hero() {
 function HeroVisual() {
   return (
     <div className="flex flex-col">
-      <MockCard>
+      <AppWindow title="Demo Studio · Today">
         <div className="flex items-center justify-between">
-          <MockLabel>Today · Demo Studio</MockLabel>
+          <MockLabel>Today</MockLabel>
           <span className="text-[11px]" style={{ color: PALETTE.muted }}>
             Daily prep brief · 3 to review
           </span>
@@ -270,7 +358,7 @@ function HeroVisual() {
         <div className="mt-3">
           <Chip tone="amber">Aftercare not marked last session</Chip>
         </div>
-      </MockCard>
+      </AppWindow>
 
       <div className="mt-4 grid grid-cols-2 gap-4">
         <MiniTile label="Before Today">Last treatment and what to watch.</MiniTile>
@@ -300,6 +388,42 @@ function MiniTile({
   );
 }
 
+/* Proof strip: credible, non-fake signals right under the hero ─────────── */
+
+const PROOF_ITEMS: ReadonlyArray<string> = [
+  "Built with working electrologists",
+  "Mobile-tested treatment workflows",
+  "Browser-tested treatment-memory loop",
+  "Lot traceability built in",
+  "Founder-led setup",
+];
+
+function ProofStrip() {
+  return (
+    <Reveal
+      as="section"
+      className="px-6 py-7 md:px-12 lg:px-16"
+      style={{
+        backgroundColor: PALETTE.band,
+        borderTop: `1px solid ${PALETTE.rule}`,
+        borderBottom: `1px solid ${PALETTE.rule}`,
+      }}
+    >
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-x-8 gap-y-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+        {PROOF_ITEMS.map((item) => (
+          <span
+            key={item}
+            className="text-[12px] font-medium uppercase"
+            style={{ letterSpacing: "0.12em", color: PALETTE.muted }}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    </Reveal>
+  );
+}
+
 /* Section 2: Problem / comparison ──────────────────────────────────────── */
 
 function ProblemSection() {
@@ -316,41 +440,42 @@ function ProblemSection() {
         left for next visit.
       </p>
 
-      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
+      <div className="mt-10 grid grid-cols-1 items-start gap-6 md:grid-cols-2">
+        {/* Deliberately thin: the calendar shows only the appointment. */}
         <MockCard>
-          <MockLabel>Calendar-only</MockLabel>
-          <ul className="mt-4 flex flex-col gap-3 text-[15px]">
-            {["client", "time", "service"].map((row) => (
-              <li
-                key={row}
-                className="border-b pb-3 capitalize"
-                style={{ borderColor: PALETTE.rule }}
-              >
-                {row}
-              </li>
-            ))}
+          <div className="flex items-baseline justify-between">
+            <MockLabel>Calendar-only</MockLabel>
+            <span className="text-[11px]" style={{ color: PALETTE.muted }}>
+              What most tools show
+            </span>
+          </div>
+          <ul className="mt-4 flex flex-col gap-3">
+            <DashRow>Client</DashRow>
+            <DashRow>Time</DashRow>
+            <DashRow>Service</DashRow>
           </ul>
         </MockCard>
+        {/* Fuller: the recorded memory the calendar never keeps. */}
         <MockCard>
-          <MockLabel>Hone</MockLabel>
-          <ul className="mt-4 flex flex-col gap-3 text-[15px]">
-            {[
-              "last area",
-              "probe and lot",
-              "tolerance and reaction",
-              "caution note",
-              "next-session note",
-              "record reminders",
-            ].map((row) => (
-              <li
-                key={row}
-                className="border-b pb-3"
-                style={{ borderColor: PALETTE.rule }}
-              >
-                {row}
-              </li>
-            ))}
+          <div className="flex items-baseline justify-between">
+            <MockLabel>Hone</MockLabel>
+            <span className="text-[11px]" style={{ color: PALETTE.muted }}>
+              What you also remember
+            </span>
+          </div>
+          <ul className="mt-4 flex flex-col gap-3">
+            <CheckRow>Last area treated</CheckRow>
+            <CheckRow>Probe and lot</CheckRow>
+            <CheckRow>Tolerance and reaction</CheckRow>
+            <CheckRow>Caution note</CheckRow>
+            <CheckRow>Next-visit note</CheckRow>
+            <CheckRow>Record reminders</CheckRow>
           </ul>
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            <Chip>Upper lip</Chip>
+            <Chip>Lot L-204</Chip>
+            <Chip tone="green">Tolerance 4/5</Chip>
+          </div>
         </MockCard>
       </div>
     </SectionShell>
@@ -412,32 +537,20 @@ function HowHoneWorks() {
 
 function ProductProof() {
   return (
-    <SectionShell id="product">
+    <SectionShell id="product" tone="band">
       <EyebrowCaption>What it remembers</EyebrowCaption>
       <SectionTitle>What Hone remembers.</SectionTitle>
+      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
+        Before the client sits down, Hone shows the last treatment, caution
+        notes, and what to record today.
+      </p>
 
-      <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
-        {/* Before Today */}
-        <MockCard className="flex flex-col">
-          <MockLabel>Before Today</MockLabel>
-          <p className="mt-2 text-[15px] leading-[1.5]">
-            Before the client sits down, Hone shows the last treatment, caution
-            notes, and what to record today.
-          </p>
-          <div className="mt-4">
-            <RememberBand>
-              <p>
-                <span className="font-medium">Watch:</span> sensitive on upper
-                lip.
-              </p>
-              <p className="mt-1">
-                <span className="font-medium">For next visit:</span> shorter
-                passes.
-              </p>
-            </RememberBand>
-          </div>
-        </MockCard>
+      {/* Before Today centerpiece: Hone's core pre-treatment surface. */}
+      <div className="mt-10">
+        <BeforeTodayMockup />
+      </div>
 
+      <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-3">
         {/* Charting */}
         <MockCard className="flex flex-col">
           <MockLabel>Charting</MockLabel>
@@ -496,6 +609,69 @@ function ProductProof() {
       </div>
       <DemoTag />
     </SectionShell>
+  );
+}
+
+// Before Today centerpiece: the pre-treatment briefing as a real app
+// screen. Remember-today band on top, then the three recorded panels
+// (last treatment, client response, record reminders). Recorded-history
+// wording only (recorded / last recorded / for next visit / caution
+// noted / not recorded) — never recommended / caused / diagnosis.
+function BeforeTodayMockup() {
+  return (
+    <div className="flex flex-col">
+      <AppWindow title="Before Today · Maya R.">
+        <RememberBand>
+          <p>
+            <span className="font-medium">Watch:</span> recorded sensitivity on
+            upper lip.
+          </p>
+          <p className="mt-1">
+            <span className="font-medium">For next visit:</span> shorter passes.
+          </p>
+        </RememberBand>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div
+            className="rounded-md p-3.5"
+            style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <MockLabel>Last treatment</MockLabel>
+            <p className="mt-2 text-[13px]" style={{ color: PALETTE.muted }}>
+              Last recorded Jun 12
+            </p>
+            <div className="mt-2 flex flex-col gap-1.5 text-[13px]">
+              <span>Upper lip</span>
+              <span>Sterex · L-204</span>
+            </div>
+          </div>
+          <div
+            className="rounded-md p-3.5"
+            style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <MockLabel>Client response</MockLabel>
+            <p className="mt-2 text-[13px]" style={{ color: PALETTE.muted }}>
+              Last recorded
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Chip tone="green">Tolerance 4/5</Chip>
+              <Chip>Mild redness</Chip>
+            </div>
+          </div>
+          <div
+            className="rounded-md p-3.5"
+            style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <MockLabel>Record reminders</MockLabel>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <Chip tone="amber">Caution noted</Chip>
+              <Chip tone="amber">Aftercare not recorded</Chip>
+            </div>
+          </div>
+        </div>
+      </AppWindow>
+      <DemoTag />
+    </div>
   );
 }
 
@@ -661,6 +837,15 @@ function DailyPrepVisual() {
             );
           })}
         </div>
+        <div
+          className="mt-3 flex items-center justify-between rounded-md px-3 py-2.5"
+          style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+        >
+          <span className="text-[12px] font-medium">Review Before Today</span>
+          <span className="text-[13px]" style={{ color: PALETTE.muted }} aria-hidden="true">
+            →
+          </span>
+        </div>
         <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
           Based on recorded Hone data.
         </p>
@@ -682,18 +867,23 @@ const TRUST_POINTS: ReadonlyArray<string> = [
 
 function TrustSection() {
   return (
-    <SectionShell>
+    <SectionShell tone="band">
       <EyebrowCaption>Privacy and trust</EyebrowCaption>
       <SectionTitle>Your client records should stay yours.</SectionTitle>
-      <div className="mt-9 grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
+      <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {TRUST_POINTS.map((t) => (
-          <p
-            key={t}
-            className="border-b pb-4 text-[16px] leading-[1.45]"
-            style={{ borderColor: PALETTE.rule }}
-          >
-            {t}
-          </p>
+          <div key={t} className="flex items-start gap-3">
+            <MockCard className="flex w-full items-start gap-3">
+              <span
+                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                style={{ backgroundColor: PALETTE.greenBg, color: PALETTE.greenInk }}
+                aria-hidden="true"
+              >
+                ✓
+              </span>
+              <p className="text-[15px] leading-[1.4]">{t}</p>
+            </MockCard>
+          </div>
         ))}
       </div>
       <p className="mt-8 text-[14px]" style={{ color: PALETTE.muted }}>

@@ -51,9 +51,12 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByRole("heading", { name: "Smarter prep, without autopilot." }),
     ).toBeVisible();
 
-    // Visual proof added in the density pass: the Records section shows a
-    // printable procedure-record mockup and the Smarter-prep section shows
-    // the Daily prep "tomorrow morning" brief.
+    // PR #246 visual system: the key product mockups all render — the
+    // hero app-window preview, the Before Today centerpiece, the
+    // procedure-record mockup, the proof strip, and the Daily prep brief.
+    await expect(page.getByText("Demo Studio · Today")).toBeVisible();
+    await expect(page.getByText("Before Today · Maya R.")).toBeVisible();
+    await expect(page.getByText("Built with working electrologists")).toBeVisible();
     await expect(
       page.getByText("Print this client's procedure record"),
     ).toBeVisible();
@@ -84,8 +87,10 @@ test.describe("marketing homepage (mobile)", () => {
     ).toBeVisible();
     await expectNoPageOverflow(page, "homepage mobile");
 
-    // The density-pass visuals stack under their copy and fit the phone
-    // (no overflow asserted above covers the record + prep mockups).
+    // The product mockups stack under their copy and fit the phone
+    // (the no-overflow assertion above covers the app-window frames,
+    // Before Today centerpiece, record, and prep mockups).
+    await expect(page.getByText("Before Today · Maya R.")).toBeVisible();
     await expect(
       page.getByText("Print this client's procedure record"),
     ).toBeVisible();

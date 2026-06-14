@@ -39,4 +39,9 @@ export const MARKETING_PALETTE = {
   greenRule: "#CFE3CE",
   greenInk: "#2B5A2B",
   chip: "#F4F2EC",
+  // PR #246 visual system: a faint warm panel tone for alternating
+  // section bands, and the app-window chrome bar tone for the hero
+  // preview frame. Both stay inside the calm, clinical warm palette.
+  band: "#F3F1E9",
+  chrome: "#F0EEE6",
 } as const;

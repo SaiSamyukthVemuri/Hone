@@ -149,10 +149,64 @@ describe("required homepage sections (human rewrite)", () => {
 });
 
 describe("structure: eight sections, no AI-policy bloat", () => {
-  it("renders eight content sections (Hero plus seven shells)", () => {
+  it("renders the hero, the proof strip, and seven content shells", () => {
     const shells = (PAGE_RAW.match(/<SectionShell/g) ?? []).length;
     expect(shells).toBe(7);
     expect(PAGE_RAW).toMatch(/<Hero \/>/);
+    expect(PAGE_RAW).toMatch(/<ProofStrip \/>/);
+  });
+});
+
+describe("PR #246 visual system: product proof + polish", () => {
+  it("the hero is a product proof visual (app-window preview)", () => {
+    // The hero visual is wrapped in the AppWindow chrome with a demo
+    // title bar, so it reads as a real app screen, not a floating card.
+    expect(PAGE).toMatch(/<AppWindow title="Demo Studio · Today">/);
+  });
+
+  it("Before Today is a centerpiece visual with recorded-history wording", () => {
+    expect(PAGE).toMatch(/<AppWindow title="Before Today · Maya R\.">/);
+    expect(PAGE).toMatch(/Remember today/);
+    expect(PAGE).toMatch(/Last recorded/);
+    expect(PAGE).toMatch(/Caution noted/);
+    // Safe wording only inside the Before Today mockup — no clinical
+    // advice / diagnosis / causation (scoped to the component slice;
+    // the page-wide safety line legitimately says "should not diagnose").
+    const start = PAGE_RAW.indexOf("function BeforeTodayMockup(");
+    const slice = PAGE_RAW.slice(start, PAGE_RAW.indexOf("\nfunction ", start + 1));
+    expect(slice.length).toBeGreaterThan(0);
+    expect(slice).not.toMatch(/recommend/i);
+    expect(slice).not.toMatch(/diagnos/i);
+    expect(slice).not.toMatch(/\bcaused\b/i);
+    expect(slice).not.toMatch(/\bsafe\b|\bunsafe\b/i);
+  });
+
+  it("Record Keeping visual shows the demo lot and aftercare", () => {
+    expect(PAGE).toMatch(/Procedure record/);
+    expect(PAGE).toMatch(/L-204/);
+    expect(PAGE).toMatch(/Aftercare/);
+    expect(PAGE).toMatch(/Marked/);
+    expect(PAGE).toMatch(/Print this client&apos;s procedure record/);
+  });
+
+  it("Daily prep visual is present with the recorded-data footer + action", () => {
+    expect(PAGE).toMatch(/Tomorrow morning/);
+    expect(PAGE).toMatch(/Review Before Today/);
+    expect(PAGE).toMatch(/Based on recorded Hone data\./);
+  });
+
+  it("has a credible proof strip and no fake proof", () => {
+    expect(PAGE).toMatch(/Built with working electrologists/);
+    expect(PAGE).toMatch(/Founder-led setup/);
+    expect(PAGE).toMatch(/Browser-tested treatment-memory loop/);
+    // No invented social proof.
+    expect(PAGE).not.toMatch(/trusted by (thousands|hundreds|millions|\d)/i);
+    expect(PAGE).not.toMatch(/\btestimonial/i);
+    expect(PAGE).not.toMatch(/customers? love/i);
+    expect(PAGE).not.toMatch(/\d+ ?(\+|k) (studios|users|customers|practitioners)/i);
+    // No fake customer logos (the page renders no images at all).
+    expect(PAGE_RAW).not.toMatch(/<img\b/i);
+    expect(PAGE_RAW).not.toMatch(/customer logos?|logo wall|as seen (in|on)/i);
   });
 });
 
