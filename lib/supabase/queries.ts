@@ -53,6 +53,48 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
   return { practitioner: practitioner as Practitioner, studio };
 }
 
+// Route-guard variant of getCurrentPractitionerWithStudio for the
+// authenticated app SHELL (app/(app)/layout.tsx). Hone is invite-only
+// (PR #189 / migration 0081 / PR #253): a signed-in user with no active
+// practitioner row — e.g. an uninvited Google sign-in, which creates an
+// auth.users row but NO studio/practitioner — must not reach the app.
+// Instead of throwing a raw 500 (what getCurrentPractitionerWithStudio
+// does), this redirects:
+//   * no auth user            -> /login
+//   * authed, but no studio   -> /no-access  (the safe invite-only gate)
+// The throwing variant stays the backstop for direct server-action POSTs
+// (those run inside try/catch and safely return a generic denial), so
+// this redirecting guard is used ONLY where a clean redirect is wanted
+// and not swallowed by a surrounding catch (the shell layout).
+export async function requirePractitionerWithStudio(): Promise<PractitionerWithStudio> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*, studio:studios(*)")
+    .eq("user_id", user.id)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load practitioner: ${error.message}`);
+  }
+  if (!data) {
+    // Authenticated but no studio membership: invite-only gate.
+    redirect("/no-access");
+  }
+
+  const { studio, ...practitioner } = data as Practitioner & { studio: Studio };
+  return { practitioner: practitioner as Practitioner, studio };
+}
+
 export async function getPractitionersForStudio(
   studioId: string,
 ): Promise<Practitioner[]> {

@@ -130,6 +130,43 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   };
 }
 
+// PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
+// email with NO pending invitation. The 0081 handle_new_user trigger
+// fires on creation, finds no invitation, and creates NOTHING (no studio,
+// no practitioner). Used to prove the invite-only gate: this user can
+// authenticate but must be redirected to /no-access, never the app shell.
+export async function seedNoStudioAuthUser(): Promise<{ email: string }> {
+  const runId = randomUUID().slice(0, 8);
+  const email = `e2e-nostudio-${runId}@harness.local`;
+  const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: E2E_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, email_confirm: true }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `local GoTrue admin createUser (no-studio) failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  // Sanity: invite-only handle_new_user must NOT have created a practitioner.
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.practitioners p
+       join auth.users u on u.id = p.user_id
+      where lower(u.email) = lower($1)`,
+    [email],
+  );
+  if (rows[0]?.count !== "0") {
+    throw new Error(
+      "seed failed: an uninvited auth user unexpectedly has a practitioner row",
+    );
+  }
+  return { email };
+}
+
 // Read-only lookups the spec uses to bridge between UI steps.
 
 // Intake links are SIGNED tokens (lib/intake/tokens.ts), not stored

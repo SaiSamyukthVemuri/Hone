@@ -111,5 +111,30 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // PR #253 invite-only gate: an AUTHENTICATED user with no active
+  // practitioner row (an uninvited sign-in — auth.users exists but the
+  // 0081 handle_new_user trigger created no studio/practitioner) is sent
+  // to the safe /no-access page BEFORE any (app) layout or page renders.
+  // Doing it here (not only in the shell layout) means no-studio users
+  // never execute an app loader, so there is no raw error and no studio
+  // data is ever loaded. Exempt: public routes, the /no-access gate
+  // itself, and its sign-out (a POST to /no-access). The practitioners
+  // read is studio-RLS-scoped to the caller; a no-studio user matches no
+  // row. The shell layout keeps its own requirePractitionerWithStudio
+  // guard as defense in depth.
+  if (user && !isPublicRoute && pathname !== "/no-access") {
+    const { data: practitioner } = await supabase
+      .from("practitioners")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (!practitioner) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/no-access";
+      return NextResponse.redirect(url);
+    }
+  }
+
   return supabaseResponse;
 }

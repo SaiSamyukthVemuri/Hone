@@ -95,11 +95,22 @@ export default function LoginPage() {
         </div>
 
         <h1
-          className="font-[var(--font-fraunces)] mb-10 text-center text-[36px] font-bold leading-[1]"
+          className="font-[var(--font-fraunces)] mb-4 text-center text-[36px] font-bold leading-[1]"
           style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
         >
           Sign in to Hone
         </h1>
+
+        {/* PR #253: Hone is invite-only for supervised studios. This is a
+            sign-IN page, not self-serve signup; uninvited emails create no
+            account or studio. */}
+        <p
+          className="mb-10 text-center text-[14px] leading-[1.55]"
+          style={{ color: PALETTE.muted }}
+        >
+          Invited users only. Use the email address your studio invitation was
+          sent to.
+        </p>
 
         {status.kind === "sent" ? (
           <SentNotice email={email} />
@@ -237,7 +248,7 @@ export default function LoginPage() {
               className="text-center text-[12px] leading-[1.55]"
               style={{ color: PALETTE.muted }}
             >
-              Trouble signing in? Email{" "}
+              Need access, or trouble signing in? Email{" "}
               <a
                 href="mailto:hello@hone.care"
                 className="underline hover:text-[#0A0A0A]"

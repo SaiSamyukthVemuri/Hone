@@ -511,6 +511,10 @@ Expected:
 | `/portal/verify/fake` | `200` | same |
 | `/calendar-feed/fake.ics` | `404` (no real token) | same |
 
+### 10b. Invite-only auth + no-studio gate (PR #253)
+
+Hone is invite-only for supervised studios; there is no self-serve signup or public studio creation. Anonymous (no session): `/login` returns `200` and shows "Sign in to Hone" with the line "Invited users only. Use the email address your studio invitation was sent to." and NO "Create account / Sign up / Create studio" CTA; `/no-access` returns `307 -> /login`; and there is no `/signup` or `/register` route (`curl -sI https://hone.care/signup` and `/register` return `404`). No-studio authenticated user (an uninvited Google sign-in, or any account with no `pending_invitations` match — i.e. an `auth.users` row with no practitioner): after the auth callback they are redirected to `/no-access` (NOT the dashboard), which shows "No studio access yet", the invite-only explanation, a Sign out button (→ `/login`), and a Contact Hone link (`mailto:hello@hone.care`), and NO app navigation or studio data; hitting `/dashboard`, `/clients`, `/calendar`, `/records`, `/settings/*`, or `/admin` directly all redirect (`307`) to `/no-access` (the middleware gate runs before any app page renders, so no studio data loads and no server error is logged). Invited owner first sign-in still works (the supported `pending_invitations` → `handle_new_user` → owner practitioner path; the existing Chloe/Willow account is unaffected). Public booking (`/book/<slug>`) and the marketing site remain public. The e2e lane (`e2e/invite-only.spec.ts`) proves the no-studio gate end to end on the local stack; the RLS posture (no authenticated user can create a studio / membership / invitation or escalate a role) is pinned by `tests/db/invite-only-posture.db.test.ts`.
+
 ## 11. Global security header smoke (PR #150)
 
 Run after every deploy. The global headers ship from `next.config.ts` via the builder in `lib/security/headers.ts`.
