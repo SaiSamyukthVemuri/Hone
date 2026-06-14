@@ -91,26 +91,36 @@ describe("required homepage sections (human rewrite)", () => {
     expect(PAGE).toMatch(/Daily Prep Brief is simple on purpose\./);
   });
 
-  it("records and lot traceability, with the responsibility caveat", () => {
+  it("records and lot traceability, with the responsibility caveat + a record visual", () => {
     expect(PAGE).toMatch(/Pull the record when you need it\./);
     expect(PAGE).toMatch(
       /Choose the client, review the record, and print it\./,
     );
-    expect(PAGE).toMatch(/lot traceability/);
+    expect(PAGE).toMatch(/lot traceability/i);
     expect(PAGE).toMatch(
       /studios remain responsible for meeting local public-health requirements\./,
     );
+    // Visual proof: the printable procedure-record mockup with demo data.
+    expect(PAGE).toMatch(/Procedure record/);
+    expect(PAGE).toMatch(/Print this client&apos;s procedure record/);
+    expect(PAGE).toMatch(/Aftercare/);
+    expect(PAGE).toMatch(/Marked/);
+    expect(PAGE).toMatch(/Sterex · L-204/);
   });
 
-  it("smarter prep without autopilot (plain forward-looking copy)", () => {
+  it("smarter prep without autopilot (plain copy + a daily-prep visual)", () => {
     expect(PAGE).toMatch(/Smarter prep, without autopilot\./);
     expect(PAGE).toMatch(
-      /it should never send messages, charge cards, or change clinical records without you\./,
+      /Better records come first\. Once the treatment history is there, Hone can help pull together the day: who needs review, what is missing, and what you wrote for next time\./,
     );
     // The single, plain safety line (docs/22 boundary in human words).
     expect(PAGE).toMatch(
       /Future smart features should help with prep and drafts\. They should not diagnose, recommend treatment settings, send messages, charge cards, or change records without you\./,
     );
+    // Visual proof: the live, rules-based Daily Prep "tomorrow morning" brief.
+    expect(PAGE).toMatch(/Tomorrow morning/);
+    expect(PAGE).toMatch(/Based on recorded Hone data\./);
+    expect(PAGE).toMatch(/Intake not reviewed/);
     // The old internal-policy section is gone from the public site.
     expect(PAGE).not.toMatch(/Agentic support, but practitioner-controlled\./);
     expect(PAGE).not.toMatch(/Assistant, not decider/);

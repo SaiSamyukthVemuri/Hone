@@ -14,12 +14,18 @@ import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 // Eight sections: Hero, Calendar vs Hone, Before/during/after, What
 // Hone remembers, Records and lot traceability, Smarter prep without
 // autopilot, Privacy/trust, Pricing/walkthrough. One hero visual;
-// the "what it remembers" section uses compact cards. All visuals are
-// coded mockups with anonymized demo data only (Maya R. / Demo Studio
-// / lot L-204 / Sterex), never real clients. The forward-looking
-// section keeps the docs/22 safety boundary in plain words (help with
-// prep and drafts; never send, charge, diagnose, or change records
-// without you), with no medical, compliance, or AI overclaims.
+// the "what it remembers" section uses compact cards. A follow-up pass
+// raised the visual density (pilot feedback: the human copy was right
+// but the page felt too sparse): the Records and Smarter-prep sections
+// each gained a product mockup (a printable procedure record; the live,
+// rules-based Daily Prep "tomorrow morning" brief), the hero card gained
+// two proof tiles, and section padding was tightened. All visuals are
+// coded mockups with anonymized demo data only (Maya R. / Jordan L. /
+// Alex P. / Demo Studio / lot L-204 / Sterex), never real clients. The
+// forward-looking section keeps the docs/22 safety boundary in plain
+// words (help with prep and drafts; never send, charge, diagnose, or
+// change records without you), with no medical, compliance, or AI
+// overclaims.
 export default function HomePage() {
   return (
     <main
@@ -61,7 +67,7 @@ function SectionShell({
     <Reveal
       as="section"
       id={id}
-      className={`scroll-mt-24 px-6 py-18 md:px-12 md:py-24 lg:px-16 ${className}`}
+      className={`scroll-mt-24 px-6 py-14 md:px-12 md:py-20 lg:px-16 ${className}`}
     >
       <div className="mx-auto max-w-[1400px]">{children}</div>
     </Reveal>
@@ -71,7 +77,7 @@ function SectionShell({
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
-      className="font-[var(--font-fraunces)] mt-8 max-w-[860px] text-[30px] font-bold leading-[1.05] md:text-[42px]"
+      className="font-[var(--font-fraunces)] mt-5 max-w-[860px] text-[30px] font-bold leading-[1.05] md:text-[42px]"
       style={{ letterSpacing: "-0.03em" }}
     >
       {children}
@@ -227,8 +233,9 @@ function Hero() {
   );
 }
 
-// One hero card: a Today appointment, the Before Today memory, a
-// record reminder, and the Daily Prep Brief in a single readable view.
+// Hero visual: the main Today card (the Before Today memory, chips, and
+// a record reminder) plus two compact proof tiles so the column reads as
+// a real product surface and balances the taller copy column on desktop.
 function HeroVisual() {
   return (
     <div className="flex flex-col">
@@ -264,7 +271,31 @@ function HeroVisual() {
           <Chip tone="amber">Aftercare not marked last session</Chip>
         </div>
       </MockCard>
+
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <MiniTile label="Before Today">Last treatment and what to watch.</MiniTile>
+        <MiniTile label="Procedure record">Print-ready, per client.</MiniTile>
+      </div>
       <DemoTag />
+    </div>
+  );
+}
+
+// Small two-line proof tile used under the hero card.
+function MiniTile({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-lg p-4"
+      style={{ backgroundColor: PALETTE.card, border: `1px solid ${PALETTE.rule}` }}
+    >
+      <MockLabel>{label}</MockLabel>
+      <p className="mt-1.5 text-[13px] leading-[1.4]">{children}</p>
     </div>
   );
 }
@@ -482,48 +513,160 @@ function ChartRow({ label, value }: { label: string; value: string }) {
 function RecordKeepingSection() {
   return (
     <SectionShell id="records">
-      <EyebrowCaption>Record keeping</EyebrowCaption>
-      <SectionTitle>Pull the record when you need it.</SectionTitle>
-      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
-        If someone asks for one client&apos;s procedure record, you should not
-        have to dig through notes. Choose the client, review the record, and
-        print it. Hone keeps procedure records, sterile item logs, disinfectants,
-        exposure incident reporting, audit history, and lot traceability in one
-        place.
-      </p>
-      <p
-        className="mt-6 max-w-[680px] text-[14px] leading-[1.6]"
-        style={{ color: PALETTE.muted }}
-      >
-        Hone supports record keeping workflows, but studios remain responsible
-        for meeting local public-health requirements.
-      </p>
+      <div className="grid grid-cols-1 items-start gap-x-14 gap-y-10 lg:grid-cols-12">
+        <div className="lg:col-span-6">
+          <EyebrowCaption>Record keeping</EyebrowCaption>
+          <SectionTitle>Pull the record when you need it.</SectionTitle>
+          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.6] md:text-[19px]">
+            If someone asks for one client&apos;s procedure record, you should not
+            have to dig through notes. Choose the client, review the record, and
+            print it.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Chip>Lot traceability</Chip>
+            <Chip>Sterile items</Chip>
+            <Chip>Disinfectants</Chip>
+            <Chip>Audit history</Chip>
+          </div>
+          <div
+            className="mt-7 max-w-[520px] rounded-md px-4 py-3"
+            style={{ backgroundColor: PALETTE.chip, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <p className="text-[13px] leading-[1.55]" style={{ color: PALETTE.muted }}>
+              Hone supports record keeping workflows, but studios remain
+              responsible for meeting local public-health requirements.
+            </p>
+          </div>
+        </div>
+        <div className="lg:col-span-6">
+          <ProcedureRecordVisual />
+        </div>
+      </div>
     </SectionShell>
+  );
+}
+
+// Procedure-record mockup: one client's printable record with demo data,
+// the proof that "pull the record" is a real product surface.
+function ProcedureRecordVisual() {
+  return (
+    <div className="flex flex-col">
+      <MockCard>
+        <div className="flex items-center justify-between">
+          <MockLabel>Procedure record</MockLabel>
+          <span className="text-[11px]" style={{ color: PALETTE.muted }}>
+            Demo Studio
+          </span>
+        </div>
+        <div className="mt-3 flex items-baseline justify-between gap-3">
+          <p className="text-[15px] font-medium">Maya R.</p>
+          <span className="text-[12px] tabular-nums" style={{ color: PALETTE.muted }}>
+            Jun 12
+          </span>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 text-[14px]">
+          <ChartRow label="Area" value="Upper lip" />
+          <ChartRow label="Probe / lot" value="Sterex · L-204" />
+          <ChartRow label="Tolerance / reaction" value="4/5 · Mild redness" />
+          <ChartRow label="Aftercare" value="Marked" />
+        </div>
+        <div
+          className="mt-4 flex items-center justify-between rounded-md px-3 py-2.5"
+          style={{ backgroundColor: PALETTE.bg, border: `1px solid ${PALETTE.rule}` }}
+        >
+          <span className="text-[12px] font-medium">
+            Print this client&apos;s procedure record
+          </span>
+          <span className="text-[11px]" style={{ color: PALETTE.muted }}>
+            PDF
+          </span>
+        </div>
+      </MockCard>
+      <DemoTag />
+    </div>
   );
 }
 
 /* Section 6: Smarter prep, without autopilot ───────────────────────────── */
 
+const PREP_ROWS: ReadonlyArray<{ name: string; note: string; tone: "blue" | "amber" }> = [
+  { name: "Maya R.", note: "Review upper lip sensitivity note", tone: "blue" },
+  { name: "Jordan L.", note: "Intake not reviewed", tone: "amber" },
+  { name: "Alex P.", note: "Probe lot missing from last session", tone: "amber" },
+];
+
 function AgenticSection() {
   return (
     <SectionShell id="prep">
-      <EyebrowCaption>Looking ahead</EyebrowCaption>
-      <SectionTitle>Smarter prep, without autopilot.</SectionTitle>
-      <p className="mt-6 max-w-[760px] text-[17px] leading-[1.6] md:text-[19px]">
-        Better records come first. Once the treatment history is there, Hone can
-        do more of the prep for you: pull together the daily brief, point out
-        what is missing, and one day help draft a follow-up. But it should never
-        send messages, charge cards, or change clinical records without you.
-      </p>
-      <p
-        className="mt-6 max-w-[760px] text-[15px] leading-[1.6]"
-        style={{ color: PALETTE.muted }}
-      >
-        Future smart features should help with prep and drafts. They should not
-        diagnose, recommend treatment settings, send messages, charge cards, or
-        change records without you.
-      </p>
+      <div className="grid grid-cols-1 items-start gap-x-14 gap-y-10 lg:grid-cols-12">
+        <div className="lg:col-span-6">
+          <EyebrowCaption>Looking ahead</EyebrowCaption>
+          <SectionTitle>Smarter prep, without autopilot.</SectionTitle>
+          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.6] md:text-[19px]">
+            Better records come first. Once the treatment history is there, Hone
+            can help pull together the day: who needs review, what is missing, and
+            what you wrote for next time.
+          </p>
+          <div
+            className="mt-7 max-w-[520px] rounded-md px-4 py-3"
+            style={{ backgroundColor: PALETTE.chip, border: `1px solid ${PALETTE.rule}` }}
+          >
+            <p className="text-[13px] leading-[1.55]" style={{ color: PALETTE.muted }}>
+              Future smart features should help with prep and drafts. They should
+              not diagnose, recommend treatment settings, send messages, charge
+              cards, or change records without you.
+            </p>
+          </div>
+        </div>
+        <div className="lg:col-span-6">
+          <DailyPrepVisual />
+        </div>
+      </div>
     </SectionShell>
+  );
+}
+
+// Daily prep mockup (Option A): the live, rules-based Daily Prep Brief
+// surfacing what to review tomorrow from recorded Hone data.
+function DailyPrepVisual() {
+  return (
+    <div className="flex flex-col">
+      <MockCard>
+        <div className="flex items-center justify-between">
+          <MockLabel>Daily prep</MockLabel>
+          <span className="text-[11px]" style={{ color: PALETTE.muted }}>
+            Demo Studio
+          </span>
+        </div>
+        <p className="mt-2 text-[15px] font-medium">Tomorrow morning</p>
+        <div className="mt-3 flex flex-col gap-2.5">
+          {PREP_ROWS.map((row) => {
+            const tone =
+              row.tone === "blue"
+                ? { bg: PALETTE.blueBg, border: PALETTE.blueRule, ink: PALETTE.blueInk }
+                : { bg: PALETTE.amberBg, border: PALETTE.amberRule, ink: PALETTE.amberInk };
+            return (
+              <div
+                key={row.name}
+                className="rounded-md px-3 py-2.5"
+                style={{ backgroundColor: tone.bg, border: `1px solid ${tone.border}` }}
+              >
+                <p className="text-[13px] font-medium" style={{ color: tone.ink }}>
+                  {row.name}
+                </p>
+                <p className="mt-0.5 text-[12px]" style={{ color: tone.ink }}>
+                  {row.note}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[11px]" style={{ color: PALETTE.muted }}>
+          Based on recorded Hone data.
+        </p>
+      </MockCard>
+      <DemoTag />
+    </div>
   );
 }
 

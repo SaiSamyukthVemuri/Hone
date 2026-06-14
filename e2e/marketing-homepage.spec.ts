@@ -51,6 +51,15 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByRole("heading", { name: "Smarter prep, without autopilot." }),
     ).toBeVisible();
 
+    // Visual proof added in the density pass: the Records section shows a
+    // printable procedure-record mockup and the Smarter-prep section shows
+    // the Daily prep "tomorrow morning" brief.
+    await expect(
+      page.getByText("Print this client's procedure record"),
+    ).toBeVisible();
+    await expect(page.getByText("Tomorrow morning")).toBeVisible();
+    await expect(page.getByText("Based on recorded Hone data.")).toBeVisible();
+
     // Sign in reachable in the header nav, links to /login.
     const signIn = page.getByRole("link", { name: "Sign in" }).first();
     await expect(signIn).toBeVisible();
@@ -74,6 +83,13 @@ test.describe("marketing homepage (mobile)", () => {
       }),
     ).toBeVisible();
     await expectNoPageOverflow(page, "homepage mobile");
+
+    // The density-pass visuals stack under their copy and fit the phone
+    // (no overflow asserted above covers the record + prep mockups).
+    await expect(
+      page.getByText("Print this client's procedure record"),
+    ).toBeVisible();
+    await expect(page.getByText("Tomorrow morning")).toBeVisible();
 
     // Hero CTA is reachable on the phone.
     await expect(
