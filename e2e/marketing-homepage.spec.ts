@@ -75,6 +75,14 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByText("Aftercare not marked last session").first(),
     ).toBeVisible();
 
+    // PR #248: the Privacy section is a compact checklist (not the old
+    // 5-card grid); the claims and the policy link render.
+    await expect(page.getByText("Studio data stays isolated.")).toBeVisible();
+    await expect(page.getByText("Secure sign-in.")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "privacy policy" }),
+    ).toBeVisible();
+
     // Sign in reachable in the header nav, links to /login.
     const signIn = page.getByRole("link", { name: "Sign in" }).first();
     await expect(signIn).toBeVisible();

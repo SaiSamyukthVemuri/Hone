@@ -86,8 +86,8 @@ describe("required homepage sections (human rewrite)", () => {
       .slice(start, PAGE_RAW.indexOf("\nfunction ", start + 1))
       .replace(/\s+/g, " ");
     const calendarCard = section.slice(
-      section.indexOf("Calendar-only"),
-      section.indexOf('MockLabel>Hone'),
+      section.indexOf('AppWindow title="Calendar-only"'),
+      section.indexOf('AppWindow title="Hone"'),
     );
     // No treatment-memory fields leak into the calendar card.
     expect(calendarCard).not.toMatch(/Remember today/);
@@ -159,10 +159,25 @@ describe("required homepage sections (human rewrite)", () => {
     expect(PAGE).not.toMatch(/No autonomous clinical decisions/);
   });
 
-  it("privacy / trust section with true claims only", () => {
+  it("privacy / trust section: compact checklist + all five claims + policy link", () => {
     expect(PAGE).toMatch(/Your client records should stay yours\./);
+    // All five claims remain present.
     expect(PAGE).toMatch(/Studio data stays isolated\./);
+    expect(PAGE).toMatch(/Records stay exportable\./);
+    expect(PAGE).toMatch(/No advertising use of health records\./);
     expect(PAGE).toMatch(/No AI training on practitioner or client records\./);
+    expect(PAGE).toMatch(/Secure sign-in\./);
+    // The privacy policy link is still there.
+    expect(PAGE).toMatch(/href="\/privacy"/);
+    expect(PAGE).toMatch(/privacy policy/);
+    // PR #248: the claims live in ONE compact checklist card, not the old
+    // five-card 3+2 grid. The five TRUST_POINTS render inside a single
+    // MockCard (the claims are mapped once), so there is exactly one
+    // MockCard in the section and no lg:grid-cols-3 card grid.
+    const start = PAGE_RAW.indexOf("function TrustSection(");
+    const fn = PAGE_RAW.slice(start, PAGE_RAW.indexOf("\nfunction ", start + 1));
+    expect((fn.match(/<MockCard/g) ?? []).length).toBe(1);
+    expect(fn).not.toMatch(/lg:grid-cols-3/);
   });
 
   it("pricing + walkthrough CTA section", () => {
