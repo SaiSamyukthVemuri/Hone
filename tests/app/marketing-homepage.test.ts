@@ -205,14 +205,22 @@ describe("structure: sections, no AI-policy bloat", () => {
     expect(PAGE_RAW).toMatch(/<BuiltFromTreatmentRooms \/>/);
   });
 
-  it("the origin-story section reinforces treatment memory without salon claims", () => {
+  it("the origin-story section is a balanced two-column story with a visual card", () => {
+    expect(PAGE).toMatch(/Why Hone exists/);
     expect(PAGE).toMatch(/Built from real treatment rooms\./);
     expect(PAGE).toMatch(
       /Hone started with a simple problem: after enough appointments, the important details get hard to keep in your head\./,
     );
-    expect(PAGE).toMatch(/Hone is built around that memory\./);
-    // No broadening into generic salon / practice-management positioning.
+    expect(PAGE).toMatch(/Hone keeps that memory close to the next visit\./);
+    // Right-side product card (not a bare text block in an empty band).
+    expect(PAGE).toMatch(/What gets hard to remember/);
+    expect(PAGE).toMatch(/What was used last time\?/);
+    expect(PAGE).toMatch(/Hone keeps those details close to the next appointment\./);
+    expect(PAGE).toMatch(/Record gap/);
+    // No broadening into generic salon / practice-management positioning,
+    // and no fake proof in the new visual.
     expect(PAGE).not.toMatch(/salon|spa software|practice management|all-in-one/i);
+    expect(PAGE).not.toMatch(/\btestimonial|trusted by (thousands|\d)/i);
   });
 });
 
