@@ -6,18 +6,20 @@ import { SafeAnalytics } from "./_components/SafeAnalytics";
 import { EyebrowCaption } from "./_components/MarketingAtoms";
 import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 
-// Public marketing homepage. PR #242 repositioned the site around
-// treatment memory; PR #243 tightens it to a YC-style landing page:
-// say what it is, who it is for, the pain, the product solving it,
-// one primary CTA, fewer sections, less repetition. Eight sections:
-// Hero, Problem/comparison, How Hone works, Product proof, Record
-// keeping, Agentic support (support + safety merged), Privacy/trust,
-// Pricing/CTA. One hero visual; product proof uses compact cards
-// instead of a full section per surface. All visuals are coded
-// mockups with anonymized demo data only (Maya R. / Demo Studio /
-// lot L-204 / Sterex), never real clients. Copy stays inside the
-// docs/22 safety boundary (assistant not decider, draft not send,
-// flag not diagnose) with no medical, compliance, or AI overclaims.
+// Public marketing homepage. PR #244 rewrites the copy in a plainer,
+// human, practitioner-first voice (pilot feedback: the site read like
+// an AI-generated SaaS homepage). The public category phrase is now
+// "Treatment memory for electrologists." AI / agentic language is out
+// of the main pitch; treatment memory and records are the lead story.
+// Eight sections: Hero, Calendar vs Hone, Before/during/after, What
+// Hone remembers, Records and lot traceability, Smarter prep without
+// autopilot, Privacy/trust, Pricing/walkthrough. One hero visual;
+// the "what it remembers" section uses compact cards. All visuals are
+// coded mockups with anonymized demo data only (Maya R. / Demo Studio
+// / lot L-204 / Sterex), never real clients. The forward-looking
+// section keeps the docs/22 safety boundary in plain words (help with
+// prep and drafts; never send, charge, diagnose, or change records
+// without you), with no medical, compliance, or AI overclaims.
 export default function HomePage() {
   return (
     <main
@@ -182,31 +184,29 @@ function Hero() {
     <Reveal as="section" className="px-6 pb-16 pt-14 md:px-12 md:pb-20 md:pt-18 lg:px-16">
       <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-x-14 gap-y-12 lg:grid-cols-12">
         <div className="lg:col-span-6">
-          <EyebrowCaption>
-            Treatment memory for permanent hair removal studios
-          </EyebrowCaption>
+          <EyebrowCaption>Treatment memory for electrologists</EyebrowCaption>
 
           <h1
             className="font-[var(--font-fraunces)] mt-8 max-w-[760px] text-[44px] font-bold leading-[0.98] md:text-[64px]"
             style={{ letterSpacing: "-0.04em" }}
           >
-            Treatment memory for permanent hair removal studios.
+            Treatment memory for electrologists.
           </h1>
 
           <p
             className="mt-8 max-w-[560px] text-[18px] leading-[1.5] md:text-[21px]"
             style={{ color: PALETTE.ink }}
           >
-            Hone helps electrologists see what happened last time, chart what
-            matters today, and keep procedure records clean.
+            Hone helps electrologists prepare for returning clients, chart
+            treatment details, and keep cleaner procedure records.
           </p>
 
           <p
             className="mt-5 max-w-[560px] text-[16px] leading-[1.55]"
             style={{ color: PALETTE.muted }}
           >
-            Your calendar tells you who is coming. Hone tells you what to
-            remember.
+            Your calendar knows who is coming. Hone helps you remember what
+            matters.
           </p>
 
           <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
@@ -215,8 +215,7 @@ function Hero() {
           </div>
 
           <p className="mt-7 text-[13px]" style={{ color: PALETTE.muted }}>
-            Built for practitioner-controlled workflows. No autonomous treatment
-            decisions.
+            Built with electrologists who do this every day.
           </p>
         </div>
 
@@ -275,8 +274,16 @@ function HeroVisual() {
 function ProblemSection() {
   return (
     <SectionShell>
-      <EyebrowCaption>The gap</EyebrowCaption>
-      <SectionTitle>Your calendar does not remember the treatment.</SectionTitle>
+      <EyebrowCaption>Calendar vs Hone</EyebrowCaption>
+      <SectionTitle>
+        Your calendar shows the appointment. Hone shows what to remember.
+      </SectionTitle>
+      <p className="mt-6 max-w-[720px] text-[17px] leading-[1.6] md:text-[19px]">
+        Most tools stop at the appointment. They tell you the client, the time,
+        and the service. Hone helps you see what happened last time: the area
+        treated, the probe and lot, the client&apos;s response, and the note you
+        left for next visit.
+      </p>
 
       <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
         <MockCard>
@@ -323,23 +330,23 @@ function ProblemSection() {
 
 const WORKFLOW: ReadonlyArray<{
   kicker: string;
-  title: string;
+  body: string;
   items: string[];
 }> = [
   {
-    kicker: "Before",
-    title: "Review the memory.",
-    items: ["Daily Prep Brief", "Before Today", "intake status", "last treatment context"],
+    kicker: "Before the appointment",
+    body: "Open the client before they sit down. Hone shows the last treatment, what to watch, and what you wrote for next time.",
+    items: ["Daily prep", "Before Today", "intake status", "last treatment"],
   },
   {
-    kicker: "During",
-    title: "Chart the details.",
-    items: ["area", "probe and lot", "tolerance and reaction", "caution", "aftercare"],
+    kicker: "During the appointment",
+    body: "Chart the treatment area, probe, lot, tolerance, reaction, and aftercare while it is fresh.",
+    items: ["area", "probe and lot", "tolerance", "reaction", "aftercare"],
   },
   {
-    kicker: "After",
-    title: "Keep the record.",
-    items: ["procedure records", "lot traceability", "audit history", "print and export"],
+    kicker: "After the appointment",
+    body: "Keep the procedure record, lot history, and follow-up notes in one place.",
+    items: ["procedure record", "lot traceability", "follow-up notes", "print and export"],
   },
 ];
 
@@ -347,7 +354,7 @@ function HowHoneWorks() {
   return (
     <SectionShell>
       <EyebrowCaption>How it works</EyebrowCaption>
-      <SectionTitle>How Hone fits into the treatment day.</SectionTitle>
+      <SectionTitle>Before, during, and after the appointment.</SectionTitle>
       <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-3">
         {WORKFLOW.map((card) => (
           <MockCard key={card.kicker} className="flex flex-col">
@@ -357,9 +364,7 @@ function HowHoneWorks() {
             >
               {card.kicker}
             </p>
-            <h3 className="font-[var(--font-fraunces)] mt-3 text-[20px] font-normal leading-[1.25]">
-              {card.title}
-            </h3>
+            <p className="mt-3 text-[15px] leading-[1.5]">{card.body}</p>
             <div className="mt-4 flex flex-wrap gap-1.5">
               {card.items.map((i) => (
                 <Chip key={i}>{i}</Chip>
@@ -377,10 +382,8 @@ function HowHoneWorks() {
 function ProductProof() {
   return (
     <SectionShell id="product">
-      <EyebrowCaption>Product</EyebrowCaption>
-      <SectionTitle>
-        Built around the details electrologists actually need.
-      </SectionTitle>
+      <EyebrowCaption>What it remembers</EyebrowCaption>
+      <SectionTitle>What Hone remembers.</SectionTitle>
 
       <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* Before Today */}
@@ -421,9 +424,9 @@ function ProductProof() {
           </div>
         </MockCard>
 
-        {/* Procedure records */}
+        {/* Procedure record */}
         <MockCard className="flex flex-col">
-          <MockLabel>Procedure records</MockLabel>
+          <MockLabel>Procedure record</MockLabel>
           <p className="mt-2 text-[15px] leading-[1.5]">
             Pull one client&apos;s procedure record without digging through
             notebooks.
@@ -436,13 +439,13 @@ function ProductProof() {
           </div>
         </MockCard>
 
-        {/* Daily Prep Brief */}
+        {/* Daily prep */}
         <MockCard className="flex flex-col">
-          <MockLabel>Daily Prep Brief · Live</MockLabel>
+          <MockLabel>Daily prep</MockLabel>
           <p className="mt-2 text-[15px] leading-[1.5]">
-            Daily Prep Brief surfaces today&apos;s memory, intake gaps, and
-            record reminders, ordered by what needs attention. Rules-based
-            today, no AI model call.
+            Daily Prep Brief is simple on purpose. It looks at today&apos;s
+            appointments and shows recorded notes, missing intake, charting
+            gaps, and record reminders.
           </p>
           <div
             className="mt-4 rounded-md p-3"
@@ -480,12 +483,13 @@ function RecordKeepingSection() {
   return (
     <SectionShell id="records">
       <EyebrowCaption>Record keeping</EyebrowCaption>
-      <SectionTitle>
-        Procedure records without scrambling before inspection.
-      </SectionTitle>
+      <SectionTitle>Pull the record when you need it.</SectionTitle>
       <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
-        Hone keeps procedure records, sterile item logs, disinfectants, exposure
-        incident reporting, audit history, and lot traceability in one place.
+        If someone asks for one client&apos;s procedure record, you should not
+        have to dig through notes. Choose the client, review the record, and
+        print it. Hone keeps procedure records, sterile item logs, disinfectants,
+        exposure incident reporting, audit history, and lot traceability in one
+        place.
       </p>
       <p
         className="mt-6 max-w-[680px] text-[14px] leading-[1.6]"
@@ -498,40 +502,27 @@ function RecordKeepingSection() {
   );
 }
 
-/* Section 6: Agentic support (support + safety merged) ─────────────────── */
-
-const AGENTIC_BULLETS: ReadonlyArray<string> = [
-  "Assistant, not decider",
-  "Draft, not send",
-  "Flag, not diagnose",
-  "Summarize recorded history, do not invent",
-  "Human confirmation before external actions",
-];
+/* Section 6: Smarter prep, without autopilot ───────────────────────────── */
 
 function AgenticSection() {
   return (
-    <SectionShell id="agentic">
-      <EyebrowCaption>Practitioner control</EyebrowCaption>
-      <SectionTitle>Agentic support, but practitioner-controlled.</SectionTitle>
+    <SectionShell id="prep">
+      <EyebrowCaption>Looking ahead</EyebrowCaption>
+      <SectionTitle>Smarter prep, without autopilot.</SectionTitle>
       <p className="mt-6 max-w-[760px] text-[17px] leading-[1.6] md:text-[19px]">
-        Hone structures treatment history first. That makes safe agentic
-        workflows possible: daily prep, missing-record reminders, and draft-only
-        follow-ups. Hone does not make clinical decisions, recommend treatment
-        settings, send messages, charge cards, or change records without
-        confirmation.
+        Better records come first. Once the treatment history is there, Hone can
+        do more of the prep for you: pull together the daily brief, point out
+        what is missing, and one day help draft a follow-up. But it should never
+        send messages, charge cards, or change clinical records without you.
       </p>
-      <div className="mt-9 grid grid-cols-1 gap-x-10 gap-y-3 md:grid-cols-2">
-        {AGENTIC_BULLETS.map((b) => (
-          <p
-            key={b}
-            className="border-b pb-3 text-[16px] leading-[1.45]"
-            style={{ borderColor: PALETTE.rule }}
-          >
-            {b}
-          </p>
-        ))}
-      </div>
-      <p className="mt-7 text-[15px] font-medium">No autonomous clinical decisions.</p>
+      <p
+        className="mt-6 max-w-[760px] text-[15px] leading-[1.6]"
+        style={{ color: PALETTE.muted }}
+      >
+        Future smart features should help with prep and drafts. They should not
+        diagnose, recommend treatment settings, send messages, charge cards, or
+        change records without you.
+      </p>
     </SectionShell>
   );
 }
@@ -550,7 +541,7 @@ function TrustSection() {
   return (
     <SectionShell>
       <EyebrowCaption>Privacy and trust</EyebrowCaption>
-      <SectionTitle>Built carefully for sensitive client records.</SectionTitle>
+      <SectionTitle>Your client records should stay yours.</SectionTitle>
       <div className="mt-9 grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
         {TRUST_POINTS.map((t) => (
           <p
@@ -578,7 +569,7 @@ function TrustSection() {
 const PRICING_CHIPS: ReadonlyArray<string> = [
   "Founder-led setup",
   "Cancel anytime",
-  "Full data export",
+  "Export your data",
   "Limited pilot availability",
 ];
 
@@ -612,9 +603,15 @@ function PricingCTA() {
           </div>
         </div>
         <div className="md:col-span-7">
-          <p className="text-[18px] leading-[1.55] md:text-[20px]">
-            Bring one real treatment workflow. We will show how Hone handles the
-            appointment, charting, treatment memory, and records.
+          <h3
+            className="font-[var(--font-fraunces)] text-[24px] font-bold leading-[1.1] md:text-[28px]"
+            style={{ letterSpacing: "-0.02em" }}
+          >
+            See if Hone fits your studio.
+          </h3>
+          <p className="mt-4 text-[18px] leading-[1.55] md:text-[20px]">
+            Bring one real treatment workflow. We will walk through how Hone
+            handles the appointment, charting, treatment memory, and records.
           </p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
             <PrimaryCta href="/demo">Book a 15-minute walkthrough</PrimaryCta>

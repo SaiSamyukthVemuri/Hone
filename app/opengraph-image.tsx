@@ -4,10 +4,12 @@ import { ImageResponse } from "next/og";
 // (Next 15; no new dependency). Outputs a 1200x630 PNG. Next auto-wires this
 // as og:image AND twitter:image site-wide via the file convention, so no
 // metadata edits are needed in layout.tsx. No client data; branded copy only.
+// PR #244: the card leads with the public category phrase (treatment memory
+// for electrologists) instead of the old "practice software" framing.
 
 export const runtime = "edge";
 export const alt =
-  "Hone. Electrolysis practice software for booking, intake, treatment plans, charting, and postcare.";
+  "Hone. Treatment memory for electrologists: before-today prep, charting, and procedure records.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -35,7 +37,7 @@ export default function OpengraphImage() {
             color: "#6B6B6B",
           }}
         >
-          Electrolysis practice software
+          Treatment memory for electrologists
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
@@ -51,8 +53,7 @@ export default function OpengraphImage() {
             Hone
           </div>
           <div style={{ display: "flex", fontSize: 40, marginTop: 18 }}>
-            Electrolysis practice software that remembers the treatment
-            details.
+            Remember what happened last time.
           </div>
         </div>
 
@@ -68,7 +69,7 @@ export default function OpengraphImage() {
           }}
         >
           <div style={{ display: "flex" }}>
-            Booking · Intake · Treatment plans · Charting · Postcare
+            Before Today · Charting · Procedure records · Lot traceability
           </div>
           <div style={{ display: "flex", color: "#0A0A0A" }}>hone.care</div>
         </div>

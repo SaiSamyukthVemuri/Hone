@@ -1,15 +1,16 @@
-// Shared nav config for the marketing site. PR #242 repositions the
-// site around treatment memory, so the nav points at the homepage
-// story sections (homepage-relative anchors, "/#id", so they work
-// from any marketing page) plus Pricing and Sign in. The primary
-// action everywhere is the Book walkthrough CTA (MARKETING_CTA),
-// rendered as a button beside the nav, not as a plain link.
+// Shared nav config for the marketing site. PR #244 keeps the nav
+// short and human and drops the "Agentic support" item, so the public
+// pitch leads with treatment memory and records rather than agentic
+// language. The nav points at the homepage story sections (homepage-
+// relative anchors, "/#id", so they work from any marketing page)
+// plus Pricing and Sign in. The primary action everywhere is the Book
+// walkthrough CTA (MARKETING_CTA), rendered as a button beside the
+// nav, not as a plain link.
 export type NavItem = { href: string; label: string };
 
 export const MARKETING_NAV: ReadonlyArray<NavItem> = [
   { href: "/#product", label: "Product" },
   { href: "/#records", label: "Records" },
-  { href: "/#agentic", label: "Agentic support" },
   { href: "/pricing", label: "Pricing" },
   { href: "/login", label: "Sign in" },
 ];

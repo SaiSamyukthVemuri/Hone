@@ -1,11 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// PR #242: public marketing homepage smoke. The homepage is a static,
-// public, server-rendered page (no auth, no DB), so this spec needs
-// no seed or login. It checks the category positioning renders, the
-// page fits the viewport on phone and desktop with no horizontal
-// overflow, the Book walkthrough CTA and pricing are visible, the
-// agentic section is present, and Sign in is reachable.
+// Public marketing homepage smoke. The homepage is a static, public,
+// server-rendered page (no auth, no DB), so this spec needs no seed or
+// login. PR #244 rewrote the copy in a human, electrologist-first voice
+// (public category phrase: "Treatment memory for electrologists."). It
+// checks that phrase renders, the page fits the viewport on phone and
+// desktop with no horizontal overflow, the Book walkthrough CTA and
+// pricing are visible, the forward-looking "Smarter prep" section is
+// present, and Sign in is reachable.
 
 async function expectNoPageOverflow(page: Page, label: string) {
   const widths = await page.evaluate(() => ({
@@ -21,13 +23,13 @@ async function expectNoPageOverflow(page: Page, label: string) {
 test.describe("marketing homepage (desktop)", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("category positioning, CTAs, pricing, agentic section, sign in", async ({
+  test("category positioning, CTAs, pricing, smarter-prep section, sign in", async ({
     page,
   }) => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Treatment memory for permanent hair removal studios.",
+        name: "Treatment memory for electrologists.",
         level: 1,
       }),
     ).toBeVisible();
@@ -44,13 +46,10 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(page.getByText("$19").first()).toBeVisible();
     await expect(page.getByText(/Founding pilot/).first()).toBeVisible();
 
-    // Agentic section visible (support + safety merged, PR #243).
+    // Forward-looking section is present, in plain language (PR #244).
     await expect(
-      page.getByRole("heading", {
-        name: "Agentic support, but practitioner-controlled.",
-      }),
+      page.getByRole("heading", { name: "Smarter prep, without autopilot." }),
     ).toBeVisible();
-    await expect(page.getByText("Assistant, not decider").first()).toBeVisible();
 
     // Sign in reachable in the header nav, links to /login.
     const signIn = page.getByRole("link", { name: "Sign in" }).first();
@@ -70,7 +69,7 @@ test.describe("marketing homepage (mobile)", () => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Treatment memory for permanent hair removal studios.",
+        name: "Treatment memory for electrologists.",
         level: 1,
       }),
     ).toBeVisible();
