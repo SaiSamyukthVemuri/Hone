@@ -194,12 +194,25 @@ describe("required homepage sections (human rewrite)", () => {
   });
 });
 
-describe("structure: eight sections, no AI-policy bloat", () => {
-  it("renders the hero, the proof strip, and seven content shells", () => {
+describe("structure: sections, no AI-policy bloat", () => {
+  it("renders the hero, the proof strip, and the content shells", () => {
+    // PR #250 added the "Built from real treatment rooms" origin-story
+    // section (8 SectionShells now).
     const shells = (PAGE_RAW.match(/<SectionShell/g) ?? []).length;
-    expect(shells).toBe(7);
+    expect(shells).toBe(8);
     expect(PAGE_RAW).toMatch(/<Hero \/>/);
     expect(PAGE_RAW).toMatch(/<ProofStrip \/>/);
+    expect(PAGE_RAW).toMatch(/<BuiltFromTreatmentRooms \/>/);
+  });
+
+  it("the origin-story section reinforces treatment memory without salon claims", () => {
+    expect(PAGE).toMatch(/Built from real treatment rooms\./);
+    expect(PAGE).toMatch(
+      /Hone started with a simple problem: after enough appointments, the important details get hard to keep in your head\./,
+    );
+    expect(PAGE).toMatch(/Hone is built around that memory\./);
+    // No broadening into generic salon / practice-management positioning.
+    expect(PAGE).not.toMatch(/salon|spa software|practice management|all-in-one/i);
   });
 });
 

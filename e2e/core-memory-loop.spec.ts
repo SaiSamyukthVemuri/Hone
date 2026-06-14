@@ -224,6 +224,23 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByRole("heading", { name: "Follow-up assistant" }),
     ).toBeVisible();
+
+    // PR #250 Pilot Love Loop V1: the dashboard shows the "Pilot learning"
+    // card and the agentic cards carry a quiet "Was this useful?" prompt.
+    // Both are manual mailto: links only — the Send feedback href is a
+    // safe mailto with no client/treatment/system-sensitive data.
+    await expect(
+      page.getByRole("heading", { name: "Pilot learning" }),
+    ).toBeVisible();
+    const sendFeedback = page.getByRole("link", { name: "Send feedback" });
+    await expect(sendFeedback).toBeVisible();
+    const href = (await sendFeedback.getAttribute("href")) ?? "";
+    expect(href.startsWith("mailto:hello@hone.care?")).toBe(true);
+    expect(href).not.toMatch(
+      /client|phone|address|tolerance|probe|aftercare|exposure|stripe|payment|token|audit/i,
+    );
+    // The Follow-up assistant card carries the quiet feedback prompt.
+    await expect(page.getByText("Was this useful?").first()).toBeVisible();
   });
 
   await test.step("Record Keeping shows the procedure record, filtered print works", async () => {
