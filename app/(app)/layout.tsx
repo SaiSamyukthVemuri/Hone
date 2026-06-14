@@ -3,7 +3,7 @@ import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
@@ -13,7 +13,10 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Invite-only route guard (PR #253). Anonymous -> /login; authenticated
+  // but no studio membership -> the safe /no-access gate. No-studio users
+  // never render the app shell, nav, or any studio data.
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const admin = isAdmin(practitioner.email);
 
   // PR #164. Unread notification count for the header badge. RLS

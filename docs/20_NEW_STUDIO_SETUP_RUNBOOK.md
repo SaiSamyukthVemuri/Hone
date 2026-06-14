@@ -54,6 +54,8 @@ returning id, studio_id, email, role, status;
 
 Laura signs in at hone.care/login with the invited email (magic link or Google with the same address). The trigger creates her owner practitioner row. Verify (read-only):
 
+> Invite-only posture (PR #253): Hone is invite-only. Self-serve signup and public studio creation do NOT exist (no `/signup` route, no signup CTA; `studios` has no INSERT policy; `handle_new_user` only provisions a practitioner from a matching `pending_invitations` row). The owner's first sign-in MUST use the exact invited email — an uninvited sign-in creates an `auth.users` row but no studio/practitioner and is gated to `/no-access` (a friendly "No studio access yet" page with Sign out + Contact Hone), never the app shell or any studio data. So the §2.2 invitation row is a prerequisite for §2.3; if Laura lands on `/no-access`, the email she used does not match a pending invitation.
+
 ```sql
 select p.id, p.studio_id, p.role, p.active, p.display_name,
        p.terms_accepted_at is not null as terms_ok
