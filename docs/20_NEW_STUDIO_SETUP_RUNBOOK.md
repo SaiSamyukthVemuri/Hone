@@ -4,6 +4,8 @@
 
 Written for the post-PR #223 state of the system (migrations through 0088 applied; live payments disabled). If the schema or posture has moved since, re-verify against docs/09 and docs/14 before using this.
 
+> Schema note (PR #252, migration 0089): the Imported Treatment Memory tables (`import_batches`, `imported_treatment_memories`, `imported_treatment_memory_audit_events`) are studio-scoped, RLS-backed (member SELECT, owner-only INSERT/UPDATE, no delete), and need NO per-studio setup — nothing to configure. There is no UI surface yet (schema + read-model only); imported history is written by the future Quick Import flow (PR #253), not during new-studio setup.
+
 Standing discipline applies to every step here: **production WRITES require the exact SQL to be shown and explicitly approved before execution** (docs/14 workflow); read-only verification uses `supabase db query --linked`. Nothing in this runbook may be run casually with the service role.
 
 ---

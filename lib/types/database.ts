@@ -1103,3 +1103,83 @@ export type RecordKeepingAuditEvent = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+// Migration 0089 (PR #252): Imported Treatment Memory. A safe
+// destination for historical treatment memory migrated from paper
+// cards / Jane / Fresha / spreadsheets -- distinct from live charting.
+// Imports are migration/editing data, so correction is soft voiding
+// (voided_at / voided_by / void_reason), never hard delete. The batch
+// is the unit of void/rollback.
+export type ImportSourceType =
+  | "paper_card"
+  | "jane"
+  | "fresha"
+  | "spreadsheet"
+  | "other";
+
+export type ImportBatch = {
+  id: string;
+  studio_id: string;
+  source_type: ImportSourceType;
+  source_system: string | null;
+  source_label: string | null;
+  row_count: number | null;
+  created_by: string | null;
+  created_at: string;
+  completed_at: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  updated_at: string;
+};
+
+export type ImportedTreatmentMemory = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  import_batch_id: string;
+  source_type: ImportSourceType;
+  source_system: string | null;
+  source_label: string | null;
+  source_row_number: number | null;
+  // Clean parsed visit date; occurred_on_text preserves messy original.
+  occurred_on: string | null;
+  occurred_on_text: string | null;
+  treatment_area_text: string | null;
+  modality: string | null;
+  method_or_machine: string | null;
+  probe_type: string | null;
+  probe_size: string | null;
+  probe_lot: string | null;
+  tolerance_text: string | null;
+  reaction_text: string | null;
+  caution_note: string | null;
+  next_visit_note: string | null;
+  aftercare_marked: boolean | null;
+  imported_note: string | null;
+  imported_by: string | null;
+  imported_at: string;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Append-only audit trail for the import domain (dedicated, separate
+// from RecordKeepingAuditEvent). Rows written ONLY by a security-definer
+// trigger; RLS exposes a studio-scoped SELECT and nothing else.
+export type ImportedTreatmentMemoryAuditEvent = {
+  id: string;
+  studio_id: string;
+  record_type: "import_batch" | "imported_treatment_memory";
+  record_id: string;
+  action: "created" | "updated";
+  changed_fields: string[];
+  changes: Record<string, { old: unknown; new: unknown }>;
+  actor_practitioner_id: string | null;
+  actor_user_id: string | null;
+  actor_display_name: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
