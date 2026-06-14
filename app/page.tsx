@@ -50,6 +50,7 @@ export default function HomePage() {
       <ProblemSection />
       <HowHoneWorks />
       <ProductProof />
+      <BuiltFromTreatmentRooms />
       <RecordKeepingSection />
       <AgenticSection />
       <TrustSection />
@@ -684,6 +685,26 @@ function ChartRow({ label, value }: { label: string; value: string }) {
       <span style={{ color: PALETTE.muted }}>{label}</span>
       <span className="text-right font-medium">{value}</span>
     </div>
+  );
+}
+
+/* Section 4b: Built from real treatment rooms (origin story) ───────────── */
+
+// PR #250 (Pilot Love Loop): a short, human origin-story section. It
+// reinforces that Hone is built around treatment memory, not a broad
+// catch-all tool. Copy only; no claims, no metrics, no invented proof.
+function BuiltFromTreatmentRooms() {
+  return (
+    <SectionShell tone="band">
+      <EyebrowCaption>Why Hone exists</EyebrowCaption>
+      <SectionTitle>Built from real treatment rooms.</SectionTitle>
+      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
+        Hone started with a simple problem: after enough appointments, the
+        important details get hard to keep in your head. What was used? What did
+        the client tolerate? What needs caution next time? Hone is built around
+        that memory.
+      </p>
+    </SectionShell>
   );
 }
 

@@ -3,6 +3,7 @@ import type {
   MissingRecordItem,
   MissingRecordsAssistant,
 } from "@/lib/dashboard/missing-records-assistant";
+import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 
 // Follow-up Assistant V1 (PR #249). Presentational only. Renders the
 // deterministic, rules-based result from buildMissingRecordsAssistant.
@@ -91,6 +92,10 @@ export function FollowUpAssistantCard({
           )}
         </>
       )}
+
+      {/* PR #250 Pilot Love Loop: a quiet, manual "Was this useful?"
+          footer. mailto only — no automated send, no analytics. */}
+      <PilotFeedbackPrompt surface="follow_up_assistant" />
     </section>
   );
 }

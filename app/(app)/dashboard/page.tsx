@@ -45,6 +45,7 @@ import {
 import { DailyPrepBriefCard } from "./daily-prep-brief";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { FollowUpAssistantCard } from "./follow-up-assistant";
+import { PilotLearningCard } from "./pilot-learning";
 import {
   buildGettingStarted,
   getGettingStartedSignals,
@@ -470,6 +471,11 @@ export default async function DashboardPage({
         today={todayLocal}
         accentColor={studio.birthday_reminder_color}
       />
+
+      {/* PR #250 Pilot Love Loop V1: a quiet, optional "Pilot learning"
+          card near the bottom (well below Today). Manual mailto only —
+          no automated send, no contacts, no referral links, no provider. */}
+      <PilotLearningCard />
 
       {/* PR #238: completed setup collapses to a quiet footer link;
           the /getting-started route stays reachable (also in the

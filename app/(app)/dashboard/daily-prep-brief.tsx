@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DailyPrepBrief } from "@/lib/dashboard/daily-prep-brief";
+import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 
 // Daily Prep Brief V1 (PR #241). Presentational only. Renders the
 // deterministic, rules-based brief from buildDailyPrepBrief. No AI, no
@@ -79,6 +80,10 @@ export function DailyPrepBriefCard({ brief }: { brief: DailyPrepBrief }) {
           ))}
         </ul>
       )}
+
+      {/* PR #250 Pilot Love Loop: a quiet, manual "Was this useful?"
+          footer. mailto only — no automated send, no analytics. */}
+      <PilotFeedbackPrompt surface="daily_prep" />
     </section>
   );
 }
