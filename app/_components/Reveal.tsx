@@ -8,11 +8,13 @@ type Props = {
   as?: "section" | "div" | "header" | "footer";
   /** Optional anchor id, so in-page links like "#charting-workflow" land here. */
   id?: string;
+  /** Optional inline style (e.g. a full-bleed section background band). */
+  style?: React.CSSProperties;
 };
 
 // Wraps a block with a 250ms opacity fade-in triggered the first time
 // it enters the viewport. CSS handles prefers-reduced-motion (see globals.css).
-export function Reveal({ children, className = "", as = "section", id }: Props) {
+export function Reveal({ children, className = "", as = "section", id, style }: Props) {
   const ref = useRef<HTMLElement | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -46,6 +48,7 @@ export function Reveal({ children, className = "", as = "section", id }: Props) 
       id={id}
       data-reveal={visible ? "1" : "0"}
       className={className}
+      style={style}
     >
       {children}
     </Tag>
