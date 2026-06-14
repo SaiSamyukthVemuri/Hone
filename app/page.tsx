@@ -690,20 +690,64 @@ function ChartRow({ label, value }: { label: string; value: string }) {
 
 /* Section 4b: Built from real treatment rooms (origin story) ───────────── */
 
-// PR #250 (Pilot Love Loop): a short, human origin-story section. It
-// reinforces that Hone is built around treatment memory, not a broad
-// catch-all tool. Copy only; no claims, no metrics, no invented proof.
+// PR #250 (Pilot Love Loop): a short, human origin-story section,
+// rebuilt as a balanced two-column product story (copy left, a compact
+// "what gets hard to remember" card right) so it matches the rest of
+// the page's rhythm instead of floating in an empty band. It reinforces
+// that Hone is built around treatment memory, not a broad catch-all
+// tool. No claims, no metrics, no invented proof, generic labels only.
+const HARD_TO_REMEMBER: ReadonlyArray<string> = [
+  "What was used last time?",
+  "How did the client tolerate it?",
+  "What needs caution next time?",
+  "Was the record complete?",
+];
+
 function BuiltFromTreatmentRooms() {
   return (
     <SectionShell tone="band">
-      <EyebrowCaption>Why Hone exists</EyebrowCaption>
-      <SectionTitle>Built from real treatment rooms.</SectionTitle>
-      <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
-        Hone started with a simple problem: after enough appointments, the
-        important details get hard to keep in your head. What was used? What did
-        the client tolerate? What needs caution next time? Hone is built around
-        that memory.
-      </p>
+      <div className="grid grid-cols-1 items-start gap-x-14 gap-y-10 lg:grid-cols-12">
+        <div className="lg:col-span-6">
+          <EyebrowCaption>Why Hone exists</EyebrowCaption>
+          <SectionTitle>Built from real treatment rooms.</SectionTitle>
+          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.6] md:text-[19px]">
+            Hone started with a simple problem: after enough appointments, the
+            important details get hard to keep in your head. What was used? What
+            did the client tolerate? What needs caution next time? Hone keeps
+            that memory close to the next visit.
+          </p>
+          <p className="mt-5 max-w-[520px] text-[15px] leading-[1.6]" style={{ color: PALETTE.muted }}>
+            The calendar moves on. The details should not.
+          </p>
+        </div>
+        <div className="lg:col-span-6">
+          <MockCard className="flex flex-col">
+            <MockLabel>What gets hard to remember</MockLabel>
+            <ul className="mt-4 flex flex-col gap-3 text-[15px]">
+              {HARD_TO_REMEMBER.map((q) => (
+                <li
+                  key={q}
+                  className="border-b pb-3"
+                  style={{ borderColor: PALETTE.rule, color: PALETTE.muted }}
+                >
+                  {q}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-4">
+              <RememberBand>
+                Hone keeps those details close to the next appointment.
+              </RememberBand>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              <Chip>Used last time</Chip>
+              <Chip>Client response</Chip>
+              <Chip tone="amber">Caution note</Chip>
+              <Chip tone="amber">Record gap</Chip>
+            </div>
+          </MockCard>
+        </div>
+      </div>
     </SectionShell>
   );
 }

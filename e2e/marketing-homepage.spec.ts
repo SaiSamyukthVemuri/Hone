@@ -51,6 +51,13 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByRole("heading", { name: "Smarter prep, without autopilot." }),
     ).toBeVisible();
 
+    // PR #250 origin-story section is a balanced two-column story with a
+    // product card on the right (not a bare text block in an empty band).
+    await expect(
+      page.getByRole("heading", { name: "Built from real treatment rooms." }),
+    ).toBeVisible();
+    await expect(page.getByText("What gets hard to remember")).toBeVisible();
+
     // The key product mockups all render — the hero app-window preview,
     // the Before Today centerpiece, the procedure-record mockup, the
     // proof strip (PR #247 marquee — items appear twice, so .first()),
