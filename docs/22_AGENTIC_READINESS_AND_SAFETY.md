@@ -161,7 +161,7 @@ A read-only brief the practitioner opens before the day. Assembled from existing
 
 Output is a presentational brief. It sends nothing and changes nothing. It is the most likely first agentic PR after this plan.
 
-**Status: implemented in PR #241, rules-based only.** No AI, no model call, no provider integration, no chatbot, no autonomous action. The pure helper `lib/dashboard/daily-prep-brief.ts` turns facts the Dashboard already loads (today's appointments, the Before Today preview pipeline, the linked-session charting state, and intake status) into a deterministic, priority-ordered prep list rendered as a compact card under Today. It reads no sensitive surface and links only to existing client routes; nothing is sent, charged, or mutated. The remaining two workflows below are still future PRs.
+**Status: implemented in PR #241, rules-based only.** No AI, no model call, no provider integration, no chatbot, no autonomous action. The pure helper `lib/dashboard/daily-prep-brief.ts` turns facts the Dashboard already loads (today's appointments, the Before Today preview pipeline, the linked-session charting state, and intake status) into a deterministic, priority-ordered prep list rendered as a compact card under Today. It reads no sensitive surface and links only to existing client routes; nothing is sent, charged, or mutated. Missing Records / Follow-up Assistant V1 below has since shipped (PR #249); only the Draft-only Client Message Assistant remains a future PR.
 
 ### 2. Missing Records / Follow-up Assistant
 
@@ -174,6 +174,8 @@ A read-only assistant that surfaces record-keeping and follow-up gaps already co
 - a next-session note exists but there is no future appointment booked
 
 It suggests what the practitioner may want to review. It marks nothing and books nothing; acting on any item still goes through the normal UI with its existing confirmation.
+
+**Status: implemented in PR #249, rules-based only.** No AI, no model call, no provider integration, no chatbot, no autonomous action, no writes/sends/charges. The pure helper `buildMissingRecordsAssistant` + bounded loader `getMissingRecordsAssistant` (`lib/dashboard/missing-records-assistant.ts`) turn already-recorded facts into a deterministic, priority-ordered, capped list of recorded gaps (completed-but-uncharted, aftercare/risks not marked, probe lot missing, intake `in_progress`, for-next-visit note with no upcoming appointment), rendered as a compact "Follow-up assistant" card under Practice Snapshot. The gap rules mirror the existing surfaces (`lib/sessions/before-today.ts`, `lib/dashboard/next-action.ts`) so they never disagree. The caution/watch-note item type was deliberately deferred because "Clients needing attention" (PR #214) already covers it. It reads only studio-scoped, RLS-backed tables (no exposure incidents, no payment internals, no Stripe ids, no raw tokens, no audit JSON) and links only to existing client/session routes; nothing is sent, charged, or mutated. Only the Draft-only Client Message Assistant below remains a future PR.
 
 ### 3. Draft-only Client Message Assistant
 

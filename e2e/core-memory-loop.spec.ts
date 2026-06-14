@@ -215,6 +215,15 @@ test("core memory loop: booking to next-appointment memory", async ({
         .getByText(/For next visit: E2E caution: shorter intervals next visit/)
         .first(),
     ).toBeVisible();
+
+    // PR #249: the rules-based Follow-up assistant renders on the
+    // dashboard too (its bounded studio-scoped loader runs against the
+    // real local DB — exercising the recent-sessions / completed-appt /
+    // intake reads). The section heading is present whether it has
+    // recorded gaps or shows the calm empty state.
+    await expect(
+      page.getByRole("heading", { name: "Follow-up assistant" }),
+    ).toBeVisible();
   });
 
   await test.step("Record Keeping shows the procedure record, filtered print works", async () => {
