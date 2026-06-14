@@ -92,7 +92,7 @@ body {
   flex: none;
   align-items: center;
   min-width: max-content;
-  animation: hone-marquee-scroll 38s linear infinite;
+  animation: hone-marquee-scroll 46s linear infinite;
   will-change: transform;
 }
 @keyframes hone-marquee-scroll {

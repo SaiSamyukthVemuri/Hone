@@ -20,10 +20,14 @@ import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 // Before Today mockup so they read as real app screens; the calendar-vs-
 // Hone contrast shown as two product-style cards (a plain appointment
 // card vs a treatment-memory card echoing Before Today); a credible
-// proof strip under the hero, now a contained, edge-faded marquee ticker
-// (real signals only, nothing invented); the privacy section as check
-// cards; and alternating
-// faint band backgrounds (SectionShell tone="band") for section rhythm.
+// proof strip under the hero, a contained, edge-faded marquee ticker of
+// pill-shaped signals (real signals only, nothing invented); and faint
+// alternating band backgrounds (SectionShell tone="band") for section
+// rhythm. PR #248 matured the page further: the calendar-vs-Hone cards
+// now sit in AppWindow chrome too, the proof items are pills, the band
+// tones strictly alternate, and the privacy section is a two-column
+// claim-plus-compact-checklist (replacing the old awkward five-card
+// 3+2 grid).
 // All visuals are coded mockups with anonymized demo data only (Maya R.
 // / Jordan L. / Alex P. / Demo Studio / lot L-204 / Sterex), never real
 // clients. The forward-looking section keeps the docs/22 safety boundary
@@ -388,20 +392,16 @@ function ProofStrip() {
           {track.map((item, i) => (
             <span
               key={i}
-              className="flex items-center"
               aria-hidden={i >= PROOF_ITEMS.length ? "true" : undefined}
+              className="mx-2 inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-4 py-1.5 text-[12px] font-medium"
+              style={{
+                backgroundColor: PALETTE.card,
+                border: `1px solid ${PALETTE.rule}`,
+                color: PALETTE.ink,
+                letterSpacing: "0.01em",
+              }}
             >
-              <span
-                className="whitespace-nowrap text-[12px] font-medium uppercase"
-                style={{ letterSpacing: "0.12em", color: PALETTE.muted }}
-              >
-                {item}
-              </span>
-              <span
-                aria-hidden="true"
-                className="mx-6 inline-block h-[3px] w-[3px] shrink-0 rounded-full"
-                style={{ backgroundColor: PALETTE.muted, opacity: 0.6 }}
-              />
+              {item}
             </span>
           ))}
         </div>
@@ -425,16 +425,11 @@ function ProblemSection() {
       </p>
 
       <div className="mt-10 grid grid-cols-1 items-start gap-6 md:grid-cols-2">
-        {/* Left: a plain appointment card — all a calendar carries. */}
-        <MockCard>
-          <div className="flex items-baseline justify-between">
-            <MockLabel>Calendar-only</MockLabel>
-            <span className="text-[11px]" style={{ color: PALETTE.muted }}>
-              Appointment data
-            </span>
-          </div>
+        {/* Left: a plain appointment screen — all a calendar carries. */}
+        <AppWindow title="Calendar-only">
+          <MockLabel>Appointment data</MockLabel>
           <p
-            className="mt-4 font-[var(--font-fraunces)] text-[26px] font-bold tabular-nums leading-none"
+            className="mt-3 font-[var(--font-fraunces)] text-[26px] font-bold tabular-nums leading-none"
             style={{ letterSpacing: "-0.02em" }}
           >
             10:00 AM
@@ -449,23 +444,18 @@ function ProblemSection() {
             </span>
             <Chip tone="green">Confirmed</Chip>
           </div>
-        </MockCard>
+        </AppWindow>
 
-        {/* Right: a treatment-memory card echoing the real Before Today
+        {/* Right: a treatment-memory screen echoing the real Before Today
             and hero surfaces — chips, a remember band, a record reminder. */}
-        <MockCard>
-          <div className="flex items-baseline justify-between">
-            <MockLabel>Hone</MockLabel>
+        <AppWindow title="Hone">
+          <div className="flex items-baseline justify-between gap-3">
+            <MockLabel>Treatment memory</MockLabel>
             <span className="text-[11px]" style={{ color: PALETTE.muted }}>
-              Treatment memory
-            </span>
-          </div>
-          <div className="mt-4 flex items-baseline justify-between gap-3">
-            <p className="text-[15px] font-medium">Maya R.</p>
-            <span className="text-[12px]" style={{ color: PALETTE.muted }}>
               Returning client
             </span>
           </div>
+          <p className="mt-3 text-[15px] font-medium">Maya R.</p>
           <div className="mt-3">
             <RememberBand>
               For next visit: review upper lip sensitivity note.
@@ -489,7 +479,7 @@ function ProblemSection() {
           <div className="mt-3">
             <Chip tone="amber">Aftercare not marked last session</Chip>
           </div>
-        </MockCard>
+        </AppWindow>
       </div>
     </SectionShell>
   );
@@ -521,7 +511,7 @@ const WORKFLOW: ReadonlyArray<{
 
 function HowHoneWorks() {
   return (
-    <SectionShell>
+    <SectionShell tone="band">
       <EyebrowCaption>How it works</EyebrowCaption>
       <SectionTitle>Before, during, and after the appointment.</SectionTitle>
       <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-3">
@@ -550,7 +540,7 @@ function HowHoneWorks() {
 
 function ProductProof() {
   return (
-    <SectionShell id="product" tone="band">
+    <SectionShell id="product">
       <EyebrowCaption>What it remembers</EyebrowCaption>
       <SectionTitle>What Hone remembers.</SectionTitle>
       <p className="mt-6 max-w-[680px] text-[17px] leading-[1.6] md:text-[19px]">
@@ -701,7 +691,7 @@ function ChartRow({ label, value }: { label: string; value: string }) {
 
 function RecordKeepingSection() {
   return (
-    <SectionShell id="records">
+    <SectionShell id="records" tone="band">
       <div className="grid grid-cols-1 items-start gap-x-14 gap-y-10 lg:grid-cols-12">
         <div className="lg:col-span-6">
           <EyebrowCaption>Record keeping</EyebrowCaption>
@@ -719,7 +709,7 @@ function RecordKeepingSection() {
           </div>
           <div
             className="mt-7 max-w-[520px] rounded-md px-4 py-3"
-            style={{ backgroundColor: PALETTE.chip, border: `1px solid ${PALETTE.rule}` }}
+            style={{ backgroundColor: PALETTE.card, border: `1px solid ${PALETTE.rule}` }}
           >
             <p className="text-[13px] leading-[1.55]" style={{ color: PALETTE.muted }}>
               Hone supports record keeping workflows, but studios remain
@@ -879,33 +869,43 @@ const TRUST_POINTS: ReadonlyArray<string> = [
 ];
 
 function TrustSection() {
+  // Two columns: the claim on the left, one compact checklist card on the
+  // right. Replaces the old five-card 3+2 grid (awkward half-empty row).
   return (
     <SectionShell tone="band">
-      <EyebrowCaption>Privacy and trust</EyebrowCaption>
-      <SectionTitle>Your client records should stay yours.</SectionTitle>
-      <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {TRUST_POINTS.map((t) => (
-          <div key={t} className="flex items-start gap-3">
-            <MockCard className="flex w-full items-start gap-3">
-              <span
-                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-                style={{ backgroundColor: PALETTE.greenBg, color: PALETTE.greenInk }}
-                aria-hidden="true"
-              >
-                ✓
-              </span>
-              <p className="text-[15px] leading-[1.4]">{t}</p>
-            </MockCard>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 items-start gap-x-14 gap-y-10 lg:grid-cols-12">
+        <div className="lg:col-span-6">
+          <EyebrowCaption>Privacy and trust</EyebrowCaption>
+          <SectionTitle>Your client records should stay yours.</SectionTitle>
+          <p className="mt-6 max-w-[480px] text-[17px] leading-[1.6] md:text-[19px]">
+            Hone is built for sensitive client records. Your studio&apos;s data
+            stays separate, exportable, and never used for advertising.
+          </p>
+          <p className="mt-6 text-[14px]" style={{ color: PALETTE.muted }}>
+            Full details in the{" "}
+            <Link href="/privacy" className="underline">
+              privacy policy
+            </Link>
+            .
+          </p>
+        </div>
+        <div className="lg:col-span-6">
+          <MockCard className="flex flex-col gap-3.5">
+            {TRUST_POINTS.map((t) => (
+              <div key={t} className="flex items-start gap-3">
+                <span
+                  className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                  style={{ backgroundColor: PALETTE.greenBg, color: PALETTE.greenInk }}
+                  aria-hidden="true"
+                >
+                  ✓
+                </span>
+                <p className="text-[15px] leading-[1.4]">{t}</p>
+              </div>
+            ))}
+          </MockCard>
+        </div>
       </div>
-      <p className="mt-8 text-[14px]" style={{ color: PALETTE.muted }}>
-        Full detail in the{" "}
-        <Link href="/privacy" className="underline">
-          privacy policy
-        </Link>
-        .
-      </p>
     </SectionShell>
   );
 }
