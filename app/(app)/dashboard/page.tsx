@@ -43,6 +43,8 @@ import {
   type DailyPrepIntake,
 } from "@/lib/dashboard/daily-prep-brief";
 import { DailyPrepBriefCard } from "./daily-prep-brief";
+import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
+import { FollowUpAssistantCard } from "./follow-up-assistant";
 import {
   buildGettingStarted,
   getGettingStartedSignals,
@@ -334,6 +336,17 @@ export default async function DashboardPage({
   // the 200 most recent sessions; unique clients counted once).
   const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
 
+  // PR #249: Missing Records / Follow-up Assistant V1. Rules-based only
+  // (no AI, no model, no provider, no action): bounded, studio-scoped,
+  // RLS-backed reads over recent sessions and completed appointments turn
+  // recorded workflow gaps (charting, aftercare, probe lot, intake,
+  // for-next-visit follow-ups) into a deterministic, link-only list. The
+  // window is computed once here so the helper stays clock-free.
+  const followUpAssistant = await getMissingRecordsAssistant(
+    studio.id,
+    new Date().toISOString(),
+  );
+
   // PR #215: Getting Started progress for the dashboard card.
   const gettingStarted = buildGettingStarted(
     await getGettingStartedSignals(
@@ -431,6 +444,11 @@ export default async function DashboardPage({
           cards). Read-only; never labeled revenue while live payments
           are disabled. */}
       <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} />
+
+      {/* PR #249: Follow-up assistant — recorded record gaps and
+          follow-ups from recent appointments. Rules-based, read-only,
+          links only. Sits under the snapshot so Today stays on top. */}
+      <FollowUpAssistantCard assistant={followUpAssistant} />
 
       <NeedsAttention
         isOwner={isOwner}
