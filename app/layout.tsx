@@ -28,14 +28,11 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-// Title and description tightened for early access positioning. The
-// homepage now leads with the category (Electrolysis Practice Software)
-// and the concrete surfaces the product covers, so the SERP snippet
-// reads like a YC company page rather than a product tagline. The
-// previous "practice memory" tagline still appears in the marketing
-// footer; this just clarifies what Hone is for crawlers and AI search.
-// PR #242: metadata leads with the category (treatment memory) rather
-// than booking software, matching the homepage overhaul. No
+// Title and description lead with the public category phrase
+// ("Treatment Memory for Electrologists") and the concrete surfaces
+// the product covers, so the SERP snippet reads like a focused company
+// page rather than a product tagline. PR #244 aligns the description
+// with the rewritten, electrologist-first homepage voice. No
 // overclaimed AI phrasing in the SERP/OG snippet.
 export const metadata: Metadata = {
   title: {
@@ -43,7 +40,7 @@ export const metadata: Metadata = {
     template: "%s · Hone",
   },
   description:
-    "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
+    "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
   authors: [{ name: "Hone" }],
@@ -62,7 +59,7 @@ export const metadata: Metadata = {
     type: "website",
     title: "Hone | Treatment Memory for Electrologists",
     description:
-      "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
+      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
     url: "https://hone.care",
     siteName: "Hone",
     locale: "en_CA",
@@ -71,7 +68,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Hone | Treatment Memory for Electrologists",
     description:
-      "Hone helps permanent hair removal studios prepare for appointments, chart treatment details, and keep procedure records clean.",
+      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
   },
   robots: {
     index: true,

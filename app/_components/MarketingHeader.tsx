@@ -2,11 +2,12 @@ import Link from "next/link";
 import { MARKETING_CTA, MARKETING_NAV, MARKETING_PALETTE } from "./marketingNav";
 import { MobileNav } from "./MobileNav";
 
-// PR #242: the desktop nav now carries the homepage story sections
-// (Product, How it works, Records, Agentic support) plus Pricing and
-// Sign in, with a Book walkthrough CTA button. The full nav shows at
-// lg+ so it never crowds the header at tablet widths; below lg the
-// MobileNav menu carries the same links and the CTA (overflow-safe).
+// The desktop nav carries the homepage story sections (Product,
+// Records) plus Pricing and Sign in, with a Book walkthrough CTA
+// button. PR #244 dropped the Agentic support item so the nav reads
+// plainly. The full nav shows at lg+ so it never crowds the header at
+// tablet widths; below lg the MobileNav menu carries the same links
+// and the CTA (overflow-safe).
 export function MarketingHeader() {
   return (
     <header
