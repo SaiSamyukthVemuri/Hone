@@ -55,14 +55,45 @@ describe("category positioning", () => {
 });
 
 describe("required homepage sections (human rewrite)", () => {
-  it("calendar-vs-Hone comparison", () => {
+  it("calendar-vs-Hone comparison (appointment card vs treatment-memory card)", () => {
     expect(PAGE).toMatch(
       /Your calendar shows the appointment\. Hone shows what to remember\./,
     );
-    expect(PAGE).toMatch(/Most tools stop at the appointment\./);
+    expect(PAGE).toMatch(
+      /Most tools stop at the appointment\. Hone shows the details that matter when a client comes back\./,
+    );
+    // Micro-context labels make the contrast immediately readable.
     expect(PAGE).toMatch(/Calendar-only/);
-    expect(PAGE).toMatch(/probe and lot/);
-    expect(PAGE).toMatch(/record reminders/);
+    expect(PAGE).toMatch(/Appointment data/);
+    expect(PAGE).toMatch(/Treatment memory/);
+    // Left card: a plain appointment (time / client / service / status).
+    expect(PAGE).toMatch(/10:00 AM/);
+    expect(PAGE).toMatch(/Electrolysis/);
+    expect(PAGE).toMatch(/Confirmed/);
+    // Right (Hone) card echoes Before Today: band + recorded chips + reminder.
+    expect(PAGE).toMatch(/Remember today/);
+    expect(PAGE).toMatch(/Last recorded/);
+    expect(PAGE).toMatch(/Tolerance 4\/5/);
+    expect(PAGE).toMatch(/Lot L-204/);
+    expect(PAGE).toMatch(/Aftercare not marked last session/);
+  });
+
+  it("the calendar-only card stays limited to appointment basics", () => {
+    // Scope to the ProblemSection so the assertion is about the calendar
+    // card, not the rest of the page.
+    const start = PAGE_RAW.indexOf("function ProblemSection(");
+    const section = PAGE_RAW
+      .slice(start, PAGE_RAW.indexOf("\nfunction ", start + 1))
+      .replace(/\s+/g, " ");
+    const calendarCard = section.slice(
+      section.indexOf("Calendar-only"),
+      section.indexOf('MockLabel>Hone'),
+    );
+    // No treatment-memory fields leak into the calendar card.
+    expect(calendarCard).not.toMatch(/Remember today/);
+    expect(calendarCard).not.toMatch(/Tolerance/);
+    expect(calendarCard).not.toMatch(/Lot L-204/);
+    expect(calendarCard).not.toMatch(/Aftercare/);
   });
 
   it("before / during / after the appointment", () => {
@@ -196,9 +227,12 @@ describe("PR #246 visual system: product proof + polish", () => {
   });
 
   it("has a credible proof strip and no fake proof", () => {
+    // All five approved proof items are present.
     expect(PAGE).toMatch(/Built with working electrologists/);
-    expect(PAGE).toMatch(/Founder-led setup/);
+    expect(PAGE).toMatch(/Mobile-tested treatment workflows/);
     expect(PAGE).toMatch(/Browser-tested treatment-memory loop/);
+    expect(PAGE).toMatch(/Lot traceability built in/);
+    expect(PAGE).toMatch(/Founder-led setup/);
     // No invented social proof.
     expect(PAGE).not.toMatch(/trusted by (thousands|hundreds|millions|\d)/i);
     expect(PAGE).not.toMatch(/\btestimonial/i);
@@ -207,6 +241,19 @@ describe("PR #246 visual system: product proof + polish", () => {
     // No fake customer logos (the page renders no images at all).
     expect(PAGE_RAW).not.toMatch(/<img\b/i);
     expect(PAGE_RAW).not.toMatch(/customer logos?|logo wall|as seen (in|on)/i);
+  });
+
+  it("the proof strip is a contained marquee that cannot widen the page", () => {
+    // The ticker is implemented as an overflow-hidden marquee, so the
+    // wide (duplicated) track is clipped and never adds page width.
+    const start = PAGE_RAW.indexOf("function ProofStrip(");
+    const fn = PAGE_RAW.slice(start, PAGE_RAW.indexOf("\nfunction ", start + 1));
+    expect(fn).toMatch(/overflow-hidden/);
+    expect(fn).toMatch(/hone-marquee/);
+    // The marquee CSS respects reduced motion (defined in globals.css).
+    const css = read("app/globals.css");
+    expect(css).toMatch(/\.hone-marquee/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*hone-marquee__track[\s\S]*animation: none/);
   });
 });
 

@@ -62,3 +62,49 @@ body {
     transition: none;
   }
 }
+
+/* Proof-strip ticker (PR #247): a contained, edge-faded marquee of trust
+ * signals under the hero. The track holds the proof items twice and
+ * translates by -50% for a seamless loop. overflow:hidden keeps it from
+ * adding page width (no horizontal page overflow); the mask fades both
+ * edges so items slide in/out cleanly. Reduced-motion users get a
+ * static, non-scrolling row. */
+.hone-marquee {
+  display: flex;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 6%,
+    #000 94%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 6%,
+    #000 94%,
+    transparent 100%
+  );
+}
+.hone-marquee__track {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-width: max-content;
+  animation: hone-marquee-scroll 38s linear infinite;
+  will-change: transform;
+}
+@keyframes hone-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hone-marquee__track {
+    animation: none;
+  }
+}

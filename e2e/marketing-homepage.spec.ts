@@ -51,17 +51,29 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByRole("heading", { name: "Smarter prep, without autopilot." }),
     ).toBeVisible();
 
-    // PR #246 visual system: the key product mockups all render — the
-    // hero app-window preview, the Before Today centerpiece, the
-    // procedure-record mockup, the proof strip, and the Daily prep brief.
+    // The key product mockups all render — the hero app-window preview,
+    // the Before Today centerpiece, the procedure-record mockup, the
+    // proof strip (PR #247 marquee — items appear twice, so .first()),
+    // and the Daily prep brief.
     await expect(page.getByText("Demo Studio · Today")).toBeVisible();
     await expect(page.getByText("Before Today · Maya R.")).toBeVisible();
-    await expect(page.getByText("Built with working electrologists")).toBeVisible();
+    await expect(
+      page.getByText("Built with working electrologists").first(),
+    ).toBeVisible();
     await expect(
       page.getByText("Print this client's procedure record"),
     ).toBeVisible();
     await expect(page.getByText("Tomorrow morning")).toBeVisible();
     await expect(page.getByText("Based on recorded Hone data.")).toBeVisible();
+
+    // PR #247: the Calendar-vs-Hone comparison renders both product
+    // cards — the limited appointment card and the treatment-memory card.
+    await expect(page.getByText("Appointment data")).toBeVisible();
+    await expect(page.getByText("Treatment memory", { exact: true })).toBeVisible();
+    await expect(page.getByText("10:00 AM").first()).toBeVisible();
+    await expect(
+      page.getByText("Aftercare not marked last session").first(),
+    ).toBeVisible();
 
     // Sign in reachable in the header nav, links to /login.
     const signIn = page.getByRole("link", { name: "Sign in" }).first();

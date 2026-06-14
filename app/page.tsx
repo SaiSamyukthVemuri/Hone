@@ -18,9 +18,11 @@ import { MARKETING_PALETTE as PALETTE } from "./_components/marketingNav";
 // PR #246 added a visual system for Jane-level polish without copying
 // Jane: an app-window chrome frame (AppWindow) on the hero and the
 // Before Today mockup so they read as real app screens; the calendar-vs-
-// Hone contrast rebuilt as a thin dashed card vs a checkmarked card; a
-// credible proof strip under the hero (real signals only, nothing
-// invented); the privacy section as check cards; and alternating
+// Hone contrast shown as two product-style cards (a plain appointment
+// card vs a treatment-memory card echoing Before Today); a credible
+// proof strip under the hero, now a contained, edge-faded marquee ticker
+// (real signals only, nothing invented); the privacy section as check
+// cards; and alternating
 // faint band backgrounds (SectionShell tone="band") for section rhythm.
 // All visuals are coded mockups with anonymized demo data only (Maya R.
 // / Jordan L. / Alex P. / Demo Studio / lot L-204 / Sterex), never real
@@ -238,39 +240,6 @@ function AppWindow({
   );
 }
 
-// A recorded-field row with a green check; the visual proof that Hone
-// carries memory the calendar does not.
-function CheckRow({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-center gap-2.5 text-[15px]">
-      <span
-        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-        style={{ backgroundColor: PALETTE.greenBg, color: PALETTE.greenInk }}
-        aria-hidden="true"
-      >
-        ✓
-      </span>
-      {children}
-    </li>
-  );
-}
-
-// A muted, dashed row for the deliberately-thin "calendar only" card.
-function DashRow({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-center gap-2.5 text-[15px]" style={{ color: PALETTE.muted }}>
-      <span
-        className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-[12px]"
-        style={{ color: PALETTE.muted }}
-        aria-hidden="true"
-      >
-        –
-      </span>
-      {children}
-    </li>
-  );
-}
-
 /* Section 1: Hero ──────────────────────────────────────────────────────── */
 
 function Hero() {
@@ -399,26 +368,43 @@ const PROOF_ITEMS: ReadonlyArray<string> = [
 ];
 
 function ProofStrip() {
+  // The track holds the items twice so the -50% translate loops with no
+  // visible seam. The second copy is aria-hidden so assistive tech reads
+  // the proof list once. overflow-hidden (on .hone-marquee) contains the
+  // wide track, so the strip never widens the page.
+  const track = [...PROOF_ITEMS, ...PROOF_ITEMS];
   return (
     <Reveal
       as="section"
-      className="px-6 py-7 md:px-12 lg:px-16"
+      className="overflow-hidden py-4"
       style={{
         backgroundColor: PALETTE.band,
         borderTop: `1px solid ${PALETTE.rule}`,
         borderBottom: `1px solid ${PALETTE.rule}`,
       }}
     >
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-x-8 gap-y-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
-        {PROOF_ITEMS.map((item) => (
-          <span
-            key={item}
-            className="text-[12px] font-medium uppercase"
-            style={{ letterSpacing: "0.12em", color: PALETTE.muted }}
-          >
-            {item}
-          </span>
-        ))}
+      <div className="hone-marquee">
+        <div className="hone-marquee__track">
+          {track.map((item, i) => (
+            <span
+              key={i}
+              className="flex items-center"
+              aria-hidden={i >= PROOF_ITEMS.length ? "true" : undefined}
+            >
+              <span
+                className="whitespace-nowrap text-[12px] font-medium uppercase"
+                style={{ letterSpacing: "0.12em", color: PALETTE.muted }}
+              >
+                {item}
+              </span>
+              <span
+                aria-hidden="true"
+                className="mx-6 inline-block h-[3px] w-[3px] shrink-0 rounded-full"
+                style={{ backgroundColor: PALETTE.muted, opacity: 0.6 }}
+              />
+            </span>
+          ))}
+        </div>
       </div>
     </Reveal>
   );
@@ -434,47 +420,74 @@ function ProblemSection() {
         Your calendar shows the appointment. Hone shows what to remember.
       </SectionTitle>
       <p className="mt-6 max-w-[720px] text-[17px] leading-[1.6] md:text-[19px]">
-        Most tools stop at the appointment. They tell you the client, the time,
-        and the service. Hone helps you see what happened last time: the area
-        treated, the probe and lot, the client&apos;s response, and the note you
-        left for next visit.
+        Most tools stop at the appointment. Hone shows the details that matter
+        when a client comes back.
       </p>
 
       <div className="mt-10 grid grid-cols-1 items-start gap-6 md:grid-cols-2">
-        {/* Deliberately thin: the calendar shows only the appointment. */}
+        {/* Left: a plain appointment card — all a calendar carries. */}
         <MockCard>
           <div className="flex items-baseline justify-between">
             <MockLabel>Calendar-only</MockLabel>
             <span className="text-[11px]" style={{ color: PALETTE.muted }}>
-              What most tools show
+              Appointment data
             </span>
           </div>
-          <ul className="mt-4 flex flex-col gap-3">
-            <DashRow>Client</DashRow>
-            <DashRow>Time</DashRow>
-            <DashRow>Service</DashRow>
-          </ul>
+          <p
+            className="mt-4 font-[var(--font-fraunces)] text-[26px] font-bold tabular-nums leading-none"
+            style={{ letterSpacing: "-0.02em" }}
+          >
+            10:00 AM
+          </p>
+          <p className="mt-3 text-[15px] font-medium">Maya R.</p>
+          <p className="text-[13px]" style={{ color: PALETTE.muted }}>
+            Electrolysis
+          </p>
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-[12px]" style={{ color: PALETTE.muted }}>
+              Status
+            </span>
+            <Chip tone="green">Confirmed</Chip>
+          </div>
         </MockCard>
-        {/* Fuller: the recorded memory the calendar never keeps. */}
+
+        {/* Right: a treatment-memory card echoing the real Before Today
+            and hero surfaces — chips, a remember band, a record reminder. */}
         <MockCard>
           <div className="flex items-baseline justify-between">
             <MockLabel>Hone</MockLabel>
             <span className="text-[11px]" style={{ color: PALETTE.muted }}>
-              What you also remember
+              Treatment memory
             </span>
           </div>
-          <ul className="mt-4 flex flex-col gap-3">
-            <CheckRow>Last area treated</CheckRow>
-            <CheckRow>Probe and lot</CheckRow>
-            <CheckRow>Tolerance and reaction</CheckRow>
-            <CheckRow>Caution note</CheckRow>
-            <CheckRow>Next-visit note</CheckRow>
-            <CheckRow>Record reminders</CheckRow>
-          </ul>
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            <Chip>Upper lip</Chip>
-            <Chip>Lot L-204</Chip>
-            <Chip tone="green">Tolerance 4/5</Chip>
+          <div className="mt-4 flex items-baseline justify-between gap-3">
+            <p className="text-[15px] font-medium">Maya R.</p>
+            <span className="text-[12px]" style={{ color: PALETTE.muted }}>
+              Returning client
+            </span>
+          </div>
+          <div className="mt-3">
+            <RememberBand>
+              For next visit: review upper lip sensitivity note.
+            </RememberBand>
+          </div>
+          <div className="mt-3">
+            <MockLabel>Last recorded</MockLabel>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <Chip>Upper lip</Chip>
+              <Chip>Sterex</Chip>
+              <Chip>Lot L-204</Chip>
+            </div>
+          </div>
+          <div className="mt-3">
+            <MockLabel>Client response</MockLabel>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <Chip tone="green">Tolerance 4/5</Chip>
+              <Chip>Mild redness</Chip>
+            </div>
+          </div>
+          <div className="mt-3">
+            <Chip tone="amber">Aftercare not marked last session</Chip>
           </div>
         </MockCard>
       </div>
