@@ -3,14 +3,26 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { markDemoContactedAction } from "./actions";
 
+// PR #255: Admin Console V1. Operator-only (the /admin layout's isAdmin gate
+// covers this page). Read-only operational metadata and aggregate counts over
+// existing tables via the service-role client — NO client-level clinical data
+// (no client names, treatment notes, exposure incidents, imported memory,
+// payment internals, Stripe ids, tokens, or audit JSON is selected here).
+
+type OwnerInviteStatus = "accepted" | "pending" | "none";
+
 type StudioRow = {
   id: string;
   name: string;
-  legal_entity_name: string | null;
+  slug: string | null;
+  timezone: string;
   owner_email: string;
   created_at: string;
   practitioner_count: number;
   client_count: number;
+  services_count: number;
+  availability_count: number;
+  owner_invite_status: OwnerInviteStatus;
 };
 
 type PractitionerRow = {
@@ -42,8 +54,16 @@ type DemoRequestRow = {
   created_at: string;
 };
 
-async function loadDashboard(): Promise<{
+type Overview = {
+  totalStudios: number;
+  pendingOwnerInvites: number;
+  acceptedOwnerInvites: number;
+  studiosNeedingOwner: number;
+};
+
+async function loadConsole(): Promise<{
   studios: StudioRow[];
+  overview: Overview;
   practitioners: PractitionerRow[];
   waitlist: WaitlistRow[];
   waitlistTotal: number;
@@ -51,61 +71,109 @@ async function loadDashboard(): Promise<{
 }> {
   const admin = createAdminClient();
 
-  const [studiosRes, practitionersRes, waitlistRes, waitlistCountRes, demoRes] =
-    await Promise.all([
-      admin
-        .from("studios")
-        .select(
-          "id, name, legal_entity_name, owner_email, created_at, practitioners(count), clients(count)",
-        )
-        .order("created_at", { ascending: false }),
-      admin
-        .from("practitioners")
-        .select("id, display_name, email, role, created_at, studio:studios(name)")
-        .order("created_at", { ascending: false })
-        .limit(20),
-      admin
-        .from("waitlist")
-        .select("id, email, practice_name, created_at")
-        .order("created_at", { ascending: false })
-        .limit(20),
-      admin
-        .from("waitlist")
-        .select("id", { count: "exact", head: true }),
-      admin
-        .from("demo_requests")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20),
-    ]);
+  const [
+    studiosRes,
+    invitesRes,
+    practitionersRes,
+    waitlistRes,
+    waitlistCountRes,
+    demoRes,
+  ] = await Promise.all([
+    // Aggregate counts only (no row contents) for setup-health flags.
+    admin
+      .from("studios")
+      .select(
+        "id, name, slug, timezone, owner_email, created_at, practitioners(count), clients(count), services(count), studio_availability_default(count)",
+      )
+      .order("created_at", { ascending: false }),
+    // Owner invitations: status + studio only (the email is the owner email,
+    // which is operational metadata we already surface elsewhere).
+    admin
+      .from("pending_invitations")
+      .select("studio_id, status")
+      .eq("role", "owner"),
+    admin
+      .from("practitioners")
+      .select("id, display_name, email, role, created_at, studio:studios(name)")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    admin
+      .from("waitlist")
+      .select("id, email, practice_name, created_at")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    admin.from("waitlist").select("id", { count: "exact", head: true }),
+    // Explicit projection (not select("*")) — matches the discipline of every
+    // other query here and future-proofs against a later column add to
+    // demo_requests. Only the operational columns the table renders.
+    admin
+      .from("demo_requests")
+      .select(
+        "id, name, email, practice_name, location, practice_type, practitioner_count, current_tool, status, created_at",
+      )
+      .order("created_at", { ascending: false })
+      .limit(20),
+  ]);
 
   if (studiosRes.error) throw new Error(studiosRes.error.message);
+  if (invitesRes.error) throw new Error(invitesRes.error.message);
   if (practitionersRes.error) throw new Error(practitionersRes.error.message);
   if (waitlistRes.error) throw new Error(waitlistRes.error.message);
   if (waitlistCountRes.error) throw new Error(waitlistCountRes.error.message);
   if (demoRes.error) throw new Error(demoRes.error.message);
 
+  type InviteRaw = { studio_id: string; status: string };
+  const invites = (invitesRes.data ?? []) as InviteRaw[];
+  const acceptedByStudio = new Set(
+    invites.filter((i) => i.status === "accepted").map((i) => i.studio_id),
+  );
+  const pendingByStudio = new Set(
+    invites.filter((i) => i.status === "pending").map((i) => i.studio_id),
+  );
+
   type StudioRaw = {
     id: string;
     name: string;
-    legal_entity_name: string | null;
+    slug: string | null;
+    timezone: string;
     owner_email: string;
     created_at: string;
     practitioners: { count: number }[] | null;
     clients: { count: number }[] | null;
+    services: { count: number }[] | null;
+    studio_availability_default: { count: number }[] | null;
   };
 
   const studios: StudioRow[] = ((studiosRes.data ?? []) as StudioRaw[]).map(
-    (s) => ({
-      id: s.id,
-      name: s.name,
-      legal_entity_name: s.legal_entity_name,
-      owner_email: s.owner_email,
-      created_at: s.created_at,
-      practitioner_count: s.practitioners?.[0]?.count ?? 0,
-      client_count: s.clients?.[0]?.count ?? 0,
-    }),
+    (s) => {
+      const ownerInviteStatus: OwnerInviteStatus = acceptedByStudio.has(s.id)
+        ? "accepted"
+        : pendingByStudio.has(s.id)
+          ? "pending"
+          : "none";
+      return {
+        id: s.id,
+        name: s.name,
+        slug: s.slug,
+        timezone: s.timezone,
+        owner_email: s.owner_email,
+        created_at: s.created_at,
+        practitioner_count: s.practitioners?.[0]?.count ?? 0,
+        client_count: s.clients?.[0]?.count ?? 0,
+        services_count: s.services?.[0]?.count ?? 0,
+        availability_count: s.studio_availability_default?.[0]?.count ?? 0,
+        owner_invite_status: ownerInviteStatus,
+      };
+    },
   );
+
+  const overview: Overview = {
+    totalStudios: studios.length,
+    pendingOwnerInvites: invites.filter((i) => i.status === "pending").length,
+    acceptedOwnerInvites: invites.filter((i) => i.status === "accepted").length,
+    studiosNeedingOwner: studios.filter((s) => s.practitioner_count === 0)
+      .length,
+  };
 
   // Supabase's typed select() returns the joined `studio` relation as either
   // an object or an array depending on the inferred FK arity; we accept both.
@@ -135,6 +203,7 @@ async function loadDashboard(): Promise<{
 
   return {
     studios,
+    overview,
     practitioners,
     waitlist: (waitlistRes.data ?? []) as WaitlistRow[],
     waitlistTotal: waitlistCountRes.count ?? 0,
@@ -143,23 +212,209 @@ async function loadDashboard(): Promise<{
 }
 
 export default async function AdminIndexPage() {
-  const { studios, practitioners, waitlist, waitlistTotal, demoRequests } =
-    await loadDashboard();
+  const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
+    await loadConsole();
 
   return (
-    <div className="flex flex-col gap-12">
+    <div className="flex flex-col gap-10">
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">Admin</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Read across every studio. Service role bypasses RLS.
+          Internal operator tools for invite-only studio setup.
         </p>
       </header>
 
+      <PaymentsBanner />
+      <StudioSetupCard />
+      <OverviewCards overview={overview} />
       <StudiosSection studios={studios} />
+      <QuickLinks />
+
+      <hr className="border-neutral-200 dark:border-neutral-800" />
+
       <PractitionersSection practitioners={practitioners} />
       <WaitlistSection rows={waitlist} total={waitlistTotal} />
       <DemoRequestsSection rows={demoRequests} />
     </div>
+  );
+}
+
+function PaymentsBanner() {
+  return (
+    <div
+      role="note"
+      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+    >
+      Live payments are disabled.
+    </div>
+  );
+}
+
+function StudioSetupCard() {
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-lg font-medium">Studio setup</h2>
+      <p className="mt-1 max-w-prose text-sm text-neutral-600 dark:text-neutral-400">
+        Create a studio and owner invitation for an invite-only pilot studio.
+        The owner is added when they first sign in with the invited email.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        <Link
+          href="/admin/studios/new"
+          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        >
+          Create new studio
+        </Link>
+        <span className="text-xs text-neutral-500">
+          Setup runbook: docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function OverviewCards({ overview }: { overview: Overview }) {
+  const cards: { label: string; value: number }[] = [
+    { label: "Studios", value: overview.totalStudios },
+    { label: "Pending owner invites", value: overview.pendingOwnerInvites },
+    { label: "Accepted owner invites", value: overview.acceptedOwnerInvites },
+    { label: "Studios needing owner", value: overview.studiosNeedingOwner },
+  ];
+  return (
+    <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {cards.map((c) => (
+        <div
+          key={c.label}
+          className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
+        >
+          <div className="text-2xl font-semibold tabular-nums">{c.value}</div>
+          <div className="mt-1 text-xs text-neutral-500">{c.label}</div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function Flag({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${
+        ok
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          : "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400"
+      }`}
+    >
+      <span aria-hidden="true">{ok ? "✓" : "—"}</span>
+      {label}
+    </span>
+  );
+}
+
+function InviteBadge({ status }: { status: OwnerInviteStatus }) {
+  const text =
+    status === "accepted"
+      ? "Accepted"
+      : status === "pending"
+        ? "Pending"
+        : "None";
+  return <span className="text-neutral-600 dark:text-neutral-400">{text}</span>;
+}
+
+function StudiosSection({ studios }: { studios: StudioRow[] }) {
+  return (
+    <SectionShell title="Studios" subtitle={`${studios.length} total`}>
+      {studios.length === 0 ? (
+        <p className="text-sm text-neutral-500">
+          No studios yet. Use “Create new studio” to set one up.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500 dark:bg-neutral-900">
+              <tr>
+                <Th>Name</Th>
+                <Th>Booking</Th>
+                <Th>Owner email</Th>
+                <Th>Timezone</Th>
+                <Th>Owner invite</Th>
+                <Th>Setup</Th>
+                <Th>Created</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              {studios.map((s) => (
+                <tr key={s.id}>
+                  <Td>
+                    <Link
+                      href={`/admin/studios/${s.id}`}
+                      className="font-medium hover:underline"
+                    >
+                      {s.name}
+                    </Link>
+                  </Td>
+                  <Td>
+                    {s.slug ? (
+                      <Link
+                        href={`/book/${s.slug}`}
+                        className="font-mono text-xs hover:underline"
+                      >
+                        /book/{s.slug}
+                      </Link>
+                    ) : (
+                      <span className="text-neutral-400">—</span>
+                    )}
+                  </Td>
+                  <Td className="text-neutral-600 dark:text-neutral-400">
+                    {s.owner_email}
+                  </Td>
+                  <Td className="text-neutral-600 dark:text-neutral-400">
+                    {s.timezone}
+                  </Td>
+                  <Td>
+                    <InviteBadge status={s.owner_invite_status} />
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap gap-1">
+                      <Flag ok={s.practitioner_count > 0} label="Owner" />
+                      <Flag ok={s.services_count > 0} label="Services" />
+                      <Flag ok={s.availability_count > 0} label="Availability" />
+                    </div>
+                  </Td>
+                  <Td className="text-neutral-500">
+                    <FormattedDateTime iso={s.created_at} />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </SectionShell>
+  );
+}
+
+function QuickLinks() {
+  return (
+    <SectionShell title="Operator references">
+      <ul className="flex flex-col gap-1 text-sm">
+        <li>
+          <Link href="/admin/studios/new" className="underline">
+            Create new studio
+          </Link>
+        </li>
+        <li>
+          <Link href="/admin/ops-alerts" className="underline">
+            Ops alerts
+          </Link>
+        </li>
+        <li className="text-neutral-500">
+          New studio setup runbook: docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
+        </li>
+        <li className="text-neutral-500">
+          Smoke tests: docs/12_SMOKE_TESTS.md
+        </li>
+      </ul>
+    </SectionShell>
   );
 }
 
@@ -176,57 +431,10 @@ function SectionShell({
     <section className="flex flex-col gap-3">
       <div>
         <h2 className="text-xl font-medium">{title}</h2>
-        {subtitle && (
-          <p className="mt-1 text-sm text-neutral-500">{subtitle}</p>
-        )}
+        {subtitle && <p className="mt-1 text-sm text-neutral-500">{subtitle}</p>}
       </div>
       {children}
     </section>
-  );
-}
-
-function StudiosSection({ studios }: { studios: StudioRow[] }) {
-  return (
-    <SectionShell
-      title="Studios"
-      subtitle={`${studios.length} total`}
-    >
-      <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <table className="min-w-full text-sm">
-          <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500 dark:bg-neutral-900">
-            <tr>
-              <Th>Name</Th>
-              <Th>Owner</Th>
-              <Th>Practitioners</Th>
-              <Th>Clients</Th>
-              <Th>Created</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
-            {studios.map((s) => (
-              <tr key={s.id}>
-                <Td>
-                  <Link
-                    href={`/admin/studios/${s.id}`}
-                    className="font-medium hover:underline"
-                  >
-                    {s.name}
-                  </Link>
-                </Td>
-                <Td className="text-neutral-600 dark:text-neutral-400">
-                  {s.owner_email}
-                </Td>
-                <Td className="tabular-nums">{s.practitioner_count}</Td>
-                <Td className="tabular-nums">{s.client_count}</Td>
-                <Td className="text-neutral-500">
-                  <FormattedDateTime iso={s.created_at} />
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionShell>
   );
 }
 
@@ -269,13 +477,7 @@ function PractitionersSection({
   );
 }
 
-function WaitlistSection({
-  rows,
-  total,
-}: {
-  rows: WaitlistRow[];
-  total: number;
-}) {
+function WaitlistSection({ rows, total }: { rows: WaitlistRow[]; total: number }) {
   return (
     <SectionShell
       title="Waitlist"
