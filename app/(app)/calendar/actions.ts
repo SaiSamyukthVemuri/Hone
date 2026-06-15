@@ -5,7 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { generateCancellationToken } from "@/lib/booking/tokens";
-import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import {
+  generateAppointmentToken,
+  hashAppointmentToken,
+} from "@/lib/booking/appointment-token";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -200,7 +203,10 @@ export async function bookAppointmentForClientAction(
       duration_minutes: effectiveDurationMinutes,
       status: "confirmed",
       notes,
-      cancellation_token: appointmentToken,
+      // PR #260: store ONLY the hash at rest. The raw appointmentToken is
+      // used by dispatchBookingEmails below (which reads the column off
+      // the returned row, now null, and mints an HMAC link instead).
+      cancellation_token_hash: hashAppointmentToken(appointmentToken),
     })
     .select("*")
     .single();
@@ -705,15 +711,17 @@ type DispatchParams = {
 async function dispatchBookingEmails(p: DispatchParams) {
   // Single helper call up front; downstream lines share the same origin.
   const appOrigin = getRequiredAppOrigin();
-  // Prefer the column-based token if the row has one; legacy callers that
-  // missed the new path can still produce a working HMAC link.
+  // PR #260: appointments are hashed at rest, so the raw column token is
+  // no longer available here at render time. Mint the stateless HMAC
+  // token (expires at the appointment start) for every link. /cancel,
+  // /manage, and (as of PR #260) /reschedule all accept the HMAC
+  // fallback, so all three links resolve. The `?? raw` branch only
+  // matters for pre-0090 rows that still carry a raw column token.
   const token =
     p.appointment.cancellation_token ??
     generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
   const cancellationUrl = `${appOrigin}/cancel/${token}`;
-  const rescheduleUrl = p.appointment.cancellation_token
-    ? `${appOrigin}/reschedule/${p.appointment.cancellation_token}`
-    : null;
+  const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
   // SMS uses the single neutral /manage/<token> entry point. We
   // build it from the same `token` cancel uses (column-based when
   // the row has one, HMAC fallback for legacy rows that pre-date

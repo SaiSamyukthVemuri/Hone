@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
+import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 // Generic public-facing message for the /manage surface. Returned for
@@ -27,17 +28,16 @@ function logInternal(event: string, detail: unknown) {
   }
 }
 
-// Same column-or-HMAC resolver pattern used by the cancel surface so
-// the manage link works for both new column-based tokens and any
-// older in-flight HMAC-based links a client may still have in an
-// email. The reschedule surface is column-only; for a legacy HMAC-
-// only row the manage page therefore resolves and renders, but the
-// Reschedule button on it routes into /reschedule which then falls
-// through to its own generic unavailable surface. New bookings and
-// the cron path always carry a column token, so this asymmetry is
-// the rare legacy-row edge only. We intentionally do not export
-// this resolver; the manage surface is the only caller and a shared
-// helper would broaden the import graph without a need.
+// Same hash-or-HMAC resolver pattern used by the cancel surface so the
+// manage link works for both the hashed at-rest token (PR #260; the raw
+// URL token is hashed and matched against cancellation_token_hash) and
+// any HMAC-based links a client may hold in an email. As of PR #260 the
+// reschedule surface ALSO accepts the HMAC fallback, so the Reschedule
+// button on a manage page reached via an HMAC link (portal / reminder /
+// internal confirmation) now resolves too — the previous column-only
+// asymmetry is gone. We intentionally do not export this resolver; the
+// manage surface is the only caller and a shared helper would broaden
+// the import graph without a need.
 async function resolveAppointmentIdFromToken(
   token: string,
 ): Promise<
@@ -47,10 +47,11 @@ async function resolveAppointmentIdFromToken(
   if (!token) return { ok: false, error: "invalid" };
 
   const admin = createAdminClient();
+  // PR #260: hash the incoming raw URL token and match the at-rest hash.
   const { data: byColumn } = await admin
     .from("appointments")
     .select("id")
-    .eq("cancellation_token", token)
+    .eq("cancellation_token_hash", hashAppointmentToken(token))
     .maybeSingle();
   if (byColumn) {
     return { ok: true, appointment_id: byColumn.id };

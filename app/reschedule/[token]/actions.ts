@@ -2,7 +2,11 @@
 
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import {
+  generateAppointmentToken,
+  hashAppointmentToken,
+} from "@/lib/booking/appointment-token";
+import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import {
   filterFutureSlots,
@@ -53,27 +57,48 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 const PUBLIC_RESCHEDULE_GENERIC_ERROR =
   "This reschedule link can't be used right now.";
 
-// Reschedule is column-token-only. The legacy HMAC token fallback
-// is intentionally NOT used here: migration 0025 backfilled an
-// opaque column token onto every confirmed appointment, and the
-// reschedule_appointment RPC verifies the SUBMITTED token against
-// the row's cancellation_token field. Keeping HMAC as a fallback
-// would let a caller with a stale signed URL bypass that check.
+// PR #260: appointment tokens are hashed at rest. Hash the incoming raw
+// URL token and match appointments.cancellation_token_hash. The reschedule
+// surface now ALSO accepts the stateless HMAC fallback (cancel/manage
+// already did): the portal Manage button, reminder emails, and internal
+// booking confirmations can no longer read a raw column token at render
+// time (new rows store only the hash), so they mint the HMAC token
+// instead, and its /reschedule link must resolve. The RPC re-verifies by
+// hash, so we surface the hash to pass: the hash of the raw URL token for
+// the column path, or the row's stored hash for an HMAC-resolved row.
 async function resolveAppointmentIdFromToken(
   token: string,
 ): Promise<
-  | { ok: true; appointment_id: string }
+  | { ok: true; appointment_id: string; rpc_token_hash: string }
   | { ok: false; error: "invalid" }
 > {
   if (!token) return { ok: false, error: "invalid" };
   const admin = createAdminClient();
+  const tokenHash = hashAppointmentToken(token);
   const { data } = await admin
     .from("appointments")
     .select("id")
-    .eq("cancellation_token", token)
+    .eq("cancellation_token_hash", tokenHash)
     .maybeSingle();
-  if (!data) return { ok: false, error: "invalid" };
-  return { ok: true, appointment_id: data.id };
+  if (data) {
+    return { ok: true, appointment_id: data.id, rpc_token_hash: tokenHash };
+  }
+  const v = verifyCancellationToken(token);
+  if (v.ok) {
+    const { data: row } = await admin
+      .from("appointments")
+      .select("cancellation_token_hash")
+      .eq("id", v.appointment_id)
+      .maybeSingle();
+    if (row?.cancellation_token_hash) {
+      return {
+        ok: true,
+        appointment_id: v.appointment_id,
+        rpc_token_hash: row.cancellation_token_hash,
+      };
+    }
+  }
+  return { ok: false, error: "invalid" };
 }
 
 // PR #149: sanitized server-side log helper for the reschedule
@@ -110,6 +135,12 @@ type ReschedulableOriginal = {
   appointment_id: string;
   studio_id: string;
   client_id: string;
+  // PR #260: the hash to pass to reschedule_appointment as
+  // p_current_cancellation_token. The RPC matches by hash; this is the
+  // hash of the raw URL token (column path) or the row's stored hash
+  // (HMAC path), so the RPC's locked re-verification always resolves the
+  // same row the resolver already authenticated.
+  rpc_token_hash: string;
 };
 async function assertReschedulableOriginal(
   token: string,
@@ -149,6 +180,7 @@ async function assertReschedulableOriginal(
       appointment_id: data.id,
       studio_id: data.studio_id,
       client_id: data.client_id,
+      rpc_token_hash: resolved.rpc_token_hash,
     },
   };
 }
@@ -639,19 +671,20 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // Postgres rolls back the entire transaction and the original
   // appointment stays confirmed.
   const newToken = generateAppointmentToken();
-  // Pass the SUBMITTED token (from the URL) so the RPC verifies it
-  // against the row's cancellation_token. Passing
-  // existing.cancellation_token here would make the verification
-  // tautological and defeat its purpose.
+  // PR #260: the RPC matches/stores hashes. p_current is the hash the
+  // resolver authenticated this request with (hash of the URL token, or
+  // the row's stored hash for an HMAC link). p_new is the hash of the
+  // freshly-generated raw token; the new row is stored hash-only and the
+  // raw newToken is used in-memory below to build the confirmation links.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
     "reschedule_appointment",
     {
       p_original_appointment_id: existing.id,
-      p_current_cancellation_token: token,
+      p_current_cancellation_token: asserted.original.rpc_token_hash,
       p_new_starts_at: start.toISOString(),
       p_new_ends_at: end.toISOString(),
       p_new_duration_minutes: existing.duration_minutes,
-      p_new_cancellation_token: newToken,
+      p_new_cancellation_token: hashAppointmentToken(newToken),
     },
   );
 

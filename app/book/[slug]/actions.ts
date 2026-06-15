@@ -18,7 +18,10 @@ import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
-import { generateAppointmentToken } from "@/lib/booking/appointment-token";
+import {
+  generateAppointmentToken,
+  hashAppointmentToken,
+} from "@/lib/booking/appointment-token";
 import {
   parseReferralSource,
   referralSourceLabel,
@@ -731,7 +734,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       duration_minutes: service.default_duration_minutes,
       status: "confirmed",
       notes,
-      cancellation_token: appointmentToken,
+      // PR #260: store ONLY the hash at rest. The raw appointmentToken
+      // is used in-memory below to build the confirmation links, then
+      // discarded; the column-based raw token is no longer persisted.
+      cancellation_token_hash: hashAppointmentToken(appointmentToken),
       // PR #163 (migration 0069). Stored as a canonical lowercase
       // value; null when the visitor declined to answer the
       // optional "How did you hear about us?" dropdown.

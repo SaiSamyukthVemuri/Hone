@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import type { ClientPortalMessage } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { generateCancellationToken } from "@/lib/booking/tokens";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -129,10 +130,23 @@ export async function getPortalIdentity(
   };
 }
 
+// PR #260: appointment tokens are hashed at rest, so the raw column token
+// is no longer readable here at render time. The portal mints the stateless
+// HMAC token (expires at the appointment start) so the Manage button still
+// lands on /manage/<token>; /manage, /cancel, and /reschedule all accept
+// the HMAC fallback. Minting needs APPOINTMENT_SIGNING_SECRET; if it is
+// unset we degrade to a null manageToken (the page hides the button)
+// rather than throwing the whole portal home.
+function safeManageToken(appointmentId: string, startsAt: string): string | null {
+  try {
+    return generateCancellationToken(appointmentId, new Date(startsAt));
+  } catch {
+    return null;
+  }
+}
+
 // Future confirmed appointments for this (studio, client). Soonest
-// first. Includes the cancellation_token so the portal home can
-// render a Manage button that lands on /manage/<token>: same
-// public flow PR #116 ships, no portal-specific token machinery.
+// first. The Manage token is minted (HMAC), never read from storage.
 //
 // We deliberately do NOT select notes, practitioner_id, status
 // metadata, or any field that could leak practitioner intent. The
@@ -148,7 +162,7 @@ export async function getPortalUpcomingAppointments(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, duration_minutes, cancellation_token, service:services(name)",
+      "id, starts_at, ends_at, duration_minutes, service:services(name)",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -173,7 +187,6 @@ export async function getPortalUpcomingAppointments(
     starts_at: string;
     ends_at: string;
     duration_minutes: number;
-    cancellation_token: string | null;
     service: { name: string } | Array<{ name: string }> | null;
   };
   const pick = <T>(v: T | T[] | null): T | null =>
@@ -186,7 +199,7 @@ export async function getPortalUpcomingAppointments(
       endsAt: row.ends_at,
       durationMinutes: row.duration_minutes,
       serviceName: service?.name?.trim() || "Appointment",
-      manageToken: row.cancellation_token,
+      manageToken: safeManageToken(row.id, row.starts_at),
     };
   });
 }
