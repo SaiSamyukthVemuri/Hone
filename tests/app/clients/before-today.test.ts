@@ -300,3 +300,87 @@ describe("safety", () => {
     expect(CARD).not.toMatch(/supabase|createClient/);
   });
 });
+
+// PR #259: imported treatment memory surfaced in Before Today. The read
+// model's void-exclusion / newest-first ordering / cap / provenance labels
+// are already proven in tests/lib/imported-treatment-memory.test.ts (and its
+// RLS scoping by tests/db/imported-treatment-memory.db.test.ts); these pins
+// cover the NEW wiring: the page loads it RLS-scoped + capped + voided-excluded
+// and passes it to the card, and the card renders a labelled, provenance-noted,
+// read-only section.
+describe("imported treatment memory in Before Today (PR #259)", () => {
+  // Slice the imported section out of the card so assertions don't match the
+  // unrelated live-charted JSX above it.
+  const importedStart = CARD.indexOf("importedMemory?.hasItems");
+  const importedSection = CARD.slice(importedStart);
+
+  it("the card accepts an optional importedMemory prop (existing call sites unaffected)", () => {
+    expect(CARD).toMatch(/importedMemory\?: ImportedMemoryList/);
+    expect(CARD).toMatch(/from "@\/lib\/imported-treatment-memory"/);
+  });
+
+  it("renders a clearly labelled, provenance-noted section gated on hasItems", () => {
+    expect(importedStart).toBeGreaterThan(-1);
+    expect(importedSection).toMatch(/Imported treatment memory/);
+    // The constant resolves to "Imported history, not charted live in Hone."
+    expect(importedSection).toMatch(/IMPORTED_PROVENANCE_NOTE/);
+    expect(importedSection).toMatch(/History imported from paper, Jane, or a spreadsheet/);
+  });
+
+  it("renders separately from live charted history (after the hasHistory block, regardless of it)", () => {
+    // The live empty/“Record reminders” block ends before the imported guard,
+    // so the imported section is a sibling that shows even with no live history.
+    expect(importedStart).toBeGreaterThan(
+      CARD.indexOf("Procedure record looks complete"),
+    );
+  });
+
+  it("shows safe useful fields and skips empties", () => {
+    for (const field of [
+      "m.sourceLabel",
+      "m.dateLabel",
+      "m.treatmentAreaText",
+      "m.modality",
+      "m.probeLot",
+      "m.toleranceText",
+      "m.reactionText",
+      "m.cautionNote",
+      "m.nextVisitNote",
+      "m.importedNote",
+      "m.aftercareMarked === true",
+    ]) {
+      expect(importedSection).toContain(field);
+    }
+  });
+
+  it("shows a 'latest N of M' line only when more imported records exist than displayed", () => {
+    expect(importedSection).toMatch(/totalFound > importedMemory\.items\.length/);
+    expect(importedSection).toMatch(/Showing the latest/);
+  });
+
+  it("uses no clinical-advice / false-assurance wording in the imported section", () => {
+    expect(importedSection).not.toMatch(/\bverified\b/i);
+    expect(importedSection).not.toMatch(/\bcomplete\b/i);
+    expect(importedSection).not.toMatch(/\bsafe\b|\bunsafe\b/i);
+    expect(importedSection).not.toMatch(/recommend/i);
+    expect(importedSection).not.toMatch(/diagnos/i);
+    expect(importedSection).not.toMatch(/should treat/i);
+    expect(importedSection).not.toMatch(/\bcaused\b/i);
+    expect(importedSection).not.toMatch(/compliance/i);
+  });
+
+  it("the page loads imported memory RLS-scoped (studio+client), capped, voided excluded, and passes it to the card", () => {
+    // The RLS-backed helper (not the service-role admin client).
+    expect(PAGE).toMatch(
+      /getImportedTreatmentMemoriesForClient\(studio\.id, client\.id/,
+    );
+    expect(PAGE).toMatch(/limit: BEFORE_TODAY_IMPORTED_CAP/);
+    // Default options exclude voided rows (no includeVoided override here).
+    const callStart = PAGE.indexOf("getImportedTreatmentMemoriesForClient(studio.id, client.id");
+    const callChunk = PAGE.slice(callStart, callStart + 180);
+    expect(callChunk).not.toMatch(/includeVoided/);
+    expect(PAGE).toMatch(/importedMemory=\{importedMemory\}/);
+    // Imported memory comes from the RLS helper, not a service-role read.
+    expect(PAGE).not.toMatch(/createAdminClient[\s\S]*imported_treatment/);
+  });
+});

@@ -1,5 +1,9 @@
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { BeforeToday } from "@/lib/sessions/before-today";
+import {
+  IMPORTED_PROVENANCE_NOTE,
+  type ImportedMemoryList,
+} from "@/lib/imported-treatment-memory";
 
 // PR #211: "Before today" pre-treatment briefing on the client
 // Overview. A compact action briefing assembled from recorded history
@@ -31,7 +35,17 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function BeforeTodayCard({ briefing }: { briefing: BeforeToday }) {
+export function BeforeTodayCard({
+  briefing,
+  importedMemory,
+}: {
+  briefing: BeforeToday;
+  // PR #259: imported (paper/Jane/spreadsheet) history for this client,
+  // loaded read-only by the page via the RLS-backed studio+client-scoped
+  // helper (voided rows already excluded, capped + newest-first). Optional
+  // so existing call sites that pass only `briefing` are unaffected.
+  importedMemory?: ImportedMemoryList;
+}) {
   const last = briefing.lastTreated;
   const setup = briefing.setup;
   const response = briefing.response;
@@ -162,6 +176,86 @@ export function BeforeTodayCard({ briefing }: { briefing: BeforeToday }) {
               </ul>
             )}
           </div>
+        </div>
+      )}
+
+      {/* PR #259: imported treatment memory. A read-only, visually distinct
+          section (amber, NOT the blue Hone-charted styling) that shows
+          regardless of whether live charted history exists, so paper/Jane/
+          spreadsheet history is useful before the next appointment. Every row
+          carries the provenance note so it is never read as live Hone
+          charting. No edit/void/merge/convert actions. */}
+      {importedMemory?.hasItems && (
+        <div className="rounded-md border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30">
+          <SectionLabel>Imported treatment memory</SectionLabel>
+          <p className="mt-1 text-xs text-neutral-500">
+            History imported from paper, Jane, or a spreadsheet.{" "}
+            {IMPORTED_PROVENANCE_NOTE}
+          </p>
+          <ul className="mt-2 flex flex-col gap-2">
+            {importedMemory.items.map((m) => (
+              <li
+                key={m.id}
+                className="rounded-md border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-neutral-500">
+                  <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                    {m.sourceLabel}
+                  </span>
+                  <span>· {m.dateLabel}</span>
+                  {m.treatmentAreaText && (
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                      · {m.treatmentAreaText}
+                    </span>
+                  )}
+                </div>
+                {(m.modality ||
+                  m.methodOrMachine ||
+                  m.probeType ||
+                  m.probeSize ||
+                  m.probeLot ||
+                  m.toleranceText ||
+                  m.reactionText ||
+                  m.aftercareMarked === true) && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {m.modality && <Chip>{m.modality}</Chip>}
+                    {m.methodOrMachine && <Chip>{m.methodOrMachine}</Chip>}
+                    {m.probeType && <Chip>{m.probeType}</Chip>}
+                    {m.probeSize && <Chip>{m.probeSize}</Chip>}
+                    {m.probeLot && <Chip>Lot {m.probeLot}</Chip>}
+                    {m.toleranceText && <Chip>Tolerance {m.toleranceText}</Chip>}
+                    {m.reactionText && <Chip>{m.reactionText}</Chip>}
+                    {m.aftercareMarked === true && <Chip>Aftercare marked</Chip>}
+                  </div>
+                )}
+                {m.cautionNote && (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                    <span className="font-medium">Caution:</span> {m.cautionNote}
+                  </p>
+                )}
+                {m.nextVisitNote && (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                    <span className="font-medium">For next visit:</span>{" "}
+                    {m.nextVisitNote}
+                  </p>
+                )}
+                {m.importedNote && (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400">
+                    {m.importedNote}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+          {importedMemory.totalFound > importedMemory.items.length && (
+            <p className="mt-2 text-xs text-neutral-500">
+              Showing the latest {importedMemory.items.length} of{" "}
+              {importedMemory.totalFound} imported records.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-neutral-400">
+            Review against the original record if needed.
+          </p>
         </div>
       )}
     </section>
