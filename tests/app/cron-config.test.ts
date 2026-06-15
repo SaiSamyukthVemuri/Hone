@@ -27,20 +27,21 @@ const ROUTE = read("app/api/cron/appointment-reminders/route.ts");
 const ROUTE_CODE = codeOnly(ROUTE);
 const NO_SHOW = read("app/api/cron/no-show-check/route.ts");
 
-describe("vercel.json schedules every active cron route", () => {
+describe("vercel.json cron config (fixes the reported empty-crons bug)", () => {
   const crons = VERCEL.crons ?? [];
   const byPath = new Map(crons.map((c) => [c.path, c.schedule]));
 
-  it("schedules appointment-reminders at the shared */15 cadence", () => {
-    expect(byPath.get("/api/cron/appointment-reminders")).toBe(
-      APPOINTMENT_REMINDER_CRON_SCHEDULE,
-    );
-  });
-
-  it("schedules materialize-recurring-breaks daily", () => {
+  it("schedules the daily materialize-recurring-breaks cron (allowed on every plan)", () => {
     expect(byPath.get("/api/cron/materialize-recurring-breaks")).toBe(
       MATERIALIZE_RECURRING_BREAKS_CRON_SCHEDULE,
     );
+  });
+
+  it("does NOT put appointment-reminders in vercel.json (sub-daily exceeds the current plan; fired by an external every-15m scheduler instead)", () => {
+    // A `*/15` vercel.json cron is rejected by the project's plan (cron cadence
+    // capped at once/day), which fails the deploy. The 2h reminder needs
+    // sub-daily checks, so the route is driven externally; see docs/08 + docs/10.
+    expect(byPath.has("/api/cron/appointment-reminders")).toBe(false);
   });
 
   it("does NOT schedule no-show-check (intentionally disabled), and the route documents why", () => {
@@ -48,19 +49,17 @@ describe("vercel.json schedules every active cron route", () => {
     expect(NO_SHOW).toMatch(/DISABLED|non-mutating/i);
   });
 
-  it("crons is non-empty (the reported empty-crons bug is fixed)", () => {
-    expect(crons.length).toBeGreaterThanOrEqual(2);
+  it("crons is non-empty (no longer the empty `[]` that left every route unscheduled)", () => {
+    expect(crons.length).toBeGreaterThanOrEqual(1);
   });
 });
 
-describe("the scheduled cadence covers the 2h reminder window", () => {
-  it("the */N cadence in vercel.json makes the 2h window lose no appointment offsets", () => {
-    const schedule = (VERCEL.crons ?? []).find(
-      (c) => c.path === "/api/cron/appointment-reminders",
-    )?.schedule;
-    const m = schedule?.match(/^\*\/(\d+) \* \* \* \*$/);
+describe("the required reminder cadence covers the 2h window", () => {
+  it("the documented */15 external cadence loses no appointment offsets; the old hourly assumption would", () => {
+    const m = APPOINTMENT_REMINDER_CRON_SCHEDULE.match(/^\*\/(\d+) \* \* \* \*$/);
     expect(m).not.toBeNull();
     const periodMin = Number(m![1]);
+    expect(periodMin).toBe(15);
     expect(windowCoversAllOffsets("2h", periodMin)).toBe(true);
     // And the prior hourly assumption would NOT have covered it.
     expect(windowCoversAllOffsets("2h", 60)).toBe(false);

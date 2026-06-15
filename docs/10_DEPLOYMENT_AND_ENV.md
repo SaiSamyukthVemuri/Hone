@@ -43,10 +43,10 @@
 
 ## Cron
 
-**Vercel Cron, configured in `vercel.json` (PR #258).** Vercel automatically attaches `Authorization: Bearer $CRON_SECRET` to each invocation; every cron route validates it. Sub-daily cadence requires a paid Vercel plan. Scheduled routes:
+**Cron (PR #258).** Every cron route validates `Authorization: Bearer $CRON_SECRET`. The production Vercel plan caps cron cadence at once-per-day, so:
 
-- `/api/cron/appointment-reminders` — `*/15 * * * *` (every 15 min); picks confirmed appointments due in ~24h or ~2h. The 30-min 2h window is covered by the 15-min cadence (see docs/08 for the schedule/window invariant).
-- `/api/cron/materialize-recurring-breaks` — `0 8 * * *` (daily).
+- `/api/cron/materialize-recurring-breaks` — **Vercel Cron** (`vercel.json`, `0 8 * * *`, daily).
+- `/api/cron/appointment-reminders` — **external scheduler** (`cron-job.org`), `GET` **every 15 minutes** with `Authorization: Bearer $CRON_SECRET`. A 2h-before reminder needs sub-daily checks and `*/15` exceeds the plan's cron cap, so it is not in `vercel.json`. The 30-min 2h window is covered by the 15-min cadence (see docs/08 for the schedule/window invariant). If the project moves to Vercel Pro, move this into `vercel.json` as `*/15 * * * *` and retire the external job.
 - `/api/cron/no-show-check` — intentionally **not** scheduled (disabled stub).
 
 ## Environment variables

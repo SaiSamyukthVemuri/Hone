@@ -6,22 +6,30 @@
 // firing every P minutes, is only missable when W < P (a closed window of
 // width >= P always contains a point of a P-minute grid). We keep W >= P; for
 // the tight 2h window W = 30 = 2 * CRON_INTERVAL_MINUTES, so a single skipped
-// cron fire still leaves a grid point inside the window. vercel.json schedules
-// the route at APPOINTMENT_REMINDER_CRON_SCHEDULE; the tests assert that
-// schedule covers every appointment minute offset for the 2h and 24h windows.
+// cron fire still leaves a grid point inside the window. The tests assert this
+// covers every appointment minute offset for the 2h and 24h windows.
 //
-// These crons run on Vercel Cron (vercel.json "crons"), which requires a paid
-// plan for sub-daily cadence and automatically attaches
-// `Authorization: Bearer ${CRON_SECRET}` to each invocation (validated by
-// lib/cron/auth.ts). No external scheduler, no new dependency, no migration.
+// SCHEDULING (PR #258): a 2-hours-before reminder needs SUB-DAILY checks. The
+// production Vercel plan caps cron cadence at once-per-day, which rejected a
+// `*/15` vercel.json cron, so the appointment-reminders route is fired by an
+// EXTERNAL scheduler (cron-job.org) every CRON_INTERVAL_MINUTES, sending
+// `Authorization: Bearer ${CRON_SECRET}` (validated by lib/cron/auth.ts). The
+// daily, Hobby-allowed materialize-recurring-breaks cron DOES live in
+// vercel.json. APPOINTMENT_REMINDER_CRON_SCHEDULE documents the required
+// external cadence (and is the vercel.json value to use if the plan is later
+// upgraded to Pro). The window/cadence invariant below holds regardless of
+// which scheduler fires the route. No new dependency, no migration.
 
 export type ReminderKind = "24h" | "2h";
 
-// MUST match vercel.json "crons".
+// The cadence the appointment-reminders route MUST be fired at (external
+// scheduler today; the vercel.json value if upgraded to a Pro plan).
 export const APPOINTMENT_REMINDER_CRON_SCHEDULE = "*/15 * * * *";
+// This one IS in vercel.json (daily is allowed on every Vercel plan).
 export const MATERIALIZE_RECURRING_BREAKS_CRON_SCHEDULE = "0 8 * * *";
 
-// The reminder cron cadence in minutes (derived from the schedule above).
+// The reminder cadence in minutes (derived from the schedule above) the 2h
+// window must stay compatible with.
 export const CRON_INTERVAL_MINUTES = 15;
 
 // [start, end] minutes-from-now for each reminder pass (CLOSED interval; the
