@@ -20,6 +20,7 @@ import {
 import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -104,6 +105,36 @@ type RunStats = {
 // SMS pass counts consent/toggle/claim skips in the same bucket.
 type SmsRunStats = RunStats;
 
+// PR #258: when a reminder reaches MAX_ATTEMPTS without sending it is silently
+// dropped (the window query filters attempts >= MAX_ATTEMPTS, so the row is
+// never retried). Surface that to the operator via the existing ops-alert
+// pipeline with NON-SENSITIVE metadata only — no client email/phone/notes,
+// no token, no free-text error string (recordOpsAlert also redacts defensively).
+async function alertIfReminderExhausted(opts: {
+  studioId: string;
+  appointmentId: string;
+  emailType: ClaimableEmailType;
+  attemptNumber: number;
+  retryable: boolean;
+  reason: "send_failed" | "missing_token";
+}): Promise<void> {
+  if (opts.attemptNumber < MAX_ATTEMPTS) return;
+  await recordOpsAlert({
+    severity: "warning",
+    event: "reminder_send_exhausted",
+    message: `Appointment reminder (${opts.emailType}) exhausted ${MAX_ATTEMPTS} send attempts without success.`,
+    studioId: opts.studioId,
+    appointmentId: opts.appointmentId,
+    route: "/api/cron/appointment-reminders",
+    safeDetails: {
+      reminder_type: opts.emailType,
+      attempt_count: opts.attemptNumber,
+      retryable: opts.retryable,
+      reason: opts.reason,
+    },
+  });
+}
+
 async function sendReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
@@ -153,6 +184,23 @@ async function sendReminderPass(opts: {
       continue;
     }
 
+    // PR #258: a confirmed appointment can be cancelled / no-showed between the
+    // window query and now; the claim does not re-validate status. Re-check
+    // immediately before the send so a reminder is never emailed for a
+    // no-longer-confirmed appointment. Idempotency stays owned by
+    // claim-before-send; this only suppresses an out-of-date send (the bumped
+    // claim attempt is harmless — a non-confirmed row is filtered out of the
+    // next window query).
+    const { data: fresh } = await admin
+      .from("appointments")
+      .select("status")
+      .eq("id", appt.id)
+      .maybeSingle();
+    if (!fresh || fresh.status !== "confirmed") {
+      stats.skipped += 1;
+      continue;
+    }
+
     stats.attempted += 1;
     const attemptNumber = (appt[attemptsColumn] as number) + 1;
     const token = appt.cancellation_token;
@@ -168,6 +216,14 @@ async function sendReminderPass(opts: {
         error: "Missing cancellation_token",
         retryable: false,
         attemptNumber,
+      });
+      await alertIfReminderExhausted({
+        studioId: appt.studio.id,
+        appointmentId: appt.id,
+        emailType,
+        attemptNumber,
+        retryable: false,
+        reason: "missing_token",
       });
       stats.failed += 1;
       continue;
@@ -214,6 +270,14 @@ async function sendReminderPass(opts: {
         error: result.error,
         retryable: result.retryable,
         attemptNumber,
+      });
+      await alertIfReminderExhausted({
+        studioId: appt.studio.id,
+        appointmentId: appt.id,
+        emailType,
+        attemptNumber,
+        retryable: result.retryable,
+        reason: "send_failed",
       });
       stats.failed += 1;
     }
@@ -274,6 +338,18 @@ async function sendSmsReminderPass(opts: {
     if (!appt.client.sms_consent_at) continue;
     if (appt.client.sms_opted_out_at) continue;
 
+    // PR #258: same cancellation-race re-check as the email pass — never SMS a
+    // reminder for an appointment cancelled/no-showed after the window query.
+    const { data: freshSms } = await admin
+      .from("appointments")
+      .select("status")
+      .eq("id", appt.id)
+      .maybeSingle();
+    if (!freshSms || freshSms.status !== "confirmed") {
+      stats.skipped += 1;
+      continue;
+    }
+
     const token = appt.cancellation_token;
     // SMS reminders carry one neutral /manage/<token> link instead
     // of separate reschedule/cancel labels; the manage landing page
@@ -326,22 +402,23 @@ export async function GET(req: Request) {
   const startedAt = Date.now();
   try {
     const now = Date.now();
-    // 24h pass: appointments starting in 23-25h from now.
-    const win24Start = new Date(now + 23 * 60 * 60 * 1000).toISOString();
-    const win24End = new Date(now + 25 * 60 * 60 * 1000).toISOString();
-    // 2h pass: 1h45m to 2h15m.
-    const win2Start = new Date(now + 105 * 60 * 1000).toISOString();
-    const win2End = new Date(now + 135 * 60 * 1000).toISOString();
+    // PR #258: windows come from the shared lib/cron/reminder-schedule module
+    // (single source of truth with the invariant tests + vercel.json cadence).
+    // 24h pass: 23-25h out. 2h pass: 1h45m-2h15m (30 min = 2x the */15 cadence,
+    // so no appointment minute offset is ever missed and a single skipped cron
+    // fire still leaves a grid point in-window).
+    const win24 = reminderWindowIso("24h", now);
+    const win2 = reminderWindowIso("2h", now);
 
     const reminder_24h = await sendReminderPass({
       kind: "24h",
-      windowStartIso: win24Start,
-      windowEndIso: win24End,
+      windowStartIso: win24.startIso,
+      windowEndIso: win24.endIso,
     });
     const reminder_2h = await sendReminderPass({
       kind: "2h",
-      windowStartIso: win2Start,
-      windowEndIso: win2End,
+      windowStartIso: win2.startIso,
+      windowEndIso: win2.endIso,
     });
 
     // SMS reminder passes run immediately after their email counterparts,
@@ -353,13 +430,13 @@ export async function GET(req: Request) {
     // compatible.
     const sms_reminder_24h = await sendSmsReminderPass({
       kind: "24h",
-      windowStartIso: win24Start,
-      windowEndIso: win24End,
+      windowStartIso: win24.startIso,
+      windowEndIso: win24.endIso,
     });
     const sms_reminder_2h = await sendSmsReminderPass({
       kind: "2h",
-      windowStartIso: win2Start,
-      windowEndIso: win2End,
+      windowStartIso: win2.startIso,
+      windowEndIso: win2.endIso,
     });
 
     return NextResponse.json({
