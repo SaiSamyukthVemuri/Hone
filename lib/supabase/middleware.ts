@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isAdmin } from "@/lib/admin";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -123,16 +124,30 @@ export async function updateSession(request: NextRequest) {
   // row. The shell layout keeps its own requirePractitionerWithStudio
   // guard as defense in depth.
   if (user && !isPublicRoute && pathname !== "/no-access") {
-    const { data: practitioner } = await supabase
-      .from("practitioners")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("active", true)
-      .maybeSingle();
-    if (!practitioner) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/no-access";
-      return NextResponse.redirect(url);
+    // PR #254: platform operators (the ADMIN_EMAILS allowlist, fail-closed in
+    // production) may reach the internal /admin surface WITHOUT a studio. The
+    // New Studio Wizard must be usable by an operator who is bootstrapping a
+    // studio and is not yet a practitioner anywhere; without this carve-out
+    // the PR #253 no-studio gate would bounce them to /no-access before the
+    // /admin layout's own isAdmin check ever runs. This does NOT weaken
+    // invite-only for anyone else: the carve-out is limited to /admin paths
+    // AND an isAdmin email, the /admin layout plus every admin server action
+    // re-check isAdmin, and a no-studio NON-admin still falls through to
+    // /no-access below.
+    const isAdminRoute =
+      pathname === "/admin" || pathname.startsWith("/admin/");
+    if (!(isAdminRoute && isAdmin(user.email))) {
+      const { data: practitioner } = await supabase
+        .from("practitioners")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("active", true)
+        .maybeSingle();
+      if (!practitioner) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/no-access";
+        return NextResponse.redirect(url);
+      }
     }
   }
 

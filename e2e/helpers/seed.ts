@@ -167,6 +167,50 @@ export async function seedNoStudioAuthUser(): Promise<{ email: string }> {
   return { email };
 }
 
+// PR #254: the internal New Studio Wizard operator. A REAL auth user whose
+// email is in ADMIN_EMAILS (local-env.ts) so isAdmin() is true, but who is
+// uninvited — so handle_new_user creates NO practitioner and they are a
+// no-studio operator. The PR #254 middleware carve-out lets this admin reach
+// /admin without a studio. Fixed (not run-scoped) email so it matches the
+// allowlist; idempotent so Playwright retries don't fail on a duplicate.
+export async function seedOperatorAuthUser(): Promise<{ email: string }> {
+  const email = "e2e-operator@harness.local";
+  const existing = await sql<{ count: string }>(
+    `select count(*)::text as count from auth.users where lower(email) = lower($1)`,
+    [email],
+  );
+  if (existing[0]?.count === "0") {
+    const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        apikey: E2E_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, email_confirm: true }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `local GoTrue admin createUser (operator) failed: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+  // The operator is uninvited -> handle_new_user must NOT have created a
+  // practitioner (they reach /admin via the isAdmin carve-out, not a studio).
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.practitioners p
+       join auth.users u on u.id = p.user_id
+      where lower(u.email) = lower($1)`,
+    [email],
+  );
+  if (rows[0]?.count !== "0") {
+    throw new Error(
+      "seed failed: the operator unexpectedly has a practitioner row",
+    );
+  }
+  return { email };
+}
+
 // Read-only lookups the spec uses to bridge between UI steps.
 
 // Intake links are SIGNED tokens (lib/intake/tokens.ts), not stored
