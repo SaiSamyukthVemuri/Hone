@@ -16,6 +16,12 @@ import {
 import { TreatmentIntelligenceCard } from "@/components/treatment-intelligence-card";
 import { BeforeTodayCard } from "@/components/before-today-card";
 import { buildBeforeToday } from "@/lib/sessions/before-today";
+import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
+
+// PR #259: display cap for imported treatment memory in Before Today — show
+// the latest few so the briefing stays scannable; "Showing the latest N of M"
+// surfaces when more exist. The helper still returns an honest totalFound.
+const BEFORE_TODAY_IMPORTED_CAP = 5;
 import {
   buildTreatmentIntelligence,
   type IntelligenceBlockInput,
@@ -201,6 +207,7 @@ export default async function ClientCheatSheetPage({
     consentTemplatesAll,
     consentLatestSignatures,
     activeCard,
+    importedMemory,
   ] = await Promise.all([
     getTotalTreatmentTime(studio.id, client.id),
     getTreatmentTimeByArea(studio.id, client.id),
@@ -226,6 +233,14 @@ export default async function ClientCheatSheetPage({
     // metadata only; Stripe identifiers stay off the wire. Rendered
     // by the new PaymentMethodCard below ConsentSignaturesCard.
     getActiveCardForStudioClient(studio.id, client.id),
+    // PR #259: read-only imported treatment memory (paper/Jane/spreadsheet
+    // history from Quick Import) for the Before Today briefing. RLS-backed,
+    // studio+client-scoped, voided rows excluded, newest-first, capped for
+    // display. Surfaced as a labelled "Imported treatment memory" section in
+    // BeforeTodayCard — never mixed with live charted history.
+    getImportedTreatmentMemoriesForClient(studio.id, client.id, {
+      limit: BEFORE_TODAY_IMPORTED_CAP,
+    }),
   ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -711,7 +726,10 @@ export default async function ClientCheatSheetPage({
 
           {/* PR #211: "Before today" pre-treatment briefing; below
               Client info, above Treatment Intelligence. */}
-          <BeforeTodayCard briefing={beforeToday} />
+          <BeforeTodayCard
+            briefing={beforeToday}
+            importedMemory={importedMemory}
+          />
 
           {/* PR #210: Treatment Intelligence; recorded-history summary
               (areas, minutes, hairs, latest setup, reactions, watch/
