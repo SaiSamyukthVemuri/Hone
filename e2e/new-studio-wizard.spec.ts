@@ -1,6 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { seedNoStudioAuthUser, seedOperatorAuthUser } from "./helpers/seed";
+import {
+  seedE2eStudio,
+  seedNoStudioAuthUser,
+  seedOperatorAuthUser,
+} from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
@@ -165,5 +169,39 @@ test.describe("Admin Console V1 (PR #255)", () => {
     await expect(
       page.getByRole("heading", { name: "New studio", level: 1 }),
     ).toBeVisible();
+  });
+});
+
+test.describe("Admin studio detail privacy (PR #256)", () => {
+  test("detail page shows counts/setup metadata, never a raw client name", async ({
+    page,
+  }) => {
+    // A full studio with an owner + a NAMED client + a service.
+    const seed = await seedE2eStudio();
+    const { email: operatorEmail } = await seedOperatorAuthUser();
+    await loginViaMagicLink(page, operatorEmail);
+
+    await page.goto(`/admin/studios/${seed.studioId}`);
+    await expect(
+      page.getByRole("heading", { name: seed.studioName, level: 1 }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Counts", level: 2 }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Setup checks", level: 2 }),
+    ).toBeVisible();
+    await expect(page.getByText("Live payments disabled")).toBeVisible();
+
+    // The seeded client NAME must NOT appear anywhere on the detail page.
+    await expect(page.getByText(seed.clientName)).toHaveCount(0);
+
+    // No horizontal overflow at desktop width.
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
   });
 });
