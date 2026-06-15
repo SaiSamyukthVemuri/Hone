@@ -28,6 +28,7 @@ export default async function SettingsLayout({
           { href: "/settings/services", label: "Services" },
           { href: "/settings/consent", label: "Consent forms" },
           { href: "/settings/payments", label: "Payments" },
+          { href: "/settings/import", label: "Import" },
           { href: "/settings/data", label: "Data" },
         ]
       : []),

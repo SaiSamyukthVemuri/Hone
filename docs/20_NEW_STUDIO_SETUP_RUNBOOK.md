@@ -78,6 +78,7 @@ where studio_id = '<STUDIO_ID>';
 4. **Settings -> Booking**: review confirmation/reminder toggles (defaults are sensible); cancellation/no-show policy text optional now, required before she relies on fee workflows.
 5. **Settings -> Consent / Intake**: review the consent templates and intake; intake schema is code-defined (no per-studio builder yet, known limitation).
 6. **Machine frequency**: nothing to configure; it learns from her first charted treatment area.
+7. **Settings -> Import (Quick Import V1, PR #257)**: optional — the owner can bring existing clients + basic historical treatment memory over from a CSV/TSV paste or file (Google Sheets/Excel/Jane/Fresha export, or paper cards typed into a sheet — one row per client or treatment area). It is preview-first and **create-only**: confident duplicates are skipped, nothing is overwritten or merged, multi-area rows group into one client, and imported rows are stored as imported memory ("Imported history, not charted live in Hone."), never as live charting. No OCR/AI/API sync. This is the supported "don't retype your practice" path; it is owner-only and does not need operator SQL.
 
 ### 2.5 Surface verification (each loads, empty but not broken)
 

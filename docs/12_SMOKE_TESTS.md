@@ -826,6 +826,10 @@ from public.sessions;
 -- The linked count climbs only as new appointment-context "+ Chart session" runs.
 ```
 
+## Quick Import smoke (PR #257)
+
+Quick Import V1 lives at the owner-only `/settings/import` (Settings → Import; the tab shows only for owners). It brings clients + basic historical treatment memory over from CSV/TSV **paste or file**, **preview-first**, into the PR #252 `imported_treatment_memories` schema. It is NOT OCR, AI, API sync, merge, overwrite, or live charting. **Access (non-destructive):** anonymous `curl -sI https://hone.care/settings/import` → `307 -> /login`; a no-studio user → `/no-access`; a non-owner practitioner sees "Only studio owners can import." **Owner flow:** Copy template → paste rows (Google Sheets/Excel TSV or CSV; include the header) → pick a Source → **Preview import** (no writes: shows source rows, grouped clients, ready/review/duplicate counts, treatment areas detected, ignored columns, per-group status chips) → **Confirm import** → summary (clients created, memories created, duplicates skipped, links to created clients). Verify: two rows for the same client (e.g. Upper lip + Chin, same email) group into **one** client with two memory rows; a row whose email/phone/name+DOB matches an existing client is **skipped** (not overwritten/merged); a same-name-only match is created with a "Review" warning, not merged; an imported client appears in Clients and its history is labelled "Imported history, not charted live in Hone." (never as charted-live, no session/appointment created). The raw pasted text is never stored or logged; no email/SMS/payment is sent. **Real imports create real `clients` rows (no hard delete; correction is owner batch soft-void), so use it for genuine setup, not throwaway tests.** Pinned by `tests/lib/import/quick-import.test.ts`, `tests/app/settings/import/quick-import-action.test.ts`, `tests/db/quick-import.db.test.ts`, and `e2e/quick-import.spec.ts`.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:
