@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 // High-entropy opaque bearer token used in cancellation and reschedule URLs
 // (confirmation + reminder emails). Stored in appointments.cancellation_token.
@@ -27,4 +27,18 @@ export function generateAppointmentToken(): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
+}
+
+// PR #260: SHA-256 hex digest of a raw appointment token. This is the
+// only token value persisted at rest (appointments.cancellation_token
+// _hash); the raw token lives only in transit (the /cancel, /reschedule,
+// /manage URL) and, for surfaces that rebuild a link after creation, is
+// replaced by the stateless HMAC token (lib/booking/tokens.ts). A DB
+// compromise therefore yields no usable bearer tokens. Mirrors the
+// portal (lib/portal/tokens.ts) and calendar-feed (lib/calendar-feed/
+// token.ts) hash-at-rest helpers; the migration 0090 CHECK enforces the
+// same 64-lowercase-hex shape. trim() is intentionally NOT applied: the
+// URL path segment is the canonical source, matching the old raw lookup.
+export function hashAppointmentToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }

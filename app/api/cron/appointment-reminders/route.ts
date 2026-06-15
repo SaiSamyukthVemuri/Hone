@@ -18,6 +18,7 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
+import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
@@ -203,12 +204,19 @@ async function sendReminderPass(opts: {
 
     stats.attempted += 1;
     const attemptNumber = (appt[attemptsColumn] as number) + 1;
-    const token = appt.cancellation_token;
+    // PR #260: appointments are hashed at rest, so the reminder no longer
+    // reads a raw column token. Prefer a pre-0090 raw token if the row
+    // still carries one; otherwise mint the stateless HMAC token (expires
+    // at the appointment start). /cancel and /reschedule both accept the
+    // HMAC fallback, so the reminder links resolve.
+    const token =
+      appt.cancellation_token ??
+      generateCancellationToken(appt.id, new Date(appt.starts_at));
     if (!token) {
-      // Without a token there's no cancel/reschedule URL. Record a failed
-      // result via the RPC (clears the claim; the claim already counted
-      // the attempt) so we don't loop forever on rows that pre-date
-      // the token backfill.
+      // Defensive: minting only fails if the appointment start is
+      // unparseable. Record a failed result via the RPC (clears the
+      // claim; the claim already counted the attempt) so we don't loop
+      // forever on a structurally broken row.
       await recordEmailResult(admin, appt.id, emailType, false);
       logEmailFailure({
         appointmentId: appt.id,
@@ -350,14 +358,22 @@ async function sendSmsReminderPass(opts: {
       continue;
     }
 
-    const token = appt.cancellation_token;
-    // SMS reminders carry one neutral /manage/<token> link instead
-    // of separate reschedule/cancel labels; the manage landing page
-    // surfaces both actions after the studio's policies. Null when
-    // the row lacks a column token (very old pre-backfill rows); the
-    // SMS template then drops the manage line and still sends the
-    // moment-only reminder.
-    const manageUrl = token ? `${getRequiredAppOrigin()}/manage/${token}` : null;
+    // PR #260: prefer a pre-0090 raw token if present, otherwise mint the
+    // stateless HMAC token so the SMS manage link still resolves. /manage
+    // accepts the HMAC fallback. Null only if minting fails (unparseable
+    // start); the SMS template then drops the manage line and still sends
+    // the moment-only reminder.
+    let manageToken: string | null = appt.cancellation_token;
+    if (!manageToken) {
+      try {
+        manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
+      } catch {
+        manageToken = null;
+      }
+    }
+    const manageUrl = manageToken
+      ? `${getRequiredAppOrigin()}/manage/${manageToken}`
+      : null;
 
     const sendFn =
       opts.kind === "24h"

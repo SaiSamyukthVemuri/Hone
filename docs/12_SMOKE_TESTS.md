@@ -18,14 +18,26 @@ The public homepage (`/`) is positioned around treatment memory; after PR #244 t
 4. Submit. Expect a confirmation banner and a confirmation email in the inbox.
 5. SQL:
    ```sql
-   select id, status, starts_at, cancellation_token,
+   select id, status, starts_at, cancellation_token, cancellation_token_hash,
           confirmation_send_attempts, confirmation_sent_at
      from public.appointments
     where studio_id = '<studio uuid>'
     order by created_at desc
     limit 5;
    ```
-   Expected: new row, `status='confirmed'`, `cancellation_token` non-null, `confirmation_send_attempts >= 1`, `confirmation_sent_at` populated.
+   Expected: new row, `status='confirmed'`, `confirmation_send_attempts >= 1`, `confirmation_sent_at` populated. **PR #260 (migration 0090): the token is now hashed at rest — the new row has `cancellation_token_hash` non-null (64 lowercase hex) and `cancellation_token` NULL.** The confirmation email's `/cancel/<token>` link still carries the raw token (generated in-memory at booking); clicking it resolves because the route hashes the URL token and matches `cancellation_token_hash`. Older rows booked before 0090 keep a non-null `cancellation_token` (plus a backfilled hash).
+
+### Appointment token hashing smoke (PR #260, migration 0090)
+
+End-to-end check that hashing at rest did not break the public cancel/reschedule/manage links:
+
+1. Book a public appointment (smoke 1). Confirm the confirmation email's **Cancel** and **Reschedule** links open `/cancel/<token>` and `/reschedule/<token>` and resolve to the appointment (not the generic "link can't be used" page).
+2. SQL on that row: `cancellation_token_hash` is non-null 64-hex, `cancellation_token` is NULL (it was never stored raw).
+3. As that client, open the **Portal** (smoke 2): the upcoming appointment's **Manage** button lands on a working `/manage/<token>` page whose **Reschedule** and **Cancel** actions both resolve (the portal mints the HMAC token; `/reschedule` accepts it as of PR #260).
+4. Trigger an appointment reminder (or wait for the 15-min scheduler): the reminder email's cancel/reschedule links and the SMS manage link all resolve.
+5. Negative: `/cancel/not-a-real-token` shows the generic neutral error (no token-state leak), unchanged.
+
+This is also pinned automatically by `tests/db/appointment-token-hash.db.test.ts`, `tests/lib/booking/appointment-token-hash.test.ts`, and `e2e/appointment-token-hash.spec.ts`.
 
 ## 2. Portal smoke
 

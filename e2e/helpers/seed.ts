@@ -4,6 +4,7 @@ import {
   E2E_DB_URL,
   E2E_SUPABASE_URL,
   E2E_SERVICE_ROLE_KEY,
+  E2E_WEB_SERVER_ENV,
 } from "./local-env";
 import { timezoneWithLocalMorning } from "./timezone";
 
@@ -276,14 +277,44 @@ export async function getAppointmentsForClient(
   );
 }
 
+// PR #260: appointment tokens are hashed at rest, so the raw token a
+// confirmation email carried can no longer be read back from the DB. The
+// public /cancel, /reschedule, and /manage routes all accept the stateless
+// HMAC fallback (the same token the portal + reminders mint), so this
+// helper mints one — matching lib/booking/tokens.ts byte-for-byte using
+// the dummy e2e signing secret the dev server runs with — so the e2e can
+// drive a working manage/cancel/reschedule link end to end.
+function base64url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
 export async function getCancellationToken(
   studioId: string,
   appointmentId: string,
 ): Promise<string | null> {
-  const rows = await sql<{ cancellation_token: string | null }>(
-    `select cancellation_token from public.appointments
+  const rows = await sql<{ starts_at: string | null }>(
+    `select starts_at from public.appointments
       where studio_id = $1 and id = $2`,
     [studioId, appointmentId],
   );
-  return rows[0]?.cancellation_token ?? null;
+  const startsAt = rows[0]?.starts_at;
+  if (!startsAt) return null;
+  const payloadB64 = base64url(
+    Buffer.from(
+      JSON.stringify({
+        appointment_id: appointmentId,
+        expires_at: new Date(startsAt).toISOString(),
+      }),
+    ),
+  );
+  const sig = base64url(
+    createHmac("sha256", E2E_WEB_SERVER_ENV.APPOINTMENT_SIGNING_SECRET)
+      .update(payloadB64)
+      .digest(),
+  );
+  return `${payloadB64}.${sig}`;
 }

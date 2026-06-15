@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
+import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
@@ -56,10 +57,14 @@ function logInternal(event: string, detail: unknown) {
   }
 }
 
-// Resolves a cancel/reschedule URL token to an appointment id. New emails
-// use the column-based token in appointments.cancellation_token; older
-// in-flight emails use the HMAC token from generateCancellationToken().
-// Try the column path first, fall back to HMAC verification.
+// Resolves a cancel/reschedule URL token to an appointment id. PR #260:
+// appointment tokens are hashed at rest, so we hash the incoming raw URL
+// token and match appointments.cancellation_token_hash. Older in-flight
+// emails carry the stateless HMAC token from generateCancellationToken();
+// try the hash path first, fall back to HMAC verification. The migration
+// 0090 backfill + trigger guarantee every row has a hash, so no raw-column
+// lookup is needed. `column_token` carries the raw URL token (or null for
+// the HMAC path) so the caller can hash it for the RPC re-verification.
 async function resolveAppointmentIdFromToken(
   token: string,
 ): Promise<
@@ -72,7 +77,7 @@ async function resolveAppointmentIdFromToken(
   const { data: byColumn } = await admin
     .from("appointments")
     .select("id")
-    .eq("cancellation_token", token)
+    .eq("cancellation_token_hash", hashAppointmentToken(token))
     .maybeSingle();
   if (byColumn) {
     return { ok: true, appointment_id: byColumn.id, column_token: token };
@@ -218,21 +223,24 @@ export async function publicCancelAppointmentAction(
   // (rejects any non-confirmed source state), locks the row FOR UPDATE,
   // and writes the audit row in the same transaction.
   //
-  // The RPC accepts only the column-based token. If the caller arrived
-  // with an HMAC fallback token, we re-look up the appointment to load
-  // its persisted cancellation_token and pass THAT into the RPC. We do
-  // not relax the RPC's token requirement to keep its surface narrow.
-  let rpcToken = resolved.column_token;
+  // PR #260: the RPC matches the stored hash. For the normal column
+  // path we pass the hash of the raw URL token (re-verified against the
+  // row's stored hash inside the RPC). For an HMAC-fallback token we
+  // re-load the appointment's persisted cancellation_token_hash and pass
+  // THAT, since the HMAC string itself does not hash to the stored value.
+  let rpcToken = resolved.column_token
+    ? hashAppointmentToken(resolved.column_token)
+    : null;
   if (!rpcToken) {
     const { data: row } = await admin
       .from("appointments")
-      .select("cancellation_token")
+      .select("cancellation_token_hash")
       .eq("id", resolved.appointment_id)
       .maybeSingle();
-    if (!row?.cancellation_token) {
+    if (!row?.cancellation_token_hash) {
       return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
     }
-    rpcToken = row.cancellation_token;
+    rpcToken = row.cancellation_token_hash;
   }
 
   // PR #144. Switched to the 5-arg variant of the RPC (migration
