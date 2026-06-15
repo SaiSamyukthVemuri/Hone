@@ -43,9 +43,11 @@
 
 ## Cron
 
-External scheduler (`cron-job.org`) or Vercel cron. Every cron route validates `Authorization: Bearer $CRON_SECRET`. Active route:
+**Vercel Cron, configured in `vercel.json` (PR #258).** Vercel automatically attaches `Authorization: Bearer $CRON_SECRET` to each invocation; every cron route validates it. Sub-daily cadence requires a paid Vercel plan. Scheduled routes:
 
-- `/api/cron/appointment-reminders`; every 5 minutes, picks confirmed appointments due in ~24h or ~2h.
+- `/api/cron/appointment-reminders` — `*/15 * * * *` (every 15 min); picks confirmed appointments due in ~24h or ~2h. The 30-min 2h window is covered by the 15-min cadence (see docs/08 for the schedule/window invariant).
+- `/api/cron/materialize-recurring-breaks` — `0 8 * * *` (daily).
+- `/api/cron/no-show-check` — intentionally **not** scheduled (disabled stub).
 
 ## Environment variables
 

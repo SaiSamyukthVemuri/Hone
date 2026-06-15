@@ -1,3 +1,12 @@
 {
-  "crons": []
+  "crons": [
+    {
+      "path": "/api/cron/appointment-reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/materialize-recurring-breaks",
+      "schedule": "0 8 * * *"
+    }
+  ]
 }
