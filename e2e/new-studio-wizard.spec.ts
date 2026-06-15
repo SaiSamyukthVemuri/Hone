@@ -126,3 +126,44 @@ test.describe("operator creates a studio + owner invitation", () => {
     ).toBeVisible();
   });
 });
+
+test.describe("Admin Console V1 (PR #255)", () => {
+  test("operator sees the console and reaches the wizard from it (no overflow)", async ({
+    page,
+  }) => {
+    const { email: operatorEmail } = await seedOperatorAuthUser();
+    await loginViaMagicLink(page, operatorEmail);
+
+    await page.goto("/admin");
+    await expect(
+      page.getByRole("heading", { name: "Admin", level: 1 }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Internal operator tools for invite-only studio setup."),
+    ).toBeVisible();
+    await expect(page.getByText("Live payments are disabled.")).toBeVisible();
+    // Overview cards + studios table render (the studios table exists because
+    // the wizard test seeded a studio earlier; either way the heading shows).
+    await expect(
+      page.getByRole("heading", { name: "Studios", level: 2 }),
+    ).toBeVisible();
+
+    // The console must not scroll sideways at a normal desktop width.
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+
+    // The New Studio Wizard is discoverable: click the primary CTA.
+    await page
+      .getByRole("link", { name: "Create new studio" })
+      .first()
+      .click();
+    await page.waitForURL(/\/admin\/studios\/new/, { timeout: 20_000 });
+    await expect(
+      page.getByRole("heading", { name: "New studio", level: 1 }),
+    ).toBeVisible();
+  });
+});
