@@ -30,6 +30,8 @@ Standing discipline applies to every step here: **production WRITES require the 
 
 ## 2. Setup checklist
 
+> New Studio Wizard (PR #254): the operator-only `/admin/studios/new` page now performs the two writes in §2.1 + §2.2 for you — `isAdmin`-gated (the `ADMIN_EMAILS` allowlist, fail-closed in production), via the service-role client, validating slug uniqueness + a non-duplicate pending invite, inserting a `studios` row (name/owner_email/slug/timezone only — fees NULL, no Stripe) and an `owner` `pending_invitations` row, and showing the booking URL + this setup checklist on success. It does NOT insert a practitioner (the owner is still created by `handle_new_user()` on first sign-in, §2.3), send any email, or touch payments. The wizard is the convenient path; the SQL below remains the source of truth for exactly what it writes and the approval discipline still applies to anything outside it. Wizard quirk: a studio-less operator reaches `/admin` via the PR #254 isAdmin middleware carve-out, so after first sign-in they may land on `/no-access` and must navigate to `/admin/studios/new` directly.
+
 ### 2.1 Create the studio row (production write: show SQL, get approval first)
 
 ```sql
@@ -146,7 +148,7 @@ Cleanup, WITHOUT violating the clinical delete hardening (0087: clients/sessions
 
 ## 6. Known limitations (accepted for Studio #2)
 
-- Setup is manual by design: two approved SQL inserts plus in-app configuration. No self-serve studio creation.
+- Setup is operator-driven: the two writes are either the approved SQL inserts below or the operator-only New Studio Wizard (PR #254, `/admin/studios/new`) that performs the same two writes; in-app configuration (services/availability/booking/consent) stays manual. No public self-serve studio creation.
 - No browser E2E; verification above is manual plus the CI DB/RLS lane.
 - No live payments; test-mode card-on-file only if explicitly scoped, and the legal/accounting + Willow Stripe checklist blockers (docs/18 section 16) apply before ANY studio goes live.
 - No Hone billing automation (nobody is charged for using Hone; that whole area is future).

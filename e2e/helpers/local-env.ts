@@ -84,5 +84,8 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   APPOINTMENT_SIGNING_SECRET: "dummy-appointment-signing-secret",
   INTAKE_SIGNING_SECRET: "dummy-intake-signing-secret",
   PORTAL_FINGERPRINT_SALT: "dummy-portal-fingerprint-salt-for-e2e",
-  ADMIN_EMAILS: "e2e@harness.local",
+  // e2e-operator@harness.local is the dedicated New Studio Wizard operator
+  // (PR #254). isAdmin matches exactly, lowercased; keep it in this allowlist
+  // so the operator e2e can reach /admin without colliding with other seeds.
+  ADMIN_EMAILS: "e2e@harness.local,e2e-operator@harness.local",
 };
