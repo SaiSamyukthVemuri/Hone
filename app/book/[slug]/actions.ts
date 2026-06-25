@@ -48,6 +48,12 @@ import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isConsultationService } from "@/lib/booking/consultation";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+// PR #261: salted SHA-256 fingerprint helper reused for public booking
+// error logs so a raw client email never lands in server logs while
+// repeated failures stay correlatable. Same helper + salt the portal
+// magic-link logs already use (app/portal/login/actions.ts), so the
+// same email yields the same fingerprint across surfaces.
+import { hashFingerprint } from "@/lib/portal/tokens";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -164,9 +170,12 @@ export async function fetchPublicSlotsAction(params: {
     // P0 (Blocker 5): public booking surfaces never return raw
     // Postgres error text. Log internally and surface the
     // sanitized generic constant.
+    // PR #261: keep the sqlstate code (non-PII ops signal) + studioId
+    // for correlation; drop the raw Postgres message (can echo
+    // submitted values on a public surface).
     logInternalBookingError("public_slots_service_lookup_failed", {
       code: error.code,
-      message: error.message,
+      studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
@@ -256,9 +265,10 @@ export async function fetchNextAvailableDateAction(params: {
     .eq("active", true)
     .maybeSingle();
   if (svcErr) {
+    // PR #261: sqlstate code + studioId only; drop raw DB message.
     logInternalBookingError("public_next_available_service_lookup_failed", {
       code: svcErr.code,
-      message: svcErr.message,
+      studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
@@ -513,9 +523,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .is("archived_at", null)
     .maybeSingle();
   if (lookupErr) {
+    // PR #261: sqlstate code + studioId + salted email fingerprint;
+    // drop raw DB message. The fingerprint correlates repeated
+    // failures for one booker without writing their raw email.
     logInternalBookingError("public_booking_client_lookup_failed", {
       code: lookupErr.code,
-      message: lookupErr.message,
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
@@ -603,9 +617,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           // Soft fail. The booking and the email path must not break
           // because of a consent-stamp error; future bookings can
           // re-attempt. We log a sanitized error and proceed.
+          // PR #261: sqlstate code + studioId + salted email
+          // fingerprint; drop raw DB message.
           logInternalBookingError("public_booking_sms_consent_update_failed", {
             code: consentErr.code,
-            message: consentErr.message,
+            studioId: studio.id,
+            emailFingerprint: hashFingerprint(normalizedEmail),
           });
         } else {
           clientSmsConsentAt = nowIso;
@@ -671,10 +688,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           // Archived-collision case. Log internally so an operator
           // can see what happened; return a generic message that
           // does not reveal the archive.
+          // PR #261: never write the raw booker email or the internal
+          // archived client UUID to logs from this unauthenticated
+          // path. The salted email fingerprint preserves operator
+          // correlation; archivedClientCollision flags the case without
+          // re-introducing the archive-enumeration linkage the visitor
+          // message deliberately hides.
           logInternalBookingError("public_booking_archived_client_collision", {
             studioId: studio.id,
-            normalizedEmail,
-            archivedClientId: winner.id,
+            emailFingerprint: hashFingerprint(normalizedEmail),
+            archivedClientCollision: true,
           });
           return {
             ok: false,
@@ -688,18 +711,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           clientSmsConsentAt = winner.sms_consent_at ?? null;
           clientSmsOptedOutAt = winner.sms_opted_out_at ?? null;
         } else {
+          // PR #261: keep the sqlstate code (the diagnostic that
+          // matters for an unresolved unique-index race) + studioId +
+          // salted email fingerprint; drop the raw booker email and the
+          // raw DB message.
           logInternalBookingError("public_booking_unique_race_unresolved", {
             studioId: studio.id,
-            normalizedEmail,
+            emailFingerprint: hashFingerprint(normalizedEmail),
             code: clientErr.code,
-            message: clientErr.message,
           });
           return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
         }
       } else {
+        // PR #261: sqlstate code + studioId + salted email fingerprint;
+        // drop raw DB message.
         logInternalBookingError("public_booking_client_insert_failed", {
           code: clientErr?.code,
-          message: clientErr?.message,
+          studioId: studio.id,
+          emailFingerprint: hashFingerprint(normalizedEmail),
         });
         return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
       }
@@ -768,9 +797,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         code: "slot_taken",
       };
     }
+    // PR #261: sqlstate code + studioId + salted email fingerprint;
+    // drop raw DB message (the appointments row carries free-text notes,
+    // so its error text must never reach logs on a public surface).
     logInternalBookingError("public_booking_insert_failed", {
       code: insertErr?.code,
-      message: insertErr?.message,
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }

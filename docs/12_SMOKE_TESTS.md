@@ -39,6 +39,16 @@ End-to-end check that hashing at rest did not break the public cancel/reschedule
 
 This is also pinned automatically by `tests/db/appointment-token-hash.db.test.ts`, `tests/lib/booking/appointment-token-hash.test.ts`, and `e2e/appointment-token-hash.spec.ts`.
 
+### Public booking PII log minimization smoke (PR #261)
+
+Confirms the unauthenticated public booking error logs never carry raw client PII:
+
+1. Primary coverage is `tests/app/book/pii-log-minimization.test.ts` (source-grep) — run `npm test`.
+2. Optional manual check (**no production writes**): in a NON-prod environment, force a public booking error path (e.g. an existing-client / archived-collision attempt) and inspect the function logs. Each `public_booking_*` line must contain only `code`, `studioId`, and `emailFingerprint` (a 64-char hex), plus `archivedClientCollision: true` on the collision path — never a raw email, `normalizedEmail`, `archivedClientId`, or a raw Postgres `message`.
+3. Determinism: the same booker email always yields the same `emailFingerprint` (so repeated failures stay correlatable), and the fingerprint never equals the raw email.
+
+Do NOT exercise this against production data.
+
 ## 2. Portal smoke
 
 1. Request a magic link at `/portal/login?studio=willow-electrolysis` for a test client.
