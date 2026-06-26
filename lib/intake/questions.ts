@@ -708,6 +708,27 @@ export function stepById(id: number): Step | undefined {
   return INTAKE_STEPS.find((s) => s.id === id);
 }
 
+// Pure key -> question / label resolvers, used by the practitioner-side
+// intake review surfaces (e.g. derived review flags in
+// lib/intake/review-flags.ts). Walk INTAKE_STEPS; fall back to the raw key /
+// value for older intakes whose keys/options were since renamed. No I/O.
+export function getQuestionByKey(key: string): Question | undefined {
+  for (const step of INTAKE_STEPS) {
+    const q = step.questions.find((qq) => qq.key === key);
+    if (q) return q;
+  }
+  return undefined;
+}
+
+export function getQuestionLabel(key: string): string {
+  return getQuestionByKey(key)?.label ?? key;
+}
+
+export function getOptionLabel(key: string, value: string): string {
+  const opt = getQuestionByKey(key)?.options?.find((o) => o.value === value);
+  return opt?.label ?? value;
+}
+
 // Quick lookup of all question keys, used by save/submit to validate payload keys.
 export const ALL_QUESTION_KEYS: ReadonlyArray<string> = INTAKE_STEPS.flatMap(
   (s) => s.questions.flatMap((q) => [q.key, `${q.key}_notes`]),
