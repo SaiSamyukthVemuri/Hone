@@ -1,7 +1,16 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import {
+  readReminderHeartbeat,
+  computeReminderSchedulerStatus,
+  type ReminderSchedulerStatus,
+} from "@/lib/cron/reminder-heartbeat";
 import { markDemoContactedAction } from "./actions";
+
+// PR #265: the reminder-scheduler status is read from the Upstash heartbeat
+// (not Supabase), so it is computed outside loadConsole's Promise.all.
+export const dynamic = "force-dynamic";
 
 // PR #255: Admin Console V1. Operator-only (the /admin layout's isAdmin gate
 // covers this page). Read-only operational metadata and aggregate counts over
@@ -214,6 +223,13 @@ async function loadConsole(): Promise<{
 export default async function AdminIndexPage() {
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
+  // PR #265: operator-visible health of the external every-15-min reminder
+  // scheduler. Read the Upstash heartbeat and classify server-side so the
+  // status badge does not depend on client-rendered time.
+  const reminderScheduler = computeReminderSchedulerStatus(
+    await readReminderHeartbeat(),
+    Date.now(),
+  );
 
   return (
     <div className="flex flex-col gap-10">
@@ -227,6 +243,7 @@ export default async function AdminIndexPage() {
       <PaymentsBanner />
       <StudioSetupCard />
       <OverviewCards overview={overview} />
+      <ReminderSchedulerCard status={reminderScheduler} />
       <StudiosSection studios={studios} />
       <QuickLinks />
 
@@ -269,6 +286,66 @@ function StudioSetupCard() {
           Setup runbook: docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
         </span>
       </div>
+    </section>
+  );
+}
+
+function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) {
+  const tone =
+    status.status === "healthy"
+      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+      : status.status === "stale"
+        ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        : "border-neutral-300 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300";
+  const label =
+    status.status === "healthy"
+      ? "Healthy"
+      : status.status === "stale"
+        ? "Stale"
+        : "Missing";
+  return (
+    <section className={`rounded-lg border p-5 ${tone}`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-medium">Reminder scheduler</h2>
+        <span className="rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ring-1 ring-current/30">
+          {label}
+        </span>
+      </div>
+      <dl className="mt-3 grid gap-1 text-sm">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="opacity-70">Last successful run:</dt>
+          <dd>
+            {status.lastSuccessAt ? (
+              <FormattedDateTime iso={status.lastSuccessAt} />
+            ) : (
+              "none recorded"
+            )}
+            {status.ageMinutes != null ? ` (${status.ageMinutes} min ago)` : ""}
+          </dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="opacity-70">Expected cadence:</dt>
+          <dd>
+            every {status.cadenceMinutes} minutes — external scheduler
+            (cron-job.org) required
+          </dd>
+        </div>
+      </dl>
+      {status.status !== "healthy" && (
+        <p className="mt-3 max-w-prose text-sm">
+          {status.status === "missing"
+            ? "No successful reminder run recorded recently. "
+            : `Last success was over ${status.staleAfterMinutes} minutes ago. `}
+          Confirm the external scheduler is enabled and calling{" "}
+          <code>GET /api/cron/appointment-reminders</code> every{" "}
+          {status.cadenceMinutes} min with the{" "}
+          <code>Authorization: Bearer $CRON_SECRET</code> header, then check{" "}
+          <Link href="/admin/ops-alerts" className="underline">
+            Ops alerts
+          </Link>{" "}
+          for run failures.
+        </p>
+      )}
     </section>
   );
 }

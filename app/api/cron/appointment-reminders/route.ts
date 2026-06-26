@@ -22,6 +22,7 @@ import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
+import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -451,6 +452,22 @@ export async function GET(req: Request) {
       kind: "2h",
       windowStartIso: win2.startIso,
       windowEndIso: win2.endIso,
+    });
+
+    // PR #265: record a non-sensitive "last successful reminder cron run"
+    // heartbeat AFTER all four passes complete (only reached on the authorized
+    // success path; a thrown run skips this and the catch records
+    // cron_route_failed instead). Best-effort/fail-open — never blocks the run.
+    // Aggregate counts only: no client email/phone/name, notes, token, or URL.
+    await recordReminderRunSuccess({
+      at: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      emailAttempted: reminder_24h.attempted + reminder_2h.attempted,
+      emailSucceeded: reminder_24h.succeeded + reminder_2h.succeeded,
+      emailFailed: reminder_24h.failed + reminder_2h.failed,
+      smsAttempted: sms_reminder_24h.attempted + sms_reminder_2h.attempted,
+      smsSucceeded: sms_reminder_24h.succeeded + sms_reminder_2h.succeeded,
+      smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
     });
 
     return NextResponse.json({
