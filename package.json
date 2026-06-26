@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/check-production-env-gates.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -15,6 +15,7 @@
     "e2e:server": "next build && next start -p 3111",
     "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
     "check:db-types": "node scripts/check-db-types.mjs",
+    "check:prod-env-gates": "node scripts/check-production-env-gates.mjs",
     "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
   },
   "dependencies": {
