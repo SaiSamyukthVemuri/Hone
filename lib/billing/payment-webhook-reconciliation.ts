@@ -480,15 +480,43 @@ export async function handlePaymentIntentSucceeded(
   if (!attempt.stripe_charge_id && latestChargeId) {
     updates.stripe_charge_id = latestChargeId;
   }
-  const { error: updateErr } = await admin
+  const { data: updatedRows, error: updateErr } = await admin
     .from("payment_charge_attempts")
     .update(updates)
     .eq("id", attempt.id)
-    .in("status", ["ready", "pending_stripe"]);
+    .in("status", ["ready", "pending_stripe"])
+    .select("id");
   if (updateErr) {
     throw new Error(
       `payment_intent_succeeded_update_failed:${updateErr.code}:${updateErr.message}`,
     );
+  }
+  // PR #263: zero-row detection. The status-conditional UPDATE matched
+  // no row — the attempt left ready/pending_stripe between the read
+  // above and this write (a concurrent action-layer or webhook write).
+  // Do NOT report a reconciliation that did not happen.
+  if (!updatedRows || updatedRows.length === 0) {
+    await recordOpsAlert({
+      severity: "warning",
+      event: "payment_intent_succeeded_reconcile_zero_rows",
+      message:
+        "payment_intent.succeeded reconciliation affected zero rows (the attempt was no longer ready/pending_stripe). No mutation; likely already reconciled by a concurrent writer. Verify the row state.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        read_status: attempt.status,
+        attempted_status: "succeeded",
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      zeroRowNoMutation: true,
+    };
   }
 
   return {
@@ -638,15 +666,40 @@ export async function handlePaymentIntentPaymentFailed(
   if (!attempt.stripe_payment_intent_id) {
     updates.stripe_payment_intent_id = pi.id;
   }
-  const { error: updateErr } = await admin
+  const { data: updatedRows, error: updateErr } = await admin
     .from("payment_charge_attempts")
     .update(updates)
     .eq("id", attempt.id)
-    .in("status", ["ready", "pending_stripe"]);
+    .in("status", ["ready", "pending_stripe"])
+    .select("id");
   if (updateErr) {
     throw new Error(
       `payment_intent_failed_update_failed:${updateErr.code}:${updateErr.message}`,
     );
+  }
+  // PR #263: zero-row detection (see handlePaymentIntentSucceeded).
+  if (!updatedRows || updatedRows.length === 0) {
+    await recordOpsAlert({
+      severity: "warning",
+      event: "payment_intent_failed_reconcile_zero_rows",
+      message:
+        "payment_intent.payment_failed reconciliation affected zero rows (the attempt was no longer ready/pending_stripe). No mutation; likely already reconciled by a concurrent writer. Verify the row state.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        read_status: attempt.status,
+        attempted_status: "failed",
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      zeroRowNoMutation: true,
+    };
   }
 
   return {
@@ -827,15 +880,40 @@ export async function handleChargeRefunded(
     if (!attempt.stripe_refund_id && stripeRefundId) {
       updates.stripe_refund_id = stripeRefundId;
     }
-    const { error: updateErr } = await admin
+    const { data: updatedRows, error: updateErr } = await admin
       .from("payment_charge_attempts")
       .update(updates)
       .eq("id", attempt.id)
-      .eq("refund_status", "pending_stripe");
+      .eq("refund_status", "pending_stripe")
+      .select("id");
     if (updateErr) {
       throw new Error(
         `charge_refunded_pending_update_failed:${updateErr.code}:${updateErr.message}`,
       );
+    }
+    // PR #263: zero-row detection. refund_status left pending_stripe
+    // before this write (a concurrent helper/webhook reconciled it).
+    if (!updatedRows || updatedRows.length === 0) {
+      await recordOpsAlert({
+        severity: "warning",
+        event: "charge_refunded_pending_reconcile_zero_rows",
+        message:
+          "charge.refunded reconciliation of a pending_stripe refund affected zero rows (refund_status was no longer pending_stripe). No mutation; likely already reconciled by a concurrent writer. Verify the row state.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        stripeEventId: event.id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          stripe_charge_id: charge.id,
+          attempted_refund_status: "succeeded",
+        },
+      });
+      return {
+        eventType: event.type,
+        attemptId: attempt.id,
+        zeroRowNoMutation: true,
+      };
     }
     return {
       eventType: event.type,
@@ -863,15 +941,43 @@ export async function handleChargeRefunded(
   // Use a status-conditional UPDATE so we do not race a concurrent
   // helper run that just claimed pending_stripe; only flip rows
   // whose refund_status is null or 'failed'.
-  const { error: updateErr } = await admin
+  const { data: updatedRows, error: updateErr } = await admin
     .from("payment_charge_attempts")
     .update(updates)
     .eq("id", attempt.id)
-    .or("refund_status.is.null,refund_status.eq.failed");
+    .or("refund_status.is.null,refund_status.eq.failed")
+    .select("id");
   if (updateErr) {
     throw new Error(
       `charge_refunded_out_of_band_update_failed:${updateErr.code}:${updateErr.message}`,
     );
+  }
+  // PR #263: zero-row detection. The conditional matched no row
+  // (refund_status was concurrently moved off null/failed, e.g. a refund
+  // helper just claimed pending_stripe). Do NOT emit the "out-of-band
+  // reconciled" alert for a reconciliation that did not happen; surface
+  // the zero-row instead so an operator can verify the row state.
+  if (!updatedRows || updatedRows.length === 0) {
+    await recordOpsAlert({
+      severity: "warning",
+      event: "charge_refunded_out_of_band_zero_rows",
+      message:
+        "charge.refunded out-of-band reconciliation affected zero rows (refund_status was no longer null/failed). No mutation; likely a concurrent refund helper claimed the row. Verify the row state.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        stripe_charge_id: charge.id,
+        previous_refund_status: attempt.refund_status,
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      zeroRowNoMutation: true,
+    };
   }
 
   await recordOpsAlert({

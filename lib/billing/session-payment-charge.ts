@@ -290,7 +290,7 @@ async function writeSucceededOutcome(args: {
     typeof args.pi.latest_charge === "string"
       ? args.pi.latest_charge
       : (args.pi.latest_charge?.id ?? null);
-  const { error } = await admin
+  const { data: updatedRows, error } = await admin
     .from("payment_charge_attempts")
     .update({
       status: "succeeded",
@@ -303,12 +303,37 @@ async function writeSucceededOutcome(args: {
       failure_message_safe: null,
     })
     .eq("id", args.attemptId)
-    .eq("status", "pending_stripe");
+    .eq("status", "pending_stripe")
+    .select("id");
   if (error) {
     logInternal("session_payment_succeeded_write_failed", {
       code: error.code,
       message: error.message,
       attemptId: args.attemptId,
+    });
+    return;
+  }
+  // PR #263: zero-row detection. A status-conditional UPDATE that
+  // matches no row (the attempt left 'pending_stripe' before this
+  // write) returns no error but persists nothing. The PaymentIntent
+  // already succeeded at Stripe, so a silent no-op would leave the
+  // ledger row unstamped while real money moved. Surface for manual
+  // reconciliation instead of continuing as if the outcome was recorded.
+  if (!updatedRows || updatedRows.length === 0) {
+    logInternal("session_payment_succeeded_write_zero_rows", {
+      attemptId: args.attemptId,
+    });
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_succeeded_write_zero_rows",
+      message:
+        "PaymentIntent succeeded but the succeeded-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The ledger row may be unstamped while the charge is real on Stripe. Manual reconciliation required.",
+      stripePaymentIntentId: args.pi.id,
+      route: "lib/billing/session-payment-charge:writeSucceededOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "succeeded",
+      },
     });
   }
 }
@@ -321,7 +346,7 @@ async function writeFailedOutcome(args: {
   failureMessage: string | null | undefined;
 }): Promise<void> {
   const admin = createAdminClient();
-  const { error } = await admin
+  const { data: updatedRows, error } = await admin
     .from("payment_charge_attempts")
     .update({
       status: "failed",
@@ -332,12 +357,36 @@ async function writeFailedOutcome(args: {
       failure_message_safe: sanitizeFailureMessage(args.failureMessage),
     })
     .eq("id", args.attemptId)
-    .eq("status", "pending_stripe");
+    .eq("status", "pending_stripe")
+    .select("id");
   if (error) {
     logInternal("session_payment_failed_write_failed", {
       code: error.code,
       message: error.message,
       attemptId: args.attemptId,
+    });
+    return;
+  }
+  // PR #263: zero-row detection. A failed-outcome update that matches no
+  // 'pending_stripe' row persisted nothing; the row may be stuck in
+  // 'pending_stripe' (or was already moved by a concurrent writer) while
+  // the caller reports 'failed'. Surface for manual review rather than
+  // silently diverging the stored row from the reported outcome.
+  if (!updatedRows || updatedRows.length === 0) {
+    logInternal("session_payment_failed_write_zero_rows", {
+      attemptId: args.attemptId,
+    });
+    await recordOpsAlert({
+      severity: "warning",
+      event: "session_payment_failed_write_zero_rows",
+      message:
+        "A failed-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The attempt row may not reflect the reported failure. Manual review may be required.",
+      stripePaymentIntentId: args.paymentIntentId,
+      route: "lib/billing/session-payment-charge:writeFailedOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "failed",
+      },
     });
   }
 }

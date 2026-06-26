@@ -412,7 +412,7 @@ export async function refundPaymentChargeAttempt(args: {
       const safeMessage =
         sanitizeFailureMessage(err.message) ??
         "Stripe refused this refund.";
-      const { error: writeFailedErr } = await admin
+      const { data: failedRows, error: writeFailedErr } = await admin
         .from("payment_charge_attempts")
         .update({
           refund_status: "failed",
@@ -422,18 +422,26 @@ export async function refundPaymentChargeAttempt(args: {
           refunded_at: null,
         })
         .eq("id", attempt.id)
-        .eq("refund_status", "pending_stripe");
-      if (writeFailedErr) {
+        .eq("refund_status", "pending_stripe")
+        .select("id");
+      // PR #263: a zero-row update (no matching pending_stripe row)
+      // persisted nothing even though Stripe terminally refused the
+      // refund. Treat it like a write error so the failed outcome is
+      // never silently dropped.
+      const failedWriteZeroRows =
+        !writeFailedErr && (!failedRows || failedRows.length === 0);
+      if (writeFailedErr || failedWriteZeroRows) {
         logInternal("payment_refund_write_failed_outcome_failed", {
           attemptId: attempt.id,
-          code: writeFailedErr.code,
-          message: writeFailedErr.message,
+          code: writeFailedErr?.code ?? null,
+          message: writeFailedErr?.message ?? null,
+          zeroRows: failedWriteZeroRows,
         });
         await recordOpsAlert({
           severity: "critical",
           event: "payment_refund_failed_write_failed",
           message:
-            "Stripe refund returned a terminal error, but Hone could not stamp the failed outcome on the attempt row. Manual reconciliation required.",
+            "Stripe refund returned a terminal error, but Hone could not stamp the failed outcome on the attempt row (DB error or zero-row update). Manual reconciliation required.",
           studioId: attempt.studio_id,
           clientId: attempt.client_id,
           route: ROUTE,
@@ -442,7 +450,8 @@ export async function refundPaymentChargeAttempt(args: {
             charge_reason: attempt.charge_reason,
             stripe_charge_id: attempt.stripe_charge_id,
             stripe_failure_code: code,
-            db_code: writeFailedErr.code ?? null,
+            db_code: writeFailedErr?.code ?? null,
+            zero_rows: failedWriteZeroRows,
           },
         });
       }
@@ -536,7 +545,7 @@ export async function refundPaymentChargeAttempt(args: {
   }
 
   const refundedAtIso = new Date().toISOString();
-  const { error: writeOkErr } = await admin
+  const { data: okRows, error: writeOkErr } = await admin
     .from("payment_charge_attempts")
     .update({
       refund_status: "succeeded",
@@ -546,22 +555,29 @@ export async function refundPaymentChargeAttempt(args: {
       refund_failure_message_safe: null,
     })
     .eq("id", attempt.id)
-    .eq("refund_status", "pending_stripe");
-  if (writeOkErr) {
+    .eq("refund_status", "pending_stripe")
+    .select("id");
+  // PR #263: a zero-row update (no matching pending_stripe row) means
+  // the refund is real on Stripe but nothing was persisted locally.
+  // Treat it identically to a write error — never report success
+  // without proving the row was stamped.
+  const okWriteZeroRows = !writeOkErr && (!okRows || okRows.length === 0);
+  if (writeOkErr || okWriteZeroRows) {
     // Stripe says refund is done but we could not persist the
-    // success outcome. Critical alert; do not invent the refund
-    // id elsewhere.
+    // success outcome (DB error or zero-row update). Critical alert;
+    // do not invent the refund id elsewhere.
     logInternal("payment_refund_succeeded_write_failed", {
       attemptId: attempt.id,
       stripeRefundId: refund.id,
-      code: writeOkErr.code,
-      message: writeOkErr.message,
+      code: writeOkErr?.code ?? null,
+      message: writeOkErr?.message ?? null,
+      zeroRows: okWriteZeroRows,
     });
     await recordOpsAlert({
       severity: "critical",
       event: "payment_refund_succeeded_write_failed",
       message:
-        "Stripe refund succeeded, but Hone could not persist the succeeded outcome on the attempt row. The refund is real on Stripe; the row stays pending until reconciled.",
+        "Stripe refund succeeded, but Hone could not persist the succeeded outcome on the attempt row (DB error or zero-row update). The refund is real on Stripe; the row stays pending until reconciled.",
       studioId: attempt.studio_id,
       clientId: attempt.client_id,
       route: ROUTE,
@@ -569,7 +585,8 @@ export async function refundPaymentChargeAttempt(args: {
         attempt_id: attempt.id,
         charge_reason: attempt.charge_reason,
         stripe_refund_id: refund.id,
-        db_code: writeOkErr.code ?? null,
+        db_code: writeOkErr?.code ?? null,
+        zero_rows: okWriteZeroRows,
       },
     });
     return {
