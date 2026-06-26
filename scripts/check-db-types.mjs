@@ -97,6 +97,9 @@ const CURATED_TABLES = {
 const CRITICAL_COLUMNS = [
   ["practitioners", "default_machine_frequency"],
   ["practitioners", "calendar_feed_token_hash"],
+  // PR #264: appointment tokens are hash-only at rest (raw column dropped
+  // in migration 0091); the hash column is the canonical lookup credential.
+  ["appointments", "cancellation_token_hash"],
   ["session_blocks", "probe_lot_number"],
   ["session_blocks", "tolerance_rating"],
   ["session_blocks", "reaction_type"],

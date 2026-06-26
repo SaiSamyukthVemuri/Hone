@@ -1,8 +1,11 @@
 import { createHash, randomBytes } from "crypto";
 
 // High-entropy opaque bearer token used in cancellation and reschedule URLs
-// (confirmation + reminder emails). Stored in appointments.cancellation_token.
-// 24 random bytes (32 url-safe base64 chars) make enumeration impractical.
+// (confirmation + reminder emails). Stored hashed at rest in
+// appointments.cancellation_token_hash (PR #260); the raw token lives only in
+// transit (the URL). The legacy raw appointments.cancellation_token column
+// was dropped in PR #264 (migration 0091). 24 random bytes (32 url-safe
+// base64 chars) make enumeration impractical.
 //
 // Possession of a valid token is the only credential required (clients
 // clicking from email don't log in); it authorizes cancel/reschedule while

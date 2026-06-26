@@ -18,21 +18,21 @@ The public homepage (`/`) is positioned around treatment memory; after PR #244 t
 4. Submit. Expect a confirmation banner and a confirmation email in the inbox.
 5. SQL:
    ```sql
-   select id, status, starts_at, cancellation_token, cancellation_token_hash,
+   select id, status, starts_at, cancellation_token_hash,
           confirmation_send_attempts, confirmation_sent_at
      from public.appointments
     where studio_id = '<studio uuid>'
     order by created_at desc
     limit 5;
    ```
-   Expected: new row, `status='confirmed'`, `confirmation_send_attempts >= 1`, `confirmation_sent_at` populated. **PR #260 (migration 0090): the token is now hashed at rest — the new row has `cancellation_token_hash` non-null (64 lowercase hex) and `cancellation_token` NULL.** The confirmation email's `/cancel/<token>` link still carries the raw token (generated in-memory at booking); clicking it resolves because the route hashes the URL token and matches `cancellation_token_hash`. Older rows booked before 0090 keep a non-null `cancellation_token` (plus a backfilled hash).
+   Expected: new row, `status='confirmed'`, `confirmation_send_attempts >= 1`, `confirmation_sent_at` populated. **Tokens are hashed at rest — the new row has `cancellation_token_hash` non-null (64 lowercase hex).** The confirmation email's `/cancel/<token>` link still carries the raw token (generated in-memory at booking); clicking it resolves because the route hashes the URL token and matches `cancellation_token_hash`. **PR #264 (migration 0091): the legacy raw `cancellation_token` column has been dropped — selecting it now errors; every row (including older ones, via the 0090 backfill) is found by hash only.**
 
 ### Appointment token hashing smoke (PR #260, migration 0090)
 
 End-to-end check that hashing at rest did not break the public cancel/reschedule/manage links:
 
 1. Book a public appointment (smoke 1). Confirm the confirmation email's **Cancel** and **Reschedule** links open `/cancel/<token>` and `/reschedule/<token>` and resolve to the appointment (not the generic "link can't be used" page).
-2. SQL on that row: `cancellation_token_hash` is non-null 64-hex, `cancellation_token` is NULL (it was never stored raw).
+2. SQL on that row: `cancellation_token_hash` is non-null 64-hex. (PR #264 / migration 0091 dropped the raw `cancellation_token` column — it no longer exists.)
 3. As that client, open the **Portal** (smoke 2): the upcoming appointment's **Manage** button lands on a working `/manage/<token>` page whose **Reschedule** and **Cancel** actions both resolve (the portal mints the HMAC token; `/reschedule` accepts it as of PR #260).
 4. Trigger an appointment reminder (or wait for the 15-min scheduler): the reminder email's cancel/reschedule links and the SMS manage link all resolve.
 5. Negative: `/cancel/not-a-real-token` shows the generic neutral error (no token-state leak), unchanged.
@@ -867,6 +867,20 @@ Imported (paper/Jane/spreadsheet) treatment memory from Quick Import now appears
 ## Payment outcome zero-row detection smoke (PR #263)
 
 Confirms payment-outcome writes never treat a zero-row update as success. **Test-mode only; do NOT run real charges or mutate production payment rows.** Primary coverage is `tests/lib/billing/payment-outcome-zero-row.test.ts` (source-grep) + the existing `tests/scripts/check-stripe-gates.test.ts` — run `npm test`. **What changed:** the charge executor (`writeSucceededOutcome`/`writeFailedOutcome`), the refund helper (success + terminal-failure writes), and the four webhook reconcilers (`payment-webhook-reconciliation.ts`) each append `.select("id")` to their status-conditional outcome UPDATE and, on zero rows, record a structured `*_zero_rows` / `*_write_failed` ops_alert (and the webhook handlers return `zeroRowNoMutation` instead of claiming a reconcile) rather than silently continuing. **Operator check (`ops_alerts`, read-only, no writes):** if a payment outcome ever fails to persist, a non-PII alert appears in `ops_alerts` (safe ids + status enums only — no raw Stripe payload, card data, secret, or customer email/phone) for manual reconciliation. No payment runtime behavior changed beyond stricter zero-row detection; exactly one `paymentIntents.create` remains; live payments remain disabled.
+
+## Raw cancellation_token column removal smoke (PR #264, migration 0091)
+
+Confirms the legacy raw appointment token is gone at rest and links still work. **Migration-first: apply 0091 to production and verify BEFORE relying on the drop; do NOT run the prod migration without explicit approval.** Source coverage is `tests/migrations/0091-drop-raw-cancellation-token.test.ts` (migration shape), `tests/db/appointment-token-hash.db.test.ts` (DB lane: hash-only storage, the raw column is gone → INSERT errors `42703`, RPCs reject a raw token, hash lookup still cancels/reschedules), and `tests/app/book/no-raw-appointment-token.test.ts` (no app reads/writes the raw column) — run `npm test` + `npm run test:db` (local Supabase / CI only).
+
+**Schema check (prod, after the migration, read-only):**
+```sql
+select column_name from information_schema.columns
+ where table_schema='public' and table_name='appointments'
+   and column_name in ('cancellation_token','cancellation_token_hash');
+```
+Expected: only `cancellation_token_hash` is returned; `cancellation_token` no longer exists.
+
+**Behavior check (no production writes):** a previously-emailed `/cancel/<raw>`, `/reschedule/<raw>`, and `/manage/<raw>` link still resolves (the route hashes the URL token and matches the backfilled `cancellation_token_hash`); a fresh booking's confirmation links resolve; `/cancel/not-a-real-token` still shows the generic neutral error. No raw token is stored, and none is logged. Stripe gates unchanged; live payments remain disabled.
 
 ## Quick gates a reviewer can run
 

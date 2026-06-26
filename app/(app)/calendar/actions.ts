@@ -711,29 +711,22 @@ type DispatchParams = {
 async function dispatchBookingEmails(p: DispatchParams) {
   // Single helper call up front; downstream lines share the same origin.
   const appOrigin = getRequiredAppOrigin();
-  // PR #260: appointments are hashed at rest, so the raw column token is
-  // no longer available here at render time. Mint the stateless HMAC
-  // token (expires at the appointment start) for every link. /cancel,
-  // /manage, and (as of PR #260) /reschedule all accept the HMAC
-  // fallback, so all three links resolve. The `?? raw` branch only
-  // matters for pre-0090 rows that still carry a raw column token.
-  const token =
-    p.appointment.cancellation_token ??
-    generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
+  // PR #260/#264: appointment tokens are hash-only at rest (the raw
+  // cancellation_token column was dropped in PR #264, migration 0091).
+  // Surfaces that rebuild a link after creation cannot read a raw token,
+  // so we mint the stateless HMAC token (expires at the appointment start)
+  // for every link. /cancel, /manage, and /reschedule all accept the HMAC
+  // token (they hash the URL token against cancellation_token_hash and
+  // fall back to verifyCancellationToken), so all three links resolve.
+  const token = generateCancellationToken(
+    p.appointment.id,
+    new Date(p.appointment.starts_at),
+  );
   const cancellationUrl = `${appOrigin}/cancel/${token}`;
   const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
-  // SMS uses the single neutral /manage/<token> entry point. We
-  // build it from the same `token` cancel uses (column-based when
-  // the row has one, HMAC fallback for legacy rows that pre-date
-  // the column backfill) so a client sees one policy-aware landing
-  // page before choosing an action. /manage and /cancel both
-  // resolve column-or-HMAC; /reschedule is column-only, so for the
-  // rare legacy HMAC-only row the manage page still works as a
-  // cancel landing and the Reschedule button on the manage page
-  // falls through to the same generic unavailable surface
-  // /reschedule already shows for unknown tokens. New internal
-  // bookings always carry a column token via the insert path, so
-  // this fallback is the legacy-row edge only.
+  // SMS uses the single neutral /manage/<token> entry point, built from the
+  // same HMAC token so a client sees one policy-aware landing page before
+  // choosing cancel or reschedule.
   const manageUrl = `${appOrigin}/manage/${token}`;
   const appointmentUrl = `${appOrigin}/calendar`;
 
