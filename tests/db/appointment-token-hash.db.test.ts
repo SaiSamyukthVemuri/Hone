@@ -12,18 +12,21 @@ import {
 } from "@/lib/booking/appointment-token";
 
 // PR #260: appointment cancel/reschedule tokens are hashed at rest
-// (migration 0090). These tests prove the security-critical invariants
-// against the real local Postgres:
+// (migration 0090). PR #264 (migration 0091) closed the deploy window and
+// DROPPED the legacy raw appointments.cancellation_token column, the
+// deploy-window hashing trigger, and the dual-match `OR cancellation_token`
+// branches in the RPCs. These tests prove the security-critical invariants
+// against the real local Postgres after 0091:
 //
-//   * The TS lookup hash (hashAppointmentToken) and the SQL storage hash
-//     (extensions.digest backfill + trigger) produce the SAME value, so a
-//     URL token looked up by the app matches a row hashed by the DB.
-//   * The BEFORE trigger auto-hashes a raw token (deploy-window safety).
-//   * New rows can be stored hash-only (raw column NULL) — no raw token
-//     at rest.
-//   * The cancel + reschedule RPCs match by hash, and also tolerate a raw
-//     token (the in-flight OLD-app deploy window) without corrupting the
-//     hash column.
+//   * The TS lookup hash (hashAppointmentToken) and the SQL digest produce
+//     the SAME value, so a URL token looked up by the app matches a row.
+//   * New rows are hash-only — there is no raw column at rest (the raw
+//     column no longer exists: an INSERT referencing it errors 42703).
+//   * The cancel + reschedule RPCs match by HASH ONLY; a raw token no longer
+//     resolves (the deploy-window tolerance is gone).
+//   * Already-emitted raw links still resolve because the app HASHES the URL
+//     token before lookup and 0090 backfilled every row's hash (proven via
+//     the TS-hash == SQL-digest agreement + the hash-match cancel test).
 //   * The format CHECK and partial unique on the hash hold.
 
 let s: SeededStudio;
@@ -68,28 +71,15 @@ function insertHashOnly(token: string) {
   ).then((r) => r.rows[0].id as string);
 }
 
-function insertRawOnly(token: string) {
-  const id = randomUUID();
-  const { start, end } = nextSlot();
-  return adminQuery(
-    `insert into public.appointments
-       (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
-        buffer_minutes_snapshot, blocked_ends_at, status,
-        cancellation_token)
-     values ($1, $2, $3, $4, $5, 60, 0, $5, 'confirmed', $6)
-     returning id`,
-    [id, s.studioId, s.clientId, start, end, token],
-  ).then((r) => r.rows[0].id as string);
-}
-
-describe("appointment token hash-at-rest (migration 0090)", () => {
+describe("appointment token hash-at-rest (migration 0090 + 0091 raw drop)", () => {
   it("TS hash and SQL digest agree (lookup matches storage)", async () => {
     const raw = generateAppointmentToken();
     const tsHash = hashAppointmentToken(raw);
     // node crypto cross-check of the helper itself.
     expect(tsHash).toBe(createHash("sha256").update(raw, "utf8").digest("hex"));
     expect(tsHash).toMatch(/^[a-f0-9]{64}$/);
-    // SQL digest (the backfill + trigger expression) must equal it.
+    // SQL digest (the backfill expression 0090 used) must equal it, so an
+    // already-emitted raw link still hashes to the backfilled stored hash.
     const r = await adminQuery(
       `select encode(extensions.digest($1, 'sha256'), 'hex') as h`,
       [raw],
@@ -97,27 +87,26 @@ describe("appointment token hash-at-rest (migration 0090)", () => {
     expect(r.rows[0].h).toBe(tsHash);
   });
 
-  it("trigger auto-hashes a raw insert (deploy-window safety)", async () => {
-    const raw = generateAppointmentToken();
-    const id = await insertRawOnly(raw);
-    const r = await adminQuery(
-      `select cancellation_token, cancellation_token_hash
-         from public.appointments where id = $1`,
-      [id],
-    );
-    expect(r.rows[0].cancellation_token).toBe(raw);
-    expect(r.rows[0].cancellation_token_hash).toBe(hashAppointmentToken(raw));
+  it("the raw cancellation_token column no longer exists (0091 drop)", async () => {
+    const { start, end } = nextSlot();
+    await expect(
+      adminQuery(
+        `insert into public.appointments
+           (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
+            buffer_minutes_snapshot, blocked_ends_at, status, cancellation_token)
+         values ($1, $2, $3, $4, $5, 60, 0, $5, 'confirmed', 'some-raw-token')`,
+        [randomUUID(), s.studioId, s.clientId, start, end],
+      ),
+    ).rejects.toMatchObject({ code: "42703" }); // undefined_column
   });
 
-  it("stores hash-only rows (no raw token at rest for new appointments)", async () => {
+  it("stores hash-only rows (no raw token at rest)", async () => {
     const raw = generateAppointmentToken();
     const id = await insertHashOnly(raw);
     const r = await adminQuery(
-      `select cancellation_token, cancellation_token_hash
-         from public.appointments where id = $1`,
+      `select cancellation_token_hash from public.appointments where id = $1`,
       [id],
     );
-    expect(r.rows[0].cancellation_token).toBeNull();
     expect(r.rows[0].cancellation_token_hash).toBe(hashAppointmentToken(raw));
   });
 
@@ -167,15 +156,17 @@ describe("appointment token hash-at-rest (migration 0090)", () => {
     expect(after.rows[0].status).toBe("cancelled");
   });
 
-  it("cancel RPC tolerates a raw token during the deploy window", async () => {
+  it("cancel RPC rejects a RAW token (0091: deploy-window tolerance removed)", async () => {
     const raw = generateAppointmentToken();
-    const id = await insertRawOnly(raw); // trigger also sets the hash
-    const ok = await adminQuery(
-      `select result, appointment_id from public.public_cancel_appointment_with_token($1,$2,$3,$4,$5)`,
-      [raw, null, null, null, false], // OLD app passes the raw token
+    await insertHashOnly(raw);
+    // The OLD-app deploy-window behavior (passing the raw token) is gone:
+    // the RPC matches cancellation_token_hash only, so a raw token whose
+    // hash is NOT itself stored returns invalid_token.
+    const res = await adminQuery(
+      `select result from public.public_cancel_appointment_with_token($1,$2,$3,$4,$5)`,
+      [raw, null, null, null, false],
     );
-    expect(ok.rows[0].result).toBe("cancelled");
-    expect(ok.rows[0].appointment_id).toBe(id);
+    expect(res.rows[0].result).toBe("invalid_token");
   });
 
   it("reschedule RPC matches by hash and stores the new token hash-only", async () => {
@@ -199,12 +190,11 @@ describe("appointment token hash-at-rest (migration 0090)", () => {
     const newId = r.rows[0].new_appointment_id as string;
 
     const newRow = await adminQuery(
-      `select cancellation_token, cancellation_token_hash, status
+      `select cancellation_token_hash, status
          from public.appointments where id = $1`,
       [newId],
     );
     expect(newRow.rows[0].status).toBe("confirmed");
-    expect(newRow.rows[0].cancellation_token).toBeNull(); // hash-only
     expect(newRow.rows[0].cancellation_token_hash).toBe(
       hashAppointmentToken(newRaw),
     );
@@ -216,34 +206,21 @@ describe("appointment token hash-at-rest (migration 0090)", () => {
     expect(orig.rows[0].status).toBe("cancelled");
   });
 
-  it("reschedule RPC tolerates a raw new-token during the deploy window without corrupting the hash column", async () => {
+  it("reschedule RPC rejects a RAW current token (0091: hash-only match)", async () => {
     const raw = generateAppointmentToken();
     const id = await insertHashOnly(raw);
-    const newRaw = generateAppointmentToken();
     const target = nextSlot();
     const r = await adminQuery(
-      `select result, new_appointment_id
-         from public.reschedule_appointment($1,$2,$3,$4,$5,$6)`,
+      `select result from public.reschedule_appointment($1,$2,$3,$4,$5,$6)`,
       [
         id,
-        hashAppointmentToken(raw),
+        raw, // RAW current token no longer matches
         target.start,
         target.end,
         60,
-        newRaw, // OLD app passes a RAW new token
+        hashAppointmentToken(generateAppointmentToken()),
       ],
     );
-    expect(r.rows[0].result).toBe("success");
-    const newId = r.rows[0].new_appointment_id as string;
-    const newRow = await adminQuery(
-      `select cancellation_token, cancellation_token_hash
-         from public.appointments where id = $1`,
-      [newId],
-    );
-    // Raw routed to the raw column; the trigger backfilled a valid hash.
-    expect(newRow.rows[0].cancellation_token).toBe(newRaw);
-    expect(newRow.rows[0].cancellation_token_hash).toBe(
-      hashAppointmentToken(newRaw),
-    );
+    expect(r.rows[0].result).toBe("appointment_not_found");
   });
 });

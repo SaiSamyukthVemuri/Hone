@@ -850,10 +850,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Note: the HMAC-fallback generateCancellationToken() call previously
   // sat here purely to keep the import "used". It has been removed; the
   // public booking flow now depends exclusively on
-  // generateAppointmentToken() above (writing the column-based token
-  // onto appointments.cancellation_token). Legacy HMAC links remain
-  // verifiable on the /cancel/[token] route via verifyCancellationToken
-  // inside the resolver, but no new HMAC links are minted here.
+  // generateAppointmentToken() above (stored hash-only at rest as
+  // appointments.cancellation_token_hash; the raw token lives only in the
+  // confirmation-email URL). Legacy HMAC links remain verifiable on the
+  // /cancel/[token] route via verifyCancellationToken inside the resolver,
+  // but no new HMAC links are minted here.
 
   // Ensure an in-progress intake exists for this client and attach the link
   // to the confirmation email. Returns null if they already have a submitted

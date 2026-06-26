@@ -28,7 +28,7 @@ Every business object in Hone is **studio-scoped**. The `studio_id` column appea
 ### Appointment (`appointments`)
 - One booking. Status union: `confirmed`, `cancelled`, `completed`, `no_show`.
 - Belongs to one studio, one client, one service, one practitioner.
-- Carries `starts_at`, `ends_at`, `duration_minutes`, `notes`, `cancellation_reason` (free-form text label snapshot since PR #144), `cancelled_at`, `cancelled_by`, `cancellation_token` (random column-based), `buffer_minutes_snapshot` (frozen from `studios.buffer_minutes` at insert time via trigger), email send-tracking columns.
+- Carries `starts_at`, `ends_at`, `duration_minutes`, `notes`, `cancellation_reason` (free-form text label snapshot since PR #144), `cancelled_at`, `cancelled_by`, `cancellation_token_hash` (SHA-256 of the high-entropy cancel/reschedule/manage bearer token; the raw token is never stored — PR #260, and the legacy raw `cancellation_token` column was dropped in PR #264 / migration 0091), `buffer_minutes_snapshot` (frozen from `studios.buffer_minutes` at insert time via trigger), email send-tracking columns.
 - Created by either public booking (`app/book/[slug]/actions.ts`) or practitioner booking (`app/(app)/calendar/actions.ts`).
 
 ### Appointment audit (`appointment_audit`)
@@ -129,7 +129,7 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 ## Important security constraints (mental model)
 
 - **Studio is the tenancy unit.** Every studio-scoped table has RLS that gates SELECT on `is_studio_member(studio_id)`. The same email can be a client of two studios; each studio has its own row and no cross-studio leakage.
-- **Tokens are bearer credentials.** `cancellation_token`, the portal magic-link token, the intake HMAC, the `practitioners.calendar_feed_token`. Anyone with the URL has the access it confers. Token routes carry `noindex/no-referrer` headers and never mount analytics (PR #142).
+- **Tokens are bearer credentials.** the appointment cancel/reschedule/manage token (stored hashed at rest as `cancellation_token_hash`; raw column dropped in PR #264), the portal magic-link token, the intake HMAC, the `practitioners.calendar_feed_token`. Anyone with the URL has the access it confers. Token routes carry `noindex/no-referrer` headers and never mount analytics (PR #142).
 - **Card authorization is linked to the card.** `client_payment_methods.card_authorization_signature_id` is the FK; an active card without a signed authorization is a structural error and blocks fee preparation (PR #145).
 - **Policy acknowledgement is linked to the appointment.** Fee preparation requires both the active card AND the specific policy ack for that appointment (PR #145).
 - **Manual fee charge is evidence-gated.** The `manual_fee_charge_attempts` row carries all four FKs, the snapshotted policy hash, the practitioner id, the internal note, the deterministic idempotency key, and the test-mode-only CHECK. The future Stripe charge action (PR #146) re-validates the full chain before any PaymentIntent call.

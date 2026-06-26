@@ -296,12 +296,11 @@ export type Appointment = {
   // incremented on resend.
   postcare_email_sent_at: string | null;
   postcare_email_send_attempts: number;
-  cancellation_token: string | null;
   // PR #260 (migration 0090): SHA-256 hex hash of the raw
-  // cancel/reschedule/manage token. New appointments store ONLY this
-  // (raw cancellation_token NULL); the raw column is kept transitionally
-  // so already-emailed links still resolve. Public lookups hash the
-  // incoming URL token and match this column.
+  // cancel/reschedule/manage token — the ONLY token value stored at rest.
+  // PR #264 (migration 0091): the legacy raw `cancellation_token` column
+  // was dropped; public lookups hash the incoming URL token and match this
+  // column, and already-emailed raw links resolve via the backfilled hash.
   cancellation_token_hash: string | null;
   // Migration 0069 (PR #163). Booking attribution: optional answer to
   // "How did you hear about us?" captured at booking time on the

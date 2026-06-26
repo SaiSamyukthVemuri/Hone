@@ -204,14 +204,14 @@ async function sendReminderPass(opts: {
 
     stats.attempted += 1;
     const attemptNumber = (appt[attemptsColumn] as number) + 1;
-    // PR #260: appointments are hashed at rest, so the reminder no longer
-    // reads a raw column token. Prefer a pre-0090 raw token if the row
-    // still carries one; otherwise mint the stateless HMAC token (expires
-    // at the appointment start). /cancel and /reschedule both accept the
-    // HMAC fallback, so the reminder links resolve.
-    const token =
-      appt.cancellation_token ??
-      generateCancellationToken(appt.id, new Date(appt.starts_at));
+    // PR #260/#264: appointment tokens are hash-only at rest (the raw
+    // cancellation_token column was dropped in PR #264). The reminder mints
+    // the stateless HMAC token (expires at the appointment start); /cancel
+    // and /reschedule accept it, so the reminder links resolve.
+    const token = generateCancellationToken(
+      appt.id,
+      new Date(appt.starts_at),
+    );
     if (!token) {
       // Defensive: minting only fails if the appointment start is
       // unparseable. Record a failed result via the RPC (clears the
@@ -221,7 +221,7 @@ async function sendReminderPass(opts: {
       logEmailFailure({
         appointmentId: appt.id,
         emailType,
-        error: "Missing cancellation_token",
+        error: "Missing appointment token",
         retryable: false,
         attemptNumber,
       });
@@ -358,18 +358,16 @@ async function sendSmsReminderPass(opts: {
       continue;
     }
 
-    // PR #260: prefer a pre-0090 raw token if present, otherwise mint the
-    // stateless HMAC token so the SMS manage link still resolves. /manage
-    // accepts the HMAC fallback. Null only if minting fails (unparseable
-    // start); the SMS template then drops the manage line and still sends
-    // the moment-only reminder.
-    let manageToken: string | null = appt.cancellation_token;
-    if (!manageToken) {
-      try {
-        manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
-      } catch {
-        manageToken = null;
-      }
+    // PR #260/#264: appointment tokens are hash-only at rest (the raw
+    // cancellation_token column was dropped in PR #264). Mint the stateless
+    // HMAC token so the SMS manage link resolves (/manage accepts it). Null
+    // only if minting fails (unparseable start); the SMS template then drops
+    // the manage line and still sends the moment-only reminder.
+    let manageToken: string | null;
+    try {
+      manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
+    } catch {
+      manageToken = null;
     }
     const manageUrl = manageToken
       ? `${getRequiredAppOrigin()}/manage/${manageToken}`
