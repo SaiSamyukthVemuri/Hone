@@ -50,6 +50,8 @@
 - `/api/cron/appointment-reminders` — **external scheduler** (`cron-job.org`), `GET` **every 15 minutes** with `Authorization: Bearer $CRON_SECRET`. A 2h-before reminder needs sub-daily checks and `*/15` exceeds the plan's cron cap, so it is not in `vercel.json`. The 30-min 2h window is covered by the 15-min cadence (see docs/08 for the schedule/window invariant). If the project moves to Vercel Pro, move this into `vercel.json` as `*/15 * * * *` and retire the external job.
 - `/api/cron/no-show-check` — intentionally **not** scheduled (disabled stub).
 
+**Reminder scheduler health (PR #265).** Because the every-15-min `/api/cron/appointment-reminders` job runs on the EXTERNAL scheduler (cron-job.org), Vercel's Cron tab gives no visibility into it. Each authorized successful run writes a non-sensitive "last successful run" heartbeat to Upstash (`reminder_cron:last_success`; ISO timestamp + aggregate counts; 24h TTL; best-effort/fail-open). The operator-only **/admin** console shows a **"Reminder scheduler"** card: **healthy** when the last success is within ~45 minutes (3 missed `*/15` cycles), **stale** when older, **missing** when none. If stale/missing: confirm the external scheduler is enabled and calling the route every 15 min with `Authorization: Bearer $CRON_SECRET` (the secret value is never displayed or logged), then check `/admin/ops-alerts` for `cron_route_failed` / `reminder_send_exhausted`.
+
 ## Environment variables
 
 Authoritative source: [`.env.local.example`](../.env.local.example). The summary below mirrors that file.
