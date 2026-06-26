@@ -75,7 +75,7 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 ### Intake (`client_intake_forms`)
 - One per client per studio. Status: `in_progress` / `submitted` / `reviewed`.
 - Token-gated edit via `/intake/<token>` (HMAC over `(intake_id, expires_at)` plus a per-intake column-based token).
-- Practitioner reviews via `/clients/<id>/intake`.
+- Practitioner reviews via `/clients/<id>/intake`. The review page also derives read-time, practitioner-only **review flags** from the existing `responses` answers (PR #266; `lib/intake/review-flags.ts`) — no new field/migration; surfaces answers for review only, not a clinical decision.
 
 ### Portal message (`client_portal_messages` + `client_portal_message_replies`)
 - One-way studio-to-client messages (PR #129/#130) with replies (PR #130 RLS hardening).

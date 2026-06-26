@@ -886,6 +886,10 @@ Expected: only `cancellation_token_hash` is returned; `cancellation_token` no lo
 
 **Behavior check (no production writes):** a previously-emailed `/cancel/<raw>`, `/reschedule/<raw>`, and `/manage/<raw>` link still resolves (the route hashes the URL token and matches the backfilled `cancellation_token_hash`); a fresh booking's confirmation links resolve; `/cancel/not-a-real-token` still shows the generic neutral error. No raw token is stored, and none is logged. Stripe gates unchanged; live payments remain disabled.
 
+## Intake review flags smoke (PR #266)
+
+Confirms practitioner-only intake review flags surface existing intake answers for review — **read-only; no production writes, no new fields, no migration.** Primary coverage: `tests/lib/intake/review-flags.test.ts` (pure deriver: mapping/levels/ordering, empty-and-legacy → no flags, wording safety) + `tests/app/clients/intake-review-flags.test.ts` (deriver is pure/no-I/O, allowed wording present, forbidden wording absent, card mounted on the practitioner page and NOT on the public `/intake/[token]` route) — run `npm test`. **Operator check (`/clients/<id>/intake`, read-only):** for a client whose latest recorded intake reports a flagged answer (e.g. a medical condition, a listed medication, scars-easily, an active cold sore, recent sun), the **"Intake review needed"** card appears above the answer grid, each item showing a level pill — **Medical authorization may be required** / **Review before treatment** / **Precaution noted** — its category, and a "Based on intake response: …" basis line, closing with "Use professional judgment and clinic policy." A clean intake (or an older intake predating these questions) shows **no** flags card. Verify the wording uses ONLY the allowed phrases (and none of the forbidden clinical-decision terms), and that flags never appear on the client-facing `/intake/<token>` page. Live payments remain disabled.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:
