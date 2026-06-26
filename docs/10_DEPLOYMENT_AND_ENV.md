@@ -37,9 +37,10 @@
 
 ## Upstash Redis
 
-- Optional. Provides the rate-limit token bucket for public surfaces (booking slot fetch + booking submit + magic-link request + token-route fetches).
-- **Fails open** when unset or down. A real outage of the limiter must not block a real booking.
-- Identifiers are hashed before use; no raw IPs or emails are stored.
+- **Required in production.** Provides the rate-limit token bucket for public surfaces (booking slot fetch + booking submit + magic-link request + token-route fetches + marketing waitlist/demo).
+- **Missing config in production = the deploy fails (PR #262).** `scripts/check-production-env-gates.mjs` (wired into `npm run build`) fails the Vercel production build when `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are missing, so a misconfigured deploy cannot silently ship with public rate limiting disabled. The gate enforces only when `VERCEL_ENV === "production"`; local/CI/preview builds are a no-op SKIP, so dev does not need Upstash. There is **no emergency bypass**.
+- **Transient outage still fails open** (deliberate): once configured, a runtime Upstash outage lets requests through with a throttled `ratelimit_backend_unavailable` alarm — a limiter outage must never block a real booking. The deploy gate is a presence check, so an outage does not trip it.
+- Identifiers are hashed before use; no raw IPs or emails are stored, and neither the gate nor the limiter logs env values.
 
 ## Cron
 
@@ -71,8 +72,8 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `STRIPE_WEBHOOK_SECRET` | Required | Signing secret from the connected-account webhook in the Stripe dashboard. |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Required for portal Add-card surface | `pk_test_*` mirrors the secret-key gate; portal renders calm unavailable surface if missing. |
 | `STRIPE_CONNECT_COUNTRY` | Default `CA` | Hardcoded for Canadian rollout. |
-| `UPSTASH_REDIS_REST_URL` | Optional | Rate limit. Fails open if unset. |
-| `UPSTASH_REDIS_REST_TOKEN` | Optional | Same. |
+| `UPSTASH_REDIS_REST_URL` | **Required in production** | Public rate limit. Missing in prod → the production build fails (PR #262 gate). Runtime still fails open on a transient outage. |
+| `UPSTASH_REDIS_REST_TOKEN` | **Required in production** | Same. |
 | `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. |
 | `TWILIO_AUTH_TOKEN` | Optional | Same. |
 | `TWILIO_FROM_NUMBER` | Optional | E.164 number. Either this or `TWILIO_MESSAGING_SERVICE_SID` must be set if SMS is in use. |
@@ -97,6 +98,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `CRON_SECRET` | All `/api/cron/*` routes return 401. Cron is effectively disabled. |
 | `STRIPE_SECRET_KEY` | `getStripe()` throws when any Stripe surface is hit. |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verification fails; webhook returns 400. |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Production **build fails** (PR #262 gate `scripts/check-production-env-gates.mjs`, wired into `npm run build`); a misconfigured deploy cannot ship with public rate limiting silently disabled. Runtime still **fails open** on a transient outage (throttled `ratelimit_backend_unavailable` alarm); the gate is a presence check with no bypass. |
 
 ## Browser security headers (PR #150)
 
