@@ -250,6 +250,10 @@ After a charge or refund action runs, the webhook receives the corresponding Str
 - No `manual_fee_charge_attempts` touch. The legacy fee runtime still has no webhook reconciliation.
 - No new migration. The existing `stripe_events` table + columns from migrations 0073-0078 cover every state PR #179 writes.
 
+### Zero-row outcome detection (PR #263)
+
+Every payment-OUTCOME write — the charge executor's `writeSucceededOutcome`/`writeFailedOutcome` (`lib/billing/session-payment-charge.ts`), the refund helper's success + terminal-failure writes (`lib/billing/payment-refund.ts`), and the four reconcile UPDATEs above — is a status-conditional `.update().eq(...)`. Each now appends `.select("id")` and treats a ZERO-row result (the row left the guarded state between the read and the write, e.g. a concurrent action/webhook race) as an explicit failure: a structured non-PII ops_alert (`*_zero_rows` / `*_write_failed`, carrying safe ids + status enums only) and, for the webhook handlers, a `zeroRowNoMutation` return instead of falsely claiming a reconcile (the out-of-band "reconciled" alert is now gated behind rows>0). A zero-row outcome is never silently treated as success. App-layer only — no new migration, dependency, Stripe call, or live-mode change. Pinned by `tests/lib/billing/payment-outcome-zero-row.test.ts`.
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).
