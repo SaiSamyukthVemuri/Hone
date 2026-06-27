@@ -56,6 +56,7 @@ import {
 } from "@/lib/sessions/clinical-response";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
+import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -290,6 +291,17 @@ export function BlockSetupForm({
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
+  }
+
+  // PR #270: single area-change handler shared by the body map and the
+  // list-below AreaPicker, so both write the same primary_area and clearing
+  // the area also clears side + specifics (no orphan side).
+  function onAreaChange(next: string) {
+    if (!next) {
+      setDraft((d) => ({ ...d, primaryArea: "", side: "", customAreaDetail: "" }));
+    } else {
+      update("primaryArea", next);
+    }
   }
 
   // "Copy settings from another area in this session" (PR #191 rework after
@@ -600,27 +612,34 @@ export function BlockSetupForm({
         ) : (
           <>
             <span className="text-xs text-neutral-500">
-              Choose the area for this chart entry. Optional; side and specifics
-              appear once an area is chosen.
+              Choose from the body map or use the list below. Optional; side and
+              specifics appear once an area is chosen.
             </span>
-            <AreaPicker
-              value={draft.primaryArea}
-              onChange={(next) => {
-                // Clearing the area also clears side + specifics so the saved
-                // row stays internally consistent (no orphan side).
-                if (!next) {
-                  setDraft((d) => ({
-                    ...d,
-                    primaryArea: "",
-                    side: "",
-                    customAreaDetail: "",
-                  }));
-                } else {
-                  update("primaryArea", next);
-                }
-              }}
-              idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
-            />
+
+            {/* PR #270: built-in body-map picker (schematic vector body, not an
+                image/upload/canvas). Sets the same primary_area value as the
+                list-below AreaPicker via the shared onAreaChange handler. */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Body map
+              </span>
+              <BodyMapAreaPicker
+                value={draft.primaryArea}
+                onChange={onAreaChange}
+                idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Or choose from the list
+              </span>
+              <AreaPicker
+                value={draft.primaryArea}
+                onChange={onAreaChange}
+                idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
+              />
+            </div>
 
             {/* PR #269: live preview of the chart part's area, updating as the
                 practitioner picks area / side / specifics. */}
