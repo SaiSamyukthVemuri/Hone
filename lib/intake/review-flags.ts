@@ -38,6 +38,32 @@ export type IntakeReviewFlag = {
   category: string;
   // "Based on intake response: <question label> — <answer label>".
   basis: string;
+  // PR #267. Modality/category badges from Chloe's clinic reference chart
+  // (resolve to wording via MODALITY_WORDING). For a chart-mapped condition
+  // these are the chart's per-modality review signals; otherwise a single
+  // fallback derived from `level`. Render-only — never a treatment decision.
+  badges: IntakeModality[];
+};
+
+// PR #267. Modality / category signals (Chloe's clinic reference chart
+// columns). "review" is the V1 generic fallback for flags with no chart row.
+export type IntakeModality =
+  | "thermolysis"
+  | "galvanic"
+  | "authorization"
+  | "authorization_depends"
+  | "precaution"
+  | "review";
+
+// Allowed copy only (PR #267 wording list). NOT rendered as a treatment
+// decision; the card pairs these with the basis + professional-judgment caveat.
+export const MODALITY_WORDING: Record<IntakeModality, string> = {
+  thermolysis: "Review before thermolysis",
+  galvanic: "Review before continuous/galvanic current",
+  authorization: "Medical authorization may be required",
+  authorization_depends: "Authorization depends on practitioner review",
+  precaution: "Precaution noted",
+  review: "Review before treatment",
 };
 
 // Allowed copy only.
@@ -52,6 +78,68 @@ const LEVEL_ORDER: Record<IntakeReviewLevel, number> = {
   review: 1,
   precaution: 2,
 };
+
+// Stable badge display order (most-to-least urgent).
+const MODALITY_ORDER: ReadonlyArray<IntakeModality> = [
+  "authorization",
+  "authorization_depends",
+  "thermolysis",
+  "galvanic",
+  "review",
+  "precaution",
+];
+
+// Fallback badge for a flag with no chart row: mirror its V1 level.
+const LEVEL_FALLBACK_MODALITY: Record<IntakeReviewLevel, IntakeModality> = {
+  authorization: "authorization",
+  review: "review",
+  precaution: "precaution",
+};
+
+// PR #267. Modality/category signals from Chloe's clinic reference chart,
+// keyed by the flag id (`questionKey:optionValue` or `questionKey:yes`) the
+// rules below produce. ONLY chart rows backed by an EXISTING structured intake
+// field are listed; chart rows with no structured field (e.g. puberty,
+// haemophilia, MS / nervous-system disorder, radiotherapy, chemotherapy,
+// arteritis, retinal implant, circulatory problems, hyper/hypotension,
+// infectious disease, total paralysis) are NOT invented. Surfaced for review
+// only — not a treatment decision.
+const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
+  // Heart problem or pacemaker → continuous/galvanic + medical authorization.
+  "medical_conditions:heart": ["galvanic", "authorization"],
+  "medical_conditions:pacemaker": ["galvanic", "authorization"],
+  // Pregnancy (chart row "pregnancy after 3 months"; the intake has no
+  // trimester field) → continuous/galvanic + medical authorization.
+  "medical_conditions:pregnancy": ["galvanic", "authorization"],
+  // Controlled epilepsy → continuous/galvanic + medical authorization.
+  "medical_conditions:epilepsy": ["galvanic", "authorization"],
+  // Cancer → continuous/galvanic + medical authorization. (Radiotherapy /
+  // chemotherapy are separate chart rows with no structured intake field, so
+  // they are not mapped here.)
+  "medical_conditions:cancer": ["galvanic", "authorization"],
+  // Hepatitis and AIDS/HIV (the intake's single blood-borne option covers
+  // both rows) → thermolysis + continuous/galvanic.
+  "medical_conditions:blood_borne": ["thermolysis", "galvanic"],
+  // Diabetes — the intake has one generic "diabetes" answer (no T1 / T2 /
+  // gestational subtype), so surface the conservative UNION of all three
+  // diabetes chart rows for review since the type is unknown.
+  "medical_conditions:diabetes": [
+    "thermolysis",
+    "galvanic",
+    "authorization",
+    "precaution",
+  ],
+  // Prolonged bleeding (mapped from the blood-thinners medication answer) →
+  // medical authorization + precaution.
+  "medications_list:blood_thinners": ["authorization", "precaution"],
+};
+
+// Resolve a flag's badges: the chart row if mapped, else the level fallback.
+// Deduped and returned in MODALITY_ORDER.
+function badgesFor(id: string, level: IntakeReviewLevel): IntakeModality[] {
+  const base = CHART_MODALITIES[id] ?? [LEVEL_FALLBACK_MODALITY[level]];
+  return MODALITY_ORDER.filter((m) => base.includes(m));
+}
 
 type Rule =
   // multi_select: triggers when responses[questionKey] is an array containing
@@ -138,7 +226,7 @@ export function deriveIntakeReviewFlags(
   responses: Record<string, unknown> | null | undefined,
 ): IntakeReviewFlag[] {
   if (!responses || typeof responses !== "object") return [];
-  const flags: IntakeReviewFlag[] = [];
+  const flags: Array<Omit<IntakeReviewFlag, "badges">> = [];
 
   for (const rule of RULES) {
     if (rule.kind === "multi") {
@@ -173,5 +261,7 @@ export function deriveIntakeReviewFlags(
     }
   }
 
-  return flags.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
+  return flags
+    .map((f) => ({ ...f, badges: badgesFor(f.id, f.level) }))
+    .sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
 }
