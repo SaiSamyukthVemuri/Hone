@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import type { ProfileTab } from "./profile-tab";
@@ -75,6 +76,16 @@ export function ProfileTabBar({ active }: Props) {
           ))}
         </select>
       </label>
+      {/* PR #272: Treatment Photos lives on its own route
+          (/clients/[id]/images). Surface it as a tab-level link instead of
+          burying it under Health & Forms. Mobile: a link under the section
+          select; md+: a tab-styled link at the end of the row. */}
+      <Link
+        href={`${pathname}/images`}
+        className="mt-2 inline-block text-sm font-medium text-neutral-600 underline md:hidden dark:text-neutral-300"
+      >
+        Treatment Photos →
+      </Link>
       {/* md+: the underlined tab row, unchanged from PR #233 (it fits
           in one row on tablet/desktop and never scrolls there). */}
       <div className="hidden gap-x-5 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex md:gap-x-6">
@@ -103,6 +114,12 @@ export function ProfileTabBar({ active }: Props) {
             </button>
           );
         })}
+        <Link
+          href={`${pathname}/images`}
+          className="relative min-h-[44px] px-1 pb-3 pt-2 text-sm font-medium text-neutral-500 transition hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+        >
+          Treatment Photos
+        </Link>
       </div>
     </nav>
   );
