@@ -383,7 +383,7 @@ Docs/launch checklist final polish
 
 - Production domain: `https://hone.care`.
 - Default branch: `claude/build-hone-saas-hOex7`. Every push to it triggers a production deploy. Vercel project: `prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk`, team `team_Pwj27KsmnBKe3ZUBfKLcFczf`.
-- At least 71 migrations applied. Most recent in-tree: `0071_thermolysis_duration_decimal.sql`. The next migration is `0072`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
+- 92 migrations applied. Most recent in-tree: `0092_treatment_images.sql`. The next migration is `0093`. Always double-check the highest file in `supabase/migrations/` before assuming the count.
 - Practitioner notification center (PR #164, migration 0070) records business events (`new_booking`, `appointment_cancelled`, `appointment_rescheduled`) into `public.practitioner_notifications`. Writes happen via the server-only `lib/notifications/practitioner-notifications.ts:recordPractitionerNotification` helper (admin/service-role client, never-throws fire-and-forget IIFE; a notification failure cannot roll back the booking / cancel / reschedule that just committed). Reads + mark-all-read happen via the authenticated RLS client on `/notifications`. Visibility is studio-wide in v1; `practitioner_id` is stored for future per-practitioner filtering. Separate from `ops_alerts` (which is the operator surface for system failures, PR #153).
 - Thermolysis duration is fractional (PR #165, migration 0071). `electrolysis_entries.thermolysis_duration_seconds` is `numeric` (was integer in migration 0042). The form input uses `step="0.01"` + `inputMode="decimal"`; the read view routes through `lib/sessions/format-seconds.ts:formatSeconds` which yields `"0.15 seconds"` / `"1 second"` / `"2 seconds"`. Only the thermolysis column was widened; galvanic_duration_seconds and intensity_percent fields stay integer.
 - Portal magic-link expiry is **60 minutes** (PR #166, raised from 30 minutes). The TTL constant `MAGIC_LINK_TTL_MS` lives in `app/portal/login/actions.ts` and is the single source of truth; the email body copy ("This link expires in 1 hour.") in `lib/email/templates/portal-magic-link.ts` is pinned by `tests/lib/email/portal-magic-link.test.ts`. No migration. The GET/POST split-consumption model (PR #142), the single-use atomic UPDATE on `consumed_at IS NULL`, and the 7-day portal session cookie TTL are all unchanged. PR #166 also flipped the portal-header right cluster from `flex-col items-end` to `flex-row items-center` so Sign out sits visibly at top-right next to the Email <studio> button instead of stacked below it.
@@ -451,7 +451,7 @@ The list of high-risk areas. Each has a doc you MUST read before changing anythi
 
 ## Payment safety rules (non-negotiable)
 
-- **No live charges** unless `STRIPE_ALLOW_LIVE_MODE=true` AND a deliberate live-mode PR is open AND the `manual_fee_charge_attempts_livemode_false_check` constraint has been deliberately replaced AND the [docs/06 §9 checklist](./06_PAYMENTS_AND_STRIPE.md#9-live-charging-requirements) is complete.
+- **No live charges** unless `STRIPE_ALLOW_LIVE_MODE=true` AND a deliberate live-mode PR is open AND the `payment_charge_attempts_livemode_false_check` constraint (the canonical ledger CHECK) has been deliberately replaced AND the [docs/06 §9 checklist](./06_PAYMENTS_AND_STRIPE.md#9-live-charging-requirements) is complete.
 - **No automatic / batch / background / public-triggered charge.** Charging is one manual practitioner click on a `ready` attempt.
 - **No platform customer / platform PaymentMethod.** Every Stripe call must carry `{ stripeAccount }`.
 - **No raw card / CVC / `client_secret` storage.**
@@ -509,16 +509,18 @@ paymentIntents.create:                exactly one occurrence allowed today:
                                       explicitly reviewed.
 ```
 
-The current `paymentIntents.create` path is **test-mode-only manual fee charging**. It is behind:
+The single `paymentIntents.create` path is the **unified test-mode executor** `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments AND late-cancel/no-show fees since PR #196/#218; **live payments remain disabled**). It is behind:
 
 - practitioner auth
-- `getManualFeeChargeEligibility` evidence recheck
+- reason-appropriate eligibility recheck (`getSessionPaymentEligibility` for session payments; `getManualFeeChargeEligibility` for fees)
 - `loadCardAndVerifyLineage` lineage recheck
-- `claim_manual_fee_charge_attempt` RPC (`FOR UPDATE`, conditional UPDATE, idempotency key stamp in one transaction)
-- deterministic idempotency key `hone:manual-fee:<attempt_id>:v1`
+- `claim_session_payment_charge_attempt` RPC (`FOR UPDATE`, conditional UPDATE, idempotency key stamp in one transaction; reasons widened in migration 0083)
+- deterministic idempotency key
 - connected-account context `{ stripeAccount }`
 - `inferStripeLivemode()` test-mode gate
-- `manual_fee_charge_attempts_livemode_false_check` DB CHECK
+- `payment_charge_attempts_livemode_false_check` DB CHECK
+
+(The legacy `lib/billing/manual-fee-charge.ts` executor was removed in PR #218; charges now persist on the canonical `payment_charge_attempts` ledger.)
 
 **Never live without an explicit live-mode PR.** A live-mode PR must add stronger stale-pending reconciliation (Stripe `paymentIntents.search` by metadata before retry) and must deliberately alter or drop the `livemode_false_check` constraint after review.
 

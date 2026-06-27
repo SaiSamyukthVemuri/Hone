@@ -322,9 +322,10 @@ Before running any of the payment smokes below, confirm the dormancy posture is 
 ```bash
 npm run check:stripe-gates
 # Expect:
-#   PASS paymentIntents.create -- 1 occurrence in lib/billing/manual-fee-charge.ts
+#   PASS paymentIntents.create -- 1 occurrence in lib/billing/session-payment-charge.ts
+#   PASS refunds.create -- 1 occurrence in lib/billing/payment-refund.ts
 #   PASS STRIPE_ALLOW_LIVE_MODE=true -- 1 occurrence in lib/stripe/server.ts
-#   PASS refunds.create / charges.create / checkout.sessions -- 0 occurrences
+#   PASS charges.create / checkout.sessions -- 0 occurrences
 
 supabase db query --linked "
   select stripe_livemode, count(*) from public.studio_payment_settings
@@ -468,13 +469,13 @@ Critical safety path. Public reschedule must match public booking on past-slot h
 7. SQL check after a successful reschedule:
    ```sql
    select id, status, starts_at, cancellation_reason, cancelled_at,
-          cancelled_by, cancellation_token, updated_at
+          cancelled_by, cancellation_token_hash, updated_at
      from public.appointments
     where studio_id = '<studio uuid>'
       and (id = '<original id>' or starts_at = '<new starts_at>')
     order by updated_at desc;
    ```
-   Expected: original row has `status='cancelled'`, `cancellation_reason='Rescheduled via email link'`. New row has `status='confirmed'` and a new `cancellation_token`.
+   Expected: original row has `status='cancelled'`, `cancellation_reason='Rescheduled via email link'`. New row has `status='confirmed'` and a new `cancellation_token_hash` (64-hex). The raw `cancellation_token` column was dropped by migration 0091 (PR #264) — the raw token exists only in the outbound link at creation time, never at rest; links resolve by hashing the URL token and matching `cancellation_token_hash`.
 8. SQL check the RPC source carries both guards:
    ```sql
    select pg_get_functiondef(p.oid)
@@ -874,7 +875,7 @@ Confirms payment-outcome writes never treat a zero-row update as success. **Test
 
 ## Raw cancellation_token column removal smoke (PR #264, migration 0091)
 
-Confirms the legacy raw appointment token is gone at rest and links still work. **Migration-first: apply 0091 to production and verify BEFORE relying on the drop; do NOT run the prod migration without explicit approval.** Source coverage is `tests/migrations/0091-drop-raw-cancellation-token.test.ts` (migration shape), `tests/db/appointment-token-hash.db.test.ts` (DB lane: hash-only storage, the raw column is gone → INSERT errors `42703`, RPCs reject a raw token, hash lookup still cancels/reschedules), and `tests/app/book/no-raw-appointment-token.test.ts` (no app reads/writes the raw column) — run `npm test` + `npm run test:db` (local Supabase / CI only).
+Confirms the legacy raw appointment token is gone at rest and links still work. **Migration 0091 is applied in production — the raw `cancellation_token` column is already dropped (local == remote, none pending); verify read-only below.** Source coverage is `tests/migrations/0091-drop-raw-cancellation-token.test.ts` (migration shape), `tests/db/appointment-token-hash.db.test.ts` (DB lane: hash-only storage, the raw column is gone → INSERT errors `42703`, RPCs reject a raw token, hash lookup still cancels/reschedules), and `tests/app/book/no-raw-appointment-token.test.ts` (no app reads/writes the raw column) — run `npm test` + `npm run test:db` (local Supabase / CI only).
 
 **Schema check (prod, after the migration, read-only):**
 ```sql
@@ -908,7 +909,7 @@ Confirms the built-in **body-map** picker — **read-only; no production writes,
 
 ## Secure treatment image storage smoke (PR #271, migration 0092)
 
-Confirms practitioner-only, private image storage. **Migration-first: production migration 0092 + the private bucket are NOT applied until explicitly approved.** Primary coverage: `tests/lib/images/treatment-images.test.ts` (MIME allowlist jpeg/png/webp, reject SVG/PDF/oversize, filename sanitize, server-derived studio-prefixed path), `tests/migrations/0092-treatment-images.test.ts` (SQL pin: bucket `public=false`, table + FKs, RLS member policies, no-delete + revoke truncate/delete, storage.objects studio-scoped), `tests/app/clients/treatment-images.test.ts` (signed-URL-only / never `getPublicUrl`, service-role gated by a studio re-check, no public/token route imports the feature, no OCR/AI/Jane) — run `npm test`. **DB-lane (local/CI Supabase only):** `tests/db/treatment-images.db.test.ts` (cross-studio read blocked, member read/insert ok, cross-studio insert denied, soft-delete via `deleted_at`, hard-DELETE/TRUNCATE forbidden) — run `npm run test:db`. **Operator check (after 0092 applied + bucket exists, read-only on the surface):** on `/clients/<id>/images` (linked from the client Health tab) attach a JPEG/PNG/WebP → it lists with "Uploaded <date>"; "View" opens a short-TTL signed URL; "Archive" soft-deletes; the bucket has no public URL and no client/booking/portal/token route shows treatment images. Private storage, practitioner-only, no annotation/OCR/AI (deferred). Live payments remain disabled.
+Confirms practitioner-only, private image storage. **Migration 0092 is applied in production — the `treatment_images` table exists and the private `treatment-images` bucket exists with `public=false`; Treatment Photos is live.** Primary coverage: `tests/lib/images/treatment-images.test.ts` (MIME allowlist jpeg/png/webp, reject SVG/PDF/oversize, filename sanitize, server-derived studio-prefixed path), `tests/migrations/0092-treatment-images.test.ts` (SQL pin: bucket `public=false`, table + FKs, RLS member policies, no-delete + revoke truncate/delete, storage.objects studio-scoped), `tests/app/clients/treatment-images.test.ts` (signed-URL-only / never `getPublicUrl`, service-role gated by a studio re-check, no public/token route imports the feature, no OCR/AI/Jane) — run `npm test`. **DB-lane (local/CI Supabase only):** `tests/db/treatment-images.db.test.ts` (cross-studio read blocked, member read/insert ok, cross-studio insert denied, soft-delete via `deleted_at`, hard-DELETE/TRUNCATE forbidden) — run `npm run test:db`. **Operator check (read-only on the surface; do not upload production data without explicit approval):** on `/clients/<id>/images` (the **Treatment Photos** tab-bar link) attach a JPEG/PNG/WebP → it lists with "Uploaded <date>"; "View" opens a short-TTL signed URL; "Archive" soft-deletes; the bucket has no public URL and no client/booking/portal/token route shows treatment images. Private storage, practitioner-only, no annotation/OCR/AI (deferred). Live payments remain disabled.
 
 ## Treatment Photos gallery UI smoke (PR #272)
 
