@@ -17,6 +17,7 @@ import {
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import {
   deriveIntakeReviewFlags,
+  MODALITY_WORDING,
   type IntakeReviewFlag,
 } from "@/lib/intake/review-flags";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -337,13 +338,15 @@ function practitionerName(
   return match.display_name?.trim() ? match.display_name : match.email;
 }
 
-// PR #266. Practitioner-only intake review flags. Surfaces existing intake
-// answers Chloe wants reviewed before treatment (derived purely from
-// `responses` by lib/intake/review-flags.ts). Renders nothing when there are
-// no flags. Hone surfaces intake answers for review only and does not make
-// treatment decisions — every flag cites the intake answer it came from and
-// the card closes with the professional-judgment caveat. Allergy / EpiPen
-// signals live in their own cards above; they are not duplicated here.
+// PR #266 / #267. Practitioner-only intake review flags. Surfaces existing
+// intake answers Chloe wants reviewed before treatment (derived purely from
+// `responses` by lib/intake/review-flags.ts). PR #267 adds modality/category
+// badges from Chloe's clinic reference chart (thermolysis / continuous-galvanic
+// / authorization / precaution). Renders nothing when there are no flags. Hone
+// surfaces intake answers for review only and does not make treatment decisions
+// — every flag cites the intake answer it came from and the card closes with
+// the professional-judgment caveat. Allergy / EpiPen signals live in their own
+// cards above; they are not duplicated here.
 function flagTone(level: IntakeReviewFlag["level"]): string {
   if (level === "authorization") {
     return "border-red-400 bg-red-50 text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100";
@@ -377,13 +380,18 @@ function IntakeReviewFlags({
             key={flag.id}
             className={`rounded-md border p-3 text-sm ${flagTone(flag.level)}`}
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-current/30 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider">
-                {flag.wording}
-              </span>
-              <span className="font-medium">{flag.category}</span>
-            </div>
+            <span className="font-medium">{flag.category}</span>
             <p className="mt-1 text-xs opacity-80">{flag.basis}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {flag.badges.map((badge) => (
+                <span
+                  key={badge}
+                  className="rounded-full border border-current/30 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider"
+                >
+                  {MODALITY_WORDING[badge]}
+                </span>
+              ))}
+            </div>
           </li>
         ))}
       </ul>

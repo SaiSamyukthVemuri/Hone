@@ -86,3 +86,27 @@ describe("practitioner-only surface", () => {
     expect(PUBLIC_INTAKE).not.toMatch(/deriveIntakeReviewFlags|IntakeReviewFlags/);
   });
 });
+
+// PR #267. Modality/category badges.
+describe("modality badges (PR #267)", () => {
+  it("the module exposes the allowed chart badge wording", () => {
+    expect(MODULE).toMatch(/Review before thermolysis/);
+    expect(MODULE).toMatch(/Review before continuous\/galvanic current/);
+    expect(MODULE).toMatch(/Medical authorization may be required/);
+    expect(MODULE).toMatch(/Precaution noted/);
+  });
+
+  it("the card renders each flag's badges via MODALITY_WORDING", () => {
+    expect(PAGE).toMatch(/MODALITY_WORDING/);
+    expect(PAGE).toMatch(/flag\.badges\.map/);
+  });
+
+  it("'contraindicated' never reaches the module or card (allowed only in docs/tests)", () => {
+    expect(codeOnly(MODULE)).not.toMatch(/contraindicat/i);
+    expect(codeOnly(PAGE)).not.toMatch(/contraindicat/i);
+  });
+
+  it("the public client-facing route still has no modality badges", () => {
+    expect(PUBLIC_INTAKE).not.toMatch(/MODALITY_WORDING|thermolysis|galvanic/i);
+  });
+});
