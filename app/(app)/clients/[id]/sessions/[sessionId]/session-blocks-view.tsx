@@ -238,15 +238,23 @@ function BlockSection({
       ) : (
         <>
           <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <h3
-              className={
-                title.placeholder
-                  ? "text-base font-normal text-neutral-400 dark:text-neutral-500"
-                  : "text-lg font-medium"
-              }
-            >
-              {title.text}
-            </h3>
+            {/* PR #268 (chart parts): name the recorded treatment area, with
+                an explicit "Area not recorded" eyebrow for legacy blocks that
+                have no structured area. */}
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                {title.placeholder ? "Area not recorded" : "Recorded area"}
+              </span>
+              <h3
+                className={
+                  title.placeholder
+                    ? "text-base font-normal text-neutral-400 dark:text-neutral-500"
+                    : "text-lg font-medium"
+                }
+              >
+                {title.text}
+              </h3>
+            </div>
             <button
               type="button"
               onClick={() => setEditing(true)}

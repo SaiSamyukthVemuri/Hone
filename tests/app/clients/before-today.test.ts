@@ -154,6 +154,8 @@ describe("buildBeforeToday", () => {
       probe: "Ballet F3",
       modeLabel: "Thermolysis",
       energyLevel: 14,
+      // PR #268: the latest setup is tied to its treatment area.
+      areaName: "Chin",
     });
     expect(b.latestSetupLine).toBe("27.12 MHz · Ballet F3 · Thermolysis · EL 14");
     const empty = buildBeforeToday(

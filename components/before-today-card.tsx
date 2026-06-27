@@ -104,16 +104,24 @@ export function BeforeTodayCard({
           {last && (
             <div>
               <SectionLabel>Last treatment</SectionLabel>
+              {/* PR #268 (chart parts): name the treatment area being recalled,
+                  with an "Area not recorded" fallback for legacy entries. */}
               <p className="mt-1 text-sm">
+                <span className="text-neutral-500">Treatment area: </span>
                 {last.areasLine ? (
                   <span className="break-words font-medium">
                     {last.areasLine}
                   </span>
                 ) : (
-                  <span className="capitalize">{last.modality} session</span>
+                  <span className="text-neutral-400">Area not recorded</span>
                 )}{" "}
                 · <FormattedDateTime iso={last.startedAt} format="date" />
               </p>
+              {setup?.areaName && (
+                <p className="mt-1.5 text-xs text-neutral-500">
+                  Latest recorded setup — {setup.areaName}
+                </p>
+              )}
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <Chip>
                   <span className="capitalize">{last.modality}</span>
@@ -205,7 +213,7 @@ export function BeforeTodayCard({
                   <span>· {m.dateLabel}</span>
                   {m.treatmentAreaText && (
                     <span className="font-medium text-neutral-700 dark:text-neutral-300">
-                      · {m.treatmentAreaText}
+                      · Imported area: {m.treatmentAreaText}
                     </span>
                   )}
                 </div>

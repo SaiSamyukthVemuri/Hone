@@ -43,6 +43,7 @@ function briefing(over: Partial<BeforeToday> = {}): BeforeToday {
       probe: "Ballet F3",
       modeLabel: "Thermolysis",
       energyLevel: null,
+      areaName: "Chin",
     },
     latestSetupLine: "27.12 MHz · Ballet F3 · Thermolysis",
     reminders: [],
