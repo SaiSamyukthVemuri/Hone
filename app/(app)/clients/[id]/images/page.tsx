@@ -4,6 +4,11 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS } from "@/lib/images/treatment-images";
+import {
+  treatmentPhotoScopeLabel,
+  treatmentPhotoAreaLabel,
+  type SessionBlockAreaInput,
+} from "./photo-context";
 import { TreatmentImagesManager } from "./TreatmentImagesManager";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
@@ -30,9 +35,16 @@ export default async function ClientImagesPage({
   if (clientErr) throw new Error(clientErr.message);
   if (!client) notFound();
 
+  // PR #274: also select the existing context links (session_id /
+  // session_block_id) and embed the attached session block's structured area
+  // fields (primary_area / side / custom_area_detail) so each card can show
+  // treatment-context tags. Display-only — no schema change; raw IDs are turned
+  // into labels server-side and never sent to the client.
   const { data: images, error: imgErr } = await supabase
     .from("treatment_images")
-    .select("id, original_filename, created_at, storage_bucket, storage_path")
+    .select(
+      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, session_blocks ( primary_area, side, custom_area_detail )",
+    )
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
@@ -51,6 +63,9 @@ export default async function ClientImagesPage({
     created_at: string;
     storage_bucket: string;
     storage_path: string;
+    session_id: string | null;
+    session_block_id: string | null;
+    session_blocks: SessionBlockAreaInput | SessionBlockAreaInput[];
   }>;
   const admin = createAdminClient();
   const rows = await Promise.all(
@@ -67,11 +82,21 @@ export default async function ClientImagesPage({
       } catch {
         previewUrl = null;
       }
+      // Embedded to-one can arrive as an object or a single-element array.
+      const block = Array.isArray(m.session_blocks)
+        ? (m.session_blocks[0] ?? null)
+        : (m.session_blocks ?? null);
+      // Compute labels server-side; only labels (never raw IDs) reach the client.
       return {
         id: m.id,
         filename: m.original_filename ?? null,
         createdAt: m.created_at,
         previewUrl,
+        scopeLabel: treatmentPhotoScopeLabel({
+          sessionId: m.session_id,
+          sessionBlockId: m.session_block_id,
+        }),
+        areaLabel: treatmentPhotoAreaLabel(m.session_block_id, block),
       };
     }),
   );
