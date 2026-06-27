@@ -29,7 +29,33 @@ type Row = {
   createdAt: string;
   // Short-lived server-signed preview URL (null if signing failed).
   previewUrl: string | null;
+  // PR #274: display-only context tags, computed server-side from existing
+  // metadata + session-block area fields (never raw IDs/paths).
+  scopeLabel: string;
+  areaLabel: string | null;
 };
+
+// Treatment-context tags shown on each card and in the larger preview. Labels
+// only — no UUIDs, storage paths, bucket names, or signed-URL text.
+function ContextTags({
+  scopeLabel,
+  areaLabel,
+}: {
+  scopeLabel: string;
+  areaLabel: string | null;
+}) {
+  const badge =
+    "rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300";
+  return (
+    <div className="flex flex-wrap gap-1">
+      <span className={badge}>{scopeLabel}</span>
+      {areaLabel && <span className={badge}>{areaLabel}</span>}
+      <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-neutral-400">
+        Clinical reference
+      </span>
+    </div>
+  );
+}
 
 export function TreatmentImagesManager({
   clientId,
@@ -218,6 +244,10 @@ export function TreatmentImagesManager({
                     Uploaded <FormattedDateTime iso={img.createdAt} />
                   </p>
                 </div>
+                <ContextTags
+                  scopeLabel={img.scopeLabel}
+                  areaLabel={img.areaLabel}
+                />
                 <div className="flex gap-3 text-xs">
                   <button
                     type="button"
@@ -267,6 +297,12 @@ export function TreatmentImagesManager({
                 <p className="text-xs text-neutral-500">
                   Uploaded <FormattedDateTime iso={modal.createdAt} />
                 </p>
+                <div className="mt-1">
+                  <ContextTags
+                    scopeLabel={modal.scopeLabel}
+                    areaLabel={modal.areaLabel}
+                  />
+                </div>
               </div>
               <button
                 type="button"
