@@ -14,6 +14,8 @@ Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_
 
 ## 2. Public route model
 
+> Treatment images (PR #271) are **not** a public surface. The `treatment-images` bucket is private (no public URLs); images are practitioner-only and viewed only via short-TTL signed URLs minted server-side after a studio-ownership re-check. No public/token route below exposes them.
+
 | Surface | Public? | What protects it |
 |---|---|---|
 | `/`, `/pricing`, `/demo`, `/privacy`, `/terms` | Yes | Static marketing content. The waitlist and demo-request forms on these pages submit anonymous server actions that are rate-limited per IP (5/hour) and per normalized email (2/day) via the shared Upstash module, with SHA-256-hashed identifiers and a generic refusal message (PR #187). |

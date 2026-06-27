@@ -93,6 +93,11 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 - `card_authorization_signature_id` links to `client_consent_signatures(id)`; every active card row points at the signature the client gave to authorize card storage.
 - `added_via` ∈ `portal / practitioner` (only `portal` is wired today).
 
+### Treatment image (`treatment_images`, PR #271 / migration 0092)
+- Practitioner-only image storage so treatment memory can include visual reference material. `studio_id` + `client_id` are required; `session_id` / `session_block_id` are optional links.
+- Bytes live in the **private** Supabase Storage bucket `treatment-images` (`public=false`); this table is metadata only (`storage_bucket`, `storage_path`, sanitized `original_filename`, `content_type`, `size_bytes`, `uploaded_by`, soft-delete `deleted_at`/`deleted_by`). studio-scoped RLS (`is_studio_member` select/insert/update, no delete).
+- **No public URLs.** Viewing mints a short-TTL signed URL via a server action that re-checks the row's studio; upload + signing use the service-role client after that ownership check. Server-generated path `<studio_id>/<client_id>/<uuid>.<ext>`. Practitioner UI at `/clients/<id>/images`. Not reused: the legacy unwired `photos` table (0001). No annotation/OCR/AI/public exposure (deferred).
+
 ### Customer mapping (`client_stripe_customers`, migration 0032)
 - Maps `(client, studio, stripe_account_id, stripe_livemode)` to a Stripe Customer object on the connected account. Reused by both 0032's dormant flow and PR #135's portal flow.
 
@@ -130,6 +135,7 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 ## Important security constraints (mental model)
 
 - **Studio is the tenancy unit.** Every studio-scoped table has RLS that gates SELECT on `is_studio_member(studio_id)`. The same email can be a client of two studios; each studio has its own row and no cross-studio leakage.
+- **Treatment images are practitioner-only + private (PR #271).** The `treatment-images` bucket is private (no public URLs); images are viewed only via short-TTL signed URLs minted server-side after a studio-ownership re-check. No client/portal/booking surface exposes treatment images.
 - **Tokens are bearer credentials.** the appointment cancel/reschedule/manage token (stored hashed at rest as `cancellation_token_hash`; raw column dropped in PR #264), the portal magic-link token, the intake HMAC, the `practitioners.calendar_feed_token`. Anyone with the URL has the access it confers. Token routes carry `noindex/no-referrer` headers and never mount analytics (PR #142).
 - **Card authorization is linked to the card.** `client_payment_methods.card_authorization_signature_id` is the FK; an active card without a signed authorization is a structural error and blocks fee preparation (PR #145).
 - **Policy acknowledgement is linked to the appointment.** Fee preparation requires both the active card AND the specific policy ack for that appointment (PR #145).

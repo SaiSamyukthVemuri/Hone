@@ -49,6 +49,16 @@ const GLOBAL_SECURITY_HEADERS = buildGlobalSecurityHeaders({
 const TOKEN_ROUTE_PRIVACY_HEADERS = buildTokenRoutePrivacyHeaders();
 
 const nextConfig: NextConfig = {
+  // PR #271: treatment image uploads (a server action) can be up to 15 MB
+  // (TREATMENT_IMAGE_MAX_BYTES in lib/images/treatment-images.ts). The Next.js
+  // default server-action body limit (~1 MB) would reject typical phone photos,
+  // so raise the framework ceiling just above the validated cap. The action
+  // still validates MIME + size server-side; this only lifts the limit.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "16mb",
+    },
+  },
   async headers() {
     return [
       // Global block. Order: this MUST come first so the token-route
