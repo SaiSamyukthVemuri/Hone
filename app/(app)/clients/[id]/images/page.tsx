@@ -52,7 +52,7 @@ export default async function ClientImagesPage({
         ← {client.name}
       </Link>
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight">Treatment images</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Treatment Photos</h1>
         <p className="mt-1 text-sm text-neutral-500">
           Stored privately. Visible to practitioners in this studio.
         </p>

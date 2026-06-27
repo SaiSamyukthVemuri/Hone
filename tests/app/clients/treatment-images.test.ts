@@ -24,7 +24,6 @@ const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
 const LIB = read("lib/images/treatment-images.ts");
 const MANAGER = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");
-const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
 const MIGRATION = read("supabase/migrations/0092_treatment_images.sql");
 
 describe("private bucket + signed-URL-only (no public URLs)", () => {
@@ -70,8 +69,12 @@ describe("no public/client-facing exposure", () => {
     expect(MANAGER).toMatch(/accept="image\/jpeg,image\/png,image\/webp"/);
     expect(PAGE).toMatch(/Stored privately/);
   });
-  it("the client page links to the practitioner images route", () => {
-    expect(CLIENT_PAGE).toMatch(/\/clients\/\$\{client\.id\}\/images/);
+  it("the practitioner nav links to the images route (PR #272: in the tab bar)", () => {
+    // PR #272 moved the link out of the Health tab into the client tab bar
+    // (a "Treatment Photos" route link), so it is no longer buried.
+    const tabBar = read("components/profile-tab-bar.tsx");
+    expect(tabBar).toMatch(/Treatment Photos/);
+    expect(tabBar).toMatch(/\$\{pathname\}\/images/);
   });
 });
 
