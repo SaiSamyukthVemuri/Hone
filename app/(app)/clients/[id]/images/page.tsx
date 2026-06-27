@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS } from "@/lib/images/treatment-images";
 import { TreatmentImagesManager } from "./TreatmentImagesManager";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
@@ -30,18 +32,49 @@ export default async function ClientImagesPage({
 
   const { data: images, error: imgErr } = await supabase
     .from("treatment_images")
-    .select("id, original_filename, created_at")
+    .select("id, original_filename, created_at, storage_bucket, storage_path")
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
   if (imgErr) throw new Error(imgErr.message);
 
-  const rows = (images ?? []).map((r) => ({
-    id: r.id as string,
-    filename: (r.original_filename as string | null) ?? null,
-    createdAt: r.created_at as string,
-  }));
+  // PR #273: server-side preview signing. Ownership is already verified (the
+  // RLS client load above is scoped to this studio + client). Short-TTL signed
+  // URLs are returned ONLY in this response — never stored in the DB, never
+  // public. storage_path stays server-side; only the signed URL reaches the
+  // client. A failed sign yields previewUrl=null → the card shows
+  // "Image not available" but keeps filename/date/Archive.
+  const meta = (images ?? []) as Array<{
+    id: string;
+    original_filename: string | null;
+    created_at: string;
+    storage_bucket: string;
+    storage_path: string;
+  }>;
+  const admin = createAdminClient();
+  const rows = await Promise.all(
+    meta.map(async (m) => {
+      let previewUrl: string | null = null;
+      try {
+        const { data } = await admin.storage
+          .from(m.storage_bucket)
+          .createSignedUrl(
+            m.storage_path,
+            TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
+          );
+        previewUrl = data?.signedUrl ?? null;
+      } catch {
+        previewUrl = null;
+      }
+      return {
+        id: m.id,
+        filename: m.original_filename ?? null,
+        createdAt: m.created_at,
+        previewUrl,
+      };
+    }),
+  );
 
   return (
     <div className="flex flex-col gap-6">
