@@ -563,11 +563,23 @@ export function BlockSetupForm({
           area is already selected it collapses to a compact summary with a
           "Change" affordance; the full region-grouped picker only expands
           when there's no area yet or the practitioner taps Change. */}
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Treatment area</span>
+      {/* PR #269: Visual treatment-area chart part. The region-grouped
+          AreaPicker (chips) is framed as a distinct "chart part" card with a
+          live "Area being charted" preview, so area selection reads as a
+          visual chart part rather than a plain field. Reuses the existing
+          structured fields (primary_area / side / custom_area_detail); no
+          schema change, no image/upload/canvas. */}
+      <div className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+            Chart part
+          </span>
+          <span className="text-sm font-medium">Treatment area</span>
+        </div>
 
         {draft.primaryArea.trim().length > 0 && !editingArea ? (
           <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-neutral-500">Area being charted:</span>
             <span className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
               {draft.primaryArea}
               {draft.side && draft.side !== "n/a"
@@ -588,8 +600,8 @@ export function BlockSetupForm({
         ) : (
           <>
             <span className="text-xs text-neutral-500">
-              Optional. The area this section treats. Side and specifics appear
-              once an area is chosen.
+              Choose the area for this chart entry. Optional; side and specifics
+              appear once an area is chosen.
             </span>
             <AreaPicker
               value={draft.primaryArea}
@@ -609,6 +621,25 @@ export function BlockSetupForm({
               }}
               idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
             />
+
+            {/* PR #269: live preview of the chart part's area, updating as the
+                practitioner picks area / side / specifics. */}
+            <p className="pt-1 text-sm">
+              <span className="text-neutral-500">Area being charted: </span>
+              {draft.primaryArea.trim() ? (
+                <span className="font-medium">
+                  {draft.primaryArea.trim()}
+                  {draft.side && draft.side !== "n/a"
+                    ? ` · ${SIDE_OPTIONS.find((o) => o.value === draft.side)?.label ?? draft.side}`
+                    : ""}
+                  {draft.customAreaDetail.trim()
+                    ? ` · ${draft.customAreaDetail.trim()}`
+                    : ""}
+                </span>
+              ) : (
+                <span className="text-neutral-400">Area not recorded</span>
+              )}
+            </p>
 
             {draft.primaryArea.trim().length > 0 && (
               <>
