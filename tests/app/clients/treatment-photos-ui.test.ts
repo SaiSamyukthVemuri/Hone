@@ -52,7 +52,8 @@ describe("gallery + empty state", () => {
   it("renders a gallery grid with View + Archive actions", () => {
     expect(MANAGER).toMatch(/grid/);
     expect(MANAGER).toMatch(/images\.map/);
-    expect(MANAGER).toMatch(/"View"/);
+    // PR #273 replaced the new-tab "View" with an in-app "View larger" preview.
+    expect(MANAGER).toMatch(/View larger/);
     expect(MANAGER).toMatch(/>\s*Archive\s*</);
   });
   it("renders the empty state when there are no photos", () => {

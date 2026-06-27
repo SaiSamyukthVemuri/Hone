@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useTransition, type FormEvent, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useState,
+  useTransition,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -9,14 +15,21 @@ import {
   archiveTreatmentImageAction,
 } from "./actions";
 
-// PR #271 / #272. Practitioner-only "Treatment Photos" UI. Upload goes to a
-// private bucket via a server action; viewing mints a short-TTL signed URL on
-// demand (no persisted/public URL). Soft-delete only (archive).
-// PR #272 is UI polish only: a styled upload card (the native file input stays,
-// just visually hidden behind a "Choose image" label) + a gallery card grid +
-// empty state. Storage / signed-URL / RLS / validation are unchanged.
+// PR #271 / #272 / #273. Practitioner-only "Treatment Photos" UI.
+// PR #273 adds INLINE gallery previews: the server pre-signs a short-TTL
+// preview URL per image (page.tsx, after the studio-scoped RLS load); each card
+// renders it as an <img>, and clicking opens an in-app modal that lazily mints a
+// fresh signed URL via the existing server action (no new browser tab as the
+// primary path). Security model unchanged: private bucket, signed-URL-only,
+// short TTL, never public, never stored in the DB. Soft-delete only (archive).
 
-type Row = { id: string; filename: string | null; createdAt: string };
+type Row = {
+  id: string;
+  filename: string | null;
+  createdAt: string;
+  // Short-lived server-signed preview URL (null if signing failed).
+  previewUrl: string | null;
+};
 
 export function TreatmentImagesManager({
   clientId,
@@ -30,6 +43,22 @@ export function TreatmentImagesManager({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [broken, setBroken] = useState<Record<string, boolean>>({});
+
+  // In-app larger preview modal.
+  const [modal, setModal] = useState<Row | null>(null);
+  const [modalUrl, setModalUrl] = useState<string | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState(false);
+
+  useEffect(() => {
+    if (!modal) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setModal(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal]);
 
   function onPick(e: ChangeEvent<HTMLInputElement>) {
     setError(null);
@@ -59,16 +88,21 @@ export function TreatmentImagesManager({
     });
   }
 
-  async function onView(id: string) {
-    setError(null);
-    setBusyId(id);
-    const res = await getTreatmentImageSignedUrlAction({ imageId: id });
-    setBusyId(null);
+  // Open the larger in-app preview. Lazily mints a FRESH signed URL via the
+  // existing server action (which re-checks practitioner/studio ownership), so
+  // the larger view works even if the grid's pre-signed URL has expired.
+  async function openPreview(img: Row) {
+    setModal(img);
+    setModalUrl(null);
+    setModalError(false);
+    setModalLoading(true);
+    const res = await getTreatmentImageSignedUrlAction({ imageId: img.id });
+    setModalLoading(false);
     if (!res.ok) {
-      setError(res.error);
+      setModalError(true);
       return;
     }
-    window.open(res.url, "_blank", "noopener,noreferrer");
+    setModalUrl(res.url);
   }
 
   async function onArchive(id: string) {
@@ -100,9 +134,6 @@ export function TreatmentImagesManager({
         >
           <label className="cursor-pointer rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
             Choose image
-            {/* Native input kept (accessible) but visually hidden behind the
-                styled label, so the rough "No file chosen" text is not the
-                primary UI. */}
             <input
               type="file"
               name="file"
@@ -134,9 +165,9 @@ export function TreatmentImagesManager({
         )}
       </section>
 
-      {/* Gallery — card grid (filename + date + View/Archive). Thumbnails are
-          deferred (would require eagerly signing every image, a signed-URL flow
-          change); viewing stays on-demand. */}
+      {/* Gallery — inline previews. Clicking opens the in-app modal (no new tab
+          as the primary path). Thumbnail pipeline and dual-photo review are
+          deferred. */}
       {images.length === 0 ? (
         <div className="rounded-lg border border-dashed border-neutral-300 p-8 text-center dark:border-neutral-700">
           <p className="text-sm font-medium">No treatment photos yet</p>
@@ -146,44 +177,127 @@ export function TreatmentImagesManager({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {images.map((img) => (
-            <div
-              key={img.id}
-              className="flex flex-col justify-between gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
-            >
-              <div>
-                <p className="truncate text-sm font-medium" title={img.filename ?? "Image"}>
-                  {img.filename ?? "Image"}
-                </p>
-                <p className="mt-0.5 text-xs text-neutral-500">
-                  Uploaded <FormattedDateTime iso={img.createdAt} />
-                </p>
+          {images.map((img) => {
+            const showPreview = !!img.previewUrl && !broken[img.id];
+            return (
+              <div
+                key={img.id}
+                className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
+              >
+                {showPreview ? (
+                  <button
+                    type="button"
+                    onClick={() => openPreview(img)}
+                    className="block overflow-hidden rounded-md"
+                    aria-label={`View larger: ${img.filename ?? "treatment photo"}`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={img.previewUrl ?? ""}
+                      alt={img.filename ?? "Treatment photo"}
+                      loading="lazy"
+                      onError={() =>
+                        setBroken((b) => ({ ...b, [img.id]: true }))
+                      }
+                      className="aspect-square w-full object-cover transition hover:opacity-90"
+                    />
+                  </button>
+                ) : (
+                  <div className="grid aspect-square w-full place-items-center rounded-md bg-neutral-100 text-xs text-neutral-400 dark:bg-neutral-900">
+                    Image not available
+                  </div>
+                )}
+                <div>
+                  <p
+                    className="truncate text-sm font-medium"
+                    title={img.filename ?? "Image"}
+                  >
+                    {img.filename ?? "Image"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    Uploaded <FormattedDateTime iso={img.createdAt} />
+                  </p>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => openPreview(img)}
+                    className="underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                  >
+                    View larger
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onArchive(img.id)}
+                    disabled={busyId === img.id}
+                    className="text-neutral-500 underline hover:text-neutral-900 disabled:opacity-60 dark:hover:text-neutral-100"
+                  >
+                    Archive
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-3 text-xs">
-                <button
-                  type="button"
-                  onClick={() => onView(img.id)}
-                  disabled={busyId === img.id}
-                  className="underline hover:text-neutral-900 disabled:opacity-60 dark:hover:text-neutral-100"
-                >
-                  {busyId === img.id ? "…" : "View"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onArchive(img.id)}
-                  disabled={busyId === img.id}
-                  className="text-neutral-500 underline hover:text-neutral-900 disabled:opacity-60 dark:hover:text-neutral-100"
-                >
-                  Archive
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <p className="text-xs text-neutral-500">
         Stored privately. Visible to practitioners in this studio.
       </p>
+
+      {modal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Treatment photo preview"
+          onClick={() => setModal(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-full w-full max-w-2xl flex-col overflow-auto rounded-lg bg-white p-4 dark:bg-neutral-900"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p
+                  className="truncate text-sm font-medium"
+                  title={modal.filename ?? "Treatment photo"}
+                >
+                  {modal.filename ?? "Treatment photo"}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  Uploaded <FormattedDateTime iso={modal.createdAt} />
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModal(null)}
+                aria-label="Close preview"
+                className="shrink-0 rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 flex min-h-[200px] items-center justify-center">
+              {modalLoading ? (
+                <p className="text-sm text-neutral-500">Loading preview…</p>
+              ) : modalUrl && !modalError ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={modalUrl}
+                  alt={modal.filename ?? "Treatment photo"}
+                  onError={() => setModalError(true)}
+                  className="max-h-[70vh] w-auto rounded-md object-contain"
+                />
+              ) : (
+                <p className="text-sm text-neutral-400">Image not available</p>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-neutral-500">
+              Stored privately. Visible to practitioners in this studio.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
