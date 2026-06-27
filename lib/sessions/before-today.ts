@@ -80,6 +80,10 @@ export type BeforeToday = {
     probe: string | null;
     modeLabel: string | null;
     energyLevel: number | null;
+    // PR #268 (chart parts): which treatment area this latest setup was
+    // recorded on, so the memory card can name it ("Latest recorded setup
+    // — Chin") instead of showing unlabeled chips. null for legacy data.
+    areaName: string | null;
   } | null;
   // "27.12 MHz · Ballet F3 · Thermolysis · EL 14" joined form, kept
   // for the Dashboard Today compact preview (PR #212).
@@ -136,6 +140,7 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
           probe: latestArea.latestProbe,
           modeLabel: latestArea.latestModeLabel,
           energyLevel: latestArea.latestEnergyLevel,
+          areaName: latestArea.name?.trim() || null,
         }
       : null;
   const latestSetupLine = setup
