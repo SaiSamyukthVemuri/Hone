@@ -22,9 +22,9 @@ Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_
 | `/book/<slug>` | Yes | Slug is the studio's public booking identifier (not a token). Rate-limited via Upstash if configured (fails open). Server resolves studio by slug; client is find-or-created with normalized email. |
 | `/portal/login` | Yes | Generic-success response regardless of email match (no enumeration). Rate-limited per email + per IP. |
 | `/login` (practitioner) | Yes | **Invite-only during the pilot (PR #189), enforced at two layers.** (1) The magic-link request runs through a server action that sets `shouldCreateUser` true ONLY when a pending invitation exists for the email; uninvited unknown emails get the same generic "sent" response and no auth user is created. (2) Migration 0081 removed `handle_new_user()`'s no-invite fresh-studio fallback, so even a path that does create an auth user (Google OAuth cannot pass `shouldCreateUser`) provisions NOTHING: no studio, no practitioner row, and every `(app)` surface denies access when the practitioner row is absent. Studio creation for new pilots happens via service role only. |
-| `/cancel/<token>` | Yes via token | Token IS the credential. See §4. |
-| `/reschedule/<token>` | Yes via token | Same. |
-| `/manage/<token>` | Yes via token | Same. |
+| `/cancel/<token>` | Yes via token | Token IS the credential. **Hashed at rest:** the DB stores only `appointments.cancellation_token_hash` (SHA-256, added + backfilled by 0090/PR #260); the raw `cancellation_token` column was **dropped by 0091/PR #264**. The raw token lives only in the outbound link at creation time; resolvers hash the URL token and match the stored hash, so already-emitted links still work. See §4. |
+| `/reschedule/<token>` | Yes via token | Same — hash-at-rest (`cancellation_token_hash`); raw column dropped in 0091. |
+| `/manage/<token>` | Yes via token | Same — hash-at-rest (`cancellation_token_hash`); raw column dropped in 0091. |
 | `/intake/<token>` | Yes via token | Same. |
 | `/portal/verify/<token>` | Yes via token | Same. |
 | `/calendar-feed/<token>.ics` | Yes via token | Same; carries privacy-collapsed iCal feed for the practitioner's own calendar app. |

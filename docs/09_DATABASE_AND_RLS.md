@@ -1,10 +1,10 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. 71 migrations live in `supabase/migrations/`, applied sequentially. All migrations are **strictly additive** and **idempotent** (`drop … if exists` before `add …`). Migrations may add columns, indexes, RPCs, or grants; they do not run destructive backfills.
+Hone uses Supabase Postgres. 92 migrations live in `supabase/migrations/` (latest `0092_treatment_images.sql`), applied sequentially. Most migrations are **additive** and **idempotent** (`drop … if exists` before `add …`); a few are deliberately destructive security-hardening migrations — notably **0091 (PR #264) drops the raw `appointments.cancellation_token` column** and two dead compatibility RPCs after the hash-at-rest cutover (0090/PR #260). Always double-check the highest file in `supabase/migrations/` before assuming the count.
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0072`.
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0093`.
 - Apply to production via `supabase db push --linked` BEFORE merging code that reads new columns or tables. A merged PR whose code references a column not yet in prod produces a 500. See the [Migration data + DDL splits](../README.md) memory.
 - For mixed `UPDATE` + `ALTER CONSTRAINT` migrations, paste the `UPDATE` first and inspect the row count before applying the constraint.
 - For atomic install patterns with cross-step invariants, wrap in `begin; … commit;` with `raise exception` validators between backfill and final constraints.
@@ -52,8 +52,9 @@ Current SECURITY DEFINER RPCs:
 - `find_or_create_client_for_booking` / `find_or_create_client_for_booking_payment_strict` (0032).
 - `start_card_required_booking_session` and friends (0032); dormant.
 - `record_payment_consent_for_session` (0032); dormant.
-- `finalize_card_required_public_booking` (0032); dormant.
-- `public_cancel_appointment_with_token(text, text)` and the new overloaded `public_cancel_appointment_with_token(text, text, text, text, boolean)` (0033 + 0063).
+- `finalize_card_required_public_booking` (0032) — **dropped by 0091** (PR #264).
+- `public_cancel_appointment_with_token(text, text, text, text, boolean)` (0033 + 0063) — the legacy 2-arg overload was **dropped by 0091** (PR #264); only this 5-arg, hash-only overload remains.
+- `claim_session_payment_charge_attempt` (0075; reasons widened in 0083) — canonical claim RPC for session-payment + fee charges.
 - `practitioner_cancel_appointment` (0033).
 - `mark_appointment_no_show` (0033).
 - `claim_manual_fee_charge_attempt` (0065 / PR #146).
@@ -71,7 +72,7 @@ Current SECURITY DEFINER RPCs:
 | 0033 | Pre-Stripe operational hardening | `public_cancel_appointment_with_token`, `practitioner_cancel_appointment`, `mark_appointment_no_show`; moved direct UPDATEs into SECURITY DEFINER RPCs. |
 | 0043 | Postcare email | Postcare send tracking on `appointments`. |
 | 0045 | Studio policy fields | `cancellation_policy_text`, `no_show_policy_text`, `policy_version`, `policy_updated_at`. |
-| 0046 | Calendar feed token | `practitioners.calendar_feed_token` (raw; hashed storage on backlog). |
+| 0046 | Calendar feed token | `practitioners.calendar_feed_token`; hashed storage shipped in 0079 (PR #182) — `calendar_feed_token_hash` (SHA-256, backfilled), feed route looks up by hash only. |
 | 0047 | Owner opt-out of new-booking notification | `studios.notify_practitioner_on_new_booking`. |
 | 0048 | Postcare email polish | Studio toggles + body shape. |
 | 0049 | SMS foundation | `studios.send_*_sms`, `clients.sms_consent_at`/`sms_opted_out_at`, `claim_sms_send` RPCs. |

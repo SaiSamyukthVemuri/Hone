@@ -1,12 +1,14 @@
 # 06 Payments and Stripe
 
+> **Status note (reconciled — supersedes stale detail below).** The **single** canonical charge executor is `lib/billing/session-payment-charge.ts` (`runSessionPaymentCharge`), which handles session payments **and** the late-cancellation / no-show **fee** charges on the canonical `payment_charge_attempts` ledger. The legacy `lib/billing/manual-fee-charge.ts` executor was **deleted in PR #218**; fee unification onto `payment_charge_attempts` is **complete (PR #196, migration 0083)**. `scripts/check-stripe-gates.mjs` pins **exactly one** `paymentIntents.create` (`session-payment-charge.ts`) and **one** `refunds.create` (`lib/billing/payment-refund.ts`); `charges.create` / `checkout.sessions` are **0**. Payment-outcome zero-row detection was added in PR #263. **Live payments remain disabled; controlled live-payment enablement has not started.** Sections below that still describe a separate `manual_fee_charge_attempts` runtime as the active charge path are retained as historical design detail; where they conflict with this note, **this note is authoritative.**
+
 ## 1. Current payment status
 
 | Capability | State |
 |---|---|
 | Stripe Connect Express onboarding | **Production**, test mode |
 | Card-on-file via SetupIntent on connected account | **Production**, test mode |
-| Test-mode manual cancellation/no-show fee charge | **Production**, test mode (legacy `manual_fee_charge_attempts` runtime; unification onto `payment_charge_attempts` still open) |
+| Test-mode cancellation/no-show fee charge | **Production**, test mode — **unified onto `payment_charge_attempts`** (PR #196, migration 0083); the legacy `manual_fee_charge_attempts` runtime was removed in PR #218 (historical rows readable only) |
 | Test-mode session payment charge end-to-end (prepare, run, status UX, completion-to-billing handoff) | **Production**, test mode on `payment_charge_attempts` (PRs #171-#174, #180, #181) |
 | Receipts (session-payment test receipt email) | **Production**, test mode (PR #175); manual-fee charge notice still not built |
 | Refunds (full-amount, reason-agnostic, `payment_charge_attempts`) | **Production**, test mode (PR #178) |
@@ -37,8 +39,8 @@ Studios onboard via **Stripe Connect Express**. Each studio gets a connected acc
 Three independent guards stack. All three must be deliberately altered for live charging.
 
 1. **Key gate.** `lib/stripe/server.ts:assertStripeKeyAllowed` refuses any `sk_live_*` secret unless `STRIPE_ALLOW_LIVE_MODE=true`. Vercel Preview / Development MUST use `sk_test_*` regardless of the flag.
-2. **Code gate.** `inferStripeLivemode()` short-circuits `lib/billing/manual-fee-charge.ts:runManualFeeCharge` to `live_mode_blocked` before any Stripe call when the env is live.
-3. **DB CHECK.** `manual_fee_charge_attempts.stripe_livemode` is CHECK-pinned to `false`. A row cannot persist `true` until a deliberate migration drops or replaces the constraint.
+2. **Code gate.** `inferStripeLivemode()` short-circuits the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments + fees) to `live_mode_blocked` before any Stripe call when the env is live. (The legacy `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
+3. **DB CHECK.** `payment_charge_attempts_livemode_false_check` pins `stripe_livemode=false` on the canonical `payment_charge_attempts` ledger (session-payment and fee charges). A row cannot persist `true` until a deliberate migration drops or replaces the constraint.
 
 ## 4. Card-on-file flow (portal SetupIntent)
 
@@ -268,7 +270,7 @@ Events handled:
 | `capability.updated` | Same handler as `account.updated`. |
 | `setup_intent.succeeded` | Insert `client_payment_methods` row with safe metadata. See §4. |
 | `setup_intent.setup_failed` | Record sanitized failure code on `stripe_events.payload_summary`. No DB write to `client_payment_methods`. |
-| Every other event class | Recorded with `ignoredInPhase1: true` summary, no side effect. PaymentIntent events from the manual fee charge path are intentionally NOT handled by the webhook; the synchronous action records the result (see §6). |
+| Every other event class | Recorded with `ignoredInPhase1: true` summary, no side effect. Fee charges now produce `payment_charge_attempts` rows (PR #196), so their PaymentIntent events ARE reconciled by the reason-agnostic PR #179 handlers (matched on `hone_charge_reason` metadata); the synchronous action also records the result (see §6). |
 
 Every event is claimed via `claim_stripe_event` (migration 0032 RPC) BEFORE any business logic, so a retried webhook delivery does not double-process.
 
@@ -301,9 +303,11 @@ Required, 1..1000 chars. The DB CHECK enforces the length range; the action enfo
 
 A future PR adding structured threshold settings (e.g. `studios.cancellation_window_hours`) can flip the value to `'system_derived'`. The column CHECK already allows that value.
 
-## 7. Test-mode manual fee charge (PR #146)
+## 7. Test-mode cancellation/no-show fee charge (PR #146; unified PR #196/#218)
 
-Action: `chargeManualFeeAttemptAction` in `app/(app)/calendar/[id]/manual-fee-actions.ts`. Helper: `lib/billing/manual-fee-charge.ts:runManualFeeCharge`.
+> **Updated (PR #196/#218):** `lib/billing/manual-fee-charge.ts:runManualFeeCharge` was **removed**. `chargeManualFeeAttemptAction` now executes through the unified `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` against `payment_charge_attempts` (`charge_reason` = `no_show_fee` / `late_cancellation_fee`), via the `claim_session_payment_charge_attempt` RPC (reasons widened in migration 0083). The execution narrative below describes the original manual-fee design and is retained for history.
+
+Action: `chargeManualFeeAttemptAction` in `app/(app)/calendar/[id]/manual-fee-actions.ts`. Helper (historical): `lib/billing/manual-fee-charge.ts:runManualFeeCharge` — **removed in PR #218**; see the note above.
 
 ### Concurrency contract
 
@@ -388,41 +392,42 @@ STRIPE_ALLOW_LIVE_MODE=true:
   Must be zero unless an explicit live-mode PR.
 
 paymentIntents.create:
-  Exactly two existing occurrences are allowed today:
-    lib/billing/manual-fee-charge.ts        (test-mode manual fee, legacy)
-    lib/billing/session-payment-charge.ts   (test-mode session payment, PR #173)
+  Exactly ONE occurrence is allowed today (PR #196/#218 unified executor):
+    lib/billing/session-payment-charge.ts   (test-mode; session payments
+                                              AND late-cancel/no-show fees)
 
-  The manual-fee occurrence is allowed only because it is the test-mode
-  manual fee charge path and is behind:
+  It is behind:
     - practitioner auth
-    - evidence recheck via getManualFeeChargeEligibility
+    - reason-appropriate eligibility recheck (getSessionPaymentEligibility
+      for session payments; getManualFeeChargeEligibility for fees)
     - lineage recheck via loadCardAndVerifyLineage
-    - claim_manual_fee_charge_attempt RPC (FOR UPDATE, conditional
+    - claim_session_payment_charge_attempt RPC (FOR UPDATE, conditional
       UPDATE, idempotency key stamp in one transaction)
-    - deterministic idempotency key hone:manual-fee:<attempt_id>:v1
+    - deterministic idempotency key
     - connected-account context { stripeAccount }
     - inferStripeLivemode() test-mode gate
-    - manual_fee_charge_attempts_livemode_false_check DB CHECK
+    - payment_charge_attempts_livemode_false_check DB CHECK
 
-  Any new paymentIntents.create occurrence is high-risk and must be
-  explicitly reviewed.
+  (The legacy lib/billing/manual-fee-charge.ts call site was deleted in
+  PR #218.) Any new paymentIntents.create occurrence is high-risk and
+  must be explicitly reviewed.
 ```
 
 The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, livemode inference gate, and the `payment_charge_attempts_livemode_false_check` DB CHECK.
 
-**Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 2** occurrences in the two allowlisted files above; both are legitimate test-mode paths and deleting either would break its feature. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
+**Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 1** occurrence in the single allowlisted file above (`lib/billing/session-payment-charge.ts`); it is a legitimate test-mode path and deleting it would break session-payment + fee charging. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
 
 ## 9. Live charging requirements
 
 When a live-mode PR is opened (it is not opened today), it must do all of the following. Cherry-picking is not safe.
 
 1. **Lawyer review of consent + cancellation + card-authorization wording** under Ontario law (CASL / PIPEDA / PCI / contract enforceability).
-2. **Receipt / charge-notice email.** Status: built in test mode for session payments (PR #175, `lib/email/templates/payment-receipt.ts`). Remaining for live: content/legal review of the template and a charge notice for the legacy manual-fee path (or unify fees onto `payment_charge_attempts` first).
+2. **Receipt / charge-notice email.** Status: built in test mode for session payments (PR #175, `lib/email/templates/payment-receipt.ts`); fees ride the same unified `payment_charge_attempts` path (PR #196). Remaining for live: content/legal review of the template copy.
 3. **Refund code path.** Status: built in test mode on `payment_charge_attempts` (PR #178; full-amount, reason-agnostic, atomic claim + idempotency). The dormant 0032 `stripe_refund_attempts` / `stripe_refunds` tables remain unused. Remaining for live: deliberate live enablement and a partial-refund decision.
-4. **Webhook handlers** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Status: built reason-agnostic for `payment_charge_attempts` (PR #179, metadata-matched, claimed via `claim_stripe_event`); live events are hard-ignored at handler entry. Remaining for live: deliberately relax the livemode guard and either unify or retire the `manual_fee_charge_attempts` runtime, which still has no webhook reconciliation.
+4. **Webhook handlers** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Status: built reason-agnostic for `payment_charge_attempts` (PR #179, metadata-matched, claimed via `claim_stripe_event`); live events are hard-ignored at handler entry. Remaining for live: deliberately relax the livemode guard. (Fee unification is already done — fees ride `payment_charge_attempts` since PR #196 and inherit this reconciliation; the legacy `manual_fee_charge_attempts` runtime was removed in PR #218.)
 5. **Strengthen pending reconciliation.** Replace the "trust Stripe idempotency within 60 minutes" path with `paymentIntents.search` by metadata before any retry. The Stripe idempotency window is 24 hours; live mode must never depend on that being long enough.
 6. **Manual smoke against a live test charge** with refund.
-7. **Deliberately replace `manual_fee_charge_attempts_livemode_false_check`** with the live-mode equivalent. The migration must be reviewed.
+7. **Deliberately replace `payment_charge_attempts_livemode_false_check`** (the canonical ledger CHECK) with the live-mode equivalent. The migration must be reviewed.
 8. **Never enable auto-charge** in the same PR as live mode. Manual click stays manual.
 
 ## 10. Do-not-do section
