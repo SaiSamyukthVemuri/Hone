@@ -40,7 +40,8 @@ describe("charting form frames the picker as a Treatment area chart part", () =>
     expect(FORM).toMatch(/Chart part/);
     expect(FORM).toMatch(/Treatment area/);
     expect(FORM).toMatch(/<AreaPicker/);
-    expect(FORM).toMatch(/Choose the area for this chart entry/);
+    // PR #270 reworded the helper to point at the body map + the list.
+    expect(FORM).toMatch(/Choose from the body map or use the list below/);
   });
 
   it("shows a live 'Area being charted' preview with an 'Area not recorded' fallback", () => {
