@@ -18,6 +18,13 @@
   - `http://localhost:3000/auth/callback` (dev).
   - `https://hone.care/auth/callback` (prod).
 
+## Storage / treatment images (PR #271, migration 0092)
+
+- One **private** Supabase Storage bucket: **`treatment-images`** (`public = false`). There are no public buckets and no public URLs.
+- Migration 0092 creates the bucket (`insert into storage.buckets (... public=false)`) + the `treatment_images` metadata table + RLS + studio-scoped `storage.objects` policies. The storage statements are wrapped so a platform-permission edge cannot fail the table migration.
+  - **Production setup:** apply 0092 with `supabase db push --linked` (migration-first, explicit approval). **Manual fallback** — if the apply emits a notice that the `storage.buckets`/`storage.objects` statements were permission-skipped, create a **private** bucket named `treatment-images` (public OFF) in the Supabase dashboard; the metadata table + RLS apply unconditionally.
+- Access is server-side only: uploads + short-TTL signed URLs are minted via the service-role client (`SUPABASE_SERVICE_ROLE_KEY`) inside server actions that first verify the caller's studio owns the row. No new env var is required (signed-URL TTL is a code constant). MIME allowlist: jpeg/png/webp; 15 MB cap; SVG/PDF rejected; server-generated `<studio_id>/<client_id>/<uuid>.<ext>` paths.
+
 ## Stripe
 
 - Connect Express. Pilot studio onboards via the in-app flow from `/settings/payments`.

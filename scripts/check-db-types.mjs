@@ -90,6 +90,8 @@ const CURATED_TABLES = {
   import_batches: "ImportBatch",
   imported_treatment_memories: "ImportedTreatmentMemory",
   imported_treatment_memory_audit_events: "ImportedTreatmentMemoryAuditEvent",
+  // Migration 0092 (PR #271): secure treatment image storage.
+  treatment_images: "TreatmentImage",
 };
 
 // Recently added columns that MUST exist in both the database and

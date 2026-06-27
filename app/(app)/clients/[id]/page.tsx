@@ -822,6 +822,7 @@ export default async function ClientCheatSheetPage({
       )}
 
       {activeTab === "health" && (
+        <>
         <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
@@ -879,6 +880,27 @@ export default async function ClientCheatSheetPage({
             </div>
           )}
         </section>
+
+        {/* PR #271: practitioner-only secure treatment images (private bucket,
+            signed-URL viewing). Lives on the Health tab next to intake. */}
+        <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Treatment images
+            </h2>
+            <Link
+              href={`/clients/${client.id}/images`}
+              className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              Open →
+            </Link>
+          </div>
+          <p className="mt-2 text-sm text-neutral-500">
+            Attach and view treatment images. Stored privately; visible to
+            practitioners in this studio.
+          </p>
+        </section>
+        </>
       )}
 
       {activeTab === "sessions" && (

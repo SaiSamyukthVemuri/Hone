@@ -912,6 +912,28 @@ export type Photo = {
   taken_at: string;
 };
 
+// Migration 0092 (PR #271): secure treatment image storage. Practitioner-only
+// metadata for images held in the PRIVATE `treatment-images` bucket; access is
+// always server-side service-role + signed URL after a studio-ownership check.
+// Column set must match the 0092 migration exactly (check-db-types gate).
+export type TreatmentImage = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  session_id: string | null;
+  session_block_id: string | null;
+  storage_bucket: string;
+  storage_path: string;
+  original_filename: string | null;
+  content_type: string;
+  size_bytes: number;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  deleted_by: string | null;
+};
+
 export type InvitationStatus = "pending" | "accepted" | "revoked";
 
 export type PendingInvitation = {
