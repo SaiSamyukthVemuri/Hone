@@ -77,13 +77,15 @@ alter table public.treatment_images
     )
   );
 
--- A session block always carries its session, so the block↔session↔studio chain
--- is always validatable.
+-- NOTE: an immediate "block requires session" CHECK is intentionally NOT used.
+-- session_id and session_block_id are independent FK ON DELETE SET NULL columns,
+-- so deleting a parent session nulls them in SEPARATE row updates and a transient
+-- state has session_id NULL while session_block_id is still set — an immediate
+-- CHECK (which cannot be deferred in Postgres) would reject that legal cascade.
+-- "A block must belong to its session" is enforced on INSERT by the trigger
+-- below instead. (drop-if-exists keeps re-runs / partial applies clean.)
 alter table public.treatment_images
   drop constraint if exists treatment_images_block_requires_session_chk;
-alter table public.treatment_images
-  add constraint treatment_images_block_requires_session_chk
-  check (session_block_id is null or session_id is not null);
 
 -- 4. Parent consistency + identity immutability (one trigger). ---------------
 -- SECURITY INVOKER (default): on the app's RLS-client insert this runs as the
@@ -116,35 +118,47 @@ begin
     end if;
   end if;
 
-  -- client must belong to the row's studio.
-  if not exists (
-    select 1 from public.clients c
-     where c.id = NEW.client_id and c.studio_id = NEW.studio_id
-  ) then
-    raise exception 'treatment_images.client_id % must belong to studio_id %',
-      NEW.client_id, NEW.studio_id using errcode = 'foreign_key_violation';
-  end if;
+  -- Parent consistency is validated on INSERT only. On UPDATE the identity
+  -- columns are frozen above (they can never be RE-POINTED, only cleared to
+  -- NULL by an FK ON DELETE SET NULL cascade), so an UPDATE can never introduce
+  -- an invalid parent — and re-validating here would FAIL on the transient
+  -- cascade state where session_id is already NULL but session_block_id is not
+  -- yet nulled (the two SET NULLs run as separate row updates). A block whose
+  -- session_id is NULL matches no session_blocks row, so a block-without-session
+  -- INSERT is still rejected here (this replaces the dropped block-requires-
+  -- session CHECK, which — being immediate — could not tolerate that cascade).
+  if tg_op = 'INSERT' then
+    -- client must belong to the row's studio.
+    if not exists (
+      select 1 from public.clients c
+       where c.id = NEW.client_id and c.studio_id = NEW.studio_id
+    ) then
+      raise exception 'treatment_images.client_id % must belong to studio_id %',
+        NEW.client_id, NEW.studio_id using errcode = 'foreign_key_violation';
+    end if;
 
-  -- session (if present) must belong to the same studio + client.
-  if NEW.session_id is not null and not exists (
-    select 1 from public.sessions s
-     where s.id = NEW.session_id
-       and s.studio_id = NEW.studio_id
-       and s.client_id = NEW.client_id
-  ) then
-    raise exception 'treatment_images.session_id % must belong to studio % + client %',
-      NEW.session_id, NEW.studio_id, NEW.client_id using errcode = 'foreign_key_violation';
-  end if;
+    -- session (if present) must belong to the same studio + client.
+    if NEW.session_id is not null and not exists (
+      select 1 from public.sessions s
+       where s.id = NEW.session_id
+         and s.studio_id = NEW.studio_id
+         and s.client_id = NEW.client_id
+    ) then
+      raise exception 'treatment_images.session_id % must belong to studio % + client %',
+        NEW.session_id, NEW.studio_id, NEW.client_id using errcode = 'foreign_key_violation';
+    end if;
 
-  -- block (if present) must belong to the same session + studio.
-  if NEW.session_block_id is not null and not exists (
-    select 1 from public.session_blocks b
-     where b.id = NEW.session_block_id
-       and b.session_id = NEW.session_id
-       and b.studio_id = NEW.studio_id
-  ) then
-    raise exception 'treatment_images.session_block_id % must belong to session % + studio %',
-      NEW.session_block_id, NEW.session_id, NEW.studio_id using errcode = 'foreign_key_violation';
+    -- block (if present) must belong to the same session + studio (also rejects
+    -- a block with a NULL session: it matches no session_blocks row).
+    if NEW.session_block_id is not null and not exists (
+      select 1 from public.session_blocks b
+       where b.id = NEW.session_block_id
+         and b.session_id = NEW.session_id
+         and b.studio_id = NEW.studio_id
+    ) then
+      raise exception 'treatment_images.session_block_id % must belong to session % + studio %',
+        NEW.session_block_id, NEW.session_id, NEW.studio_id using errcode = 'foreign_key_violation';
+    end if;
   end if;
 
   return NEW;

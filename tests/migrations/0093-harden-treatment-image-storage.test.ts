@@ -40,9 +40,14 @@ describe("0093 binds metadata path/bucket to the row", () => {
     expect(SQL).toMatch(/studio_id::text \|\| '\/' \|\| client_id::text/);
     expect(SQL).toMatch(/\[A-Za-z0-9\._-\]\+\\\.\(jpg\|jpeg\|png\|webp\)/);
   });
-  it("requires a session when a session block is attached", () => {
-    expect(SQL).toMatch(/treatment_images_block_requires_session_chk/);
-    expect(SQL).toMatch(/session_block_id is null or session_id is not null/);
+  it("does NOT (re)add an immediate block-requires-session CHECK (cascade-incompatible)", () => {
+    // The constraint is dropped (idempotent) but never re-added as an immediate
+    // CHECK — that would reject the legal ON DELETE SET NULL cascade. "A block
+    // requires its session" is enforced in the trigger on INSERT instead.
+    expect(SQL).toMatch(/drop constraint if exists treatment_images_block_requires_session_chk/);
+    expect(SQL).not.toMatch(/add constraint treatment_images_block_requires_session_chk/);
+    expect(SQL).not.toMatch(/session_block_id is null or session_id is not null/);
+    expect(SQL).toMatch(/if tg_op = 'INSERT' then/);
   });
 });
 
