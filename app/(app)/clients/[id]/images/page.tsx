@@ -3,7 +3,11 @@ import { notFound } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS } from "@/lib/images/treatment-images";
+import {
+  TREATMENT_IMAGES_BUCKET,
+  TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
+  validateTreatmentImagePath,
+} from "@/lib/images/treatment-images";
 import {
   treatmentPhotoScopeLabel,
   treatmentPhotoAreaLabel,
@@ -71,16 +75,28 @@ export default async function ClientImagesPage({
   const rows = await Promise.all(
     meta.map(async (m) => {
       let previewUrl: string | null = null;
-      try {
-        const { data } = await admin.storage
-          .from(m.storage_bucket)
-          .createSignedUrl(
-            m.storage_path,
-            TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
-          );
-        previewUrl = data?.signedUrl ?? null;
-      } catch {
-        previewUrl = null;
+      // Trust boundary (PR #276): only sign a path that binds to this studio +
+      // client; a forged/malformed row yields previewUrl=null ("Image not
+      // available") instead of being signed.
+      const pathOk = validateTreatmentImagePath({
+        expectedStudioId: studio.id,
+        rowStudioId: studio.id,
+        rowClientId: id,
+        storageBucket: m.storage_bucket,
+        storagePath: m.storage_path,
+      }).ok;
+      if (pathOk) {
+        try {
+          const { data } = await admin.storage
+            .from(TREATMENT_IMAGES_BUCKET)
+            .createSignedUrl(
+              m.storage_path,
+              TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
+            );
+          previewUrl = data?.signedUrl ?? null;
+        } catch {
+          previewUrl = null;
+        }
       }
       // Embedded to-one can arrive as an object or a single-element array.
       const block = Array.isArray(m.session_blocks)

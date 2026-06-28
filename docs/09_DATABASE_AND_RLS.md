@@ -1,10 +1,12 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. 92 migrations live in `supabase/migrations/` (latest `0092_treatment_images.sql`), applied sequentially. Most migrations are **additive** and **idempotent** (`drop … if exists` before `add …`); a few are deliberately destructive security-hardening migrations — notably **0091 (PR #264) drops the raw `appointments.cancellation_token` column** and two dead compatibility RPCs after the hash-at-rest cutover (0090/PR #260). Always double-check the highest file in `supabase/migrations/` before assuming the count.
+Hone uses Supabase Postgres. 93 migrations live in `supabase/migrations/` (latest `0093_harden_treatment_image_storage.sql`), applied sequentially. Most migrations are **additive** and **idempotent** (`drop … if exists` before `add …`); a few are deliberately destructive security-hardening migrations — notably **0091 (PR #264) drops the raw `appointments.cancellation_token` column** and two dead compatibility RPCs after the hash-at-rest cutover (0090/PR #260). Always double-check the highest file in `supabase/migrations/` before assuming the count.
+
+**Treatment image storage trust boundary (0093, PR #276):** `treatment_images` objects are **service-role only** — 0093 drops the authenticated `storage.objects` select/insert policies for `treatment-images`, so normal members never touch storage objects directly; all upload/sign/archive goes through the server actions (service-role, after a studio-ownership re-check + a path validator). The metadata table adds CHECK constraints binding `storage_bucket = 'treatment-images'` and `storage_path` to `<studio_id>/<client_id>/<file>.<jpg|jpeg|png|webp>` (the row's own ids), a "block requires session" CHECK, and a BEFORE INSERT OR UPDATE trigger (`enforce_treatment_image_integrity`) that (a) enforces client∈studio / session∈studio+client / block∈session+studio and (b) freezes the identity columns (bucket/path/studio/client/session/block) after insert — archive only flips `deleted_at`/`deleted_by`. **0093 must not be applied to production until explicitly approved after merge.**
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0093`.
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration is `0094`.
 - Apply to production via `supabase db push --linked` BEFORE merging code that reads new columns or tables. A merged PR whose code references a column not yet in prod produces a 500. See the [Migration data + DDL splits](../README.md) memory.
 - For mixed `UPDATE` + `ALTER CONSTRAINT` migrations, paste the `UPDATE` first and inspect the row count before applying the constraint.
 - For atomic install patterns with cross-step invariants, wrap in `begin; … commit;` with `raise exception` validators between backfill and final constraints.

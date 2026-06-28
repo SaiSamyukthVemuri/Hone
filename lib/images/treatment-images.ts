@@ -74,3 +74,60 @@ export function buildTreatmentImagePath(input: {
   const ext = EXT_BY_TYPE[input.contentType];
   return `${input.studioId}/${input.clientId}/${input.id}.${ext}`;
 }
+
+// Lowercase extensions only — matches the (case-sensitive) DB CHECK in 0093 and
+// the server-generated path (EXT_BY_TYPE is always lowercase).
+const ALLOWED_FILENAME = /^[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp)$/;
+
+export type PathValidationResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+// PR #276. Strict trust-boundary validation that a STORED row's bucket + path
+// are the server-derived shape for THIS studio + client, BEFORE the service-role
+// signer mints a URL for it. Defense-in-depth on top of the 0093 DB CHECK: the
+// signer must NEVER sign a path it cannot bind to the caller's studio + client
+// (a forged/legacy row is rejected, not signed). Returns a structured result;
+// `reason` is a short non-sensitive tag (never the path) for ops alerts.
+export function validateTreatmentImagePath(input: {
+  expectedStudioId: string; // the authenticated practitioner's studio
+  rowStudioId: string; // the row's studio_id (from a studio-scoped query)
+  rowClientId: string; // the row's client_id
+  storageBucket: string;
+  storagePath: string;
+}): PathValidationResult {
+  if (input.storageBucket !== TREATMENT_IMAGES_BUCKET) {
+    return { ok: false, reason: "wrong_bucket" };
+  }
+  if (!input.expectedStudioId || input.rowStudioId !== input.expectedStudioId) {
+    return { ok: false, reason: "studio_mismatch" };
+  }
+  const path = input.storagePath ?? "";
+  if (path.length === 0 || path.length > 512) {
+    return { ok: false, reason: "bad_length" };
+  }
+  // No whitespace or backslashes; no traversal (raw or percent-encoded). Any
+  // other control char would also fail the per-segment UUID equality or the
+  // filename allowlist below.
+  if (/\s/.test(path) || path.includes("\\")) {
+    return { ok: false, reason: "illegal_chars" };
+  }
+  if (path.includes("..") || /%2e|%2f|%5c/i.test(path)) {
+    return { ok: false, reason: "traversal" };
+  }
+  const segments = path.split("/");
+  if (segments.length !== 3) {
+    return { ok: false, reason: "segment_count" };
+  }
+  const [studioSeg, clientSeg, filename] = segments;
+  if (studioSeg !== input.rowStudioId) {
+    return { ok: false, reason: "path_studio_mismatch" };
+  }
+  if (clientSeg !== input.rowClientId) {
+    return { ok: false, reason: "path_client_mismatch" };
+  }
+  if (!ALLOWED_FILENAME.test(filename)) {
+    return { ok: false, reason: "bad_filename" };
+  }
+  return { ok: true };
+}

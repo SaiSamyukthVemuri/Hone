@@ -15,6 +15,8 @@ Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_
 ## 2. Public route model
 
 > Treatment images (PR #271) are **not** a public surface. The `treatment-images` bucket is private (no public URLs); images are practitioner-only and viewed only via short-TTL signed URLs minted server-side after a studio-ownership re-check. No public/token route below exposes them.
+>
+> **Storage trust boundary (PR #276, migration 0093 — not yet applied to prod).** Treatment images are **service-mediated only**: 0093 removes the authenticated `storage.objects` policies, so members cannot read/write objects directly — every upload/sign/archive runs through the server actions (service-role, after a studio re-check). Before signing, the signer (and the page pre-signer) run a strict path validator: the bucket must be exactly `treatment-images` and the path must bind to the caller's studio + the row's client (`<studio_id>/<client_id>/<file>.<jpg|jpeg|png|webp>`), so a **forged/malformed/cross-studio metadata row is rejected, never signed**. The metadata table enforces the same path/bucket shape (CHECK) + parent consistency (client∈studio / session∈studio+client / block∈session+studio) and **freezes identity columns** post-insert (a trigger), so a member cannot move a row to another bucket/path/studio/client. Orphan cleanup runs if a metadata insert fails (critical ops alert if the cleanup itself fails). Signed URLs stay short-TTL and are never stored or logged; archive is metadata-only (soft-delete) — object bytes remain in the private bucket (retention), never exposed.
 
 | Surface | Public? | What protects it |
 |---|---|---|
