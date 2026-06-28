@@ -14,6 +14,7 @@ import {
   sanitizeFilename,
   buildTreatmentImagePath,
 } from "@/lib/images/treatment-images";
+import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 
 // PR #271. Practitioner-only secure treatment image actions.
 //
@@ -62,22 +63,36 @@ export async function uploadTreatmentImageAction(
     if (clientErr) throw new Error(clientErr.message);
     if (!client) return { ok: false, error: "Client not found." };
 
+    // CONTENT validation + metadata strip (PR #277). Decodes the actual bytes
+    // (never trusts file.type), rejects fake-MIME / SVG / HEIC / PDF / HTML /
+    // corrupt data, and re-encodes WITHOUT EXIF/GPS/metadata. Everything below
+    // uses the SANITIZED output: its content type drives the path/extension, its
+    // bytes are what we upload, its length is the stored size. A normal user
+    // mistake (wrong file) just returns the generic error — no ops alert.
+    const inputBytes = Buffer.from(await file.arrayBuffer());
+    const sanitized = await sanitizeTreatmentImage({
+      bytes: inputBytes,
+      declaredContentType: valid.contentType,
+    });
+    if (!sanitized.ok) return { ok: false, error: sanitized.error };
+
     // Server-generated id + studio-prefixed path; client path is never trusted.
+    // Extension/content type come from the SANITIZED output, not the upload.
     const id = randomUUID();
     const storagePath = buildTreatmentImagePath({
       studioId: studio.id,
       clientId,
       id,
-      contentType: valid.contentType,
+      contentType: sanitized.contentType,
     });
 
-    // STORAGE plane: service-role upload to the private bucket.
+    // STORAGE plane: service-role upload of the SANITIZED bytes to the private
+    // bucket.
     const admin = createAdminClient();
-    const body = Buffer.from(await file.arrayBuffer());
     const { error: upErr } = await admin.storage
       .from(TREATMENT_IMAGES_BUCKET)
-      .upload(storagePath, body, {
-        contentType: valid.contentType,
+      .upload(storagePath, sanitized.bytes, {
+        contentType: sanitized.contentType,
         upsert: false,
       });
     if (upErr) {
@@ -103,8 +118,8 @@ export async function uploadTreatmentImageAction(
       storage_bucket: TREATMENT_IMAGES_BUCKET,
       storage_path: storagePath,
       original_filename: sanitizeFilename(file.name),
-      content_type: valid.contentType,
-      size_bytes: file.size,
+      content_type: sanitized.contentType,
+      size_bytes: sanitized.bytes.length,
       uploaded_by: practitioner.id,
     });
     if (insErr) {
