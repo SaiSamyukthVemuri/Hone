@@ -148,7 +148,7 @@ export async function getClientProcedureRecords(
   let query = supabase
     .from("sessions")
     .select(
-      "id, started_at, modality, practitioner_id, performed_by_practitioner_id, aftercare_and_risks_explained_at, clients:client_id(id, name, date_of_birth, phone, email, address)",
+      "id, started_at, modality, practitioner_id, performed_by_practitioner_id, aftercare_and_risks_explained_at, clients(id, name, date_of_birth, phone, email, address)",
     )
     .eq("studio_id", studioId);
   if (filter.clientId) query = query.eq("client_id", filter.clientId);

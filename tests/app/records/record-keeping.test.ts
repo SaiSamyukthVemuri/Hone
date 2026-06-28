@@ -127,7 +127,7 @@ describe("Client Procedure Records (generated, never invented)", () => {
   it("builds from existing clients/sessions/blocks and renders missing as Not recorded", () => {
     expect(QUERIES).toMatch(/getClientProcedureRecords/);
     expect(QUERIES).toMatch(
-      /clients:client_id\(id, name, date_of_birth, phone, email, address\)/,
+      /clients\(id, name, date_of_birth, phone, email, address\)/,
     );
     expect(QUERIES).toMatch(/probe_lot_number/);
     expect(PAGE).toMatch(/Not recorded/);
