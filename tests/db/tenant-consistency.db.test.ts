@@ -221,6 +221,34 @@ describe("electrolysis_entries: attached block must belong to the same session",
   });
 });
 
+describe("exactly one FK relationship per pair (PostgREST embed ambiguity guard)", () => {
+  // PR #278 fix: the composite FK REPLACES the single FK, so each table pair has
+  // exactly one relationship — otherwise PostgREST embedded selects (e.g.
+  // sessions.select("... session_blocks(...)")) fail with "more than one
+  // relationship was found".
+  async function fkCount(child: string, parent: string): Promise<number> {
+    const r = await adminQuery(
+      `select count(*)::int as n from pg_constraint
+        where contype='f' and conrelid=$1::regclass and confrelid=$2::regclass`,
+      [`public.${child}`, `public.${parent}`],
+    );
+    return r.rows[0].n as number;
+  }
+  it("session_blocks->sessions, sessions->clients/appointments, etc. each have one FK", async () => {
+    expect(await fkCount("session_blocks", "sessions")).toBe(1);
+    expect(await fkCount("sessions", "clients")).toBe(1);
+    expect(await fkCount("sessions", "appointments")).toBe(1);
+    expect(await fkCount("client_intake_forms", "clients")).toBe(1);
+    expect(await fkCount("imported_treatment_memories", "clients")).toBe(1);
+    expect(await fkCount("imported_treatment_memories", "import_batches")).toBe(1);
+    expect(await fkCount("treatment_plans", "clients")).toBe(1);
+    expect(await fkCount("electrolysis_entries", "session_blocks")).toBe(1);
+  });
+  it("electrolysis_entries->sessions keeps its single FK (different pair)", async () => {
+    expect(await fkCount("electrolysis_entries", "sessions")).toBe(1);
+  });
+});
+
 describe("RLS regression: cross-studio reads still blocked", () => {
   it("a foreign-studio member cannot read studio A's sessions", async () => {
     const r = await userQuery(

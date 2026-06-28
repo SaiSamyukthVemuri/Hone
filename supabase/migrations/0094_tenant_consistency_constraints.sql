@@ -14,14 +14,17 @@
 -- pattern), NOT triggers — which avoids the independent ON DELETE SET NULL
 -- cascade pitfall hit in PR #276. On Postgres 17 the column-list
 -- `ON DELETE SET NULL (col)` nulls ONLY the parent id (never the NOT NULL
--- studio_id), so SET-NULL parents work cleanly. Each composite FK MIRRORS the
--- existing single-column FK's ON DELETE action, and the existing single FKs are
--- LEFT IN PLACE (no delete-semantics change; non-destructive; the redundant
--- constraint just adds the same-studio check). MATCH SIMPLE (default) means a
--- NULL parent id skips the check (detach-to-NULL stays legal). The composite FK
--- references the parent's (studio_id, id) unique; Postgres matches FK columns to
--- a unique by SET, so the existing clients/appointments `unique (id, studio_id)`
--- satisfies them.
+-- studio_id), so SET-NULL parents work cleanly. Each composite FK REPLACES the
+-- prior single-column FK and MIRRORS its ON DELETE action.
+--
+-- IMPORTANT (PR #278 fix): the composite FK REPLACES the existing single-column
+-- FK rather than sitting beside it. Two FKs between the same table pair make
+-- PostgREST embedded selects ambiguous ("Could not embed because more than one
+-- relationship was found"), which breaks app reads like
+-- `sessions.select("... session_blocks(...)")`. The composite joins on the same
+-- key (studio_id is always consistent), so embeds return identical rows via the
+-- single remaining relationship. The payment subsystem uses this composite-only
+-- shape for the same reason.
 --
 -- PREFLIGHT (run read-only BEFORE applying; production verified 0 on 2026-06-28).
 -- A non-zero count is a real cross-tenant row -> STOP and investigate; do NOT apply.
@@ -34,14 +37,14 @@
 --   select count(*) from treatment_plans p join clients c on c.id=p.client_id where c.studio_id<>p.studio_id;                 -- 0
 --   select count(*) from electrolysis_entries e join session_blocks b on b.id=e.block_id where b.session_id<>e.session_id;   -- 0
 --
--- Idempotent: composite FKs are dropped FIRST, then the parent uniques they
--- depend on, then both are re-added (a unique cannot be dropped while an FK
--- references it). No RLS weakened. No payment / live-mode change. Soft-delete +
--- cascade semantics preserved. Tables are small (validation scan is trivial).
--- DO NOT apply to production until explicitly approved after merge.
+-- Idempotent (drop-if-exists throughout; composite FKs dropped before the parent
+-- uniques they depend on). No RLS weakened. No payment / live-mode change.
+-- Soft-delete + cascade semantics preserved (each composite mirrors the old
+-- single FK's ON DELETE). Tables are small (validation scan is trivial). DO NOT
+-- apply to production until explicitly approved after merge.
 
--- 1. Drop any prior 0094 composite FKs first (re-run safety: a unique cannot be
---    dropped while an FK still references it).
+-- 1. Drop any prior 0094 composite FKs (re-run safety: a unique cannot be dropped
+--    while an FK still references it, so composites come off first).
 alter table public.sessions                    drop constraint if exists sessions_client_same_studio_fk;
 alter table public.sessions                    drop constraint if exists sessions_appointment_same_studio_fk;
 alter table public.session_blocks              drop constraint if exists session_blocks_session_same_studio_fk;
@@ -51,10 +54,23 @@ alter table public.imported_treatment_memories drop constraint if exists importe
 alter table public.treatment_plans             drop constraint if exists treatment_plans_client_same_studio_fk;
 alter table public.electrolysis_entries        drop constraint if exists electrolysis_block_same_session_fk;
 
--- 2. Parent unique constraints the composite FKs need. id is the PK, so these are
+-- 2. Drop the prior SINGLE-column FKs that the composites replace (so each table
+--    pair keeps exactly ONE relationship -> no PostgREST embed ambiguity). NOTE:
+--    electrolysis_entries_session_id_fkey is INTENTIONALLY KEPT (it is the
+--    electrolysis->sessions link; the composite below is electrolysis->session_blocks,
+--    a different pair, so it does not duplicate it).
+alter table public.sessions                    drop constraint if exists sessions_client_id_fkey;
+alter table public.sessions                    drop constraint if exists sessions_appointment_id_fkey;
+alter table public.session_blocks              drop constraint if exists session_blocks_session_id_fkey;
+alter table public.client_intake_forms         drop constraint if exists client_intake_forms_client_id_fkey;
+alter table public.imported_treatment_memories drop constraint if exists imported_treatment_memories_client_id_fkey;
+alter table public.imported_treatment_memories drop constraint if exists imported_treatment_memories_import_batch_id_fkey;
+alter table public.treatment_plans             drop constraint if exists treatment_plans_client_id_fkey;
+alter table public.electrolysis_entries        drop constraint if exists electrolysis_entries_block_id_fkey;
+
+-- 3. Parent unique constraints the composite FKs need. id is the PK, so these are
 --    trivially unique (additive; no row rewrite). clients(id,studio_id) and
---    appointments(id,studio_id) already exist (payment subsystem). Safe to
---    drop+recreate now that no FK depends on them.
+--    appointments(id,studio_id) already exist (payment subsystem).
 alter table public.sessions       drop constraint if exists sessions_studio_id_uniq;
 alter table public.sessions       add  constraint sessions_studio_id_uniq unique (studio_id, id);
 alter table public.session_blocks drop constraint if exists session_blocks_session_id_id_uniq;
@@ -62,8 +78,8 @@ alter table public.session_blocks add  constraint session_blocks_session_id_id_u
 alter table public.import_batches drop constraint if exists import_batches_studio_id_uniq;
 alter table public.import_batches add  constraint import_batches_studio_id_uniq unique (studio_id, id);
 
--- 3. Composite same-studio FKs (added after the uniques exist; each mirrors the
---    existing single FK's ON DELETE).
+-- 4. Composite same-studio FKs (replace the dropped single FKs; one relationship
+--    per table pair). Each ON DELETE mirrors the single FK it replaces.
 
 -- sessions: client + appointment must be same-studio.
 alter table public.sessions add constraint sessions_client_same_studio_fk
@@ -98,8 +114,9 @@ alter table public.treatment_plans add constraint treatment_plans_client_same_st
 
 -- electrolysis_entries: the attached block must belong to the SAME session as the
 -- entry (no studio_id column here; tenancy flows via session_id -> sessions + RLS
--- session scoping). block_id is nullable -> MATCH SIMPLE skips when null;
--- ON DELETE SET NULL (block_id) mirrors the existing single FK.
+-- session scoping). Replaces electrolysis_entries_block_id_fkey. block_id is
+-- nullable -> MATCH SIMPLE skips when null; ON DELETE SET NULL (block_id) mirrors
+-- the dropped single FK.
 alter table public.electrolysis_entries add constraint electrolysis_block_same_session_fk
   foreign key (session_id, block_id) references public.session_blocks (session_id, id)
   on delete set null (block_id);

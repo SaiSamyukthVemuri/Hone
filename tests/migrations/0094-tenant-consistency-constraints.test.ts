@@ -40,10 +40,32 @@ describe("0094 adds composite same-studio FKs (mirroring existing ON DELETE)", (
     expect(SQL).toMatch(/electrolysis_block_same_session_fk[\s\S]*foreign key \(session_id, block_id\) references public\.session_blocks \(session_id, id\)[\s\S]*on delete set null \(block_id\)/);
   });
   it("is idempotent (drop-if-exists before each add)", () => {
-    expect((SQL.match(/drop constraint if exists/g) ?? []).length).toBeGreaterThanOrEqual(11);
+    expect((SQL.match(/drop constraint if exists/g) ?? []).length).toBeGreaterThanOrEqual(19);
   });
   it("includes a production preflight section", () => {
     expect(SQL).toMatch(/PREFLIGHT/);
+  });
+});
+
+describe("0094 REPLACES the duplicate single-column FKs (no PostgREST ambiguity)", () => {
+  // Two FKs between the same table pair make PostgREST embeds ambiguous, so the
+  // composite must replace the single FK, not sit beside it.
+  it("drops the now-duplicated single-column FKs", () => {
+    for (const name of [
+      "sessions_client_id_fkey",
+      "sessions_appointment_id_fkey",
+      "session_blocks_session_id_fkey",
+      "client_intake_forms_client_id_fkey",
+      "imported_treatment_memories_client_id_fkey",
+      "imported_treatment_memories_import_batch_id_fkey",
+      "treatment_plans_client_id_fkey",
+      "electrolysis_entries_block_id_fkey",
+    ]) {
+      expect(SQL).toMatch(new RegExp(`drop constraint if exists ${name}\\b`));
+    }
+  });
+  it("KEEPS electrolysis_entries_session_id_fkey (different pair; not duplicated)", () => {
+    expect(SQL).not.toMatch(/drop constraint if exists electrolysis_entries_session_id_fkey/);
   });
 });
 
