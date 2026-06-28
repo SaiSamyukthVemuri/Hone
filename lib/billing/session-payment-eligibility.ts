@@ -85,7 +85,7 @@ export async function getSessionPaymentEligibility(
   const { data: sessionRow } = await admin
     .from("sessions")
     .select(
-      "id, studio_id, client_id, modality, started_at, ended_at, price_paid_cents, appointment_id, appointments:appointment_id(id, status, starts_at)",
+      "id, studio_id, client_id, modality, started_at, ended_at, price_paid_cents, appointment_id, appointments(id, status, starts_at)",
     )
     .eq("id", args.sessionId)
     .eq("studio_id", args.studioId)

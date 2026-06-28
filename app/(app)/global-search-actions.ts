@@ -72,7 +72,7 @@ export async function globalSearchAction(
       supabase
         .from("session_blocks")
         .select(
-          "id, session_id, primary_area, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:session_id(client_id, started_at, client:client_id(name))",
+          "id, session_id, primary_area, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions(client_id, started_at, client:clients(name))",
         )
         .eq("studio_id", studioId)
         .is("deleted_at", null)
@@ -84,7 +84,7 @@ export async function globalSearchAction(
         .then((r) => r.data ?? []),
       supabase
         .from("sessions")
-        .select("id, client_id, started_at, next_session_note, client:client_id(name)")
+        .select("id, client_id, started_at, next_session_note, client:clients(name)")
         .eq("studio_id", studioId)
         .is("deleted_at", null)
         .ilike("next_session_note", like)
