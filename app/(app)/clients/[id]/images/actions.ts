@@ -10,6 +10,7 @@ import {
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
   validateTreatmentImageUpload,
+  validateTreatmentImagePath,
   sanitizeFilename,
   buildTreatmentImagePath,
 } from "@/lib/images/treatment-images";
@@ -107,12 +108,17 @@ export async function uploadTreatmentImageAction(
       uploaded_by: practitioner.id,
     });
     if (insErr) {
-      // Best-effort cleanup so a failed insert does not orphan the object.
-      await admin.storage.from(TREATMENT_IMAGES_BUCKET).remove([storagePath]);
+      // Cleanup so a failed insert does not orphan the object. If the cleanup
+      // itself fails, surface a CRITICAL alert (the object is now orphaned).
+      const { error: rmErr } = await admin.storage
+        .from(TREATMENT_IMAGES_BUCKET)
+        .remove([storagePath]);
       await recordOpsAlert({
-        severity: "warning",
-        event: "treatment_image_metadata_insert_failed",
-        message: insErr.message,
+        severity: rmErr ? "critical" : "warning",
+        event: rmErr
+          ? "treatment_image_orphan_cleanup_failed"
+          : "treatment_image_metadata_insert_failed",
+        message: rmErr ? rmErr.message : insErr.message,
         studioId: studio.id,
         clientId,
         route: "/clients/[id]/images",
@@ -138,13 +144,35 @@ export async function getTreatmentImageSignedUrlAction(input: {
     // archived. The bucket/path are read FROM the verified row, never input.
     const { data: row, error } = await supabase
       .from("treatment_images")
-      .select("storage_bucket, storage_path, studio_id")
+      .select("storage_bucket, storage_path, studio_id, client_id")
       .eq("id", input.imageId)
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!row) return { ok: false, error: "Image not available." };
+
+    // Trust boundary (PR #276): NEVER sign a path that does not bind to the
+    // caller's studio + the row's client. Rejects forged/malformed/cross-studio
+    // rows before the service-role signer touches storage.
+    const pathCheck = validateTreatmentImagePath({
+      expectedStudioId: studio.id,
+      rowStudioId: row.studio_id,
+      rowClientId: row.client_id,
+      storageBucket: row.storage_bucket,
+      storagePath: row.storage_path,
+    });
+    if (!pathCheck.ok) {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "treatment_image_sign_rejected_invalid_path",
+        message: `signer rejected row: ${pathCheck.reason}`,
+        studioId: studio.id,
+        route: "/clients/[id]/images",
+        safeDetails: { imageId: input.imageId, reason: pathCheck.reason },
+      });
+      return { ok: false, error: "Image not available." };
+    }
 
     const admin = createAdminClient();
     const { data: signed, error: signErr } = await admin.storage
