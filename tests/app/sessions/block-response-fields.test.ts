@@ -101,9 +101,11 @@ describe("block form: optional capture, round-trip on edit", () => {
     expect(FORM).toMatch(/cautionNote: draft\.cautionNote\.trim\(\) \|\| null/);
   });
 
-  it("tolerance is a 1-5 tap control, never required", () => {
-    expect(FORM).toMatch(/\["1", "2", "3", "4", "5"\]\.map/);
-    expect(FORM).toMatch(/1 = struggled, 5 = very comfortable/);
+  it("tolerance is a label-based control, never required (PR #279)", () => {
+    // PR #279: the raw 1-5 grid was replaced by labeled options; storage is
+    // still the 1-5 tolerance_rating smallint.
+    expect(FORM).toMatch(/TOLERANCE_OPTIONS\.map/);
+    expect(FORM).not.toMatch(/\["1", "2", "3", "4", "5"\]\.map/);
     const responseSection = FORM.slice(FORM.indexOf("Client tolerance"));
     expect(responseSection).not.toMatch(/required/);
   });

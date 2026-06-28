@@ -44,13 +44,14 @@ describe("3. charting order + chips", () => {
   });
   it("no reaction <select> remains; reactions are chips in observations", () => {
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);
-    const obsBlock = FORM.slice(FORM.indexOf("PR #198: skin/client response options live HERE"));
+    const obsBlock = FORM.slice(FORM.indexOf("skin/client response options as chips"));
     expect(obsBlock).toMatch(/REACTION_TYPES\.map/);
     expect(obsBlock).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
   });
   it("legacy reaction notes stay visible; tolerance rating remains", () => {
     expect(FORM).toMatch(/\{draft\.reactionNotes\.trim\(\) !== "" && \(/);
-    expect(FORM).toMatch(/\["1", "2", "3", "4", "5"\]\.map/);
+    // PR #279: tolerance is now a label-based control (still stored 1-5).
+    expect(FORM).toMatch(/TOLERANCE_OPTIONS\.map/);
   });
 });
 

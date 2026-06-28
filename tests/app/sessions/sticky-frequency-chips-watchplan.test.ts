@@ -115,8 +115,9 @@ describe("reaction/response chips match the observation chips", () => {
 
   it("reaction chips render with a leading +", () => {
     expect(obsRegion).toMatch(/\+ \{reactionTypeLabel\(r\)\}/);
-    // The observation chips keep theirs too.
-    expect(obsRegion).toMatch(/\+ \{c\}/);
+    // PR #279: observation chips are toggles now — unselected still shows a
+    // leading + (the template `+ ${c}`), selected shows the bare label.
+    expect(obsRegion).toMatch(/\+ \$\{c\}/);
   });
 
   it("no plain non-plus reaction label remains in the chip list", () => {

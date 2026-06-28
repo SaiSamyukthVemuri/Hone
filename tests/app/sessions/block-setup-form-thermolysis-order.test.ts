@@ -32,20 +32,19 @@ describe("thermolysis input order in block-setup-form.tsx", () => {
   // opener and the next-sibling galv branch opener. That window
   // contains exactly the thermolysis labels we care about and ends
   // before any Galvanic copy can leak in.
-  const thermoOpenIdx = SOURCE.indexOf(
-    '(mode === "thermo" || mode === "blend")',
-  );
-  const galvOpenIdx = SOURCE.indexOf(
-    '(mode === "galv" || mode === "blend")',
-  );
+  // PR #279 refactor: the thermolysis/galvanic fields are now built as the
+  // `thermoSection` / `galvSection` consts before the return (so OmniBlend can
+  // reorder them). Slice between the two const definitions to isolate thermo.
+  const thermoOpenIdx = SOURCE.indexOf("const thermoSection =");
+  const galvOpenIdx = SOURCE.indexOf("const galvSection =");
   if (thermoOpenIdx === -1 || galvOpenIdx === -1) {
     throw new Error(
-      "Could not isolate the thermolysis branch (mode-conditional opener missing).",
+      "Could not isolate the thermolysis section (thermoSection/galvSection const missing).",
     );
   }
   if (galvOpenIdx <= thermoOpenIdx) {
     throw new Error(
-      "Expected the galv branch to appear AFTER the thermo branch in source order.",
+      "Expected galvSection to be defined AFTER thermoSection in source order.",
     );
   }
   const thermoBlock = SOURCE.slice(thermoOpenIdx, galvOpenIdx);
@@ -129,19 +128,16 @@ describe("galvanic input order (preserved, not changed by PR #162)", () => {
   // block PR #162 added INSIDE the thermo branch also mentions the
   // `mode !== "galv"` string, so we ask for the FIRST occurrence
   // strictly after the galv opener.
-  const galvOpenIdx = SOURCE.indexOf(
-    '(mode === "galv" || mode === "blend")',
-  );
+  const galvOpenIdx = SOURCE.indexOf("const galvSection =");
   if (galvOpenIdx === -1) {
-    throw new Error("Could not isolate the galv branch opener.");
+    throw new Error("Could not isolate the galvSection const.");
   }
-  const pulseGateIdx = SOURCE.indexOf('mode !== "galv"', galvOpenIdx);
-  if (pulseGateIdx === -1) {
-    throw new Error(
-      "Could not find the pulse-count gate (`mode !== \"galv\"`) after the galv branch.",
-    );
+  // galvSection ends at the component's render return.
+  const renderIdx = SOURCE.indexOf("\n  return (", galvOpenIdx);
+  if (renderIdx === -1) {
+    throw new Error("Could not find the component return after galvSection.");
   }
-  const galvBlock = SOURCE.slice(galvOpenIdx, pulseGateIdx);
+  const galvBlock = SOURCE.slice(galvOpenIdx, renderIdx);
 
   it("Galvanic duration (s) appears before Galvanic intensity %", () => {
     const durationIdx = galvBlock.indexOf("Galvanic duration");

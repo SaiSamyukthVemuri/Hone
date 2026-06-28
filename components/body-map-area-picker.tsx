@@ -29,7 +29,14 @@ export function BodyMapAreaPicker({
   const open = BODY_ZONES.find((z) => z.id === openZone) ?? null;
 
   function zoneGroup(id: BodyZoneId, label: string) {
-    const active = selectedZone === id;
+    // PR #279 (Chloe charting feedback): the saved value is always a SPECIFIC
+    // sub-area (e.g. "Underarms"), never a whole zone. zoneForArea maps it to its
+    // owning zone (Underarms -> Arms). Previously the whole broad zone shape (both
+    // arms) flooded emerald, which read as if the ENTIRE region was being treated
+    // — confusing when only underarms was selected. Now the broad shape gets only
+    // a SUBTLE "contains the selected area" tint; the exact area is shown by the
+    // highlighted area chip below + the form's "Area being charted: Underarms" line.
+    const containsSelection = selectedZone === id;
     const focused = openZone === id;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -40,14 +47,16 @@ export function BodyMapAreaPicker({
     return {
       role: "button" as const,
       tabIndex: 0,
-      "aria-label": `Body map zone: ${label}`,
-      "aria-pressed": active,
+      "aria-label": containsSelection
+        ? `Body map zone: ${label} (contains the selected area)`
+        : `Body map zone: ${label}`,
+      "aria-pressed": containsSelection,
       onClick: () => setOpenZone(id),
       onKeyDown,
       className:
         "cursor-pointer outline-none " +
-        (active
-          ? "fill-emerald-200 dark:fill-emerald-900"
+        (containsSelection
+          ? "fill-emerald-50 dark:fill-emerald-950/50"
           : focused
             ? "fill-neutral-300 dark:fill-neutral-600"
             : "fill-neutral-100 hover:fill-neutral-200 dark:fill-neutral-800 dark:hover:fill-neutral-700"),

@@ -725,6 +725,26 @@ Operator smoke after deploy:
    ```
    Expected: stored value is still the lowercase `bilateral`; only the rendered label changed.
 
+## Charting feedback — numbing, body-map, probe-lot confirm, OmniBlend, tolerance, observation chips (PR #279, migration 0095)
+
+Chloe real-charting feedback, charting-only. **Requires migration 0095 applied** to the environment (the form writes `numbing_status` + `probe_lot_confirmed`). Sign in, open a client, start/chart an electrolysis session, add a treatment area.
+
+1. **Numbing (item 1):** the "Numbing" control shows three choices — **Not recorded** (default) / **No numbing used** / **Numbing used**. Pick "Numbing used", save, reopen: the saved block shows "Numbing used". A legacy block (charted before 0095) shows no numbing line (Not recorded). No advice/dosing wording anywhere.
+2. **Body-map underarms (item 2):** open the body map, open **Arms**, pick **Underarms**. Confirm the broad Arms shape does **not** light up as if the whole arm is the treatment area (only a subtle "contains the selected area" tint); the **Underarms** chip is clearly selected and "Area being charted: Underarms" shows. Picking a Face area highlights Face, not Arms.
+3. **Probe lot suggestion + confirm (item 3):** if the studio has a probe sterile-item record, the form shows **"Suggested from records: <lot>"** with **Use this lot** when the field is empty. Tapping "Use this lot" fills the field but it reads **not confirmed**. Tap **Confirm lot for this treatment** → it reads **Confirmed for this treatment ✓**. Typing a different lot **un-confirms** it. Save; the saved record shows "Lot #… (confirmed)" only when confirmed. With no probe record, manual entry still works (no suggestion shown).
+4. **Energy under Treatment readings (item 4):** the **Energy level (EL)** input renders **under the "Treatment readings" heading** (not near Modality). There is exactly one energy field. Save/reopen: value round-trips.
+5. **OmniBlend (item 5):** pick mode **Blend** + modality **OmniBlend**. Confirm under Treatment readings the **Galvanic** section renders **before Thermolysis**, there is **no Thermolysis duration** field, and **no Galvanic intensity** field. Switch to another blend modality (e.g. PicoBlend) and confirm thermolysis-first + all fields return (other modalities unchanged).
+6. **Tolerance labels (item 6):** the Client tolerance control shows **labels** (Comfortable / Mild discomfort / Moderate discomfort / High discomfort / Needed pause / stopped early), not a raw 1-5 grid. Pick one, save, reopen: the saved record shows "Tolerance: <label>". A legacy numeric value renders as its label.
+7. **Observation chips (item 7, mobile):** on a phone, tap an observation chip (e.g. **Slight edema**) — it appears in the notes box and shows pressed; tap it again — it is removed (unselect works). Tap **No visible reaction** in the response chips — it registers; picking another response replaces it (single-select). Manually typed notes are preserved through chip toggles. No duplicate tokens.
+8. Backstop SQL (optional, after 0095):
+   ```sql
+   select id, numbing_status, probe_lot_number, probe_lot_confirmed, tolerance_rating
+   from public.session_blocks
+   where studio_id = '<studio uuid>'
+   order by created_at desc limit 5;
+   ```
+   Expected: `numbing_status` is NULL or `none`/`used`; `probe_lot_confirmed` true only when you confirmed; `tolerance_rating` is still the 1-5 smallint.
+
 ## Pre-appointment instructions (PR #160)
 
 After deploy, the operator should confirm the editable per-service prep text feeds both the email and the portal end to end.

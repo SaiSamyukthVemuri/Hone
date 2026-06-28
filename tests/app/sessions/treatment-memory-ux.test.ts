@@ -163,7 +163,8 @@ describe("7. bucketed charting form", () => {
 
   it("each bucket explains its purpose", () => {
     expect(FORM).toMatch(/What you saw during treatment/);
-    expect(FORM).toMatch(/Optional quick rating\./);
+    // PR #279: tolerance bucket explainer is now the question prompt.
+    expect(FORM).toMatch(/Optional\. How did the client tolerate this area\?/);
     // PR #199: the per-area For next visit bucket is consolidated into
     // the session-level note.
     expect(FORM).not.toMatch(
