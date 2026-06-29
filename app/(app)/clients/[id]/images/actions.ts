@@ -44,6 +44,15 @@ export async function uploadTreatmentImageAction(
     return { ok: false, error: "Missing image or client." };
   }
 
+  // PR #284: optional attach-at-upload context. The browser may submit a
+  // session and/or session-block id, but these are NEVER trusted — they are
+  // validated server-side below (session ∈ studio+client; block ∈ session+
+  // studio) before being stored. Empty string → not attached.
+  const requestedSessionId = String(formData.get("sessionId") ?? "").trim();
+  const requestedSessionBlockId = String(
+    formData.get("sessionBlockId") ?? "",
+  ).trim();
+
   // Validate BEFORE any I/O. Server-authoritative MIME + size gate.
   const valid = validateTreatmentImageUpload({
     contentType: file.type,
@@ -62,6 +71,59 @@ export async function uploadTreatmentImageAction(
       .maybeSingle();
     if (clientErr) throw new Error(clientErr.message);
     if (!client) return { ok: false, error: "Client not found." };
+
+    // PR #284: resolve + VALIDATE the attach context server-side. The 0093
+    // trigger is the structural DB backstop (it rejects a cross-tenant /
+    // mismatched parent on insert), but we validate here too so a forged id
+    // returns a clean generic error instead of a DB exception, and so only
+    // proven-consistent ids are ever stored. Mirrors the trigger's predicates:
+    //   * session (if any) must belong to this studio + client,
+    //   * block (if any) must belong to the SAME session + studio (and a block
+    //     can never be attached without its session).
+    let sessionId: string | null = null;
+    let sessionBlockId: string | null = null;
+    if (requestedSessionBlockId) {
+      // A block attach requires its session. Derive it from the block row so a
+      // mismatched (block, session) pair cannot be stored even if both were
+      // submitted.
+      const { data: block, error: blockErr } = await supabase
+        .from("session_blocks")
+        .select("id, session_id, sessions!inner ( id, studio_id, client_id )")
+        .eq("id", requestedSessionBlockId)
+        .eq("studio_id", studio.id)
+        .maybeSingle();
+      if (blockErr) throw new Error(blockErr.message);
+      const parent = block
+        ? (Array.isArray(block.sessions) ? block.sessions[0] : block.sessions)
+        : null;
+      if (
+        !block ||
+        !parent ||
+        parent.studio_id !== studio.id ||
+        parent.client_id !== clientId
+      ) {
+        return { ok: false, error: "That treatment area is not available for this client." };
+      }
+      // If the form also sent a session id, it must match the block's session.
+      if (requestedSessionId && requestedSessionId !== block.session_id) {
+        return { ok: false, error: "That treatment area is not available for this client." };
+      }
+      sessionId = block.session_id;
+      sessionBlockId = block.id;
+    } else if (requestedSessionId) {
+      const { data: session, error: sessErr } = await supabase
+        .from("sessions")
+        .select("id")
+        .eq("id", requestedSessionId)
+        .eq("studio_id", studio.id)
+        .eq("client_id", clientId)
+        .maybeSingle();
+      if (sessErr) throw new Error(sessErr.message);
+      if (!session) {
+        return { ok: false, error: "That session is not available for this client." };
+      }
+      sessionId = session.id;
+    }
 
     // CONTENT validation + metadata strip (PR #277). Decodes the actual bytes
     // (never trusts file.type), rejects fake-MIME / SVG / HEIC / PDF / HTML /
@@ -113,8 +175,8 @@ export async function uploadTreatmentImageAction(
       id,
       studio_id: studio.id,
       client_id: clientId,
-      session_id: null,
-      session_block_id: null,
+      session_id: sessionId,
+      session_block_id: sessionBlockId,
       storage_bucket: TREATMENT_IMAGES_BUCKET,
       storage_path: storagePath,
       original_filename: sanitizeFilename(file.name),

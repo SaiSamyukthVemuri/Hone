@@ -35,6 +35,17 @@ type Row = {
   areaLabel: string | null;
 };
 
+// PR #284: recent sessions (+ their blocks' area labels) for the attach-at-
+// upload context selector. The option VALUE carries the id (submitted +
+// re-validated server-side); only the area label text is shown.
+export type SessionAttachOption = {
+  id: string;
+  startedAt: string;
+  blocks: { id: string; areaLabel: string }[];
+};
+
+type PhotoContextKind = "client" | "session" | "block";
+
 // Treatment-context tags shown on each card and in the larger preview. Labels
 // only — no UUIDs, storage paths, bucket names, or signed-URL text.
 function ContextTags({
@@ -60,9 +71,11 @@ function ContextTags({
 export function TreatmentImagesManager({
   clientId,
   images,
+  sessionOptions = [],
 }: {
   clientId: string;
   images: Row[];
+  sessionOptions?: SessionAttachOption[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -70,6 +83,18 @@ export function TreatmentImagesManager({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
+
+  // PR #284: attach-at-upload context. Default "client" (no session/block).
+  const hasSessions = sessionOptions.length > 0;
+  const [contextKind, setContextKind] = useState<PhotoContextKind>("client");
+  const [ctxSessionId, setCtxSessionId] = useState<string>("");
+  const [ctxBlockId, setCtxBlockId] = useState<string>("");
+  const ctxSession = sessionOptions.find((s) => s.id === ctxSessionId) ?? null;
+  const ctxBlocks = ctxSession?.blocks ?? [];
+  const sessionDateLabel = (iso: string): string => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "session" : d.toLocaleDateString();
+  };
 
   // In-app larger preview modal.
   const [modal, setModal] = useState<Row | null>(null);
@@ -102,6 +127,25 @@ export function TreatmentImagesManager({
       setError("Choose an image first.");
       return;
     }
+    // PR #284: attach the validated-on-the-server context ids. Client default
+    // sends neither, so the photo stays a client photo. Block requires a
+    // selected block; session requires a selected session.
+    fd.delete("sessionId");
+    fd.delete("sessionBlockId");
+    if (contextKind === "session") {
+      if (!ctxSessionId) {
+        setError("Choose a session, or switch to Client photo.");
+        return;
+      }
+      fd.set("sessionId", ctxSessionId);
+    } else if (contextKind === "block") {
+      if (!ctxSessionId || !ctxBlockId) {
+        setError("Choose a treatment area, or switch to Client photo.");
+        return;
+      }
+      fd.set("sessionId", ctxSessionId);
+      fd.set("sessionBlockId", ctxBlockId);
+    }
     startTransition(async () => {
       const res = await uploadTreatmentImageAction(fd);
       if (!res.ok) {
@@ -110,6 +154,9 @@ export function TreatmentImagesManager({
       }
       form.reset();
       setSelectedName(null);
+      setContextKind("client");
+      setCtxSessionId("");
+      setCtxBlockId("");
       router.refresh();
     });
   }
@@ -154,10 +201,106 @@ export function TreatmentImagesManager({
           Stored privately. Visible to practitioners in this studio. JPEG, PNG,
           or WebP, up to 15 MB.
         </p>
-        <form
-          onSubmit={onUpload}
-          className="mt-3 flex flex-wrap items-center gap-3"
-        >
+        <form onSubmit={onUpload} className="mt-3 flex flex-col gap-3">
+          {/* PR #284: Photo context selector. Mobile-friendly: stacked, full-
+              width controls. Only shown when this client has sessions; otherwise
+              every photo attaches to the client. */}
+          {hasSessions ? (
+            <fieldset className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+              <legend className="px-1 text-xs font-medium text-neutral-500">
+                Photo context
+              </legend>
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-4">
+                {(
+                  [
+                    ["client", "Client photo"],
+                    ["session", "Session photo"],
+                    ["block", "Treatment area photo"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
+                  >
+                    <input
+                      type="radio"
+                      name="contextKind"
+                      value={value}
+                      checked={contextKind === value}
+                      onChange={() => {
+                        setContextKind(value);
+                        setError(null);
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+
+              {(contextKind === "session" || contextKind === "block") && (
+                <label className="flex flex-col gap-1 text-xs text-neutral-500">
+                  Session
+                  <select
+                    value={ctxSessionId}
+                    onChange={(e) => {
+                      setCtxSessionId(e.target.value);
+                      setCtxBlockId("");
+                    }}
+                    className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                  >
+                    <option value="">Select a session…</option>
+                    {sessionOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        Session on {sessionDateLabel(s.startedAt)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              {contextKind === "block" &&
+                ctxSessionId &&
+                (ctxBlocks.length > 0 ? (
+                  <label className="flex flex-col gap-1 text-xs text-neutral-500">
+                    Treatment area
+                    <select
+                      value={ctxBlockId}
+                      onChange={(e) => setCtxBlockId(e.target.value)}
+                      className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    >
+                      <option value="">Select a treatment area…</option>
+                      {ctxBlocks.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.areaLabel}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    No treatment areas recorded for this session.
+                  </p>
+                ))}
+
+              <p className="text-xs text-neutral-400">
+                {contextKind === "client"
+                  ? "Will attach as: Client photo."
+                  : contextKind === "session"
+                    ? ctxSession
+                      ? `Will attach as: Session photo — Session on ${sessionDateLabel(ctxSession.startedAt)}.`
+                      : "Will attach as: Session photo — choose a session."
+                    : ctxBlockId && ctxSession
+                      ? `Will attach as: Treatment area photo — ${ctxBlocks.find((b) => b.id === ctxBlockId)?.areaLabel ?? ""}, Session on ${sessionDateLabel(ctxSession.startedAt)}.`
+                      : "Will attach as: Treatment area photo — choose a session and area."}
+              </p>
+            </fieldset>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              No sessions yet for this client — photos attach to the client.
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
           <label className="cursor-pointer rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
             Choose image
             <input
@@ -185,6 +328,7 @@ export function TreatmentImagesManager({
           >
             {pending ? "Uploading…" : "Attach image"}
           </button>
+          </div>
         </form>
         {error && (
           <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>

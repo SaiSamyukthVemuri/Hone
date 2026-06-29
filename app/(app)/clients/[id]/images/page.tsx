@@ -11,9 +11,13 @@ import {
 import {
   treatmentPhotoScopeLabel,
   treatmentPhotoAreaLabel,
+  sessionBlockOptionLabel,
   type SessionBlockAreaInput,
 } from "./photo-context";
-import { TreatmentImagesManager } from "./TreatmentImagesManager";
+import {
+  TreatmentImagesManager,
+  type SessionAttachOption,
+} from "./TreatmentImagesManager";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
 // requirePractitionerWithStudio layout; data is loaded with the RLS client
@@ -117,6 +121,37 @@ export default async function ClientImagesPage({
     }),
   );
 
+  // PR #284: recent sessions (with their blocks' area fields) for the
+  // attach-at-upload context selector. RLS-client + studio/client scoped, so a
+  // practitioner only ever sees their own studio's sessions for this client.
+  // Only ids + display labels reach the client; the upload action re-validates
+  // every submitted id server-side. Bounded to keep the dropdown small.
+  const { data: sessionRows, error: sessErr } = await supabase
+    .from("sessions")
+    .select(
+      "id, started_at, session_blocks ( id, primary_area, side, custom_area_detail )",
+    )
+    .eq("studio_id", studio.id)
+    .eq("client_id", id)
+    .order("started_at", { ascending: false })
+    .limit(12);
+  if (sessErr) throw new Error(sessErr.message);
+  type EmbeddedBlock = { id: string } & NonNullable<SessionBlockAreaInput>;
+  const sessionOptions: SessionAttachOption[] = (sessionRows ?? []).map((s) => {
+    const raw = s.session_blocks;
+    const blocks = (
+      Array.isArray(raw) ? raw : raw ? [raw] : []
+    ) as unknown as EmbeddedBlock[];
+    return {
+      id: s.id as string,
+      startedAt: s.started_at as string,
+      blocks: blocks.map((b) => ({
+        id: b.id,
+        areaLabel: sessionBlockOptionLabel(b),
+      })),
+    };
+  });
+
   return (
     <div className="flex flex-col gap-6">
       <Link
@@ -131,7 +166,11 @@ export default async function ClientImagesPage({
           Stored privately. Visible to practitioners in this studio.
         </p>
       </header>
-      <TreatmentImagesManager clientId={id} images={rows} />
+      <TreatmentImagesManager
+        clientId={id}
+        images={rows}
+        sessionOptions={sessionOptions}
+      />
     </div>
   );
 }
