@@ -48,11 +48,12 @@ import type {
   SessionBlockSide,
   SessionMode,
 } from "@/lib/types/database";
-import { appendComment } from "@/lib/comments";
+import { isCommentSelected, toggleComment } from "@/lib/comments";
 import {
+  NUMBING_OPTIONS,
   REACTION_TYPES,
+  TOLERANCE_OPTIONS,
   reactionTypeLabel,
-  toleranceLabel,
 } from "@/lib/sessions/clinical-response";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
@@ -123,6 +124,10 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
+  // PR #279 (Chloe charting feedback): latest current probe lot/batch from the
+  // sterile-item records, offered for the practitioner to CONFIRM (never
+  // auto-saved). Null when there is nothing to suggest.
+  suggestedProbeLot?: string | null;
   onCancel: () => void;
 };
 
@@ -161,6 +166,10 @@ type Draft = {
   reactionNotes: string;
   cautionForNextSession: boolean;
   cautionNote: string;
+  // PR #279 (migration 0095). numbingStatus is "" (Not recorded), "none", or
+  // "used". probeLotConfirmed records that the practitioner confirmed the lot.
+  numbingStatus: string;
+  probeLotConfirmed: boolean;
 };
 
 const EMPTY: Draft = {
@@ -188,6 +197,8 @@ const EMPTY: Draft = {
   reactionNotes: "",
   cautionForNextSession: false,
   cautionNote: "",
+  numbingStatus: "",
+  probeLotConfirmed: false,
 };
 
 function initialDraft(
@@ -258,6 +269,9 @@ function initialDraft(
     reactionNotes: block.reaction_notes ?? "",
     cautionForNextSession: block.caution_for_next_session ?? false,
     cautionNote: block.caution_note ?? "",
+    // PR #279 (migration 0095): round-trip numbing + lot confirmation.
+    numbingStatus: block.numbing_status ?? "",
+    probeLotConfirmed: block.probe_lot_confirmed ?? false,
   };
 }
 
@@ -270,6 +284,7 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
+  suggestedProbeLot = null,
   onCancel,
 }: Props) {
   const isEdit = !!block;
@@ -452,6 +467,8 @@ export function BlockSetupForm({
       reactionNotes: draft.reactionNotes.trim() || null,
       cautionForNextSession: draft.cautionForNextSession,
       cautionNote: draft.cautionNote.trim() || null,
+      // PR #279: numbing record ("" -> Not recorded -> null in the action).
+      numbingStatus: draft.numbingStatus || null,
     };
 
     const readings = {
@@ -484,6 +501,7 @@ export function BlockSetupForm({
           minutesPerformed: minutesNum,
           probeOptionKey: draft.probeKey || null,
           probeLotNumber: draft.probeLotNumber.trim() || null,
+          probeLotConfirmed: draft.probeLotConfirmed,
           machineFrequency: (draft.machineFrequency || null) as
             | MachineFrequency
             | null,
@@ -512,6 +530,7 @@ export function BlockSetupForm({
         minutesPerformed: minutesNum,
         probeOptionKey: draft.probeKey || null,
         probeLotNumber: draft.probeLotNumber.trim() || null,
+        probeLotConfirmed: draft.probeLotConfirmed,
         machineFrequency: (draft.machineFrequency || null) as
           | MachineFrequency
           | null,
@@ -547,6 +566,128 @@ export function BlockSetupForm({
       : mode === "blend"
         ? APILUS_MODALITIES_BY_MODE.blend
         : [];
+
+  // PR #279 (Chloe charting feedback): OmniBlend-specific reading layout. For
+  // OmniBlend the galvanic settings are charted BEFORE thermolysis, OmniBlend
+  // thermolysis has no duration, and galvanic has no intensity. Other modalities
+  // are intentionally NOT changed (pending Chloe's review of the rest). Hiding an
+  // input never clears a stored value — an existing reading round-trips on save,
+  // so historical OmniBlend records are not rewritten; new ones leave it empty.
+  const isOmniblend = draft.apilusModality === "Omniblend";
+
+  const thermoSection =
+    mode === "thermo" || mode === "blend" ? (
+      <div className="flex flex-col gap-3">
+        {mode === "blend" && (
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Thermolysis
+          </span>
+        )}
+        <div className="grid gap-4 md:grid-cols-2">
+          {!isOmniblend && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                Thermolysis duration (s)
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min={0}
+                value={draft.thermolysisDurationSeconds}
+                onChange={(e) =>
+                  update("thermolysisDurationSeconds", e.target.value)
+                }
+                className={READING_INPUT_CLS}
+              />
+            </label>
+          )}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Thermolysis intensity %</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              step="1"
+              min={0}
+              max={100}
+              value={draft.thermolysisIntensityPercent}
+              onChange={(e) =>
+                update("thermolysisIntensityPercent", e.target.value)
+              }
+              className={READING_INPUT_CLS}
+            />
+          </label>
+        </div>
+      </div>
+    ) : null;
+
+  const galvSection =
+    mode === "galv" || mode === "blend" ? (
+      <div className="flex flex-col gap-3">
+        {mode === "blend" && (
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Galvanic
+          </span>
+        )}
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Galvanic mA</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              value={draft.galvanicMa}
+              onChange={(e) => update("galvanicMa", e.target.value)}
+              className={READING_INPUT_CLS}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Galvanic duration (s)</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              step="1"
+              min={0}
+              value={draft.galvanicDurationSeconds}
+              onChange={(e) =>
+                update("galvanicDurationSeconds", e.target.value)
+              }
+              className={READING_INPUT_CLS}
+            />
+          </label>
+          {!isOmniblend && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Galvanic intensity %</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min={0}
+                max={100}
+                value={draft.galvanicIntensityPercent}
+                onChange={(e) =>
+                  update("galvanicIntensityPercent", e.target.value)
+                }
+                className={READING_INPUT_CLS}
+              />
+            </label>
+          )}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Units of lye (UL)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              value={draft.unitsOfLye}
+              onChange={(e) => update("unitsOfLye", e.target.value)}
+              className={READING_INPUT_CLS}
+            />
+          </label>
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
@@ -758,13 +899,25 @@ export function BlockSetupForm({
         />
         {/* PR #205 (migration 0085): lot/batch number off the probe
             box, required by the health-inspection client procedure
-            record. Optional; saved on this treatment area. */}
+            record. Optional; saved on this treatment area.
+            PR #279 (migration 0095): can be auto-suggested from the
+            sterile-item records and CONFIRMED for this treatment. A
+            suggestion is never saved as confirmed until the practitioner
+            taps Confirm; typing always works and un-confirms. */}
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium">Probe lot/batch number</span>
           <input
             type="text"
             value={draft.probeLotNumber}
-            onChange={(e) => update("probeLotNumber", e.target.value)}
+            onChange={(e) =>
+              // Editing the lot un-confirms it: a freshly typed value has not
+              // been confirmed for this treatment yet.
+              setDraft((d) => ({
+                ...d,
+                probeLotNumber: e.target.value,
+                probeLotConfirmed: false,
+              }))
+            }
             placeholder="e.g. 460941"
             maxLength={120}
             className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
@@ -773,6 +926,60 @@ export function BlockSetupForm({
             Used for health inspection and client procedure records.
           </span>
         </label>
+
+        {/* PR #279: suggestion from records (only when there is one and the
+            field is empty). Tapping "Use" fills the field but does NOT confirm. */}
+        {suggestedProbeLot && draft.probeLotNumber.trim() === "" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-neutral-500">
+              Suggested from records:{" "}
+              <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                {suggestedProbeLot}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setDraft((d) => ({
+                  ...d,
+                  probeLotNumber: suggestedProbeLot,
+                  probeLotConfirmed: false,
+                }))
+              }
+              className="rounded-full border border-neutral-300 px-3 py-1 font-medium hover:border-neutral-500 dark:border-neutral-700"
+            >
+              Use this lot
+            </button>
+          </div>
+        )}
+
+        {/* PR #279: confirm control + state. Only meaningful once a lot is
+            present; confirmation is explicit (never automatic). */}
+        {draft.probeLotNumber.trim() !== "" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <button
+              type="button"
+              aria-pressed={draft.probeLotConfirmed}
+              onClick={() =>
+                update("probeLotConfirmed", !draft.probeLotConfirmed)
+              }
+              className={
+                draft.probeLotConfirmed
+                  ? "rounded-full bg-emerald-600 px-3 py-1 font-medium text-white"
+                  : "rounded-full border border-neutral-300 px-3 py-1 font-medium hover:border-neutral-500 dark:border-neutral-700"
+              }
+            >
+              {draft.probeLotConfirmed
+                ? "Confirmed for this treatment ✓"
+                : "Confirm lot for this treatment"}
+            </button>
+            {!draft.probeLotConfirmed && (
+              <span className="text-neutral-500">
+                Manually entered / not confirmed
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -803,7 +1010,21 @@ export function BlockSetupForm({
           <span className="text-sm font-medium">Modality</span>
           <select
             value={draft.apilusModality}
-            onChange={(e) => update("apilusModality", e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setDraft((d) => ({
+                ...d,
+                apilusModality: next,
+                // PR #279: OmniBlend has no thermolysis duration / galvanic
+                // intensity. Clear any value typed under a different modality so
+                // a NEW OmniBlend record can't persist a now-hidden reading.
+                // (Editing an existing OmniBlend record seeds from the saved
+                // entry and fires no onChange, so its history is preserved.)
+                ...(next === "Omniblend"
+                  ? { thermolysisDurationSeconds: "", galvanicIntensityPercent: "" }
+                  : {}),
+              }));
+            }}
             className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           >
             <option value="">Select…</option>
@@ -816,19 +1037,6 @@ export function BlockSetupForm({
         </label>
       )}
 
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Energy level (EL)</span>
-        <input
-          type="number"
-          inputMode="decimal"
-          step="1"
-          min={0}
-          value={draft.energyLevel}
-          onChange={(e) => update("energyLevel", e.target.value)}
-          className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-      </label>
-
       {/* Treatment readings — the first pass, captured on this same page so
           there is no second form after saving. Mode-aware: thermolysis
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
@@ -837,127 +1045,35 @@ export function BlockSetupForm({
       <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
 
-        {(mode === "thermo" || mode === "blend") && (
-          <div className="flex flex-col gap-3">
-            {mode === "blend" && (
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Thermolysis
-              </span>
-            )}
-            {/* PR #162. Field order matches the order Chloe sees on
-                her thermolysis machine and the order she enters
-                values during a real session:
-                  Duration -> Intensity -> Pulse count
-                Pulse count renders below this block via the
-                shared `mode !== "galv"` branch (lines further
-                down) so it lands third. Persisted column names
-                (thermolysis_duration_seconds,
-                thermolysis_intensity_percent, pulse_count) are
-                unchanged. */}
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Thermolysis duration (s)</span>
-                {/* PR #165. Allow fractional seconds. Chloe enters
-                    values like 0.15 / 0.2 on the thermolysis flash;
-                    the prior integer-only step truncated those to
-                    0 at parse time AND the DB stored 0. Migration
-                    0071 widened the column to numeric; the form now
-                    accepts decimals and the parser below uses
-                    parseFloat (int: false). */}
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  min={0}
-                  value={draft.thermolysisDurationSeconds}
-                  onChange={(e) =>
-                    update("thermolysisDurationSeconds", e.target.value)
-                  }
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Thermolysis intensity %</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min={0}
-                  max={100}
-                  value={draft.thermolysisIntensityPercent}
-                  onChange={(e) =>
-                    update("thermolysisIntensityPercent", e.target.value)
-                  }
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-            </div>
-          </div>
-        )}
+        {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
+            used to sit near modality). Same energy_level column; UI move only. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Energy level (EL)</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="1"
+            min={0}
+            value={draft.energyLevel}
+            onChange={(e) => update("energyLevel", e.target.value)}
+            className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+        </label>
 
-        {(mode === "galv" || mode === "blend") && (
-          <div className="flex flex-col gap-3">
-            {mode === "blend" && (
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Galvanic
-              </span>
-            )}
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Galvanic mA</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  min={0}
-                  value={draft.galvanicMa}
-                  onChange={(e) => update("galvanicMa", e.target.value)}
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Galvanic duration (s)</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min={0}
-                  value={draft.galvanicDurationSeconds}
-                  onChange={(e) =>
-                    update("galvanicDurationSeconds", e.target.value)
-                  }
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Galvanic intensity %</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min={0}
-                  max={100}
-                  value={draft.galvanicIntensityPercent}
-                  onChange={(e) =>
-                    update("galvanicIntensityPercent", e.target.value)
-                  }
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Units of lye (UL)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  min={0}
-                  value={draft.unitsOfLye}
-                  onChange={(e) => update("unitsOfLye", e.target.value)}
-                  className={READING_INPUT_CLS}
-                />
-              </label>
-            </div>
-          </div>
+        {/* PR #279 (Chloe): OmniBlend charts galvanic BEFORE thermolysis; every
+            other mode keeps thermolysis first. The section contents (incl.
+            OmniBlend hiding thermolysis duration + galvanic intensity) are built
+            above as thermoSection / galvSection. */}
+        {isOmniblend ? (
+          <>
+            {galvSection}
+            {thermoSection}
+          </>
+        ) : (
+          <>
+            {thermoSection}
+            {galvSection}
+          </>
         )}
 
         {/* Pulse count is a thermolysis concept — shown for thermolysis,
@@ -1030,52 +1146,67 @@ export function BlockSetupForm({
         </span>
       </label>
 
-      {/* Client tolerance (PR #198 order): the 1-5 rating only. The
-          reaction vocabulary now lives as chips under Treatment
-          observations; same reaction_type field underneath. */}
+      {/* PR #279 (migration 0095): numbing record — a factual note of whether
+          the client used numbing before treatment. "Not recorded" (NULL) is the
+          default. No advice / dosing / product guidance. */}
+      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <span className="text-sm font-medium">Numbing</span>
+        <div className="flex flex-wrap gap-2">
+          {NUMBING_OPTIONS.map((opt) => {
+            const selected = draft.numbingStatus === opt.value;
+            return (
+              <button
+                key={opt.value || "not-recorded"}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => update("numbingStatus", opt.value)}
+                className={
+                  selected
+                    ? "rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                }
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Client tolerance (PR #279): label-based comfort scale. The CONTROL is
+          labels (the raw 1-5 was not intuitive), but the stored value is still
+          the 1-5 smallint tolerance_rating, so every existing record maps
+          cleanly. Factual comfort descriptions, no medical judgment. */}
       <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
           <span className="text-sm font-medium">Client tolerance</span>
           <p className="text-xs text-neutral-500">
-            Optional quick rating.
+            Optional. How did the client tolerate this area?
           </p>
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-neutral-600 dark:text-neutral-400">
-            How did the client tolerate this area?
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            {["1", "2", "3", "4", "5"].map((n) => (
+        <div className="flex flex-wrap gap-2">
+          {TOLERANCE_OPTIONS.map((opt) => {
+            const value = String(opt.value);
+            const selected = draft.toleranceRating === value;
+            return (
               <button
-                key={n}
+                key={opt.value}
                 type="button"
-                aria-pressed={draft.toleranceRating === n}
+                aria-pressed={selected}
                 onClick={() =>
-                  update(
-                    "toleranceRating",
-                    draft.toleranceRating === n ? "" : n,
-                  )
+                  update("toleranceRating", selected ? "" : value)
                 }
                 className={
-                  draft.toleranceRating === n
-                    ? "h-10 w-10 rounded-md bg-neutral-900 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
-                    : "h-10 w-10 rounded-md border border-neutral-300 bg-white text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                  selected
+                    ? "rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
                 }
               >
-                {n}
+                {opt.label}
               </button>
-            ))}
-            <span className="text-xs text-neutral-500">
-              {draft.toleranceRating
-                ? toleranceLabel(parseInt(draft.toleranceRating, 10))
-                : "1 = struggled, 5 = very comfortable"}
-            </span>
-          </div>
+            );
+          })}
         </div>
-
-
-
       </div>
 
       {/* Treatment observations (PR #191 bucket A): what the
@@ -1091,23 +1222,36 @@ export function BlockSetupForm({
             What you saw during treatment, including how the skin and client responded.
           </p>
         </div>
+        {/* PR #279 (Chloe mobile feedback): observation chips are TOGGLES — tap
+            to add the phrase to the notes, tap again to remove it. Selected
+            chips show pressed and their text appears in the notes box below;
+            manually typed text is preserved. (Was append-only, which could not
+            be unselected.) */}
         <div className="flex flex-wrap gap-2">
-          {COMMON_COMMENTS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() =>
-                update("comments", appendComment(draft.comments, c))
-              }
-              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
-            >
-              + {c}
-            </button>
-          ))}
+          {COMMON_COMMENTS.map((c) => {
+            const selected = isCommentSelected(draft.comments, c);
+            return (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => update("comments", toggleComment(draft.comments, c))}
+                className={
+                  selected
+                    ? "rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                }
+              >
+                {selected ? c : `+ ${c}`}
+              </button>
+            );
+          })}
         </div>
-        {/* PR #198: skin/client response options live HERE as chips
-            (single-select toggle; still the reaction_type field
-            underneath). Tap again to clear. */}
+        {/* PR #198/#279: skin/client response options as chips. Single-select
+            toggle on the reaction_type field — tap again to clear, and picking
+            one (e.g. "No visible reaction") replaces any other (deliberate
+            conflict handling). The choice is saved as the block's reaction and
+            shows in the saved record. */}
         <div className="flex flex-wrap gap-2">
           {REACTION_TYPES.map((r) => (
             <button

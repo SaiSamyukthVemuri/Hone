@@ -26,6 +26,33 @@ export async function getSterileItemRecords(
   return (data ?? []) as RecordKeepingSterileItem[];
 }
 
+// PR #279 (Chloe charting feedback): suggest the latest current probe lot/batch
+// from the studio's sterile-item records so the practitioner can CONFIRM it
+// while charting (it is never auto-confirmed). "Relevant" = a sterile item whose
+// description mentions a probe; "current" = not past its expiry date. Returns the
+// lot number to suggest, or null when there is nothing to suggest (manual entry
+// stays available). Read-only; record-keeping forms are untouched (deferred to
+// PR #280).
+export async function getLatestProbeLotSuggestion(
+  studioId: string,
+): Promise<string | null> {
+  const supabase = await createClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("lot_number, item_description, expiry_date, date_purchased")
+    .eq("studio_id", studioId)
+    .not("lot_number", "is", null)
+    .ilike("item_description", "%probe%")
+    .or(`expiry_date.is.null,expiry_date.gte.${today}`)
+    .order("date_purchased", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lot = (data?.lot_number as string | null | undefined)?.trim();
+  return lot ? lot : null;
+}
+
 export async function getDisinfectantRecords(
   studioId: string,
 ): Promise<RecordKeepingDisinfectant[]> {

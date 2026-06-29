@@ -34,6 +34,7 @@ import {
   getTreatmentPlanWithCount,
 } from "@/lib/treatment-plans/queries";
 import { getSessionNumberForClient } from "@/lib/treatment-time/queries";
+import { getLatestProbeLotSuggestion } from "@/lib/record-keeping/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
@@ -156,6 +157,14 @@ export default async function SessionDetailPage({
   const blockData =
     session.modality === "electrolysis"
       ? await getSessionWithBlocks(sessionId)
+      : null;
+
+  // PR #279 (Chloe charting feedback): the latest current probe lot/batch from
+  // the studio's sterile-item records, offered as a CONFIRMABLE suggestion while
+  // charting (never auto-confirmed). Electrolysis only; read-only.
+  const suggestedProbeLot =
+    session.modality === "electrolysis"
+      ? await getLatestProbeLotSuggestion(studio.id)
       : null;
 
   // Treatment plan attachment context: the active plans the practitioner
@@ -405,6 +414,7 @@ export default async function SessionDetailPage({
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
+          suggestedProbeLot={suggestedProbeLot}
           // UI defaulting only: seed a NEW treatment area from the attached
           // plan, or the client's single active plan when unattached (see
           // above). Never overrides practitioner choice or mutates data.

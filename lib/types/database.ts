@@ -1,6 +1,10 @@
 // Hand-rolled minimal database types. Regenerate from Supabase later with:
 //   npx supabase gen types typescript --project-id <ref> > lib/types/database.ts
 
+// PR #279: numbing vocabulary (allowlist + labels) lives with the other
+// clinical-response vocabulary; the type is imported here for SessionBlock.
+import type { NumbingStatus } from "@/lib/sessions/clinical-response";
+
 export type Modality = "electrolysis" | "laser";
 export type ElectrolysisMode = "thermo" | "galv" | "blend";
 export type PractitionerRole = "owner" | "practitioner";
@@ -867,6 +871,14 @@ export type SessionBlock = {
   reaction_notes: string | null;
   caution_for_next_session: boolean;
   caution_note: string | null;
+  // Migration 0095 (PR #279, Chloe charting feedback). numbing_status is NULL
+  // for every legacy row ("Not recorded"); 'none' = no numbing used; 'used' =
+  // numbing used. probe_lot_confirmed records that the practitioner confirmed
+  // the probe lot/batch for this treatment (vs suggested-from-records or typed
+  // but unconfirmed); legacy rows default to false. Allowlist + default live in
+  // the 0095 CHECK + lib/sessions/clinical-response.ts.
+  numbing_status: NumbingStatus | null;
+  probe_lot_confirmed: boolean;
 };
 
 export type LaserEntry = {

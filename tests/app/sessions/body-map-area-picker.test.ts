@@ -106,6 +106,27 @@ describe("charting form wires the body map above the list picker", () => {
   });
 });
 
+describe("PR #279 (item 2): a sub-area no longer floods the whole zone", () => {
+  it("underarms maps to the Arms zone (the source of the confusion)", () => {
+    expect(zoneForArea("Underarms")).toBe("arms");
+    expect(zoneForArea("Forearms")).toBe("arms");
+    expect(zoneForArea("Hands")).toBe("arms");
+  });
+  it("the broad zone gets a SUBTLE 'contains the selected area' state, not a flood", () => {
+    expect(COMPONENT).toMatch(/containsSelection/);
+    expect(COMPONENT).toMatch(/contains the selected area/);
+    // the previous dominant flood is replaced by a subtle tint
+    expect(COMPONENT).not.toMatch(/fill-emerald-200/);
+    expect(COMPONENT).toMatch(/fill-emerald-50/);
+  });
+  it("the exact area is still conveyed precisely by the selected area chip", () => {
+    // the area chips set aria-pressed on the exact value
+    expect(COMPONENT).toMatch(/const selected = value === area/);
+    // the form shows the precise "Area being charted" line
+    expect(FORM).toMatch(/Area being charted/);
+  });
+});
+
 describe("treatment-plan editor is unaffected (body map is charting-only)", () => {
   it("the treatment-plan card does NOT use the charting-only body map", () => {
     expect(PLAN_CARD).not.toMatch(/BodyMapAreaPicker|body-map-area-picker/);

@@ -103,11 +103,11 @@ describe("per-area summaries (the Chloe fix)", () => {
     expect(s.areas[0].name).toBe("Chin");
     expect(s.areas[0].settingsLine).toBe("Thermolysis - EL 12 - 20 min");
     expect(s.areas[0].probeLine).toBe("Ballet Gold F3");
-    expect(s.areas[0].toleranceLine).toBe("5/5 - Very comfortable");
+    expect(s.areas[0].toleranceLine).toBe("5/5 - Comfortable");
     expect(s.areas[0].reactionLine).toBe("No visible reaction");
     expect(s.areas[1].name).toBe("Upper lip (Left)");
     expect(s.areas[1].settingsLine).toBe("Blend - EL 9");
-    expect(s.areas[1].toleranceLine).toBe("3/5 - Okay");
+    expect(s.areas[1].toleranceLine).toBe("3/5 - Moderate discomfort");
     expect(s.areas[1].reactionLine).toBe("Mild redness. Settled quickly.");
   });
 

@@ -6,8 +6,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { findProbeOptionByKey } from "@/lib/probes";
 import {
+  isNumbingStatus,
   isReactionType,
   isToleranceRating,
+  type NumbingStatus,
   type ReactionType,
 } from "@/lib/sessions/clinical-response";
 import {
@@ -51,6 +53,9 @@ type ClinicalResponseInput = {
   reactionNotes?: string | null;
   cautionForNextSession?: boolean;
   cautionNote?: string | null;
+  // PR #279: whether the client used numbing (factual record). "" / null /
+  // undefined -> Not recorded (NULL).
+  numbingStatus?: string | null;
 };
 
 type ClinicalResponseColumns = {
@@ -59,6 +64,7 @@ type ClinicalResponseColumns = {
   reaction_notes: string | null;
   caution_for_next_session: boolean;
   caution_note: string | null;
+  numbing_status: NumbingStatus | null;
 };
 
 function normalizeClinicalResponse(
@@ -80,6 +86,10 @@ function normalizeClinicalResponse(
   const reactionNotes = input.reactionNotes?.trim() || null;
   const cautionNote = input.cautionNote?.trim() || null;
   const cautionFlag = Boolean(input.cautionForNextSession) || cautionNote !== null;
+  const numbing = input.numbingStatus || null;
+  if (numbing !== null && !isNumbingStatus(numbing)) {
+    return { ok: false, error: "Pick a numbing option from the list." };
+  }
   return {
     ok: true,
     columns: {
@@ -88,6 +98,7 @@ function normalizeClinicalResponse(
       reaction_notes: reactionNotes,
       caution_for_next_session: cautionFlag,
       caution_note: cautionNote,
+      numbing_status: numbing,
     },
   };
 }
@@ -764,6 +775,11 @@ export type CreateAreaWithEntryInput = {
   reactionNotes?: string | null;
   cautionForNextSession?: boolean;
   cautionNote?: string | null;
+  // PR #279 (migration 0095): numbing record + whether the probe lot was
+  // confirmed for this treatment. Both optional; defaults are Not recorded /
+  // not confirmed.
+  numbingStatus?: string | null;
+  probeLotConfirmed?: boolean;
 };
 
 export async function createTreatmentAreaWithEntryAction(
@@ -830,6 +846,10 @@ export async function createTreatmentAreaWithEntryAction(
       machine_frequency: input.machineFrequency ?? null,
       probe_lot_number:
         (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
+      // PR #279: confirmation only counts when a lot is actually present.
+      probe_lot_confirmed:
+        Boolean(input.probeLotConfirmed) &&
+        (input.probeLotNumber ?? "").trim() !== "",
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
@@ -928,6 +948,10 @@ export type UpdateAreaWithEntryInput = {
   reactionNotes?: string | null;
   cautionForNextSession?: boolean;
   cautionNote?: string | null;
+  // PR #279 (migration 0095): numbing record + probe-lot confirmation. The edit
+  // form seeds these from the block row and always sends them back.
+  numbingStatus?: string | null;
+  probeLotConfirmed?: boolean;
 };
 
 export async function updateTreatmentAreaWithEntryAction(
@@ -983,6 +1007,10 @@ export async function updateTreatmentAreaWithEntryAction(
       machine_frequency: input.machineFrequency ?? null,
       probe_lot_number:
         (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
+      // PR #279: confirmation only counts when a lot is actually present.
+      probe_lot_confirmed:
+        Boolean(input.probeLotConfirmed) &&
+        (input.probeLotNumber ?? "").trim() !== "",
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,

@@ -18,6 +18,12 @@
   - `http://localhost:3000/auth/callback` (dev).
   - `https://hone.care/auth/callback` (prod).
 
+## Pending production migration: 0095 (PR #279, charting numbing + probe-lot confirm)
+
+- Migration **0095** (`session_blocks.numbing_status` + `probe_lot_confirmed`) is in-tree and CI-verified but **NOT applied to production** until explicitly approved.
+- **Ordering matters (different from 0094):** the PR #279 app **writes** these two columns on every charting save, so the columns must exist in prod **before** the new app serves traffic. 0095 is **additive and backward-compatible** — the *current* (pre-#279) app never references the new columns, so 0095 is safe to apply to prod **ahead of merging #279**. **Recommended sequence: apply 0095 to prod first (approved), then merge PR #279.** Merging #279 before 0095 is applied would make charting saves fail in prod (writing to a non-existent column).
+- Apply path (when approved): run the read-only preflight in the migration header (both counts 0 before apply) → `supabase db push --linked` for 0095 only → read-only verify both columns + the `session_blocks_numbing_status_check` exist. Legacy rows read as Not recorded / not confirmed.
+
 ## Storage / treatment images (PR #271, migration 0092)
 
 - One **private** Supabase Storage bucket: **`treatment-images`** (`public = false`). There are no public buckets and no public URLs.
