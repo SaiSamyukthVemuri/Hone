@@ -533,10 +533,13 @@ supabase db query --linked "
 # Expect: stripe_livemode=false for every row.
 
 # Confirm no live-mode charge attempt exists.
+# (PR #218 deleted the legacy manual_fee_charge_attempts executor; the
+# canonical ledger is payment_charge_attempts — see the PR #281 / §17
+# update below.)
 supabase db query --linked "
-  select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true;
+  select count(*) from public.payment_charge_attempts where stripe_livemode = true;
 "
-# Expect: 0 (the CHECK constraint blocks any such write).
+# Expect: 0 (the payment_charge_attempts_livemode_false_check CHECK blocks any such write).
 
 # Confirm STRIPE_ALLOW_LIVE_MODE is not set to 'true' in production.
 # Run from the Vercel dashboard: Project -> Settings -> Environment Variables
@@ -549,7 +552,12 @@ supabase db query --linked "
 # The check-stripe-gates script enforces this on every CI run, but the
 # operator can confirm manually.
 npm run check:stripe-gates
-# Expect: PASS paymentIntents.create -- 1 occurrence in lib/billing/manual-fee-charge.ts only.
+# Expect: PASS paymentIntents.create -- 1 occurrence in lib/billing/session-payment-charge.ts only.
+#         (PR #218 deleted lib/billing/manual-fee-charge.ts; the canonical
+#         charge executor is now lib/billing/session-payment-charge.ts.)
+# Expect: PASS refunds.create        -- 1 occurrence in lib/billing/payment-refund.ts only.
+# Expect: PASS charges.create        -- 0 occurrences.
+# Expect: PASS checkout.sessions     -- 0 occurrences.
 # Expect: PASS STRIPE_ALLOW_LIVE_MODE=true -- 1 occurrence in lib/stripe/server.ts only.
 ```
 
@@ -1048,3 +1056,171 @@ PR #169 is docs + guardrails ONLY. Nothing in this PR:
 - Changes `STRIPE_ALLOW_LIVE_MODE` default. Still unset / `false`.
 
 The Stripe gates remain intact. The only artifacts of this PR are the new section above plus the guardrail tests that pin the section's claims.
+
+---
+
+## 17. Payment reconciliation + controlled live-payment readiness runbook (PR #282)
+
+> **This section is the authoritative, post-#281 reconciliation + controlled-enablement runbook.** It supersedes the §7 stub (kept above for history; §7.1/§7.2 references corrected for the `payment_charge_attempts` ledger). **PR #282 adds readiness + reconciliation only — it is NOT live-payment enablement.** Controlled live-payment enablement remains a **separate, explicit, owner-approved future step**.
+
+### 17.1 Current status
+
+- **Live payments are DISABLED.** `STRIPE_ALLOW_LIVE_MODE` is unset / `false` in production; the three dormancy guards (§3) are intact; the Stripe gates pass.
+- **PR #281 (payment success persistence) is COMPLETE and authoritative.** A normal `succeeded` outcome now requires **Stripe success AND a proven Hone ledger write**. If Stripe succeeds but Hone cannot persist the success (DB error or zero-row update), the charge path returns `needs_manual_review` (never a clean success) and a **critical** ops alert fires (`session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows`). See docs/06 §4d.
+- **Webhook reconciliation remains the eventual-consistency backstop.** The `payment_intent.succeeded` handler (`lib/billing/payment-webhook-reconciliation.ts`, PR #179) reconciles a `ready|pending_stripe` row to `succeeded`, so a transient #281 DB-error split self-heals even though the synchronous result was honestly indeterminate.
+- **Operators already have full visibility** via the admin **Ops alerts** page (`/admin/ops-alerts`): unresolved-critical-first, with event, message, PaymentIntent id, and redacted details; critical alerts also email `OPS_ALERT_EMAILS`. No new dashboard is required for reconciliation.
+
+### 17.2 Required gates before any live-mode change
+
+Every line must hold (most are CI-enforced):
+
+- [ ] Stripe gates pass — **one** `paymentIntents.create`, **one** `refunds.create`, **zero** `charges.create`, **zero** `checkout.sessions` (`npm run check:stripe-gates`).
+- [ ] Local success persistence is authoritative (PR #281 — `tests/lib/billing/payment-success-persistence.test.ts`).
+- [ ] Webhook **signature verification** confirmed — `constructEvent` over the raw body with `STRIPE_WEBHOOK_SECRET`; `400 "Invalid signature."` on any failure (`app/api/stripe/webhook/route.ts`).
+- [ ] Webhook **replay procedure** documented (§17.6).
+- [ ] **Refund path** documented and test-verified (`lib/billing/payment-refund.ts`; refund is owner-only, reason-agnostic, idempotent, manual-review on persist failure).
+- [ ] **Manual-review handling** documented (§17.4 / §17.5).
+- [ ] **Reconciliation checks** return clean (§17.7 read-only SQL).
+- [ ] **Rollback plan** documented (§17.8).
+- [ ] Owner business approval recorded; Willow live Stripe account onboarded + payouts enabled; legal/accounting review of card-authorization wording, statement descriptor, and tax/HST complete (the open §5 / docs/18 blockers).
+
+### 17.3 Forbidden actions without explicit owner approval
+
+Do **NOT**, as part of readiness work, do any of the following — each is a separate, owner-approved live-enablement decision:
+
+- Set `STRIPE_ALLOW_LIVE_MODE=true` (in any environment).
+- Add or rotate to live Stripe keys (`sk_live_*` / live `whsec_*` / live publishable key).
+- Run a live charge or any live payment flow.
+- Enable card-required / card-on-file-mandatory flows broadly.
+- Onboard a studio to live mode (`studio_payment_settings.stripe_livemode=true`).
+
+### 17.4 Before the first controlled live payment
+
+- Confirm the **business decision / owner approval** is recorded.
+- Confirm the **test-mode payment flow** works end-to-end (prepare → charge → receipt → refund) — docs/12 payment smoke chain.
+- Confirm the **refund flow** works in test mode.
+- Confirm **webhook delivery** is live-endpoint-configured in the Stripe dashboard, and the **replay procedure** (§17.6) is understood.
+- Confirm the **connected account** state (Willow): onboarded, `charges_enabled`, `payouts_enabled`.
+- Confirm the **manual-review procedure** (§17.5).
+- Confirm the **reconciliation checks** (§17.7) return clean (zero stuck/mismatched rows, zero unresolved payment criticals).
+- Confirm the **rollback procedure** (§17.8) is ready.
+
+### 17.5 During the first controlled live payment
+
+- **One studio only.** **One operator** watching production logs + the Ops alerts page. **One small controlled payment.**
+- Verify the **Stripe dashboard** shows the PaymentIntent `succeeded`.
+- Verify the **Hone payment ledger** row: `payment_charge_attempts.status='succeeded'`, PI id + charge id + `charged_at` stamped.
+- Verify the **webhook event** was received + processed (`stripe_events`).
+- Verify **no critical ops alert** fired (especially the #281 `session_payment_succeeded_write_*` pair).
+- Verify the **refund path** if appropriate — in a sandbox/test context, not necessarily a real refund.
+- **Stop immediately on any mismatch** and execute the rollback (§17.8).
+
+### 17.6 Webhook replay / reconciliation procedure
+
+- Events are claimed idempotently via `claim_stripe_event` and recorded in `public.stripe_events` with a `payload_summary` + processed state.
+- To replay: re-send the event from the **Stripe dashboard** (Developers → Webhooks → event → Resend) or via the Stripe CLI. The handler is idempotent — a re-delivered, already-processed event is a no-op; a previously-unmatched event re-runs the matcher.
+- A `payment_intent.succeeded` with no matching local row raises `payment_intent_succeeded_no_match` (warning); a terminal-state mismatch raises a **critical** alert — both visible on the Ops alerts page. Reconcile the named PaymentIntent against the ledger before any retry.
+
+### 17.7 Read-only reconciliation checks (SELECT-only)
+
+All snippets are **read-only** (`SELECT` only — no `INSERT`/`UPDATE`/`DELETE`/`DROP`/`ALTER`). Run them in the Supabase SQL editor (read-only role) or any read replica. They never call Stripe. Run these before/after a controlled live payment and on a schedule once live.
+
+```sql
+-- (1) Payment attempts stuck in pending_stripe too long (> 60 min).
+-- The synchronous reconcile window is 60 min; the webhook is the backstop.
+-- A non-empty result means a charge may be unreconciled — investigate before retry.
+select id, studio_id, charge_reason, amount_cents, stripe_payment_intent_id, updated_at
+from public.payment_charge_attempts
+where status = 'pending_stripe'
+  and updated_at < now() - interval '60 minutes'
+order by updated_at asc;
+```
+
+```sql
+-- (2) Stripe PaymentIntent present but the local row is NOT succeeded.
+-- Catches a #281-style "Stripe moved money but Hone did not persist success"
+-- split (row left in pending_stripe with a stamped/known PI). Cross-check each
+-- PI id against the Stripe dashboard.
+select id, studio_id, charge_reason, status, stripe_payment_intent_id, stripe_status, charged_at, updated_at
+from public.payment_charge_attempts
+where stripe_payment_intent_id is not null
+  and status <> 'succeeded'
+  and status <> 'failed'
+order by updated_at asc;
+```
+
+```sql
+-- (3) The PR #281 critical success-persistence alerts (UNRESOLVED).
+-- Any row here = Stripe succeeded but Hone could not persist; reconcile the
+-- attempt_id / PaymentIntent before it is retried.
+select created_at, event, severity, stripe_payment_intent_id, message, safe_details
+from public.ops_alerts
+where event in ('session_payment_succeeded_write_failed',
+                'session_payment_succeeded_write_zero_rows')
+  and resolved_at is null
+order by created_at desc;
+```
+
+```sql
+-- (4) Refund-review / refund write-failure alerts (UNRESOLVED).
+select created_at, event, severity, stripe_payment_intent_id, message
+from public.ops_alerts
+where event like 'payment_refund_%'
+  and severity in ('warning', 'critical')
+  and resolved_at is null
+order by created_at desc;
+```
+
+```sql
+-- (5) Unprocessed / unmapped Stripe webhook events (recent).
+-- A claimed-but-not-processed event, or a succeeded event that matched no
+-- local row (see the no_match ops alert in (6)), needs operator reconciliation.
+select event_id, type, livemode, processed_at, claimed_at, created_at
+from public.stripe_events
+where processed_at is null
+  and created_at > now() - interval '7 days'
+order by created_at desc;
+```
+
+```sql
+-- (6) Recent payment/Stripe critical ops alerts (last 7 days), unresolved first.
+-- The operator's single sweep for anything money-related that needs a human.
+select created_at, event, severity, stripe_event_id, stripe_payment_intent_id, message, resolved_at
+from public.ops_alerts
+where severity = 'critical'
+  and (event like 'session_payment_%'
+       or event like 'payment_intent_%'
+       or event like 'payment_refund_%'
+       or event like 'charge_%'
+       or event like 'stripe_webhook_%')
+  and created_at > now() - interval '7 days'
+order by (resolved_at is null) desc, created_at desc;
+```
+
+### 17.8 Rollback plan
+
+If anything looks wrong at any point during or after a controlled live payment:
+
+1. **Disable the live-mode env flag** — set `STRIPE_ALLOW_LIVE_MODE` to unset / `false` in Vercel production (re-arms the key gate — `sk_live_` is rejected immediately).
+2. **Revert / pause live Stripe key usage** — rotate back to `sk_test_*` if a live key was added; the key gate then refuses live mode regardless of the flag.
+3. **Pause the charging path if needed** — stop new charges (e.g. revert the enabling deploy) until reconciled.
+4. **Inspect ops alerts** — the admin Ops alerts page + the §17.7 queries; resolve or escalate every payment critical.
+5. **Inspect the Stripe dashboard** — confirm the true state of each PaymentIntent / charge / refund.
+6. **Document the outcome** — what happened, what was reconciled, and the go/no-go for the next attempt.
+
+### 17.9 After the first controlled live payment
+
+- Run the §17.7 reconciliation checks — expect all clean.
+- Sample production logs — expect no payment errors / 5xx.
+- Confirm no unresolved payment ops alert.
+- Document the outcome.
+- **Do not broaden** (more studios / larger amounts / card-required flows) until repeated clean controlled runs.
+
+### 17.10 What PR #282 does NOT do
+
+- Does NOT enable live payments, set `STRIPE_ALLOW_LIVE_MODE=true`, add live Stripe keys, run live charges, or start controlled live-payment enablement.
+- Does NOT change any charge / refund / webhook runtime behavior.
+- Does NOT add a migration, a new DB table/column/RLS/RPC, or a new admin UI.
+- Does NOT add an executable script that connects to production. The reconciliation checks are read-only SQL snippets the operator runs deliberately.
+
+The only artifacts of PR #282 are this section + the documentation updates + the guardrail test (`tests/docs/payment-reconciliation-readiness.test.ts`) that pins these claims. **Live payments remain disabled; controlled live-payment enablement has not started.**
