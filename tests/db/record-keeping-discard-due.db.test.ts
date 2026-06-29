@@ -11,6 +11,19 @@ import { randomUUID } from "node:crypto";
 // Proven on the REAL migrated local database. Additive + nullable so legacy rows
 // (no due date) read safely.
 
+// Normalize a Postgres `date` column to YYYY-MM-DD. The pg driver returns a
+// `date` as a JS Date (at local midnight for that calendar day); a `::text`
+// cast or a different driver returns a string. Support both.
+function ymd(v: unknown): string {
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    const d = String(v.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 let s: SeededStudio;
 
 beforeAll(async () => {
@@ -34,8 +47,8 @@ describe("discard_due_date column", () => {
       "select date_prepared, discard_due_date, date_discarded from public.record_keeping_disinfectants where id=$1",
       [id],
     );
-    expect(String(r.rows[0].discard_due_date).slice(0, 10)).toBe("2026-06-15");
-    expect(String(r.rows[0].date_prepared).slice(0, 10)).toBe("2026-06-01");
+    expect(ymd(r.rows[0].discard_due_date)).toBe("2026-06-15");
+    expect(ymd(r.rows[0].date_prepared)).toBe("2026-06-01");
     expect(r.rows[0].date_discarded).toBeNull();
   });
 
