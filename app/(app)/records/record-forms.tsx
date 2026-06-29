@@ -1,8 +1,23 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { Fragment, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RecordActionResult } from "./actions";
+
+// PR #280 (Chloe record-keeping feedback): shared option shapes for the
+// same-studio operator dropdown + exposed-person selector. All lists are fed
+// from server-side same-studio queries (getPractitionersForStudio /
+// getClientsForStudio), so no cross-studio person can ever appear as an option.
+export type OperatorOption = { id: string; name: string };
+export type ClientContactOption = {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+};
+
+// Sentinel select value for "Other (type a name)" — a non-staff operator.
+const OTHER_OPERATOR = "__other__";
 
 // PR #205: add-record forms for the Record Keeping logbook. Plain
 // uncontrolled forms posting to the server actions; explicit saved /
@@ -29,6 +44,11 @@ function AddRecordForm({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
+  // PR #280: bump on a successful submit to REMOUNT the fields. form.reset()
+  // clears uncontrolled DOM inputs but NOT child React state (the OperatorPicker
+  // select, the ExposedPersonPicker person-type) — without this, a second add
+  // would keep the previous operator/person selection. Remounting resets both.
+  const [resetKey, setResetKey] = useState(0);
 
   return (
     <form
@@ -42,6 +62,7 @@ function AddRecordForm({
           const res = await action(fd);
           if (res.ok) {
             form.reset();
+            setResetKey((k) => k + 1);
             setSaved(true);
             router.refresh();
           } else {
@@ -51,7 +72,7 @@ function AddRecordForm({
       }}
       className="flex flex-col gap-3"
     >
-      {children}
+      <Fragment key={resetKey}>{children}</Fragment>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
@@ -130,6 +151,204 @@ function NotesField({
   );
 }
 
+const PILL_ON =
+  "rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900";
+const PILL_OFF =
+  "rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300";
+
+// PR #280: operator dropdown — current user + active same-studio staff, with a
+// free-text "Other" fallback (for an operator without an account, or legacy
+// records). When a staff member is picked, only operator_practitioner_id is
+// submitted and the server resolves the display name; "Other" submits a typed
+// operator_name. The staff list is same-studio only (server-fed).
+function OperatorPicker({
+  staff,
+  currentPractitionerId,
+  defaultPractitionerId,
+  defaultName,
+}: {
+  staff: OperatorOption[];
+  currentPractitionerId: string;
+  defaultPractitionerId?: string | null;
+  defaultName?: string;
+}) {
+  const savedIsStaff =
+    !!defaultPractitionerId && staff.some((s) => s.id === defaultPractitionerId);
+  // Edit with a current-staff operator -> preselect them. Edit with a
+  // legacy/free-text operator -> "Other" + prefill the name. New record ->
+  // default to the current user.
+  const initial = savedIsStaff
+    ? (defaultPractitionerId as string)
+    : defaultName
+      ? OTHER_OPERATOR
+      : currentPractitionerId;
+  const [sel, setSel] = useState(initial);
+  const isOther = sel === OTHER_OPERATOR;
+  return (
+    <>
+      <label className="flex flex-col gap-1">
+        <span className={LABEL_CLS}>Operator</span>
+        <select
+          name="operator_practitioner_id"
+          value={sel}
+          onChange={(e) => setSel(e.target.value)}
+          className={INPUT_CLS}
+        >
+          {staff.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {s.id === currentPractitionerId ? " (you)" : ""}
+            </option>
+          ))}
+          <option value={OTHER_OPERATOR}>Other (type a name)</option>
+        </select>
+      </label>
+      {isOther && (
+        <label className="flex flex-col gap-1">
+          <span className={LABEL_CLS}>Operator name</span>
+          <input
+            type="text"
+            name="operator_name"
+            defaultValue={defaultName}
+            placeholder="Name of the operator"
+            className={INPUT_CLS}
+          />
+        </label>
+      )}
+    </>
+  );
+}
+
+// PR #280: exposed-person selector for exposure incidents. The three stored
+// fields (full name / phone / address) stay free text and editable; picking a
+// same-studio Client or Staff/self just autofills them (imperatively, so the
+// form still resets cleanly). "Other" is the manual path. No client/staff FK is
+// stored — this only pre-fills text the member could type anyway, so the
+// owner-only read posture of exposure incidents is unchanged.
+function ExposedPersonPicker({
+  clients,
+  staff,
+  defaults,
+}: {
+  clients: ClientContactOption[];
+  staff: OperatorOption[];
+  defaults?: { full_name: string; phone: string; address: string };
+}) {
+  const [kind, setKind] = useState<"client" | "staff" | "other">("other");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+
+  function fill(name: string, phone: string, address: string) {
+    if (nameRef.current) nameRef.current.value = name;
+    if (phoneRef.current) phoneRef.current.value = phone;
+    if (addressRef.current) addressRef.current.value = address;
+  }
+
+  return (
+    <>
+      <div className="flex flex-col gap-1 sm:col-span-2">
+        <span className={LABEL_CLS}>Exposed person</span>
+        <div className="flex flex-wrap gap-2">
+          {(["client", "staff", "other"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={kind === k}
+              onClick={() => setKind(k)}
+              className={kind === k ? PILL_ON : PILL_OFF}
+            >
+              {k === "client" ? "Client" : k === "staff" ? "Staff / myself" : "Other"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {kind === "client" && (
+        <label className="flex flex-col gap-1 sm:col-span-2">
+          <span className={LABEL_CLS}>Select client (same studio)</span>
+          <select
+            className={INPUT_CLS}
+            defaultValue=""
+            onChange={(e) => {
+              const c = clients.find((x) => x.id === e.target.value);
+              if (c) fill(c.name, c.phone, c.address);
+            }}
+          >
+            <option value="" disabled>
+              Choose a client…
+            </option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {kind === "staff" && (
+        <label className="flex flex-col gap-1 sm:col-span-2">
+          <span className={LABEL_CLS}>Select staff / myself (same studio)</span>
+          <select
+            className={INPUT_CLS}
+            defaultValue=""
+            onChange={(e) => {
+              const s = staff.find((x) => x.id === e.target.value);
+              // Practitioners carry a name (no phone/address here); leave
+              // contact fields for manual entry.
+              if (s) fill(s.name, "", "");
+            }}
+          >
+            <option value="" disabled>
+              Choose a person…
+            </option>
+            {staff.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {/* The actual stored fields — always shown + editable; the pickers above
+          autofill them, and the practitioner can correct anything after. */}
+      <label className="flex flex-col gap-1">
+        <span className={LABEL_CLS}>Exposed person&apos;s full name</span>
+        <input
+          ref={nameRef}
+          type="text"
+          name="exposed_person_full_name"
+          required
+          defaultValue={defaults?.full_name ?? ""}
+          className={INPUT_CLS}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className={LABEL_CLS}>Phone (optional)</span>
+        <input
+          ref={phoneRef}
+          type="text"
+          name="exposed_person_phone"
+          defaultValue={defaults?.phone ?? ""}
+          className={INPUT_CLS}
+        />
+      </label>
+      <label className="flex flex-col gap-1 sm:col-span-2">
+        <span className={LABEL_CLS}>Address (optional)</span>
+        <input
+          ref={addressRef}
+          type="text"
+          name="exposed_person_address"
+          defaultValue={defaults?.address ?? ""}
+          className={INPUT_CLS}
+        />
+      </label>
+    </>
+  );
+}
+
 export function AddSterileItemForm({ action }: { action: Action }) {
   return (
     <AddRecordForm action={action} submitLabel="Add sterile item record">
@@ -151,7 +370,15 @@ export function AddSterileItemForm({ action }: { action: Action }) {
   );
 }
 
-export function AddDisinfectantForm({ action }: { action: Action }) {
+export function AddDisinfectantForm({
+  action,
+  staff,
+  currentPractitionerId,
+}: {
+  action: Action;
+  staff: OperatorOption[];
+  currentPractitionerId: string;
+}) {
   return (
     <AddRecordForm action={action} submitLabel="Add disinfectant record">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -163,30 +390,31 @@ export function AddDisinfectantForm({ action }: { action: Action }) {
           placeholder="e.g. CaviCide"
         />
         <Field label="Concentration" name="concentration" placeholder="e.g. ready to use / 1:10" />
-        <Field label="Date discarded" name="date_discarded" type="date" />
-        <Field
-          label="Operator"
-          name="operator_name"
-          placeholder="Defaults to you"
-        />
+        {/* PR #280: three distinct dates — prepared (made), discard/replace-by
+            (drives the read-time due alert), and actual date discarded. */}
+        <Field label="Discard / replace by" name="discard_due_date" type="date" />
+        <Field label="Actual date discarded" name="date_discarded" type="date" />
+        <OperatorPicker staff={staff} currentPractitionerId={currentPractitionerId} />
         <NotesField />
       </div>
     </AddRecordForm>
   );
 }
 
-export function AddExposureIncidentForm({ action }: { action: Action }) {
+export function AddExposureIncidentForm({
+  action,
+  clients,
+  staff,
+}: {
+  action: Action;
+  clients: ClientContactOption[];
+  staff: OperatorOption[];
+}) {
   return (
     <AddRecordForm action={action} submitLabel="Add exposure incident">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Incident date" name="incident_date" type="date" required />
-        <Field
-          label="Exposed person's full name"
-          name="exposed_person_full_name"
-          required
-        />
-        <Field label="Address" name="exposed_person_address" wide />
-        <Field label="Phone" name="exposed_person_phone" />
+        <ExposedPersonPicker clients={clients} staff={staff} />
         <Field label="Staff involved" name="staff_involved_name" />
         <label className="flex flex-col gap-1 sm:col-span-2">
           <span className={LABEL_CLS}>How the exposure occurred</span>
@@ -312,7 +540,9 @@ type DisinfectantRecord = {
   date_prepared: string;
   disinfectant_name: string;
   concentration: string;
+  discard_due_date: string | null;
   date_discarded: string | null;
+  operator_practitioner_id: string | null;
   operator_name: string;
   notes: string | null;
 };
@@ -320,9 +550,13 @@ type DisinfectantRecord = {
 export function EditDisinfectantForm({
   record,
   action,
+  staff,
+  currentPractitionerId,
 }: {
   record: DisinfectantRecord;
   action: Action;
+  staff: OperatorOption[];
+  currentPractitionerId: string;
 }) {
   return (
     <AddRecordForm action={action} submitLabel="Save changes">
@@ -347,15 +581,22 @@ export function EditDisinfectantForm({
           defaultValue={record.concentration}
         />
         <Field
-          label="Date discarded"
+          label="Discard / replace by"
+          name="discard_due_date"
+          type="date"
+          defaultValue={record.discard_due_date?.slice(0, 10)}
+        />
+        <Field
+          label="Actual date discarded"
           name="date_discarded"
           type="date"
           defaultValue={record.date_discarded?.slice(0, 10)}
         />
-        <Field
-          label="Operator"
-          name="operator_name"
-          defaultValue={record.operator_name}
+        <OperatorPicker
+          staff={staff}
+          currentPractitionerId={currentPractitionerId}
+          defaultPractitionerId={record.operator_practitioner_id}
+          defaultName={record.operator_name}
         />
         <NotesField defaultValue={record.notes ?? ""} />
       </div>
@@ -378,9 +619,13 @@ type ExposureIncidentRecord = {
 export function EditExposureIncidentForm({
   record,
   action,
+  clients,
+  staff,
 }: {
   record: ExposureIncidentRecord;
   action: Action;
+  clients: ClientContactOption[];
+  staff: OperatorOption[];
 }) {
   return (
     <AddRecordForm action={action} submitLabel="Save changes">
@@ -393,22 +638,14 @@ export function EditExposureIncidentForm({
           required
           defaultValue={record.incident_date?.slice(0, 10)}
         />
-        <Field
-          label="Exposed person's full name"
-          name="exposed_person_full_name"
-          required
-          defaultValue={record.exposed_person_full_name}
-        />
-        <Field
-          label="Address"
-          name="exposed_person_address"
-          wide
-          defaultValue={record.exposed_person_address}
-        />
-        <Field
-          label="Phone"
-          name="exposed_person_phone"
-          defaultValue={record.exposed_person_phone}
+        <ExposedPersonPicker
+          clients={clients}
+          staff={staff}
+          defaults={{
+            full_name: record.exposed_person_full_name,
+            phone: record.exposed_person_phone,
+            address: record.exposed_person_address,
+          }}
         />
         <Field
           label="Staff involved"

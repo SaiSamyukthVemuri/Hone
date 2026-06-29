@@ -2,7 +2,14 @@ import Link from "next/link";
 import {
   getClientsForStudio,
   getCurrentPractitionerWithStudio,
+  getPractitionersForStudio,
 } from "@/lib/supabase/queries";
+import { todayInTz } from "@/lib/booking/tz";
+import {
+  disinfectantDueStatus,
+  disinfectantStatusLabel,
+  isDisinfectantAlert,
+} from "@/lib/record-keeping/disinfectant-status";
 import {
   getAuditEventsByRecord,
   getLotTraceability,
@@ -235,7 +242,11 @@ export default async function RecordKeepingPage({
         <SterileItemsSection studioId={studio.id} lotSearch={lotSearch} />
       )}
       {section === "disinfectants" && (
-        <DisinfectantsSection studioId={studio.id} />
+        <DisinfectantsSection
+          studioId={studio.id}
+          currentPractitionerId={practitioner.id}
+          timezone={studio.timezone}
+        />
       )}
       {section === "incidents" && (
         <ExposureIncidentsSection studioId={studio.id} isOwner={isOwner} />
@@ -389,13 +400,28 @@ async function SterileItemsSection({
   );
 }
 
-async function DisinfectantsSection({ studioId }: { studioId: string }) {
+async function DisinfectantsSection({
+  studioId,
+  currentPractitionerId,
+  timezone,
+}: {
+  studioId: string;
+  currentPractitionerId: string;
+  timezone: string;
+}) {
   const records = await getDisinfectantRecords(studioId);
   const audit = await getAuditEventsByRecord(
     studioId,
     "disinfectant",
     records.map((r) => r.id),
   );
+  // PR #280: same-studio staff for the operator dropdown; studio-local "today"
+  // for the read-time discard due/overdue alerts.
+  const staff = (await getPractitionersForStudio(studioId)).map((p) => ({
+    id: p.id,
+    name: p.display_name?.trim() || p.email,
+  }));
+  const today = todayInTz(timezone);
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -403,10 +429,14 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
           Add disinfectant record
         </h2>
         <p className="mb-4 mt-1 text-xs text-neutral-500">
-          Disinfectants prepared for use, their concentration, and when each
-          batch was discarded.
+          Disinfectants prepared for use, their concentration, when each batch
+          must be replaced by, and when it was actually discarded.
         </p>
-        <AddDisinfectantForm action={addDisinfectantRecordAction} />
+        <AddDisinfectantForm
+          action={addDisinfectantRecordAction}
+          staff={staff}
+          currentPractitionerId={currentPractitionerId}
+        />
       </section>
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">
@@ -421,7 +451,11 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
           </p>
         ) : (
           <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {records.map((r) => (
+            {records.map((r) => {
+              // PR #280: read-time due/overdue status (no cron/notification).
+              const status = disinfectantDueStatus(r, today);
+              const alert = isDisinfectantAlert(status);
+              return (
               <li key={r.id} className="flex flex-col gap-1 p-4 text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">
@@ -430,6 +464,18 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
                       <span className="font-normal text-neutral-500">
                         {" "}
                         · {r.concentration}
+                      </span>
+                    )}
+                    {alert && (
+                      <span
+                        role="status"
+                        className={
+                          status === "overdue"
+                            ? "ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950/50 dark:text-red-300"
+                            : "ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
+                        }
+                      >
+                        {disinfectantStatusLabel(status)}
                       </span>
                     )}
                   </span>
@@ -442,6 +488,13 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
                     Prepared:{" "}
                     <span className="font-medium text-neutral-900 dark:text-neutral-100">
                       {dateOnly(r.date_prepared)}
+                    </span>
+                  </span>
+                  {/* PR #280: the three distinct dates, clearly separated. */}
+                  <span>
+                    Replace by:{" "}
+                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                      {dateOnly(r.discard_due_date) ?? "Not set"}
                     </span>
                   </span>
                   <span>
@@ -459,12 +512,15 @@ async function DisinfectantsSection({ studioId }: { studioId: string }) {
                     <EditDisinfectantForm
                       record={r}
                       action={updateDisinfectantRecordAction}
+                      staff={staff}
+                      currentPractitionerId={currentPractitionerId}
                     />
                   }
                   events={audit.get(r.id)}
                 />
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </section>
@@ -488,6 +544,20 @@ async function ExposureIncidentsSection({
     "exposure_incident",
     records.map((r) => r.id),
   );
+  // PR #280: same-studio clients + staff for the exposed-person selector +
+  // autofill. Both lists are member-readable, so any member filing an incident
+  // can use them; they only pre-fill the existing free-text fields (no FK
+  // stored), so the owner-only read posture is unchanged.
+  const clients = (await getClientsForStudio(studioId)).map((c) => ({
+    id: c.id,
+    name: c.name,
+    phone: c.phone ?? "",
+    address: c.address ?? "",
+  }));
+  const staff = (await getPractitionersForStudio(studioId)).map((p) => ({
+    id: p.id,
+    name: p.display_name?.trim() || p.email,
+  }));
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -499,7 +569,11 @@ async function ExposureIncidentsSection({
           sensitive personal information; the incident history is visible to
           the studio owner only.
         </p>
-        <AddExposureIncidentForm action={addExposureIncidentRecordAction} />
+        <AddExposureIncidentForm
+          action={addExposureIncidentRecordAction}
+          clients={clients}
+          staff={staff}
+        />
       </section>
       {!isOwner ? (
         <section className="flex flex-col gap-3">
@@ -560,6 +634,8 @@ async function ExposureIncidentsSection({
                     <EditExposureIncidentForm
                       record={r}
                       action={updateExposureIncidentRecordAction}
+                      clients={clients}
+                      staff={staff}
                     />
                   }
                   events={audit.get(r.id)}

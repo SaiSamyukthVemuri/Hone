@@ -24,6 +24,43 @@ function dateStr(v: FormDataEntryValue | null): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
 }
 
+// PR #280: resolve the disinfectant operator from the dropdown. A selected
+// same-studio active practitioner wins (the display name is resolved
+// server-side, so it stays accurate); otherwise it is a free-text "Other"
+// operator (falling back to the current user's name when left blank). The
+// practitioner lookup is studio-scoped + RLS-guarded, so a cross-studio id can
+// never attach — it simply falls through to the free-text path.
+const OTHER_OPERATOR = "__other__";
+
+async function resolveOperator(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  formData: FormData,
+  fallbackName: string,
+): Promise<{ operator_practitioner_id: string | null; operator_name: string }> {
+  const selId = str(formData.get("operator_practitioner_id"), 60);
+  if (selId && selId !== OTHER_OPERATOR) {
+    const { data } = await supabase
+      .from("practitioners")
+      .select("id, display_name, email")
+      .eq("id", selId)
+      .eq("studio_id", studioId)
+      .eq("active", true)
+      .maybeSingle();
+    if (data) {
+      return {
+        operator_practitioner_id: data.id as string,
+        operator_name:
+          (data.display_name as string | null)?.trim() || (data.email as string),
+      };
+    }
+  }
+  return {
+    operator_practitioner_id: null,
+    operator_name: str(formData.get("operator_name"), 200) || fallbackName,
+  };
+}
+
 export async function addSterileItemRecordAction(
   formData: FormData,
 ): Promise<RecordActionResult> {
@@ -82,7 +119,15 @@ export async function addDisinfectantRecordAction(
     };
   }
   const discarded = dateStr(formData.get("date_discarded"));
+  // PR #280: distinct "discard / replace by" date drives the read-time alert.
+  const discardDue = dateStr(formData.get("discard_due_date"));
   const supabase = await createClient();
+  const operator = await resolveOperator(
+    supabase,
+    studioId,
+    formData,
+    operatorFallback,
+  );
   const { error } = await supabase
     .from("record_keeping_disinfectants")
     .insert({
@@ -90,11 +135,11 @@ export async function addDisinfectantRecordAction(
       date_prepared: datePrepared,
       disinfectant_name: name,
       concentration: str(formData.get("concentration"), 100),
+      discard_due_date: discardDue || null,
       date_discarded: discarded || null,
-      // The logged-in practitioner is the default operator; a typed
-      // name (e.g. for staff without accounts) wins when provided.
-      operator_practitioner_id: practitionerId,
-      operator_name: str(formData.get("operator_name"), 200) || operatorFallback,
+      // PR #280: operator from the same-studio dropdown (or free-text "Other").
+      operator_practitioner_id: operator.operator_practitioner_id,
+      operator_name: operator.operator_name,
       notes: str(formData.get("notes")) || null,
       created_by_practitioner_id: practitionerId,
     });
@@ -229,10 +274,11 @@ export async function updateSterileItemRecordAction(
 export async function updateDisinfectantRecordAction(
   formData: FormData,
 ): Promise<RecordActionResult> {
-  let studioId: string;
+  let studioId: string, operatorFallback: string;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    operatorFallback = practitioner.display_name?.trim() || practitioner.email;
   } catch {
     return { ok: false, error: GENERIC_ERROR };
   }
@@ -246,15 +292,25 @@ export async function updateDisinfectantRecordAction(
     };
   }
   const discarded = dateStr(formData.get("date_discarded"));
+  const discardDue = dateStr(formData.get("discard_due_date"));
   const supabase = await createClient();
+  // PR #280: edits now also (re)write the operator FK from the dropdown.
+  const operator = await resolveOperator(
+    supabase,
+    studioId,
+    formData,
+    operatorFallback,
+  );
   const { error } = await supabase
     .from("record_keeping_disinfectants")
     .update({
       date_prepared: datePrepared,
       disinfectant_name: name,
       concentration: str(formData.get("concentration"), 100),
+      discard_due_date: discardDue || null,
       date_discarded: discarded || null,
-      operator_name: str(formData.get("operator_name"), 200),
+      operator_practitioner_id: operator.operator_practitioner_id,
+      operator_name: operator.operator_name,
       notes: str(formData.get("notes")) || null,
     })
     .eq("id", recordId)
