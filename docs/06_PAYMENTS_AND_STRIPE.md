@@ -256,6 +256,22 @@ After a charge or refund action runs, the webhook receives the corresponding Str
 
 Every payment-OUTCOME write — the charge executor's `writeSucceededOutcome`/`writeFailedOutcome` (`lib/billing/session-payment-charge.ts`), the refund helper's success + terminal-failure writes (`lib/billing/payment-refund.ts`), and the four reconcile UPDATEs above — is a status-conditional `.update().eq(...)`. Each now appends `.select("id")` and treats a ZERO-row result (the row left the guarded state between the read and the write, e.g. a concurrent action/webhook race) as an explicit failure: a structured non-PII ops_alert (`*_zero_rows` / `*_write_failed`, carrying safe ids + status enums only) and, for the webhook handlers, a `zeroRowNoMutation` return instead of falsely claiming a reconcile (the out-of-band "reconciled" alert is now gated behind rows>0). A zero-row outcome is never silently treated as success. App-layer only — no new migration, dependency, Stripe call, or live-mode change. Pinned by `tests/lib/billing/payment-outcome-zero-row.test.ts`.
 
+### Authoritative success persistence (PR #281)
+
+**A session-payment charge may only return a NORMAL `succeeded` outcome when BOTH are true: Stripe reported the PaymentIntent as `succeeded` AND Hone durably persisted that success on the local `payment_charge_attempts` ledger row.** Before PR #281, `writeSucceededOutcome` returned `void`, so the caller (`runSessionPaymentCharge`'s create/confirm path **and** `reconcileExistingPaymentIntent`) reported a clean `ok:true, outcome:"succeeded"` even when the local success write hit a DB error or affected zero rows — a real-money / unstamped-ledger split reported to the practitioner as fully done.
+
+PR #281 makes success authoritative without a migration, a new public status, or any live-payment change:
+
+- `writeSucceededOutcome` now returns a structured `SuccessPersistenceResult` = `{ persisted: true } | { persisted: false; reason: "db_error" | "zero_rows" }`.
+- **Stripe success + DB write error** → critical ops_alert `session_payment_succeeded_write_failed` (PR #263 previously only logged this to stderr; it is now a critical alert) → helper returns `{persisted:false, reason:"db_error"}`. The row stays `pending_stripe`.
+- **Stripe success + zero-row update** → critical ops_alert `session_payment_succeeded_write_zero_rows` (kept) → helper returns `{persisted:false, reason:"zero_rows"}`.
+- **Stripe success + DB write proven (one row)** → helper returns `{persisted:true}`.
+- Both success callers branch: `persisted:true` → existing `ok:true, outcome:"succeeded"`; `persisted:false` → `ok:false, outcome:"needs_manual_review"` (an existing, indeterminate, **non-success** outcome) with the safe message *"Stripe reported the payment as succeeded, but Hone could not confirm the local payment record. Review the payment in Stripe and Hone before retrying."* plus non-sensitive reconciliation ids (`stripePaymentIntentId`, `attemptId`) — no card data, raw Stripe payload, secrets, or sensitive client data.
+- **No double-charge:** the `persisted:false` branch returns immediately and issues no retry; the deterministic idempotency key + Stripe's 24h replay already guard the retry path.
+- **Webhook reconciliation remains the backstop:** the `payment_intent.succeeded` handler (§4d) still flips a `pending_stripe` row to `succeeded`, so a transient DB-error split is eventually reconciled even though the synchronous result was honestly indeterminate.
+
+App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).
