@@ -198,7 +198,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByText(`Lot E2E-LOT-${seed.runId}`).first(),
     ).toBeVisible();
-    await expect(page.getByText("Tolerance: Mild discomfort").first()).toBeVisible();
+    await expect(page.getByText("Tolerance 4/5").first()).toBeVisible();
     await expect(page.getByText("Mild redness").first()).toBeVisible();
   });
 
