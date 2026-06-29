@@ -156,6 +156,19 @@ Negative checks (each should leave the appointment status alone):
 
 After step 6 (or 7) lands, proceed to the payment smoke chain below.
 
+## Payment reconciliation read-only checks (PR #282)
+
+Operator/reviewer sweep for unreconciled payment state. **Read-only — every query is `SELECT`-only and never calls Stripe.** Run from the Supabase SQL editor (read-only role) or a read replica; the full snippets live in [docs/16 §17.7](./16_LIVE_PAYMENTS_READINESS.md#177-read-only-reconciliation-checks-select-only). Run before/after any controlled live payment and on a schedule once live. Expected (test-mode steady state): all six return clean.
+
+1. **Stuck `pending_stripe` (> 60 min)** — `payment_charge_attempts` where `status='pending_stripe'` and `updated_at < now() - interval '60 minutes'`. Expect 0 rows.
+2. **Stripe PI present, local not succeeded** — `payment_charge_attempts` with a `stripe_payment_intent_id` but `status` not in (`succeeded`,`failed`). Cross-check each PI in the Stripe dashboard. Expect 0 rows.
+3. **#281 success-persistence criticals** — unresolved `ops_alerts` for `session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows`. Expect 0 rows.
+4. **Refund-review alerts** — unresolved `ops_alerts` `payment_refund_%` (warning/critical). Expect 0 rows.
+5. **Unprocessed/unmapped webhook events** — `stripe_events` with `processed_at IS NULL` in the last 7 days. Expect 0 rows.
+6. **Recent payment criticals** — `ops_alerts` severity `critical` for `session_payment_%` / `payment_intent_%` / `payment_refund_%` / `charge_%` / `stripe_webhook_%` in the last 7 days, unresolved first. Expect 0 unresolved.
+
+These are also the §17.7 checks the operator runs **before** any live-mode change and **after** the first controlled live payment. Any non-empty result is a reconciliation item — investigate against the Stripe dashboard before any retry; never `UPDATE`/`DELETE` a payment row by hand. Critical alerts are also visible on the admin **Ops alerts** page (`/admin/ops-alerts`). **Live payments remain disabled; this PR does not start controlled live-payment enablement.**
+
 ## Payment success persistence smoke (PR #281, test mode only)
 
 Verifies the authoritative-success rule: a charge returns a normal `succeeded` result ONLY when Stripe succeeded **and** Hone persisted the success on the local ledger. When Stripe succeeds but the local success write fails (DB error) or affects zero rows, the practitioner must see an indeterminate **manual-review** result (NOT a clean success) and a critical ops alert must exist.

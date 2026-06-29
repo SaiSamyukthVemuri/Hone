@@ -190,6 +190,8 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 
 ## 15. Draft live enablement runbook (FUTURE - DO NOT EXECUTE)
 
+> **Update (PR #282):** the §5 reconciliation findings and §6 ops-alert findings have a concrete, authoritative operator runbook now: **[docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md#17-payment-reconciliation--controlled-live-payment-readiness-runbook-pr-282)** (PR #282) — post-#281 status, required gates, Before/During/After first-live-payment checklist, forbidden actions, rollback plan, webhook replay procedure, and **read-only reconciliation SQL queries**. **PR #281 closed the success-persistence gap** (a normal `succeeded` now requires Stripe success *and* a proven Hone ledger write; the #281 `session_payment_succeeded_write_*` criticals surface any split). PR #282 is **readiness/reconciliation only — it does NOT execute this runbook, enable live payments, change Stripe keys/env, or add a migration.** The draft below remains future, do-not-execute.
+
 1. **Preconditions:** PRs #193-#195 merged; legal/accounting sign-offs recorded in docs/13; Chloe informed and scheduled; rollback rehearsed in test mode.
 2. **Code changes (PR #198 only):** env `STRIPE_ALLOW_LIVE_MODE=true` in Production only; migration deliberately replacing `payment_charge_attempts_livemode_false_check`; webhook livemode guard relaxed for reconciliation; conditional live copy; live publishable/secret keys.
 3. **Approvals:** lawyer (card auth + policies), accountant (receipt/tax), operator (runbook).
