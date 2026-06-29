@@ -134,7 +134,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     await page
       .getByRole("spinbutton", { name: /minutes performed/i })
       .fill("15");
-    await page.getByRole("button", { name: "4", exact: true }).click();
+    await page.getByRole("button", { name: "Mild discomfort" }).click();
     await page.getByRole("button", { name: "+ Mild redness" }).click();
     await page.getByRole("button", { name: /save treatment area/i }).click();
     await expect(page.getByText(`E2E-LOT-${seed.runId}`).first()).toBeVisible({
@@ -198,7 +198,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByText(`Lot E2E-LOT-${seed.runId}`).first(),
     ).toBeVisible();
-    await expect(page.getByText("Tolerance 4/5").first()).toBeVisible();
+    await expect(page.getByText("Tolerance: Mild discomfort").first()).toBeVisible();
     await expect(page.getByText("Mild redness").first()).toBeVisible();
   });
 

@@ -428,7 +428,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       [page.getByRole("button", { name: "13.56 MHz" }), "machine frequency"],
       [page.getByPlaceholder("e.g. 460941"), "probe lot"],
       [page.getByRole("spinbutton", { name: /minutes performed/i }), "minutes"],
-      [page.getByRole("button", { name: "4", exact: true }), "tolerance"],
+      [page.getByRole("button", { name: "Mild discomfort" }), "tolerance"],
       [page.getByRole("button", { name: "+ Mild redness" }), "reaction chip"],
       [
         page.getByPlaceholder(/start lower and check sensitivity/i),
@@ -453,7 +453,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page
       .getByRole("spinbutton", { name: /minutes performed/i })
       .fill("10");
-    await page.getByRole("button", { name: "4", exact: true }).click();
+    await page.getByRole("button", { name: "Mild discomfort" }).click();
     await page.getByRole("button", { name: "+ Mild redness" }).click();
     await page.getByRole("button", { name: /save treatment area/i }).click();
     await expect(page.getByText(`E2E-M-${seed.runId}`).first()).toBeVisible({
