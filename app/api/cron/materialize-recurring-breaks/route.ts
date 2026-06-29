@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
 
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
@@ -149,6 +150,20 @@ export async function GET(req: Request) {
           failure_codes: failures.map((f) => f.code ?? "unknown").slice(0, 50),
         },
       });
+    }
+
+    // PR #283: piggyback a best-effort reminder-scheduler health check on
+    // this daily cron. It runs independently of the external every-15-min
+    // appointment-reminder scheduler, so a stale/missing scheduler becomes a
+    // deduped ops alert within ~24h instead of staying a passive admin-card
+    // signal. This does NOT send reminders or call the appointment-reminders
+    // route; it only reads the heartbeat and may record an ops alert. Wrapped
+    // so a health-check failure can never turn a successful materialization
+    // run into a cron_route_failed.
+    try {
+      await recordReminderSchedulerHealthAlert();
+    } catch {
+      // Never let the scheduler-health check break the daily cron.
     }
 
     return NextResponse.json({

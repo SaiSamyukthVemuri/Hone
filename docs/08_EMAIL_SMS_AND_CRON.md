@@ -112,6 +112,7 @@ Events:
 - `sms_send_failed` (warning): emitted from `logSmsFailure` under the same threshold.
 - `cron_route_failed` (critical): emitted from the catch block at the top of `/api/cron/appointment-reminders/route.ts` and `/api/cron/materialize-recurring-breaks/route.ts`.
 - `recurring_break_materialization_failures` (warning): emitted once per run when at least one rule failed.
+- `reminder_scheduler_stale` (warning) / `reminder_scheduler_missing` (critical) — **PR #283**: recorded by the daily `materialize-recurring-breaks` cron's best-effort scheduler-health check (`recordReminderSchedulerHealthAlert`, `lib/cron/reminder-heartbeat.ts`) when the external every-15-min reminder scheduler's heartbeat is stale (>45 min) or missing (no recorded run). Deduped on an existing unresolved `ops_alerts` row for the same event, so repeated daily checks never spam. `safe_details` carry only `status`, `last_success_at`, `age_minutes`, `cadence_minutes`, `stale_after_minutes`, `checked_at` — never `CRON_SECRET`, an Authorization header, client phone/email/PII, reminder contents, or a provider payload. The check NEVER sends reminders and never calls `/api/cron/appointment-reminders`.
 
 The no-show-check route is intentionally non-mutating (responds with `{ ok: true, disabled: true }`) and does NOT emit cron alerts.
 
@@ -120,6 +121,35 @@ The no-show-check route is intentionally non-mutating (responds with `{ ok: true
 - **`appointment-reminders` schedule drift**: if the scheduler stops hitting this route, the 24h and 2h reminder emails stop going out. The per-row 3-strike attempts counter caps the retry blast radius once the scheduler resumes, but real reminders will be missed in the meantime.
 - **`materialize-recurring-breaks` schedule drift**: if the scheduler stops hitting this route, recurring break occurrences are NOT materialized for newly-extended horizon days. Public booking eventually starts offering slots inside recurring-break windows once the rolling horizon advances past the last materialized day. The RPC is idempotent, so re-running catches up.
 - **Cron heartbeat (PR #265).** The external every-15-min `/api/cron/appointment-reminders` job now writes a non-sensitive "last successful run" heartbeat to Upstash (`reminder_cron:last_success`) on each authorized success, and the operator-only `/admin` console surfaces it as a **Reminder scheduler** card (healthy ≤45 min / stale / missing) so missed runs are observable inside Hone without an external-scheduler check. (Originally deferred from PR #149.) The heartbeat is best-effort/fail-open and stores only a timestamp + aggregate counts — never CRON_SECRET or client PII.
+
+### Reminder scheduler alerting + runbook (PR #283)
+
+The PR #265 heartbeat was **passive** — an operator only learned the external scheduler had stopped if they happened to open `/admin`. PR #283 makes it **active** without a new scheduler, cron route, or migration.
+
+**How it works.** The **existing daily** `materialize-recurring-breaks` cron (`0 8 * * *`) now runs a best-effort `recordReminderSchedulerHealthAlert()` after its own work. That cron fires automatically and **independently** of the external every-15-min scheduler, so it can detect a dead scheduler that never calls its own route. The check reads the heartbeat, classifies it (`computeReminderSchedulerStatus`), and records ONE deduped ops alert when stale/missing. It **never sends reminders** and never calls `/api/cron/appointment-reminders`; a failure of the check can never break the daily cron (it is wrapped). The always-on admin **Reminder scheduler** card remains the **real-time read-only** view.
+
+**Scheduler facts.**
+- **URL:** `/api/cron/appointment-reminders` — the external scheduler (cron-job.org) remains the source of reminder execution.
+- **Auth:** `Authorization: Bearer <CRON_SECRET>` (validated by `lib/cron/auth.ts`; missing/wrong → `401`).
+- **Cadence:** every **15 minutes**.
+- **Expected success:** `2xx` response → heartbeat (`reminder_cron:last_success`) updates → admin status **Healthy** (≤45 min).
+
+**Failure meanings.**
+- **`401`** = missing/bad `CRON_SECRET` (the scheduler is calling but unauthorized).
+- **`5xx`** = app/runtime/provider issue inside the route (records `cron_route_failed` critical).
+- **stale** = the scheduler is not calling, or recent runs failed: last success older than 45 min → `reminder_scheduler_stale` (warning).
+- **missing** = no successful run has ever been recorded (or the 24h heartbeat key expired) → `reminder_scheduler_missing` (critical, emails `OPS_ALERT_EMAILS`).
+
+**Alert + dedupe behavior.** stale/missing records **one** deduped ops alert; while an unresolved alert for the same event exists, repeated daily checks record **nothing** (no spam). **Detection latency is up to ~24h** (the daily cron cadence); the admin card is the real-time view for anyone who looks sooner. **No auto-resolve** — the operator resolves the alert manually on the admin **Ops alerts** page after the scheduler is confirmed healthy.
+
+**Operator response (do NOT manually trigger reminders unless explicitly approved):**
+1. Check the **external scheduler provider** (cron-job.org) — is the job enabled and firing every 15 min?
+2. Check the **`CRON_SECRET`** configuration (scheduler header vs. Vercel env) if you see `401`s.
+3. Check the **Vercel deployment / logs** for the reminder route (`5xx`, exceptions).
+4. Check the **admin Ops alerts** page for the `reminder_scheduler_*` (and `cron_route_failed` / `reminder_send_exhausted`) alerts + details.
+5. After the scheduler is confirmed healthy (admin card returns to **Healthy**), **resolve** the alert manually.
+
+Live payments remain disabled (unrelated to this change).
 
 ### Disinfectant discard reminders — read-time only (PR #280)
 
