@@ -156,6 +156,32 @@ Negative checks (each should leave the appointment status alone):
 
 After step 6 (or 7) lands, proceed to the payment smoke chain below.
 
+## Payment success persistence smoke (PR #281, test mode only)
+
+Verifies the authoritative-success rule: a charge returns a normal `succeeded` result ONLY when Stripe succeeded **and** Hone persisted the success on the local ledger. When Stripe succeeds but the local success write fails (DB error) or affects zero rows, the practitioner must see an indeterminate **manual-review** result (NOT a clean success) and a critical ops alert must exist.
+
+Happy-path check (normal run):
+1. Run a normal test charge (the payment smoke chain above) so a `status='succeeded'` row exists.
+2. Confirm the UI shows **Test charge succeeded** and SQL shows `status='succeeded'` with `stripe_payment_intent_id`, `stripe_charge_id`, `charged_at` populated.
+3. SQL verify NO `session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows` alert for this attempt:
+   ```sql
+   select event, severity, created_at from public.ops_alerts
+   where event in (
+     'session_payment_succeeded_write_failed',
+     'session_payment_succeeded_write_zero_rows'
+   )
+   order by created_at desc limit 5;
+   ```
+
+Persistence-failure behavior (primarily pinned by source-grep tests — the harness/operator cannot easily force a real DB-write error mid-charge):
+- **Stripe success + DB write error** → critical ops alert `session_payment_succeeded_write_failed`; the practitioner-facing result is `needs_manual_review` with the message *"Stripe reported the payment as succeeded, but Hone could not confirm the local payment record. Review the payment in Stripe and Hone before retrying."* The attempt row stays `pending_stripe`.
+- **Stripe success + zero-row update** → critical ops alert `session_payment_succeeded_write_zero_rows`; same `needs_manual_review` result.
+- In neither case does the result report a normal `succeeded` outcome.
+- **Backstop:** the `payment_intent.succeeded` webhook (below) later reconciles a `pending_stripe` row to `succeeded`, so a transient DB-error split self-heals even though the synchronous result was honestly indeterminate.
+- Detect any indeterminate split that needs an operator: any critical `session_payment_succeeded_write_*` alert in `ops_alerts` is the wake-up signal; reconcile the named `attempt_id` against its Stripe PaymentIntent before retrying.
+
+Source enforcement: `tests/lib/billing/payment-success-persistence.test.ts` and `tests/lib/billing/payment-outcome-zero-row.test.ts`. **Live payments remain disabled; controlled live-payment enablement has not started.**
+
 ## Webhook reconciliation smoke (PR #179, test mode only)
 
 Run this after a full Prepare -> Run test charge -> Send receipt -> Refund chain has produced a `succeeded` row with `refund_status='succeeded'`.

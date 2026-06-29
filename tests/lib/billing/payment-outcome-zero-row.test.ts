@@ -50,6 +50,15 @@ describe("charge outcome writes detect zero rows (session-payment-charge.ts)", (
     // branch only evaluates a real (non-error) zero-row result.
     expect(count(CHARGE, /logInternal\("session_payment_(succeeded|failed)_write_failed"/g)).toBe(2);
   });
+
+  // PR #281: a DB ERROR on the succeeded write is also a real-money /
+  // unstamped-ledger split. PR #263 only logged it to stderr; now it
+  // raises a CRITICAL ops alert just like the zero-row case.
+  it("succeeded write raises a CRITICAL ops alert on a DB error (not just stderr)", () => {
+    expect(CHARGE).toMatch(
+      /severity: "critical",\s*event: "session_payment_succeeded_write_failed"/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,7 @@ describe("zero-row alerts leak no raw payload or PII", () => {
     // carries attempt_id (a UUID), proving a safe-id shape was used.
     for (const ev of [
       "session_payment_succeeded_write_zero_rows",
+      "session_payment_succeeded_write_failed",
       "session_payment_failed_write_zero_rows",
       "payment_intent_succeeded_reconcile_zero_rows",
       "payment_intent_failed_reconcile_zero_rows",

@@ -64,6 +64,11 @@ const LIVE_MODE_BLOCKED_MESSAGE =
   "Live charges are not enabled for this test-mode release.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
   "This test charge is pending and needs manual review before retrying.";
+// PR #281: Stripe reported success but Hone could not confirm the local
+// ledger write. Surfaced to the practitioner verbatim; carries no card
+// data, raw Stripe payload, secrets, or sensitive client data.
+const SUCCESS_NOT_PERSISTED_MESSAGE =
+  "Stripe reported the payment as succeeded, but Hone could not confirm the local payment record. Review the payment in Stripe and Hone before retrying.";
 const GENERIC_LINEAGE_MISMATCH_MESSAGE =
   "Card or studio details no longer match this session payment. Refresh and try again.";
 const AUTHENTICATION_REQUIRED_MESSAGE =
@@ -129,6 +134,12 @@ export type SessionPaymentChargeResult =
       message: string;
       blockingReasons?: string[];
       failureCode?: string | null;
+      // PR #281: non-sensitive reconciliation identifiers for the
+      // needs_manual_review-after-Stripe-success case. Let an operator
+      // bind the indeterminate result to the real Stripe charge + the
+      // local attempt row. Never card data / raw payload / secrets.
+      stripePaymentIntentId?: string;
+      attemptId?: string;
     };
 
 type ClaimRow = {
@@ -280,11 +291,25 @@ async function loadCardAndVerifyLineage(args: {
   return { ok: true, card: card! };
 }
 
+// PR #281: a payment may only return a NORMAL 'succeeded' result when
+// Stripe succeeded AND Hone persisted that success on the local ledger
+// row. writeSucceededOutcome reports which of those happened so the
+// caller never reports a clean success it could not persist. Mirrors
+// the refund helper's writeOkErr || okWriteZeroRows -> needs_manual_review
+// posture (lib/billing/payment-refund.ts).
+type SuccessPersistenceResult =
+  | { persisted: true }
+  | { persisted: false; reason: "db_error" | "zero_rows" };
+
 // Snapshots a successful PaymentIntent back onto the attempt row.
+// Returns whether the success outcome was durably persisted: the
+// caller must NOT report a normal success unless persisted === true.
 async function writeSucceededOutcome(args: {
   attemptId: string;
+  studioId: string;
+  clientId: string;
   pi: Stripe.PaymentIntent;
-}): Promise<void> {
+}): Promise<SuccessPersistenceResult> {
   const admin = createAdminClient();
   const latestCharge =
     typeof args.pi.latest_charge === "string"
@@ -306,12 +331,35 @@ async function writeSucceededOutcome(args: {
     .eq("status", "pending_stripe")
     .select("id");
   if (error) {
+    // PR #281: the PaymentIntent already succeeded at Stripe, so a DB
+    // error on the succeeded-outcome write is a real-money / unstamped-
+    // ledger split. PR #263 only logged this to stderr; raise a CRITICAL
+    // ops alert (the operator's wake-up signal) and tell the caller the
+    // success was NOT persisted so it returns needs_manual_review rather
+    // than a clean success. The webhook payment_intent.succeeded handler
+    // (PR #179) remains the eventual-consistency backstop; the row stays
+    // 'pending_stripe' for it to reconcile.
     logInternal("session_payment_succeeded_write_failed", {
       code: error.code,
       message: error.message,
       attemptId: args.attemptId,
     });
-    return;
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_succeeded_write_failed",
+      message:
+        "PaymentIntent succeeded but Hone could not persist the succeeded outcome on the attempt row (DB error). The charge is real on Stripe; the row stays 'pending_stripe' until reconciled (webhook backstop or manual). Manual reconciliation required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      stripePaymentIntentId: args.pi.id,
+      route: "lib/billing/session-payment-charge:writeSucceededOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "succeeded",
+        db_code: error.code ?? null,
+      },
+    });
+    return { persisted: false, reason: "db_error" };
   }
   // PR #263: zero-row detection. A status-conditional UPDATE that
   // matches no row (the attempt left 'pending_stripe' before this
@@ -328,6 +376,8 @@ async function writeSucceededOutcome(args: {
       event: "session_payment_succeeded_write_zero_rows",
       message:
         "PaymentIntent succeeded but the succeeded-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The ledger row may be unstamped while the charge is real on Stripe. Manual reconciliation required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
       stripePaymentIntentId: args.pi.id,
       route: "lib/billing/session-payment-charge:writeSucceededOutcome",
       safeDetails: {
@@ -335,7 +385,11 @@ async function writeSucceededOutcome(args: {
         attempted_status: "succeeded",
       },
     });
+    // PR #281: a zero-row success write is NOT a normal success. The
+    // caller must return needs_manual_review with the reconciliation ids.
+    return { persisted: false, reason: "zero_rows" };
   }
+  return { persisted: true };
 }
 
 async function writeFailedOutcome(args: {
@@ -440,7 +494,24 @@ async function reconcileExistingPaymentIntent(args: {
     };
   }
   if (pi.status === "succeeded") {
-    await writeSucceededOutcome({ attemptId: args.attemptId, pi });
+    const persistence = await writeSucceededOutcome({
+      attemptId: args.attemptId,
+      studioId: args.studioId,
+      clientId: args.clientId,
+      pi,
+    });
+    if (!persistence.persisted) {
+      // PR #281: Stripe says succeeded but Hone could not persist it
+      // (DB error or zero-row update). writeSucceededOutcome already
+      // raised the critical ops alert. Never report a clean success.
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message: SUCCESS_NOT_PERSISTED_MESSAGE,
+        stripePaymentIntentId: pi.id,
+        attemptId: args.attemptId,
+      };
+    }
     const latestCharge =
       typeof pi.latest_charge === "string"
         ? pi.latest_charge
@@ -878,7 +949,28 @@ export async function runSessionPaymentCharge(args: {
   // 7. Stripe accepted the create+confirm. The PI either succeeded
   //    or sits in requires_action / requires_payment_method.
   if (pi.status === "succeeded") {
-    await writeSucceededOutcome({ attemptId: attemptRow.id, pi });
+    // PR #281: success is authoritative ONLY if Hone also persisted the
+    // succeeded outcome on the ledger row. If persistence failed (DB
+    // error or zero-row update), writeSucceededOutcome already raised the
+    // critical ops alert; return needs_manual_review with the
+    // reconciliation ids instead of a clean success. No retry is issued
+    // (the deterministic idempotency key + Stripe 24h replay already
+    // guard against a double charge), so this cannot move money twice.
+    const persistence = await writeSucceededOutcome({
+      attemptId: attemptRow.id,
+      studioId: attemptRow.studio_id,
+      clientId: attemptRow.client_id,
+      pi,
+    });
+    if (!persistence.persisted) {
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message: SUCCESS_NOT_PERSISTED_MESSAGE,
+        stripePaymentIntentId: pi.id,
+        attemptId: attemptRow.id,
+      };
+    }
     const latestCharge =
       typeof pi.latest_charge === "string"
         ? pi.latest_charge
