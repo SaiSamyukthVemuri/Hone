@@ -121,6 +121,10 @@ The no-show-check route is intentionally non-mutating (responds with `{ ok: true
 - **`materialize-recurring-breaks` schedule drift**: if the scheduler stops hitting this route, recurring break occurrences are NOT materialized for newly-extended horizon days. Public booking eventually starts offering slots inside recurring-break windows once the rolling horizon advances past the last materialized day. The RPC is idempotent, so re-running catches up.
 - **Cron heartbeat (PR #265).** The external every-15-min `/api/cron/appointment-reminders` job now writes a non-sensitive "last successful run" heartbeat to Upstash (`reminder_cron:last_success`) on each authorized success, and the operator-only `/admin` console surfaces it as a **Reminder scheduler** card (healthy ≤45 min / stale / missing) so missed runs are observable inside Hone without an external-scheduler check. (Originally deferred from PR #149.) The heartbeat is best-effort/fail-open and stores only a timestamp + aggregate counts — never CRON_SECRET or client PII.
 
+### Disinfectant discard reminders — read-time only (PR #280)
+
+The disinfectant "discard / replace by" date (`record_keeping_disinfectants.discard_due_date`, migration 0096) drives a **read-time** due/overdue/due-soon badge on the Record Keeping page, computed in the studio timezone when the page renders. **There is NO cron, bell notification, email, or SMS for it** — a proactive reminder was deliberately deferred (Option A). If/when a proactive reminder is built, the intended design reuses the existing `practitioner_notifications` table + a new daily `/api/cron/disinfectant-reminders` route (same `CRON_SECRET` auth + heartbeat pattern) inserting one notification per due batch, made idempotent by a `reminder_sent_at` marker column. Until then, disinfectant reminders are visible only when a practitioner opens Record Keeping.
+
 ## Testing instructions
 
 Real Resend / Twilio sends need real credentials and a real inbox / phone number you control. The harness cannot exercise these from CI; they live in manual smoke ([docs/12](./12_SMOKE_TESTS.md)).

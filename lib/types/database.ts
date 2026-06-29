@@ -1088,6 +1088,10 @@ export type RecordKeepingDisinfectant = {
   disinfectant_name: string;
   concentration: string;
   date_discarded: string | null;
+  // Migration 0096 (PR #280): the date this batch must be replaced/discarded by.
+  // Distinct from date_prepared (made) and date_discarded (actually discarded).
+  // Drives a read-time due/overdue alert; nullable, legacy rows read safely.
+  discard_due_date: string | null;
   operator_practitioner_id: string | null;
   operator_name: string;
   notes: string | null;
