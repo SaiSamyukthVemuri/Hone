@@ -156,6 +156,20 @@ Negative checks (each should leave the appointment status alone):
 
 After step 6 (or 7) lands, proceed to the payment smoke chain below.
 
+## Reminder scheduler alerting smoke (PR #283)
+
+Confirms a stale/missing external reminder scheduler becomes a deduped ops alert (not just a passive admin card). **Do NOT trigger production reminders or call `/api/cron/appointment-reminders`.** Primarily verified by `tests/lib/cron/reminder-heartbeat.test.ts` (pure decision + safe_details) + `tests/app/cron/reminder-heartbeat-wiring.test.ts` (the daily-cron wiring) — run `npm test`.
+
+Behavior to expect:
+- **Healthy** heartbeat (last success ≤45 min) → admin **Reminder scheduler** card green; the daily check records **no** alert.
+- **Stale** (>45 min) → daily `materialize-recurring-breaks` cron records one `reminder_scheduler_stale` (**warning**) ops alert.
+- **Missing** (no recorded run) → one `reminder_scheduler_missing` (**critical**, emails `OPS_ALERT_EMAILS`).
+- **Dedupe:** while an unresolved alert for that event exists, repeated daily runs record **nothing** (no spam).
+- The alert `safe_details` carry only `status` / `last_success_at` / `age_minutes` / `cadence_minutes` / `stale_after_minutes` / `checked_at` — no `CRON_SECRET`, Authorization header, client PII, or reminder content.
+- **Detection latency** ≤ ~24h (daily cron); the admin card is the real-time view.
+
+Operator check (read-only): the alerts appear on `/admin/ops-alerts` (critical-first). Resolve manually after the external scheduler (cron-job.org) is confirmed healthy and the admin card returns to **Healthy**. Full runbook: docs/08 §"Reminder scheduler alerting + runbook (PR #283)". Live payments remain disabled (unrelated).
+
 ## Payment reconciliation read-only checks (PR #282)
 
 Operator/reviewer sweep for unreconciled payment state. **Read-only — every query is `SELECT`-only and never calls Stripe.** Run from the Supabase SQL editor (read-only role) or a read replica; the full snippets live in [docs/16 §17.7](./16_LIVE_PAYMENTS_READINESS.md#177-read-only-reconciliation-checks-select-only). Run before/after any controlled live payment and on a schedule once live. Expected (test-mode steady state): all six return clean.

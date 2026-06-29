@@ -212,8 +212,13 @@ describe("supporting docs frame PR #282 as readiness, not enablement", () => {
     expect(DECISIONS).toMatch(/no migration/i);
   });
 
-  it("docs/14 current-status names PR #282 and keeps live payments disabled", () => {
-    expect(HANDOFF).toMatch(/Current production status \(as of PR #282\)/);
+  it("docs/14 current-status is at PR #282 or later and keeps live payments disabled", () => {
+    // The handoff status header rolls forward with each docs PR; assert it is
+    // at #282 or higher (so PR #282's contract holds without locking later
+    // PRs to back-edit this file — matching live-payments-readiness.test.ts).
+    const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
+    expect(m).not.toBeNull();
+    if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(282);
     expect(HANDOFF).toMatch(/Live payments remain disabled/i);
   });
 });
