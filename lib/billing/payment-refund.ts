@@ -246,6 +246,39 @@ export async function refundPaymentChargeAttempt(args: {
   }
 
   // ============================================================
+  // 2b. Owner-only re-check — defense in depth (PR #296). Refund
+  //     INITIATION is owner-only and is already gated in BOTH action
+  //     callers (refundPaymentChargeAttemptAction, refundFeeAttemptAction).
+  //     Re-verify it HERE so a FUTURE caller that reaches this helper
+  //     without the action-layer gate still cannot move money out as a
+  //     non-owner. The actor is scoped to the same studio as the resolved
+  //     studioId; this runs BEFORE the claim UPDATE and the Stripe refund.
+  //     Reads only the existing practitioners.role column — no schema change.
+  // ============================================================
+  const { data: actorRow, error: actorErr } = await admin
+    .from("practitioners")
+    .select("role")
+    .eq("id", args.practitionerId)
+    .eq("studio_id", args.studioId)
+    .eq("active", true)
+    .maybeSingle();
+  if (actorErr || !actorRow || actorRow.role !== "owner") {
+    // Safe IDs + event name only — no client name/email/phone, no health/
+    // treatment data, no Stripe secret or raw payload.
+    logInternal("payment_refund_helper_not_owner", {
+      attemptId: args.attemptId,
+      studioId: args.studioId,
+      practitionerId: args.practitionerId,
+      actorLoadError: actorErr ? actorErr.code : null,
+    });
+    return {
+      ok: false,
+      outcome: "not_authorized",
+      message: "Only the studio owner can issue a refund.",
+    };
+  }
+
+  // ============================================================
   // 3. Eligibility predicates. Each branch returns a distinct
   //    outcome so the action layer + UI can render the precise
   //    reason. Test-mode invariants enforced even though the
