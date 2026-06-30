@@ -6,7 +6,7 @@ import {
   createTimedBlockAction,
   deleteTimedBlockAction,
   updateTimedBlockAction,
-} from "../availability/actions";
+} from "./actions";
 
 type Props = {
   studioTimezone: string;
