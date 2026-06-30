@@ -21,6 +21,7 @@ import {
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
+import { calendarReturnHref } from "../calendar-return";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import { PostcareSendButton } from "../PostcareSendButton";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
@@ -70,10 +71,19 @@ function fitzpatrickLabel(value: number | null): string | null {
 
 export default async function AppointmentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{
+    view?: string | string[];
+    week?: string | string[];
+    month?: string | string[];
+  }>;
 }) {
   const { id } = await params;
+  // Safe, internal-only back link: returns to the view/date the practitioner
+  // came from (falls back to /calendar). Never an external URL.
+  const backHref = calendarReturnHref(await searchParams);
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
@@ -314,7 +324,7 @@ export default async function AppointmentDetailPage({
   return (
     <div className="flex flex-col gap-6">
       <Link
-        href="/calendar"
+        href={backHref}
         className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
       >
         ← Calendar

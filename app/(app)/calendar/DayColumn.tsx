@@ -178,6 +178,10 @@ type Props = {
   // as public booking). Display-only: used to hide auto-materialized
   // recurring breaks on closed dates. Does not affect booking or data.
   closedDay: boolean;
+  // Query string (e.g. "?view=week&week=2026-07-06") appended to each
+  // appointment-detail link so the detail page's back link returns the
+  // practitioner to this view/date. Always internal to /calendar; "" = none.
+  returnTo?: string;
 };
 
 // Drag-selection state. `pointerId` matches the in-flight pointer so a
@@ -203,6 +207,7 @@ export function DayColumn({
   isToday,
   availability,
   closedDay,
+  returnTo = "",
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR #139. Drag-created drafts route through a chooser ("Book
@@ -702,7 +707,7 @@ export function DayColumn({
         return (
           <Link
             key={a.id}
-            href={`/calendar/${a.id}`}
+            href={`/calendar/${a.id}${returnTo}`}
             style={{ top, height }}
             title={
               serviceName

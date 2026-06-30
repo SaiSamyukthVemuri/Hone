@@ -25,6 +25,7 @@ import type {
 } from "@/lib/booking/queries";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { DayColumn, type DayAvailability } from "./DayColumn";
+import { buildCalendarReturnParams } from "./calendar-return";
 // Grid constants + formatters MUST come from plain (non-"use client")
 // modules. Importing them from the "use client" DayColumn turned them
 // into client-reference proxies in this Server Component, so the rail's
@@ -165,6 +166,10 @@ export default async function CalendarPage({
 
   const prevWeek = addDays(weekStart, -7);
   const nextWeek = addDays(weekStart, 7);
+
+  // Return context for appointment-detail links: send the practitioner back to
+  // THIS week view/date when they return from an appointment (not today).
+  const returnTo = buildCalendarReturnParams({ view: "week", week: weekStart });
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
@@ -344,6 +349,7 @@ export default async function CalendarPage({
                 isToday={date === today}
                 availability={availabilityByDow.get(i) ?? null}
                 closedDay={isClosedDate(date, i)}
+                returnTo={returnTo}
               />
             ))}
           </div>
