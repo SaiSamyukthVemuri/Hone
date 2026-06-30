@@ -492,6 +492,10 @@ Expected end state:
 4. Open `/book/<slug>` and the studio's booking horizon date that overlaps the block. Confirm the blocked time is NOT offered as a bookable slot.
 5. Repeat with an all-day block. Confirm the block synthesises `[utc(date 00:00), utc(date+1 00:00))` (no extra calendar day swept up).
 
+### 7a. Calendar return-to-date navigation (Chloe pilot feedback, no migration)
+
+When a practitioner returns from an appointment to the calendar, they should land back on the view/date they came from (not today). The week page now appends a safe return context (`?view=week&week=<anchor>`) to each appointment-detail link (`DayColumn`), and the detail page's back link is built from those params via `calendarReturnHref` (`app/(app)/calendar/calendar-return.ts`) — always internal to `/calendar`, falling back to bare `/calendar` when absent, and never an external URL (unknown view / malformed date anchors are dropped). **Manual smoke:** open `/calendar`, navigate to a non-current week (Next ›), open an appointment, then click "← Calendar" — confirm you return to that same week, not today. Confirm a direct `/calendar/<id>` link (no params) still back-links to `/calendar`. Pinned by `tests/app/calendar/return-nav.test.ts`. Render/routing-only: no schema/migration, no appointment mutation, no other calendar rendering changed.
+
 ## 8. Fee protection smoke (PR #145)
 
 1. As owner in `/settings/payments`, set both `late_cancel_fee_cents` and `no_show_fee_cents` to non-zero values via the FeeAmountsCard.
