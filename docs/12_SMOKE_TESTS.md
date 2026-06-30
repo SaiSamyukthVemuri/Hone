@@ -156,6 +156,10 @@ Negative checks (each should leave the appointment status alone):
 
 After step 6 (or 7) lands, proceed to the payment smoke chain below.
 
+## Ops-alert message redaction smoke (PR #285)
+
+Confirms operator alerts are safe by default — the alert MESSAGE (not just `safe_details`) is centrally redacted before every sink (server log, `ops_alerts` row, admin page, critical email). **Privacy hardening only; no migration, no UI/notification-channel change, no payment/reminder/Treatment-Photos behavior change.** Primary coverage: `tests/lib/ops/redact.test.ts` (pure `redactOpsAlertMessage` scrubs email / phone / Bearer / CRON_SECRET / JWT / Supabase signed URL / URL token+signature params / appointment-cancel token / `treatment-images` + raw `<uuid>/<uuid>/` storage paths / Stripe `sk_`/`rk_`/`whsec_`/`pi_…_secret_` / high-entropy tokens / named `token`/`secret`/`password`/`client_secret` fields; PRESERVES non-secret `pi_`/`ch_`/`re_`/`cus_` ids + UUIDs; deterministic + idempotent; safe_details value redaction; central wiring in `recordOpsAlert` before log/DB/email) + the existing `tests/lib/ops/alerts.test.ts` (safe_details + never-throws) — run `npm test`. **Operator check (read-only):** on `/admin/ops-alerts`, an alert whose source error referenced an email/phone/token/signed URL shows `[redacted]` in place of the secret while keeping the event, severity, studio/client/PaymentIntent ids, and route. Live payments remain disabled (unrelated).
+
 ## Reminder scheduler alerting smoke (PR #283)
 
 Confirms a stale/missing external reminder scheduler becomes a deduped ops alert (not just a passive admin card). **Do NOT trigger production reminders or call `/api/cron/appointment-reminders`.** Primarily verified by `tests/lib/cron/reminder-heartbeat.test.ts` (pure decision + safe_details) + `tests/app/cron/reminder-heartbeat-wiring.test.ts` (the daily-cron wiring) — run `npm test`.

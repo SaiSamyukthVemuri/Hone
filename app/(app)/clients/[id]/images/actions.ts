@@ -161,7 +161,12 @@ export async function uploadTreatmentImageAction(
       await recordOpsAlert({
         severity: "warning",
         event: "treatment_image_upload_failed",
-        message: upErr.message,
+        // PR #285: generic message — the event already says what failed, and a
+        // raw storage error.message can carry a storage path / signed URL. The
+        // central redactor in recordOpsAlert is the real backstop; this keeps
+        // the alert clean at the source. The provider error code stays in the
+        // structured server log, not the durable alert.
+        message: "Treatment image upload to storage failed.",
         studioId: studio.id,
         clientId,
         route: "/clients/[id]/images",
@@ -195,7 +200,12 @@ export async function uploadTreatmentImageAction(
         event: rmErr
           ? "treatment_image_orphan_cleanup_failed"
           : "treatment_image_metadata_insert_failed",
-        message: rmErr ? rmErr.message : insErr.message,
+        // PR #285: generic message (the event names the failure). A raw
+        // Supabase error.message can carry the storage path / column data;
+        // central redaction is the backstop.
+        message: rmErr
+          ? "Treatment image orphan-object cleanup failed after a metadata insert failure."
+          : "Treatment image metadata insert failed.",
         studioId: studio.id,
         clientId,
         route: "/clients/[id]/images",
@@ -259,7 +269,9 @@ export async function getTreatmentImageSignedUrlAction(input: {
       await recordOpsAlert({
         severity: "warning",
         event: "treatment_image_sign_failed",
-        message: signErr?.message ?? "no signed url",
+        // PR #285: generic message — a storage signing error can echo the
+        // signed URL / path. Central redaction is the backstop.
+        message: "Treatment image signed-URL creation failed.",
         studioId: studio.id,
         route: "/clients/[id]/images",
         safeDetails: { imageId: input.imageId, bucket: row.storage_bucket },

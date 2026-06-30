@@ -276,6 +276,10 @@ PR #282 is **readiness + reconciliation only — NOT live-payment enablement.** 
 
 App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
 
+### Ops-alert message redaction (PR #285)
+
+Payment/Stripe `recordOpsAlert` call sites (webhook handler failures, refund unknown-outcome, reconciliation criticals, etc.) are safe by default: `recordOpsAlert` now **centrally redacts the message** via `redactOpsAlertMessage` (`lib/ops/redact.ts`) before the stderr log, the `ops_alerts` row, the admin page, and the critical email — scrubbing Stripe secret/restricted keys (`sk_`/`rk_`), webhook secrets (`whsec_`), client secrets (`pi_…_secret_…`), plus emails / phones / Bearer tokens / JWTs / signed URLs / storage paths. It **preserves** non-secret Stripe object ids (`pi_`/`ch_`/`re_`/`cus_`/…) and UUIDs so reconciliation context survives, and the typed `stripe_payment_intent_id` / `stripe_event_id` columns are untouched. No payment behavior / Stripe gate / live-mode change. See docs/03 §ops_alerts.
+
 ## 5. Webhook configuration
 
 Endpoint: `/api/stripe/webhook` (route handler).

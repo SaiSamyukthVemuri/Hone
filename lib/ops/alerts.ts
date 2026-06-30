@@ -1,6 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
+import {
+  redactOpsAlertMessage,
+  redactOpsAlertDetails,
+} from "@/lib/ops/redact";
 
 // ===========================================================================
 // recordOpsAlert (PR #153)
@@ -65,98 +69,18 @@ export type OpsAlertInput = {
   safeDetails?: Record<string, unknown>;
 };
 
-// Keys that may contain credential-shaped values. Redacted from
-// safeDetails before insert or log. Case-insensitive.
-const REDACT_KEYS = [
-  "token",
-  "raw_token",
-  "rawtoken",
-  "client_secret",
-  "clientsecret",
-  "secret",
-  "password",
-  "cookie",
-  "set-cookie",
-  "authorization",
-  "auth",
-  "api_key",
-  "apikey",
-  "stripe_secret_key",
-  "private_key",
-  "card_number",
-  "cardnumber",
-  "pan",
-  "cvc",
-  "cvv",
-  "ssn",
-  "bearer",
-];
-
-const REDACTED = "[redacted]";
 const MAX_MESSAGE_LEN = 2000;
-const MAX_DETAIL_VALUE_LEN = 500;
 
-function looksLikeStripeSecret(value: string): boolean {
-  return /^sk_(live|test)_/.test(value);
-}
-function looksLikeBearerToken(value: string): boolean {
-  // Long base64-url-ish strings (>= 32 chars, mostly token alphabet)
-  // are likely raw tokens we should not surface. We DO NOT match
-  // typical UUIDs (length 36 with hyphens) so resource IDs flow.
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
-    return false;
-  }
-  return /^[A-Za-z0-9_-]{32,}$/.test(value);
-}
-function looksLikeJwt(value: string): boolean {
-  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
-}
-
-function redactValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    if (
-      looksLikeStripeSecret(value) ||
-      looksLikeJwt(value) ||
-      looksLikeBearerToken(value)
-    ) {
-      return REDACTED;
-    }
-    if (value.length > MAX_DETAIL_VALUE_LEN) {
-      return value.slice(0, MAX_DETAIL_VALUE_LEN) + "...[truncated]";
-    }
-    return value;
-  }
-  if (value === null || value === undefined) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(redactValue);
-  }
-  if (typeof value === "object") {
-    return redactObject(value as Record<string, unknown>);
-  }
-  return value;
-}
-
-function redactObject(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(obj)) {
-    if (REDACT_KEYS.includes(key.toLowerCase())) {
-      out[key] = REDACTED;
-      continue;
-    }
-    out[key] = redactValue(val);
-  }
-  return out;
-}
-
-// Exported for unit tests; callers should use recordOpsAlert.
-export function redactSafeDetails(
-  input: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!input) return {};
-  return redactObject(input);
-}
+// PR #285: central redaction. The pure, dependency-free helpers live in
+// lib/ops/redact.ts so they are trivially testable and reusable. The
+// message scrubber (redactOpsAlertMessage) is the PR #285 fix — the raw
+// `message` was previously only truncated, so a provider error.message
+// could leak PII / signed URLs / tokens / Stripe secrets into the log,
+// the ops_alerts row, the admin page, and the critical email. safeDetails
+// redaction is unchanged in spirit (credential-named keys + secret-shaped
+// values) and now also scrubs embedded patterns in string values.
+// redactSafeDetails is kept as the public name the existing tests use.
+export const redactSafeDetails = redactOpsAlertDetails;
 
 function truncate(str: string, max: number): string {
   if (str.length <= max) return str;
@@ -183,7 +107,15 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
   const redacted = redactSafeDetails(input.safeDetails);
-  const message = truncate(input.message, MAX_MESSAGE_LEN);
+  // PR #285: redact the message CENTRALLY before it reaches ANY sink
+  // (console log, ops_alerts row, admin page, critical email). The single
+  // `message` local below is the only message surface, so this one call
+  // makes every caller's message safe-by-default — no per-call-site fix
+  // is required for correctness.
+  const message = truncate(
+    redactOpsAlertMessage(input.message),
+    MAX_MESSAGE_LEN,
+  );
 
   // Structured stderr log first. Always emitted, even if DB insert
   // fails. This is the floor for Vercel-log-only debugging.

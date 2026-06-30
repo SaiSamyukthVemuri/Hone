@@ -106,6 +106,8 @@ Every `/api/cron/*` route validates `Authorization: Bearer $CRON_SECRET` before 
 
 When an email or SMS send gives up (final-attempt non-retryable failure OR attempt counter reaches 3), `logEmailFailure` / `logSmsFailure` now ALSO record a durable row in the `ops_alerts` table via `recordOpsAlert`. The helper never throws to the caller, so the booking / reminder / postcare path that triggered the log is not affected by alerting failures.
 
+**Alert message redaction (PR #285).** Cron / email / SMS alert call sites that pass a provider `error.message` (e.g. `cron_route_failed`) are safe by default: `recordOpsAlert` now runs `redactOpsAlertMessage` (`lib/ops/redact.ts`) on the message before the stderr log, the `ops_alerts` row, the admin page, and the critical email — scrubbing email/phone/CRON_SECRET/Bearer tokens/JWTs/signed URLs/storage paths/Stripe secrets while preserving safe ids (non-secret Stripe object ids, UUIDs). See docs/03 §ops_alerts.
+
 Events:
 
 - `email_send_gave_up` (warning): emitted from `logEmailFailure` when the email send is non-retryable OR attempt_number >= 3. The ops helper does not dispatch operator email at all in PR #153 (deferred), so the give-up alert lives purely as a `ops_alerts` row + stderr log.
