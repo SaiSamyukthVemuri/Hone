@@ -9,6 +9,8 @@ import {
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { serviceCardClasses } from "@/lib/calendar/service-colors";
 import { appointmentDisplayStatus } from "./appointment-display-status";
+import { displayBlockoutLabel } from "./calendar-format";
+import type { MonthDayBlocked } from "./month-blocked";
 
 // Server component. Renders the 6-row Sunday-start month grid for
 // the given monthAnchor (YYYY-MM-DD, normalized to first-of-month by
@@ -42,11 +44,13 @@ const MAX_CHIPS_PER_DAY = 3;
 export function MonthView({
   monthAnchor,
   appointmentsByDate,
+  blockedByDate,
   today,
   isClosedDate,
 }: {
   monthAnchor: string;
   appointmentsByDate: Map<string, MonthDayAppt[]>;
+  blockedByDate: Map<string, MonthDayBlocked>;
   today: string;
   isClosedDate: ClosedDayLookup;
 }) {
@@ -86,6 +90,20 @@ export function MonthView({
           const isTodayCell = cellDate === today;
           const closed = isClosedDate(cellDate);
           const dayAppts = appointmentsByDate.get(cellDate) ?? [];
+          const blocked = blockedByDate.get(cellDate) ?? null;
+          // Compact blocked-time label for the cell: a full-day blockout shows
+          // its reason (fallback "Blocked"); otherwise the first timed-block /
+          // break label, with "+N" when several apply.
+          const blockedLabel = blocked
+            ? blocked.fullDay
+              ? displayBlockoutLabel(blocked.fullDayReason)
+              : blocked.labels.length > 0
+                ? blocked.labels[0] +
+                  (blocked.labels.length > 1
+                    ? ` +${blocked.labels.length - 1}`
+                    : "")
+                : null
+            : null;
           // The week view URL the day click navigates to. Snap the
           // clicked date to its containing week so the week view
           // header carries a consistent start, exactly matching what
@@ -132,6 +150,14 @@ export function MonthView({
                 )}
               </div>
               <div className="flex flex-col gap-1">
+                {blockedLabel && inMonth && (
+                  <span
+                    title={blockedLabel}
+                    className="truncate rounded-md border border-[#C9C4B6] bg-[#F4F1EA] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#3F3F3F] dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-200"
+                  >
+                    {blockedLabel}
+                  </span>
+                )}
                 {dayAppts.slice(0, MAX_CHIPS_PER_DAY).map((a) => {
                   const ds = appointmentDisplayStatus(a.status, a.ends_at);
                   const terminal = ds !== "upcoming";
@@ -166,7 +192,7 @@ export function MonthView({
                     +{dayAppts.length - MAX_CHIPS_PER_DAY} more
                   </span>
                 )}
-                {dayAppts.length === 0 && inMonth && !closed && (
+                {dayAppts.length === 0 && inMonth && !closed && !blockedLabel && (
                   <span className="text-[10px] text-neutral-400 dark:text-neutral-600">
                     No appointments
                   </span>

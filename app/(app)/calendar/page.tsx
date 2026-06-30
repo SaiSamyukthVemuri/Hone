@@ -44,6 +44,7 @@ import {
 } from "./calendar-format";
 import { CalendarViewToggle } from "./ViewToggle";
 import { MonthView, groupMonthAppointmentsByDate } from "./MonthView";
+import { groupMonthBlockedByDate } from "./month-blocked";
 import {
   firstOfMonthString,
   firstOfNextMonthString,
@@ -188,10 +189,13 @@ export default async function CalendarPage({
     byDate.set(localDate, arr);
   }
 
-  const blockoutDates = new Set<string>();
+  // Map each blocked date to its blockout reason (first blockout covering the
+  // date wins) so the week overlay can show the reason instead of bare
+  // "Blocked". Presence in the map = blocked; the value may be null (no reason).
+  const blockoutReasonByDate = new Map<string, string | null>();
   for (const b of blockouts) {
     for (let d = b.starts_on; d <= b.ends_on; d = addDays(d, 1)) {
-      blockoutDates.add(d);
+      if (!blockoutReasonByDate.has(d)) blockoutReasonByDate.set(d, b.reason);
     }
   }
 
@@ -342,7 +346,8 @@ export default async function CalendarPage({
                 appts={byDate.get(date) ?? []}
                 timedBlocks={timedBlocksByDate.get(date) ?? []}
                 recurringBreaks={recurringByDate.get(date) ?? []}
-                blocked={blockoutDates.has(date)}
+                blocked={blockoutReasonByDate.has(date)}
+                blockedReason={blockoutReasonByDate.get(date) ?? null}
                 tz={studio.timezone}
                 clients={drawerClients}
                 services={services}
@@ -401,18 +406,33 @@ async function renderMonthView(opts: {
   const startUtc = utcInstantFromLocal(monthAnchor, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(monthEnd, "00:00", studio.timezone);
 
-  const [appointments, availabilityDefaults, availabilityOverrides] =
-    await Promise.all([
-      getAppointmentsForRange(
-        studio.id,
-        startUtc.toISOString(),
-        endUtc.toISOString(),
-      ),
-      getAvailabilityDefaults(studio.id),
-      // Read-only per-date overrides for the month so the muted
-      // "Closed" tint resolves the same way the week view does.
-      getOverridesForRange(studio.id, monthAnchor, monthEnd),
-    ]);
+  const [
+    appointments,
+    availabilityDefaults,
+    availabilityOverrides,
+    blockouts,
+    timedBlocks,
+    recurringOccurrences,
+  ] = await Promise.all([
+    getAppointmentsForRange(
+      studio.id,
+      startUtc.toISOString(),
+      endUtc.toISOString(),
+    ),
+    getAvailabilityDefaults(studio.id),
+    // Read-only per-date overrides for the month so the muted
+    // "Closed" tint resolves the same way the week view does.
+    getOverridesForRange(studio.id, monthAnchor, monthEnd),
+    // Blocked-time sources for the month, same as the week view, so the
+    // month grid shows blocked-time indicators (Chloe pilot feedback).
+    getBlockouts(studio.id),
+    getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+    getRecurringBreakOccurrencesForRange(
+      studio.id,
+      startUtc.toISOString(),
+      endUtc.toISOString(),
+    ),
+  ]);
 
   const availabilityByDow = new Map<number, boolean>();
   for (const d of availabilityDefaults) {
@@ -437,6 +457,14 @@ async function renderMonthView(opts: {
     appointments,
     studio.timezone,
     (iso, tz) => localTimeString(new Date(iso), tz),
+  );
+
+  const blockedByDate = groupMonthBlockedByDate(
+    blockouts,
+    timedBlocks,
+    recurringOccurrences,
+    studio.timezone,
+    isClosedDate,
   );
 
   const lastWeekHref = `/calendar?view=week${
@@ -488,6 +516,7 @@ async function renderMonthView(opts: {
       <MonthView
         monthAnchor={monthAnchor}
         appointmentsByDate={appointmentsByDate}
+        blockedByDate={blockedByDate}
         today={today}
         isClosedDate={isClosedDate}
       />

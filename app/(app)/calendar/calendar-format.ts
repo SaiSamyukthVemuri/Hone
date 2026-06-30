@@ -54,3 +54,52 @@ export function formatHourLabel(hour24: number): string {
   const h12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
   return `${h12} ${period}`;
 }
+
+// Block / break display labels. These live here (not DayColumn.tsx) so the
+// server-rendered month view (MonthView + calendar/page.tsx renderMonthView)
+// can resolve the same labels the week view shows without crossing the client
+// boundary. The week view (DayColumn) imports the same source of truth.
+
+// Timed-block category → display label (categories stored lowercase).
+export const TIMED_BLOCK_LABEL: Record<string, string> = {
+  lunch: "Lunch",
+  break: "Break",
+  meeting: "Meeting",
+  emergency: "Emergency",
+  personal: "Personal",
+  training: "Training",
+  admin: "Admin",
+  other: "Unavailable",
+};
+
+// Migration 0037 (Breaks & blocks cleanup) widened the recurring-break label
+// column to free text. KNOWN_RECURRING_BREAK_LABELS keeps the old enum values
+// rendering with their pre-existing capitalized display ("lunch" → "Lunch").
+// Custom labels typed by the practitioner ("Dinner", "School pickup") fall
+// through and preserve their casing.
+const KNOWN_RECURRING_BREAK_LABELS: Record<string, string> = {
+  lunch: "Lunch",
+  break: "Break",
+  admin: "Admin",
+  other: "Break",
+};
+
+export function displayRecurringBreakLabel(
+  rawLabel: string | null | undefined,
+): string {
+  if (!rawLabel) return "Break";
+  const t = rawLabel.trim();
+  if (t.length === 0) return "Break";
+  const known = KNOWN_RECURRING_BREAK_LABELS[t.toLowerCase()];
+  if (known) return known;
+  // Custom label: preserve practitioner-supplied casing, but capitalize the
+  // first letter for tidy display if it was typed all-lowercase.
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// Full-day blockout display label: the practitioner-entered reason, or the
+// generic "Blocked" fallback when no reason was given.
+export function displayBlockoutLabel(reason: string | null | undefined): string {
+  const t = reason?.trim();
+  return t && t.length > 0 ? t : "Blocked";
+}

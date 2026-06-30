@@ -44,10 +44,17 @@ import {
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
 import { serviceCardClasses } from "@/lib/calendar/service-colors";
+import {
+  displayBlockoutLabel,
+  displayRecurringBreakLabel,
+  TIMED_BLOCK_LABEL,
+} from "./calendar-format";
 
 // Day-of-week labels + the "Mon · May 26" / "8 AM" formatters live in
 // ./calendar-format (also a plain, non-"use client" module) for the same
-// server/client-boundary reason. This client component doesn't need them.
+// server/client-boundary reason. The block/break label helpers
+// (TIMED_BLOCK_LABEL, displayRecurringBreakLabel) also live there now so the
+// server-rendered month view resolves the same labels this week view shows.
 
 // Appointment-card colors are now keyed off SERVICE, not
 // practitioner. See lib/calendar/service-colors.ts. The prior
@@ -78,42 +85,6 @@ export type DayAvailability = {
   openTime: string | null; // "HH:MM:SS"
   closeTime: string | null;
 };
-
-const TIMED_BLOCK_LABEL: Record<string, string> = {
-  lunch: "Lunch",
-  break: "Break",
-  meeting: "Meeting",
-  emergency: "Emergency",
-  personal: "Personal",
-  training: "Training",
-  admin: "Admin",
-  other: "Unavailable",
-};
-
-// Migration 0037 (Breaks & blocks cleanup) widened the recurring-
-// break label column to free text. KNOWN_RECURRING_BREAK_LABELS keeps
-// the old enum values rendering with their pre-existing capitalized
-// display ("lunch" → "Lunch", etc.). Custom labels typed by the
-// practitioner ("Dinner", "School pickup") fall through to
-// displayRecurringBreakLabel which preserves their casing.
-const KNOWN_RECURRING_BREAK_LABELS: Record<string, string> = {
-  lunch: "Lunch",
-  break: "Break",
-  admin: "Admin",
-  other: "Break",
-};
-
-function displayRecurringBreakLabel(rawLabel: string | null | undefined): string {
-  if (!rawLabel) return "Break";
-  const t = rawLabel.trim();
-  if (t.length === 0) return "Break";
-  const known = KNOWN_RECURRING_BREAK_LABELS[t.toLowerCase()];
-  if (known) return known;
-  // Custom label: preserve practitioner-supplied casing (e.g. "Dinner"
-  // typed as-is), but capitalize the first letter for tidy display if
-  // the practitioner typed all-lowercase.
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
 
 // PR #10 idiom: blockouts use a 40px height threshold to choose
 // between two-line and one-line layouts. Same threshold applied
@@ -166,6 +137,9 @@ type Props = {
   timedBlocks: StudioTimedBlock[];
   recurringBreaks: RecurringBreakOccurrenceWithRule[];
   blocked: boolean;
+  // Reason for a full-day blockout on this date, shown on the overlay instead
+  // of the generic "Blocked" when present. null/absent → "Blocked" fallback.
+  blockedReason?: string | null;
   tz: string;
   clients: QuickBookClient[];
   services: Service[];
@@ -201,6 +175,7 @@ export function DayColumn({
   timedBlocks,
   recurringBreaks,
   blocked,
+  blockedReason = null,
   tz,
   clients,
   services,
@@ -455,16 +430,19 @@ export function DayColumn({
           Updates every minute via a small client interval. */}
       {isToday && <NowLine tz={tz} />}
 
-      {/* Neutral availability tint (visual guidance only). Very subtle so
-          available hours stay the main canvas. pointer-events-none so the
-          empty-slot click overlay below still receives clicks everywhere
-          in the visible range — booking behavior is unchanged. */}
+      {/* Neutral availability tint (visual guidance only). The closed /
+          out-of-hours regions get a clearer-but-calm gray fill with a hairline
+          edge so the OPEN working window reads at a glance (Chloe pilot
+          feedback: the prior near-white gray was too subtle). Still neutral
+          (never a status color) and pointer-events-none so the empty-slot
+          click overlay below still receives clicks everywhere in the visible
+          range — booking behavior is unchanged. */}
       {tintRegions.map((r, i) => (
         <div
           key={`tint-${i}`}
           aria-hidden
           style={{ top: r.top, height: r.height }}
-          className="pointer-events-none absolute inset-x-0 z-0 bg-neutral-100/80 dark:bg-neutral-800/50"
+          className="pointer-events-none absolute inset-x-0 z-0 border-y border-neutral-300/60 bg-neutral-200/70 dark:border-neutral-700/50 dark:bg-neutral-800/65"
         />
       ))}
 
@@ -569,7 +547,7 @@ export function DayColumn({
         // colour bumped from neutral-500 to a solid dark gray so
         // the Blocked label remains legible over the stripes.
         <div
-          aria-label="Blocked day"
+          aria-label={`Blocked day: ${displayBlockoutLabel(blockedReason)}`}
           className="absolute inset-0 z-[3] dark:bg-stone-900/55"
           style={{
             backgroundColor: "#F4F1EA",
@@ -581,7 +559,7 @@ export function DayColumn({
             className="px-2 pt-2 text-[11px] font-medium uppercase tracking-wider"
             style={{ color: "#3F3F3F" }}
           >
-            Blocked
+            {displayBlockoutLabel(blockedReason)}
           </div>
         </div>
       )}
