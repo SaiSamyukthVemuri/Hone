@@ -52,8 +52,10 @@ import { todayInTz } from "@/lib/booking/tz";
 import {
   getLatestIntakeForClient,
   getLatestSubmittedOrReviewedIntakeForClient,
+  INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
+import { IntakeResendCard } from "./intake/IntakeResendCard";
 // getClientTags import removed: tags no longer render on the main
 // profile (see ClientTagsCard note above). Server actions for tags
 // are unchanged and the data is preserved.
@@ -845,11 +847,32 @@ export default async function ClientCheatSheetPage({
             </p>
           )}
           {intake?.status === "in_progress" && (
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-neutral-600">
-                Intake started <FormattedDateTime iso={intake.started_at} />, not
-                yet submitted.
-              </p>
+            <div className="mt-2 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-neutral-600">
+                  Intake started <FormattedDateTime iso={intake.started_at} />,
+                  not yet submitted.
+                </p>
+                <Link
+                  href={`/clients/${client.id}/intake`}
+                  className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                >
+                  View intake →
+                </Link>
+              </div>
+              {/* PR #293 follow-up: surface the Resend intake link CTA on the
+                  Health & Forms tab practitioners actually use (this overview
+                  card), not only the dedicated /intake page. Reuses the
+                  existing IntakeResendCard + its existing backend actions. */}
+              <IntakeResendCard
+                clientId={client.id}
+                intakeId={intake.id}
+                clientHasEmail={!!client.email}
+                linkMaybeExpired={
+                  Date.now() - new Date(intake.started_at).getTime() >
+                  INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000
+                }
+              />
             </div>
           )}
           {intake?.status === "submitted" && intake.submitted_at && (
