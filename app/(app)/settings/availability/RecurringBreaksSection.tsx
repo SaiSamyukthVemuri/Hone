@@ -7,7 +7,7 @@ import {
   deleteRecurringBreakRuleAction,
   toggleRecurringBreakRuleActiveAction,
   updateRecurringBreakRuleAction,
-} from "../availability/actions";
+} from "./actions";
 
 type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
