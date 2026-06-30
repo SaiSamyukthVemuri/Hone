@@ -459,6 +459,13 @@ export async function refundFeeAttemptAction(
     // OWNER-ONLY, consistently across session payments and fees
     // (same rule as refundPaymentChargeAttemptAction).
     if (practitioner.role !== "owner") {
+      // PR #296: record the denied (non-owner) refund attempt. Safe IDs +
+      // event name only — no client name/email/phone, no health/treatment
+      // data, no Stripe secret or raw payload.
+      logInternal("payment_refund_denied_not_owner", {
+        studioId: studio.id,
+        practitionerId: practitioner.id,
+      });
       return { ok: false, error: OWNER_ONLY_REFUND_ERROR };
     }
     practitionerId = practitioner.id;

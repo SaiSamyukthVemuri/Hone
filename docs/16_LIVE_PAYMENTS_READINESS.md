@@ -1078,7 +1078,7 @@ Every line must hold (most are CI-enforced):
 - [ ] Local success persistence is authoritative (PR #281 — `tests/lib/billing/payment-success-persistence.test.ts`).
 - [ ] Webhook **signature verification** confirmed — `constructEvent` over the raw body with `STRIPE_WEBHOOK_SECRET`; `400 "Invalid signature."` on any failure (`app/api/stripe/webhook/route.ts`).
 - [ ] Webhook **replay procedure** documented (§17.6).
-- [ ] **Refund path** documented and test-verified (`lib/billing/payment-refund.ts`; refund is owner-only, reason-agnostic, idempotent, manual-review on persist failure).
+- [ ] **Refund path** documented and test-verified (`lib/billing/payment-refund.ts`; refund is owner-only, reason-agnostic, idempotent, manual-review on persist failure). **Owner-only is defense-in-depth as of PR #296: enforced in BOTH action callers AND re-checked inside the helper (actor `practitioners.role`, scoped to the studio) before the claim + `refunds.create`; denied non-owner attempts are safe-ID logged.**
 - [ ] **Manual-review handling** documented (§17.4 / §17.5).
 - [ ] **Reconciliation checks** return clean (§17.7 read-only SQL).
 - [ ] **Rollback plan** documented (§17.8).

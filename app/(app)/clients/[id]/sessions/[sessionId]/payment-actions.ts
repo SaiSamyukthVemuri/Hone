@@ -525,6 +525,13 @@ export async function refundPaymentChargeAttemptAction(
     // moving money back out of the studio's balance is restricted
     // to the studio owner ahead of controlled live enablement.
     if (practitioner.role !== "owner") {
+      // PR #296: record the denied (non-owner) refund attempt. Safe IDs +
+      // event name only — no client name/email/phone, no health/treatment
+      // data, no Stripe secret or raw payload.
+      logInternal("payment_refund_denied_not_owner", {
+        studioId: studio.id,
+        practitionerId: practitioner.id,
+      });
       return {
         ok: false,
         outcome: "not_authorized",

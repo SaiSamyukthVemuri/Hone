@@ -30,6 +30,74 @@ const ACTION_PATH = path.resolve(
 );
 const ACTION = readFileSync(ACTION_PATH, "utf8");
 
+const FEE_ACTION_PATH = path.resolve(
+  __dirname,
+  "../../../app/(app)/calendar/[id]/manual-fee-actions.ts",
+);
+const FEE_ACTION = readFileSync(FEE_ACTION_PATH, "utf8");
+
+// PR #296: refund initiation is studio-owner-only. Both action callers
+// gate on role === "owner", AND the shared helper re-checks it (defense in
+// depth) before any claim/refund — so a future helper caller cannot bypass
+// owner-only. Denial logging carries safe IDs only (no client PII).
+describe("refund owner-only gate (PR #296)", () => {
+  it("both action callers gate on role === 'owner' before calling the helper", () => {
+    // Session payment refund action.
+    expect(ACTION).toMatch(/refundPaymentChargeAttemptAction/);
+    expect(ACTION).toMatch(/practitioner\.role !== "owner"/);
+    const sessGate = ACTION.indexOf('practitioner.role !== "owner"');
+    const sessCall = ACTION.indexOf("refundPaymentChargeAttempt({");
+    expect(sessGate).toBeGreaterThan(-1);
+    expect(sessCall).toBeGreaterThan(sessGate); // gate before the helper call
+    // Manual-fee refund action.
+    expect(FEE_ACTION).toMatch(/refundFeeAttemptAction/);
+    expect(FEE_ACTION).toMatch(/practitioner\.role !== "owner"/);
+    const feeGate = FEE_ACTION.indexOf('practitioner.role !== "owner"');
+    const feeCall = FEE_ACTION.indexOf("refundPaymentChargeAttempt({");
+    expect(feeGate).toBeGreaterThan(-1);
+    expect(feeCall).toBeGreaterThan(feeGate);
+  });
+
+  it("the shared helper re-checks role === 'owner' (defense in depth)", () => {
+    // Reads the actor's role from the existing practitioners.role column,
+    // scoped to the resolved studio, and rejects non-owners.
+    expect(HELPER_CODE).toMatch(/\.from\("practitioners"\)/);
+    expect(HELPER_CODE).toMatch(/\.select\("role"\)/);
+    expect(HELPER_CODE).toMatch(/\.eq\("id", args\.practitionerId\)/);
+    expect(HELPER_CODE).toMatch(/\.eq\("studio_id", args\.studioId\)/);
+    expect(HELPER_CODE).toMatch(/role !== "owner"/);
+    expect(HELPER_CODE).toMatch(/outcome: "not_authorized"/);
+  });
+
+  it("the helper owner re-check runs BEFORE the claim UPDATE and the Stripe refund", () => {
+    const ownerCheck = HELPER.indexOf("payment_refund_helper_not_owner");
+    const claim = HELPER.indexOf("refund_initiated_by_practitioner_id");
+    const refundCall = HELPER.indexOf("refunds.create");
+    expect(ownerCheck).toBeGreaterThan(-1);
+    expect(claim).toBeGreaterThan(ownerCheck); // before the claim mutation
+    expect(refundCall).toBeGreaterThan(ownerCheck); // before the Stripe refund
+  });
+
+  it("keeps exactly one refunds.create call site (gate unchanged)", () => {
+    const count = (HELPER_CODE.match(/refunds\.create/g) ?? []).length;
+    expect(count).toBe(1);
+  });
+
+  it("non-owner denial logging carries safe IDs only — no client PII", () => {
+    for (const [src, event] of [
+      [HELPER, "payment_refund_helper_not_owner"],
+      [ACTION, "payment_refund_denied_not_owner"],
+      [FEE_ACTION, "payment_refund_denied_not_owner"],
+    ] as const) {
+      const idx = src.indexOf(event);
+      expect(idx, event).toBeGreaterThan(-1);
+      // The logInternal({...}) payload immediately follows the event name.
+      const payload = src.slice(idx, idx + 240);
+      expect(payload).not.toMatch(/email|phone|\bname\b|client\.|first_name|last_name/i);
+    }
+  });
+});
+
 describe("refundPaymentChargeAttempt: server boundary", () => {
   it("imports 'server-only'", () => {
     expect(HELPER).toMatch(/^import "server-only";/);
