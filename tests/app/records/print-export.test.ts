@@ -17,6 +17,40 @@ const BUTTON = read("app/(app)/records/print/print-button.tsx");
 const RECORDS = read("app/(app)/records/page.tsx");
 const LAYOUT = read("app/(app)/layout.tsx");
 
+describe("disinfectants print: replace-by date + read-time status (PR #295)", () => {
+  it("references discard_due_date and renders a 'Replace by' line", () => {
+    expect(PRINT).toMatch(/discard_due_date/);
+    expect(PRINT).toMatch(/label="Replace by"/);
+    // "Not set" when no replace-by date is recorded (mirrors the in-app screen).
+    expect(PRINT).toMatch(/"Not set"/);
+  });
+
+  it("computes status via the shared read-time helpers (same as the in-app screen)", () => {
+    expect(PRINT).toMatch(/disinfectantDueStatus/);
+    expect(PRINT).toMatch(/disinfectantStatusLabel/);
+    expect(PRINT).toMatch(/isDisinfectantAlert/);
+    expect(PRINT).toMatch(
+      /from "@\/lib\/record-keeping\/disinfectant-status"/,
+    );
+  });
+
+  it("is read-time/render-only: status uses the studio-timezone 'today', no write/new query", () => {
+    // Same deterministic studio-local "today" the Records screen uses.
+    expect(PRINT).toMatch(/todayInTz\(timezone\)/);
+    expect(PRINT).toMatch(/timezone=\{studio\.timezone\}/);
+    // The disinfectant section still reads via the existing query only — no
+    // insert/update/upsert/delete was introduced anywhere in the print page.
+    expect(PRINT).toMatch(/getDisinfectantRecords/);
+    expect(PRINT).not.toMatch(/\.insert\(|\.update\(|\.upsert\(|\.delete\(/);
+  });
+
+  it("introduces no schema / RLS change (display-only over existing columns)", () => {
+    // discard_due_date already exists (migration 0096). The print page is a
+    // render component — it contains no schema/RLS DDL of any kind.
+    expect(PRINT).not.toMatch(/alter table|create policy|drop policy|create table /i);
+  });
+});
+
 describe("entry points + protection", () => {
   it("a Print / Export button links the active section to the print view", () => {
     expect(RECORDS).toMatch(/Print \/ Export/);
