@@ -36,7 +36,7 @@ Studios onboard via **Stripe Connect Express**. Each studio gets a connected acc
 
 ## 3. Live-mode guards
 
-Three independent guards stack. All three must be deliberately altered for live charging.
+Three independent guards stack. All three must be deliberately altered for live charging. **The full ordered enablement sequence (every guard + DB CHECK + claim RPC + webhook + env, in order — env flip last) is the source of truth in [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only); a CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`) keeps them intact. Live payments remain disabled.**
 
 1. **Key gate.** `lib/stripe/server.ts:assertStripeKeyAllowed` refuses any `sk_live_*` secret unless `STRIPE_ALLOW_LIVE_MODE=true`. Vercel Preview / Development MUST use `sk_test_*` regardless of the flag.
 2. **Code gate.** `inferStripeLivemode()` short-circuits the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments + fees) to `live_mode_blocked` before any Stripe call when the env is live. (The legacy `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
