@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import {
   isNumbingStatus,
@@ -233,21 +234,13 @@ export type CreateBlockInput = {
   probeOptionKey?: string | null;
 };
 
-async function assertSessionInStudio(
-  studioId: string,
-  sessionId: string,
-): Promise<void> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("id")
-    .eq("id", sessionId)
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (error) throw new Error(`Failed to load session: ${error.message}`);
-  if (!data) throw new Error("Session not found.");
-}
+// PR #286: clinical lineage. Every charting write below validates the session
+// belongs to BOTH the studio AND the route client (input.clientId) via the
+// shared assertSessionForClient — not just the studio. This closes the
+// same-studio wrong-client write that assertSessionInStudio (studio-only,
+// removed) allowed. Block/entry writes remain scoped by the (now client-
+// validated) session_id, and migration 0094 guarantees block ∈ session and
+// entry ∈ block ∈ session, so the whole lineage chain is client-correct.
 
 
 // PR #203 (migration 0084): sticky machine-frequency default.
@@ -281,7 +274,7 @@ export async function createSessionBlockAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot create blocks." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   // Validate the new structured-area fields up front so the caller gets a
   // clean message instead of an opaque CHECK violation. Existing block
@@ -386,7 +379,7 @@ export async function updateSessionBlockAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot edit blocks." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   // Validate any structured-area fields present in the patch. Each is
   // independent: callers can update just block_name without sending
@@ -469,7 +462,7 @@ export async function copyPreviousSessionAreasAction(input: {
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   const supabase = await createClient();
 
@@ -575,7 +568,7 @@ export async function softDeleteSessionBlockAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot delete blocks." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -789,7 +782,7 @@ export async function createTreatmentAreaWithEntryAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -961,7 +954,7 @@ export async function updateTreatmentAreaWithEntryAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
   }
-  await assertSessionInStudio(studio.id, input.sessionId);
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
