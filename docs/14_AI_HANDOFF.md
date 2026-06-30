@@ -2,7 +2,7 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
-## Current production status (as of the smart-scheduling PR)
+## Current production status (as of PR #298)
 
 - **Smart / packed booking slots** (Chloe pilot feedback A, **no migration**, algorithm-only). Public booking availability no longer offers a fixed every-15-minute grid. `getAvailableSlots` (`lib/booking/slots.ts`) now anchors candidate starts to (1) the opening time and (2) **immediately after each existing reservation's protected end** (`candidateMs.add(c.end)` — appointment `ends_at` already includes its buffer per 0029, so no double-count), plus a **coarse hourly fallback** (`FALLBACK_GRANULARITY_MINUTES=60`, generated via `utcInstantFromLocal` per step so DST is preserved) so an empty day still offers a few choices. Each candidate must fit a full `duration` before close and clear every conflict via the same half-open overlap rule. So an empty 10:00–17:00 day shows 10:00/11:00/…/16:00 (not 10:00/10:15/10:30), and a 10:00–11:00 appointment (15-min buffer) offers 11:15 next. **No schema/RLS change, no migration, no new query, no conflict-model change**; public booking display + re-verify + next-available all share the unchanged `getAvailableSlots`, so a shown slot stays bookable and the DB exclusion protections are intact. Pinned by tests/lib/booking/slots-smart-scheduling.test.ts. No payment/Stripe/cron/intake/Treatment-Photo/Record-Keeping change; Stripe gates unchanged (1/1/0/0). Live payments remain disabled. (Other Chloe feedback — settings IA, calendar visibility/nav, postcare audit, photo UX — are separately-scoped follow-ups.)
 
