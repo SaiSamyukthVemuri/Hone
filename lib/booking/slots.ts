@@ -83,7 +83,14 @@ type BlockoutRow = {
   ends_on: string;
 };
 
-const SLOT_GRANULARITY_MINUTES = 15;
+// Smart/packed scheduling. Slots are no longer a fixed every-15-minute grid
+// (which produced 10:00/10:15/10:30/… and arbitrary mid-day gaps). Instead
+// candidate starts are ANCHORED to (1) the opening time and (2) immediately
+// after each existing reservation's protected end, plus a COARSE fallback so a
+// long empty stretch still offers a few choices instead of a single slot.
+// FALLBACK_GRANULARITY_MINUTES is intentionally coarse (hourly) — it only
+// fills empty windows; the precise anchors do the packing.
+const FALLBACK_GRANULARITY_MINUTES = 60;
 
 // Strips seconds from a "HH:MM:SS" coming back from a postgres time column.
 function trimTime(t: string | null): string | null {
@@ -179,26 +186,52 @@ export async function getAvailableSlots(
   const openMin = localMinutesSinceMidnight(openTime);
   const closeMin = localMinutesSinceMidnight(closeTime);
 
-  const slots: Slot[] = [];
-  for (let m = openMin; m + duration <= closeMin; m += SLOT_GRANULARITY_MINUTES) {
-    const startLabel = minutesToHHMM(m);
-    const slotStart = utcInstantFromLocal(dateStr, startLabel, tz);
-    const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
-    const slotStartMs = slotStart.getTime();
-    // If this slot were booked now, its protected interval would be
-    // [slotStart, slotEnd + currentBuffer). Match the DB exclusion
-    // rule: candidate's protected interval must not overlap any
-    // existing protected interval. Half-open touching is allowed.
-    const slotProtectedEndMs = slotEnd.getTime() + buffer * 60_000;
+  const openStartMs = utcInstantFromLocal(dateStr, openTime, tz).getTime();
+  const closeMs = utcInstantFromLocal(dateStr, closeTime, tz).getTime();
+  const durationMs = duration * 60_000;
+  const bufferMs = buffer * 60_000;
 
+  // Candidate slot starts come from three sources (NOT "every 15 minutes"):
+  const candidateMs = new Set<number>();
+
+  // (1) the opening anchor + (3) a COARSE fallback grid from opening. Generated
+  //     in LOCAL minutes and converted per-step via utcInstantFromLocal so DST
+  //     is handled exactly like the old grid (the fallback step is hourly, so
+  //     an empty day shows 10:00, 11:00, 12:00 … not 10:00/10:15/10:30/…).
+  for (let m = openMin; m + duration <= closeMin; m += FALLBACK_GRANULARITY_MINUTES) {
+    candidateMs.add(utcInstantFromLocal(dateStr, minutesToHHMM(m), tz).getTime());
+  }
+
+  // (2) immediately after each existing reservation's PROTECTED end. The
+  //     reservation rows already bake in the relevant buffer (appointment
+  //     ends_at = end + snapshotted buffer, migration 0029; blocks/blockouts
+  //     are raw) — so the conflict's `end` IS the earliest legal next start.
+  //     We must NOT add the buffer again here (the migration-0029 double-count
+  //     bug). This is what packs a new client in right after the previous one.
+  for (const c of conflicts) {
+    candidateMs.add(c.end);
+  }
+
+  const slots: Slot[] = [];
+  for (const slotStartMs of [...candidateMs].sort((a, b) => a - b)) {
+    // Stay inside the open window and leave room for the full service duration
+    // before close (the trailing buffer may extend past close, as before).
+    if (slotStartMs < openStartMs) continue;
+    if (slotStartMs + durationMs > closeMs) continue;
+
+    // Same half-open overlap rule as the DB exclusion: the candidate's
+    // protected interval [start, end + currentBuffer) must not overlap any
+    // existing protected interval. Touching is allowed.
+    const slotProtectedEndMs = slotStartMs + durationMs + bufferMs;
     const overlap = conflicts.some(
       (c) => slotStartMs < c.end && slotProtectedEndMs > c.start,
     );
     if (overlap) continue;
 
+    const slotStart = new Date(slotStartMs);
     slots.push({
       start: slotStart.toISOString(),
-      end: slotEnd.toISOString(),
+      end: new Date(slotStartMs + durationMs).toISOString(),
       startLabel: localTimeString12h(slotStart, tz),
     });
   }

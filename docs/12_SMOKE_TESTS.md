@@ -12,6 +12,8 @@ The public homepage (`/`) is positioned around treatment memory; after PR #244 t
 
 ## 1. Public booking smoke
 
+**Smart / packed scheduling (this PR, no migration):** public booking availability is no longer a fixed every-15-minute grid. `getAvailableSlots` (`lib/booking/slots.ts`) now anchors candidate starts to (1) the opening time and (2) immediately after each existing reservation's protected end (appointment end + its baked-in buffer; blocks/blockouts raw), with a **coarse hourly fallback** so an empty day still offers a few choices. Duration/buffer/overlap/DST and the conflict checks (appointments, timed blocks, recurring breaks, full-day blockouts) are unchanged, and public booking + re-verify share the same generator (a shown slot is bookable). **Manual smoke:** on `/book/<slug>` for an EMPTY open day (e.g. opens 10:00, closes 17:00) confirm the slot list reads 10:00, 11:00, 12:00 … (hourly) and **not** 10:00/10:15/10:30/10:45; with an existing appointment, confirm the first offered slot after it is **appointment-end + buffer** (e.g. a 10:00–11:00 appt with a 15-min buffer offers 11:15, not 11:00 or 11:30) and that no gappy mid-block 15-minute slots appear. Pinned by `tests/lib/booking/slots-smart-scheduling.test.ts`. No migration; no charge/refund/Stripe change; live payments remain disabled.
+
 1. Open `https://hone.care/book/willow-electrolysis`. Expect `200`.
 2. Pick "Next available day". Expect a date with at least one slot.
 3. Fill the form as a new client. Verify the service picker only shows consultation modalities.
