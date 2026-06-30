@@ -9,6 +9,7 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
+  TREATMENT_IMAGE_MAX_BYTES,
   validateTreatmentImageUpload,
   validateTreatmentImagePath,
   sanitizeFilename,
@@ -132,11 +133,29 @@ export async function uploadTreatmentImageAction(
     // bytes are what we upload, its length is the stored size. A normal user
     // mistake (wrong file) just returns the generic error — no ops alert.
     const inputBytes = Buffer.from(await file.arrayBuffer());
+    // PR #292 defense-in-depth: the pre-buffer gate trusted the client-reported
+    // file.size. Re-bound the ACTUAL buffered length (> 0 and <= 15 MB) on the
+    // real bytes BEFORE any Sharp work — independent of file.size — reusing the
+    // same single-source validator + constant + generic error strings.
+    const bufferValid = validateTreatmentImageUpload({
+      contentType: valid.contentType,
+      sizeBytes: inputBytes.byteLength,
+    });
+    if (!bufferValid.ok) return { ok: false, error: bufferValid.error };
+
     const sanitized = await sanitizeTreatmentImage({
       bytes: inputBytes,
       declaredContentType: valid.contentType,
     });
     if (!sanitized.ok) return { ok: false, error: sanitized.error };
+
+    // PR #292: cap the SANITIZED OUTPUT size before any storage work. The
+    // re-encode is bounded by the 100 MP pixel limit, not by the 15 MB byte cap;
+    // enforce the byte cap on the output too so a re-encode that grows past the
+    // limit is never uploaded or recorded. Generic error — no provider detail.
+    if (sanitized.bytes.byteLength > TREATMENT_IMAGE_MAX_BYTES) {
+      return { ok: false, error: "Could not upload the image." };
+    }
 
     // Server-generated id + studio-prefixed path; client path is never trusted.
     // Extension/content type come from the SANITIZED output, not the upload.
