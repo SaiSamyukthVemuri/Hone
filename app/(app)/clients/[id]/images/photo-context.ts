@@ -49,3 +49,20 @@ export function treatmentPhotoAreaLabel(
   const text = extras.length > 0 ? `${area} · ${extras.join(" · ")}` : area;
   return `Treatment area: ${text}`;
 }
+
+// PR #284. Concise label for a session-block option in the attach-at-upload
+// context selector (no "Treatment area:" prefix). Same area/side/detail
+// composition as treatmentPhotoAreaLabel; "Area not recorded" when blank.
+// Pure + display-only — the option's VALUE carries the id, never shown text.
+export function sessionBlockOptionLabel(block: SessionBlockAreaInput): string {
+  const area = block?.primary_area?.trim();
+  if (!area) return "Area not recorded";
+  const extras: string[] = [];
+  if (block && block.side && block.side !== "n/a") {
+    const sideLabel = sessionBlockSideLabel(block.side);
+    if (sideLabel) extras.push(sideLabel);
+  }
+  const detail = block?.custom_area_detail?.trim();
+  if (detail) extras.push(detail);
+  return extras.length > 0 ? `${area} · ${extras.join(" · ")}` : area;
+}
