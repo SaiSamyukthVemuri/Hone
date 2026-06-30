@@ -223,6 +223,8 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 
 PR #201 executed the "Live Payments Gate Preparation" step (renumbered: docs said #195, then #197; the actual GitHub PR is **#201**, and controlled enablement is **#202**). **Live payments remain disabled.** No gate, env, CHECK, or executor change was made.
 
+> **Prep update — PR #297 (2026-06-30, no gate change).** The controlled-enablement steps are now consolidated into one ordered checklist at **docs/16 §17.12** (every layer in order — business/legal → live Stripe account → live webhook → DB CHECK `payment_charge_attempts_livemode_false_check` → claim-RPC mirror → charge/refund/receipt guards → webhook `shouldIgnoreLiveModeEvent` → card-auth scoping → static gates → env flip LAST), and a **CI safety-lock** (`tests/lib/billing/live-mode-disabled.test.ts`) pins every dormancy gate so live cannot be enabled accidentally — relaxing any gate now requires also updating that test. Shipped backstops referenced: persistence/`needs_manual_review` (#281), manual-review queue (#290), `OPS_ALERT_EMAILS` required in prod (#291), owner-only refunds (#201 + #296). PR #297 flips no gate, changes no env, adds no migration. **Live payments remain disabled.**
+
 ### 16.1 Blocker status updates (supersedes the table in §13 where noted)
 
 | Blocker (from §13) | Status after PR #201 |
