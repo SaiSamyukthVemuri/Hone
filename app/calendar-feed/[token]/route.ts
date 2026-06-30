@@ -15,43 +15,45 @@ import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
 // token), then loads the practitioner's appointments and renders an
 // ICS calendar. No login, no cookies. Anyone with the token can fetch.
 //
-// Privacy rules baked in:
-//   * SUMMARY is always "Hone appointment" — no service name in the
-//     event title (lock-screen safe; shared-calendar safe).
-//   * DESCRIPTION contains client name + service modality (NOT the
-//     specific service name; modality is "electrolysis" / "laser" /
-//     "consultation", general enough not to leak treatment area) +
-//     a link back to /calendar/<id> in Hone (which is auth-gated).
+// Privacy rules baked in (PR #289 — privacy-preserving by default).
+//   * The feed URL is a BEARER secret. Third-party calendar providers
+//     (Google / Apple / Outlook) store the URL AND the event contents.
+//     So the default ICS exposes NO client data and NO treatment
+//     context — anyone who obtains the URL learns only the
+//     practitioner's busy/free times, not who or what.
+//   * SUMMARY is always "Hone appointment" — generic, no service name
+//     (lock-screen safe; shared-calendar safe).
+//   * DESCRIPTION is generic ("Appointment scheduled in Hone…") plus a
+//     link back to /calendar/<id> in Hone (auth-gated; not a token).
+//     It does NOT contain the client name, email, phone, address, the
+//     service / modality / body area / treatment context, notes,
+//     status, any token, Stripe/payment data, or storage paths.
+//   * The route does not even SELECT the client name or service
+//     modality — defense in depth, so a row leaked to logs carries no
+//     client PII.
 //   * No intake responses, allergies, EpiPen flags, private warnings,
 //     pricing, payment data, or session notes ever appear in the feed.
-//   * Cancelled appointments are excluded entirely.
-//   * Time window: 30 days back + all future. Past window keeps the
-//     calendar useful for "what did I do last Wednesday" without
-//     leaking long-tail historical data into a subscribed surface.
+//   * Cancelled appointments are excluded entirely (status filter).
+//   * Time window: 30 days back + all future.
+//   * (Deferred backlog: an explicit per-studio opt-in to include
+//     client names in the feed; token rotation/revoke UI; last-used
+//     telemetry. NOT in this PR.)
 //
-// Cache headers: short max-age + must-revalidate so Google's poller
-// re-fetches frequently enough that rotated tokens drop quickly. No
-// CDN caching; the URL itself is the secret.
+// Cache headers: private, no-store so the URL itself stays the only
+// secret and providers re-fetch (rotated tokens drop quickly). No CDN
+// caching. Referrer-Policy: no-referrer + X-Robots-Tag: noindex are
+// applied to /calendar-feed/:token* by next.config.ts.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const FEED_WINDOW_DAYS = 30;
 
-// Map a service modality string to a generic, treatment-area-free
-// label. Anything unknown collapses to "Appointment".
-function modalityLabel(m: string | null | undefined): string {
-  if (m === "electrolysis") return "Electrolysis";
-  if (m === "laser") return "Laser";
-  if (m === "consultation") return "Consultation";
-  return "Appointment";
-}
-
-function statusDescriptor(status: string): string | null {
-  if (status === "completed") return "completed";
-  if (status === "no_show") return "no-show";
-  return null;
-}
+// Generic, non-sensitive event description for every feed event. No
+// client/appointment specifics; the practitioner opens Hone (the
+// auth-gated /calendar/<id> link below) for the real details.
+const GENERIC_DESCRIPTION =
+  "Appointment scheduled in Hone. Open Hone for details.";
 
 export async function GET(
   _req: Request,
@@ -99,16 +101,15 @@ export async function GET(
     Date.now() - FEED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  // Pull just enough columns to render the conservative feed. NO
-  // appointment.notes, NO client.allergies / pinned notes, NO
-  // session entries, NO pricing.
+  // PR #289: pull ONLY the time-window columns. We deliberately do NOT
+  // select the client name or the service/modality — the default feed
+  // exposes neither, and not fetching them means a row leaked to logs
+  // carries no client PII or treatment context. The status filter still
+  // excludes cancelled appointments; status itself is not projected
+  // because the generic description does not surface it.
   const { data: rows, error: aErr } = await admin
     .from("appointments")
-    .select(
-      `id, starts_at, ends_at, status,
-       service:services(modality),
-       client:clients(name)`,
-    )
+    .select("id, starts_at, ends_at")
     .eq("studio_id", practitioner.studio_id)
     .eq("practitioner_id", practitioner.id)
     .in("status", ["confirmed", "completed", "no_show"])
@@ -139,32 +140,21 @@ export async function GET(
     id: string;
     starts_at: string;
     ends_at: string;
-    status: string;
-    service: { modality: string | null } | { modality: string | null }[] | null;
-    client: { name: string } | { name: string }[] | null;
   };
 
   const appOrigin = getRequiredAppOrigin();
   const events: IcsEvent[] = ((rows ?? []) as Row[]).map((row) => {
-    const service = Array.isArray(row.service) ? row.service[0] : row.service;
-    const client = Array.isArray(row.client) ? row.client[0] : row.client;
-    const lines: string[] = [];
-    if (client?.name) {
-      lines.push(`Client: ${client.name}`);
-    }
-    lines.push(`Type: ${modalityLabel(service?.modality ?? null)}`);
-    const descriptor = statusDescriptor(row.status);
-    if (descriptor) {
-      lines.push(`Status: ${descriptor}`);
-    }
-    lines.push(`View in Hone: ${appOrigin}/calendar/${row.id}`);
+    // Generic description only: no client / treatment specifics. The
+    // /calendar/<id> link is auth-gated (a login is required to see any
+    // detail) and carries no token.
+    const description = `${GENERIC_DESCRIPTION}\nView in Hone: ${appOrigin}/calendar/${row.id}`;
 
     return {
       uid: row.id,
       start: new Date(row.starts_at),
       end: new Date(row.ends_at),
       summary: "Hone appointment",
-      description: lines.join("\n"),
+      description,
       location,
     };
   });
