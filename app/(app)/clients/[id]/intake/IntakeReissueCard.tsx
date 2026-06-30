@@ -8,9 +8,13 @@ type Props = {
   clientHasEmail: boolean;
 };
 
-// "Request intake update" card. Replaces the prior toast-only stub.
+// "Send a new intake form" card (PR #293 relabel — was the
+// "Request intake update" card). Secondary to the prominent
+// "Resend intake link" CTA: this one starts a brand-new BLANK intake
+// (createIntakeRequestForClient), so it is for a fresh form, not for
+// re-sending a link to a form the client already started.
 // Two-step interaction:
-//   1. Practitioner clicks Request intake update.
+//   1. Practitioner clicks Send a new intake form.
 //   2. Confirmation explains the new in-progress row, preserved
 //      history, and the email-vs-copy choice.
 //   3. On confirm, server action creates a fresh row + token; the
@@ -62,13 +66,13 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
   return (
     <section className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-        Request intake update
+        Send a new intake form
       </h2>
       {stage === "idle" && (
         <div className="mt-3 flex flex-col gap-3">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Send the client a fresh intake form. Previous intakes stay on
-            file and are not changed.
+            Starts a brand-new blank intake. Use Resend intake link if the
+            client already started this form.
           </p>
           <div>
             <button
@@ -76,7 +80,7 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
               onClick={() => setStage("confirm")}
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
             >
-              Request intake update
+              Send a new intake form
             </button>
           </div>
         </div>

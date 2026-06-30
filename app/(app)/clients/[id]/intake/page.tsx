@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   getIntakeById,
   getIntakeHistoryForClient,
+  INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import {
   INTAKE_STEPS,
@@ -23,6 +24,7 @@ import {
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
 import { IntakeReissueCard } from "./IntakeReissueCard";
+import { IntakeResendCard } from "./IntakeResendCard";
 import { IntakeHistoryList } from "./IntakeHistoryList";
 import { NoneAnswerSummary } from "./NoneAnswerSummary";
 
@@ -227,6 +229,23 @@ export default async function ClientIntakePage({
           </p>
         )}
       </div>
+
+      {/* PR #293: primary resend CTA for an in-progress intake — refreshes
+          the link for THIS row and keeps saved answers. The reissue card
+          below is the secondary "start a brand-new blank intake" path. */}
+      {intake.status === "in_progress" && (
+        <IntakeResendCard
+          clientId={id}
+          intakeId={intake.id}
+          clientHasEmail={!!client.email}
+          // Best-effort: an in-progress intake older than the 14-day link
+          // TTL means the last link the client got has likely expired.
+          linkMaybeExpired={
+            Date.now() - new Date(intake.started_at).getTime() >
+            INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000
+          }
+        />
+      )}
 
       <IntakeReissueCard
         clientId={id}

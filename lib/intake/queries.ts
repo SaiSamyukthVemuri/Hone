@@ -20,7 +20,9 @@ import type { ClientIntakeForm } from "@/lib/types/database";
 // client_intake_forms.token_version smallint and include it in the
 // HMAC payload so a forwarded link can be revoked individually before
 // submission.
-const INTAKE_LINK_TTL_DAYS = 14;
+// Exported so the Health & Forms tab can compute a best-effort
+// "this link may have expired" hint without re-declaring the TTL.
+export const INTAKE_LINK_TTL_DAYS = 14;
 
 // Returns the most recent non-deleted intake for the client, if any.
 export async function getLatestIntakeForClient(
