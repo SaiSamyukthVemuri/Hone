@@ -13,6 +13,12 @@ import {
   normalizeProcedureRecordFilter,
   utcInstantsForLocalDayRange,
 } from "@/lib/record-keeping/queries";
+import {
+  disinfectantDueStatus,
+  disinfectantStatusLabel,
+  isDisinfectantAlert,
+} from "@/lib/record-keeping/disinfectant-status";
+import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
 
@@ -192,6 +198,7 @@ export default async function RecordKeepingPrintPage({
         <DisinfectantsPrint
           studioId={studio.id}
           includeHistory={includeHistory}
+          timezone={studio.timezone}
         />
       )}
       {section === "incidents" &&
@@ -261,9 +268,11 @@ async function SterilePrint({
 async function DisinfectantsPrint({
   studioId,
   includeHistory,
+  timezone,
 }: {
   studioId: string;
   includeHistory: boolean;
+  timezone: string;
 }) {
   const records = await getDisinfectantRecords(studioId);
   const audit = includeHistory
@@ -275,27 +284,45 @@ async function DisinfectantsPrint({
     : new Map();
   if (records.length === 0)
     return <p className="text-sm">No disinfectant records.</p>;
+  // PR #295: read-time discard / replace-by status, computed against the
+  // studio's "today" (the same deterministic todayInTz the in-app Records
+  // screen uses) so the printed inspection log matches what staff see on
+  // screen. Display-only — nothing is stored or sent.
+  const today = todayInTz(timezone);
   return (
     <ul className="flex flex-col divide-y divide-neutral-300 text-sm">
-      {records.map((r) => (
-        <li key={r.id} className="break-inside-avoid py-2">
-          <FieldLine label="Date prepared" value={dateOnly(r.date_prepared)} />
-          <FieldLine label="Disinfectant" value={notRecorded(r.disinfectant_name)} />
-          <FieldLine label="Concentration" value={notRecorded(r.concentration)} />
-          <FieldLine
-            label="Date discarded"
-            value={r.date_discarded ? dateOnly(r.date_discarded) : "In use"}
-          />
-          <FieldLine label="Operator" value={notRecorded(r.operator_name)} />
-          {r.notes && <FieldLine label="Notes" value={r.notes} />}
-          <p className="text-[11px] text-neutral-500">
-            Recorded {utcStamp(new Date(r.created_at))}
-            {r.updated_at !== r.created_at &&
-              ` · Last updated ${utcStamp(new Date(r.updated_at))}`}
-          </p>
-          <HistoryLines events={audit.get(r.id)} />
-        </li>
-      ))}
+      {records.map((r) => {
+        const status = disinfectantDueStatus(r, today);
+        const statusLabel = isDisinfectantAlert(status)
+          ? disinfectantStatusLabel(status)
+          : null;
+        return (
+          <li key={r.id} className="break-inside-avoid py-2">
+            <FieldLine label="Date prepared" value={dateOnly(r.date_prepared)} />
+            <FieldLine label="Disinfectant" value={notRecorded(r.disinfectant_name)} />
+            <FieldLine label="Concentration" value={notRecorded(r.concentration)} />
+            <FieldLine
+              label="Date discarded"
+              value={r.date_discarded ? dateOnly(r.date_discarded) : "In use"}
+            />
+            <FieldLine
+              label="Replace by"
+              value={r.discard_due_date ? dateOnly(r.discard_due_date) : "Not set"}
+            />
+            {statusLabel && (
+              <FieldLine label="Replace status" value={statusLabel} />
+            )}
+            <FieldLine label="Operator" value={notRecorded(r.operator_name)} />
+            {r.notes && <FieldLine label="Notes" value={r.notes} />}
+            <p className="text-[11px] text-neutral-500">
+              Recorded {utcStamp(new Date(r.created_at))}
+              {r.updated_at !== r.created_at &&
+                ` · Last updated ${utcStamp(new Date(r.updated_at))}`}
+            </p>
+            <HistoryLines events={audit.get(r.id)} />
+          </li>
+        );
+      })}
     </ul>
   );
 }
