@@ -484,6 +484,11 @@ function QuickLinks() {
             Ops alerts
           </Link>
         </li>
+        <li>
+          <Link href="/admin/payments/manual-review" className="underline">
+            Payment manual review
+          </Link>
+        </li>
         <li className="text-neutral-500">
           New studio setup runbook: docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
         </li>

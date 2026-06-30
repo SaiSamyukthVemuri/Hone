@@ -216,6 +216,15 @@ Per row:
   2. If found: manually UPDATE the row with the PI id + result.
   3. If not found: manually UPDATE the row to `failed` or `cancelled` with a clear reason; the next prepare for the same `(appointment, charge_type)` will succeed.
 
+## Payment manual-review queue (PR #290)
+
+The canonical session-payment / fee ledger is **`payment_charge_attempts`** (the legacy `manual_fee_charge_attempts` above was retired in PR #218; only historical rows remain). For the canonical ledger operators no longer need raw SQL — the admin-only, **read-only** page **`/admin/payments/manual-review`** surfaces the two checks that matter:
+
+- **Stuck attempts** — `payment_charge_attempts` in `status='pending_stripe'` older than 60 min (the reconcile window). A non-empty list means a charge may be unreconciled.
+- **Unresolved critical payment alerts** — `ops_alerts` with `severity='critical'`, `resolved_at IS NULL`, and a payment event (`session_payment_*` / `payment_intent_*` / `payment_refund_*` / `payment_charge_*` / `charge_refunded_*` / `stripe_webhook_*`). Includes the PR #281 "Stripe succeeded but Hone could not persist" criticals (`session_payment_succeeded_write_failed` / `_zero_rows`). Warning-level alerts stay on `/admin/ops-alerts`.
+
+It shows the PaymentIntent id, Hone status, amount, live/test-mode flag, and the redacted alert message — **no client names, no raw payloads, no secrets**. It is **read-only** (no resolve/retry/refund button). To reconcile a row: (1) search the Stripe Dashboard for the PaymentIntent (`pi_…`) on the connected account; (2) compare with the Hone attempt (the row stays `pending_stripe`; the `payment_intent.succeeded` webhook is the eventual-consistency backstop, PR #179); (3) **do NOT retry the charge or issue a refund blindly** — follow docs/16 §17; (4) after reconciling, **resolve the related alert on `/admin/ops-alerts`** (the only mutation; not on this queue). Live payments remain disabled; this is operations hardening, not enablement.
+
 ## Webhook signature error handling
 
 If every webhook is returning 400 with "signature mismatch":
