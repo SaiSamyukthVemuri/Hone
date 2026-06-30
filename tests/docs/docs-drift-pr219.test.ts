@@ -106,14 +106,15 @@ describe("docs/03: OPS_ALERT_EMAILS language matches lib/ops/alert-email.ts", ()
     );
   });
 
-  it("states the variable IS read, by which helper, and that it is optional", () => {
+  it("states the variable IS read, by which helper, and its production-required status", () => {
     expect(SECURITY).toMatch(
-      /`OPS_ALERT_EMAILS` \(comma-separated recipient list\) IS read by that helper and is optional/,
+      /`OPS_ALERT_EMAILS` \(comma-separated recipient list\) IS read by that helper/,
     );
     expect(SECURITY).toMatch(/`lib\/ops\/alert-email\.ts`/);
-    expect(SECURITY).toMatch(
-      /once-per-instance warning is logged and the email is skipped/,
-    );
+    // PR #291: optional outside production, REQUIRED in production (env gate).
+    expect(SECURITY).toMatch(/optional outside production/);
+    expect(SECURITY).toMatch(/REQUIRED in production/);
+    expect(SECURITY).toMatch(/once-per-instance warning is logged and the email is skipped/);
     expect(SECURITY).toMatch(/durable row and the dashboard are unaffected/);
   });
 

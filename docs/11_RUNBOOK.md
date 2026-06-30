@@ -271,7 +271,7 @@ If the test-mode manual fee charge action needs to be quickly disabled:
 
 ## Ops alerts (PR #153)
 
-**Operator surface in PR #153: SQL + Vercel logs.** Operator email dispatch is deliberately not implemented; the alerts helper avoids importing `lib/email/send-appointment.ts` to keep a clean separation from the email subsystem it observes. `OPS_ALERT_EMAILS` is reserved in env docs but not read. A future PR may add a standalone `lib/ops/alert-email.ts` calling Resend directly.
+**Operator surface: `/admin/ops-alerts` + critical-alert email + SQL/logs.** Durable `ops_alerts` rows are the source of truth, surfaced on the admin dashboard (PR #193) and via the SQL recipes below. The alerts helper avoids importing `lib/email/send-appointment.ts` to keep a clean separation from the email subsystem it observes. **Critical** alerts additionally email the recipients in **`OPS_ALERT_EMAILS`** via the standalone `lib/ops/alert-email.ts` (bare Resend client, after the durable row, never throws; redacted message + safe ids only). **`OPS_ALERT_EMAILS` is REQUIRED in production (PR #291):** the production env gate (`scripts/check-production-env-gates.mjs`, wired into `npm run build`) fails the production build if it does not list ≥1 recipient, so a deploy cannot silently ship with critical-alert email disabled. If it is unset/empty at runtime the email is a no-op (once-per-instance warning) and the row + dashboard still work. **Operator action: set `OPS_ALERT_EMAILS` in the Vercel Production environment.**
 
 The `ops_alerts` table (migration 0067) is the durable record of silent-failure states. Recent alerts:
 

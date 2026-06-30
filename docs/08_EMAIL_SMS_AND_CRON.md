@@ -108,6 +108,8 @@ When an email or SMS send gives up (final-attempt non-retryable failure OR attem
 
 **Alert message redaction (PR #285).** Cron / email / SMS alert call sites that pass a provider `error.message` (e.g. `cron_route_failed`) are safe by default: `recordOpsAlert` now runs `redactOpsAlertMessage` (`lib/ops/redact.ts`) on the message before the stderr log, the `ops_alerts` row, the admin page, and the critical email — scrubbing email/phone/CRON_SECRET/Bearer tokens/JWTs/signed URLs/storage paths/Stripe secrets while preserving safe ids (non-secret Stripe object ids, UUIDs). See docs/03 §ops_alerts.
 
+**Critical-alert delivery is production-gated (PR #291).** Critical ops alerts email the recipients in `OPS_ALERT_EMAILS` via `lib/ops/alert-email.ts` (after the durable row, never throws). Because an unset/empty `OPS_ALERT_EMAILS` makes that email a silent no-op (the alert then lives only as a DB row + `/admin/ops-alerts`), **`OPS_ALERT_EMAILS` is now REQUIRED in production**: the env gate `scripts/check-production-env-gates.mjs` (wired into `npm run build`) fails the production build if it does not list ≥1 recipient (whitespace-only / comma-only counts as none). Enforced only when `VERCEL_ENV === "production"`; local/CI/preview SKIP. Names-only output — the addresses are never printed. This is delivery-config verification only: no alert is sent at build time, and the reminder/email/cron runtime is unchanged.
+
 Events:
 
 - `email_send_gave_up` (warning): emitted from `logEmailFailure` when the email send is non-retryable OR attempt_number >= 3. The ops helper does not dispatch operator email at all in PR #153 (deferred), so the give-up alert lives purely as a `ops_alerts` row + stderr log.

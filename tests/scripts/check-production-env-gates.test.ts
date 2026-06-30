@@ -30,6 +30,8 @@ const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, "utf8");
 // up in stdout/stderr. The gate must only ever print variable NAMES.
 const URL_SENTINEL = "URLVAL_must_never_be_printed";
 const TOKEN_SENTINEL = "TOKVAL_must_never_be_printed";
+// PR #291: a configured OPS_ALERT_EMAILS address must never be printed either.
+const OPS_EMAIL_SENTINEL = "ops-alerts+secret@example.invalid";
 
 function run(env: Record<string, string>) {
   return spawnSync("node", [SCRIPT_PATH], {
@@ -76,27 +78,104 @@ describe("check-production-env-gates script (PR #262)", () => {
     expect(r.stdout + r.stderr).toMatch(/UPSTASH_REDIS_REST_URL/);
   });
 
-  it("PASSES a production build when both Upstash vars are present", () => {
+  it("PASSES a production build when Upstash vars AND OPS_ALERT_EMAILS are present", () => {
     const r = run({
       VERCEL_ENV: "production",
       UPSTASH_REDIS_REST_URL: URL_SENTINEL,
       UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+      OPS_ALERT_EMAILS: OPS_EMAIL_SENTINEL,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout).toMatch(/^PASS public-rate-limit-env/m);
+    expect(r.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
   });
 
-  it("never prints env VALUES — only variable NAMES (present case)", () => {
+  it("never prints env VALUES — only variable NAMES (all-present case)", () => {
     const r = run({
       VERCEL_ENV: "production",
       UPSTASH_REDIS_REST_URL: URL_SENTINEL,
       UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+      OPS_ALERT_EMAILS: OPS_EMAIL_SENTINEL,
     });
     const out = r.stdout + r.stderr;
     expect(out).not.toContain(URL_SENTINEL);
     expect(out).not.toContain(TOKEN_SENTINEL);
+    // A configured alert email address must never be printed.
+    expect(out).not.toContain(OPS_EMAIL_SENTINEL);
     // The names themselves are expected to appear.
     expect(out).toMatch(/UPSTASH_REDIS_REST_URL/);
+    expect(out).toMatch(/OPS_ALERT_EMAILS/);
+  });
+
+  // --- PR #291: critical ops-alert delivery gate ---------------------------
+
+  it("FAILS a production build when OPS_ALERT_EMAILS is missing (Upstash present)", () => {
+    const r = run({
+      VERCEL_ENV: "production",
+      UPSTASH_REDIS_REST_URL: URL_SENTINEL,
+      UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout + r.stderr).toMatch(/FAIL ops-alert-delivery-env/);
+    expect(r.stdout + r.stderr).toMatch(/OPS_ALERT_EMAILS/);
+    // Upstash gate still passes independently.
+    expect(r.stdout).toMatch(/^PASS public-rate-limit-env/m);
+  });
+
+  it("FAILS a production build when OPS_ALERT_EMAILS is empty", () => {
+    const r = run({
+      VERCEL_ENV: "production",
+      UPSTASH_REDIS_REST_URL: URL_SENTINEL,
+      UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+      OPS_ALERT_EMAILS: "",
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout + r.stderr).toMatch(/FAIL ops-alert-delivery-env/);
+  });
+
+  it("FAILS a production build when OPS_ALERT_EMAILS is whitespace/comma-only (zero recipients)", () => {
+    const r = run({
+      VERCEL_ENV: "production",
+      UPSTASH_REDIS_REST_URL: URL_SENTINEL,
+      UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+      OPS_ALERT_EMAILS: " , ,  ",
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout + r.stderr).toMatch(/FAIL ops-alert-delivery-env/);
+  });
+
+  it("PASSES with a multi-recipient OPS_ALERT_EMAILS and never prints the addresses", () => {
+    const r = run({
+      VERCEL_ENV: "production",
+      UPSTASH_REDIS_REST_URL: URL_SENTINEL,
+      UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+      OPS_ALERT_EMAILS: `${OPS_EMAIL_SENTINEL}, second-secret@example.invalid`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
+    const out = r.stdout + r.stderr;
+    expect(out).not.toContain(OPS_EMAIL_SENTINEL);
+    expect(out).not.toContain("second-secret@example.invalid");
+  });
+
+  it("does NOT require OPS_ALERT_EMAILS off-production (preview, missing)", () => {
+    const r = run({ VERCEL_ENV: "preview" });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/^SKIP public-rate-limit-env/m);
+    // No FAIL for the missing ops-alert var outside production.
+    expect(r.stdout + r.stderr).not.toMatch(/FAIL ops-alert-delivery-env/);
+  });
+
+  it("still requires Upstash even when OPS_ALERT_EMAILS is set (gates are independent)", () => {
+    const r = run({
+      VERCEL_ENV: "production",
+      OPS_ALERT_EMAILS: OPS_EMAIL_SENTINEL,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout + r.stderr).toMatch(/FAIL public-rate-limit-env/);
+    // The ops-alert gate itself passes; only Upstash fails here.
+    expect(r.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
+    expect(r.stdout + r.stderr).not.toContain(OPS_EMAIL_SENTINEL);
   });
 
   it("is a NO-OP on preview deploys (env intentionally absent)", () => {
@@ -129,5 +208,23 @@ describe("check-production-env-gates contract is pinned in source", () => {
 
   it("has NO fail-open bypass env (a bypass would re-enable the silent prod fail-open)", () => {
     expect(SCRIPT_SOURCE).not.toMatch(/process\.env\.\w*(BYPASS|ALLOW)\w*/i);
+  });
+
+  it("requires OPS_ALERT_EMAILS by name with its own gate label (PR #291)", () => {
+    expect(SCRIPT_SOURCE).toContain("OPS_ALERT_EMAILS");
+    expect(SCRIPT_SOURCE).toMatch(/ops-alert-delivery-env/);
+    // Mirrors the runtime parser (split/trim/filter) so whitespace/comma-only fails.
+    expect(SCRIPT_SOURCE).toMatch(/opsAlertRecipientCount/);
+  });
+
+  it("does NOT send email or add an external alert provider (env-presence gate only)", () => {
+    // No real send: the gate reads presence only, never imports Resend/email or fetches.
+    expect(SCRIPT_SOURCE).not.toMatch(/resend|nodemailer|sendEmail|fetch\(|import\s+/i);
+    // No new external alert provider env (Slack / PagerDuty / OpsGenie / webhook URL).
+    expect(SCRIPT_SOURCE).not.toMatch(/SLACK|PAGERDUTY|OPSGENIE|WEBHOOK_URL|DISCORD/i);
+  });
+
+  it("does NOT touch Stripe / live-payment gates", () => {
+    expect(SCRIPT_SOURCE).not.toMatch(/STRIPE|paymentIntents|charges\.|refunds\.|checkout\.sessions|LIVE_MODE/i);
   });
 });
