@@ -1,6 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+
+// PR #288 (CI reliability checkpoint). The runtime smoke below exercises the
+// helper's fire-and-forget paths, which spawn an UNAWAITED async chain
+// (`void (async () => { await import("@/lib/ops/alerts"); await recordOpsAlert(...) })()`
+// for the invalid-event guard, and a `createAdminClient()` insert for the valid
+// path). Left un-mocked, that background work — a dynamic import of the ops-
+// alert module + the admin client — outlives the synchronous assertion and was
+// the suspected source of a prior full-suite timeout flake (it passed when run
+// alone). Mocking these targets makes the background work a controlled no-op,
+// and flushing microtasks settles it WITHIN the test so nothing leaks past the
+// test boundary. Production behavior is unchanged — this is test isolation only.
+vi.mock("@/lib/ops/alerts", () => ({
+  recordOpsAlert: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: vi.fn(() => {
+    throw new Error("admin client unavailable in unit test");
+  }),
+}));
+import { recordOpsAlert } from "@/lib/ops/alerts";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+
+// Resolve all queued microtasks/timers so a fire-and-forget chain settles
+// before the test ends (no dangling promise / open handle).
+const flushAsync = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 // PR #164. The practitioner-notification helper is the trust
 // boundary between public visitor/token flows and the practitioner
@@ -108,30 +133,78 @@ describe("event_type allowlist", () => {
 // unit tests (no live DB), but we can confirm the misuse branch.
 // ---------------------------------------------------------------------------
 
-describe("runtime: invalid event type does not throw", () => {
-  it("returns void synchronously and swallows the misuse", async () => {
+describe("runtime: invalid event type is swallowed deterministically", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  const invalidInput = {
+    studioId: "00000000-0000-0000-0000-000000000000",
+    practitionerId: null,
+    // Intentionally invalid; the helper logs + returns void.
+    eventType: "not_a_real_event_type" as unknown as
+      | "new_booking"
+      | "appointment_cancelled"
+      | "appointment_rescheduled",
+    title: "test",
+    body: null,
+    appointmentId: null,
+    clientId: null,
+    href: null,
+  } as const;
+
+  it("returns void synchronously and does not throw", async () => {
     const mod = await import("@/lib/notifications/practitioner-notifications");
+    let result: unknown = "sentinel";
     let threw = false;
     try {
-      const result = mod.recordPractitionerNotification({
-        studioId: "00000000-0000-0000-0000-000000000000",
-        practitionerId: null,
-        // Intentionally invalid; the helper logs + returns void.
-        eventType: "not_a_real_event_type" as unknown as
-          | "new_booking"
-          | "appointment_cancelled"
-          | "appointment_rescheduled",
-        title: "test",
-        body: null,
-        appointmentId: null,
-        clientId: null,
-        href: null,
-      });
-      expect(result).toBeUndefined();
+      result = mod.recordPractitionerNotification(invalidInput);
     } catch {
       threw = true;
     }
     expect(threw).toBe(false);
+    expect(result).toBeUndefined();
+    await flushAsync();
+  });
+
+  it("logs the misuse via the ops-alert path, then settles with no dangling work", async () => {
+    const mod = await import("@/lib/notifications/practitioner-notifications");
+    mod.recordPractitionerNotification(invalidInput);
+    // The fire-and-forget ops-alert chain is unawaited by the helper (by
+    // design). Flushing here proves it settles INSIDE the test — no open
+    // handle survives past the test boundary.
+    await flushAsync();
+    expect(vi.mocked(recordOpsAlert)).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(recordOpsAlert).mock.calls[0][0];
+    expect(call.event).toBe("practitioner_notification_invalid_event_type");
+    expect(call.severity).toBe("warning");
+  });
+
+  it("does NOT attempt a notification insert on the invalid-event path", async () => {
+    const mod = await import("@/lib/notifications/practitioner-notifications");
+    mod.recordPractitionerNotification(invalidInput);
+    await flushAsync();
+    // The guard returns BEFORE the IIFE, so the admin client is never created
+    // and no notification row is attempted for an invalid event.
+    expect(vi.mocked(createAdminClient)).not.toHaveBeenCalled();
+  });
+
+  it("a VALID event still returns void and its fire-and-forget insert failure is swallowed", async () => {
+    const mod = await import("@/lib/notifications/practitioner-notifications");
+    let threw = false;
+    try {
+      mod.recordPractitionerNotification({ ...invalidInput, eventType: "new_booking" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    await flushAsync();
+    // The IIFE calls createAdminClient (mocked to throw); the throw is caught
+    // and reported via the ops-alert path — never surfaced to the caller.
+    expect(vi.mocked(createAdminClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordOpsAlert)).toHaveBeenCalled();
+    const events = vi
+      .mocked(recordOpsAlert)
+      .mock.calls.map((c) => c[0].event);
+    expect(events).toContain("practitioner_notification_insert_threw");
   });
 });
 
