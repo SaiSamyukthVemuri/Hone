@@ -291,7 +291,16 @@ export async function archiveTreatmentImageAction(input: {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   try {
     const supabase = await createClient();
-    const { error } = await supabase
+    // PR #287: archive must change exactly the CURRENT client's row. The
+    // conditional UPDATE is scoped by id + studio_id + client_id + not-already-
+    // deleted, and `.select("id")` proves a row was actually changed. Without
+    // the client_id scope, a Client A route call with Client B's (same-studio)
+    // image id would archive the wrong client's photo (RLS/0093 allow the
+    // same-studio deleted_at flip); without the row-affected check, a
+    // nonexistent / already-archived / wrong-client id would update zero rows
+    // and still report success. A zero-row result is a generic "not found" —
+    // it never reveals whether another client's image exists.
+    const { data, error } = await supabase
       .from("treatment_images")
       .update({
         deleted_at: new Date().toISOString(),
@@ -299,8 +308,13 @@ export async function archiveTreatmentImageAction(input: {
       })
       .eq("id", input.imageId)
       .eq("studio_id", studio.id)
-      .is("deleted_at", null);
+      .eq("client_id", input.clientId)
+      .is("deleted_at", null)
+      .select("id");
     if (error) throw new Error(error.message);
+    if (!data || data.length !== 1) {
+      return { ok: false, error: "Treatment photo not found." };
+    }
     revalidatePath(`/clients/${input.clientId}/images`);
     return { ok: true };
   } catch {
