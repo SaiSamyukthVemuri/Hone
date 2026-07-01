@@ -125,15 +125,25 @@ export function PostcareSendButton({
         >
           {buttonLabel}
         </button>
-        {alreadySentAt && (
-          <p className="text-xs text-neutral-500">
-            Last sent{" "}
-            {new Date(alreadySentAt).toLocaleString(undefined, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-            {sendAttempts > 1 ? ` · ${sendAttempts} attempts` : null}
+        {alreadySentAt ? (
+          // Clear "sent" status so the practitioner doesn't have to guess.
+          // "Sent" is the recorded send timestamp (migration 0043), NOT a
+          // delivery/receipt confirmation — the copy stays "sent", never
+          // "delivered" or "received".
+          <p className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              <span aria-hidden>✓</span> Postcare sent
+            </span>
+            <span className="text-neutral-500">
+              {new Date(alreadySentAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+              {sendAttempts > 1 ? ` · ${sendAttempts} attempts` : null}
+            </span>
           </p>
+        ) : (
+          <p className="text-xs text-neutral-500">Not sent yet.</p>
         )}
       </div>
 
