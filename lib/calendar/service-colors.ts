@@ -16,19 +16,25 @@
 //     existing softCardClasses() in DayColumn used so legibility
 //     (esp. dark mode) stays consistent with the prior look.
 
+// Stronger-but-calm fills (calendar card refresh). Bumped from the prior
+// ultra-pale `-50` bg + `-400` accent to a `-100` bg + a saturated `-500`
+// left accent so appointment blocks read as clear, scannable blocks (Fresha
+// used only as a readability benchmark, never copied) while staying clinical,
+// not salon-bright. The rose/red family is STILL excluded — Hone reserves it
+// for allergy / EpiPen / clinical-caution banners.
 const SERVICE_PALETTE: ReadonlyArray<string> = [
   // amber
-  "bg-amber-50 text-amber-900 border-l-amber-400 dark:bg-amber-950/40 dark:text-amber-100 dark:border-l-amber-500",
+  "bg-amber-100 text-amber-900 border-l-amber-500 dark:bg-amber-950/50 dark:text-amber-100 dark:border-l-amber-500",
   // emerald
-  "bg-emerald-50 text-emerald-900 border-l-emerald-400 dark:bg-emerald-950/40 dark:text-emerald-100 dark:border-l-emerald-500",
+  "bg-emerald-100 text-emerald-900 border-l-emerald-500 dark:bg-emerald-950/50 dark:text-emerald-100 dark:border-l-emerald-500",
   // teal
-  "bg-teal-50 text-teal-900 border-l-teal-400 dark:bg-teal-950/40 dark:text-teal-100 dark:border-l-teal-500",
+  "bg-teal-100 text-teal-900 border-l-teal-500 dark:bg-teal-950/50 dark:text-teal-100 dark:border-l-teal-500",
   // sky
-  "bg-sky-50 text-sky-900 border-l-sky-400 dark:bg-sky-950/40 dark:text-sky-100 dark:border-l-sky-500",
+  "bg-sky-100 text-sky-900 border-l-sky-500 dark:bg-sky-950/50 dark:text-sky-100 dark:border-l-sky-500",
   // indigo
-  "bg-indigo-50 text-indigo-900 border-l-indigo-400 dark:bg-indigo-950/40 dark:text-indigo-100 dark:border-l-indigo-500",
+  "bg-indigo-100 text-indigo-900 border-l-indigo-500 dark:bg-indigo-950/50 dark:text-indigo-100 dark:border-l-indigo-500",
   // violet
-  "bg-violet-50 text-violet-900 border-l-violet-400 dark:bg-violet-950/40 dark:text-violet-100 dark:border-l-violet-500",
+  "bg-violet-100 text-violet-900 border-l-violet-500 dark:bg-violet-950/50 dark:text-violet-100 dark:border-l-violet-500",
 ];
 
 // Neutral fallback for an appointment whose service row has been
