@@ -358,6 +358,12 @@ export type ClientAppointmentTimelineRow = {
   service_modality: string | null;
   cancelled_at: string | null;
   cancellation_reason: string | null;
+  // Postcare send visibility (read-only, existing columns from migration
+  // 0043). `postcare_email_sent_at` is the timestamp of the last successful
+  // send (never a delivery/receipt confirmation); attempts counts recorded
+  // send attempts. Surfaced so a practitioner can see postcare was sent.
+  postcare_email_sent_at: string | null;
+  postcare_email_send_attempts: number;
   linked_session: {
     id: string;
     started_at: string;
@@ -379,7 +385,7 @@ export async function getAppointmentsForClientProfile(
   const { data: rawAppts, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, service:services(name, modality)",
+      "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, postcare_email_sent_at, postcare_email_send_attempts, service:services(name, modality)",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -398,6 +404,8 @@ export async function getAppointmentsForClientProfile(
     service_id: string | null;
     cancelled_at: string | null;
     cancellation_reason: string | null;
+    postcare_email_sent_at: string | null;
+    postcare_email_send_attempts: number | null;
     service:
       | { name: string; modality: string | null }
       | Array<{ name: string; modality: string | null }>
@@ -457,6 +465,8 @@ export async function getAppointmentsForClientProfile(
       service_modality: svc?.modality ?? null,
       cancelled_at: a.cancelled_at,
       cancellation_reason: a.cancellation_reason,
+      postcare_email_sent_at: a.postcare_email_sent_at,
+      postcare_email_send_attempts: a.postcare_email_send_attempts ?? 0,
       linked_session: latestByAppointment.get(a.id) ?? null,
     };
   });

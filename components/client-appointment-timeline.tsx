@@ -221,6 +221,21 @@ function TimelineRow({
             · {row.linked_session.modality}
           </p>
         )}
+        {row.postcare_email_sent_at && (
+          // Postcare send visibility (read-only). "Sent" is the recorded send
+          // timestamp, not a delivery confirmation. Only shown when a send
+          // was recorded, so this reads as a per-client postcare history.
+          <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+            Postcare sent{" "}
+            <FormattedDateTime
+              iso={row.postcare_email_sent_at}
+              format="datetime"
+            />
+            {row.postcare_email_send_attempts > 1
+              ? ` · ${row.postcare_email_send_attempts} attempts`
+              : ""}
+          </p>
+        )}
       </div>
       <TimelineActions row={row} bucket={bucket} clientId={clientId} />
     </li>
