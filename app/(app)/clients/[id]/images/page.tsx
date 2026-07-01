@@ -51,7 +51,10 @@ export default async function ClientImagesPage({
   const { data: images, error: imgErr } = await supabase
     .from("treatment_images")
     .select(
-      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, session_blocks ( primary_area, side, custom_area_detail )",
+      // sessions ( started_at ) is a read-only embed (via the session_id FK)
+      // so the gallery can title a photo with its SESSION date instead of the
+      // raw filename. Display-only; no schema/security change.
+      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
     )
     .eq("studio_id", studio.id)
     .eq("client_id", id)
@@ -64,7 +67,7 @@ export default async function ClientImagesPage({
   // URLs are returned ONLY in this response — never stored in the DB, never
   // public. storage_path stays server-side; only the signed URL reaches the
   // client. A failed sign yields previewUrl=null → the card shows
-  // "Image not available" but keeps filename/date/Archive.
+  // "Image not available" but keeps the date label + context tags + Archive.
   const meta = (images ?? []) as Array<{
     id: string;
     original_filename: string | null;
@@ -73,6 +76,7 @@ export default async function ClientImagesPage({
     storage_path: string;
     session_id: string | null;
     session_block_id: string | null;
+    sessions: { started_at: string } | { started_at: string }[] | null;
     session_blocks: SessionBlockAreaInput | SessionBlockAreaInput[];
   }>;
   const admin = createAdminClient();
@@ -106,10 +110,15 @@ export default async function ClientImagesPage({
       const block = Array.isArray(m.session_blocks)
         ? (m.session_blocks[0] ?? null)
         : (m.session_blocks ?? null);
+      const session = Array.isArray(m.sessions)
+        ? (m.sessions[0] ?? null)
+        : (m.sessions ?? null);
       // Compute labels server-side; only labels (never raw IDs) reach the client.
       return {
         id: m.id,
-        filename: m.original_filename ?? null,
+        // Session date of the attached session (null for client-scope photos),
+        // used as the human card title in place of the raw filename.
+        sessionDate: session?.started_at ?? null,
         createdAt: m.created_at,
         previewUrl,
         scopeLabel: treatmentPhotoScopeLabel({
