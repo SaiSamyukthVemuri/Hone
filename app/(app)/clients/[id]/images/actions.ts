@@ -16,6 +16,7 @@ import {
   buildTreatmentImagePath,
 } from "@/lib/images/treatment-images";
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
+import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 
 // PR #271. Practitioner-only secure treatment image actions.
 //
@@ -300,6 +301,50 @@ export async function getTreatmentImageSignedUrlAction(input: {
     return { ok: true, url: signed.signedUrl };
   } catch {
     return { ok: false, error: "Image not available." };
+  }
+}
+
+// PR #307: add / edit / clear the practitioner note under a treatment photo.
+// Metadata-only UPDATE via the RLS client (createClient) — no service-role, no
+// storage/token/sanitizer touch. Scoped exactly like archiveTreatmentImageAction
+// (id + studio_id + client_id + not-already-deleted, with a .select("id")
+// row-affected check) so a same-studio cross-client write is a generic
+// "not found". The 0093 integrity trigger freezes only identity columns, so a
+// practitioner_note update passes. Errors are generic; nothing sensitive logged.
+export async function updateTreatmentImageNoteAction(input: {
+  imageId: string;
+  clientId: string;
+  note: string;
+}): Promise<ImageActionResult> {
+  const { studio } = await getCurrentPractitionerWithStudio();
+  try {
+    const trimmed = typeof input.note === "string" ? input.note.trim() : "";
+    if (trimmed.length > TREATMENT_NOTE_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `Note is too long (max ${TREATMENT_NOTE_MAX_LENGTH} characters).`,
+      };
+    }
+    // Whitespace-only clears the note (stored as NULL).
+    const value = trimmed.length > 0 ? trimmed : null;
+
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("treatment_images")
+      .update({ practitioner_note: value })
+      .eq("id", input.imageId)
+      .eq("studio_id", studio.id)
+      .eq("client_id", input.clientId)
+      .is("deleted_at", null)
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!data || data.length !== 1) {
+      return { ok: false, error: "Treatment photo not found." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not save the note. Please try again." };
   }
 }
 

@@ -13,7 +13,9 @@ import {
   uploadTreatmentImageAction,
   getTreatmentImageSignedUrlAction,
   archiveTreatmentImageAction,
+  updateTreatmentImageNoteAction,
 } from "./actions";
+import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 
 // PR #271 / #272 / #273. Practitioner-only "Treatment Photos" UI.
 // PR #273 adds INLINE gallery previews: the server pre-signs a short-TTL
@@ -35,6 +37,9 @@ type Row = {
   // metadata + session-block area fields (never raw IDs/paths).
   scopeLabel: string;
   areaLabel: string | null;
+  // PR #307: practitioner note/caption (null = none). Edited inline via
+  // updateTreatmentImageNoteAction; never affects storage/security.
+  note: string | null;
 };
 
 // PR #284: recent sessions (+ their blocks' area labels) for the attach-at-
@@ -66,6 +71,109 @@ function ContextTags({
       <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-neutral-400">
         Clinical reference
       </span>
+    </div>
+  );
+}
+
+// PR #307: per-photo practitioner note/caption. Inline: shows the note (when
+// present) + an "Edit note" / "Add note" control; opens a small textarea with
+// Save / Cancel that calls updateTreatmentImageNoteAction (RLS-scoped, capped).
+// Display-only over the photo — never touches upload/storage/security.
+function PhotoNoteEditor({
+  imageId,
+  clientId,
+  note,
+}: {
+  imageId: string;
+  clientId: string;
+  note: string | null;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(note ?? "");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function startEdit() {
+    setValue(note ?? "");
+    setError(null);
+    setEditing(true);
+  }
+  function cancel() {
+    setValue(note ?? "");
+    setError(null);
+    setEditing(false);
+  }
+  function save() {
+    setError(null);
+    startTransition(async () => {
+      const res = await updateTreatmentImageNoteAction({
+        imageId,
+        clientId,
+        note: value,
+      });
+      if (!res.ok) {
+        // Generic message — never surface a raw provider/DB detail.
+        setError(res.error);
+        return;
+      }
+      setEditing(false);
+      router.refresh();
+    });
+  }
+
+  if (!editing) {
+    return (
+      <div className="mt-2">
+        {note ? (
+          <p className="whitespace-pre-wrap break-words text-xs text-neutral-700 dark:text-neutral-300">
+            {note}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={startEdit}
+          className="mt-1 text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          {note ? "Edit note" : "Add note"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2">
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        maxLength={TREATMENT_NOTE_MAX_LENGTH}
+        rows={2}
+        placeholder="Add a note for this photo…"
+        className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+      />
+      <div className="mt-1 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={save}
+          disabled={pending}
+          className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+        >
+          {pending ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          disabled={pending}
+          className="rounded-md border border-neutral-300 px-3 py-1 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <p className="mt-1 text-xs text-red-700" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -405,6 +513,11 @@ export function TreatmentImagesManager({
                   scopeLabel={img.scopeLabel}
                   areaLabel={img.areaLabel}
                 />
+                <PhotoNoteEditor
+                  imageId={img.id}
+                  clientId={clientId}
+                  note={img.note}
+                />
                 <div className="flex gap-3 text-xs">
                   <button
                     type="button"
@@ -470,6 +583,11 @@ export function TreatmentImagesManager({
                     areaLabel={modal.areaLabel}
                   />
                 </div>
+                <PhotoNoteEditor
+                  imageId={modal.id}
+                  clientId={clientId}
+                  note={modal.note}
+                />
               </div>
               <button
                 type="button"

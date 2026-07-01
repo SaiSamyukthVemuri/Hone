@@ -54,7 +54,7 @@ export default async function ClientImagesPage({
       // sessions ( started_at ) is a read-only embed (via the session_id FK)
       // so the gallery can title a photo with its SESSION date instead of the
       // raw filename. Display-only; no schema/security change.
-      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
+      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
     )
     .eq("studio_id", studio.id)
     .eq("client_id", id)
@@ -76,6 +76,7 @@ export default async function ClientImagesPage({
     storage_path: string;
     session_id: string | null;
     session_block_id: string | null;
+    practitioner_note: string | null;
     sessions: { started_at: string } | { started_at: string }[] | null;
     session_blocks: SessionBlockAreaInput | SessionBlockAreaInput[];
   }>;
@@ -119,6 +120,8 @@ export default async function ClientImagesPage({
         // Session date of the attached session (null for client-scope photos),
         // used as the human card title in place of the raw filename.
         sessionDate: session?.started_at ?? null,
+        // PR #307: practitioner note/caption shown under the photo (null = none).
+        note: m.practitioner_note ?? null,
         createdAt: m.created_at,
         previewUrl,
         scopeLabel: treatmentPhotoScopeLabel({
