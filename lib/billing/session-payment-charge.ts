@@ -394,6 +394,8 @@ async function writeSucceededOutcome(args: {
 
 async function writeFailedOutcome(args: {
   attemptId: string;
+  studioId: string;
+  clientId: string;
   paymentIntentId: string | null;
   stripeStatus: string | null;
   failureCode: string | null | undefined;
@@ -414,10 +416,34 @@ async function writeFailedOutcome(args: {
     .eq("status", "pending_stripe")
     .select("id");
   if (error) {
+    // PR #310: a DB error on the FAILED-outcome write previously logged to
+    // stderr only, leaving it invisible to ops_alerts / the manual-review
+    // queue — weaker than the succeeded-outcome path (PR #281). No charge was
+    // captured (Stripe did NOT succeed), but the reported outcome ('failed')
+    // now diverges from a row that may stay 'pending_stripe'. Raise a CRITICAL
+    // ops alert, symmetric with writeSucceededOutcome, so failure-persistence
+    // failures are as observable as success-persistence failures. Alerting
+    // only: the caller still returns 'failed' (no flow/money change).
     logInternal("session_payment_failed_write_failed", {
       code: error.code,
       message: error.message,
       attemptId: args.attemptId,
+    });
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_failed_write_failed",
+      message:
+        "Stripe reported the payment as failed/non-success, but Hone could not persist the failed outcome on the attempt row (DB error). No charge was captured; the row may stay 'pending_stripe' until reconciled (webhook backstop or manual). Manual review required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      stripePaymentIntentId: args.paymentIntentId,
+      route: "lib/billing/session-payment-charge:writeFailedOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "failed",
+        stripe_status: args.stripeStatus ?? null,
+        db_code: error.code ?? null,
+      },
     });
     return;
   }
@@ -427,19 +453,25 @@ async function writeFailedOutcome(args: {
   // the caller reports 'failed'. Surface for manual review rather than
   // silently diverging the stored row from the reported outcome.
   if (!updatedRows || updatedRows.length === 0) {
+    // PR #310: promoted from warning to CRITICAL so it surfaces in the
+    // critical-only manual-review queue (via the existing 'session_payment_'
+    // prefix), symmetric with the succeeded-outcome zero-row alert.
     logInternal("session_payment_failed_write_zero_rows", {
       attemptId: args.attemptId,
     });
     await recordOpsAlert({
-      severity: "warning",
+      severity: "critical",
       event: "session_payment_failed_write_zero_rows",
       message:
-        "A failed-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The attempt row may not reflect the reported failure. Manual review may be required.",
+        "A failed-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The attempt row may not reflect the reported failure. Manual review required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
       stripePaymentIntentId: args.paymentIntentId,
       route: "lib/billing/session-payment-charge:writeFailedOutcome",
       safeDetails: {
         attempt_id: args.attemptId,
         attempted_status: "failed",
+        stripe_status: args.stripeStatus ?? null,
       },
     });
   }
@@ -525,6 +557,8 @@ async function reconcileExistingPaymentIntent(args: {
   }
   await writeFailedOutcome({
     attemptId: args.attemptId,
+    studioId: args.studioId,
+    clientId: args.clientId,
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
@@ -878,6 +912,8 @@ export async function runSessionPaymentCharge(args: {
       const piStatus = paymentIntent?.status ?? null;
       await writeFailedOutcome({
         attemptId: attemptRow.id,
+        studioId: attemptRow.studio_id,
+        clientId: attemptRow.client_id,
         paymentIntentId: piId,
         stripeStatus: piStatus,
         failureCode: err.code ?? piStatus,
@@ -986,6 +1022,8 @@ export async function runSessionPaymentCharge(args: {
   // Off-session SCA hit or other non-success status.
   await writeFailedOutcome({
     attemptId: attemptRow.id,
+    studioId: attemptRow.studio_id,
+    clientId: attemptRow.client_id,
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
