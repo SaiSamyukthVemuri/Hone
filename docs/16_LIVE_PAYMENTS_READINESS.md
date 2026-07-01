@@ -1264,3 +1264,43 @@ Already SHIPPED backstops (do not re-do): payment success persistence + `needs_m
 **Rollback / kill-switch (see §17.8):** set **`STRIPE_ALLOW_LIVE_MODE` back to unset / `false`** (re-arms the key gate; `sk_live_` is rejected immediately) → revert `sk_live_*` → `sk_test_*` → pause the charging path (revert the enabling deploy) if needed → inspect `/admin/ops-alerts` + the §17.7 queries + the **Stripe dashboard** to confirm the true state of every PaymentIntent.
 
 **Live payments remain disabled; controlled live-payment enablement has not started.**
+
+### 17.13 Read-only production verification (PR #308)
+
+The final pre-live review found a **P0 gap**: the repo requires production migration max **0099**, but the review could **not independently confirm remote production state**. `scripts/verify-production.mjs` closes that gap — an **operator-run, READ-ONLY** check that proves remote production matches the repo's required state **before** enabling live payments or broadening sensitive-data use. It is **not** a CI gate (CI has no production link, by design) and **not** a live-payment enablement script.
+
+**Command (run from the production-linked Mac):**
+
+```
+node --env-file=.env.local scripts/verify-production.mjs
+```
+
+**Local prerequisites:**
+- **Linked Supabase CLI** — `supabase/.temp/project-ref` present; `supabase db query --linked` works. The script reads remote prod exclusively through `supabase db query --linked` (READ-ONLY; it never runs `db push` or `db execute`, never applies a migration, never writes).
+- **`.env.local`** with the runtime/read env (as used for local dev against prod).
+- **Upstash env** (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) **for the heartbeat check**. Without them the heartbeat is reported **INCOMPLETE** (fail-closed), not PASS.
+
+**What it checks (automated):**
+1. Remote migration max = **0099** (`supabase_migrations.schema_migrations`).
+2. Required migration effects: **0093** treatment-image bucket exists + **private** + `treatment_images` RLS policies + `treatment_images_enforce_integrity` trigger; **0097** `client_intake_forms` intake-link columns; **0098** `appointments` intake-reminder columns + window indexes + `claim_email_send`/`record_email_result` `intake_reminder_7d`/`_3d` branches; **0099** `treatment_images.practitioner_note`.
+3. **RLS enabled** on the curated critical tables (clients, appointments, client_intake_forms, sessions, session_blocks, treatment_images, payment_charge_attempts, ops_alerts, and the `record_keeping_*` tables).
+4. **Unresolved critical payment/refund/stripe ops alerts = 0** (count only — never message bodies).
+5. **Stripe gates 1/1/0/0** (spawns `scripts/check-stripe-gates.mjs`).
+6. **Reminder scheduler heartbeat fresh** (≤ 45 min; mirrors `REMINDER_STALE_AFTER_MINUTES`).
+
+**Output — PASS / FAIL / INCOMPLETE:**
+- **PASS** — the check verified the expected state.
+- **FAIL** — the expected state is wrong or a required check could not be run (e.g. CLI not linked). **Exit code is non-zero.**
+- **INCOMPLETE** — a required check could not be verified from this environment (e.g. Upstash env absent for the heartbeat). Treated as **not verified**, exit non-zero — never a silent pass.
+- The final line is **`PRODUCTION VERIFIED ✓`** (all automated checks passed) **or** **`NOT VERIFIED ✗`**. `PRODUCTION VERIFIED ✓` means only the **automated** checks passed — the manual checks below are still required.
+
+**Safety:** the script performs no production writes, applies no migration, triggers no cron, sends no email, and makes no Stripe API writes (only the local source-gate script). Every query returns scalars only; it prints **no secrets, no client names/emails/phones, no tokens, no health data, no notes, and no ops-alert message bodies** — only PASS/FAIL/INCOMPLETE + counts/booleans/version/table/column names.
+
+**Manual checks still required (NOT covered by the script):**
+- **Vercel PRODUCTION env presence** — `OPS_ALERT_EMAILS` set; Upstash vars set; **`STRIPE_ALLOW_LIVE_MODE` unset/false**; `STRIPE_SECRET_KEY` is `sk_test_*` unless deliberately enabling live per §17.12. (Vercel env vars are write-only; the proof is the last green production deploy passing `check-production-env-gates.mjs` plus a dashboard glance — not a value read.)
+- **Stripe dashboard** — mode / keys / account state (no live keys in use).
+- **storage.objects policies** — not introspectable from the linked query role; confirm in the Supabase dashboard (Storage → policies) that the `treatment-images` object policies are the hardened set.
+- **Optional read-only Vercel production log sample** — `vercel logs <deployment> --json` filtered for `error`/5xx.
+- **Reminder scheduler external dashboard** — if the heartbeat was INCOMPLETE, confirm the **Reminder scheduler** card in `/admin`.
+
+This is a **read-only pre-flight**, not an enablement step. Enabling live payments still follows §17.12 in order.

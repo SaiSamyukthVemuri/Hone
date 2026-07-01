@@ -148,3 +148,13 @@ After every merge to the default branch:
 4. Run the anonymous smoke checks in [docs/12 §10](./12_SMOKE_TESTS.md#10-security-route-smoke).
 
 If anything looks off, the rollback path is to push the previous commit's SHA forward (revert merge commit + force-deploy). The [docs/11 Runbook](./11_RUNBOOK.md) has the steps.
+
+## Read-only production verification (before live payments)
+
+Before enabling live payments or broadening sensitive-data use, run the **operator-only, read-only** production verification from the production-linked Mac:
+
+```
+node --env-file=.env.local scripts/verify-production.mjs
+```
+
+It proves remote production matches the repo's required state — migration max **0099** + the 0093/0097/0098/0099 effects, private treatment-image bucket, RLS on the critical tables, zero unresolved critical payment ops alerts, Stripe gates 1/1/0/0, and a fresh reminder heartbeat — printing only PASS/FAIL/INCOMPLETE (no secrets/PII) and exiting non-zero if anything is unverified. It performs **no writes, no migration, no cron, no email, no Stripe writes**, and is **not** a CI gate or a live-payment enablement step. Full runbook + the remaining manual dashboard checks: [docs/16 §17.13](./16_LIVE_PAYMENTS_READINESS.md#1713-read-only-production-verification-pr-308).
