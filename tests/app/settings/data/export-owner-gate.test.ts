@@ -98,3 +98,73 @@ describe("PR #189 boundaries (export action)", () => {
     expect(ACTIONS).not.toMatch(/admin-server/);
   });
 });
+
+describe("PR #312: record-keeping / inspection CSVs", () => {
+  it("the ZIP includes all four record-keeping CSVs", () => {
+    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_sterile_items\.csv"/);
+    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_disinfectants\.csv"/);
+    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_exposure_incidents\.csv"/);
+    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_audit_events\.csv"/);
+  });
+
+  it("reads each record-keeping table via the RLS client, studio-scoped", () => {
+    for (const table of [
+      "record_keeping_sterile_items",
+      "record_keeping_disinfectants",
+      "record_keeping_exposure_incidents",
+      "record_keeping_audit_events",
+    ]) {
+      // The load block: `.from("<table>") ... .eq("studio_id", studio.id)`.
+      const from = CODE.indexOf(`.from("${table}")`);
+      expect(from, `missing load for ${table}`).toBeGreaterThan(-1);
+      const slice = CODE.slice(from, from + 400);
+      expect(slice, `${table} not studio-scoped`).toMatch(
+        /\.eq\("studio_id", studio\.id\)/,
+      );
+    }
+    // No admin/service-role client anywhere (exposure-incident owner-only RLS
+    // must stay in force).
+    expect(ACTIONS).not.toMatch(/createAdminClient|admin-server/);
+  });
+
+  it("exposure incidents stay behind the owner gate (before any read)", () => {
+    const gateIdx = CODE.indexOf('practitioner.role !== "owner"');
+    const exposureIdx = CODE.indexOf('.from("record_keeping_exposure_incidents")');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(exposureIdx).toBeGreaterThan(gateIdx);
+  });
+
+  it("audit export is REDUCED — no full changes value-snapshot JSON or metadata", () => {
+    // The audit load selects changed_fields (names) but NOT `changes` / `metadata`.
+    const load = CODE.slice(
+      CODE.indexOf('.from("record_keeping_audit_events")'),
+      CODE.indexOf('.from("record_keeping_audit_events")') + 400,
+    );
+    expect(load).toMatch(/changed_fields/);
+    expect(load).not.toMatch(/\bchanges\b/);
+    expect(load).not.toMatch(/\bmetadata\b/);
+    // And the CSV header omits them too.
+    const csv = CODE.slice(
+      CODE.indexOf('"record_keeping_audit_events.csv"'),
+      CODE.indexOf('"record_keeping_audit_events.csv"') + 400,
+    );
+    expect(csv).not.toMatch(/"changes"|"metadata"/);
+  });
+
+  it("no treatment_images CSV, no image binaries, no storage paths/buckets, no payment tables", () => {
+    expect(CODE).not.toMatch(/treatment_images\.csv/);
+    expect(CODE).not.toMatch(/storage_path|storage_bucket|createSignedUrl|signedUrl/);
+    expect(CODE).not.toMatch(/\.from\("(payment_charge_attempts|appointment_payments|payment_consents|client_payment_methods)"\)/);
+  });
+
+  it("README warns the export contains sensitive record-keeping data", () => {
+    expect(ACTIONS).toMatch(/SENSITIVE DATA/);
+    expect(ACTIONS).toMatch(/exposure-incident log/i);
+    expect(ACTIONS).toMatch(/record_keeping_sterile_items\.csv:/);
+    expect(ACTIONS).toMatch(/record_keeping_exposure_incidents\.csv:.*OWNER-ONLY/);
+  });
+
+  it("no migration/schema/RLS change ships from the action (source is read-only)", () => {
+    expect(CODE).not.toMatch(/alter table|create policy|drop policy|create table|\.rpc\(/i);
+  });
+});

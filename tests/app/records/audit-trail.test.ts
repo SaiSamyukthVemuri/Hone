@@ -69,18 +69,33 @@ describe("audit table + immutability (migration 0086)", () => {
       .toString()
       .trim();
     expect(out).toBe("");
-    // And no app code inserts into the audit table directly.
-    const inserts = execSync(
+    // And no app code inserts into the audit table directly (triggers are the
+    // only writers). App code may READ it — lib/record-keeping/queries.ts
+    // surfaces the history, and (PR #312) the owner-only studio export includes
+    // a reduced audit CSV. Both are SELECT-only.
+    const refs = execSync(
       'grep -rl "record_keeping_audit_events" app lib components 2>/dev/null || true',
       { cwd: process.cwd() },
     )
       .toString()
       .trim()
       .split("\n")
-      .filter(Boolean);
-    expect(inserts).toEqual(["lib/record-keeping/queries.ts"]);
-    const QUERIES_SRC = read("lib/record-keeping/queries.ts");
-    expect(QUERIES_SRC).not.toMatch(/record_keeping_audit_events"\)\s*\n?\s*\.insert/);
+      .filter(Boolean)
+      .sort();
+    expect(refs).toEqual([
+      "app/(app)/settings/data/actions.ts",
+      "lib/record-keeping/queries.ts",
+    ]);
+    // No referencing file inserts/updates/deletes the audit table.
+    for (const rel of refs) {
+      const src = read(rel);
+      expect(
+        src,
+        `${rel} must not write record_keeping_audit_events`,
+      ).not.toMatch(
+        /record_keeping_audit_events"\)\s*\n?\s*\.(insert|update|delete|upsert)/,
+      );
+    }
   });
 
   it("trigger functions are narrow security definer with empty search_path", () => {
