@@ -853,6 +853,20 @@ async function dispatchBookingEmails(p: DispatchParams) {
 // because (a) a separate "in-flight" column would expand the schema
 // surface for marginal benefit, and (b) Resend failures are rare; the
 // resend path is the recovery primitive.
+// PR #311: a postcare claim older than this is stale and reclaimable (the
+// sender process died between the claim and the outcome write). Mirrors the
+// reminder-cron 5-minute stale-claim window.
+const POSTCARE_CLAIM_STALE_MS = 5 * 60_000;
+
+// PR #311: SAFE/GENERIC postcare failure category stored in
+// postcare_email_last_error. NEVER the raw Resend payload, client email/name,
+// health/treatment data, or exception details — just a practitioner-facing hint.
+function safePostcareLastError(retryable: boolean): string {
+  return retryable
+    ? "Temporary email provider error. Try again."
+    : "The email provider rejected the send. Try again.";
+}
+
 export async function sendPostcareEmailAction(
   formData: FormData,
 ): Promise<AppointmentStateActionResult> {
@@ -883,7 +897,7 @@ export async function sendPostcareEmailAction(
   const { data: appt, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners(id, display_name)",
+      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners(id, display_name)",
     )
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
@@ -942,19 +956,30 @@ export async function sendPostcareEmailAction(
 
   const previousSentAt = appt.postcare_email_sent_at;
   const previousAttempts = appt.postcare_email_send_attempts ?? 0;
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const staleCutoffIso = new Date(nowMs - POSTCARE_CLAIM_STALE_MS).toISOString();
 
-  // Atomic first-send claim OR unconditional resend bookkeeping.
+  // PR #311: CLAIM the send WITHOUT stamping sent_at. sent_at is stamped ONLY
+  // after the provider confirms success (below), so a provider failure never
+  // leaves a false "Postcare sent". Bump attempts + last_attempt_at + claim.
   if (!isResend) {
+    // First send: guard on not-already-sent AND no FRESH claim (a stale claim
+    // — sender died mid-send — is reclaimable). .select("id") proves a row was
+    // claimed, so concurrent first-send clicks can't both proceed.
     const { data: claimed, error: claimErr } = await admin
       .from("appointments")
       .update({
-        postcare_email_sent_at: nowIso,
+        postcare_email_claimed_at: nowIso,
+        postcare_email_last_attempt_at: nowIso,
         postcare_email_send_attempts: previousAttempts + 1,
       })
       .eq("id", appointmentId)
       .eq("studio_id", studio.id)
       .is("postcare_email_sent_at", null)
+      .or(
+        `postcare_email_claimed_at.is.null,postcare_email_claimed_at.lt.${staleCutoffIso}`,
+      )
       .select("id");
     if (claimErr) {
       console.error(
@@ -979,13 +1004,15 @@ export async function sendPostcareEmailAction(
     }
   } else {
     // Resend: practitioner has confirmed via modal. Bump attempts +
-    // sent_at unconditionally. A concurrent resend race here can
-    // double-send; the in-flight button-disabled UI state is the
-    // mitigation per the audit's accepted trade-off.
+    // last_attempt_at and claim (drives the "Sending…" state); do NOT touch
+    // sent_at yet. A concurrent resend race can double-send; the in-flight
+    // button-disabled UI state is the mitigation per the audit's accepted
+    // trade-off.
     const { error: resendErr } = await admin
       .from("appointments")
       .update({
-        postcare_email_sent_at: nowIso,
+        postcare_email_claimed_at: nowIso,
+        postcare_email_last_attempt_at: nowIso,
         postcare_email_send_attempts: previousAttempts + 1,
       })
       .eq("id", appointmentId)
@@ -1020,11 +1047,14 @@ export async function sendPostcareEmailAction(
     reviewPromptText: studioRow.postcare_review_prompt_text ?? null,
   });
   if (!result.ok) {
-    // logEmailFailure's emailType union doesn't include "postcare" and
-    // we intentionally don't extend it (postcare bypasses
-    // record_email_attempt; see the helper's header comment). Log the
-    // failure inline with the postcare event tag so the audit trail
-    // names the right surface.
+    // PR #311: the provider send FAILED. Record the failure honestly — set
+    // failed_at + a SAFE/GENERIC last_error (never the raw provider payload,
+    // client PII, or exception details) and clear the claim. Do NOT set
+    // sent_at: a first send stays "not sent"; a resend keeps any prior real
+    // sent_at intact (a failed resend never erases a real historical send).
+    // logEmailFailure's emailType union doesn't include "postcare" and we
+    // intentionally don't extend it (postcare bypasses record_email_attempt);
+    // log inline with the postcare event tag.
     console.error(
       JSON.stringify({
         event: "send_postcare_email_failed",
@@ -1034,11 +1064,60 @@ export async function sendPostcareEmailAction(
         timestamp: new Date().toISOString(),
       }),
     );
+    const { error: failWriteErr } = await admin
+      .from("appointments")
+      .update({
+        postcare_email_failed_at: nowIso,
+        postcare_email_last_error: safePostcareLastError(result.retryable),
+        postcare_email_claimed_at: null,
+      })
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id);
+    if (failWriteErr) {
+      console.error(
+        JSON.stringify({
+          event: "send_postcare_fail_write_failed",
+          code: failWriteErr.code,
+          message: failWriteErr.message,
+          appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+    revalidatePath(`/calendar/${appointmentId}`);
     return {
       ok: false,
       error:
         "Postcare email could not be sent. You can try resending it from the appointment page.",
     };
+  }
+
+  // PR #311: provider SUCCESS — now (and only now) stamp sent_at, and clear the
+  // failure state + claim. "Sent" means Hone handed the email to the provider,
+  // never delivered/received/opened.
+  const { error: successWriteErr } = await admin
+    .from("appointments")
+    .update({
+      postcare_email_sent_at: nowIso,
+      postcare_email_failed_at: null,
+      postcare_email_last_error: null,
+      postcare_email_claimed_at: null,
+    })
+    .eq("id", appointmentId)
+    .eq("studio_id", studio.id);
+  if (successWriteErr) {
+    // The email DID hand off to the provider, but the success stamp failed.
+    // Log it; the claim stays and is stale-reclaimable — we under-claim
+    // ("still sending" → "not sent yet") rather than overclaim "sent".
+    console.error(
+      JSON.stringify({
+        event: "send_postcare_success_write_failed",
+        code: successWriteErr.code,
+        message: successWriteErr.message,
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 
   revalidatePath(`/calendar/${appointmentId}`);

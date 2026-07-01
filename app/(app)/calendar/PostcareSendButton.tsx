@@ -29,6 +29,11 @@ import { sendPostcareEmailAction } from "./actions";
 type Props = {
   appointmentId: string;
   alreadySentAt: string | null;
+  // PR #311: postcare send-state correctness. failedAt is set when the last
+  // provider send failed (sent_at is only set AFTER provider success now).
+  // `sending` is a server-computed "claim is fresh, no outcome yet" flag.
+  failedAt: string | null;
+  sending: boolean;
   sendAttempts: number;
   // Pre-rendered preview text from the server (same composition the
   // email will use). Rendered as monospace inside the modal so it
@@ -44,6 +49,8 @@ type Props = {
 export function PostcareSendButton({
   appointmentId,
   alreadySentAt,
+  failedAt,
+  sending,
   sendAttempts,
   previewText,
   requiresConsultationConfirmation,
@@ -126,22 +133,37 @@ export function PostcareSendButton({
           {buttonLabel}
         </button>
         {alreadySentAt ? (
-          // Clear "sent" status so the practitioner doesn't have to guess.
-          // "Sent" is the recorded send timestamp (migration 0043), NOT a
-          // delivery/receipt confirmation — the copy stays "sent", never
-          // "delivered" or "received".
-          <p className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-              <span aria-hidden>✓</span> Postcare sent
-            </span>
-            <span className="text-neutral-500">
-              {new Date(alreadySentAt).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
-              {sendAttempts > 1 ? ` · ${sendAttempts} attempts` : null}
-            </span>
+          // PR #311: "Sent" now means a CONFIRMED provider hand-off (sent_at is
+          // stamped only after provider success), NOT delivery/receipt — the
+          // copy stays "sent", never "delivered" / "received" / "opened".
+          // If a later RESEND failed after this success, sent_at stays and we
+          // add a small sub-note (failedAt is cleared on any success).
+          <div className="flex flex-col gap-1">
+            <p className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                <span aria-hidden>✓</span> Postcare sent
+              </span>
+              <span className="text-neutral-500">
+                {new Date(alreadySentAt).toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+                {sendAttempts > 1 ? ` · ${sendAttempts} attempts` : null}
+              </span>
+            </p>
+            {failedAt ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Last resend failed. Try again.
+              </p>
+            ) : null}
+          </div>
+        ) : failedAt ? (
+          // Provider send failed before any success — never claim "sent".
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+            Postcare send failed. Try again.
           </p>
+        ) : sending ? (
+          <p className="text-xs text-neutral-500">Sending…</p>
         ) : (
           <p className="text-xs text-neutral-500">Not sent yet.</p>
         )}

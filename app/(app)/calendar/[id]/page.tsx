@@ -452,6 +452,8 @@ export default async function AppointmentDetailPage({
           practitionerName={data.practitioner?.display_name ?? null}
           postcareEmailSentAt={data.postcare_email_sent_at}
           postcareEmailSendAttempts={data.postcare_email_send_attempts}
+          postcareEmailClaimedAt={data.postcare_email_claimed_at}
+          postcareEmailFailedAt={data.postcare_email_failed_at}
           isOwner={isOwner}
         />
       )}
@@ -1305,6 +1307,9 @@ function PostcareSection(props: {
   practitionerName: string | null;
   postcareEmailSentAt: string | null;
   postcareEmailSendAttempts: number;
+  // PR #311: postcare send-state correctness.
+  postcareEmailClaimedAt: string | null;
+  postcareEmailFailedAt: string | null;
   isOwner: boolean;
 }) {
   const preview = buildPostcareEmail({
@@ -1347,6 +1352,19 @@ function PostcareSection(props: {
           <PostcareSendButton
             appointmentId={props.appointmentId}
             alreadySentAt={props.postcareEmailSentAt}
+            failedAt={props.postcareEmailFailedAt}
+            // PR #311: "sending" = a fresh claim with no outcome yet (server-
+            // computed so the client render carries no Date.now → no hydration
+            // mismatch). A stale claim (>5 min, sender died) is not "sending".
+            sending={
+              !!(
+                props.postcareEmailClaimedAt &&
+                !props.postcareEmailSentAt &&
+                !props.postcareEmailFailedAt &&
+                Date.now() - new Date(props.postcareEmailClaimedAt).getTime() <
+                  5 * 60_000
+              )
+            }
             sendAttempts={props.postcareEmailSendAttempts}
             previewText={preview.preview}
             requiresConsultationConfirmation={isConsultation}
