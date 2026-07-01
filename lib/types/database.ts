@@ -948,6 +948,9 @@ export type TreatmentImage = {
   content_type: string;
   size_bytes: number;
   uploaded_by: string | null;
+  // Optional practitioner-authored note/caption (migration 0099). Free text,
+  // capped at 1000 chars by the update action; NULL = no note.
+  practitioner_note: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
