@@ -25,7 +25,9 @@ import {
 
 type Row = {
   id: string;
-  filename: string | null;
+  // Session date of the attached session (null for client-scope photos). Shown
+  // as the human card title instead of the raw .jpg filename (Chloe feedback).
+  sessionDate: string | null;
   createdAt: string;
   // Short-lived server-signed preview URL (null if signing failed).
   previewUrl: string | null;
@@ -359,12 +361,12 @@ export function TreatmentImagesManager({
                     type="button"
                     onClick={() => openPreview(img)}
                     className="block overflow-hidden rounded-md"
-                    aria-label={`View larger: ${img.filename ?? "treatment photo"}`}
+                    aria-label="View larger treatment photo"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={img.previewUrl ?? ""}
-                      alt={img.filename ?? "Treatment photo"}
+                      alt="Treatment photo"
                       loading="lazy"
                       onError={() =>
                         setBroken((b) => ({ ...b, [img.id]: true }))
@@ -378,15 +380,26 @@ export function TreatmentImagesManager({
                   </div>
                 )}
                 <div>
-                  <p
-                    className="truncate text-sm font-medium"
-                    title={img.filename ?? "Image"}
-                  >
-                    {img.filename ?? "Image"}
-                  </p>
-                  <p className="mt-0.5 text-xs text-neutral-500">
-                    Uploaded <FormattedDateTime iso={img.createdAt} />
-                  </p>
+                  {/* Human title, never the raw .jpg filename: the SESSION
+                      date when the photo is attached to a session, else the
+                      upload date as a fallback. */}
+                  {img.sessionDate ? (
+                    <>
+                      <p
+                        className="truncate text-sm font-medium"
+                        title={`Session ${sessionDateLabel(img.sessionDate)}`}
+                      >
+                        Session {sessionDateLabel(img.sessionDate)}
+                      </p>
+                      <p className="mt-0.5 text-xs text-neutral-500">
+                        Uploaded <FormattedDateTime iso={img.createdAt} />
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm font-medium">
+                      Uploaded <FormattedDateTime iso={img.createdAt} />
+                    </p>
+                  )}
                 </div>
                 <ContextTags
                   scopeLabel={img.scopeLabel}
@@ -432,15 +445,25 @@ export function TreatmentImagesManager({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p
-                  className="truncate text-sm font-medium"
-                  title={modal.filename ?? "Treatment photo"}
-                >
-                  {modal.filename ?? "Treatment photo"}
-                </p>
-                <p className="text-xs text-neutral-500">
-                  Uploaded <FormattedDateTime iso={modal.createdAt} />
-                </p>
+                {/* Human title (never the raw .jpg filename): session date
+                    when attached to a session, else the upload date. */}
+                {modal.sessionDate ? (
+                  <>
+                    <p
+                      className="truncate text-sm font-medium"
+                      title={`Session ${sessionDateLabel(modal.sessionDate)}`}
+                    >
+                      Session {sessionDateLabel(modal.sessionDate)}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      Uploaded <FormattedDateTime iso={modal.createdAt} />
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm font-medium">
+                    Uploaded <FormattedDateTime iso={modal.createdAt} />
+                  </p>
+                )}
                 <div className="mt-1">
                   <ContextTags
                     scopeLabel={modal.scopeLabel}
@@ -464,7 +487,7 @@ export function TreatmentImagesManager({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={modalUrl}
-                  alt={modal.filename ?? "Treatment photo"}
+                  alt="Treatment photo"
                   onError={() => setModalError(true)}
                   className="max-h-[70vh] w-auto rounded-md object-contain"
                 />

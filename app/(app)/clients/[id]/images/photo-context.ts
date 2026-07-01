@@ -8,7 +8,12 @@ import type { SessionBlockSide } from "@/lib/types/database";
 // human-facing context tags. These NEVER expose raw IDs, storage paths, bucket
 // names, or signed URLs — only labels. No DB/schema/security change.
 
-export type PhotoScopeLabel = "Client photo" | "Session photo" | "Block photo";
+// Chloe pilot feedback: the card said "Block photo" while the upload selector
+// said "Treatment area photo" — one consistent, practitioner-friendly label.
+export type PhotoScopeLabel =
+  | "Client photo"
+  | "Session photo"
+  | "Treatment area photo";
 
 export type SessionBlockAreaInput = {
   primary_area: string | null;
@@ -22,7 +27,7 @@ export function treatmentPhotoScopeLabel(input: {
   sessionId: string | null;
   sessionBlockId: string | null;
 }): PhotoScopeLabel {
-  if (input.sessionBlockId) return "Block photo";
+  if (input.sessionBlockId) return "Treatment area photo";
   if (input.sessionId) return "Session photo";
   return "Client photo";
 }

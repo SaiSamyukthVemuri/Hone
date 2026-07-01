@@ -26,13 +26,14 @@ describe("treatmentPhotoScopeLabel (most-specific scope wins)", () => {
       treatmentPhotoScopeLabel({ sessionId: "s1", sessionBlockId: null }),
     ).toBe("Session photo");
   });
-  it("block attached → 'Block photo' (even with a session)", () => {
+  it("block attached → 'Treatment area photo' (even with a session)", () => {
+    // PR #304: was "Block photo"; unified with the upload selector's label.
     expect(
       treatmentPhotoScopeLabel({ sessionId: "s1", sessionBlockId: "b1" }),
-    ).toBe("Block photo");
+    ).toBe("Treatment area photo");
     expect(
       treatmentPhotoScopeLabel({ sessionId: null, sessionBlockId: "b1" }),
-    ).toBe("Block photo");
+    ).toBe("Treatment area photo");
   });
 });
 
