@@ -1021,6 +1021,13 @@ export type ClientIntakeForm = {
   // when the row was created by the booking-confirmation flow.
   requested_at: string | null;
   requested_by: string | null;
+  // Intake link send/expiry display metadata (migration 0097). A display
+  // mirror of the most recently issued link — the signed token remains the
+  // authoritative expiry. last_sent_at/expires_at are null on legacy rows and
+  // until the next mint; send_count defaults to 0.
+  intake_link_last_sent_at: string | null;
+  intake_link_expires_at: string | null;
+  intake_link_send_count: number;
   created_at: string;
   updated_at: string;
 };

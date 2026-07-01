@@ -25,6 +25,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { IntakeReviewForm } from "./IntakeReviewForm";
 import { IntakeReissueCard } from "./IntakeReissueCard";
 import { IntakeResendCard } from "./IntakeResendCard";
+import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 import { IntakeHistoryList } from "./IntakeHistoryList";
 import { NoneAnswerSummary } from "./NoneAnswerSummary";
 
@@ -244,6 +245,7 @@ export default async function ClientIntakePage({
             Date.now() - new Date(intake.started_at).getTime() >
             INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000
           }
+          status={computeIntakeLinkStatus(intake, Date.now())}
         />
       )}
 

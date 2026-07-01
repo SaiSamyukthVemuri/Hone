@@ -2,10 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   createIntakeRequestForClient,
   generateIntakeLinkUrl,
+  stampIntakeLinkIssued,
 } from "@/lib/intake/queries";
 import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
@@ -211,6 +213,12 @@ export async function requestIntakeUpdateAction(
     }
   }
 
+  // Stamp the freshly created reissue row: last_sent_at only when we actually
+  // emailed it (emailSent), always refresh expiry + count.
+  await stampIntakeLinkIssued(createAdminClient(), created.id, {
+    emailed: emailSent,
+  });
+
   revalidatePath(`/clients/${clientId}`);
   revalidatePath(`/clients/${clientId}/intake`);
   return {
@@ -263,6 +271,11 @@ export async function getIntakeLinkAction(
   }
 
   const url = generateIntakeLinkUrl(intake.id, getRequiredAppOrigin());
+  // Copy link mints a fresh token (new expiry) but does NOT email it: refresh
+  // expiry + count so the status is accurate, but never set last_sent_at.
+  await stampIntakeLinkIssued(createAdminClient(), intake.id, {
+    emailed: false,
+  });
   return {
     ok: true,
     intakeId: intake.id,
@@ -334,6 +347,11 @@ export async function resendIntakeEmailAction(
     );
     return { ok: false, error: "Could not send the email. Please try again." };
   }
+
+  // Emailed successfully: stamp last_sent_at + refresh expiry + count.
+  await stampIntakeLinkIssued(createAdminClient(), intake.id, {
+    emailed: true,
+  });
 
   return {
     ok: true,

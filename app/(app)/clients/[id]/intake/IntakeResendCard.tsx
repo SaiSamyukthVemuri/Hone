@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import type { IntakeLinkStatus } from "@/lib/intake/link-status";
 import { getIntakeLinkAction, resendIntakeEmailAction } from "./actions";
 
 type Props = {
@@ -12,8 +13,27 @@ type Props = {
   // Best-effort hint only: true when this in-progress intake is older than
   // the 14-day link TTL, so the last link the client received has likely
   // expired. Computed server-side from started_at; NOT precise tracking.
+  // Now used only as the LEGACY fallback (rows with no stored metadata yet).
   linkMaybeExpired: boolean;
+  // Precise smart status computed server-side from the migration-0097 display
+  // metadata (last sent, expiry, days left, send count). When present and not
+  // usingFallback, it drives the status copy + the CTA label.
+  status: IntakeLinkStatus;
 };
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
 
 // PR #293. Prominent, primary "Resend intake link" CTA on the client
 // Health & Forms tab, shown for an in-progress intake. This is a
@@ -27,6 +47,7 @@ export function IntakeResendCard({
   intakeId,
   clientHasEmail,
   linkMaybeExpired,
+  status,
 }: Props) {
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -84,11 +105,46 @@ export function IntakeResendCard({
         Resend intake link
       </h2>
 
-      {linkMaybeExpired && (
+      {/* Legacy fallback (rows minted before migration 0097 stored metadata):
+          hedge with the started_at heuristic. Once a fresh link is issued the
+          precise status below takes over. */}
+      {status.usingFallback && linkMaybeExpired && (
         <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
           The previous link may have expired. Resend a fresh link so the client
           can continue.
         </p>
+      )}
+
+      {/* Precise smart status (stored metadata). Expiry/close-to-expiry drive a
+          prominent "send a fresh link" prompt. */}
+      {!status.usingFallback && status.state === "expired" && (
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+          This intake link has likely expired. Send a fresh link.
+        </p>
+      )}
+      {!status.usingFallback && status.state === "closeToExpiry" && (
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+          This intake link expires soon. Send a fresh link so the client can
+          continue.
+        </p>
+      )}
+
+      {!status.usingFallback && (
+        <div className="mt-3 space-y-0.5 text-sm text-neutral-600 dark:text-neutral-400">
+          <p>
+            {status.lastSentAt
+              ? `Intake link emailed ${fmtDateTime(status.lastSentAt)}`
+              : "Not emailed yet — use Copy link to share it."}
+            {status.sendCount >= 2 ? ` · sent ${status.sendCount} times` : ""}
+          </p>
+          {status.state !== "expired" && (
+            <p>
+              Current link expires {fmtDate(status.expiresAt)} ·{" "}
+              {status.daysLeft} {status.daysLeft === 1 ? "day" : "days"} left
+            </p>
+          )}
+          <p>Client has not submitted yet.</p>
+        </div>
       )}
 
       <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
@@ -104,7 +160,7 @@ export function IntakeResendCard({
           title={clientHasEmail ? undefined : "No email on file for this client"}
           className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {isPending ? "Sending…" : "Resend intake link"}
+          {isPending ? "Sending…" : status.buttonLabel}
         </button>
         <button
           type="button"
