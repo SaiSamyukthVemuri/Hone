@@ -42,6 +42,26 @@ Three independent guards stack. All three must be deliberately altered for live 
 2. **Code gate.** `inferStripeLivemode()` short-circuits the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments + fees) to `live_mode_blocked` before any Stripe call when the env is live. (The legacy `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
 3. **DB CHECK.** `payment_charge_attempts_livemode_false_check` pins `stripe_livemode=false` on the canonical `payment_charge_attempts` ledger (session-payment and fee charges). A row cannot persist `true` until a deliberate migration drops or replaces the constraint.
 
+## 3b. Complete Stripe-write source inventory (PR #309)
+
+`scripts/check-stripe-gates.mjs` is a **source-gate / read-only** grep over runtime code (`app/`, `lib/`, `middleware.ts`, `next.config.ts`) — it changes **no runtime payment behavior** and makes **no Stripe API calls**. PR #309 expanded it from a money-movement-only gate into a **complete inventory of every Stripe mutating call**, in three classes:
+
+- **Money movement (unchanged — remains 1/1/0/0):** `paymentIntents.create` **=1** (`lib/billing/session-payment-charge.ts`), `refunds.create` **=1** (`lib/billing/payment-refund.ts`), `charges.create` **=0**, `checkout.sessions` **=0**. The output lines are byte-compatible with the pre-#309 gate (relied on by `scripts/verify-production.mjs`).
+- **Non-money Stripe writes (now explicitly inventoried, exactly-count pinned):** these create Stripe objects/accounts but move **no money** and are **test-mode gated** at runtime (the shared `getStripe()`/`assertStripeKeyAllowed()` key gate + `inferStripeLivemode()`):
+  - `customers.create` **=1** → `lib/stripe/setup-intent.ts` (card-on-file customer)
+  - `setupIntents.create` **=1** → `lib/stripe/setup-intent.ts` (card-on-file SetupIntent)
+  - `accounts.create` **=1** → `lib/stripe/account.ts` (Connect Express account)
+  - `accountLinks.create` **=1** → `lib/stripe/account.ts` (Connect onboarding link)
+  - `accounts.createLoginLink` **=1** → `lib/stripe/account.ts` (Connect dashboard login link)
+  - `confirmSetup` (browser Stripe.js) **=1** → `app/portal/PortalPaymentMethodForm.tsx` (portal card save)
+
+  A second occurrence or a new site is a **deliberate review event** (update the allowlist/count + add a docs/13 decision) — exactly like the money-movement discipline.
+- **Unknown / unclassified Stripe writes (hard-FAIL):** a catch-all matches any Stripe write **shape** — a `stripe.<…>.<write-verb>` chain (`create`/`update`/`delete`/`cancel`/`confirm`/`capture`/`finalize`/`void`/`expire`/`reject`/`attach`/`detach`/…) or a browser `confirmSetup`/`confirmPayment`/`confirmCardPayment` — and subtracts every occurrence already accounted for by a classified rule. Any residual (a new verb, a new namespace, or a write in a new file) **fails the gate and names the offending file/method**. Comments are stripped first so a prose mention never trips it; read-only `.retrieve`/`.list` are excluded by construction.
+
+**Read-only Stripe calls** (not writes, not gated): `paymentIntents.retrieve` (`session-payment-charge.ts`), `paymentMethods.retrieve` + `accounts.retrieve` (`app/api/stripe/webhook/route.ts`), `accounts.retrieve` (`lib/stripe/account.ts`).
+
+This is a **source gate only** — no runtime payment behavior changed, no live-mode guard touched, **live payments remain disabled**.
+
 ## 4. Card-on-file flow (portal SetupIntent)
 
 Gating order (PR #158 clarifies what the client sees in each state; PR #170 adds the current-version branch):
