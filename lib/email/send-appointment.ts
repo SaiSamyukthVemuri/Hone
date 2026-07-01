@@ -12,6 +12,7 @@ import {
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
+import { buildIntakeReminderEmail } from "@/lib/email/templates/intake-reminder";
 import { buildIcs } from "@/lib/booking/ical";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -181,7 +182,13 @@ export async function recordEmailAttempt(
 // PR #189 (pilot safety). Email types covered by the claim_email_send
 // RPC (migration 0080). no_show keeps the unclaimed 0028 path;
 // postcare has its own conditional-UPDATE claim (0043).
-export type ClaimableEmailType = "confirmation" | "reminder_24h" | "reminder_2h";
+export type ClaimableEmailType =
+  | "confirmation"
+  | "reminder_24h"
+  | "reminder_2h"
+  // PR #306: automated intake-form reminders (claim_email_send / 0098 branches).
+  | "intake_reminder_7d"
+  | "intake_reminder_3d";
 
 // Atomically reserve the right to send one email of the given type
 // for the given appointment (claim_email_send, migration 0080).
@@ -258,7 +265,9 @@ const EMAIL_GIVE_UP_ATTEMPT_THRESHOLD = 3;
 
 export function logEmailFailure(opts: {
   appointmentId: string;
-  emailType: EmailType;
+  // Log-only union (never hits a DB RPC), so it can carry the claimable
+  // intake-reminder types (PR #306) as well as the legacy EmailType values.
+  emailType: EmailType | ClaimableEmailType;
   error: string;
   retryable: boolean;
   attemptNumber?: number;
@@ -516,6 +525,30 @@ export async function send2hReminderToClient(
     rescheduleUrl: p.rescheduleUrl,
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
+  });
+  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+}
+
+// PR #306: automated intake-form reminder (sent by the cron ~7d / ~3d before a
+// confirmed appointment when the latest intake is still in_progress). Carries a
+// FRESH secure intake link minted + stamped by the caller; this function only
+// builds + sends the reminder-specific copy. No PII in the subject, no medical
+// claims, no delivery overclaim.
+export async function sendIntakeReminderToClient(p: {
+  clientEmail: string;
+  studioName: string;
+  startsAt: Date;
+  timezone: string;
+  intakeUrl: string;
+}): Promise<EmailSendResult> {
+  if (!p.clientEmail) {
+    return { ok: false, error: "No client email on file", retryable: false };
+  }
+  const { subject, html, text } = buildIntakeReminderEmail({
+    studioName: p.studioName,
+    intakeUrl: p.intakeUrl,
+    startsAt: p.startsAt,
+    timezone: p.timezone,
   });
   return sendEmailSafely({ to: p.clientEmail, subject, html, text });
 }

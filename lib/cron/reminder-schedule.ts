@@ -89,3 +89,40 @@ export function windowCoversAllOffsets(
   const w = REMINDER_WINDOW_MINUTES[kind];
   return uncoveredOffsets(w.start, w.end, cronPeriodMin).length === 0;
 }
+
+// PR #306: intake-form reminder windows. Separate kind + windows from the
+// appointment-reminder ReminderKind above so the intake feature never widens
+// the tight 24h/2h windows. Each window is 2 hours wide (>= the 15-min cadence,
+// so the reliability invariant holds) and centered on the target day, so a
+// confirmed appointment gets exactly one 7-day and one 3-day reminder as its
+// start passes through the window (idempotency is still owned by
+// claim-before-send + the _sent_at column, same as the 24h/2h reminders).
+export type IntakeReminderKind = "7d" | "3d";
+
+const DAY_MIN = 24 * 60;
+export const INTAKE_REMINDER_WINDOW_MINUTES: Record<
+  IntakeReminderKind,
+  { start: number; end: number }
+> = {
+  "7d": { start: 7 * DAY_MIN - 60, end: 7 * DAY_MIN + 60 },
+  "3d": { start: 3 * DAY_MIN - 60, end: 3 * DAY_MIN + 60 },
+};
+
+export function intakeReminderWindowIso(
+  kind: IntakeReminderKind,
+  nowMs: number,
+): { startIso: string; endIso: string } {
+  const w = INTAKE_REMINDER_WINDOW_MINUTES[kind];
+  return {
+    startIso: new Date(nowMs + w.start * 60_000).toISOString(),
+    endIso: new Date(nowMs + w.end * 60_000).toISOString(),
+  };
+}
+
+export function intakeWindowCoversAllOffsets(
+  kind: IntakeReminderKind,
+  cronPeriodMin: number,
+): boolean {
+  const w = INTAKE_REMINDER_WINDOW_MINUTES[kind];
+  return uncoveredOffsets(w.start, w.end, cronPeriodMin).length === 0;
+}

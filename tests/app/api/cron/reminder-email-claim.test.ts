@@ -25,11 +25,19 @@ function codeOnly(src: string): string {
 }
 const CODE = codeOnly(ROUTE);
 
-// The email pass is everything between sendReminderPass and the SMS
-// pass; scope assertions there so SMS-claim code cannot satisfy them.
+// The appointment email pass is sendReminderPass only; scope assertions there
+// so the SMS pass AND the PR #306 intake-reminder pass (both inserted after it,
+// each with their own claim) cannot satisfy them. End the slice at whichever of
+// those two passes comes first.
+const EMAIL_PASS_END = Math.min(
+  ...[
+    CODE.indexOf("async function sendIntakeReminderPass"),
+    CODE.indexOf("async function sendSmsReminderPass"),
+  ].filter((i) => i > -1),
+);
 const EMAIL_PASS = CODE.slice(
   CODE.indexOf("async function sendReminderPass"),
-  CODE.indexOf("async function sendSmsReminderPass"),
+  EMAIL_PASS_END,
 );
 
 describe("email reminder pass: claim before send", () => {
