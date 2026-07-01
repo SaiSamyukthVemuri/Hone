@@ -300,6 +300,12 @@ export type Appointment = {
   // incremented on resend.
   postcare_email_sent_at: string | null;
   postcare_email_send_attempts: number;
+  // PR #311 (migration 0100): postcare send-state correctness. sent_at is now
+  // stamped ONLY after provider success; the claim moved to claimed_at.
+  postcare_email_claimed_at: string | null;
+  postcare_email_failed_at: string | null;
+  postcare_email_last_error: string | null;
+  postcare_email_last_attempt_at: string | null;
   // PR #260 (migration 0090): SHA-256 hex hash of the raw
   // cancel/reschedule/manage token — the ONLY token value stored at rest.
   // PR #264 (migration 0091): the legacy raw `cancellation_token` column

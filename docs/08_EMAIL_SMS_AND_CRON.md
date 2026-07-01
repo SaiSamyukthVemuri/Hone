@@ -37,11 +37,13 @@ Appointment rows carry attempt counters and stamped timestamps:
 - `reminder_24h_send_attempts` + `reminder_24h_sent_at`
 - `reminder_2h_send_attempts` + `reminder_2h_sent_at`
 - `no_show_email_send_attempts` + `no_show_email_sent_at`
-- `postcare_email_send_attempts` + `postcare_email_sent_at`
+- `postcare_email_send_attempts` + `postcare_email_sent_at` (+ `_claimed_at` / `_failed_at` / `_last_error` / `_last_attempt_at`, migration 0100) — PR #311
 - `intake_reminder_7d_send_attempts` + `intake_reminder_7d_sent_at` (+ `_claimed_at`) — PR #306
 - `intake_reminder_3d_send_attempts` + `intake_reminder_3d_sent_at` (+ `_claimed_at`) — PR #306
 
 Truthful-reporting rule: stamp the `*_sent_at` **only** when the Resend call actually delivered. The 3-strike pattern is on every transactional path: each attempt increments `_attempts`; once Resend confirms success the `_sent_at` is set; if attempts exceed 3 without delivery the cron stops retrying and logs a sanitized failure for the operator.
+
+**Postcare send-state correctness (PR #311, migration 0100).** The manual postcare send (`sendPostcareEmailAction`) previously used `postcare_email_sent_at` as **both** the atomic first-send claim **and** the "sent" marker, stamping it **before** the Resend call — so a provider failure left a false "Postcare sent" (a P1 overclaim). It now mirrors the reminder claim discipline with per-appointment columns: the first send **claims `postcare_email_claimed_at`** (guarded by `sent_at IS NULL` + no fresh claim; ~5-min stale-reclaim window) and sets `postcare_email_last_attempt_at` + increments attempts **without** stamping `sent_at`; `postcare_email_sent_at` is stamped **only after Resend confirms success** (which also clears `_failed_at`/`_last_error`/`_claimed_at`). A provider **failure** sets `postcare_email_failed_at` + a **safe/generic** `postcare_email_last_error` (never the raw provider payload, client email/name, health data, or exception details) and clears the claim, leaving `sent_at` NULL on a first send (a failed **resend** keeps any prior real `sent_at`). The appointment-detail UI shows Sent / **Send failed — try again** / Sending… / Not-sent, and "sent" means **handed to the provider**, never delivered/received/opened. Postcare still bypasses `record_email_attempt` (single-request, no scheduler race). Additive/backfill-safe; existing historical `postcare_email_sent_at` rows are unchanged.
 
 ### Intake-form reminders (PR #306, migration 0098)
 
