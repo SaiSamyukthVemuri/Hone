@@ -137,6 +137,7 @@ What the headers depend on for correctness:
 - **Test vs live keys.** Vercel Preview and Development environments **MUST** use `sk_test_*` regardless of `STRIPE_ALLOW_LIVE_MODE`. The key-gate enforces this and throws if a live key is presented in those environments.
 - **Webhook secret.** The signing secret in `STRIPE_WEBHOOK_SECRET` must match the connected-account webhook (not the platform webhook). A mismatch causes every webhook to return 400 and Stripe will retry until the operator fixes it.
 - **Live-mode opt-in.** `STRIPE_ALLOW_LIVE_MODE=true` is the only way `sk_live_*` is accepted. The current production deployment leaves this unset; a live-mode PR is the only place that flips it, and only with the [docs/06 §9](./06_PAYMENTS_AND_STRIPE.md#9-live-charging-requirements) checklist satisfied.
+- **Stripe-write source gate.** `scripts/check-stripe-gates.mjs` (run in CI + by `scripts/verify-production.mjs`) is a **source-gate/read-only** inventory of every Stripe mutating call: money movement stays **1/1/0/0**, the six non-money writes (`customers.create`, `setupIntents.create`, `accounts.create`, `accountLinks.create`, `accounts.createLoginLink`, browser `confirmSetup`) are exactly-count pinned to their one file each, and any **unknown/unclassified** Stripe write hard-fails. It changes no runtime behavior. Full inventory: [docs/06 §3b](./06_PAYMENTS_AND_STRIPE.md#3b-complete-stripe-write-source-inventory-pr-309).
 
 ## Deployment verification (per-PR)
 

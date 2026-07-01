@@ -139,6 +139,82 @@ const RULES = [
     allowlist: [],
     exactly: 0,
   },
+  // ------------------------------------------------------------------
+  // Non-money Stripe writes (PR #309).
+  //
+  // These create Stripe OBJECTS/ACCOUNTS but move NO money. They are
+  // intentionally ALLOWED and are test-mode gated at runtime (the shared
+  // getStripe()/assertStripeKeyAllowed() key gate + inferStripeLivemode()).
+  // They are pinned here — exactly one occurrence, in exactly one file —
+  // so a NEW non-money write site (or a second occurrence) is a deliberate,
+  // reviewed change, NOT a silent addition. This does NOT change runtime
+  // behavior; it inventories what already exists. A count/allowlist change
+  // must come with a decision in docs/13.
+  {
+    name: "customers.create",
+    pattern: /customers\.create/g,
+    allowlist: [
+      // Card-on-file Stripe Customer provisioning (PR #135), serialised
+      // against the 0032 customer RPCs. Test-mode gated via getStripe().
+      "lib/stripe/setup-intent.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "setupIntents.create",
+    pattern: /setupIntents\.create/g,
+    allowlist: [
+      // Card-on-file SetupIntent on the connected account (PR #135).
+      // No money movement; test-mode gated + inferStripeLivemode() tagged.
+      "lib/stripe/setup-intent.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "accounts.create",
+    pattern: /accounts\.create\b/g,
+    allowlist: [
+      // Stripe Connect Express account provisioning (onboarding only;
+      // no charges/SetupIntents here). Test-mode gated via getStripe().
+      "lib/stripe/account.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "accountLinks.create",
+    pattern: /accountLinks\.create/g,
+    allowlist: [
+      // Connect onboarding link creation (PR Connect Phase 1).
+      "lib/stripe/account.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "accounts.createLoginLink",
+    pattern: /accounts\.createLoginLink/g,
+    allowlist: [
+      // Connect dashboard login-link creation (PR Connect Phase 1).
+      "lib/stripe/account.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "confirmSetup (browser)",
+    // Browser Stripe.js card-save (SetupIntent confirmation) in the portal
+    // payment-method form. No money movement. Pinned to the one client
+    // component that mounts the PaymentElement.
+    pattern: /confirmSetup/g,
+    allowlist: [
+      "app/portal/PortalPaymentMethodForm.tsx",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
   {
     name: "set_studio_require_card_on_file",
     pattern: /set_studio_require_card_on_file/g,
@@ -254,7 +330,12 @@ function evaluateRule(rule, files) {
     } catch {
       continue;
     }
-    const count = countMatches(content, rule.pattern);
+    // Non-money rules (PR #309) count CALL SITES only, so comment mentions of
+    // the method (e.g. a doc-comment "wrapper around stripe.setupIntents.create")
+    // don't inflate the exact count. The money-movement rules keep scanning raw
+    // source (unchanged behavior). stripComments is hoisted (declared below).
+    const scanned = rule.stripComments ? stripComments(content) : content;
+    const count = countMatches(scanned, rule.pattern);
     if (count > 0) {
       occurrences.push({ path: relPosix(abs), count });
     }
@@ -298,6 +379,90 @@ function evaluateRule(rule, files) {
 }
 
 // --------------------------------------------------------------------
+// Unknown / unclassified Stripe write catch-all (PR #309)
+// --------------------------------------------------------------------
+//
+// The per-method rules above pin the KNOWN Stripe writes. This catch-all
+// hard-fails if ANY OTHER Stripe mutating call appears — a new verb
+// (.update/.cancel/.confirm/.capture/…), a new namespace, or a write in a
+// new file — so no Stripe write can be added without either landing on the
+// classified list or failing the gate.
+//
+// It matches Stripe write SHAPES (server: a `stripe.<...>.<write-verb>`
+// chain; browser: confirmSetup/confirmPayment/confirmCardPayment) and
+// subtracts every occurrence already accounted for by a CLASSIFIED pattern.
+// Read-only calls (.retrieve/.list) are excluded by construction. Comments
+// are stripped first so a prose mention of a Stripe method never trips it.
+
+// Server: any `stripe.` client chain ending in a mutating verb. `createLoginLink`
+// is listed before `create` so the longer verb wins.
+const STRIPE_SERVER_WRITE_SHAPE =
+  /\bstripe\.[a-zA-Z0-9_.]+\.(createLoginLink|create|update|delete|del|cancel|confirm|capture|finalize|void|expire|reject|attach|detach|approve|decline|release|increment|decrement|verify)\b/g;
+// Browser Stripe.js write shapes (Elements confirmations).
+const STRIPE_BROWSER_WRITE_SHAPE = /\b(confirmSetup|confirmPayment|confirmCardPayment)\s*\(/g;
+
+// A write SHAPE occurrence is "classified" (already inventoried above) if its
+// matched text hits one of these. Non-global so .test() is stateless.
+const CLASSIFIED_WRITE_PATTERNS = [
+  /paymentIntents\.create/,
+  /refunds\.create/,
+  /charges\.create/,
+  /checkout\.sessions\.create/,
+  /customers\.create/,
+  /setupIntents\.create/,
+  /accounts\.createLoginLink/,
+  /accounts\.create\b/,
+  /accountLinks\.create/,
+  /confirmSetup\s*\(/,
+];
+
+// Strip /* */ and // comments so prose mentions of a Stripe method (e.g.
+// "Call Stripe.accounts.create …") never count as a call site.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+function isClassifiedWrite(snippet) {
+  return CLASSIFIED_WRITE_PATTERNS.some((p) => p.test(snippet));
+}
+
+function evaluateUnknownStripeWrites(files) {
+  const offenders = []; // [{ path, snippet }]
+  for (const abs of files) {
+    let content;
+    try {
+      content = readFileSync(abs, "utf8");
+    } catch {
+      continue;
+    }
+    const code = stripComments(content);
+    const matches = [
+      ...code.matchAll(STRIPE_SERVER_WRITE_SHAPE),
+      ...code.matchAll(STRIPE_BROWSER_WRITE_SHAPE),
+    ];
+    for (const m of matches) {
+      if (!isClassifiedWrite(m[0])) {
+        offenders.push({ path: relPosix(abs), snippet: m[0].trim() });
+      }
+    }
+  }
+  if (offenders.length > 0) {
+    return {
+      ok: false,
+      summary: `unclassified Stripe write(s): ${offenders
+        .map((o) => `${o.path} [${o.snippet}]`)
+        .join(", ")}`,
+    };
+  }
+  return {
+    ok: true,
+    summary: "no unclassified Stripe writes (all mutating calls are inventoried)",
+  };
+}
+
+// --------------------------------------------------------------------
 // Main
 // --------------------------------------------------------------------
 
@@ -316,6 +481,12 @@ function main() {
     process.stdout.write(`${tag} ${rule.name}: ${result.summary}\n`);
     if (!result.ok) allOk = false;
   }
+  // Hard-fail catch-all: any Stripe write not on the classified list above.
+  const unknown = evaluateUnknownStripeWrites(files);
+  process.stdout.write(
+    `${unknown.ok ? "PASS" : "FAIL"} no-unclassified-stripe-writes: ${unknown.summary}\n`,
+  );
+  if (!unknown.ok) allOk = false;
   process.stdout.write(
     `\nScanned ${files.length} runtime source file(s) under ${SCAN_ROOTS.join(", ")}.\n`,
   );

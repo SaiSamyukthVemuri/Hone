@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 // PR #154: Stripe / payment safety grep gates.
@@ -97,5 +98,134 @@ describe("check-stripe-gates script (PR #154)", () => {
     expect(SCRIPT_SOURCE).toMatch(
       /name:\s*"STRIPE_ALLOW_LIVE_MODE=true"[\s\S]{0,800}allowlist:\s*\[[\s\S]{0,500}"lib\/stripe\/server\.ts"/,
     );
+  });
+});
+
+// --------------------------------------------------------------------
+// PR #309: complete Stripe-write inventory (non-money rules + catch-all)
+// --------------------------------------------------------------------
+
+describe("check-stripe-gates: money-movement gate stays 1/1/0/0 (PR #309)", () => {
+  it("prints the exact money-movement PASS lines verify-production.mjs relies on", () => {
+    const result = spawnSync("node", [SCRIPT_PATH], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr ?? result.stdout).toBe(0);
+    const stdout = result.stdout ?? "";
+    // 1 / 1 / 0 / 0, byte-compatible with the pre-#309 output.
+    expect(stdout).toMatch(
+      /^PASS paymentIntents\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/session-payment-charge\.ts:1$/m,
+    );
+    expect(stdout).toMatch(/^PASS charges\.create: zero runtime source occurrences$/m);
+    expect(stdout).toMatch(
+      /^PASS refunds\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/payment-refund\.ts:1$/m,
+    );
+    expect(stdout).toMatch(/^PASS checkout\.sessions: zero runtime source occurrences$/m);
+  });
+});
+
+describe("check-stripe-gates: non-money Stripe writes are pinned (PR #309)", () => {
+  it("all six non-money writes PASS with exactly-one, in their allowlisted file", () => {
+    const result = spawnSync("node", [SCRIPT_PATH], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr ?? result.stdout).toBe(0);
+    const stdout = result.stdout ?? "";
+    expect(stdout).toMatch(/^PASS customers\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/stripe\/setup-intent\.ts:1$/m);
+    expect(stdout).toMatch(/^PASS setupIntents\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/stripe\/setup-intent\.ts:1$/m);
+    expect(stdout).toMatch(/^PASS accounts\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/stripe\/account\.ts:1$/m);
+    expect(stdout).toMatch(/^PASS accountLinks\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/stripe\/account\.ts:1$/m);
+    expect(stdout).toMatch(/^PASS accounts\.createLoginLink: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/stripe\/account\.ts:1$/m);
+    expect(stdout).toMatch(/^PASS confirmSetup \(browser\): 1 occurrence\(s\), all in allowlisted file\(s\): app\/portal\/PortalPaymentMethodForm\.tsx:1$/m);
+  });
+
+  it("each non-money rule is exactly-count pinned to exactly one file (source shape)", () => {
+    for (const [name, file] of [
+      ["customers.create", "lib/stripe/setup-intent.ts"],
+      ["setupIntents.create", "lib/stripe/setup-intent.ts"],
+      ["accounts.create", "lib/stripe/account.ts"],
+      ["accountLinks.create", "lib/stripe/account.ts"],
+      ["accounts.createLoginLink", "lib/stripe/account.ts"],
+      ["confirmSetup (browser)", "app/portal/PortalPaymentMethodForm.tsx"],
+    ] as const) {
+      const esc = name.replace(/[.()]/g, (c) => `\\${c}`);
+      const re = new RegExp(
+        `name:\\s*"${esc}"[\\s\\S]{0,600}allowlist:\\s*\\[[\\s\\S]{0,400}"${file.replace(/\//g, "\\/")}"[\\s\\S]{0,200}exactly:\\s*1`,
+      );
+      expect(SCRIPT_SOURCE, `expected pinned rule for ${name}`).toMatch(re);
+    }
+  });
+
+  it("prints PASS for the unknown-write catch-all on the clean repo", () => {
+    const result = spawnSync("node", [SCRIPT_PATH], { cwd: REPO_ROOT, encoding: "utf8" });
+    expect(result.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+});
+
+describe("check-stripe-gates: unknown Stripe writes hard-fail (PR #309)", () => {
+  // Run the REAL script against a throwaway scan dir so we can inject a
+  // fake call site without touching the repo. cwd = tmp → REPO_ROOT = tmp;
+  // the script scans tmp/app + tmp/lib. We assert on the catch-all line +
+  // a non-zero exit (other rules also fail for want of the real call sites,
+  // which is fine — we pin the catch-all's behavior specifically).
+  let dir: string | null = null;
+  function runAgainst(relFile: string, contents: string) {
+    dir = mkdtempSync(path.join(tmpdir(), "stripe-gate-"));
+    const abs = path.join(dir, relFile);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, contents, "utf8");
+    return spawnSync("node", [SCRIPT_PATH], { cwd: dir, encoding: "utf8" });
+  }
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  it("hard-fails on an unclassified server Stripe write (new verb)", () => {
+    const r = runAgainst("lib/x.ts", "const stripe = {};\nawait stripe.paymentIntents.capture(id);\n");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL no-unclassified-stripe-writes:/m);
+    expect(r.stdout ?? "").toContain("paymentIntents.capture");
+    expect(r.stdout ?? "").toContain("lib/x.ts");
+  });
+
+  it("hard-fails on an unclassified server Stripe write (new namespace)", () => {
+    const r = runAgainst("app/y.ts", "await stripe.terminal.readers.create({});\n");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL no-unclassified-stripe-writes:/m);
+    expect(r.stdout ?? "").toContain("terminal.readers.create");
+  });
+
+  it("hard-fails on an unclassified browser Stripe write (confirmPayment)", () => {
+    const r = runAgainst("app/z.tsx", "const { error } = await stripe.confirmPayment({});\n");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL no-unclassified-stripe-writes:/m);
+    expect(r.stdout ?? "").toContain("confirmPayment");
+  });
+
+  it("does NOT fail the catch-all on comment-only Stripe method mentions", () => {
+    const r = runAgainst(
+      "lib/c.ts",
+      "// we intentionally do not call stripe.paymentIntents.capture here\n/* nor stripe.foo.update */\nexport const x = 1;\n",
+    );
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+
+  it("does NOT fail the catch-all on read-only Stripe calls (retrieve/list)", () => {
+    const r = runAgainst(
+      "lib/r.ts",
+      "await stripe.paymentIntents.retrieve(id);\nawait stripe.accounts.retrieve(a);\nawait stripe.customers.list();\n",
+    );
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+
+  it("does NOT fail the catch-all when only the classified writes appear", () => {
+    const r = runAgainst(
+      "lib/ok.ts",
+      "await stripe.customers.create({});\nawait stripe.accounts.createLoginLink(a);\nconst e = await stripe.confirmSetup({});\n",
+    );
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
   });
 });
