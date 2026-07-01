@@ -56,6 +56,7 @@ import {
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
+import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 // getClientTags import removed: tags no longer render on the main
 // profile (see ClientTagsCard note above). Server actions for tags
 // are unchanged and the data is preserved.
@@ -872,6 +873,7 @@ export default async function ClientCheatSheetPage({
                   Date.now() - new Date(intake.started_at).getTime() >
                   INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000
                 }
+                status={computeIntakeLinkStatus(intake, Date.now())}
               />
             </div>
           )}

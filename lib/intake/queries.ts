@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
 import { generateIntakeToken } from "./tokens";
@@ -155,6 +156,10 @@ export async function ensureIntakeForClient(params: {
   const expires = new Date(Date.now() + INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
   const token = generateIntakeToken(intakeId, expires);
   const url = `${params.appOrigin}/intake/${token}`;
+  // The booking/reschedule confirmation email carries this link, so it counts
+  // as an emailed send. Stamp the display metadata (best-effort; never blocks
+  // the booking flow if it fails).
+  await stampIntakeLinkIssued(admin, intakeId, { emailed: true });
   return { id: intakeId, url };
 }
 
@@ -229,4 +234,51 @@ export function generateIntakeLinkUrl(
   const expires = new Date(Date.now() + INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
   const token = generateIntakeToken(intakeId, expires);
   return `${appOrigin}/intake/${token}`;
+}
+
+// Shared stamping helper (migration 0097). Call this once at EACH place a
+// fresh intake link/token is minted so the practitioner UI can show accurate
+// resend status. It refreshes intake_link_expires_at (= now + TTL, matching
+// the freshly minted token) and increments intake_link_send_count on every
+// mint; it sets intake_link_last_sent_at ONLY when the link was actually
+// emailed (`emailed: true`) — copy-link refreshes expiry + count but must NOT
+// claim it was emailed. Uses the admin client so no RLS UPDATE policy change
+// is needed (callers gate ownership before minting). Saved answers
+// (`responses`) are never touched. Stamping failure is non-fatal and logged
+// WITHOUT any token or PII — the link was already minted/sent.
+export async function stampIntakeLinkIssued(
+  admin: SupabaseClient,
+  intakeId: string,
+  opts: { emailed: boolean },
+): Promise<void> {
+  const nowMs = Date.now();
+  const expiresAt = new Date(
+    nowMs + INTAKE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Low-concurrency practitioner path; send_count is a soft UX signal, so a
+  // read-then-write is acceptable (no atomic increment / RPC needed).
+  const { data: current } = await admin
+    .from("client_intake_forms")
+    .select("intake_link_send_count")
+    .eq("id", intakeId)
+    .maybeSingle();
+  const nextCount =
+    ((current?.intake_link_send_count as number | null) ?? 0) + 1;
+
+  const patch: Record<string, unknown> = {
+    intake_link_expires_at: expiresAt,
+    intake_link_send_count: nextCount,
+  };
+  if (opts.emailed) {
+    patch.intake_link_last_sent_at = new Date(nowMs).toISOString();
+  }
+
+  const { error } = await admin
+    .from("client_intake_forms")
+    .update(patch)
+    .eq("id", intakeId);
+  if (error) {
+    console.error("Failed to stamp intake link metadata:", error.message);
+  }
 }
