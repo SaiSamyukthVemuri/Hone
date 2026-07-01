@@ -343,6 +343,14 @@ export type Appointment = {
   confirmation_claimed_at: string | null;
   reminder_24h_claimed_at: string | null;
   reminder_2h_claimed_at: string | null;
+  // Intake-form reminder idempotency (migration 0098). Same column-based,
+  // claim-before-send pattern as the 24h/2h reminders; send_attempts default 0.
+  intake_reminder_7d_sent_at: string | null;
+  intake_reminder_7d_send_attempts: number;
+  intake_reminder_7d_claimed_at: string | null;
+  intake_reminder_3d_sent_at: string | null;
+  intake_reminder_3d_send_attempts: number;
+  intake_reminder_3d_claimed_at: string | null;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and

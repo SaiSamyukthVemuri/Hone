@@ -7,8 +7,13 @@ import {
   recordEmailResult,
   send24hReminderToClient,
   send2hReminderToClient,
+  sendIntakeReminderToClient,
   type ClaimableEmailType,
 } from "@/lib/email/send-appointment";
+import {
+  generateIntakeLinkUrl,
+  stampIntakeLinkIssued,
+} from "@/lib/intake/queries";
 import {
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -21,7 +26,10 @@ import type { Appointment, Client, Service, Studio } from "@/lib/types/database"
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
+import {
+  intakeReminderWindowIso,
+  reminderWindowIso,
+} from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 
 const PER_RUN_LIMIT = 50;
@@ -50,12 +58,16 @@ type SentColumn =
   | "reminder_24h_sent_at"
   | "reminder_2h_sent_at"
   | "sms_reminder_24h_sent_at"
-  | "sms_reminder_2h_sent_at";
+  | "sms_reminder_2h_sent_at"
+  | "intake_reminder_7d_sent_at"
+  | "intake_reminder_3d_sent_at";
 type AttemptsColumn =
   | "reminder_24h_send_attempts"
   | "reminder_2h_send_attempts"
   | "sms_reminder_24h_send_attempts"
-  | "sms_reminder_2h_send_attempts";
+  | "sms_reminder_2h_send_attempts"
+  | "intake_reminder_7d_send_attempts"
+  | "intake_reminder_3d_send_attempts";
 
 async function loadAppointmentsForWindow(opts: {
   startIso: string;
@@ -295,6 +307,126 @@ async function sendReminderPass(opts: {
   return stats;
 }
 
+// PR #306: intake-form reminder pass. Reuses the same claim-before-send
+// idempotency + due-window loader as the appointment reminders, but only emails
+// when the client's latest intake is still in_progress and always mints + stamps
+// a FRESH secure intake link. No studio toggle (the per-appointment dedupe +
+// skip-submitted + the 7d/3d cadence keep it non-spammy). Logs only ids/kinds —
+// never a raw token or client PII.
+async function sendIntakeReminderPass(opts: {
+  kind: "7d" | "3d";
+  windowStartIso: string;
+  windowEndIso: string;
+}): Promise<RunStats> {
+  const sentColumn: SentColumn =
+    opts.kind === "7d"
+      ? "intake_reminder_7d_sent_at"
+      : "intake_reminder_3d_sent_at";
+  const attemptsColumn: AttemptsColumn =
+    opts.kind === "7d"
+      ? "intake_reminder_7d_send_attempts"
+      : "intake_reminder_3d_send_attempts";
+  const emailType: ClaimableEmailType =
+    opts.kind === "7d" ? "intake_reminder_7d" : "intake_reminder_3d";
+
+  const appts = await loadAppointmentsForWindow({
+    startIso: opts.windowStartIso,
+    endIso: opts.windowEndIso,
+    notSentColumn: sentColumn,
+    attemptsColumn,
+  });
+
+  const admin = createAdminClient();
+  const stats: RunStats = { attempted: 0, succeeded: 0, failed: 0, skipped: 0 };
+  const appOrigin = getRequiredAppOrigin();
+
+  for (const appt of appts) {
+    if (!appt.studio) continue;
+    if (!appt.client?.email) continue;
+
+    // Resolve the client's latest intake BEFORE claiming, so a submitted /
+    // reviewed / missing intake is skipped without wasting a claim attempt.
+    // Admin client (the cron is session-less); studio + client scoped so studio
+    // isolation holds. Only id + status are read — no client PII, no token.
+    const { data: intake } = await admin
+      .from("client_intake_forms")
+      .select("id, status")
+      .eq("studio_id", appt.studio.id)
+      .eq("client_id", appt.client_id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!intake || intake.status !== "in_progress") {
+      stats.skipped += 1;
+      continue;
+    }
+
+    // Claim-before-send: two overlapping cron runs can never both email this
+    // row (atomic increment + _claimed_at via claim_email_send, 0098 branch).
+    const claimed = await claimEmailSend(admin, appt.id, emailType);
+    if (!claimed) {
+      stats.skipped += 1;
+      continue;
+    }
+
+    // Cancellation re-check (mirrors the appointment reminder pass): suppress a
+    // send for an appointment cancelled between the window query and now.
+    const { data: fresh } = await admin
+      .from("appointments")
+      .select("status")
+      .eq("id", appt.id)
+      .maybeSingle();
+    if (!fresh || fresh.status !== "confirmed") {
+      stats.skipped += 1;
+      continue;
+    }
+
+    stats.attempted += 1;
+    const attemptNumber = (appt[attemptsColumn] as number) + 1;
+
+    // Always mint a FRESH valid link (now + 14-day TTL; signed token stays the
+    // authoritative expiry) so the reminder carries a working link. Saved
+    // answers are preserved — this reuses the existing intake row, never a new
+    // one. The raw token is never logged or stored.
+    const intakeUrl = generateIntakeLinkUrl(intake.id, appOrigin);
+    const result = await sendIntakeReminderToClient({
+      clientEmail: appt.client.email,
+      studioName: appt.studio.name,
+      startsAt: new Date(appt.starts_at),
+      timezone: appt.studio.timezone,
+      intakeUrl,
+    });
+    await recordEmailResult(admin, appt.id, emailType, result.ok);
+    if (result.ok) {
+      // Stamp the PR #303 intake-link display metadata only on a real emailed
+      // send (last_sent_at + expires_at + send_count).
+      await stampIntakeLinkIssued(admin, intake.id, { emailed: true });
+      stats.succeeded += 1;
+    } else {
+      logEmailFailure({
+        appointmentId: appt.id,
+        emailType,
+        error: result.error,
+        retryable: result.retryable,
+        attemptNumber,
+        studioId: appt.studio.id,
+      });
+      await alertIfReminderExhausted({
+        studioId: appt.studio.id,
+        appointmentId: appt.id,
+        emailType,
+        attemptNumber,
+        retryable: result.retryable,
+        reason: "send_failed",
+      });
+      stats.failed += 1;
+    }
+  }
+
+  return stats;
+}
+
 // SMS reminder pass (PR Twilio v1). Mirrors sendReminderPass above
 // but keys off the SMS columns and uses claim_sms_send +
 // record_sms_result via the helper. We deliberately keep this as a
@@ -454,6 +586,22 @@ export async function GET(req: Request) {
       windowEndIso: win2.endIso,
     });
 
+    // PR #306: intake-form reminder passes (7 days + 3 days before). Own wide
+    // windows (2h each, centered on the target day) + own idempotency columns;
+    // independent of the appointment/SMS reminders above.
+    const win7d = intakeReminderWindowIso("7d", now);
+    const win3d = intakeReminderWindowIso("3d", now);
+    const intake_reminder_7d = await sendIntakeReminderPass({
+      kind: "7d",
+      windowStartIso: win7d.startIso,
+      windowEndIso: win7d.endIso,
+    });
+    const intake_reminder_3d = await sendIntakeReminderPass({
+      kind: "3d",
+      windowStartIso: win3d.startIso,
+      windowEndIso: win3d.endIso,
+    });
+
     // PR #265: record a non-sensitive "last successful reminder cron run"
     // heartbeat AFTER all four passes complete (only reached on the authorized
     // success path; a thrown run skips this and the catch records
@@ -462,9 +610,21 @@ export async function GET(req: Request) {
     await recordReminderRunSuccess({
       at: new Date().toISOString(),
       durationMs: Date.now() - startedAt,
-      emailAttempted: reminder_24h.attempted + reminder_2h.attempted,
-      emailSucceeded: reminder_24h.succeeded + reminder_2h.succeeded,
-      emailFailed: reminder_24h.failed + reminder_2h.failed,
+      emailAttempted:
+        reminder_24h.attempted +
+        reminder_2h.attempted +
+        intake_reminder_7d.attempted +
+        intake_reminder_3d.attempted,
+      emailSucceeded:
+        reminder_24h.succeeded +
+        reminder_2h.succeeded +
+        intake_reminder_7d.succeeded +
+        intake_reminder_3d.succeeded,
+      emailFailed:
+        reminder_24h.failed +
+        reminder_2h.failed +
+        intake_reminder_7d.failed +
+        intake_reminder_3d.failed,
       smsAttempted: sms_reminder_24h.attempted + sms_reminder_2h.attempted,
       smsSucceeded: sms_reminder_24h.succeeded + sms_reminder_2h.succeeded,
       smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
@@ -476,6 +636,8 @@ export async function GET(req: Request) {
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
+      intake_reminder_7d,
+      intake_reminder_3d,
     });
   } catch (err) {
     // PR #153. Cron-route failure alert. The cron runs every few
