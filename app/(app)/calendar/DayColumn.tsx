@@ -47,6 +47,7 @@ import { serviceCardClasses } from "@/lib/calendar/service-colors";
 import {
   displayBlockoutLabel,
   displayRecurringBreakLabel,
+  timeRangeLabel,
   TIMED_BLOCK_LABEL,
 } from "./calendar-format";
 
@@ -666,6 +667,12 @@ export function DayColumn({
         );
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
+        // Visible time RANGE ("9:00–10:00"), derived from the existing row
+        // (starts_at + ends_at) — display only, no positioning/logic change.
+        const localEndTime = a.ends_at
+          ? localTimeString(new Date(a.ends_at), tz)
+          : null;
+        const timeRange = timeRangeLabel(localTime, localEndTime);
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
         // Display-derived status (DB row unchanged). A past confirmed
         // appointment reads as "Done" (muted), a DB-completed row as
@@ -699,23 +706,29 @@ export function DayColumn({
             // red unique. softCardClasses still exists for any
             // future practitioner-color surface but is not used on
             // the per-appointment card any more.
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-[3px] ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
+              // Hierarchy (Chloe / Fresha-readability): time range, then the
+              // bold client name, then service/modality on its own line.
               <>
-                <div className="truncate font-semibold">{clientName}</div>
-                <div className="truncate text-[10px] opacity-70">
-                  {localTime}
-                  {serviceName ? ` · ${serviceName}` : ""}
-                  {` · ${a.duration_minutes}m`}
+                <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
+                  {timeRange}
                   {statusTag ? ` · ${statusTag}` : ""}
                 </div>
+                <div className="truncate font-semibold">{clientName}</div>
+                {serviceName && (
+                  <div className="truncate text-[10px] opacity-70">
+                    {serviceName}
+                  </div>
+                )}
               </>
             ) : (
-              <div className="truncate font-medium">
+              // Short block: keep it to one dense line — bold name + range.
+              <div className="truncate font-semibold">
                 {clientName}{" "}
-                <span className="opacity-60">
-                  · {localTime}
+                <span className="font-normal tabular-nums opacity-70">
+                  {timeRange}
                   {statusTag ? ` · ${statusTag}` : ""}
                 </span>
               </div>

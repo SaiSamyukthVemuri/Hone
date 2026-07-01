@@ -103,3 +103,18 @@ export function displayBlockoutLabel(reason: string | null | undefined): string 
   const t = reason?.trim();
   return t && t.length > 0 ? t : "Blocked";
 }
+
+// Compact appointment time range for a calendar card: two "HH:MM" (24-hour)
+// local labels → "9:00–10:00" (leading zero on the hour stripped, en dash, no
+// AM/PM to stay dense). Pure string formatting — no Date construction, so it
+// can't drift across timezones (callers pass already-localized labels). Falls
+// back to just the start when the end is missing/blank.
+export function timeRangeLabel(
+  start24: string,
+  end24: string | null | undefined,
+): string {
+  const strip = (t: string) => t.replace(/^0(?=\d:)/, "");
+  const start = strip(start24);
+  const end = end24?.trim() ? strip(end24) : "";
+  return end ? `${start}–${end}` : start;
+}
