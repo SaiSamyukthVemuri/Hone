@@ -34,6 +34,8 @@ describe("check-stripe-gates script (PR #154)", () => {
     const stdout = result.stdout ?? "";
     // Each documented rule must show up as PASS in the output.
     expect(stdout).toMatch(/^PASS paymentIntents\.create:/m);
+    // PR #320: the requires_action safety cancel — pinned to exactly one site.
+    expect(stdout).toMatch(/^PASS paymentIntents\.cancel:/m);
     expect(stdout).toMatch(/^PASS charges\.create:/m);
     expect(stdout).toMatch(/^PASS refunds\.create:/m);
     expect(stdout).toMatch(/^PASS checkout\.sessions:/m);

@@ -229,6 +229,68 @@ describe("runSessionPaymentCharge: PaymentIntent metadata", () => {
   });
 });
 
+describe("PR #320: accurate charge description (no 'session null')", () => {
+  it("the PaymentIntent description comes from buildChargeDescription(attemptRow)", () => {
+    expect(HELPER).toMatch(/description:\s*buildChargeDescription\(attemptRow\)/);
+  });
+  it("the old `Session payment for session ${...}` literal is gone", () => {
+    expect(HELPER).not.toMatch(/Session payment for session \$\{/);
+  });
+  it("the description builder is imported from the pure (non-server-only) module", () => {
+    expect(HELPER).toMatch(
+      /import \{ buildChargeDescription \} from "@\/lib\/billing\/charge-description"/,
+    );
+  });
+});
+
+describe("PR #320: requires_action is canceled, never silently terminal", () => {
+  it("both charge paths route requires_action to finalizeRequiresActionPaymentIntent BEFORE writing failed", () => {
+    // create path (runSessionPaymentCharge) + reconcile path both branch first.
+    const occurrences = HELPER.match(
+      /if \(pi\.status === "requires_action"\) \{\s*return finalizeRequiresActionPaymentIntent\(/g,
+    );
+    expect(occurrences?.length).toBe(2);
+  });
+
+  it("finalizeRequiresActionPaymentIntent cancels the PaymentIntent (the one cancel call site)", () => {
+    // Count the actual CALL (with paren), not comment mentions of the method.
+    const cancels = HELPER.match(/paymentIntents\.cancel\(/g);
+    expect(cancels?.length).toBe(1);
+    const fn = HELPER.slice(
+      HELPER.indexOf("async function finalizeRequiresActionPaymentIntent"),
+    );
+    expect(fn).toMatch(/await args\.stripe\.paymentIntents\.cancel\(/);
+  });
+
+  it("on cancel SUCCESS: writes terminal failed with failure code requires_action_canceled", () => {
+    const fn = HELPER.slice(
+      HELPER.indexOf("async function finalizeRequiresActionPaymentIntent"),
+      HELPER.indexOf("\n// Pending reconciliation branch"),
+    );
+    expect(fn).toMatch(/writeFailedOutcome\(/);
+    expect(fn).toMatch(/failureCode:\s*"requires_action_canceled"/);
+    expect(fn).toMatch(/event:\s*"session_payment_requires_action_canceled"/);
+  });
+
+  it("on cancel FAILURE: critical alert + needs_manual_review, and does NOT write terminal failed", () => {
+    const fn = HELPER.slice(
+      HELPER.indexOf("async function finalizeRequiresActionPaymentIntent"),
+      HELPER.indexOf("\n// Pending reconciliation branch"),
+    );
+    const catchBlock = fn.slice(fn.indexOf("catch (cancelErr)"));
+    expect(catchBlock).toMatch(/severity:\s*"critical"/);
+    expect(catchBlock).toMatch(/event:\s*"session_payment_requires_action_cancel_failed"/);
+    expect(catchBlock).toMatch(/outcome:\s*"needs_manual_review"/);
+    // The unresolved-Stripe-outcome path must NOT claim terminal failure.
+    expect(catchBlock).not.toMatch(/writeFailedOutcome\(/);
+    expect(catchBlock).not.toMatch(/outcome:\s*"failed"/);
+  });
+
+  it("does not add support for client-side 3DS completion", () => {
+    expect(HELPER).not.toMatch(/confirmCardPayment|handleCardAction|next_action|client_secret/);
+  });
+});
+
 describe("runSessionPaymentCharge: success / failure outcomes", () => {
   it("on success, writes status='succeeded', PI id, latest_charge id, charged_at", () => {
     expect(HELPER).toMatch(/status:\s*"succeeded"/);
