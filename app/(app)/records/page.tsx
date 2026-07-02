@@ -23,6 +23,10 @@ import {
   utcInstantsForLocalDayRange,
   FILTERED_PROCEDURE_RECORD_LIMIT,
 } from "@/lib/record-keeping/queries";
+import {
+  summarizeSupplyExpiry,
+  supplyExpiryState,
+} from "@/lib/record-keeping/expiry";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import {
   addDisinfectantRecordAction,
@@ -239,7 +243,11 @@ export default async function RecordKeepingPage({
       </nav>
 
       {section === "sterile" && (
-        <SterileItemsSection studioId={studio.id} lotSearch={lotSearch} />
+        <SterileItemsSection
+          studioId={studio.id}
+          lotSearch={lotSearch}
+          timezone={studio.timezone}
+        />
       )}
       {section === "disinfectants" && (
         <DisinfectantsSection
@@ -265,11 +273,17 @@ export default async function RecordKeepingPage({
 async function SterileItemsSection({
   studioId,
   lotSearch,
+  timezone,
 }: {
   studioId: string;
   lotSearch: string | null;
+  timezone: string;
 }) {
   const records = await getSterileItemRecords(studioId);
+  // PR #316: expiry states for row styling + the summary banner (studio-local
+  // "today"). Display-only over the existing expiry_date column.
+  const today = todayInTz(timezone);
+  const expirySummary = summarizeSupplyExpiry(records, today);
   // PR #213: traceability for the searched/selected lot.
   const trace = lotSearch
     ? await getLotTraceability(studioId, lotSearch)
@@ -328,7 +342,22 @@ async function SterileItemsSection({
           Commercially purchased prepackaged and sterile items, e.g. a box of
           probes. Record the lot number and expiry from the packaging.
         </p>
-        <AddSterileItemForm action={addSterileItemRecordAction} />
+        <AddSterileItemForm
+          action={addSterileItemRecordAction}
+          lastRecord={
+            records[0]
+              ? {
+                  date_purchased: records[0].date_purchased,
+                  item_description: records[0].item_description,
+                  manufacturer_name: records[0].manufacturer_name,
+                  amount_purchased: records[0].amount_purchased,
+                  expiry_date: records[0].expiry_date,
+                  notes: records[0].notes,
+                  // NOTE: lot_number is intentionally omitted — never copied.
+                }
+              : null
+          }
+        />
       </section>
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">
@@ -337,16 +366,52 @@ async function SterileItemsSection({
             ({records.length})
           </span>
         </h2>
+        {(expirySummary.expired > 0 || expirySummary.expiring > 0) && (
+          <p
+            className={`rounded-lg border px-4 py-3 text-sm font-medium ${
+              expirySummary.expired > 0
+                ? "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+                : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            }`}
+            role="status"
+          >
+            {expirySummary.expired > 0 &&
+              `${expirySummary.expired} expired`}
+            {expirySummary.expired > 0 && expirySummary.expiring > 0 && " · "}
+            {expirySummary.expiring > 0 &&
+              `${expirySummary.expiring} expiring within 30 days`}
+          </p>
+        )}
         {records.length === 0 ? (
           <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
             No sterile item records yet.
           </p>
         ) : (
           <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {records.map((r) => (
-              <li key={r.id} className="flex flex-col gap-1 p-4 text-sm">
+            {records.map((r) => {
+              const expiry = supplyExpiryState(r.expiry_date, today);
+              const rowCls =
+                expiry === "expired"
+                  ? "bg-red-50 dark:bg-red-950/30"
+                  : expiry === "expiring"
+                    ? "bg-amber-50 dark:bg-amber-950/20"
+                    : "";
+              return (
+              <li key={r.id} className={`flex flex-col gap-1 p-4 text-sm ${rowCls}`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{r.item_description}</span>
+                  <span className="flex items-baseline gap-2">
+                    <span className="font-medium">{r.item_description}</span>
+                    {expiry === "expired" && (
+                      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-800 dark:bg-red-900/50 dark:text-red-200">
+                        Expired
+                      </span>
+                    )}
+                    {expiry === "expiring" && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">
+                        Expires soon
+                      </span>
+                    )}
+                  </span>
                   <span className="flex items-baseline gap-3 text-xs text-neutral-500">
                     <span>Purchased {dateOnly(r.date_purchased)}</span>
                     {r.lot_number && (
@@ -392,7 +457,8 @@ async function SterileItemsSection({
                   events={audit.get(r.id)}
                 />
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </section>

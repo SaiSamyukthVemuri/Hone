@@ -26,6 +26,13 @@ const OTHER_OPERATOR = "__other__";
 
 type Action = (formData: FormData) => Promise<RecordActionResult>;
 
+// PR #316 (Chloe feedback): probe/sterile manufacturer is a dropdown of the
+// three brands the studio buys, plus a free-text "Other". The DB column stays
+// free text (no migration), so existing/legacy values are preserved: on edit,
+// a stored value that isn't one of these preselects "Other" with the value.
+export const MANUFACTURER_OPTIONS = ["Protec", "Ballet", "Sterex"] as const;
+const OTHER_MANUFACTURER = "__other__";
+
 const INPUT_CLS =
   "rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950";
 const LABEL_CLS =
@@ -35,10 +42,14 @@ function AddRecordForm({
   action,
   submitLabel,
   children,
+  onAfterSuccess,
 }: {
   action: Action;
   submitLabel: string;
   children: React.ReactNode;
+  // PR #316: optional hook so a form can clear its own copy-last prefill after
+  // a successful add (the generic reset only clears uncontrolled DOM inputs).
+  onAfterSuccess?: () => void;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +75,7 @@ function AddRecordForm({
             form.reset();
             setResetKey((k) => k + 1);
             setSaved(true);
+            onAfterSuccess?.();
             router.refresh();
           } else {
             setError(res.error);
@@ -219,6 +231,63 @@ function OperatorPicker({
   );
 }
 
+// PR #316: manufacturer dropdown (Protec / Ballet / Sterex + Other). Fully
+// controlled so it works with copy-last (a new key/defaultValue prefills it) and
+// preserves free-text/legacy values on edit. Submits exactly ONE
+// `manufacturer_name` value via a hidden input: the selected brand, or the typed
+// "Other" text. The column stays free text — no schema change.
+function ManufacturerPicker({ defaultValue }: { defaultValue?: string }) {
+  const known = (MANUFACTURER_OPTIONS as readonly string[]).includes(
+    (defaultValue ?? "").trim(),
+  );
+  const [sel, setSel] = useState(
+    defaultValue && known
+      ? defaultValue.trim()
+      : defaultValue && defaultValue.trim()
+        ? OTHER_MANUFACTURER
+        : "",
+  );
+  const [custom, setCustom] = useState(
+    defaultValue && !known ? defaultValue : "",
+  );
+  const isOther = sel === OTHER_MANUFACTURER;
+  const resolved = isOther ? custom.trim() : sel;
+  return (
+    <>
+      <label className="flex flex-col gap-1">
+        <span className={LABEL_CLS}>Manufacturer (optional)</span>
+        <select
+          value={sel}
+          onChange={(e) => setSel(e.target.value)}
+          className={INPUT_CLS}
+        >
+          <option value="">— Select —</option>
+          {MANUFACTURER_OPTIONS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+          <option value={OTHER_MANUFACTURER}>Other (type a name)</option>
+        </select>
+      </label>
+      {isOther && (
+        <label className="flex flex-col gap-1">
+          <span className={LABEL_CLS}>Manufacturer name</span>
+          <input
+            type="text"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            placeholder="e.g. a manufacturer not in the list"
+            className={INPUT_CLS}
+          />
+        </label>
+      )}
+      {/* Exactly one submitted value; no name collision with the select. */}
+      <input type="hidden" name="manufacturer_name" value={resolved} />
+    </>
+  );
+}
+
 // PR #280: exposed-person selector for exposure incidents. The three stored
 // fields (full name / phone / address) stay free text and editable; picking a
 // same-studio Client or Staff/self just autofills them (imperatively, so the
@@ -349,22 +418,90 @@ function ExposedPersonPicker({
   );
 }
 
-export function AddSterileItemForm({ action }: { action: Action }) {
+// PR #316: the shape copy-last prefills from (the studio's most recent sterile
+// record). lot_number is intentionally absent — it must NEVER be copied.
+export type SterileCopyLast = {
+  date_purchased: string;
+  item_description: string;
+  manufacturer_name: string;
+  amount_purchased: string;
+  expiry_date: string | null;
+  notes: string | null;
+};
+
+export function AddSterileItemForm({
+  action,
+  lastRecord,
+}: {
+  action: Action;
+  // PR #316: the latest already-loaded sterile record (studio-scoped) for the
+  // client-side "Copy last entry" button. null when there are no records.
+  lastRecord?: SterileCopyLast | null;
+}) {
+  // Prefill from a copy (never includes lot_number); bump copyKey to REMOUNT the
+  // fields so uncontrolled inputs + the ManufacturerPicker pick up the values.
+  const [prefill, setPrefill] = useState<SterileCopyLast | null>(null);
+  const [copyKey, setCopyKey] = useState(0);
+  const clear = () => {
+    setPrefill(null);
+    setCopyKey((k) => k + 1);
+  };
   return (
-    <AddRecordForm action={action} submitLabel="Add sterile item record">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Date purchased" name="date_purchased" type="date" required />
+    <AddRecordForm
+      action={action}
+      submitLabel="Add sterile item record"
+      onAfterSuccess={clear}
+    >
+      {lastRecord && (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              // Copy everything EXCEPT the lot number (each purchase has its own
+              // lot; copying it would be a false traceability record).
+              setPrefill({ ...lastRecord });
+              setCopyKey((k) => k + 1);
+            }}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
+          >
+            Copy last entry
+          </button>
+          <span className="ml-2 text-xs text-neutral-500">
+            Fills everything except the lot number.
+          </span>
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2" key={copyKey}>
+        <Field
+          label="Date purchased"
+          name="date_purchased"
+          type="date"
+          required
+          defaultValue={prefill?.date_purchased?.slice(0, 10)}
+        />
         <Field
           label="Item description"
           name="item_description"
           required
           placeholder="e.g. Ballet F3 stainless probes"
+          defaultValue={prefill?.item_description}
         />
-        <Field label="Manufacturer" name="manufacturer_name" placeholder="e.g. Ballet" />
-        <Field label="Amount purchased" name="amount_purchased" placeholder="e.g. 50" />
+        <ManufacturerPicker defaultValue={prefill?.manufacturer_name} />
+        <Field
+          label="Amount purchased"
+          name="amount_purchased"
+          placeholder="e.g. 50"
+          defaultValue={prefill?.amount_purchased}
+        />
+        {/* Lot # is NEVER prefilled from copy-last — always starts blank. */}
         <Field label="Lot #" name="lot_number" placeholder="e.g. 460941" />
-        <Field label="Expiry date" name="expiry_date" type="date" />
-        <NotesField />
+        <Field
+          label="Expiry date"
+          name="expiry_date"
+          type="date"
+          defaultValue={prefill?.expiry_date?.slice(0, 10)}
+        />
+        <NotesField defaultValue={prefill?.notes ?? undefined} />
       </div>
     </AddRecordForm>
   );
@@ -512,11 +649,7 @@ export function EditSterileItemForm({
           required
           defaultValue={record.item_description}
         />
-        <Field
-          label="Manufacturer"
-          name="manufacturer_name"
-          defaultValue={record.manufacturer_name}
-        />
+        <ManufacturerPicker defaultValue={record.manufacturer_name} />
         <Field
           label="Amount purchased"
           name="amount_purchased"

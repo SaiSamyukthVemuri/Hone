@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
+import {
+  SUPPLY_EXPIRING_WITHIN_DAYS,
+  supplyExpiryHorizon,
+} from "@/lib/record-keeping/expiry";
 import type {
   RecordKeepingDisinfectant,
   RecordKeepingExposureIncident,
@@ -24,6 +28,37 @@ export async function getSterileItemRecords(
     .order("created_at", { ascending: false })
     .limit(200);
   return (data ?? []) as RecordKeepingSterileItem[];
+}
+
+// PR #316: sterile items expired OR expiring within N days, for the dashboard
+// "Supplies expiring" attention card. Studio-scoped (RLS + explicit .eq);
+// `today` is passed in so callers stay deterministic. Returns only safe display
+// fields (no lot_number — the card never needs it).
+export async function getExpiringSterileItems(
+  studioId: string,
+  todayIso: string,
+  options: { withinDays?: number; limit?: number } = {},
+): Promise<
+  Pick<
+    RecordKeepingSterileItem,
+    "id" | "item_description" | "manufacturer_name" | "expiry_date"
+  >[]
+> {
+  const within = options.withinDays ?? SUPPLY_EXPIRING_WITHIN_DAYS;
+  const supabase = await createClient();
+  const horizon = supplyExpiryHorizon(todayIso, within);
+  const { data } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("id, item_description, manufacturer_name, expiry_date")
+    .eq("studio_id", studioId)
+    .not("expiry_date", "is", null)
+    .lte("expiry_date", horizon)
+    .order("expiry_date", { ascending: true })
+    .limit(options.limit ?? 50);
+  return (data ?? []) as Pick<
+    RecordKeepingSterileItem,
+    "id" | "item_description" | "manufacturer_name" | "expiry_date"
+  >[];
 }
 
 // PR #279 (Chloe charting feedback): suggest the latest current probe lot/batch
