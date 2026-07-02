@@ -44,7 +44,9 @@ import {
 } from "@/lib/dashboard/daily-prep-brief";
 import { DailyPrepBriefCard } from "./daily-prep-brief";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
+import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { FollowUpAssistantCard } from "./follow-up-assistant";
+import { SuppliesExpiringCard } from "./supplies-expiring";
 import { PilotLearningCard } from "./pilot-learning";
 import {
   buildGettingStarted,
@@ -348,6 +350,10 @@ export default async function DashboardPage({
     new Date().toISOString(),
   );
 
+  // PR #316: sterile items / probe lots expired or expiring within 30 days,
+  // studio-scoped, for the on-dashboard "Supplies expiring" attention card.
+  const expiringSupplies = await getExpiringSterileItems(studio.id, todayLocal);
+
   // PR #215: Getting Started progress for the dashboard card.
   const gettingStarted = buildGettingStarted(
     await getGettingStartedSignals(
@@ -450,6 +456,7 @@ export default async function DashboardPage({
           follow-ups from recent appointments. Rules-based, read-only,
           links only. Sits under the snapshot so Today stays on top. */}
       <FollowUpAssistantCard assistant={followUpAssistant} />
+      <SuppliesExpiringCard items={expiringSupplies} today={todayLocal} />
 
       <NeedsAttention
         isOwner={isOwner}
