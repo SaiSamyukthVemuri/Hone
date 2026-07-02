@@ -1258,7 +1258,7 @@ Already SHIPPED backstops (do not re-do): payment success persistence + `needs_m
 9. **Webhook live-event relaxation** — `shouldIgnoreLiveModeEvent` in `lib/billing/payment-webhook-reconciliation.ts` ignores every `event.livemode === true` event and records `stripe_webhook_livemode_event_ignored`; relax it so the live reconcilers process live events.
 10. **Card-authorization livemode scoping relaxation** — `lib/consent/current-card-authorization.ts` + `lib/payment-methods/refresh-card-authorization-pointer.ts` scope card lookups to `inferStripeLivemode()`; ensure live card-on-file rows resolve.
 11. **Static gates green.** `scripts/check-stripe-gates.mjs` (1 `paymentIntents.create` / 1 `refunds.create` / 0 `charges.create` / 0 `checkout.sessions` + `STRIPE_ALLOW_LIVE_MODE=true` allowlisted to `lib/stripe/server.ts`) and `scripts/check-production-env-gates.mjs` (Upstash + `OPS_ALERT_EMAILS`) both pass. The PR #297 safety-lock test will need updating in lockstep with steps 4-10 (that is the point — it forces the relaxation to be explicit).
-12. **Env flip — LAST.** In Vercel **Production** only: `STRIPE_SECRET_KEY=sk_live_*`, `STRIPE_PUBLISHABLE_KEY=pk_live_*`, `STRIPE_WEBHOOK_SECRET=<live whsec_*>`, then `STRIPE_ALLOW_LIVE_MODE=true`. (Preview/Development still forbid live keys regardless.)
+12. **Env flip — LAST.** In Vercel **Production** only: `STRIPE_SECRET_KEY=sk_live_*`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_*` (this is the exact env var name the code reads — `lib/stripe/publishable-key.ts`; it is `NEXT_PUBLIC_`-inlined at build time, so a **redeploy** is required for the browser to pick it up), `STRIPE_WEBHOOK_SECRET=<live whsec_*>`, then `STRIPE_ALLOW_LIVE_MODE=true`. (Preview/Development still forbid live keys regardless.)
 
 **First controlled live payment (see §17.5):** one studio, one operator watching production logs + `/admin/ops-alerts`, one small controlled charge. Verify the Stripe dashboard PaymentIntent succeeded; the Hone ledger row (`status='succeeded'`, PI/charge ids + `charged_at`); the webhook event processed (`stripe_events`); **no critical ops alert** (esp. the #281 `session_payment_succeeded_write_*` pair). **Run the §17.7 read-only reconciliation SQL / the `/admin/payments/manual-review` queue BEFORE and AFTER.**
 
@@ -1268,7 +1268,7 @@ Already SHIPPED backstops (do not re-do): payment success persistence + `needs_m
 
 ### 17.13 Read-only production verification (PR #308)
 
-The final pre-live review found a **P0 gap**: the repo requires production migration max **0099**, but the review could **not independently confirm remote production state**. `scripts/verify-production.mjs` closes that gap — an **operator-run, READ-ONLY** check that proves remote production matches the repo's required state **before** enabling live payments or broadening sensitive-data use. It is **not** a CI gate (CI has no production link, by design) and **not** a live-payment enablement script.
+The final pre-live review found a **P0 gap**: the repo requires a specific production migration max (the repo-derived expected max — currently **0100** as of PR #320/#321), but the review could **not independently confirm remote production state**. `scripts/verify-production.mjs` closes that gap — an **operator-run, READ-ONLY** check that proves remote production matches the repo's required state **before** enabling live payments or broadening sensitive-data use. It is **not** a CI gate (CI has no production link, by design) and **not** a live-payment enablement script.
 
 **Command (run from the production-linked Mac):**
 
@@ -1282,7 +1282,7 @@ node --env-file=.env.local scripts/verify-production.mjs
 - **Upstash env** (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) **for the heartbeat check**. Without them the heartbeat is reported **INCOMPLETE** (fail-closed), not PASS.
 
 **What it checks (automated):**
-1. Remote migration max = **0099** (`supabase_migrations.schema_migrations`).
+1. Remote migration max = the **repo-derived expected max** (`supabase_migrations.schema_migrations`). `verify-production.mjs` derives the expected value from the highest `NNNN_*.sql` in `supabase/migrations/` (PR #314) rather than hardcoding it, so it tracks the repo automatically; the current value is **0100** (as of PR #320/#321).
 2. Required migration effects: **0093** treatment-image bucket exists + **private** + `treatment_images` RLS policies + `treatment_images_enforce_integrity` trigger; **0097** `client_intake_forms` intake-link columns; **0098** `appointments` intake-reminder columns + window indexes + `claim_email_send`/`record_email_result` `intake_reminder_7d`/`_3d` branches; **0099** `treatment_images.practitioner_note`.
 3. **RLS enabled** on the curated critical tables (clients, appointments, client_intake_forms, sessions, session_blocks, treatment_images, payment_charge_attempts, ops_alerts, and the `record_keeping_*` tables).
 4. **Unresolved critical payment/refund/stripe ops alerts = 0** (count only — never message bodies).

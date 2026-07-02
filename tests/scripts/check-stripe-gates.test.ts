@@ -41,6 +41,8 @@ describe("check-stripe-gates script (PR #154)", () => {
     expect(stdout).toMatch(/^PASS checkout\.sessions:/m);
     expect(stdout).toMatch(/^PASS set_studio_require_card_on_file:/m);
     expect(stdout).toMatch(/^PASS STRIPE_ALLOW_LIVE_MODE=true:/m);
+    // PR #321: the getStripe() binding gate (renamed-client evasion guard).
+    expect(stdout).toMatch(/^PASS getStripe-binding:/m);
     // The PI rule's single allowed location (PR #218 removed the
     // legacy manual-fee executor; the unified executor remains).
     expect(stdout).toContain("lib/billing/session-payment-charge.ts");
@@ -231,5 +233,115 @@ describe("check-stripe-gates: unknown Stripe writes hard-fail (PR #309)", () => 
       "await stripe.customers.create({});\nawait stripe.accounts.createLoginLink(a);\nconst e = await stripe.confirmSetup({});\n",
     );
     expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+});
+
+// --------------------------------------------------------------------
+// PR #321: renamed-client evasion guard + generic dangerous-resource deny
+// --------------------------------------------------------------------
+
+describe("check-stripe-gates: getStripe() binding convention (PR #321)", () => {
+  let dir: string | null = null;
+  function runAgainst(files: Record<string, string>) {
+    dir = mkdtempSync(path.join(tmpdir(), "stripe-bind-"));
+    for (const [rel, contents] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, contents, "utf8");
+    }
+    return spawnSync("node", [SCRIPT_PATH], { cwd: dir, encoding: "utf8" });
+  }
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  // The exact evasion the gate exists to stop: a renamed client whose member
+  // calls (`s.*`) never match the `stripe.<ns>.<method>` inventory/catch-all.
+  it("HARD-FAILS a renamed client (const s = getStripe(); s.transfers.create)", () => {
+    const r = runAgainst({
+      "lib/evil.ts": "const s = getStripe();\nawait s.transfers.create({});\n",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL getStripe-binding:/m);
+    expect(r.stdout ?? "").toContain("lib/evil.ts");
+    // Proof this WAS an evasion: the catch-all alone did not see `s.transfers`.
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+
+  it("HARD-FAILS another renamed client (const client = getStripe(); client.refunds.create)", () => {
+    const r = runAgainst({
+      "lib/e2.ts": "const client = getStripe();\nawait client.refunds.create({});\n",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL getStripe-binding:/m);
+  });
+
+  it("HARD-FAILS a destructured client (const { paymentIntents } = getStripe())", () => {
+    const r = runAgainst({
+      "lib/e3.ts": "const { paymentIntents } = getStripe();\nawait paymentIntents.create({});\n",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL getStripe-binding:/m);
+  });
+
+  it("HARD-FAILS an inline client chain (getStripe().payouts.create)", () => {
+    const r = runAgainst({
+      "app/e4.ts": "await getStripe().payouts.create({});\n",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL getStripe-binding:/m);
+  });
+
+  it("PASSES the binding gate for the canonical `const stripe = getStripe()`", () => {
+    const r = runAgainst({
+      "lib/good.ts": "const stripe = getStripe();\nawait stripe.customers.create({});\n",
+    });
+    // The binding gate specifically passes (other count rules may fail for a
+    // synthetic file, but the getStripe-binding line must be PASS).
+    expect(r.stdout ?? "").toMatch(/^PASS getStripe-binding:/m);
+    expect(r.stdout ?? "").not.toMatch(/^FAIL getStripe-binding:/m);
+  });
+
+  it("does NOT flag the getStripe DEFINITION site (function getStripe())", () => {
+    const r = runAgainst({
+      "lib/stripe/server.ts": "export function getStripe() {\n  return {};\n}\n",
+    });
+    expect(r.stdout ?? "").toMatch(/^PASS getStripe-binding:/m);
+  });
+
+  it("does NOT flag comment-only or import mentions of getStripe", () => {
+    const r = runAgainst({
+      "lib/c.ts": "// const s = getStripe(); is forbidden\nimport { getStripe } from '@/lib/stripe/server';\nexport const x = 1;\n",
+    });
+    expect(r.stdout ?? "").toMatch(/^PASS getStripe-binding:/m);
+  });
+
+  // Generic deny: with `stripe` enforced, any dangerous mutating resource is a
+  // `stripe.<ns>.<method>` unclassified write → the catch-all denies it.
+  it.each([
+    "transfers.create",
+    "payouts.create",
+    "subscriptions.create",
+    "invoices.create",
+    "applicationFees.create",
+    "charges.create",
+  ])("HARD-FAILS a direct dangerous write: stripe.%s", (call) => {
+    const r = runAgainst({ "lib/d.ts": `const stripe = getStripe();\nawait stripe.${call}({});\n` });
+    expect(r.status).not.toBe(0);
+    // charges.create has its own exactly:0 rule; the rest hit the catch-all.
+    const failed =
+      /^FAIL no-unclassified-stripe-writes:/m.test(r.stdout ?? "") ||
+      /^FAIL charges\.create:/m.test(r.stdout ?? "");
+    expect(failed, r.stdout).toBe(true);
+  });
+
+  it("read-only calls on dangerous resources stay allowed (no overbroadening)", () => {
+    const r = runAgainst({
+      "lib/reads.ts":
+        "const stripe = getStripe();\nawait stripe.invoices.retrieve(i);\nawait stripe.subscriptions.list();\nawait stripe.transfers.retrieve(t);\n",
+    });
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+    expect(r.stdout ?? "").toMatch(/^PASS getStripe-binding:/m);
   });
 });
