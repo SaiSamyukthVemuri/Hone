@@ -18,6 +18,7 @@ import {
   disinfectantStatusLabel,
   isDisinfectantAlert,
 } from "@/lib/record-keeping/disinfectant-status";
+import { supplyExpiryPrintMarker } from "@/lib/record-keeping/expiry";
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
@@ -192,7 +193,11 @@ export default async function RecordKeepingPrintPage({
       </header>
 
       {section === "sterile" && (
-        <SterilePrint studioId={studio.id} includeHistory={includeHistory} />
+        <SterilePrint
+          studioId={studio.id}
+          includeHistory={includeHistory}
+          timezone={studio.timezone}
+        />
       )}
       {section === "disinfectants" && (
         <DisinfectantsPrint
@@ -228,11 +233,15 @@ export default async function RecordKeepingPrintPage({
 async function SterilePrint({
   studioId,
   includeHistory,
+  timezone,
 }: {
   studioId: string;
   includeHistory: boolean;
+  timezone: string;
 }) {
   const records = await getSterileItemRecords(studioId);
+  // PR #317: studio-local "today" for the print-safe expiry marker.
+  const today = todayInTz(timezone);
   const audit = includeHistory
     ? await getAuditEventsByRecord(
         studioId,
@@ -251,7 +260,17 @@ async function SterilePrint({
           <FieldLine label="Manufacturer" value={notRecorded(r.manufacturer_name)} />
           <FieldLine label="Amount purchased" value={notRecorded(r.amount_purchased)} />
           <FieldLine label="Lot #" value={notRecorded(r.lot_number)} />
-          <FieldLine label="Expiry date" value={dateOnly(r.expiry_date)} />
+          {/* PR #317: plain-text expiry marker so a printed/exported inspection
+              record flags expired / expires-today / expires-soon (color won't
+              print). Only appended when an expiry date is recorded. */}
+          <FieldLine
+            label="Expiry date"
+            value={
+              r.expiry_date
+                ? `${dateOnly(r.expiry_date)}${supplyExpiryPrintMarker(r.expiry_date, today)}`
+                : dateOnly(r.expiry_date)
+            }
+          />
           {r.notes && <FieldLine label="Notes" value={r.notes} />}
           <p className="text-[11px] text-neutral-500">
             Recorded {utcStamp(new Date(r.created_at))}
