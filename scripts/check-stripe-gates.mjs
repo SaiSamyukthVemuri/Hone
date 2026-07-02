@@ -486,6 +486,65 @@ function evaluateUnknownStripeWrites(files) {
 }
 
 // --------------------------------------------------------------------
+// getStripe() binding convention (PR #321)
+// --------------------------------------------------------------------
+//
+// The unclassified-write catch-all above matches `stripe.<ns>.<method>` — it
+// only fires when the Stripe client is the variable literally named `stripe`.
+// A RENAMED client would evade the ENTIRE inventory (money rules + catch-all):
+//   const s = getStripe(); await s.transfers.create(...)      // `s.*` unmatched
+//   const client = getStripe(); await client.refunds.create() // `client.*`  "
+//   await getStripe().payouts.create(...)                     // inline chain
+//   const { paymentIntents } = getStripe();                   // destructured
+// So we ENFORCE the convention: every getStripe() CALL must be bound as
+// `const stripe = getStripe()` (or `let`). Renamed bindings, destructuring, and
+// inline member access are hard failures. With `stripe` enforced, every mutating
+// call is `stripe.<ns>.<method>` and is therefore covered by the classified
+// rules + the catch-all — which together DENY every dangerous mutating resource
+// v1 does not use (transfers, payouts, subscriptions, invoices, applicationFees,
+// charges, checkout.sessions). This is the generic deny coverage: not a per-
+// resource allowlist (harmless reads like `stripe.invoices.retrieve` stay fine),
+// but "any unclassified mutation through the one enforced client name fails".
+const GETSTRIPE_CALL_SHAPE = /getStripe\s*\(\s*\)/g;
+function evaluateGetStripeBinding(files) {
+  const offenders = []; // [{ path, snippet }]
+  for (const abs of files) {
+    let content;
+    try {
+      content = readFileSync(abs, "utf8");
+    } catch {
+      continue;
+    }
+    const code = stripComments(content);
+    const re = new RegExp(GETSTRIPE_CALL_SHAPE.source, "g");
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      const before = code.slice(Math.max(0, m.index - 48), m.index);
+      // The function DEFINITION (`export function getStripe()`) is not a call.
+      if (/function\s+$/.test(before)) continue;
+      // Canonical binding: `const stripe = getStripe()` / `let stripe = …`.
+      if (/\b(?:const|let)\s+stripe\s*=\s*$/.test(before)) continue;
+      const snippet = (before.slice(-32) + m[0]).replace(/\s+/g, " ").trim();
+      offenders.push({ path: relPosix(abs), snippet });
+    }
+  }
+  if (offenders.length > 0) {
+    return {
+      ok: false,
+      summary:
+        "getStripe() must be bound as `const stripe = getStripe()` — a renamed/" +
+        "aliased/destructured/inline client evades the write inventory: " +
+        offenders.map((o) => `${o.path} [${o.snippet}]`).join(", "),
+    };
+  }
+  return {
+    ok: true,
+    summary:
+      "every getStripe() call binds to `const stripe` (no renamed client can evade the inventory)",
+  };
+}
+
+// --------------------------------------------------------------------
 // Main
 // --------------------------------------------------------------------
 
@@ -510,6 +569,13 @@ function main() {
     `${unknown.ok ? "PASS" : "FAIL"} no-unclassified-stripe-writes: ${unknown.summary}\n`,
   );
   if (!unknown.ok) allOk = false;
+  // PR #321: enforce the getStripe() binding convention so a renamed client
+  // cannot slip a mutating call past the `stripe.<ns>.<method>` inventory above.
+  const binding = evaluateGetStripeBinding(files);
+  process.stdout.write(
+    `${binding.ok ? "PASS" : "FAIL"} getStripe-binding: ${binding.summary}\n`,
+  );
+  if (!binding.ok) allOk = false;
   process.stdout.write(
     `\nScanned ${files.length} runtime source file(s) under ${SCAN_ROOTS.join(", ")}.\n`,
   );
