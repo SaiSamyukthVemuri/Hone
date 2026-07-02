@@ -12,6 +12,19 @@ Hone is multi-tenant per studio. The unit of isolation is `studio_id`.
 
 Practitioners belong to exactly one studio. Clients are studio-scoped (`(client_id, studio_id)` unique). Services, appointments, sessions, treatment plans, intake forms, consent templates, signatures, card payment methods, policy acknowledgements, fee attempts; all studio-scoped, all RLS-gated.
 
+### 1a. Service-role inventory (PR #313)
+
+`createAdminClient()` (`lib/supabase/admin-server.ts`) is the **only** way to build a service-role Supabase client, and it **BYPASSES RLS**. Its use must be **exceptional and justified** — the service-role key is server-only (guarded by `import "server-only"` + the browser-boundary test), and it is used only where RLS cannot apply (session-less public token routes, webhooks, cron, the operator admin console) or where an authenticated action writes through after resolving the caller's studio.
+
+To stop an overlooked or new service-role usage from silently breaking studio isolation, **every runtime `createAdminClient()` call site under `app/` and `lib/` is allowlisted** in `tests/security/service-role-allowlist.ts` — each entry declares a **path**, a **purpose**, a **why** (the reason RLS must be bypassed), and a **scopeGuard** (a real token/signature/studio/client/appointment guard symbol that must appear in the file, e.g. `getCurrentPractitionerWithStudio`, `verifyIntakeToken`, `verifyCancellationToken`, `constructEvent`, `isAuthorizedCronRequest` / `CRON_SECRET`, `isAdmin` / `ADMIN_EMAILS`). The companion test (`tests/security/service-role-allowlist.test.ts`) fails CI if:
+
+- a **new, unallowlisted** `createAdminClient()` usage appears,
+- an allowlisted usage is **removed but still listed**,
+- an entry is missing a purpose / why / scopeGuard, or
+- a file no longer contains its declared **scopeGuard** symbol (a dropped guard).
+
+**Any new service-role usage must add an allowlist entry** with all four fields. This is an **inventory + drift gate** — it proves each call site *has* a guard symbol; it is **not** a formal proof that every query is perfectly scoped. Deeper, per-query audits are still required for the high-risk session-less surfaces (public token routes, webhooks, cron). This complements the browser-boundary test (`tests/lib/supabase/admin-server-boundary.test.ts`), which keeps the service-role key out of client bundles.
+
 ## 2. Public route model
 
 > Treatment images (PR #271) are **not** a public surface. The `treatment-images` bucket is private (no public URLs); images are practitioner-only and viewed only via short-TTL signed URLs minted server-side after a studio-ownership re-check. No public/token route below exposes them.
