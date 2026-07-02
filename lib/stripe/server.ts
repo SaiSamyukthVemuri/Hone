@@ -22,8 +22,10 @@
 //   * STRIPE_SECRET_KEY is read at first use and never logged.
 //   * Pinned API version `2026-04-22.dahlia`. Bumping it later must
 //     be a deliberate code change.
-//   * No client-side Stripe.js is used in Phase 1, so there is no
-//     publishable key requirement.
+//   * Client-side Stripe.js is used only in the card-on-file portal flow
+//     (PortalPaymentMethodForm confirmSetup, PR #135), which loads its own
+//     publishable key via lib/stripe/publishable-key.ts. This server module
+//     never needs the publishable key; it uses the secret key only.
 
 import Stripe from "stripe";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
