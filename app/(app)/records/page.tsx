@@ -25,6 +25,7 @@ import {
 } from "@/lib/record-keeping/queries";
 import {
   summarizeSupplyExpiry,
+  supplyExpiryLabel,
   supplyExpiryState,
 } from "@/lib/record-keeping/expiry";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
@@ -390,25 +391,27 @@ async function SterileItemsSection({
           <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {records.map((r) => {
               const expiry = supplyExpiryState(r.expiry_date, today);
+              const expiryLabel = supplyExpiryLabel(expiry);
               const rowCls =
                 expiry === "expired"
                   ? "bg-red-50 dark:bg-red-950/30"
-                  : expiry === "expiring"
+                  : expiry === "today" || expiry === "expiring"
                     ? "bg-amber-50 dark:bg-amber-950/20"
                     : "";
+              const badgeCls =
+                expiry === "expired"
+                  ? "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200"
+                  : "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200";
               return (
               <li key={r.id} className={`flex flex-col gap-1 p-4 text-sm ${rowCls}`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="flex items-baseline gap-2">
                     <span className="font-medium">{r.item_description}</span>
-                    {expiry === "expired" && (
-                      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-800 dark:bg-red-900/50 dark:text-red-200">
-                        Expired
-                      </span>
-                    )}
-                    {expiry === "expiring" && (
-                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">
-                        Expires soon
+                    {expiryLabel && (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${badgeCls}`}
+                      >
+                        {expiryLabel}
                       </span>
                     )}
                   </span>

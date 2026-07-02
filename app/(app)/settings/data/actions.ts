@@ -737,7 +737,7 @@ Files included:
 - appointments.csv: One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.
 - treatment_plans.csv: One row per treatment plan with client, name, primary area, all treatment areas (pipe-joined), estimated timeline months window, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
 - treatment_plan_stages.csv: Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.
-- record_keeping_sterile_items.csv: Sterile-supply inspection log — item, manufacturer, amount, lot number, purchase/expiry dates, notes.
+- record_keeping_sterile_items.csv: Sterile-supply inspection log — item, manufacturer, amount, lot number, purchase/expiry dates, notes. Expiry status is derivable from the expiry_date column (a date on or before today is expired); the in-app Records list and the print view flag expired / expires-today / expires-soon items.
 - record_keeping_disinfectants.csv: Disinfectant preparation log — name, concentration, prepared/discarded/discard-due dates, operator, notes.
 - record_keeping_exposure_incidents.csv: Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.
 - record_keeping_audit_events.csv: Record-keeping change history — record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)

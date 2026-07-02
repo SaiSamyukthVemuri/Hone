@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { supplyExpiryState } from "@/lib/record-keeping/expiry";
+import {
+  supplyExpiryLabel,
+  supplyExpiryState,
+} from "@/lib/record-keeping/expiry";
 
 // PR #316 (Chloe feedback): a small, studio-scoped dashboard attention card for
 // sterile items / probe lots that are expired or expiring within 30 days.
@@ -47,6 +50,7 @@ export function SuppliesExpiringCard({
         {items.map((it) => {
           const state = supplyExpiryState(it.expiry_date, today);
           const expired = state === "expired";
+          const label = supplyExpiryLabel(state) ?? "Expires soon";
           return (
             <li
               key={it.id}
@@ -64,7 +68,7 @@ export function SuppliesExpiringCard({
                         : "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200"
                     }`}
                   >
-                    {expired ? "Expired" : "Expires soon"}
+                    {label}
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">

@@ -15,6 +15,8 @@ const PAGE = read("app/(app)/records/page.tsx");
 const QUERIES = read("lib/record-keeping/queries.ts");
 const DASH = read("app/(app)/dashboard/page.tsx");
 const CARD = read("app/(app)/dashboard/supplies-expiring.tsx");
+const PRINT = read("app/(app)/records/print/page.tsx");
+const EXPORT = read("app/(app)/settings/data/actions.ts");
 
 describe("manufacturer dropdown", () => {
   it("offers Protec / Ballet / Sterex + Other", () => {
@@ -62,12 +64,16 @@ describe("copy-last never copies the lot number", () => {
 });
 
 describe("Records page expiry states + banner", () => {
-  it("computes state per row and styles expired red / expiring amber with badges", () => {
+  it("computes state per row and styles expired red / expiring amber with a helper-driven badge", () => {
     expect(PAGE).toMatch(/supplyExpiryState\(r\.expiry_date, today\)/);
-    expect(PAGE).toMatch(/Expired/);
-    expect(PAGE).toMatch(/Expires soon/);
+    // Badge text comes from supplyExpiryLabel (one source of truth incl. the
+    // PR #317 "Expires today" state) — not hardcoded literals in the page.
+    expect(PAGE).toMatch(/supplyExpiryLabel\(expiry\)/);
+    expect(PAGE).toMatch(/\{expiryLabel\}/);
     expect(PAGE).toMatch(/bg-red-50/);
     expect(PAGE).toMatch(/bg-amber-50/);
+    // "today" and "expiring" share the amber row treatment.
+    expect(PAGE).toMatch(/expiry === "today" \|\| expiry === "expiring"/);
   });
   it("shows a summary banner with expired + expiring-within-30 counts", () => {
     expect(PAGE).toMatch(/summarizeSupplyExpiry\(records, today\)/);
@@ -95,6 +101,21 @@ describe("dashboard 'Supplies expiring' card is studio-scoped", () => {
   it("the card renders nothing when empty (no clutter) and never shows lot numbers", () => {
     expect(CARD).toMatch(/if \(items\.length === 0\) return null/);
     expect(CARD).not.toMatch(/lot_number/);
+  });
+});
+
+describe("PR #317: print expiry marker + export note", () => {
+  it("SterilePrint appends a studio-local, print-safe expiry marker to the date", () => {
+    expect(PRINT).toMatch(/supplyExpiryPrintMarker\(r\.expiry_date, today\)/);
+    expect(PRINT).toMatch(/const today = todayInTz\(timezone\)/);
+    expect(PRINT).toMatch(/<SterilePrint[\s\S]{0,120}timezone=\{studio\.timezone\}/);
+    // Marker only when an expiry date is recorded (no marker for null).
+    expect(PRINT).toMatch(/r\.expiry_date\s*\?\s*`\$\{dateOnly\(r\.expiry_date\)\}\$\{supplyExpiryPrintMarker/);
+  });
+  it("the export README notes expiry is derivable from expiry_date (no CSV schema change)", () => {
+    expect(EXPORT).toMatch(/Expiry status is derivable from the expiry_date column/);
+    // CSV header still carries the same columns (schema unchanged).
+    expect(EXPORT).toMatch(/"expiry_date",/);
   });
 });
 
