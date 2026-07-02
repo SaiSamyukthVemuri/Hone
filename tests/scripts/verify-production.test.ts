@@ -95,7 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0100");
+    // PR #322: repo max advances to 0101 (live-payment DB readiness migration).
+    expect(nums[nums.length - 1]).toBe("0101");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
