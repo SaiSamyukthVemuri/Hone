@@ -103,7 +103,13 @@ function sanitizeFailureMessage(
 // (and the caller should return its summary unchanged). Returns false
 // when the handler should proceed with test-mode reconciliation.
 // ---------------------------------------------------------------------------
-async function shouldIgnoreLiveModeEvent(
+// PR #319: exported so the setup_intent.succeeded handler (in the webhook
+// route) can apply the SAME live-mode dormancy guard the four money handlers
+// use. setup_intent.succeeded is the only card-WRITE path, so it must ignore
+// live events (record a warning ops alert, write nothing) while live mode is
+// structurally disabled — reusing this guard keeps the alert taxonomy and the
+// livemode-mismatch semantics identical across every reconciliation surface.
+export async function shouldIgnoreLiveModeEvent(
   event: Stripe.Event,
   ctx: WebhookCtx,
   eventForAlert: string,

@@ -109,6 +109,60 @@ describe("payment-webhook-reconciliation: live-mode dormancy guard", () => {
   });
 });
 
+describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
+  it("shouldIgnoreLiveModeEvent is exported for the route to reuse", () => {
+    expect(HELPER).toMatch(
+      /export async function shouldIgnoreLiveModeEvent\(/,
+    );
+  });
+
+  it("the route imports the shared guard from the reconciliation module", () => {
+    expect(ROUTE).toMatch(
+      /import \{[\s\S]*shouldIgnoreLiveModeEvent[\s\S]*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
+    );
+  });
+
+  it("handleSetupIntentSucceeded calls the guard BEFORE any client_payment_methods write (and before the customer-lineage read)", () => {
+    const startIdx = ROUTE.indexOf(
+      "async function handleSetupIntentSucceeded(",
+    );
+    expect(startIdx).toBeGreaterThan(-1);
+    const endIdx = ROUTE.indexOf("\nasync function ", startIdx + 1);
+    const block = ROUTE.slice(startIdx, endIdx === -1 ? undefined : endIdx);
+
+    const guardIdx = block.indexOf(
+      'shouldIgnoreLiveModeEvent(event, ctx, "setup_intent.succeeded")',
+    );
+    // Anchor on the actual DB operations (.from("...")), not bare mentions —
+    // a comment naming the tables must not fool the ordering check.
+    const pmIdx = block.indexOf('.from("client_payment_methods")');
+    const lineageIdx = block.indexOf('.from("client_stripe_customers")');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(pmIdx).toBeGreaterThan(-1); // the handler does write cards in test mode
+    // Guard runs first — before the card write AND before the lineage read.
+    expect(guardIdx).toBeLessThan(pmIdx);
+    expect(guardIdx).toBeLessThan(lineageIdx);
+  });
+
+  it("a live event returns an ignored summary WITHOUT throwing (idempotency preserved)", () => {
+    const startIdx = ROUTE.indexOf(
+      "async function handleSetupIntentSucceeded(",
+    );
+    const block = ROUTE.slice(startIdx, startIdx + 1200);
+    // Ignored path returns a sanitized summary (marked processed by the route),
+    // never throws — so Stripe is not retried into a storm.
+    expect(block).toMatch(
+      /shouldIgnoreLiveModeEvent\(event, ctx, "setup_intent\.succeeded"\)\s*\)\s*\{\s*return \{[\s\S]{0,160}livemodeEventIgnored: true/,
+    );
+    // The ignored return carries no card/PII — only ids + the flag.
+    const returnBlock = block.slice(
+      block.indexOf("livemodeEventIgnored: true") - 200,
+      block.indexOf("livemodeEventIgnored: true") + 40,
+    );
+    expect(returnBlock).not.toMatch(/payment_method|card|customer/i);
+  });
+});
+
 describe("payment-webhook-reconciliation: metadata lookup order", () => {
   it("resolves the canonical key 'hone_payment_charge_attempt_id' first", () => {
     expect(HELPER).toMatch(/hone_payment_charge_attempt_id/);
@@ -336,9 +390,9 @@ describe("payment-webhook-reconciliation: reason-agnostic by construction", () =
 });
 
 describe("Webhook route wiring (PR #179)", () => {
-  it("imports all four reconciliation handlers", () => {
+  it("imports all four reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
     expect(ROUTE).toMatch(
-      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
+      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
     );
   });
 
