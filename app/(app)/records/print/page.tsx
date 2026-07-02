@@ -12,6 +12,7 @@ import {
   getSterileItemRecords,
   normalizeProcedureRecordFilter,
   utcInstantsForLocalDayRange,
+  UNFILTERED_PROCEDURE_RECORD_LIMIT,
 } from "@/lib/record-keeping/queries";
 import {
   disinfectantDueStatus,
@@ -434,7 +435,19 @@ async function ProceduresPrint({
           : "No sessions recorded."}
       </p>
     );
+  // PR #318: an unfiltered (studio-wide) pull is capped at the most recent N.
+  // When that cap is hit, say so plainly — otherwise the inspection artifact
+  // silently looks complete. Filtering by client raises the cap to 200.
+  const cappedUnfiltered =
+    !filter.clientId && records.length >= UNFILTERED_PROCEDURE_RECORD_LIMIT;
   return (
+    <>
+      {cappedUnfiltered && (
+        <p className="mb-2 text-sm font-medium text-neutral-700">
+          Showing the most recent {UNFILTERED_PROCEDURE_RECORD_LIMIT} records.
+          Filter by client for a complete procedure log.
+        </p>
+      )}
     <ul className="flex flex-col divide-y divide-neutral-300 text-sm">
       {records.map((r) => (
         <li key={r.sessionId} className="break-inside-avoid py-2">
@@ -482,5 +495,6 @@ async function ProceduresPrint({
         </li>
       ))}
     </ul>
+    </>
   );
 }

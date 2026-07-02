@@ -442,8 +442,8 @@ export function PublicBookForm({
             Already a {studioName} client?
           </h2>
           <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
-            Use your secure client portal to manage appointments and
-            book follow-up sessions.
+            Sign in to your secure client portal to manage your upcoming
+            appointments.
           </p>
           <a
             href={`/portal/login?studio=${encodeURIComponent(slug)}`}
