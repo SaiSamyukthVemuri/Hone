@@ -167,6 +167,17 @@ describe("verify-production: fail-closed", () => {
     expect(CODE).toMatch(/MANUAL checks still required/);
     expect(CODE).toMatch(/PRODUCTION VERIFIED/);
   });
+
+  it("the printed manual checks include the storage.objects policy check (PR #315)", () => {
+    // storage.objects policies are not introspectable from the linked query
+    // role, so the operator must confirm them in the Supabase dashboard: no
+    // authenticated/anon access to treatment-images (0093 dropped those; objects
+    // are service-role-only) + no foreign-bucket policy OR-combining onto it.
+    expect(CODE).toMatch(/storage\.objects/);
+    expect(CODE).toMatch(/service-role-only/);
+    expect(CODE).toMatch(/no authenticated\/anon policy granting access to treatment-images/);
+    expect(CODE).toMatch(/foreign-bucket policy OR-combines onto storage\.objects/);
+  });
 });
 
 describe("verify-production: runbook + cross-reference", () => {

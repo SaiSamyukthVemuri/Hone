@@ -440,6 +440,12 @@ async function main() {
       "  - Vercel PRODUCTION env: OPS_ALERT_EMAILS set, Upstash set, " +
       "STRIPE_ALLOW_LIVE_MODE unset/false, Stripe keys test-mode.\n" +
       "  - Stripe dashboard: mode / keys / account state.\n" +
+      "  - Supabase dashboard → Storage → policies: confirm storage.objects has " +
+      "no authenticated/anon policy granting access to treatment-images; 0093 " +
+      "dropped those policies, so objects must be service-role-only; confirm no " +
+      "foreign-bucket policy OR-combines onto storage.objects. (storage.objects " +
+      "policies are not introspectable from the linked query role, so this stays " +
+      "manual.)\n" +
       "  - Optional: read-only Vercel production log sample for 5xx/errors.\n" +
       "  - Reminder scheduler external dashboard if the heartbeat was INCOMPLETE.",
   );
