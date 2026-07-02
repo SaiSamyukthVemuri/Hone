@@ -107,6 +107,23 @@ const RULES = [
     exactly: 1,
   },
   {
+    name: "paymentIntents.cancel",
+    pattern: /paymentIntents\.cancel/g,
+    allowlist: [
+      // PR #320: the requires_action safety cancel. When an off-session
+      // PaymentIntent returns requires_action (async SCA), it is canceled
+      // (voided) BEFORE the terminal 'failed' outcome is written, so Stripe
+      // cannot later succeed it while Hone records 'failed' (webhook
+      // reconciliation only transitions from ready/pending_stripe). This VOIDS
+      // money — it never moves it. One call site, in the charge executor's
+      // finalizeRequiresActionPaymentIntent; test-mode gated via getStripe().
+      // Adding a second cancel site is a deliberate review event.
+      "lib/billing/session-payment-charge.ts",
+    ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
     name: "charges.create",
     pattern: /charges\.create/g,
     allowlist: [],
@@ -410,6 +427,7 @@ const STRIPE_BROWSER_WRITE_SHAPE = /\b(confirmSetup|confirmPayment|confirmCardPa
 // matched text hits one of these. Non-global so .test() is stateless.
 const CLASSIFIED_WRITE_PATTERNS = [
   /paymentIntents\.create/,
+  /paymentIntents\.cancel/,
   /refunds\.create/,
   /charges\.create/,
   /checkout\.sessions\.create/,

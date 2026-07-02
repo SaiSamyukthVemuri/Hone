@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { buildChargeDescription } from "@/lib/billing/charge-description";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -477,6 +478,105 @@ async function writeFailedOutcome(args: {
   }
 }
 
+// PR #320: safely finalize a PaymentIntent that resolved to `requires_action`
+// (off-session SCA). A `requires_action` PI is NOT terminal on Stripe — the
+// cardholder could complete authentication out-of-band and the PI could later
+// succeed. But webhook reconciliation only flips rows from ready/pending_stripe
+// (payment-webhook-reconciliation.ts), so writing terminal 'failed' here would
+// leave Hone permanently 'failed' while Stripe succeeded — a real-money
+// divergence. So we CANCEL the PI first (voiding it so Stripe can never succeed
+// it), then record terminal 'failed'. If the cancel FAILS, the Stripe outcome is
+// unresolved: we do NOT claim terminal certainty — we leave the row
+// pending_stripe (a valid reconciliation source) and route to manual review.
+// The single paymentIntents.cancel call site in the codebase (pinned in
+// scripts/check-stripe-gates.mjs). Runs only in test mode today (the live-mode
+// early return gates all charging).
+async function finalizeRequiresActionPaymentIntent(args: {
+  stripe: Stripe;
+  pi: Stripe.PaymentIntent;
+  stripeAccountId: string;
+  attemptId: string;
+  studioId: string;
+  clientId: string;
+  sessionId: string | null;
+  appointmentId: string | null;
+  route: string;
+}): Promise<SessionPaymentChargeResult> {
+  try {
+    const canceled = await args.stripe.paymentIntents.cancel(
+      args.pi.id,
+      undefined,
+      { stripeAccount: args.stripeAccountId },
+    );
+    // PI is now 'canceled' on Stripe and can never succeed — terminal 'failed'
+    // is now truthful and cannot diverge.
+    await writeFailedOutcome({
+      attemptId: args.attemptId,
+      studioId: args.studioId,
+      clientId: args.clientId,
+      paymentIntentId: args.pi.id,
+      stripeStatus: canceled.status,
+      failureCode: "requires_action_canceled",
+      failureMessage: AUTHENTICATION_REQUIRED_MESSAGE,
+    });
+    await recordOpsAlert({
+      severity: "warning",
+      event: "session_payment_requires_action_canceled",
+      message:
+        "Off-session PaymentIntent required authentication; canceled to keep Hone and Stripe consistent (terminal failed).",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      route: args.route,
+      safeDetails: {
+        attempt_id: args.attemptId,
+        session_id: args.sessionId,
+        appointment_id: args.appointmentId,
+        stripe_payment_intent_id: args.pi.id,
+        canceled_status: canceled.status,
+      },
+    });
+    return {
+      ok: false,
+      outcome: "failed",
+      message: AUTHENTICATION_REQUIRED_MESSAGE,
+      failureCode: "requires_action_canceled",
+    };
+  } catch (cancelErr) {
+    // Cancel FAILED — Stripe outcome is UNRESOLVED (the PI may still complete).
+    // Do NOT write terminal 'failed'. Leave the row pending_stripe so a later
+    // success can still reconcile, and route to manual review. Never silently
+    // claim terminal certainty when the Stripe outcome is unknown.
+    logInternal("session_payment_requires_action_cancel_failed", {
+      attemptId: args.attemptId,
+      paymentIntentId: args.pi.id,
+      message: cancelErr instanceof Error ? cancelErr.message : String(cancelErr),
+    });
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_requires_action_cancel_failed",
+      message:
+        "Off-session PaymentIntent required authentication and could NOT be canceled; Stripe outcome is unresolved. Row stays pending_stripe for manual review (do not assume failed).",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      route: args.route,
+      safeDetails: {
+        attempt_id: args.attemptId,
+        session_id: args.sessionId,
+        appointment_id: args.appointmentId,
+        stripe_payment_intent_id: args.pi.id,
+        reason: "cancel_failed",
+      },
+    });
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      stripePaymentIntentId: args.pi.id,
+      attemptId: args.attemptId,
+    };
+  }
+}
+
 // Pending reconciliation branch. Stale pending_stripe rows with a
 // known PaymentIntent id: read the PI back from Stripe to recover
 // the true status without re-creating.
@@ -555,6 +655,20 @@ async function reconcileExistingPaymentIntent(args: {
       stripeChargeId: latestCharge,
     };
   }
+  // PR #320: requires_action is not terminal on Stripe — cancel before failing.
+  if (pi.status === "requires_action") {
+    return finalizeRequiresActionPaymentIntent({
+      stripe,
+      pi,
+      stripeAccountId: args.stripeAccountId,
+      attemptId: args.attemptId,
+      studioId: args.studioId,
+      clientId: args.clientId,
+      sessionId: args.sessionId,
+      appointmentId: args.appointmentId,
+      route: "lib/billing/session-payment-charge:reconcileExistingPaymentIntent",
+    });
+  }
   await writeFailedOutcome({
     attemptId: args.attemptId,
     studioId: args.studioId,
@@ -584,10 +698,9 @@ async function reconcileExistingPaymentIntent(args: {
   return {
     ok: false,
     outcome: "failed",
+    // requires_action is handled by finalizeRequiresActionPaymentIntent above.
     message:
-      pi.status === "requires_action"
-        ? AUTHENTICATION_REQUIRED_MESSAGE
-        : pi.last_payment_error?.message ?? "PaymentIntent did not succeed.",
+      pi.last_payment_error?.message ?? "PaymentIntent did not succeed.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }
@@ -881,7 +994,8 @@ export async function runSessionPaymentCharge(args: {
         payment_method: card.stripe_payment_method_id,
         confirm: true,
         off_session: true,
-        description: `Session payment for session ${attemptRow.session_id}`,
+        // PR #320: accurate per-reason description (no "…for session null" on fees).
+        description: buildChargeDescription(attemptRow),
         metadata: {
           hone_studio_id: attemptRow.studio_id,
           hone_client_id: attemptRow.client_id,
@@ -1019,7 +1133,25 @@ export async function runSessionPaymentCharge(args: {
     };
   }
 
-  // Off-session SCA hit or other non-success status.
+  // PR #320: requires_action (off-session SCA) is NOT terminal on Stripe —
+  // cancel the PI before recording failure so a later out-of-band authentication
+  // success cannot leave Hone 'failed' while Stripe succeeded.
+  if (pi.status === "requires_action") {
+    return finalizeRequiresActionPaymentIntent({
+      stripe,
+      pi,
+      stripeAccountId: card.stripe_account_id,
+      attemptId: attemptRow.id,
+      studioId: attemptRow.studio_id,
+      clientId: attemptRow.client_id,
+      sessionId: attemptRow.session_id,
+      appointmentId: attemptRow.appointment_id,
+      route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+    });
+  }
+
+  // Other non-success status (e.g. requires_payment_method) — genuinely terminal
+  // for an off-session charge (Stripe will not auto-succeed it), so record failed.
   await writeFailedOutcome({
     attemptId: attemptRow.id,
     studioId: attemptRow.studio_id,
@@ -1029,12 +1161,12 @@ export async function runSessionPaymentCharge(args: {
     failureCode: pi.last_payment_error?.code ?? pi.status,
     failureMessage:
       pi.last_payment_error?.message ??
-      (pi.status === "requires_action"
-        ? AUTHENTICATION_REQUIRED_MESSAGE
-        : `PaymentIntent status: ${pi.status}`),
+      `PaymentIntent status: ${pi.status}`,
   });
   await recordOpsAlert({
-    severity: pi.status === "requires_action" ? "critical" : "warning",
+    // requires_action is handled + alerted in finalizeRequiresActionPaymentIntent
+    // above, so this path is always a plain (warning-level) charge failure.
+    severity: "warning",
     event: "session_payment_charge_failed",
     message: `PaymentIntent status post-create: ${pi.status}`,
     studioId: attemptRow.studio_id,
@@ -1053,10 +1185,8 @@ export async function runSessionPaymentCharge(args: {
     ok: false,
     outcome: "failed",
     message:
-      pi.status === "requires_action"
-        ? AUTHENTICATION_REQUIRED_MESSAGE
-        : (pi.last_payment_error?.message ??
-          "Stripe could not charge the saved card."),
+      pi.last_payment_error?.message ??
+      "Stripe could not charge the saved card.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }

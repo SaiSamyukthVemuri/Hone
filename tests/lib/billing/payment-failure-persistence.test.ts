@@ -22,11 +22,14 @@ const CHARGE = read("lib/billing/session-payment-charge.ts");
 const MANUAL_REVIEW = read("lib/billing/payment-manual-review.ts");
 const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 
-// The writeFailedOutcome function body only, so success-path alerts can't
+// The writeFailedOutcome function body only, so success-path alerts (and the
+// PR #320 finalizeRequiresActionPaymentIntent helper, which follows it) can't
 // satisfy the failure-path assertions.
 const FAILED_FN = (() => {
   const start = CHARGE.indexOf("async function writeFailedOutcome");
-  const end = CHARGE.indexOf("async function reconcileExistingPaymentIntent");
+  // PR #320: bound at the next function (finalizeRequiresActionPaymentIntent)
+  // so this stays exactly the writeFailedOutcome body.
+  const end = CHARGE.indexOf("async function finalizeRequiresActionPaymentIntent");
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return CHARGE.slice(start, end);
@@ -95,8 +98,10 @@ describe("writeFailedOutcome: safe details only — no PII / no raw payload (PR 
 
 describe("writeFailedOutcome: studioId + clientId threaded into ALL call sites (PR #310)", () => {
   it("every writeFailedOutcome call passes studioId and clientId", () => {
+    // PR #320 added a 4th call site (finalizeRequiresActionPaymentIntent's
+    // cancel-success path); it too threads both ids.
     const calls = count(CHARGE, /await writeFailedOutcome\(\{/g);
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
     // Each call block must carry both ids. Slice each call's argument object.
     const re = /await writeFailedOutcome\(\{([\s\S]*?)\}\);/g;
     let m: RegExpExecArray | null;
@@ -106,7 +111,7 @@ describe("writeFailedOutcome: studioId + clientId threaded into ALL call sites (
       expect(m[1]).toMatch(/clientId:/);
       checked += 1;
     }
-    expect(checked).toBe(3);
+    expect(checked).toBe(4);
   });
 });
 
@@ -120,10 +125,13 @@ describe("PR #310 leaves the rest of the payment path unchanged", () => {
     );
   });
 
-  it("no new Stripe call sites: exactly one create + retrieve counts unchanged", () => {
+  it("Stripe call inventory: one create + one retrieve, plus PR #320's one cancel", () => {
     expect(count(CHARGE, /paymentIntents\.create/g)).toBe(1);
-    // The single reconcile retrieve; no new retrieve added by this PR.
+    // The single reconcile retrieve; no new retrieve added.
     expect(count(CHARGE, /paymentIntents\.retrieve/g)).toBe(1);
+    // PR #320: exactly one paymentIntents.cancel (the requires_action safety
+    // cancel), pinned in scripts/check-stripe-gates.mjs.
+    expect(count(CHARGE, /paymentIntents\.cancel\(/g)).toBe(1);
   });
 
   it("manual-review still keys off the session_payment_ prefix + critical severity", () => {
