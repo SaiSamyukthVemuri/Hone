@@ -80,6 +80,7 @@ import {
   handlePaymentIntentPaymentFailed,
   handleChargeRefunded,
   handleChargeDisputeCreated,
+  shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
 
 // Force Node runtime — Stripe SDK + raw body buffering need Node, not
@@ -433,6 +434,22 @@ async function handleSetupIntentSucceeded(
   ctx: { studioId: string | null; stripeAccountId: string | null; livemode: boolean },
 ): Promise<Record<string, unknown>> {
   const si = event.data.object as Stripe.SetupIntent;
+
+  // 0. PR #319: live-mode dormancy guard. setup_intent.succeeded is the ONLY
+  //    card-WRITE webhook path; while live mode is structurally disabled, a
+  //    live-mode event must NOT insert/update client_payment_methods. Apply the
+  //    same guard the four money handlers use: it records a warning ops alert
+  //    (stripe_webhook_livemode_event_ignored) and we return a sanitized
+  //    summary WITHOUT throwing, so the event is marked processed (idempotent,
+  //    no retry storm). Test-mode events (livemode false) fall through
+  //    unchanged. This writes nothing and calls no Stripe API.
+  if (await shouldIgnoreLiveModeEvent(event, ctx, "setup_intent.succeeded")) {
+    return {
+      eventType: event.type,
+      setupIntentId: si.id,
+      livemodeEventIgnored: true,
+    };
+  }
 
   // 1. Metadata must carry the Hone identity tuple. We do NOT
   //    accept the SetupIntent if any field is missing.
