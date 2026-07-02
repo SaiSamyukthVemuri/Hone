@@ -5,8 +5,9 @@
  * Operator-run, READ-ONLY verification that PRODUCTION matches the repo's
  * required state, to be run BEFORE enabling live payments or broadening
  * sensitive-data use. It answers the P0 "we cannot independently confirm remote
- * production state" gap: it proves remote Supabase = repo-required (migration
- * 0099 + the 0093/0097/0098/0099 effects), that the treatment-image bucket is
+ * production state" gap: it proves remote Supabase = repo-required (the latest
+ * migration — derived from supabase/migrations/, not hardcoded — plus the
+ * 0093/0097/0098/0099 effects), that the treatment-image bucket is
  * private with hardened policies, that RLS is on for the critical tables, that
  * there are no unresolved critical payment ops alerts, that the Stripe source
  * gates are intact, and that the reminder scheduler heartbeat is fresh.
@@ -35,14 +36,34 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { readdirSync } from "node:fs";
+import path from "node:path";
 
 // Mirrored from lib/cron/reminder-heartbeat.ts (a .mjs script can't import the
 // TS module). CRON_INTERVAL_MINUTES = 15; stale after 3 missed runs = 45 min.
 const HEARTBEAT_KEY = "reminder_cron:last_success";
 const REMINDER_STALE_AFTER_MINUTES = 45;
 
-// Expected repo-required production state.
-const EXPECTED_MIGRATION_MAX = "0099";
+// Expected repo-required production state. DERIVED from supabase/migrations/ at
+// run time (PR #314) — NOT hardcoded — so this pre-live verifier can never go
+// stale against the repo. The expected max is the highest 4-digit migration
+// prefix in the repo (e.g. 0100_postcare_send_state.sql -> "0100"). If the repo
+// gains a migration, the expected value tracks automatically.
+function deriveExpectedMigrationMax() {
+  const dir = path.join(process.cwd(), "supabase", "migrations");
+  const nums = readdirSync(dir)
+    .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
+    .filter(Boolean)
+    .map((m) => m[1])
+    .sort();
+  if (nums.length === 0) {
+    throw new Error(
+      "no supabase/migrations/NNNN_*.sql files found — run from the repo root",
+    );
+  }
+  return nums[nums.length - 1];
+}
+const EXPECTED_MIGRATION_MAX = deriveExpectedMigrationMax();
 
 // Critical tables that must have RLS enabled. All confirmed to exist in prod.
 const CRITICAL_RLS_TABLES = [

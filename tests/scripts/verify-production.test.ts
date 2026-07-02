@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // PR #308. Read-only production verification script. The script is an
@@ -73,9 +73,29 @@ describe("verify-production: no secrets / no PII in output", () => {
 });
 
 describe("verify-production: covers every required check", () => {
-  it("remote migration max = 0099", () => {
-    expect(CODE).toMatch(/EXPECTED_MIGRATION_MAX\s*=\s*"0099"/);
+  it("derives the expected migration max from the repo (no hardcoded literal)", () => {
+    // PR #314: the expected max must NOT be a hardcoded literal (it went stale
+    // at "0099" while prod/repo was 0100). It is derived from supabase/
+    // migrations/ at run time, and the remote value is read from
+    // schema_migrations.
+    expect(CODE).not.toMatch(/EXPECTED_MIGRATION_MAX\s*=\s*"\d{4}"/);
+    expect(CODE).toMatch(/function deriveExpectedMigrationMax/);
+    expect(CODE).toMatch(/EXPECTED_MIGRATION_MAX\s*=\s*deriveExpectedMigrationMax\(\)/);
+    expect(CODE).toMatch(/"supabase",\s*"migrations"/);
     expect(CODE).toMatch(/schema_migrations/);
+  });
+
+  it("the derived expected max tracks the repo's current migration max", () => {
+    // Independently compute the repo max the same way the script does, and pin
+    // the current value. When a new migration lands this fails, forcing a
+    // conscious review of the pre-live verifier (drift tripwire) — but the
+    // SCRIPT itself never goes stale, because it derives at run time.
+    const nums = readdirSync(join(process.cwd(), "supabase", "migrations"))
+      .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
+      .filter(Boolean)
+      .map((m) => (m as RegExpExecArray)[1])
+      .sort();
+    expect(nums[nums.length - 1]).toBe("0100");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

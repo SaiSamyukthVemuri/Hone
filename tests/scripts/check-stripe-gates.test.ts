@@ -48,10 +48,12 @@ describe("check-stripe-gates script (PR #154)", () => {
   });
 
   it("excludes docs, tests, migrations, scripts, and the script itself from the scan", () => {
-    // Scan scope must be exactly: app/, lib/, middleware.ts,
-    // next.config.ts. Anything that broadens this list would start
-    // counting strings in places the gate intentionally ignores.
+    // Scan scope must be exactly: app/, lib/, components/ (PR #314),
+    // middleware.ts, next.config.ts. Anything that broadens this list would
+    // start counting strings in places the gate intentionally ignores; docs/,
+    // tests/, migrations/, and scripts/ stay excluded.
     expect(SCRIPT_SOURCE).toMatch(/SCAN_ROOTS\s*=\s*\[[^\]]*"app"[^\]]*"lib"/);
+    expect(SCRIPT_SOURCE).toMatch(/"components"/);
     expect(SCRIPT_SOURCE).toMatch(/"middleware\.ts"/);
     expect(SCRIPT_SOURCE).toMatch(/"next\.config\.ts"/);
 

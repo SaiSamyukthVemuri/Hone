@@ -45,6 +45,11 @@ const SCRIPT_PATH = realpathSync(fileURLToPath(import.meta.url));
 const SCAN_ROOTS = [
   "app",
   "lib",
+  // PR #314: also scan components/ so a Stripe write (server or browser
+  // Stripe.js) added there can't evade the money-movement rules or the
+  // unclassified-write catch-all. No Stripe write lives here today, so the
+  // expected result is unchanged (money 1/1/0/0 + non-money pinned + catch-all).
+  "components",
   "middleware.ts",
   "next.config.ts",
 ];
