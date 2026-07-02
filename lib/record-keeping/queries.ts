@@ -200,19 +200,31 @@ export function utcInstantsForLocalDayRange(
 // inspection/transfer artifact, still bounded.
 export const FILTERED_PROCEDURE_RECORD_LIMIT = 200;
 
+// PR #318: cap for an UNFILTERED (studio-wide) pull — deliberately small since
+// the unfiltered view is a browse, not a complete log. Named so the print view
+// can show an honest "showing most recent N" notice when the cap is hit.
+export const UNFILTERED_PROCEDURE_RECORD_LIMIT = 30;
+
 export async function getClientProcedureRecords(
   studioId: string,
   filter: ProcedureRecordFilter = {},
 ): Promise<ClientProcedureRecord[]> {
   const limit =
-    filter.limit ?? (filter.clientId ? FILTERED_PROCEDURE_RECORD_LIMIT : 30);
+    filter.limit ??
+    (filter.clientId
+      ? FILTERED_PROCEDURE_RECORD_LIMIT
+      : UNFILTERED_PROCEDURE_RECORD_LIMIT);
   const supabase = await createClient();
   let query = supabase
     .from("sessions")
     .select(
       "id, started_at, modality, practitioner_id, performed_by_practitioner_id, aftercare_and_risks_explained_at, clients(id, name, date_of_birth, phone, email, address)",
     )
-    .eq("studio_id", studioId);
+    .eq("studio_id", studioId)
+    // PR #318: exclude soft-deleted sessions (migration 0013). A session deleted
+    // as a correction must not appear in Procedure Records / the inspection
+    // print/export. (session_blocks are already filtered below.)
+    .is("deleted_at", null);
   if (filter.clientId) query = query.eq("client_id", filter.clientId);
   if (filter.fromUtc) query = query.gte("started_at", filter.fromUtc);
   if (filter.toUtcExclusive)

@@ -99,17 +99,42 @@ describe("query layer: filter shape and scoping", () => {
   });
 
   it("studio scoping is unconditional, before any filter", () => {
+    // PR #318: studio scoping + the soft-delete filter are both unconditional
+    // (applied before the conditional client/date filters).
     expect(QUERIES).toMatch(
-      /\.from\("sessions"\)[\s\S]*?\.eq\("studio_id", studioId\);\s*\n\s*if \(filter\.clientId\)/,
+      /\.from\("sessions"\)[\s\S]*?\.eq\("studio_id", studioId\)[\s\S]*?\.is\("deleted_at", null\);\s*\n\s*if \(filter\.clientId\)/,
     );
   });
 
   it("filtered pulls are capped, unfiltered default stays 30", () => {
     expect(QUERIES).toMatch(/FILTERED_PROCEDURE_RECORD_LIMIT = 200/);
+    // PR #318: the unfiltered cap is now a named constant (still 30) so the
+    // print view can reference it for an honest truncation notice.
+    expect(QUERIES).toMatch(/UNFILTERED_PROCEDURE_RECORD_LIMIT = 30/);
     expect(QUERIES).toMatch(
-      /filter\.limit \?\? \(filter\.clientId \? FILTERED_PROCEDURE_RECORD_LIMIT : 30\)/,
+      /filter\.clientId\s*\?\s*FILTERED_PROCEDURE_RECORD_LIMIT\s*:\s*UNFILTERED_PROCEDURE_RECORD_LIMIT/,
     );
     expect(FILTERED_PROCEDURE_RECORD_LIMIT).toBe(200);
+  });
+
+  it("PR #318: getClientProcedureRecords excludes soft-deleted sessions", () => {
+    // The sessions query must filter deleted_at so a session deleted as a
+    // correction never appears in Procedure Records / the inspection print.
+    const fn = QUERIES.slice(
+      QUERIES.indexOf("export async function getClientProcedureRecords"),
+      QUERIES.indexOf("export async function getClientProcedureRecords") + 900,
+    );
+    expect(fn).toMatch(/\.from\("sessions"\)/);
+    expect(fn).toMatch(/\.eq\("studio_id", studioId\)[\s\S]{0,400}\.is\("deleted_at", null\)/);
+  });
+
+  it("PR #318: unfiltered procedures print shows a truncation notice at the cap", () => {
+    expect(PRINT).toMatch(/UNFILTERED_PROCEDURE_RECORD_LIMIT/);
+    expect(PRINT).toMatch(
+      /!filter\.clientId && records\.length >= UNFILTERED_PROCEDURE_RECORD_LIMIT/,
+    );
+    expect(PRINT).toMatch(/Showing the most recent \{UNFILTERED_PROCEDURE_RECORD_LIMIT\} records/);
+    expect(PRINT).toMatch(/Filter by client for a complete procedure log/);
   });
 
   it("queries module stays practitioner-facing (user-scoped client only)", () => {
