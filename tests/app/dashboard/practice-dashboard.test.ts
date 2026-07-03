@@ -213,8 +213,10 @@ describe("service value wording (live payments disabled)", () => {
     );
   });
 
-  it("payments card keeps the test-mode posture explicit", () => {
-    expect(SNAPSHOT).toMatch(/label="Live payments" value="Off"/);
+  it("payments card: the Live payments state is mode-aware; test metrics stay explicit", () => {
+    // PR #323: the single factual state claim is now mode-gated (On/Off); the
+    // remaining test-mode metric labels are deferred to the copy fast-follow.
+    expect(SNAPSHOT).toMatch(/label="Live payments" value=\{livemode \? "On" : "Off"\}/);
     expect(SNAPSHOT).toMatch(/label="Test payments" value="Available"/);
     expect(SNAPSHOT).toMatch(/Test mode only/);
     expect(SNAPSHOT).toMatch(/Test payments prepared/);

@@ -143,10 +143,11 @@ describe("refundPaymentChargeAttempt: eligibility predicates", () => {
     );
   });
 
-  it("refuses live-mode row with outcome 'live_mode_blocked'", () => {
+  it("refuses a mode-mismatched row with outcome 'live_mode_blocked' (PR #323)", () => {
     expect(HELPER).toMatch(
-      /attempt\.stripe_livemode !== false[\s\S]{0,300}outcome:\s*"live_mode_blocked"/,
+      /attempt\.stripe_livemode !== livemode[\s\S]{0,300}outcome:\s*"live_mode_blocked"/,
     );
+    expect(HELPER).not.toMatch(/attempt\.stripe_livemode !== false/);
   });
 
   it("refuses missing stripe_charge_id with outcome 'missing_charge_id'", () => {
@@ -186,18 +187,21 @@ describe("refundPaymentChargeAttempt: eligibility predicates", () => {
   });
 });
 
-describe("refundPaymentChargeAttempt: live-mode dormancy guard at entry", () => {
-  it("short-circuits with outcome='live_mode_blocked' before any DB call when env is live", () => {
-    const livemodeBlock =
-      HELPER.match(/if \(inferStripeLivemode\(\)\)\s*\{[\s\S]{0,400}\}/)?.[0] ??
-      "";
-    expect(livemodeBlock).toMatch(/outcome:\s*"live_mode_blocked"/);
-    // The live-mode block must appear before any .from("payment_charge_attempts") call
+describe("refundPaymentChargeAttempt: env-gated mode (PR #323)", () => {
+  it("derives the deployment mode from inferStripeLivemode() before any DB call", () => {
+    // PR #323: the old hard `if (inferStripeLivemode()) return live_mode_blocked`
+    // early-return is removed; the mode is derived once at the top and used by
+    // the row-mode-consistency guard. Live refunds stay env/key gated.
+    expect(HELPER).toMatch(/const livemode = inferStripeLivemode\(\)/);
     const livemodeIdx = HELPER.indexOf("inferStripeLivemode()");
     const firstDbIdx = HELPER.indexOf('.from("payment_charge_attempts")');
     expect(livemodeIdx).toBeGreaterThan(-1);
     expect(firstDbIdx).toBeGreaterThan(-1);
     expect(livemodeIdx).toBeLessThan(firstDbIdx);
+    // The mode-consistency guard still yields live_mode_blocked.
+    expect(HELPER).toMatch(
+      /attempt\.stripe_livemode !== livemode[\s\S]{0,300}outcome:\s*"live_mode_blocked"/,
+    );
   });
 });
 
@@ -214,9 +218,10 @@ describe("refundPaymentChargeAttempt: atomic claim", () => {
     expect(claimIdx).toBeLessThan(refundIdx);
   });
 
-  it("claim filters by status='succeeded' AND stripe_livemode=false", () => {
+  it("claim filters by status='succeeded' AND the deployment mode", () => {
     expect(HELPER).toMatch(/\.eq\("status", "succeeded"\)/);
-    expect(HELPER).toMatch(/\.eq\("stripe_livemode", false\)/);
+    expect(HELPER).toMatch(/\.eq\("stripe_livemode", livemode\)/);
+    expect(HELPER).not.toMatch(/\.eq\("stripe_livemode", false\)/);
   });
 
   it("claim filters by refund_status null or 'failed'", () => {
@@ -277,12 +282,13 @@ describe("refundPaymentChargeAttempt: Stripe refund call shape", () => {
     );
   });
 
-  it("metadata carries the Hone identity tuple + charge reason + environment=test", () => {
+  it("metadata carries the Hone identity tuple + charge reason + dynamic environment", () => {
     expect(HELPER).toMatch(/hone_payment_charge_attempt_id:\s*attempt\.id/);
     expect(HELPER).toMatch(/hone_studio_id:\s*attempt\.studio_id/);
     expect(HELPER).toMatch(/hone_client_id:\s*attempt\.client_id/);
     expect(HELPER).toMatch(/hone_charge_reason:\s*attempt\.charge_reason/);
-    expect(HELPER).toMatch(/hone_environment:\s*"test"/);
+    expect(HELPER).toMatch(/hone_environment: livemode \? "live" : "test"/);
+    expect(HELPER).not.toMatch(/hone_environment:\s*"test"/);
   });
 
   it("does NOT pass application_fee_amount or transfer/reverse_transfer (code only)", () => {

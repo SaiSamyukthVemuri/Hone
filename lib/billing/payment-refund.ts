@@ -192,15 +192,13 @@ export async function refundPaymentChargeAttempt(args: {
   internalNote?: string | null;
 }): Promise<PaymentRefundResult> {
   // ============================================================
-  // 1. Live-mode dormancy guard.
+  // 1. PR #323: the `inferStripeLivemode()` dormancy early-return was removed to
+  //    make refunds live-CAPABLE. Live refunds stay gated by the env/key layer
+  //    (getStripe() throws on sk_live_ unless STRIPE_ALLOW_LIVE_MODE === "true").
+  //    The row-mode consistency guard below now compares against the current
+  //    deployment mode instead of a hardcoded false.
   // ============================================================
-  if (inferStripeLivemode()) {
-    return {
-      ok: false,
-      outcome: "live_mode_blocked",
-      message: LIVE_MODE_BLOCKED_MESSAGE,
-    };
-  }
+  const livemode = inferStripeLivemode();
 
   const admin = createAdminClient();
 
@@ -288,10 +286,11 @@ export async function refundPaymentChargeAttempt(args: {
     return {
       ok: false,
       outcome: "not_succeeded",
-      message: "Only a succeeded test charge can be refunded.",
+      message: "Only a succeeded charge can be refunded.",
     };
   }
-  if (attempt.stripe_livemode !== false) {
+  // Mode-consistency: the row's mode must match the deployment mode.
+  if (attempt.stripe_livemode !== livemode) {
     return {
       ok: false,
       outcome: "live_mode_blocked",
@@ -376,7 +375,7 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("id", attempt.id)
     .eq("studio_id", args.studioId)
     .eq("status", "succeeded")
-    .eq("stripe_livemode", false)
+    .eq("stripe_livemode", livemode)
     .or("refund_status.is.null,refund_status.eq.failed")
     .select("id");
   if (claimErr) {
@@ -426,7 +425,7 @@ export async function refundPaymentChargeAttempt(args: {
           hone_studio_id: attempt.studio_id,
           hone_client_id: attempt.client_id,
           hone_charge_reason: attempt.charge_reason,
-          hone_environment: "test",
+          hone_environment: livemode ? "live" : "test",
         },
       },
       {

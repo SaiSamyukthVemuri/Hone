@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getSessionPaymentEligibility,
@@ -202,10 +203,10 @@ export async function prepareSessionPaymentChargeAction(
       stripe_account_id: eligibility.stripeAccountId,
       stripe_customer_id: eligibility.stripeCustomerId,
       stripe_payment_method_id: eligibility.stripePaymentMethodId,
-      // The CHECK guarantees this is false; the explicit write is
-      // intentional so a future PR that flips the default cannot
-      // silently change the v1 row shape.
-      stripe_livemode: false,
+      // PR #323: write the current deployment mode. In test env this is false
+      // (identical to before); the new payment_charge_attempts_live_requires_
+      // account_check (0101) is satisfied because stripe_account_id is set above.
+      stripe_livemode: inferStripeLivemode(),
       internal_note: internalNote,
     })
     .select("id")

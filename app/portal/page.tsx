@@ -24,6 +24,7 @@ import {
 import { PortalConsentForms } from "./PortalConsentForms";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { PortalPaymentMethodForm } from "./PortalPaymentMethodForm";
 import { PortalCardOnFileCard } from "./PortalCardOnFileCard";
 
@@ -174,6 +175,11 @@ export default async function PortalHomePage() {
     cardAuthSignatureSummary != null &&
     cardAuthSignatureSummary.template_version !== cardAuthTemplate.version;
   const publishableKeyResolution = resolveStripePublishableKey();
+  // PR #323: the deployment mode, so client-facing card-authorization copy is
+  // accurate. In test env this is false (existing "no live card" copy shows);
+  // in live env (after #324) the live wording shows. NOTE (docs/16): the live
+  // card-authorization wording requires legal/accounting sign-off before #324.
+  const stripeLivemode = inferStripeLivemode();
   // Group replies by parent message_id once so each <article> render
   // does not re-filter the full array. We deliberately do NOT pass
   // replies straight into the message render: an empty group is
@@ -643,6 +649,7 @@ export default async function PortalHomePage() {
                   </p>
                   <PortalPaymentMethodForm
                     publishableKey={publishableKeyResolution.key}
+                    livemode={stripeLivemode}
                   />
                 </section>
               )}
@@ -1040,6 +1047,7 @@ export default async function PortalHomePage() {
                 <PortalCardOnFileCard
                   card={activeCard}
                   publishableKey={publishableKeyResolution.key}
+                  livemode={stripeLivemode}
                 />
               ) : (
                 <section className="flex flex-col gap-2">

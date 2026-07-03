@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import {
   getCurrentPractitionerWithStudio,
   getPractitionersForStudio,
@@ -450,7 +451,7 @@ export default async function DashboardPage({
           counts + service value + test-mode payment posture + action
           cards). Read-only; never labeled revenue while live payments
           are disabled. */}
-      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} />
+      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} livemode={inferStripeLivemode()} />
 
       {/* PR #249: Follow-up assistant — recorded record gaps and
           follow-ups from recent appointments. Rules-based, read-only,

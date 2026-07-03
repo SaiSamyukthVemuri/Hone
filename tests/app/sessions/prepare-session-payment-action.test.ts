@@ -115,8 +115,9 @@ describe("prepare action: the inserted row shape", () => {
     expect(ACTION).toMatch(/currency:\s*"cad"/);
   });
 
-  it("stamps stripe_livemode=false explicitly", () => {
-    expect(ACTION).toMatch(/stripe_livemode:\s*false/);
+  it("stamps stripe_livemode from the deployment mode (PR #323; false in test env)", () => {
+    expect(ACTION).toMatch(/stripe_livemode: inferStripeLivemode\(\)/);
+    expect(ACTION).not.toMatch(/stripe_livemode:\s*false/);
   });
 
   it("stamps session_id (required for session_payment per reason_shape_check)", () => {

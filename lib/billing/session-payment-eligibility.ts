@@ -265,9 +265,9 @@ export async function getSessionPaymentEligibility(
         `Studio Stripe account status is "${settings.stripe_account_status ?? "unknown"}". Complete Stripe onboarding before preparing a session payment.`,
       );
     }
-    if (settings.stripe_livemode !== false) {
+    if (settings.stripe_livemode !== livemode) {
       reasons.push(
-        "Live mode is not supported in v1. Session payment is test mode only.",
+        "Studio payment settings mode does not match the deployment mode.",
       );
     }
     resolvedStripeAccountId =

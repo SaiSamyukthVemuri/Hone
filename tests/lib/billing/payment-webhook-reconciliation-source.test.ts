@@ -96,10 +96,11 @@ describe("payment-webhook-reconciliation: live-mode dormancy guard", () => {
     }
   });
 
-  it("the live-mode guard fires when event.livemode === true OR ctx.livemode === true", () => {
-    expect(HELPER).toMatch(
-      /event\.livemode !== true && ctx\.livemode !== true/,
-    );
+  it("the guard MODE-MATCHES: process iff event.livemode equals the deployment mode (PR #323)", () => {
+    expect(HELPER).toMatch(/const deploymentLive = inferStripeLivemode\(\)/);
+    expect(HELPER).toMatch(/eventLive === deploymentLive/);
+    // The old "ignore whenever either is live" logic is gone.
+    expect(HELPER).not.toMatch(/event\.livemode !== true && ctx\.livemode !== true/);
   });
 
   it("the live-mode guard records a warning ops_alert with stripe_webhook_livemode_event_ignored", () => {
