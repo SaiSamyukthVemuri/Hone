@@ -15,7 +15,7 @@ describe("fees write the canonical ledger only", () => {
   it("prepare inserts payment_charge_attempts with the mapped fee reason", () => {
     expect(code(ACTIONS)).toMatch(/\.from\("payment_charge_attempts"\)\s*\n?\s*\.insert\(/);
     expect(ACTIONS).toMatch(/rawChargeType === "no_show" \? "no_show_fee" : "late_cancellation_fee"/);
-    expect(ACTIONS).toMatch(/stripe_livemode: false,/);
+    expect(ACTIONS).toMatch(/stripe_livemode: inferStripeLivemode\(\),/);
   });
   it("no new runtime writes to manual_fee_charge_attempts", () => {
     expect(code(ACTIONS)).not.toMatch(/from\("manual_fee_charge_attempts"\)\s*\n?\s*\.(insert|update)/);

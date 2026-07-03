@@ -169,7 +169,7 @@ describe("5. dashboard: worklist first", () => {
   it("PR #236 Today actions and the snapshot are untouched", () => {
     expect(DASH).toMatch(/resolveNextAction\(\{/);
     expect(DASH).toMatch(/\{nextAction\.label\}/);
-    expect(DASH).toMatch(/<PracticeSnapshot metrics=\{practiceMetrics\} attention=\{clientsNeedingAttention\} \/>/);
+    expect(DASH).toMatch(/<PracticeSnapshot metrics=\{practiceMetrics\} attention=\{clientsNeedingAttention\} livemode=\{inferStripeLivemode\(\)\} \/>/);
   });
 });
 

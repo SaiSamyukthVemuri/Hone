@@ -29,12 +29,17 @@ type ActiveCardSummary = {
 export function PortalCardOnFileCard({
   card,
   publishableKey,
+  livemode = false,
 }: {
   card: ActiveCardSummary;
   // Resolved by the server-rendered portal page via
   // resolveStripePublishableKey(). Passed in only when the gate
   // returned ok; this component never renders if the gate is closed.
   publishableKey: string;
+  // PR #323: deployment mode (server-computed). Gates the client-facing
+  // card-authorization copy. Defaults to false (test) — the existing "no live
+  // card will be charged" wording. The live wording needs legal sign-off (#324).
+  livemode?: boolean;
 }) {
   const [replacing, setReplacing] = useState(false);
 
@@ -60,8 +65,10 @@ export function PortalCardOnFileCard({
           style={{ color: "#6B6B6B" }}
         >
           Use this if your card expired, was replaced, or you want
-          the studio to use a different card for authorized fees.
-          Test mode only. No live card will be charged.
+          the studio to use a different card for authorized fees.{" "}
+          {livemode
+            ? "Your card on file may be charged by the studio for authorized fees per the policy you agreed to."
+            : "Test mode only. No live card will be charged."}
         </p>
         <button
           type="button"
@@ -96,6 +103,7 @@ export function PortalCardOnFileCard({
           labelled button before Stripe Elements appeared. */}
       <PortalPaymentMethodForm
         publishableKey={publishableKey}
+        livemode={livemode}
         mode="replace"
         autoStart
         onCancel={() => setReplacing(false)}

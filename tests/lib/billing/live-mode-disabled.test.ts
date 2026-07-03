@@ -2,19 +2,25 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #297 — safety-lock. Live payments are DISABLED and must stay that way
-// until a deliberate, reviewed enablement PR removes each gate. This is a
-// READ-ONLY source-grep guard: it never calls Stripe and never reads
-// production env. If a future change relaxes any layer of the dormancy stack
-// WITHOUT updating this test, CI fails — making "live got accidentally
-// enabled" impossible to ship silently. The layers mirror docs/16 §17 +
-// the enablement sequence in that runbook.
+// PR #297 safety-lock, REPOINTED at PR #323 to the ENV-GATED model.
+//
+// Live payments are still DISABLED — but the dormancy model changed. Before
+// #323 the money paths HARDCODED stripe_livemode=false. After #322 (DB) + #323
+// (runtime) they are now live-CAPABLE, and live is off SOLELY because:
+//   * the env/key gate (Layer 1) rejects an sk_live_ key unless
+//     STRIPE_ALLOW_LIVE_MODE === "true" (unset today), so inferStripeLivemode()
+//     is false; and
+//   * every money-path guard is gated on inferStripeLivemode() (Layer 2) — with
+//     it false, they enforce test-mode exactly as before, and no runtime path
+//     ever WRITES a live row (prepare-inserts write inferStripeLivemode()).
+// So this test now asserts the guards are DYNAMIC (compare inferStripeLivemode()
+// / livemode), NOT hardcoded false, and that no stale hardcoded-false literal
+// remains in the money paths. The env flip (#324) is what turns it on. This is a
+// READ-ONLY source-grep guard; it never calls Stripe or reads production env.
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
-// Strip // line comments so a docblock that *describes* a gate does not
-// satisfy (or trip) a grep that must target the real code.
 function codeOnly(src: string): string {
   return src
     .split("\n")
@@ -22,23 +28,29 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 
-const STRIPE_SERVER = read("lib/stripe/server.ts");
-const STRIPE_SERVER_CODE = codeOnly(STRIPE_SERVER);
+const STRIPE_SERVER_CODE = codeOnly(read("lib/stripe/server.ts"));
 const CHARGE = read("lib/billing/session-payment-charge.ts");
-const REFUND = read("lib/billing/payment-refund.ts");
-const RECEIPT = read("lib/billing/payment-receipt.ts");
-const WEBHOOK_RECON = read("lib/billing/payment-webhook-reconciliation.ts");
+const CHARGE_CODE = codeOnly(CHARGE);
+const REFUND_CODE = codeOnly(read("lib/billing/payment-refund.ts"));
+const RECEIPT_CODE = codeOnly(read("lib/billing/payment-receipt.ts"));
+const WEBHOOK_CODE = codeOnly(read("lib/billing/payment-webhook-reconciliation.ts"));
 const CARD_AUTH = read("lib/consent/current-card-authorization.ts");
 const CARD_PTR = read("lib/payment-methods/refresh-card-authorization-pointer.ts");
-const MIG_0073 = read("supabase/migrations/0073_payment_charge_attempts.sql");
-const MIG_0075 = read(
-  "supabase/migrations/0075_claim_session_payment_charge_attempt.sql",
+const PREPARE = codeOnly(
+  read("app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts"),
 );
-const MIG_0075_CODE = codeOnly(MIG_0075);
+const FEE_PREPARE = codeOnly(read("app/(app)/calendar/[id]/manual-fee-actions.ts"));
+const MIG_0101 = codeOnly(
+  read("supabase/migrations/0101_live_payment_charge_attempts_db_readiness.sql"),
+);
 const STRIPE_GATE_SCRIPT = read("scripts/check-stripe-gates.mjs");
 
+// The money-path modules whose dormancy is now env-gated. No stale hardcoded
+// stripe_livemode=false may remain in any of them (that was the pre-#323 model).
+const MONEY_PATHS = { CHARGE_CODE, REFUND_CODE, RECEIPT_CODE, WEBHOOK_CODE, PREPARE, FEE_PREPARE };
+
 // ---------------------------------------------------------------------------
-// Layer 1 — env / key gate (lib/stripe/server.ts)
+// Layer 1 — env / key gate (unchanged; this is now the PRIMARY reason live is off)
 // ---------------------------------------------------------------------------
 describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () => {
   it("assertStripeKeyAllowed requires STRIPE_ALLOW_LIVE_MODE === 'true' before a live key", () => {
@@ -48,13 +60,11 @@ describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () 
     );
     expect(STRIPE_SERVER_CODE).toMatch(/throw new Error\(/);
   });
-
   it("preview / development deployments still cannot use a live key", () => {
     expect(STRIPE_SERVER_CODE).toMatch(
       /\(vercelEnv === "preview" \|\| vercelEnv === "development"\) && !isTestKey/,
     );
   });
-
   it("inferStripeLivemode is derived only from an sk_live_ key prefix", () => {
     expect(STRIPE_SERVER_CODE).toMatch(/export function inferStripeLivemode/);
     expect(STRIPE_SERVER_CODE).toMatch(/startsWith\("sk_live_"\)/);
@@ -62,63 +72,92 @@ describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () 
 });
 
 // ---------------------------------------------------------------------------
-// Layer 2 — runtime dormancy guards
+// Layer 2 — runtime guards are ENV-GATED on inferStripeLivemode() (not false)
 // ---------------------------------------------------------------------------
-describe("Layer 2: runtime dormancy guards still block live mode", () => {
-  it("the charge path still returns live_mode_blocked (env + row guard)", () => {
-    expect(CHARGE).toMatch(/inferStripeLivemode\(\) === true/);
-    expect(CHARGE).toMatch(/outcome: "live_mode_blocked"/);
-    expect(CHARGE).toMatch(/stripe_livemode !== false/);
+describe("Layer 2: runtime money-path guards are env-gated, not hardcoded false", () => {
+  it("the charge path uses inferStripeLivemode() + a mode-consistency row guard", () => {
+    expect(CHARGE_CODE).toMatch(/const livemode = inferStripeLivemode\(\)/);
+    expect(CHARGE_CODE).toMatch(/attemptRow\.stripe_livemode !== livemode/);
+    expect(CHARGE_CODE).toMatch(/outcome: "live_mode_blocked"/);
+    // The old hard env early-return + hardcoded false row guard are gone.
+    expect(CHARGE_CODE).not.toMatch(/inferStripeLivemode\(\) === true/);
+    expect(CHARGE_CODE).not.toMatch(/stripe_livemode !== false/);
   });
-
-  it("the refund path still returns live_mode_blocked (env + row guard)", () => {
-    expect(REFUND).toMatch(/if \(inferStripeLivemode\(\)\)/);
-    expect(REFUND).toMatch(/outcome: "live_mode_blocked"/);
-    expect(REFUND).toMatch(/stripe_livemode !== false/);
+  it("the refund path is env-gated (mode-consistency, not hardcoded false)", () => {
+    expect(REFUND_CODE).toMatch(/const livemode = inferStripeLivemode\(\)/);
+    expect(REFUND_CODE).toMatch(/attempt\.stripe_livemode !== livemode/);
+    expect(REFUND_CODE).toMatch(/outcome: "live_mode_blocked"/);
+    expect(REFUND_CODE).not.toMatch(/stripe_livemode !== false/);
   });
-
-  it("the receipt path still refuses live-mode rows and the template stays dormant", () => {
-    expect(RECEIPT).toMatch(/attempt\.stripe_livemode !== false/);
-    // The receipt email template is hardcoded test-mode until live enablement.
-    expect(RECEIPT).toMatch(/livemode: false/);
+  it("the receipt guard is env-gated (live-CAPABLE) + passes the row's real mode", () => {
+    expect(RECEIPT_CODE).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
+    expect(RECEIPT_CODE).toMatch(/livemode: attempt\.stripe_livemode/);
+    expect(RECEIPT_CODE).not.toMatch(/livemode: false/);
   });
-
   it("card-authorization lookups stay scoped to the running process's livemode", () => {
     for (const src of [CARD_AUTH, CARD_PTR]) {
       expect(src).toMatch(/inferStripeLivemode\(\)/);
       expect(src).toMatch(/\.eq\("stripe_livemode", livemode\)/);
     }
   });
-});
-
-// ---------------------------------------------------------------------------
-// Layer 3 — DB structural guards (migration source)
-// ---------------------------------------------------------------------------
-describe("Layer 3: DB structural dormancy guards still present in migration source", () => {
-  it("payment_charge_attempts_livemode_false_check (stripe_livemode = false) still exists", () => {
-    expect(MIG_0073).toMatch(/payment_charge_attempts_livemode_false_check/);
-    expect(MIG_0073).toMatch(/check \(stripe_livemode = false\)/);
+  it("prepare-inserts write stripe_livemode: inferStripeLivemode() (false in test env)", () => {
+    expect(PREPARE).toMatch(/stripe_livemode: inferStripeLivemode\(\)/);
+    expect(FEE_PREPARE).toMatch(/stripe_livemode: inferStripeLivemode\(\)/);
   });
-
-  it("the claim RPC mirror still returns not_ready for any non-test-mode row", () => {
-    expect(MIG_0075_CODE).toMatch(/stripe_livemode <> false/);
-    expect(MIG_0075_CODE).toMatch(/not_ready/);
+  it("PaymentIntent + refund metadata hone_environment is dynamic (not hardcoded test)", () => {
+    expect(CHARGE_CODE).toMatch(/hone_environment: livemode \? "live" : "test"/);
+    expect(REFUND_CODE).toMatch(/hone_environment: livemode \? "live" : "test"/);
+    expect(CHARGE_CODE).not.toMatch(/hone_environment: "test"/);
   });
-});
-
-// ---------------------------------------------------------------------------
-// Layer 4 — webhook livemode block
-// ---------------------------------------------------------------------------
-describe("Layer 4: webhook still ignores live-mode events", () => {
-  it("shouldIgnoreLiveModeEvent still exists and records the ignored event", () => {
-    expect(WEBHOOK_RECON).toMatch(/function shouldIgnoreLiveModeEvent/);
-    expect(WEBHOOK_RECON).toMatch(/event\.livemode !== true && ctx\.livemode !== true/);
-    expect(WEBHOOK_RECON).toMatch(/stripe_webhook_livemode_event_ignored/);
+  it("NO stale hardcoded stripe_livemode=false remains anywhere in the money paths", () => {
+    for (const [name, code] of Object.entries(MONEY_PATHS)) {
+      expect(code, `${name} still has a hardcoded stripe_livemode false`).not.toMatch(
+        /stripe_livemode !== false|stripe_livemode === false|\.eq\("stripe_livemode", false\)|stripe_livemode: false/,
+      );
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
-// Static Stripe-gate rules unchanged (1 PI / 1 refund / 0 charges / 0 checkout)
+// Layer 3 — DB is now live-CAPABLE (0101); dormancy shifted to env/runtime
+// ---------------------------------------------------------------------------
+describe("Layer 3: DB is live-capable via 0101 (dormancy is now env/runtime)", () => {
+  it("0101 replaced the livemode-false CHECK with the account-requiring CHECK", () => {
+    expect(MIG_0101).toMatch(
+      /drop constraint if exists\s+payment_charge_attempts_livemode_false_check/i,
+    );
+    expect(MIG_0101).toMatch(
+      /check\s*\(\s*stripe_livemode\s*=\s*false\s+or\s+stripe_account_id\s+is\s+not\s+null\s*\)/i,
+    );
+  });
+  it("0101 relaxed the claim RPC (no longer refuses live rows)", () => {
+    expect(MIG_0101).toMatch(
+      /create or replace function public\.claim_session_payment_charge_attempt/i,
+    );
+    expect(MIG_0101).not.toMatch(/stripe_livemode <> false/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 4 — webhook now MODE-MATCHES the deployment (ignore mismatched safely)
+// ---------------------------------------------------------------------------
+describe("Layer 4: webhook processes only deployment-mode events", () => {
+  it("shouldIgnoreLiveModeEvent compares event.livemode to inferStripeLivemode()", () => {
+    expect(WEBHOOK_CODE).toMatch(/function shouldIgnoreLiveModeEvent/);
+    expect(WEBHOOK_CODE).toMatch(/const deploymentLive = inferStripeLivemode\(\)/);
+    expect(WEBHOOK_CODE).toMatch(/eventLive === deploymentLive/);
+    expect(WEBHOOK_CODE).toMatch(/stripe_webhook_livemode_event_ignored/);
+    // The old "ignore whenever either is live" logic is gone.
+    expect(WEBHOOK_CODE).not.toMatch(/event\.livemode !== true && ctx\.livemode !== true/);
+  });
+  it("the per-handler row backstops are mode-consistency (not hardcoded false)", () => {
+    expect(WEBHOOK_CODE).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
+    expect(WEBHOOK_CODE).not.toMatch(/attempt\.stripe_livemode !== false/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Static Stripe-gate money inventory unchanged (1 PI / 1 refund / 0 / 0)
 // ---------------------------------------------------------------------------
 describe("static Stripe gates remain 1/1/0/0", () => {
   const rule = (name: string) =>
@@ -126,20 +165,16 @@ describe("static Stripe gates remain 1/1/0/0", () => {
       `name:\\s*"${name.replace(".", "\\.")}"[\\s\\S]{0,1500}?exactly:\\s*(\\d+)`,
     );
   it("paymentIntents.create exactly 1", () => {
-    const m = STRIPE_GATE_SCRIPT.match(rule("paymentIntents.create"));
-    expect(m?.[1]).toBe("1");
+    expect(STRIPE_GATE_SCRIPT.match(rule("paymentIntents.create"))?.[1]).toBe("1");
   });
   it("refunds.create exactly 1", () => {
-    const m = STRIPE_GATE_SCRIPT.match(rule("refunds.create"));
-    expect(m?.[1]).toBe("1");
+    expect(STRIPE_GATE_SCRIPT.match(rule("refunds.create"))?.[1]).toBe("1");
   });
   it("charges.create exactly 0", () => {
-    const m = STRIPE_GATE_SCRIPT.match(rule("charges.create"));
-    expect(m?.[1]).toBe("0");
+    expect(STRIPE_GATE_SCRIPT.match(rule("charges.create"))?.[1]).toBe("0");
   });
   it("checkout.sessions exactly 0", () => {
-    const m = STRIPE_GATE_SCRIPT.match(rule("checkout.sessions"));
-    expect(m?.[1]).toBe("0");
+    expect(STRIPE_GATE_SCRIPT.match(rule("checkout.sessions"))?.[1]).toBe("0");
   });
   it("STRIPE_ALLOW_LIVE_MODE=true is allowlisted to lib/stripe/server.ts only", () => {
     expect(STRIPE_GATE_SCRIPT).toMatch(/STRIPE_ALLOW_LIVE_MODE=true/);

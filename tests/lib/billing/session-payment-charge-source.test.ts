@@ -37,15 +37,21 @@ describe("runSessionPaymentCharge: server boundary + admin client", () => {
   });
 });
 
-describe("runSessionPaymentCharge: live-mode guards", () => {
-  it("returns live_mode_blocked early when inferStripeLivemode() === true", () => {
-    expect(HELPER).toMatch(
-      /inferStripeLivemode\(\) === true[\s\S]{0,200}outcome:\s*"live_mode_blocked"/,
-    );
+describe("runSessionPaymentCharge: live-mode guards (PR #323: env-gated)", () => {
+  it("derives the deployment mode from inferStripeLivemode() (no hard early return)", () => {
+    expect(HELPER).toMatch(/const livemode = inferStripeLivemode\(\)/);
+    // The old hard `inferStripeLivemode() === true` dormancy early-return is gone
+    // (check code only; comments may reference the removed guard).
+    const code = HELPER.split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(code).not.toMatch(/inferStripeLivemode\(\) === true/);
   });
 
-  it("re-checks the row's stripe_livemode and refuses if it is not false", () => {
-    expect(HELPER).toMatch(/attemptRow\.stripe_livemode !== false/);
+  it("re-checks the row's mode against the deployment mode (mode-consistency)", () => {
+    expect(HELPER).toMatch(/attemptRow\.stripe_livemode !== livemode/);
+    expect(HELPER).toMatch(/outcome:\s*"live_mode_blocked"/);
+    expect(HELPER).not.toMatch(/attemptRow\.stripe_livemode !== false/);
   });
 });
 
@@ -224,8 +230,9 @@ describe("runSessionPaymentCharge: PaymentIntent metadata", () => {
     });
   }
 
-  it("metadata env field is hard-coded to 'test'", () => {
-    expect(HELPER).toMatch(/hone_environment:\s*"test"/);
+  it("metadata env field is dynamic (live/test by deployment mode)", () => {
+    expect(HELPER).toMatch(/hone_environment: livemode \? "live" : "test"/);
+    expect(HELPER).not.toMatch(/hone_environment:\s*"test"/);
   });
 });
 
@@ -324,8 +331,11 @@ describe("runSessionPaymentCharge: no forbidden behavior added", () => {
     expect(HELPER).not.toMatch(/checkout\.sessions/);
   });
 
-  it("does NOT relax STRIPE_ALLOW_LIVE_MODE or any existing gate", () => {
-    expect(HELPER).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
+  it("does NOT touch STRIPE_ALLOW_LIVE_MODE in code (comments may reference it)", () => {
+    const codeOnly = HELPER.split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
   });
 
   it("does NOT touch manual_fee_charge_attempts", () => {

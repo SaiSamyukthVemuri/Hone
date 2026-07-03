@@ -81,9 +81,13 @@ export function PortalPaymentMethodForm({
   mode = "add",
   autoStart = false,
   onCancel,
+  livemode = false,
 }: {
   publishableKey: string;
   mode?: Mode;
+  // PR #323: deployment mode (server-computed). Gates the "Test mode only. No
+  // charge will be made." intro copy. Defaults to false (test — existing copy).
+  livemode?: boolean;
   // PR #152. When true, the form skips its own idle "click to start"
   // button and immediately triggers the start logic on mount. The
   // Replace card flow turns this on: the OUTER "Replace card" button
@@ -106,6 +110,14 @@ export function PortalPaymentMethodForm({
 }) {
   const [start, setStart] = useState<StartState>({ kind: "idle" });
   const copy = COPY[mode];
+  // PR #323: mode-aware intro copy. In live env the "No charge / test mode"
+  // wording would be false; the live wording needs legal sign-off before #324.
+  const introCopy =
+    copy.introCopy == null
+      ? null
+      : livemode
+        ? "Your current card will be replaced after the new card is saved. It may be charged for authorized fees per the studio's policy."
+        : copy.introCopy;
 
   function onClickAddCard() {
     setStart({ kind: "starting" });
@@ -157,12 +169,12 @@ export function PortalPaymentMethodForm({
     if (autoStart) {
       return (
         <div className="flex flex-col gap-3">
-          {copy.introCopy && (
+          {introCopy && (
             <p
               className="text-[13px] leading-[1.5]"
               style={{ color: "#6B6B6B" }}
             >
-              {copy.introCopy}
+              {introCopy}
             </p>
           )}
           <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
@@ -183,12 +195,12 @@ export function PortalPaymentMethodForm({
     }
     return (
       <div className="flex flex-col gap-3">
-        {copy.introCopy && (
+        {introCopy && (
           <p
             className="text-[13px] leading-[1.5]"
             style={{ color: "#6B6B6B" }}
           >
-            {copy.introCopy}
+            {introCopy}
           </p>
         )}
         <div className="flex flex-wrap items-center gap-3">
@@ -222,12 +234,12 @@ export function PortalPaymentMethodForm({
   if (start.kind === "starting") {
     return (
       <div className="flex flex-col gap-3">
-        {copy.introCopy && (
+        {introCopy && (
           <p
             className="text-[13px] leading-[1.5]"
             style={{ color: "#6B6B6B" }}
           >
-            {copy.introCopy}
+            {introCopy}
           </p>
         )}
         <p className="text-[14px]" style={{ color: "#6B6B6B" }}>
@@ -287,6 +299,7 @@ export function PortalPaymentMethodForm({
       stripeAccountId={start.stripeAccountId}
       clientSecret={start.clientSecret}
       copy={copy}
+      introCopy={introCopy}
       onCancel={onCancel}
     />
   );
@@ -297,12 +310,14 @@ function StripeElementsBoundary({
   stripeAccountId,
   clientSecret,
   copy,
+  introCopy,
   onCancel,
 }: {
   publishableKey: string;
   stripeAccountId: string;
   clientSecret: string;
   copy: (typeof COPY)[Mode];
+  introCopy: string | null;
   onCancel?: () => void;
 }) {
   // loadStripe is async; memoise so React's re-renders don't churn
@@ -318,16 +333,18 @@ function StripeElementsBoundary({
       stripe={stripePromise}
       options={{ clientSecret, appearance: { theme: "stripe" } }}
     >
-      <PaymentForm copy={copy} onCancel={onCancel} />
+      <PaymentForm copy={copy} introCopy={introCopy} onCancel={onCancel} />
     </Elements>
   );
 }
 
 function PaymentForm({
   copy,
+  introCopy,
   onCancel,
 }: {
   copy: (typeof COPY)[Mode];
+  introCopy: string | null;
   onCancel?: () => void;
 }) {
   const stripe = useStripe();
@@ -378,12 +395,12 @@ function PaymentForm({
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-3">
-      {copy.introCopy && (
+      {introCopy && (
         <p
           className="text-[13px] leading-[1.5]"
           style={{ color: "#6B6B6B" }}
         >
-          {copy.introCopy}
+          {introCopy}
         </p>
       )}
       <PaymentElement options={{ layout: "tabs" }} />

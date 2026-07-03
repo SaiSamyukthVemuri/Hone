@@ -56,8 +56,8 @@ describe("sendPaymentChargeReceipt: eligibility gates (pre-send)", () => {
     expect(HELPER).toMatch(/reason:\s*"not_succeeded"/);
   });
 
-  it("refuses when stripe_livemode is not false", () => {
-    expect(HELPER).toMatch(/attempt\.stripe_livemode !== false/);
+  it("refuses when the row mode does not match the deployment mode (PR #323)", () => {
+    expect(HELPER).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
   });
 
   it("refuses when stripe_payment_intent_id is missing", () => {

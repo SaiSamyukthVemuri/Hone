@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getManualFeeChargeEligibility,
@@ -167,7 +168,8 @@ export async function prepareManualFeeChargeAction(
       amount_cents: eligibility.amountCents,
       currency: eligibility.currency,
       status: "ready",
-      stripe_livemode: false,
+      // PR #323: write the current deployment mode (false in test env).
+      stripe_livemode: inferStripeLivemode(),
       client_payment_method_id: eligibility.cardPaymentMethodId,
       card_authorization_signature_id:
         eligibility.cardAuthorizationSignatureId,

@@ -130,9 +130,9 @@ describe("getSessionPaymentEligibility: studio Stripe settings", () => {
     );
   });
 
-  it("requires stripe_livemode === false (test-mode v1 rule)", () => {
-    expect(HELPER).toMatch(/settings\.stripe_livemode !== false/);
-    expect(HELPER).toMatch(/Live mode is not supported in v1/);
+  it("requires studio settings mode to match the deployment mode (PR #323)", () => {
+    expect(HELPER).toMatch(/settings\.stripe_livemode !== livemode/);
+    expect(HELPER).not.toMatch(/settings\.stripe_livemode !== false/);
   });
 
   it("requires stripe_account_status === 'enabled'", () => {

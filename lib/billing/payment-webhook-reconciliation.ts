@@ -1,6 +1,7 @@
 import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // ---------------------------------------------------------------------------
@@ -103,31 +104,40 @@ function sanitizeFailureMessage(
 // (and the caller should return its summary unchanged). Returns false
 // when the handler should proceed with test-mode reconciliation.
 // ---------------------------------------------------------------------------
-// PR #319: exported so the setup_intent.succeeded handler (in the webhook
-// route) can apply the SAME live-mode dormancy guard the four money handlers
-// use. setup_intent.succeeded is the only card-WRITE path, so it must ignore
-// live events (record a warning ops alert, write nothing) while live mode is
-// structurally disabled — reusing this guard keeps the alert taxonomy and the
-// livemode-mismatch semantics identical across every reconciliation surface.
+// Exported (PR #319) so the setup_intent.succeeded handler applies the SAME
+// guard the four money handlers use. PR #323: this is now a MODE-MATCHING guard,
+// not a "live is structurally disabled" guard — the reconcilers process ONLY
+// events whose mode matches the current deployment mode (inferStripeLivemode()),
+// and safely IGNORE mismatched-mode events (record a warning ops alert, mutate
+// nothing). In test env inferStripeLivemode() is false, so this is identical to
+// before: test events process, live events are ignored. After the #324 env flip
+// it flips to: live events process, stray test events are ignored.
 export async function shouldIgnoreLiveModeEvent(
   event: Stripe.Event,
   ctx: WebhookCtx,
   eventForAlert: string,
 ): Promise<boolean> {
-  if (event.livemode !== true && ctx.livemode !== true) {
+  const eventLive = event.livemode === true;
+  const deploymentLive = inferStripeLivemode();
+  if (eventLive === deploymentLive) {
+    // Event mode matches the deployment mode → process it.
     return false;
   }
+  // Mode mismatch (e.g. a live event delivered to a test deployment, or vice
+  // versa) → ignore safely. Never mutate a row from a mismatched-mode event.
   await recordOpsAlert({
     severity: "warning",
     event: "stripe_webhook_livemode_event_ignored",
     message:
-      "Live-mode Stripe webhook event received while live mode is structurally disabled. Ignored.",
+      "Stripe webhook event mode does not match the deployment mode. Ignored (no row mutation).",
     studioId: ctx.studioId,
     stripeEventId: event.id,
     route: ROUTE,
     safeDetails: {
       event_type: event.type,
       target_event: eventForAlert,
+      event_livemode: eventLive,
+      deployment_livemode: deploymentLive,
       stripe_account_id: ctx.stripeAccountId,
     },
   });
@@ -390,12 +400,12 @@ export async function handlePaymentIntentSucceeded(
   // CHECK constraint refuses a live row anyway; this guards against
   // an event resolved by a fallback path against a row that the CHECK
   // never enforced (impossible today; future-proofing).
-  if (attempt.stripe_livemode !== false) {
+  if (attempt.stripe_livemode !== inferStripeLivemode()) {
     await recordOpsAlert({
       severity: "critical",
       event: "payment_intent_succeeded_livemode_row_mismatch",
       message:
-        "Stripe payment_intent.succeeded resolved to a row with stripe_livemode=true. Row was NOT mutated.",
+        "Stripe payment_intent.succeeded resolved to a row whose stripe_livemode does not match the deployment mode. Row was NOT mutated.",
       studioId: attempt.studio_id,
       clientId: attempt.client_id,
       stripeEventId: event.id,
@@ -786,12 +796,12 @@ export async function handleChargeRefunded(
     };
   }
 
-  if (attempt.stripe_livemode !== false) {
+  if (attempt.stripe_livemode !== inferStripeLivemode()) {
     await recordOpsAlert({
       severity: "critical",
       event: "charge_refunded_livemode_row_mismatch",
       message:
-        "Stripe charge.refunded resolved to a row with stripe_livemode=true. Row was NOT mutated.",
+        "Stripe charge.refunded resolved to a row whose stripe_livemode does not match the deployment mode. Row was NOT mutated.",
       studioId: attempt.studio_id,
       clientId: attempt.client_id,
       stripeEventId: event.id,

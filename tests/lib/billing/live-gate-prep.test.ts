@@ -104,15 +104,19 @@ describe("receipt template: live branch (copy readiness only; unreachable at run
   });
 });
 
-describe("receipt sender: live branch structurally unreachable", () => {
+describe("receipt sender: env-gated + live-capable (PR #323; legal-copy gate pending #324)", () => {
   const SENDER = read("lib/billing/payment-receipt.ts");
 
-  it("refuses any row whose stripe_livemode is not false", () => {
-    expect(SENDER).toMatch(/attempt\.stripe_livemode !== false/);
+  it("refuses only rows whose mode does not match the deployment mode", () => {
+    // PR #323: was `!== false` (test-only). Now env-gated: in test env this is
+    // still `!== false`; a live row is only sendable after the #324 env flip.
+    expect(SENDER).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
+    expect(SENDER).not.toMatch(/attempt\.stripe_livemode !== false/);
   });
 
-  it("passes livemode: false explicitly to the template", () => {
-    expect(SENDER).toMatch(/livemode: false,/);
+  it("passes the row's actual mode to the template (not hardcoded false)", () => {
+    expect(SENDER).toMatch(/livemode: attempt\.stripe_livemode/);
+    expect(SENDER).not.toMatch(/livemode: false,/);
   });
 });
 
@@ -204,8 +208,16 @@ describe("live mode stays blocked", () => {
       "lib/billing/payment-receipt.ts",
       "lib/email/templates/payment-receipt.ts",
     ];
+    // Strip comments: the runtime code must not ASSIGN/compare STRIPE_ALLOW_LIVE_
+    // MODE (that lives only in server.ts); PR #323 comments may reference it.
     for (const f of RUNTIME_FILES) {
-      expect(read(f)).not.toMatch(/STRIPE_ALLOW_LIVE_MODE\s*=/);
+      const codeOnly = read(f)
+        .split("\n")
+        .filter((l) => !/^\s*\/\//.test(l))
+        .join("\n");
+      expect(codeOnly, `${f} must not touch STRIPE_ALLOW_LIVE_MODE in code`).not.toMatch(
+        /STRIPE_ALLOW_LIVE_MODE\s*=/,
+      );
     }
   });
 

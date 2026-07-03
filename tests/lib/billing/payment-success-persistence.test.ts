@@ -179,10 +179,16 @@ describe("Stripe gates + live-mode block unchanged", () => {
     expect(CHARGE).not.toMatch(/checkout\.sessions/);
   });
 
-  it("does not relax the live-mode gate (no STRIPE_ALLOW_LIVE_MODE; early return intact)", () => {
-    expect(CHARGE).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
+  it("keeps the env-gated live-mode model (PR #323): mode-consistency guard intact, no flag touch in code", () => {
+    // The charge code must not touch STRIPE_ALLOW_LIVE_MODE (comments may mention it).
+    const chargeCode = CHARGE.split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(chargeCode).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
+    // The dormancy is now env-gated: a mode-consistency guard yields live_mode_blocked.
+    expect(CHARGE).toMatch(/const livemode = inferStripeLivemode\(\)/);
     expect(CHARGE).toMatch(
-      /inferStripeLivemode\(\) === true[\s\S]{0,200}outcome:\s*"live_mode_blocked"/,
+      /attemptRow\.stripe_livemode !== livemode[\s\S]{0,200}outcome:\s*"live_mode_blocked"/,
     );
   });
 

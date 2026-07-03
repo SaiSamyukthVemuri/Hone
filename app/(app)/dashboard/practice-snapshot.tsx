@@ -51,11 +51,15 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export function PracticeSnapshot({
   metrics,
   attention,
+  livemode = false,
 }: {
   metrics: PracticeDashboardMetrics;
   // PR #214: recorded-history attention list for the Action needed
   // section. Read-only; never medical advice.
   attention: ClientsNeedingAttention;
+  // PR #323: deployment mode. Gates the factual "Live payments On/Off" +
+  // "Test payments" labels in the Payments card. Defaults false (test).
+  livemode?: boolean;
 }) {
   const a = metrics.appointments;
   return (
@@ -108,7 +112,10 @@ export function PracticeSnapshot({
         </Card>
 
         <Card title="Payments">
-          <Stat label="Live payments" value="Off" />
+          {/* PR #323: the single FACTUAL state claim is mode-aware. The
+              remaining test-mode metric labels below are internal + inert until
+              the #324 env flip; they are reworded in the copy fast-follow. */}
+          <Stat label="Live payments" value={livemode ? "On" : "Off"} />
           <Stat label="Test payments" value="Available" />
           <Stat label="Collected revenue" value="Not enabled yet" />
           <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">

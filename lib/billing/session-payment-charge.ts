@@ -17,9 +17,10 @@ import { buildChargeDescription } from "@/lib/billing/charge-description";
 // (migration 0073 + 0074 + the PR #173 claim RPC migration 0075).
 //
 // What this helper does:
-//   1. Refuses to run in live mode (inferStripeLivemode() === true
-//      short-circuit; mirrors the manual fee belt; the DB CHECK +
-//      Stripe key gate are the braces).
+//   1. PR #323: env-gated for live capability. Derives the deployment mode via
+//      inferStripeLivemode() and enforces mode-consistency (the row/card/settings
+//      /customer must all match it); live charging stays gated by the Stripe
+//      key/env layer (getStripe() rejects sk_live_ unless the flag is set).
 //   2. Loads the attempt row + re-runs eligibility checks. Card
 //      lineage (active, livemode=false, signature matches the
 //      stamped id), studio Stripe settings, customer mapping, and
@@ -193,6 +194,13 @@ async function loadCardAndVerifyLineage(args: {
 > {
   const admin = createAdminClient();
   const reasons: string[] = [];
+  // PR #323: mode-consistency lineage checks compare against the CURRENT
+  // deployment mode (inferStripeLivemode()), not a hardcoded false. In test env
+  // this is false (identical to before); in live env every lineage row
+  // (card / settings / customer) must be live too. These are SECURITY checks
+  // (account == customer == PM == attempt share one mode) — preserved, only the
+  // compared constant changes.
+  const livemode = inferStripeLivemode();
 
   const { data: cardRow } = await admin
     .from("client_payment_methods")
@@ -214,8 +222,8 @@ async function loadCardAndVerifyLineage(args: {
     if (card.status !== "active") {
       reasons.push("Card on file is not active.");
     }
-    if (card.stripe_livemode !== false) {
-      reasons.push("Card on file is not in test mode.");
+    if (card.stripe_livemode !== livemode) {
+      reasons.push("Card on file mode does not match the deployment mode.");
     }
     if (!card.stripe_account_id) {
       reasons.push("Card on file has no connected account.");
@@ -266,8 +274,10 @@ async function loadCardAndVerifyLineage(args: {
           "Studio is now connected to a different Stripe account.",
         );
       }
-      if (settings.stripe_livemode !== false) {
-        reasons.push("Studio payment settings are not in test mode.");
+      if (settings.stripe_livemode !== livemode) {
+        reasons.push(
+          "Studio payment settings mode does not match the deployment mode.",
+        );
       }
     }
 
@@ -277,7 +287,7 @@ async function loadCardAndVerifyLineage(args: {
       .eq("studio_id", args.studioId)
       .eq("client_id", args.clientId)
       .eq("stripe_account_id", card.stripe_account_id)
-      .eq("stripe_livemode", false)
+      .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!customer) {
       reasons.push("Stripe customer mapping is missing.");
@@ -712,15 +722,12 @@ export async function runSessionPaymentCharge(args: {
   studioId: string;
   practitionerId: string;
 }): Promise<SessionPaymentChargeResult> {
-  // 1. Hard test-mode gate from environment. Belt; the DB CHECK and
-  //    Stripe key gate are the braces.
-  if (inferStripeLivemode() === true) {
-    return {
-      ok: false,
-      outcome: "live_mode_blocked",
-      message: LIVE_MODE_BLOCKED_MESSAGE,
-    };
-  }
+  // PR #323: the hard `inferStripeLivemode() === true` dormancy early-return was
+  // removed to make the executor live-CAPABLE. Live charging stays gated by the
+  // env/key layer — getStripe() (assertStripeKeyAllowed) throws on an sk_live_
+  // key unless STRIPE_ALLOW_LIVE_MODE === "true" — so with the current test key
+  // this path is unreached in live and every row below stays test-mode.
+  const livemode = inferStripeLivemode();
 
   const admin = createAdminClient();
 
@@ -755,8 +762,9 @@ export async function runSessionPaymentCharge(args: {
       message: "This attempt has an unsupported charge reason.",
     };
   }
-  // Row-level live-mode guard (mirror of the RPC guard).
-  if (attemptRow.stripe_livemode !== false) {
+  // Row-level mode-consistency guard: the attempt row's mode must match the
+  // deployment mode (test env → must be false; live env → must be true).
+  if (attemptRow.stripe_livemode !== livemode) {
     return {
       ok: false,
       outcome: "live_mode_blocked",
@@ -1005,7 +1013,7 @@ export async function runSessionPaymentCharge(args: {
           hone_charge_reason: attemptRow.charge_reason,
           hone_card_authorization_signature_id:
             attemptRow.card_authorization_signature_id,
-          hone_environment: "test",
+          hone_environment: livemode ? "live" : "test",
         },
       },
       {

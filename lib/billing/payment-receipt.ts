@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
@@ -210,15 +211,17 @@ export async function sendPaymentChargeReceipt(args: {
       message: NOT_SUCCEEDED_MESSAGE,
     };
   }
-  if (attempt.stripe_livemode !== false) {
-    // The DB CHECK already prevents this row from existing.
-    // Belt-and-braces: refuse to send a live-mode receipt even
-    // if the CHECK were ever relaxed by a future migration.
+  // PR #323: mode-consistency guard. The receipt is now live-CAPABLE — it refuses
+  // only rows whose mode does not match the deployment mode (in test env this is
+  // `!== false`, unchanged). NOTE (docs/16): #324 must NOT proceed until the live
+  // receipt wording (lib/email/templates/payment-receipt.ts live branch) has
+  // legal/accounting sign-off. No live receipt is sent in #323 (env is test → no
+  // live row exists).
+  if (attempt.stripe_livemode !== inferStripeLivemode()) {
     return {
       ok: false,
       reason: "not_authorized",
-      message:
-        "Live-mode receipts are not enabled for this test-mode release.",
+      message: "Receipt mode does not match the deployment mode.",
     };
   }
   if (!attempt.stripe_payment_intent_id) {
@@ -361,12 +364,10 @@ export async function sendPaymentChargeReceipt(args: {
     chargedAt: new Date(attempt.charged_at),
     stripePaymentIntentId: attempt.stripe_payment_intent_id,
     stripeChargeId: attempt.stripe_charge_id,
-    // PR #201: ALWAYS the test-mode receipt. The livemode guard above
-    // refuses any row whose stripe_livemode !== false, so passing the
-    // row's value would be equivalent, but the explicit literal keeps
-    // the live-copy branch structurally unreachable from this sender
-    // until controlled live enablement (future PR #202).
-    livemode: false,
+    // PR #323: pass the row's actual mode so a live row (once one exists, after
+    // the #324 env flip) renders the live-copy branch. In test env every row is
+    // stripe_livemode=false, so this stays the test-mode receipt today.
+    livemode: attempt.stripe_livemode,
   });
 
   const sendResult = await sendEmailSafely({
