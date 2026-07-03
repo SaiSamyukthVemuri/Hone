@@ -242,34 +242,33 @@ describe("PR #174: ReadyPanel (active prepared row)", () => {
     expect(block).toMatch(/Prepared:\s*<FormattedDateTime iso=\{attempt\.createdAt\}/);
   });
 
-  it("renders the Run test charge button with a two-click confirm", () => {
+  it("renders the Run charge button with a two-click confirm", () => {
     const block = blockFor("ReadyPanel");
-    expect(block).toMatch(/Run test charge/);
-    expect(block).toMatch(/Confirm: run test charge/);
+    expect(block).toMatch(/Run charge/);
+    expect(block).toMatch(/Confirm: run charge/);
     expect(block).toMatch(/setConfirmExecute\(true\)/);
     expect(block).toMatch(/fd\.set\("confirm_charge",\s*"true"\)/);
   });
 
-  it("names the Stripe test-mode framing on the run-charge panel", () => {
+  it("uses the neutral Stripe-charge caution on the run-charge panel", () => {
     const block = blockFor("ReadyPanel");
-    expect(block).toMatch(/Stripe test mode/);
-    // The JSX text may wrap "No live card is\ncharged" across two
-    // lines; allow whitespace between the words.
-    expect(block).toMatch(/No live card is\s+charged/);
+    expect(block).toMatch(/Stripe charge/);
+    expect(block).not.toMatch(/Stripe test mode/);
+    expect(block).not.toMatch(/No live card is\s+charged/);
   });
 });
 
 describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
   it("explicitly names test charge pending + may need manual review", () => {
     const block = blockFor("PendingPanel");
-    expect(block).toMatch(/Test charge pending/);
+    expect(block).toMatch(/Charge pending/);
     expect(block).toMatch(/may need manual review/);
   });
 
-  it("does NOT render the Run test charge button (the row is not 'ready')", () => {
+  it("does NOT render the Run charge button (the row is not 'ready')", () => {
     const block = blockFor("PendingPanel");
-    expect(block).not.toMatch(/Run test charge/);
-    expect(block).not.toMatch(/Confirm: run test charge/);
+    expect(block).not.toMatch(/Run charge/);
+    expect(block).not.toMatch(/Confirm: run charge/);
   });
 
   it("surfaces the PaymentIntent id when one is on the row", () => {
@@ -279,9 +278,9 @@ describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
 });
 
 describe("PR #174: SucceededPanel (post-refresh)", () => {
-  it("uses 'Test charge succeeded' (not 'Payment complete')", () => {
+  it("uses 'Charge succeeded' (not 'Payment complete')", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/Test charge succeeded/);
+    expect(block).toMatch(/Charge succeeded/);
     expect(block).not.toMatch(/Payment complete/);
   });
 
@@ -303,22 +302,23 @@ describe("PR #174: SucceededPanel (post-refresh)", () => {
     expect(block).toMatch(/Charged:\s*<FormattedDateTime/);
   });
 
-  it("explicitly names test mode + no live card", () => {
+  it("uses neutral charge copy (no false test-mode / no-live-card claim)", () => {
     // PR #175 replaced the "No receipt was sent in this PR" line
     // with a real ReceiptSubPanel that drives off the persisted
     // receipt_status column (migration 0076). The test-mode +
     // no-live-card disclaimer stays; the receipt-not-sent claim
     // moved to the sub-panel's send-button copy where it belongs.
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/Stripe test-mode charge/);
-    expect(block).toMatch(/No live card was charged/);
+    expect(block).toMatch(/This charge ran on the studio(&apos;|')s Stripe connected account/);
+    expect(block).not.toMatch(/Stripe test-mode charge/);
+    expect(block).not.toMatch(/No live card was charged/);
     expect(block).toMatch(/<ReceiptSubPanel/);
   });
 
-  it("does NOT render the Run test charge button (post-refresh terminal-success state)", () => {
+  it("does NOT render the Run charge button (post-refresh terminal-success state)", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).not.toMatch(/Run test charge/);
-    expect(block).not.toMatch(/Confirm: run test charge/);
+    expect(block).not.toMatch(/Run charge/);
+    expect(block).not.toMatch(/Confirm: run charge/);
   });
 
   it("does NOT render the Prepare form (terminal status excludes the form)", () => {
@@ -333,9 +333,9 @@ describe("PR #174: SucceededPanel (post-refresh)", () => {
 });
 
 describe("PR #174: FailedPanel (terminal in this PR)", () => {
-  it("uses 'Test charge failed' as the heading", () => {
+  it("uses 'Charge failed' as the heading", () => {
     const block = blockFor("FailedPanel");
-    expect(block).toMatch(/Test charge failed/);
+    expect(block).toMatch(/Charge failed/);
   });
 
   it("renders failure_message_safe + failure_code + failed_at + PaymentIntent id when present", () => {
@@ -353,10 +353,10 @@ describe("PR #174: FailedPanel (terminal in this PR)", () => {
     expect(block).toMatch(/Prepare a new session payment attempt/);
   });
 
-  it("does NOT render the Run test charge button (failed is terminal in PR #173)", () => {
+  it("does NOT render the Run charge button (failed is terminal in PR #173)", () => {
     const block = blockFor("FailedPanel");
-    expect(block).not.toMatch(/Run test charge/);
-    expect(block).not.toMatch(/Confirm: run test charge/);
+    expect(block).not.toMatch(/Run charge/);
+    expect(block).not.toMatch(/Confirm: run charge/);
   });
 });
 
@@ -364,13 +364,13 @@ describe("PR #174: CancelledPanel + BlockedAttemptPanel", () => {
   it("CancelledPanel is calm + name-only (no charge actions)", () => {
     const block = blockFor("CancelledPanel");
     expect(block).toMatch(/Session payment cancelled/);
-    expect(block).not.toMatch(/Run test charge/);
+    expect(block).not.toMatch(/Run charge/);
   });
 
   it("BlockedAttemptPanel is calm + name-only (no charge actions)", () => {
     const block = blockFor("BlockedAttemptPanel");
     expect(block).toMatch(/Session payment blocked/);
-    expect(block).not.toMatch(/Run test charge/);
+    expect(block).not.toMatch(/Run charge/);
   });
 });
 
@@ -407,24 +407,24 @@ describe("PR #174: forbidden copy not present anywhere in actionable JSX", () =>
 });
 
 describe("PR #174: status labels reflect post-execute reality (PR #173 already shipped)", () => {
-  it("'ready' label says 'Ready (test mode)' not the pre-PR-#173 'ready to charge in a future PR' string", () => {
+  it("'ready' label says 'Ready' not the pre-PR-#173 'ready to charge in a future PR' string", () => {
     // The file header comment legitimately documents the old
     // label for context; what matters is the actual STATUS_LABEL
     // map value. We check the map definition specifically.
-    expect(CARD).toMatch(/ready:\s*"Ready \(test mode\)"/);
+    expect(CARD).toMatch(/ready:\s*"Ready"/);
     expect(CARD).not.toMatch(/ready:\s*"Prepared \(ready to charge/);
   });
 
   it("'succeeded' label says '(test mode)' so the practitioner cannot mistake it for live", () => {
-    expect(CARD).toMatch(/succeeded:\s*"Succeeded \(test mode\)"/);
+    expect(CARD).toMatch(/succeeded:\s*"Succeeded"/);
   });
 
   it("'failed' label says '(test mode)'", () => {
-    expect(CARD).toMatch(/failed:\s*"Failed \(test mode\)"/);
+    expect(CARD).toMatch(/failed:\s*"Failed"/);
   });
 
-  it("'pending_stripe' label says 'Pending Stripe (test mode)'", () => {
-    expect(CARD).toMatch(/pending_stripe:\s*"Pending Stripe \(test mode\)"/);
+  it("'pending_stripe' label says 'Pending Stripe'", () => {
+    expect(CARD).toMatch(/pending_stripe:\s*"Pending Stripe"/);
   });
 });
 

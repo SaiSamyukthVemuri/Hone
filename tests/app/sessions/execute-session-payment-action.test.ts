@@ -4,7 +4,7 @@ import path from "node:path";
 
 // PR #173. Source-grep tests for the new executeSessionPaymentChargeAction
 // + the UI wiring. The action is the server-action entry point for
-// the prepare-card's "Run test charge" button; it must:
+// the prepare-card's "Run charge" button; it must:
 //   * resolve practitioner + studio from the session
 //   * require an explicit confirm_charge='true' flag
 //   * never accept browser-supplied amount / card id / client id /
@@ -124,13 +124,13 @@ describe("execute action: no forbidden behavior", () => {
   });
 });
 
-describe("SessionPaymentPrepareCard: Run test charge button (PR #173)", () => {
+describe("SessionPaymentPrepareCard: Run charge button (PR #173)", () => {
   it("accepts an executeAction prop", () => {
     expect(CARD).toMatch(/executeAction:\s*ExecuteAction/);
   });
 
   it("only renders the button when the active attempt status is 'ready' (PR #174 via ReadyPanel)", () => {
-    // PR #174 moved the Run test charge button into a dedicated
+    // PR #174 moved the Run charge button into a dedicated
     // ReadyPanel subcomponent. AttemptStatusPanel dispatches on
     // attempt.status; only the 'ready' case returns ReadyPanel,
     // which is the only place the executeAction is consumed.
@@ -141,10 +141,12 @@ describe("SessionPaymentPrepareCard: Run test charge button (PR #173)", () => {
     expect(CARD).toMatch(/executeAction=\{executeAction\}/);
   });
 
-  it("the button copy explicitly names test mode", () => {
-    expect(CARD).toMatch(/Stripe test mode/);
-    expect(CARD).toMatch(/Run test charge/);
-    expect(CARD).toMatch(/No live card is charged/);
+  it("the run-charge panel uses the neutral Stripe-charge caution (no test-mode claim)", () => {
+    expect(CARD).toMatch(/Stripe charge/);
+    expect(CARD).toMatch(/Run charge/);
+    // Neutralized: no false-in-live "test mode" / "no live card" claim.
+    expect(CARD).not.toMatch(/Stripe test mode/);
+    expect(CARD).not.toMatch(/No live card is charged/);
   });
 
   it("the button does NOT say Pay now / Charge card / Collect payment", () => {
@@ -162,7 +164,7 @@ describe("SessionPaymentPrepareCard: Run test charge button (PR #173)", () => {
   it("uses a two-click confirm pattern (first click flips confirmExecute, second submits)", () => {
     expect(CARD).toMatch(/if \(!confirmExecute\)/);
     expect(CARD).toMatch(/setConfirmExecute\(true\)/);
-    expect(CARD).toMatch(/Confirm: run test charge/);
+    expect(CARD).toMatch(/Confirm: run charge/);
   });
 
   it("submits confirm_charge='true' on the second click", () => {
@@ -170,7 +172,7 @@ describe("SessionPaymentPrepareCard: Run test charge button (PR #173)", () => {
   });
 
   it("renders the succeeded panel with PaymentIntent + Charge ids", () => {
-    expect(CARD).toMatch(/Test charge succeeded/);
+    expect(CARD).toMatch(/Charge succeeded/);
     expect(CARD).toMatch(/PaymentIntent:/);
   });
 

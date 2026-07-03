@@ -51,7 +51,7 @@ describe("history + UI", () => {
   });
   it("succeeded fee panel exposes test receipt + refund controls", () => {
     const CARD = read("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx");
-    expect(CARD).toMatch(/Send test receipt/);
-    expect(CARD).toMatch(/Refund test charge/);
+    expect(CARD).toMatch(/Send receipt/);
+    expect(CARD).toMatch(/Refund charge/);
   });
 });

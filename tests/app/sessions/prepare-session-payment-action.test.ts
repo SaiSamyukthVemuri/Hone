@@ -229,11 +229,11 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
     expect(CARD).toMatch(/^"use client";/);
   });
 
-  it("renders the test-mode disclaimer prominently", () => {
+  it("renders the neutral prepare disclaimer prominently", () => {
     // The disclaimer is rendered in the header and may wrap across
     // two lines in the JSX; allow the regex to bridge whitespace.
     expect(CARD).toMatch(
-      /This prepares a test-mode payment record\.\s*It does not charge the\s*client\./,
+      /This prepares a payment record\.\s*The client is not charged until you\s*run the charge\./,
     );
   });
 
@@ -259,8 +259,9 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
     expect(CARD).not.toMatch(/paymentIntents/);
   });
 
-  it("the submit button copy names the test-mode posture", () => {
-    expect(CARD).toMatch(/Prepare session payment \(test mode\)/);
+  it("the submit button copy is neutral (no test-mode suffix)", () => {
+    expect(CARD).toMatch(/Prepare session payment/);
+    expect(CARD).not.toMatch(/Prepare session payment \(test mode\)/);
   });
 
   it("renders blocking reasons via a list", () => {
@@ -279,12 +280,12 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
   it("shows the test-mode-only success state with the post-prepare action copy (PR #181 update)", () => {
     // PR #172 originally exposed the local "Attempt id: <uuid>" banner
     // as the just-prepared confirmation. PR #181 replaced that with a
-    // cleaner "You can now run the test charge." line + a
+    // cleaner "You can now run the charge." line + a
     // router.refresh() call so the persisted ReadyPanel (which says
     // "Session payment prepared") immediately becomes the single
     // source of truth. The ReadyPanel's "Session payment prepared"
     // heading is unchanged; only the local banner copy is updated.
     expect(CARD).toMatch(/Session payment prepared/);
-    expect(CARD).toMatch(/You can now run the test charge\./);
+    expect(CARD).toMatch(/You can now run the charge\./);
   });
 });

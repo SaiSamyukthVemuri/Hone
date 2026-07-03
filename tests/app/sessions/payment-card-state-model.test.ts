@@ -10,7 +10,7 @@ import path from "node:path";
 //   * Calls router.refresh() after a successful Prepare so the
 //   persisted ready row replaces the local banner immediately.
 //   * Promotes refund_status='succeeded' to the top heading
-//     ("Test payment refunded") with a refund details block below
+//     ("Payment refunded") with a refund details block below
 //     the charge details. Receipt + Refund sub-panels still
 //   render below as the per-section detail.
 //   * Wraps the SessionPaymentPrepareCard in <div id="session-
@@ -51,8 +51,8 @@ describe("PR #181: prepareJustSucceeded banner is single-render", () => {
     );
   });
 
-  it("the new banner copy is 'You can now run the test charge.' (replaces the stale 'No charge has been run' wording)", () => {
-    expect(CARD).toMatch(/You can now run the test charge\./);
+  it("the new banner copy is 'You can now run the charge.' (replaces the stale 'No charge has been run' wording)", () => {
+    expect(CARD).toMatch(/You can now run the charge\./);
   });
 
   it("the stale 'Attempt id: ... No charge has been run' banner is gone", () => {
@@ -63,7 +63,7 @@ describe("PR #181: prepareJustSucceeded banner is single-render", () => {
     // "No charge has been run" line.
     expect(CARD).not.toMatch(/No charge has been run/);
     expect(CARD).not.toMatch(
-      /Refresh to see the persisted state and the Run test charge affordance/,
+      /Refresh to see the persisted state and the Run charge affordance/,
     );
   });
 
@@ -88,15 +88,15 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
     );
   });
 
-  it("the top heading reads 'Test payment refunded.' when refunded", () => {
+  it("the top heading reads 'Payment refunded.' when refunded", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/refunded \? "Test payment refunded\." :/);
+    expect(block).toMatch(/refunded \? "Payment refunded\." :/);
   });
 
-  it("the top heading reads 'Test charge succeeded.' when not refunded", () => {
+  it("the top heading reads 'Charge succeeded.' when not refunded", () => {
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(
-      /refunded \? "Test payment refunded\." : "Test charge succeeded\."/,
+      /refunded \? "Payment refunded\." : "Charge succeeded\."/,
     );
   });
 
@@ -116,11 +116,12 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
     expect(block).toMatch(/attempt\.stripeRefundId/);
   });
 
-  it("the panel still says 'Stripe test-mode charge. No live card was charged.' below the details", () => {
+  it("the panel uses neutral charge copy below the details (no false 'no live card' claim)", () => {
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(
-      /This was a Stripe test-mode charge\. No live card was charged\./,
+      /This charge ran on the studio(&apos;|')s Stripe connected account\./,
     );
+    expect(block).not.toMatch(/No live card was charged/);
   });
 
   it("the Amount line is renamed to 'Amount charged:' so it reads as a charge total", () => {
@@ -165,7 +166,7 @@ describe("PR #181: forbidden copy on the payment surface", () => {
     expect(code).not.toMatch(/Money returned/);
   });
 
-  it("never says 'Refund complete' (test-mode wording is 'Test payment refunded')", () => {
+  it("never says 'Refund complete' (test-mode wording is 'Payment refunded')", () => {
     const code = codeOnly(CARD);
     expect(code).not.toMatch(/Refund complete/);
   });

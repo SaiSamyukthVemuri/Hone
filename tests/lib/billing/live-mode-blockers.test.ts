@@ -233,26 +233,36 @@ describe("no live-mode behavior added by this PR (docs + tests only)", () => {
   });
 });
 
-describe('"Test mode only" UI copy locations are stable', () => {
-  // PR #168 audit identified 7 client-facing strings that say
-  // "Test mode only." A future live-mode PR must remove every one
-  // of them. Until that PR lands, the locations should be stable
-  // so the audit + readiness doc stays accurate. The test asserts
-  // that EACH known location still carries the string; if a
-  // future PR removes one early, this test fails and the readiness
-  // doc must be updated in lockstep.
+describe("payment UI test-mode copy: mode-gated retained, misleading removed", () => {
+  // PR #168 held "Test mode only" copy in place until the removal PR. The copy
+  // fast-follow (post-#323) is that PR. Two buckets now:
+  //   * MODE-GATED locations still carry "test mode" copy, but only shown while
+  //     live is off (gated on livemode / status.livemode) — the preserved
+  //     test-mode warning. #323 made the portal ones mode-aware.
+  //   * NEUTRALIZED locations (the internal practitioner/fee cards) must NOT
+  //     carry the misleading "Test mode only. No live card will be charged."
+  //     claim that would read false after the #324 env flip.
 
-  const KNOWN_LOCATIONS = [
+  const MODE_GATED = [
     "app/portal/PortalPaymentMethodForm.tsx",
     "app/portal/PortalCardOnFileCard.tsx",
     "app/(app)/settings/payments/PaymentsSettings.tsx",
-    "app/(app)/calendar/[id]/ManualFeeChargeCard.tsx",
   ];
-
-  for (const file of KNOWN_LOCATIONS) {
-    it(`${file} still mentions test mode somewhere`, () => {
+  for (const file of MODE_GATED) {
+    it(`${file} still carries mode-gated test-mode copy`, () => {
       const src = readRepoFile(file);
       expect(src.toLowerCase()).toMatch(/test mode/);
+      expect(src).toMatch(/livemode/);
     });
   }
+
+  it("ManualFeeChargeCard.tsx no longer carries the misleading test-mode claim", () => {
+    // Strip // comments — target user-facing copy, not stale historical comments.
+    const src = readRepoFile("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx")
+      .split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(src).not.toMatch(/Test mode only\. No live card will be charged\./);
+    expect(src).not.toMatch(/Run test charge/);
+  });
 });

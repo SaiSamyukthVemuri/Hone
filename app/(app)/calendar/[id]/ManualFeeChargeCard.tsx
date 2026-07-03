@@ -114,7 +114,7 @@ export function ManualFeeChargeCard({
           and the appointment policy shown here.
         </p>
         <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
-          Test mode only. No live card will be charged.
+          The client&apos;s saved card on file will be charged this fee.
         </p>
       </div>
 
@@ -419,7 +419,7 @@ function ReadyPanel({
   return (
     <div className="flex flex-col gap-4 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
       <div className="flex flex-col gap-1">
-        <h4 className="font-medium">Ready for test charge</h4>
+        <h4 className="font-medium">Ready to charge</h4>
         <p className="text-xs">
           Amount: {formatCents(attempt.amount_cents, attempt.currency)}
           {card && (
@@ -435,7 +435,7 @@ function ReadyPanel({
         <li>internal note recorded</li>
       </ul>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-        Test mode only. No live card will be charged.
+        The client&apos;s saved card on file will be charged this fee.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -447,7 +447,7 @@ function ReadyPanel({
         >
           {chargePending
             ? "Running…"
-            : `Run test charge (${formatCents(attempt.amount_cents, attempt.currency)})`}
+            : `Run charge (${formatCents(attempt.amount_cents, attempt.currency)})`}
         </button>
         <button
           type="button"
@@ -538,7 +538,7 @@ function PendingPanel({
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-      <h4 className="font-medium">Stripe test charge pending.</h4>
+      <h4 className="font-medium">Charge pending.</h4>
       <p className="text-xs">
         The previous click is still resolving with Stripe. Click Refresh
         to recheck; the system will not create a second PaymentIntent.
@@ -568,7 +568,7 @@ function SucceededPanel({
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-      <h4 className="font-medium">Test charge succeeded.</h4>
+      <h4 className="font-medium">Charge succeeded.</h4>
       <p className="text-xs">
         Amount: {formatCents(attempt.amount_cents, attempt.currency)}
         {attempt.charged_at && (
@@ -624,11 +624,11 @@ function FeeReceiptRefundControls({
           onClick={() => run(sendFeeReceiptAction)}
           className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
         >
-          Send test receipt
+          Send receipt
         </button>
       )}
       {refunded ? (
-        <span className="text-xs font-medium">Test payment refunded.</span>
+        <span className="text-xs font-medium">Payment refunded.</span>
       ) : (
         <button
           type="button"
@@ -636,7 +636,7 @@ function FeeReceiptRefundControls({
           onClick={() => run(refundFeeAttemptAction)}
           className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
         >
-          Refund test charge
+          Refund charge
         </button>
       )}
       {message && <span className="text-xs">{message}</span>}
@@ -651,7 +651,7 @@ function FailedPanel({
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-      <h4 className="font-medium">Test charge failed.</h4>
+      <h4 className="font-medium">Charge failed.</h4>
       {attempt.failure_message && (
         <p className="text-xs">Reason: {attempt.failure_message}</p>
       )}

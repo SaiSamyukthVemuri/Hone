@@ -187,7 +187,7 @@ export function PaymentsSettings({
         <ul className="flex flex-col gap-2 text-sm">
           <ReadinessItem
             ok={status.chargesEnabled}
-            okLabel="Stripe can accept test payments for this studio"
+            okLabel="Stripe can accept payments for this studio"
             notYetLabel="Stripe cannot accept payments for this studio yet"
           />
           <ReadinessItem
@@ -414,8 +414,7 @@ function CardOnFileReadiness({
         </div>
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
           Card collection is not enabled yet. No cards are being collected.
-          This checklist prepares your studio for a later test-mode
-          card-on-file flow.
+          This checklist prepares your studio for a later card-on-file flow.
         </p>
       </header>
 
@@ -452,8 +451,8 @@ function CardOnFileReadiness({
         />
         <ReadinessItem
           ok={isTestMode}
-          okLabel="Test mode only"
-          notYetLabel="Test mode only (live mode is not enabled)"
+          okLabel="Test mode — no live charges"
+          notYetLabel="Live mode enabled"
         />
         <ReadinessItem
           ok={false}

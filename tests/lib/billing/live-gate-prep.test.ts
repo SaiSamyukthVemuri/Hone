@@ -120,25 +120,32 @@ describe("receipt sender: env-gated + live-capable (PR #323; legal-copy gate pen
   });
 });
 
-describe("payment UI copy map: test-mode strings stay while live is disabled", () => {
-  const CARD = read("components/session-payment-prepare-card.tsx");
-  const FEE_CARD = read("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx");
+describe("payment UI copy map: neutral, mode-safe strings (copy fast-follow)", () => {
+  // Strip // comments: the assertion targets USER-FACING copy, not stale
+  // historical comments that still reference the old button names.
+  const stripComments = (s: string) =>
+    s.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const CARD = stripComments(read("components/session-payment-prepare-card.tsx"));
+  const FEE_CARD = stripComments(read("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx"));
 
-  it("session payment card keeps its test-mode framing", () => {
-    expect(CARD).toMatch(
-      /This prepares a test-mode payment record\. It does not charge the\s*\n?\s*client\./,
-    );
-    expect(CARD).toMatch(/Run test charge/);
-    expect(CARD).toMatch(
-      /This was a Stripe test-mode charge\. No live card was charged\./,
-    );
+  it("session payment card uses neutral labels + NO misleading live-mode copy", () => {
+    // Neutralized so nothing reads false after the #324 env flip.
+    expect(CARD).toMatch(/Run charge/);
+    expect(CARD).toMatch(/Charge succeeded\./);
+    // The old test-mode framing that would lie in live mode is gone.
+    expect(CARD).not.toMatch(/Run test charge/);
+    expect(CARD).not.toMatch(/No live card was charged/);
+    expect(CARD).not.toMatch(/test-mode payment record/);
+    expect(CARD).not.toMatch(/Stripe test-mode charge/);
   });
 
-  it("fee card keeps its test-mode framing", () => {
-    expect(FEE_CARD).toMatch(/Test mode only\. No live card will be charged\./);
-    expect(FEE_CARD).toMatch(/Run test charge/);
-    expect(FEE_CARD).toMatch(/Send test receipt/);
-    expect(FEE_CARD).toMatch(/Refund test charge/);
+  it("fee card uses neutral labels + NO misleading live-mode copy", () => {
+    expect(FEE_CARD).toMatch(/Run charge/);
+    expect(FEE_CARD).toMatch(/Send receipt/);
+    expect(FEE_CARD).toMatch(/Refund charge/);
+    expect(FEE_CARD).not.toMatch(/Test mode only\. No live card will be charged\./);
+    expect(FEE_CARD).not.toMatch(/Run test charge/);
+    expect(FEE_CARD).not.toMatch(/Send test receipt/);
   });
 
   it("the copy map is documented in docs/18 §16", () => {

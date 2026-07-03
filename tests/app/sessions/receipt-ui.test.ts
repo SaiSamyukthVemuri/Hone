@@ -8,7 +8,7 @@ import path from "node:path";
 //     pending / failed rows)
 //   * read receipt_status from the persisted summary so the
 //     already-sent state survives refresh
-//   * show the Send test receipt button only when receipt_status
+//   * show the Send receipt button only when receipt_status
 //     is null / failed (the latter for retry after fix)
 //   * never say "Pay now" / "Send invoice" / "Tax receipt" /
 //     "Official invoice" / "Payment complete" / "Live payment"
@@ -136,7 +136,7 @@ describe("PR #175: ReceiptSubPanel rendering shape", () => {
     expect(block).toMatch(/attempt\.receiptStatus === "sending"/);
   });
 
-  it("the Send test receipt button only appears when status is null or failed (persisted)", () => {
+  it("the Send receipt button only appears when status is null or failed (persisted)", () => {
     const block = blockFor("ReceiptSubPanel");
     // The button-render gate excludes persistedSent + persistedSending.
     // We pin both negations + the button appearing inside the
@@ -145,14 +145,14 @@ describe("PR #175: ReceiptSubPanel rendering shape", () => {
     expect(block).toMatch(
       /!persistedSent[\s\S]{0,800}!persistedSending[\s\S]{0,800}<button/,
     );
-    expect(block).toMatch(/Send test receipt/);
+    expect(block).toMatch(/Send receipt/);
   });
 
-  it("the button copy explicitly names Stripe test-mode + no live card", () => {
+  it("the receipt copy is neutral (no test-mode / no-live-card claim)", () => {
     const block = blockFor("ReceiptSubPanel");
-    expect(block).toMatch(/Stripe test-mode receipt/);
-    // JSX text can wrap "No live card was\n  charged" across lines.
-    expect(block).toMatch(/No live card was\s+charged/);
+    expect(block).toMatch(/Sends a Stripe receipt to the client for this charge\./);
+    expect(block).not.toMatch(/Stripe test-mode receipt/);
+    expect(block).not.toMatch(/No live card was\s+charged/);
   });
 
   it("the already-sent state surfaces the recipient + sent timestamp", () => {
