@@ -258,9 +258,9 @@ describe("Session payment prepare form wiring", () => {
     );
   });
 
-  it("test-mode copy is unchanged and nothing implies the client paid", () => {
+  it("prepare copy is neutral (charge happens on run) and nothing implies the client paid", () => {
     expect(CARD).toMatch(
-      /This prepares a test-mode payment record\. It does not charge the\s*\n?\s*client\./,
+      /This prepares a payment record\. The client is not charged until you\s*\n?\s*run the charge\./,
     );
     expect(CARD).not.toMatch(/already paid|payment received/i);
   });

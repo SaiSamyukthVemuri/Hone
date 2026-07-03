@@ -134,10 +134,10 @@ function formatCadFromCents(cents: number | null): string {
 // stale once PR #173 added the charge action; the label is now
 // honest about what 'ready' means in the post-execute world.
 const STATUS_LABEL: Record<string, string> = {
-  ready: "Ready (test mode)",
-  pending_stripe: "Pending Stripe (test mode)",
-  succeeded: "Succeeded (test mode)",
-  failed: "Failed (test mode)",
+  ready: "Ready",
+  pending_stripe: "Pending Stripe",
+  succeeded: "Succeeded",
+  failed: "Failed",
   cancelled: "Cancelled",
   blocked: "Blocked",
 };
@@ -253,8 +253,8 @@ export function SessionPaymentPrepareCard({
           Session payment
         </h2>
         <p className="mt-1 text-xs text-neutral-500">
-          This prepares a test-mode payment record. It does not charge the
-          client.
+          This prepares a payment record. The client is not charged until you
+          run the charge.
         </p>
       </header>
 
@@ -300,7 +300,7 @@ export function SessionPaymentPrepareCard({
         <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
           <p className="font-medium">Session payment prepared.</p>
           <p className="mt-1">
-            You can now run the test charge.
+            You can now run the charge.
           </p>
         </div>
       )}
@@ -481,7 +481,7 @@ function ReadyPanel({
   if (executeSuccess) {
     return (
       <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
-        <p className="font-medium">Test charge succeeded.</p>
+        <p className="font-medium">Charge succeeded.</p>
         <p className="mt-1">
           PaymentIntent: <code>{executeSuccess.paymentIntentId}</code>
           {executeSuccess.chargeId && (
@@ -492,9 +492,8 @@ function ReadyPanel({
           )}
         </p>
         <p className="mt-1">
-          This was a Stripe test-mode charge. No live card was charged. No
-          receipt was sent in this PR. Refresh to see the persisted succeeded
-          state.
+          This charge ran on the studio&apos;s Stripe connected account.
+          Refresh to see the persisted succeeded state.
         </p>
       </div>
     );
@@ -516,12 +515,11 @@ function ReadyPanel({
 
       <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
         <p className="text-[11px] font-medium uppercase tracking-wider text-amber-900 dark:text-amber-200">
-          Stripe test mode
+          Stripe charge
         </p>
         <p className="text-xs text-amber-900 dark:text-amber-200">
-          Run test charge will create a Stripe PaymentIntent on the connected
-          account in test mode against the saved test card. No live card is
-          charged. No receipt is sent.
+          Running the charge creates a Stripe PaymentIntent on the studio&apos;s
+          connected account against the client&apos;s saved card.
         </p>
         {executeError && (
           <p className="text-xs text-red-700 dark:text-red-400" role="alert">
@@ -569,10 +567,10 @@ function ReadyPanel({
             className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
           >
             {executePending
-              ? "Running test charge..."
+              ? "Running charge..."
               : confirmExecute
-                ? `Confirm: run test charge (${formatCadFromCents(attempt.amountCents)})`
-                : "Run test charge"}
+                ? `Confirm: run charge (${formatCadFromCents(attempt.amountCents)})`
+                : "Run charge"}
           </button>
           {confirmExecute && !executePending && (
             <button
@@ -604,7 +602,7 @@ function PendingPanel({
 }) {
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-      <p className="font-medium">Test charge pending.</p>
+      <p className="font-medium">Charge pending.</p>
       <p className="mt-1">
         Amount: {formatCadFromCents(attempt.amountCents)}
         {" · "}
@@ -620,7 +618,7 @@ function PendingPanel({
         </p>
       )}
       <p className="mt-1">
-        This was a Stripe test-mode attempt. No live card is charged.
+        This charge is pending on the studio&apos;s Stripe connected account.
       </p>
     </div>
   );
@@ -662,7 +660,7 @@ function SucceededPanel({
       }
     >
       <p className="font-medium">
-        {refunded ? "Test payment refunded." : "Test charge succeeded."}
+        {refunded ? "Payment refunded." : "Charge succeeded."}
       </p>
       <p className="mt-1">
         Amount charged: {formatCadFromCents(attempt.amountCents)}
@@ -712,7 +710,7 @@ function SucceededPanel({
       )}
 
       <p className="mt-2">
-        This was a Stripe test-mode charge. No live card was charged.
+        This charge ran on the studio&apos;s Stripe connected account.
       </p>
 
       {/* PR #175. Receipt sub-panel. Visible only when the
@@ -729,7 +727,7 @@ function SucceededPanel({
       {/* PR #178. Refund sub-panel. Also succeeded-only. Reads
           refund_status from the persisted row so the
           already-refunded / pending / failed states survive a
-          page refresh. The Refund test charge button only
+          page refresh. The Refund charge button only
           renders when refund_status is null or 'failed'. */}
       <RefundSubPanel
         attempt={attempt}
@@ -821,8 +819,7 @@ function ReceiptSubPanel({
         !localSent && (
           <>
             <p className="text-xs text-neutral-600 dark:text-neutral-400">
-              Sends a Stripe test-mode receipt to the client. No live card was
-              charged.
+              Sends a Stripe receipt to the client for this charge.
             </p>
             <button
               type="button"
@@ -851,7 +848,7 @@ function ReceiptSubPanel({
               }}
               className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
             >
-              {pending ? "Sending test receipt..." : "Send test receipt"}
+              {pending ? "Sending receipt..." : "Send receipt"}
             </button>
           </>
         )}
@@ -921,7 +918,7 @@ function RefundSubPanel({
 
       {(persistedSucceeded || localRefunded) && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          <p className="font-medium">Test refund succeeded.</p>
+          <p className="font-medium">Refund succeeded.</p>
           <p className="mt-1">
             Amount refunded:{" "}
             {formatCadFromCents(
@@ -963,7 +960,7 @@ function RefundSubPanel({
 
       {persistedFailed && !localRefunded && (
         <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
-          <p className="font-medium">Test refund failed.</p>
+          <p className="font-medium">Refund failed.</p>
           {attempt.refundFailureMessageSafe && (
             <p className="mt-1">Failure: {attempt.refundFailureMessageSafe}</p>
           )}
@@ -985,8 +982,8 @@ function RefundSubPanel({
         !localRefunded && (
           <>
             <p className="text-xs text-neutral-600 dark:text-neutral-400">
-              This creates a Stripe test-mode refund for this charge. No live
-              money is moved.
+              This creates a Stripe refund for this charge on the studio&apos;s
+              connected account.
             </p>
             {!confirming ? (
               <button
@@ -995,7 +992,7 @@ function RefundSubPanel({
                 onClick={() => setConfirming(true)}
                 className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
-                Refund test charge
+                Refund charge
               </button>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
@@ -1031,8 +1028,8 @@ function RefundSubPanel({
                   className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                 >
                   {pending
-                    ? "Refunding test charge..."
-                    : `Confirm: refund test charge (${refundAmountFormatted})`}
+                    ? "Refunding charge..."
+                    : `Confirm: refund charge (${refundAmountFormatted})`}
                 </button>
                 <button
                   type="button"
@@ -1066,7 +1063,7 @@ function FailedPanel({
 }) {
   return (
     <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
-      <p className="font-medium">Test charge failed.</p>
+      <p className="font-medium">Charge failed.</p>
       <p className="mt-1">
         Amount: {formatCadFromCents(attempt.amountCents)}
         {attempt.failedAt && (
@@ -1306,7 +1303,7 @@ function PrepareForm({
         disabled={pending}
         className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
       >
-        {pending ? "Preparing..." : "Prepare session payment (test mode)"}
+        {pending ? "Preparing..." : "Prepare session payment"}
       </button>
     </form>
   );

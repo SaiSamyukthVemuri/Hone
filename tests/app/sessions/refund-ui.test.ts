@@ -6,10 +6,10 @@ import path from "node:path";
 //   * lives ONLY inside SucceededPanel (not in any other panel)
 //   * reads refund_status from the persisted summary so the
 //     already-refunded / pending / failed states survive refresh
-//   * shows Refund test charge button only when refund_status is
+//   * shows Refund charge button only when refund_status is
 //     null or 'failed'
-//   * uses two-click confirm (Refund test charge then
-//     "Confirm: refund test charge ($X.XX)")
+//   * uses two-click confirm (Refund charge then
+//     "Confirm: refund charge ($X.XX)")
 //   * says test mode + no live money
 //   * never says "Live refund", "Refund complete", "Money returned",
 //     "Official refund receipt"
@@ -140,32 +140,34 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     expect(block).toMatch(/attempt\.refundStatus === "failed"/);
   });
 
-  it("the Refund test charge button only appears when status is null or failed (persisted)", () => {
+  it("the Refund charge button only appears when status is null or failed (persisted)", () => {
     const block = blockFor("RefundSubPanel");
     // The button-render gate excludes persistedSucceeded + persistedPending.
     expect(block).toMatch(
-      /!persistedSucceeded[\s\S]{0,800}!persistedPending[\s\S]{0,800}Refund test charge/,
+      /!persistedSucceeded[\s\S]{0,800}!persistedPending[\s\S]{0,800}Refund charge/,
     );
   });
 
-  it("the action copy explicitly names test-mode + no live money", () => {
+  it("the refund copy is neutral (no test-mode / no-live-money claim)", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(
-      /This creates a Stripe test-mode refund for this charge\. No live\s+money is moved\./,
+      /This creates a Stripe refund for this charge on the studio(&apos;|')s\s+connected account\./,
     );
+    expect(block).not.toMatch(/Stripe test-mode refund/);
+    expect(block).not.toMatch(/No live\s+money is moved/);
   });
 
   it("uses a two-click confirm with the amount in the confirm button", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(/setConfirming\(true\)/);
     expect(block).toMatch(
-      /Confirm: refund test charge \(\$\{refundAmountFormatted\}\)/,
+      /Confirm: refund charge \(\$\{refundAmountFormatted\}\)/,
     );
   });
 
   it("the succeeded state surfaces amount + refunded timestamp + stripe refund id", () => {
     const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/Test refund succeeded\./);
+    expect(block).toMatch(/Refund succeeded\./);
     expect(block).toMatch(/Amount refunded/);
     expect(block).toMatch(/Refunded:/);
     expect(block).toMatch(/Stripe refund:/);
@@ -175,7 +177,7 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
 
   it("the failed state surfaces the sanitised failure message + code", () => {
     const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/Test refund failed\./);
+    expect(block).toMatch(/Refund failed\./);
     expect(block).toMatch(/attempt\.refundFailureMessageSafe/);
     expect(block).toMatch(/attempt\.refundFailureCode/);
   });
