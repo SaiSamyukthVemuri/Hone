@@ -1065,7 +1065,8 @@ The Stripe gates remain intact. The only artifacts of this PR are the new sectio
 
 ### 17.1 Current status
 
-- **Live payments are DISABLED.** `STRIPE_ALLOW_LIVE_MODE` is unset / `false` in production; the three dormancy guards (§3) are intact; the Stripe gates pass. **The ordered, consolidated "how to turn it on" checklist is [§17.12](#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297) — flipping the env flag alone is NOT enough.** A CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`, PR #297) fails if any dormancy gate is relaxed without a deliberate change.
+- **Enablement-sequence progress (as of the copy fast-follow, 2026-07-02): live payments remain DISABLED, but the codebase is now DB-, runtime-, and copy-ready.** Completed: **PR A / #322** — migration `0101` (live-payment DB readiness), **merged AND applied to production** (prod migration max = `0101`); **PR B / #323** — runtime/webhook/receipt guards relaxed to the **env-gated model** (`inferStripeLivemode()`), so the money paths are **live-CAPABLE but inert** while the env is test; the safety-lock (`live-mode-disabled`/`-blockers`/`-gate-prep`) was **repointed** to assert the env-gated model; **copy fast-follow / #324** — internal practitioner/fee-card + settings copy neutralized so nothing reads false in live. Live is off **solely because the env is test** (`STRIPE_ALLOW_LIVE_MODE` unset, `sk_test_`). **The finalized operator runbook for the actual env flip + first live charge is [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) — that is the authoritative "how to turn it on" procedure; §17.12 remains the code-side prep ledger.**
+- **Live payments are DISABLED.** `STRIPE_ALLOW_LIVE_MODE` is unset / `false` in production; the env/key gate (`lib/stripe/server.ts`) rejects an `sk_live_` key unless the flag is `"true"`; the Stripe gates pass (15 PASS). **The ordered, consolidated "how to turn it on" checklist is [§17.12](#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297) + the finalized [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) runbook — flipping the env flag alone is NOT enough.** A CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`, PR #297, repointed in #323) fails if any dormancy gate is relaxed without a deliberate change.
 - **PR #281 (payment success persistence) is COMPLETE and authoritative.** A normal `succeeded` outcome now requires **Stripe success AND a proven Hone ledger write**. If Stripe succeeds but Hone cannot persist the success (DB error or zero-row update), the charge path returns `needs_manual_review` (never a clean success) and a **critical** ops alert fires (`session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows`). See docs/06 §4d.
 - **PR #310 (payment FAILURE persistence) makes the failed-outcome path symmetric.** If Stripe returns a **failed/non-success** outcome and Hone cannot persist the local `failed` state, the DB-error branch now fires a **critical** `session_payment_failed_write_failed` (previously stderr-only, no alert) and the zero-row branch is **promoted warning → critical** `session_payment_failed_write_zero_rows` — so failure-persistence failures are now as observable as success-persistence failures and surface in the critical `/admin/payments/manual-review` queue (existing `session_payment_` prefix). Alerting/observability only — no payment behavior change, no new Stripe calls, no migration. See docs/06 §4d.
 - **Webhook reconciliation remains the eventual-consistency backstop.** The `payment_intent.succeeded` handler (`lib/billing/payment-webhook-reconciliation.ts`, PR #179) reconciles a `ready|pending_stripe` row to `succeeded`, so a transient #281 DB-error split self-heals even though the synchronous result was honestly indeterminate.
@@ -1307,3 +1308,147 @@ node --env-file=.env.local scripts/verify-production.mjs
 - **Reminder scheduler external dashboard** — if the heartbeat was INCOMPLETE, confirm the **Reminder scheduler** card in `/admin`.
 
 This is a **read-only pre-flight**, not an enablement step. Enabling live payments still follows §17.12 in order.
+
+### 17.14 Controlled live-payment env flip + first live charge — operator runbook (PR C)
+
+> **READ THIS FIRST.** **Live payments are still OFF.** This section is DOCUMENTATION ONLY. **This PR does not flip the env, does not touch Stripe, does not create any webhook endpoint, does not run any payment, and changes no code behavior or copy.** The actual env flip and the first live charge are **separate operator actions**, taken by hand **after** this runbook merges AND every go-condition below is met. **Legal/accounting sign-off on the live receipt + client-facing card-authorization wording remains MANDATORY before the env flip; if legal changes any wording, a separate copy-only PR (updating `lib/email/templates/payment-receipt.ts` + the portal card-authorization strings) must merge before the flip.** Scope is **one supervised studio (Willow / Chloe) and one small supervised charge** — nothing else.
+
+**Why the flip is more than a flag.** Stripe Connect accounts are **mode-specific**: Willow's current `acct_…` is a **test** account. A live account requires a **fresh live Express onboarding**, which can only happen **after** the deployment is in live mode (onboarding calls `getStripe()` with the live key). All runtime lookups scope by `stripe_livemode = inferStripeLivemode()`, so once the deployment is live, the test settings/cards/customers go **dormant** (not deleted) and Willow must onboard fresh in live. Two ordering traps: (a) `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is **build-time inlined** → a **fresh build** is required, not a cache-reuse redeploy; (b) `assertStripeKeyAllowed` (`lib/stripe/server.ts`) **throws** if `sk_live_` is set while `STRIPE_ALLOW_LIVE_MODE !== "true"` → **never** deploy the live key with the flag unset.
+
+#### 17.14.1 Final go/no-go checklist (ALL must be ✅ before the first charge)
+
+1. [ ] Legal/accounting **written** sign-off on the live **receipt** wording AND the client-facing **card-authorization** wording (§17.14.2). If reworded, the copy-only PR is merged.
+2. [ ] Live Connect **webhook endpoint** created (connected-accounts, 8 events — §17.14.4) and its `whsec_` is in hand.
+3. [ ] All four live env vars set in Vercel Production (§17.14.5) and a **fresh** production build/deploy succeeded; `VERCEL_ENV=production`.
+4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0101`).
+5. [ ] Willow **live** Connect account fully enabled (§17.14.3): `charges_enabled`, `payouts_enabled`, `details_submitted` all true; `requirements.currently_due` **empty**; CAD bank verified; statement descriptor reviewed; dispute email/recovery/2FA reviewed.
+6. [ ] Live `studio_payment_settings` row present (`stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true`).
+7. [ ] Supervised client (recommend **Chloe's own real card**) has **signed the card-authorization consent** and **added a live active card** on file via the portal.
+8. [ ] Read-only SQL clean (§17.14.8): `payment_charge_attempts where stripe_livemode=true` count = **0**; unresolved critical ops_alerts = **0**.
+9. [ ] Rollback + kill-switch (§17.14.10) rehearsed; operator watching all surfaces (§17.14.9); amount **small**; card operator-controlled.
+
+**If ANY line is unchecked → STOP (see §17.14.11 no-go conditions).**
+
+#### 17.14.2 Legal/accounting sign-off requirements (MANDATORY before the flip)
+
+- **Live receipt wording** — the live branch of `lib/email/templates/payment-receipt.ts` (currently DRAFT, marked "PENDING legal/accounting review"). Legal/accounting must approve the exact strings: lead "Receipt for card payment processed by {studio}."; no-tax "No tax calculation is included on this receipt unless separately stated by the studio."; support "For questions about this payment or refund eligibility, contact the studio."; subject "Receipt from {studio}: {reason} {amount}". They confirm: **no** tax-receipt / official-invoice / charitable-receipt claim, **no** refund-policy promise, accurate for a CA aesthetics service.
+- **Client-facing card-authorization wording** — the #323 mode-gated live portal strings: `PortalCardOnFileCard` "Your card on file may be charged by the studio for authorized fees per the policy you agreed to."; `PortalPaymentMethodForm` "Your current card will be replaced after the new card is saved. It may be charged for authorized fees per the studio's policy." They confirm the authorization/consent language is accurate and enforceable.
+- **If approved AS-IS → no code change.** **If reworded → a separate copy-only PR** (`payment-receipt.ts` template + the two portal strings) must merge **before** the env flip. This runbook PR does **not** change that copy.
+
+#### 17.14.3 Willow live Stripe Connect readiness (LIVE account, Stripe live Dashboard → synced to `studio_payment_settings`)
+
+- [ ] `charges_enabled = true`
+- [ ] `payouts_enabled = true`
+- [ ] `details_submitted = true`
+- [ ] `requirements.currently_due` **empty** (and `eventually_due` reviewed)
+- [ ] **CAD** external bank account added + **verified**
+- [ ] **Statement descriptor** reviewed on the connected account (the app sets none in code — `session-payment-charge.ts` sets no `statement_descriptor`; the account default is what the client sees)
+- [ ] **Dispute email / recovery / 2FA** reviewed (dispute-notification email set, 2FA on, Radar reviewed)
+
+#### 17.14.4 Live webhook endpoint
+
+- **URL:** `https://hone.care/api/stripe/webhook` (the existing route — no code change).
+- **Type:** a **Connect** webhook endpoint in the Stripe **live** Dashboard with **"Listen to events on Connected accounts" enabled** (the handler reads `event.account`).
+- **Signing secret** → becomes `STRIPE_WEBHOOK_SECRET` (§17.14.5).
+- **Required events** (the handler acts on exactly these; all others are recorded as `ignoredInPhase1`):
+  - `account.updated`
+  - `capability.updated`
+  - `setup_intent.succeeded`
+  - `setup_intent.setup_failed`
+  - `payment_intent.succeeded`
+  - `payment_intent.payment_failed`
+  - `charge.refunded`
+  - `charge.dispute.created`
+
+#### 17.14.5 Exact Vercel Production env vars
+
+| Var | Value | Read at | Notes |
+|---|---|---|---|
+| `STRIPE_ALLOW_LIVE_MODE` | `true` | runtime | the master switch |
+| `STRIPE_SECRET_KEY` | `sk_live_…` | runtime | |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_…` | **build** | requires a fresh build |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` (the **live** endpoint's secret) | runtime | |
+| `STRIPE_CONNECT_COUNTRY` | confirm `CA` | runtime | already defaults to `CA` |
+
+(`OPS_ALERT_EMAILS`, `RESEND_API_KEY`, `UPSTASH_REDIS_REST_URL/TOKEN` must already be set — alerts, receipts, heartbeat — and are unchanged.)
+
+#### 17.14.6 Exact env-flip order
+
+1. **Legal/accounting sign-off** complete (§17.14.2). If reworded, the copy-only PR is merged.
+2. **Create the live Connect webhook endpoint** (§17.14.4) → obtain `whsec_`.
+3. In Vercel **Production**, set **all four** live vars (§17.14.5) **in one batch, before any redeploy**; confirm `STRIPE_CONNECT_COUNTRY=CA`.
+4. Trigger **one fresh production build/deploy** (full build, so `pk_live_` is inlined).
+5. **Verify health** (go/no-go items 3–4).
+6. **NEVER deploy `sk_live_` while `STRIPE_ALLOW_LIVE_MODE` is false/unset** — that deploy hard-fails every Stripe route (`assertStripeKeyAllowed` throws).
+
+#### 17.14.7 First live charge procedure (all in-app, supervised)
+
+1. **Willow live onboarding** — Settings → Payments → complete live Connect onboarding.
+2. **Confirm the live settings row** — `studio_payment_settings` has `stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true` (synced via the `account.updated` webhook).
+3. **Supervised client signs the card-authorization consent** (recommend Chloe's own real card).
+4. **Supervised client adds a live card** on file via the portal → `setup_intent.succeeded` → `client_payment_methods` (`stripe_livemode=true`, `status=active`).
+5. **Prepare one small charge** — session payment or a small manual fee, CAD, small amount.
+6. **Run charge** (two-click confirm) → direct charge on the connected account (`confirm:true`, off-session, **0 application fee**, no `statement_descriptor` in code) → "Charge succeeded."
+7. **Verify webhook reconciliation** — `payment_intent.succeeded` reconciles the row idempotently (already `succeeded` from the synchronous path).
+8. **Send the receipt** — **only if** the live receipt wording is legal-approved (§17.14.2).
+9. **(Recommended close-out) Refund through the app** to return the funds and validate the live refund lifecycle (`charge.refunded` → `refund_status='succeeded'`). This is the existing refund path — not a new charge.
+
+#### 17.14.8 Read-only SQL checks (via `supabase db query --linked`, SELECT-only)
+
+**Before (post-flip health + pre-charge):**
+```
+select max(version) from supabase_migrations.schema_migrations;                          -- expect 0101
+select count(*) from payment_charge_attempts where stripe_livemode = true;               -- expect 0
+select count(*) from ops_alerts where severity='critical' and resolved_at is null;       -- expect 0
+-- after Willow onboards live:
+select stripe_livemode, stripe_account_status, charges_enabled, payouts_enabled
+  from studio_payment_settings where studio_id = '<willow_studio_id>';                    -- live row, enabled, both true
+-- after the client adds a live card:
+select count(*) from client_payment_methods
+  where stripe_livemode = true and status='active' and studio_id='<willow_studio_id>';    -- expect 1
+```
+**After the charge:**
+```
+select id, status, stripe_livemode, amount_cents, currency, refund_status
+  from payment_charge_attempts where stripe_livemode = true
+  order by created_at desc limit 1;                                                       -- one row, succeeded, livemode true
+select count(*) from ops_alerts where severity='critical' and resolved_at is null;       -- expect 0
+```
+Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0101`.
+
+#### 17.14.9 Operator surfaces to watch (during + after)
+
+- **Stripe live Dashboard** — the PaymentIntent + Charge on Willow's account (small CAD amount, 0 application fee).
+- **Connect account health** — Willow's account status, requirements, payouts.
+- **Webhook delivery** — Stripe → Webhooks: the live endpoint delivering 200 (no 4xx/5xx retries).
+- **Vercel production logs** — no `getStripe` / `STRIPE_SECRET_KEY` / `sync_studio_account_status` errors.
+- **Ops alerts** — `/admin/ops-alerts` + the read-only SQL count (critical/warning).
+- **Manual-review queue** — `/admin/payments/manual-review` (any `needs_manual_review`).
+- **Practitioner UI** — the "Charge succeeded" panel.
+- **Resend** — delivery of the (approved) live receipt.
+
+#### 17.14.10 Rollback / kill switch
+
+- **Kill-switch (fastest):** in Vercel Production **unset/flip `STRIPE_ALLOW_LIVE_MODE`** and **redeploy** → `getStripe()` fails closed on the live key → no further live charges (~1–3 min redeploy window; acceptable under supervision).
+- **Bad charge:** a live charge is **real money** — **refund it via the app (while still live) or in the Stripe Dashboard** *before* rolling back keys. Rollback does **not** un-charge.
+- **Full revert to test:** restore `STRIPE_SECRET_KEY=sk_test_`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_`, the **test** `STRIPE_WEBHOOK_SECRET`, unset `STRIPE_ALLOW_LIVE_MODE` → **fresh redeploy** → test mode restored.
+- **Live rows stay dormant, not deleted** — mode-scoping (`stripe_livemode`) hides them from the test deployment; nothing is destroyed.
+
+#### 17.14.11 Exact no-go conditions (STOP if ANY is true)
+
+- Legal/accounting copy not signed off (or reworded but the copy-only PR not merged).
+- Any Willow Connect check (§17.14.3) failing, or `requirements.currently_due` non-empty.
+- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0101`.
+- Any unresolved **critical** ops alert.
+- No live `studio_payment_settings` row, or no live active card on file.
+- A pre-existing `stripe_livemode=true` charge row (unexpected state).
+- Rollback/kill-switch not rehearsed, or no operator watching the surfaces.
+- Anything other than **one small charge** on **one operator-controlled card** at **one studio (Willow)**.
+
+#### 17.14.12 Explicitly out of scope
+
+Deposits · packages · gift cards · subscriptions · application fees · `checkout.sessions` · Stripe Terminal · any second studio · any broad or self-serve rollout · more than one small supervised charge. Each is a separate, future, owner-approved decision — none is enabled by the flip.
+
+---
+
+**This runbook (PR C) is documentation only. Live payments remain OFF. It flips no env, touches no Stripe, runs no payment, creates no webhook endpoint, changes no code or copy, adds no migration, and adds no Stripe SDK call. The env flip + first live charge are separate operator actions after this merges, after legal/accounting sign-off, and after every §17.14.1 go-condition is met.**
