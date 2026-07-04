@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the intake-submit notification)
+
+- **In-app notification on intake submit** (no migration, no email/SMS). `submitIntakeAction` now fires the PR #164 `recordPractitionerNotification` helper (`intake_submitted` event, added to the helper allowlist + the `PractitionerNotificationEventType` union) **in the winner branch of the atomic `in_progress → submitted` transition**, so it notifies the studio exactly once per submission (resubmit/retry never double-notifies). Studio-scoped, studio-wide visibility (`practitionerId: null`), RLS-gated to the studio. Privacy-safe: title "Intake submitted", body "{client name} submitted an intake form." (fallback "A client…"), href `/clients/{client_id}/intake` — no intake answers, no token, no health columns. Fire-and-forget: never rolls back the submit; insert failure logs a warning ops alert. **No payment/env/Stripe/live-payment change; `check-stripe-gates` 15 PASS.** Production DB stays **0101**, live payments disabled.
+
 ## Current production status (as of the PR C runbook)
 
 - **Controlled live-payment env-flip + first-live-charge runbook — FINALIZED (docs-only, PR C).** `docs/16 §17.14` now holds the authoritative operator runbook: go/no-go checklist, legal/accounting sign-off requirements (live receipt + client-facing card-authorization wording), Willow live Connect readiness, live webhook endpoint + events, exact Vercel Production env vars + flip order, first-live-charge procedure, read-only SQL, surfaces to watch, rollback/kill-switch, no-go conditions, out-of-scope. **Documentation only — no env, no Stripe, no payment, no webhook endpoint, no code/copy/migration/SDK change; live payments remain OFF.** The env flip + first charge are **separate operator actions** taken after this merges, after **legal/accounting sign-off** (mandatory), and after every go-condition is met. **If legal reworders the receipt/card-auth copy, a separate copy-only PR must merge before the flip.** Production stays **0101**, live disabled.

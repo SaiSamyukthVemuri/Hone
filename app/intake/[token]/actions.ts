@@ -9,6 +9,7 @@ import {
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
 
@@ -212,6 +213,37 @@ export async function submitIntakeAction(payload: {
   // delete allergies. Failures inside the sync are logged and swallowed;
   // the intake submit is the source of truth and is not rolled back.
   await syncIntakeToClient(merged, existing.client_id);
+
+  // Fire-and-forget in-app notification for the studio (PR #164 helper,
+  // studio-wide visibility). This runs ONLY in this winner branch: the
+  // early-exit (already submitted/reviewed) and the race-loser (zero rows
+  // updated) branches above both return before reaching here, so a
+  // resubmit / double-click / retry never double-notifies — the atomic
+  // status transition is the dedup. The helper never throws and never rolls
+  // back the (already-committed) submit; an insert failure logs to
+  // ops_alerts. The payload carries ONLY the client name (already shown to
+  // studio members) + safe text — never intake answers, and never the intake
+  // token; href is the authenticated intake review page.
+  const { data: client } = await admin
+    .from("clients")
+    .select("name")
+    .eq("id", existing.client_id)
+    .eq("studio_id", existing.studio_id)
+    .maybeSingle();
+  const clientName =
+    typeof client?.name === "string" ? client.name.trim() : "";
+  recordPractitionerNotification({
+    studioId: existing.studio_id,
+    practitionerId: null,
+    eventType: "intake_submitted",
+    title: "Intake submitted",
+    body: clientName
+      ? `${clientName} submitted an intake form.`
+      : "A client submitted an intake form.",
+    appointmentId: null,
+    clientId: existing.client_id,
+    href: `/clients/${existing.client_id}/intake`,
+  });
 
   return { ok: true };
 }
