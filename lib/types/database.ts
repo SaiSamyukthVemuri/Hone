@@ -795,6 +795,9 @@ export type ElectrolysisEntry = {
   intensity: number | null;
   duration_seconds: number | null;
   pulse_count: number;
+  // Seconds between high-frequency pulses; only set when pulse_count > 1
+  // (0.03–1.90s). NULL for single-pulse entries and pre-0102 rows.
+  pulse_delay_seconds: number | null;
   comments: string | null;
   // Migration 0011: parameters moved from session level to entry level.
   apilus_modality: ApilusModality | null;

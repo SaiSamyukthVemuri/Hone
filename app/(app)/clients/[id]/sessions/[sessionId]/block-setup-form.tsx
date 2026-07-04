@@ -29,6 +29,9 @@ import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
+  PULSE_DELAY_DEFAULT,
+  PULSE_DELAY_MIN,
+  PULSE_DELAY_MAX,
   apilusModalityLabel,
 } from "@/lib/constants";
 import {
@@ -156,6 +159,7 @@ type Draft = {
   galvanicIntensityPercent: string;
   unitsOfLye: string;
   pulseCount: string;
+  pulseDelay: string;
   hairsTreated: string;
   comments: string;
   // PR #190 (migration 0082): structured client response. All optional.
@@ -190,6 +194,7 @@ const EMPTY: Draft = {
   galvanicIntensityPercent: "",
   unitsOfLye: "",
   pulseCount: String(PULSE_COUNT_DEFAULT),
+  pulseDelay: String(PULSE_DELAY_DEFAULT),
   hairsTreated: "",
   comments: "",
   toleranceRating: "",
@@ -256,6 +261,10 @@ function initialDraft(
       firstEntry?.pulse_count != null
         ? String(firstEntry.pulse_count)
         : String(PULSE_COUNT_DEFAULT),
+    pulseDelay:
+      firstEntry?.pulse_delay_seconds != null
+        ? String(firstEntry.pulse_delay_seconds)
+        : String(PULSE_DELAY_DEFAULT),
     hairsTreated:
       firstEntry?.hairs_treated != null
         ? String(firstEntry.hairs_treated)
@@ -457,6 +466,17 @@ export function BlockSetupForm({
     if (!hairs.ok) return setError(hairs.error);
     const pulseStr = draft.pulseCount.trim();
     const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
+    // Pulse delay is only recorded when multiple pulses were done. When
+    // applicable, validate the range here so the practitioner gets the exact
+    // message; the server re-validates (defense-in-depth).
+    let pulseDelaySeconds: number | null = null;
+    if (pulseCount != null && pulseCount > 1 && draft.pulseDelay.trim() !== "") {
+      const pd = Number(draft.pulseDelay);
+      if (!Number.isFinite(pd) || pd < PULSE_DELAY_MIN || pd > PULSE_DELAY_MAX) {
+        return setError("Pulse delay must be between 0.03 and 1.90 seconds.");
+      }
+      pulseDelaySeconds = Math.round(pd * 100) / 100;
+    }
 
     // PR #190: structured client response, shared by create + edit.
     const clinicalResponse = {
@@ -479,6 +499,7 @@ export function BlockSetupForm({
       galvanicIntensityPercent: gInt.value,
       unitsOfLye: ul.value,
       pulseCount,
+      pulseDelaySeconds,
       hairsTreated: hairs.value,
       comments: draft.comments,
     };
@@ -1111,6 +1132,29 @@ export function BlockSetupForm({
                 Pulses per hair (1 to {PULSE_COUNT_MAX}).
               </span>
             </div>
+            {Number(draft.pulseCount) > 1 && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Pulse delay</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min={PULSE_DELAY_MIN}
+                    max={PULSE_DELAY_MAX}
+                    value={draft.pulseDelay}
+                    onChange={(e) => update("pulseDelay", e.target.value)}
+                    aria-label="Pulse delay in seconds"
+                    className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                  />
+                  <span className="text-sm text-neutral-500">seconds</span>
+                </div>
+                <span className="text-xs text-neutral-500">
+                  Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
+                  {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
+                </span>
+              </div>
+            )}
           </div>
         )}
 

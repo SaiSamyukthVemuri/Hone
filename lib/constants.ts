@@ -252,3 +252,12 @@ export const FLUENCE_DEFAULT = 30;
 export const PULSE_COUNT_MIN = 1;
 export const PULSE_COUNT_MAX = 10;
 export const PULSE_COUNT_DEFAULT = 1;
+
+// Pulse delay (seconds) between high-frequency pulses, recorded only when
+// multiple pulses are done (pulse_count > 1). Chloe's machine: range
+// 0.03–1.90s, auto-set to 0.5s. Two decimal places.
+export const PULSE_DELAY_MIN = 0.03;
+export const PULSE_DELAY_MAX = 1.9;
+export const PULSE_DELAY_DEFAULT = 0.5;
+export const PULSE_DELAY_RANGE_ERROR =
+  "Pulse delay must be between 0.03 and 1.90 seconds.";

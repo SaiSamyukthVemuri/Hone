@@ -17,6 +17,9 @@ import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
+  PULSE_DELAY_MIN,
+  PULSE_DELAY_MAX,
+  PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
 import type {
   ApilusModality,
@@ -617,6 +620,8 @@ export async function softDeleteSessionBlockAction(
 // now have their own fields. pulse_count and hairs_treated are unchanged.
 export type EntryReadingsInput = {
   pulseCount?: number | null;
+  // Seconds between high-frequency pulses; only meaningful when pulseCount > 1.
+  pulseDelaySeconds?: number | null;
   hairsTreated?: number | null;
   comments?: string | null;
   galvanicMa?: number | null;
@@ -630,6 +635,19 @@ export type EntryReadingsInput = {
 function clampPulseCount(n: number | null | undefined): number {
   if (n == null || !Number.isFinite(n)) return PULSE_COUNT_DEFAULT;
   return Math.min(PULSE_COUNT_MAX, Math.max(PULSE_COUNT_MIN, Math.trunc(n)));
+}
+
+// Pulse delay is stored ONLY when multiple pulses were done (pulse_count > 1);
+// otherwise it is null (single-pulse entries carry no delay). Returns the
+// rounded-to-2dp value when applicable, else null. Range validity is checked
+// separately in validateReadings so an out-of-range value returns a clean
+// error rather than being silently clamped.
+function resolvePulseDelaySeconds(r: EntryReadingsInput): number | null {
+  const count = clampPulseCount(r.pulseCount);
+  if (count <= 1) return null;
+  const v = r.pulseDelaySeconds;
+  if (v == null || !Number.isFinite(v)) return null;
+  return Math.round(v * 100) / 100;
 }
 
 // pulse_count defaults to 1, so it alone is NOT treated as "a reading was
@@ -678,6 +696,15 @@ function validateReadings(
   for (const [v, label] of percent) {
     if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) {
       return { ok: false, error: `${label} must be between 0 and 100.` };
+    }
+  }
+  // Pulse delay: validated only when multiple pulses were done (pulse_count >
+  // 1). A single-pulse entry carries no delay, so a stale draft value is
+  // ignored rather than rejected. When applicable it must be in [0.03, 1.90].
+  if (clampPulseCount(r.pulseCount) > 1 && r.pulseDelaySeconds != null) {
+    const d = r.pulseDelaySeconds;
+    if (!Number.isFinite(d) || d < PULSE_DELAY_MIN || d > PULSE_DELAY_MAX) {
+      return { ok: false, error: PULSE_DELAY_RANGE_ERROR };
     }
   }
   return { ok: true };
@@ -877,6 +904,7 @@ export async function createTreatmentAreaWithEntryAction(
         // Legacy generic intensity / duration_seconds are intentionally not
         // written; thermolysis / galvanic readings live in their own columns.
         pulse_count: clampPulseCount(readings.pulseCount),
+        pulse_delay_seconds: resolvePulseDelaySeconds(readings),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
         ...structuredReadingColumns((input.mode ?? null) as SessionMode | null, readings),
@@ -1037,6 +1065,7 @@ export async function updateTreatmentAreaWithEntryAction(
     // galvanic readings are written to their own columns.
     const entryUpdate: Record<string, unknown> = {
       pulse_count: clampPulseCount(readings.pulseCount),
+      pulse_delay_seconds: resolvePulseDelaySeconds(readings),
       hairs_treated: readings.hairsTreated ?? null,
       comments: normalizedComments(readings),
       ...structuredReadingColumns(
@@ -1072,6 +1101,7 @@ export async function updateTreatmentAreaWithEntryAction(
         areas: [area],
         probe_lot_id: null,
         pulse_count: clampPulseCount(readings.pulseCount),
+        pulse_delay_seconds: resolvePulseDelaySeconds(readings),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
         ...structuredReadingColumns(

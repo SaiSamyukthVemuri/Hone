@@ -84,10 +84,20 @@ export function ElectrolysisEntryRow({
     const label = formatSeconds(entry.thermolysis_duration_seconds);
     if (label) thermoParts.push(label);
   }
+  // Pulse delay only reads when multiple pulses were done (pulse_count > 1) and
+  // a value was recorded. numeric may arrive as string via PostgREST, so
+  // coerce before formatting to 2 decimals.
+  const pulseDelayLabel =
+    entry.pulse_count != null &&
+    entry.pulse_count > 1 &&
+    entry.pulse_delay_seconds != null
+      ? `${Number(entry.pulse_delay_seconds).toFixed(2)}s delay`
+      : null;
   if (isThermoish && entry.pulse_count != null) {
     thermoParts.push(
       `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
     );
+    if (pulseDelayLabel) thermoParts.push(pulseDelayLabel);
   }
 
   const hasStructured = galvanicParts.length > 0 || thermoParts.length > 0;
@@ -103,6 +113,7 @@ export function ElectrolysisEntryRow({
       meta.push(
         `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
       );
+      if (pulseDelayLabel) meta.push(pulseDelayLabel);
     }
     if (entry.intensity != null) meta.push(`${entry.intensity}%`);
     if (entry.duration_seconds != null) meta.push(`${entry.duration_seconds}s`);
@@ -143,6 +154,7 @@ export function ElectrolysisEntryRow({
         legacyReadings.push(
           `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
         );
+        if (pulseDelayLabel) legacyReadings.push(pulseDelayLabel);
       }
       if (entry.intensity != null) legacyReadings.push(`${entry.intensity}%`);
       if (entry.duration_seconds != null) {
