@@ -7,6 +7,9 @@ import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
+  PULSE_DELAY_DEFAULT,
+  PULSE_DELAY_MIN,
+  PULSE_DELAY_MAX,
 } from "@/lib/constants";
 import type { SessionBlock } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
@@ -39,6 +42,7 @@ type Draft = {
   galvanicIntensityPercent: string;
   unitsOfLye: string;
   pulse_count: string;
+  pulse_delay: string;
   hairs_treated: string;
   comments: string;
 };
@@ -53,6 +57,7 @@ function emptyDraft(): Draft {
     galvanicIntensityPercent: "",
     unitsOfLye: "",
     pulse_count: String(PULSE_COUNT_DEFAULT),
+    pulse_delay: String(PULSE_DELAY_DEFAULT),
     hairs_treated: "",
     comments: "",
   };
@@ -118,6 +123,7 @@ export function SimplifiedEntryForm({
     fd.set("galvanic_intensity_percent", draft.galvanicIntensityPercent);
     fd.set("units_of_lye", draft.unitsOfLye);
     fd.set("pulse_count", draft.pulse_count);
+    fd.set("pulse_delay_seconds", draft.pulse_delay);
     fd.set("hairs_treated", draft.hairs_treated);
     fd.set("comments", draft.comments);
 
@@ -295,6 +301,29 @@ export function SimplifiedEntryForm({
               Pulses per hair (1 to {PULSE_COUNT_MAX}).
             </span>
           </div>
+          {Number(draft.pulse_count) > 1 && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Pulse delay</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={PULSE_DELAY_MIN}
+                  max={PULSE_DELAY_MAX}
+                  value={draft.pulse_delay}
+                  onChange={(e) => update("pulse_delay", e.target.value)}
+                  aria-label="Pulse delay in seconds"
+                  className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                />
+                <span className="text-sm text-neutral-500">seconds</span>
+              </div>
+              <span className="text-xs text-neutral-500">
+                Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
+                {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
+              </span>
+            </div>
+          )}
         </div>
       )}
 

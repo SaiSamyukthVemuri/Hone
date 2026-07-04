@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the pulse-delay charting field)
+
+- **Charting: pulse delay between high-frequency pulses** (Chloe feedback, **PR A of a 2-part split**; the probe lot/batch auto-populate is **deferred to PR B**, no migration). **Migration 0102** adds `electrolysis_entries.pulse_delay_seconds numeric(4,2)` nullable + a range CHECK (`null or 0.03–1.90`) — additive, existing/single-pulse rows stay valid. When `pulse_count > 1`, both live charting forms show a "Pulse delay" field (seconds, default 0.5, range 0.03–1.90) that saves through both write paths and displays in `entry-row.tsx` ("0.50s delay"); null when `pulse_count <= 1`. **No payment/env/Stripe/live-payment change; `check-stripe-gates` 15 PASS.** **Repo migration max → 0102** (apply to prod via the migration-first process after merge, when ready — prod is still at 0101 until then).
+
 ## Current production status (as of the intake-submit notification)
 
 - **In-app notification on intake submit** (no migration, no email/SMS). `submitIntakeAction` now fires the PR #164 `recordPractitionerNotification` helper (`intake_submitted` event, added to the helper allowlist + the `PractitionerNotificationEventType` union) **in the winner branch of the atomic `in_progress → submitted` transition**, so it notifies the studio exactly once per submission (resubmit/retry never double-notifies). Studio-scoped, studio-wide visibility (`practitionerId: null`), RLS-gated to the studio. Privacy-safe: title "Intake submitted", body "{client name} submitted an intake form." (fallback "A client…"), href `/clients/{client_id}/intake` — no intake answers, no token, no health columns. Fire-and-forget: never rolls back the submit; insert failure logs a warning ops alert. **No payment/env/Stripe/live-payment change; `check-stripe-gates` 15 PASS.** Production DB stays **0101**, live payments disabled.

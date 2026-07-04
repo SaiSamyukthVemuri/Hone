@@ -9,9 +9,29 @@ import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
+  PULSE_DELAY_MIN,
+  PULSE_DELAY_MAX,
+  PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
+
+// Pulse delay is recorded only when multiple pulses were done (pulse_count >
+// 1); a single-pulse entry stores null. When applicable the value must be in
+// [0.03, 1.90] — an out-of-range value throws the same clean message the UI
+// shows. Rounded to 2 decimal places.
+function resolvePulseDelay(
+  value: FormDataEntryValue | null,
+  pulseCount: number,
+): number | null {
+  if (pulseCount <= 1) return null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < PULSE_DELAY_MIN || n > PULSE_DELAY_MAX) {
+    throw new Error(PULSE_DELAY_RANGE_ERROR);
+  }
+  return Math.round(n * 100) / 100;
+}
 
 function clampedPulseCount(value: FormDataEntryValue | null): number {
   if (typeof value !== "string" || value.trim() === "") return PULSE_COUNT_DEFAULT;
@@ -227,6 +247,12 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
       machineFrequency,
     }));
 
+  const pulseCount = clampedPulseCount(formData.get("pulse_count"));
+  const pulseDelaySeconds = resolvePulseDelay(
+    formData.get("pulse_delay_seconds"),
+    pulseCount,
+  );
+
   const supabase = await createClient();
   const { error } = await supabase.from("electrolysis_entries").insert({
     session_id: sessionId,
@@ -238,7 +264,8 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     mode,
     intensity: nullableNumber(formData.get("intensity")),
     duration_seconds: nullableNumber(formData.get("duration_seconds")),
-    pulse_count: clampedPulseCount(formData.get("pulse_count")),
+    pulse_count: pulseCount,
+    pulse_delay_seconds: pulseDelaySeconds,
     comments: nullableString(formData.get("comments")),
     apilus_modality: apilusModality,
     energy_level: energyLevel,
