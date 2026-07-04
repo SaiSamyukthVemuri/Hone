@@ -20,7 +20,7 @@
 // actions already accept every field used here — no action behavior
 // change.
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
   COMMON_COMMENTS,
@@ -127,10 +127,11 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
-  // PR #279 (Chloe charting feedback): latest current probe lot/batch from the
-  // sterile-item records, offered for the practitioner to CONFIRM (never
-  // auto-saved). Null when there is nothing to suggest.
-  suggestedProbeLot?: string | null;
+  // Feature A (Chloe charting feedback): most recent lot/batch used per probe
+  // (probe_key) in this studio. The form auto-populates the lot field from the
+  // map for the selected probe (studio-scoped, never auto-confirmed). Empty
+  // when there is nothing to suggest.
+  probeLotByProbeKey?: Record<string, string>;
   onCancel: () => void;
 };
 
@@ -293,12 +294,20 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
-  suggestedProbeLot = null,
+  probeLotByProbeKey = {},
   onCancel,
 }: Props) {
   const isEdit = !!block;
   const [draft, setDraft] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency),
+  );
+  // Feature A: whether the practitioner has typed/edited the lot themselves. A
+  // saved lot on an existing block counts as manual (never clobber it). While
+  // false, the lot field auto-populates from the same-probe suggestion as the
+  // practitioner picks a probe; once they edit, we stop suggesting so a probe
+  // switch never overwrites a manual value.
+  const [lotEditedManually, setLotEditedManually] = useState<boolean>(
+    () => (block?.probe_lot_number ?? "").trim() !== "",
   );
   const [error, setError] = useState<string | null>(null);
   // PR #191: inline feedback after "Copy settings" so the
@@ -312,6 +321,28 @@ export function BlockSetupForm({
   const [editingArea, setEditingArea] = useState(
     () => !(draft.primaryArea.trim().length > 0),
   );
+
+  // Feature A: auto-populate the lot/batch from the most-recent-for-this-probe
+  // suggestion as the practitioner selects a probe. Runs when probe_key changes;
+  // does NOTHING once the practitioner has manually edited the lot (so a probe
+  // switch never clobbers a typed value). Auto-populated lots are always
+  // UNCONFIRMED — the practitioner must confirm or override. If the selected
+  // probe has no prior lot, the field is left blank (a prior auto-suggestion for
+  // a different probe is cleared).
+  useEffect(() => {
+    if (lotEditedManually) return;
+    const suggestion = draft.probeKey
+      ? probeLotByProbeKey[draft.probeKey] ?? ""
+      : "";
+    setDraft((d) =>
+      d.probeLotNumber === suggestion
+        ? d
+        : { ...d, probeLotNumber: suggestion, probeLotConfirmed: false },
+    );
+    // Intentionally excludes draft.probeLotNumber: we react to the PROBE
+    // changing, not to our own write.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.probeKey, probeLotByProbeKey, lotEditedManually]);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -930,15 +961,19 @@ export function BlockSetupForm({
           <input
             type="text"
             value={draft.probeLotNumber}
-            onChange={(e) =>
-              // Editing the lot un-confirms it: a freshly typed value has not
-              // been confirmed for this treatment yet.
+            onChange={(e) => {
+              const value = e.target.value;
+              // Editing the lot un-confirms it (a freshly typed value has not
+              // been confirmed) and marks it a manual edit so a later probe
+              // switch never clobbers it. Clearing it back to empty re-enables
+              // auto-suggestion for the next probe.
               setDraft((d) => ({
                 ...d,
-                probeLotNumber: e.target.value,
+                probeLotNumber: value,
                 probeLotConfirmed: false,
-              }))
-            }
+              }));
+              setLotEditedManually(value.trim() !== "");
+            }}
             placeholder="e.g. 460941"
             maxLength={120}
             className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
@@ -948,31 +983,16 @@ export function BlockSetupForm({
           </span>
         </label>
 
-        {/* PR #279: suggestion from records (only when there is one and the
-            field is empty). Tapping "Use" fills the field but does NOT confirm. */}
-        {suggestedProbeLot && draft.probeLotNumber.trim() === "" && (
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-neutral-500">
-              Suggested from records:{" "}
-              <span className="font-medium text-neutral-700 dark:text-neutral-300">
-                {suggestedProbeLot}
-              </span>
+        {/* Feature A: the lot field auto-populates (unconfirmed) from the most
+            recent lot used for THIS probe. This line shows while the value is
+            still the un-edited suggestion, prompting an explicit confirm. */}
+        {!lotEditedManually &&
+          draft.probeLotNumber.trim() !== "" &&
+          draft.probeLotNumber === probeLotByProbeKey[draft.probeKey] && (
+            <span className="text-xs text-neutral-500">
+              Suggested from last use. Please confirm this lot/batch is correct.
             </span>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft((d) => ({
-                  ...d,
-                  probeLotNumber: suggestedProbeLot,
-                  probeLotConfirmed: false,
-                }))
-              }
-              className="rounded-full border border-neutral-300 px-3 py-1 font-medium hover:border-neutral-500 dark:border-neutral-700"
-            >
-              Use this lot
-            </button>
-          </div>
-        )}
+          )}
 
         {/* PR #279: confirm control + state. Only meaningful once a lot is
             present; confirmation is explicit (never automatic). */}
@@ -991,12 +1011,12 @@ export function BlockSetupForm({
               }
             >
               {draft.probeLotConfirmed
-                ? "Confirmed for this treatment ✓"
-                : "Confirm lot for this treatment"}
+                ? "Confirmed ✓"
+                : "Confirm lot/batch"}
             </button>
-            {!draft.probeLotConfirmed && (
+            {!draft.probeLotConfirmed && lotEditedManually && (
               <span className="text-neutral-500">
-                Manually entered / not confirmed
+                Lot/batch changed for this entry.
               </span>
             )}
           </div>

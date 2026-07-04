@@ -48,17 +48,43 @@ describe("item 2: underarms does not flood the whole Arms zone", () => {
   });
 });
 
-describe("item 3: probe-lot suggestion + explicit confirm", () => {
-  it("suggests from records but never auto-confirms", () => {
-    expect(RK).toMatch(/getLatestProbeLotSuggestion/);
-    expect(PAGE).toMatch(/getLatestProbeLotSuggestion/);
-    expect(FORM).toMatch(/suggestedProbeLot/);
-    expect(FORM).toMatch(/Suggested from records/);
-    expect(FORM).toMatch(/Confirm lot for this treatment/);
+describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () => {
+  it("suggests the most-recent lot for the SAME probe (probe_key map), never auto-confirms", () => {
+    // Feature A replaced the studio-wide sterile-item suggestion with a
+    // probe_key -> latest-lot map, auto-populated per selected probe.
+    expect(RK).toMatch(/getLatestProbeLotByProbeKey/);
+    expect(PAGE).toMatch(/getLatestProbeLotByProbeKey/);
+    expect(PAGE).not.toMatch(/getLatestProbeLotSuggestion/);
+    expect(FORM).toMatch(/probeLotByProbeKey/);
+    expect(FORM).toMatch(
+      /Suggested from last use\. Please confirm this lot\/batch is correct\./,
+    );
+    expect(FORM).toMatch(/Confirm lot\/batch/);
+    // Old copy is gone.
+    expect(FORM).not.toMatch(/Suggested from records/);
   });
-  it("typing the lot un-confirms it; confirmation is its own action", () => {
+  it("auto-populates from the map for the selected probe, always unconfirmed", () => {
+    // The reactive effect keys off probe_key and writes the suggestion
+    // unconfirmed; it never runs once the practitioner has edited manually.
+    expect(FORM).toMatch(/probeLotByProbeKey\[draft\.probeKey\]/);
+    expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
+    expect(FORM).toMatch(
+      /probeLotNumber: suggestion,\s*\n?\s*probeLotConfirmed: false/,
+    );
+  });
+  it("typing the lot un-confirms it + marks a manual edit (probe switch won't clobber)", () => {
     expect(FORM).toMatch(/probeLotConfirmed: false/);
+    expect(FORM).toMatch(/setLotEditedManually\(value\.trim\(\) !== ""\)/);
     expect(FORM).toMatch(/update\("probeLotConfirmed", !draft\.probeLotConfirmed\)/);
+  });
+  it("the query is studio-scoped, same-probe, and excludes null/blank/deleted", () => {
+    expect(RK).toMatch(/\.eq\("studio_id", studioId\)/);
+    expect(RK).toMatch(/\.not\("probe_key", "is", null\)/);
+    expect(RK).toMatch(/\.not\("probe_lot_number", "is", null\)/);
+    expect(RK).toMatch(/\.is\("deleted_at", null\)/);
+    // Prefer confirmed, then newest.
+    expect(RK).toMatch(/\.order\("probe_lot_confirmed", \{ ascending: false \}\)/);
+    expect(RK).toMatch(/\.order\("created_at", \{ ascending: false \}\)/);
   });
   it("the action only stores confirmed=true when a lot is present", () => {
     expect(ACTIONS).toMatch(/probe_lot_confirmed:\s*\n?\s*Boolean\(input\.probeLotConfirmed\)/);

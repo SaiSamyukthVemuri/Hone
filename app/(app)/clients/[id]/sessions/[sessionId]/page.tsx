@@ -34,7 +34,7 @@ import {
   getTreatmentPlanWithCount,
 } from "@/lib/treatment-plans/queries";
 import { getSessionNumberForClient } from "@/lib/treatment-time/queries";
-import { getLatestProbeLotSuggestion } from "@/lib/record-keeping/queries";
+import { getLatestProbeLotByProbeKey } from "@/lib/record-keeping/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
@@ -160,12 +160,16 @@ export default async function SessionDetailPage({
       : null;
 
   // PR #279 (Chloe charting feedback): the latest current probe lot/batch from
-  // the studio's sterile-item records, offered as a CONFIRMABLE suggestion while
-  // charting (never auto-confirmed). Electrolysis only; read-only.
-  const suggestedProbeLot =
+  // Feature A (Chloe charting feedback): the most recent lot/batch used for
+  // each probe (probe_key) in THIS studio, as a probe_key -> lot map. The
+  // charting form auto-populates the lot field from the map for the probe the
+  // practitioner selects (never auto-confirmed; studio-scoped). Electrolysis
+  // only; read-only. Replaces the pre-Feature-A studio-wide sterile-item
+  // suggestion on this field (which was not probe-specific).
+  const probeLotByProbeKey =
     session.modality === "electrolysis"
-      ? await getLatestProbeLotSuggestion(studio.id)
-      : null;
+      ? await getLatestProbeLotByProbeKey(studio.id)
+      : {};
 
   // Treatment plan attachment context: the active plans the practitioner
   // can attach to (excludes closed), plus the resolved attached plan + its
@@ -414,7 +418,7 @@ export default async function SessionDetailPage({
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
-          suggestedProbeLot={suggestedProbeLot}
+          probeLotByProbeKey={probeLotByProbeKey}
           // UI defaulting only: seed a NEW treatment area from the attached
           // plan, or the client's single active plan when unattached (see
           // above). Never overrides practitioner choice or mutates data.

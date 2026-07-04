@@ -69,9 +69,9 @@ type Props = {
   // treatment-area drafts from the practitioner's last-used value;
   // editable per area; the block row still stores the actual value.
   defaultMachineFrequency?: string | null;
-  // PR #279 (Chloe charting feedback): latest current probe lot/batch from the
-  // sterile-item records, offered as a confirmable suggestion (never auto-saved).
-  suggestedProbeLot?: string | null;
+  // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
+  // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
+  probeLotByProbeKey?: Record<string, string>;
 };
 
 export function SessionBlocksView({
@@ -82,7 +82,7 @@ export function SessionBlocksView({
   clientTagLabels = [],
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
-  suggestedProbeLot = null,
+  probeLotByProbeKey = {},
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -99,7 +99,7 @@ export function SessionBlocksView({
           sessionId={sessionId}
           clientId={clientId}
           clientTagLabels={clientTagLabels}
-          suggestedProbeLot={suggestedProbeLot}
+          probeLotByProbeKey={probeLotByProbeKey}
         />
       ))}
 
@@ -128,7 +128,7 @@ export function SessionBlocksView({
           clientId={clientId}
           previousBlock={previousBlock}
           savedBlocks={blocks}
-          suggestedProbeLot={suggestedProbeLot}
+          probeLotByProbeKey={probeLotByProbeKey}
           // PR #191 (Chloe smoke feedback): the plan-area seed applies
           // only to the FIRST treatment area of the session. Adding
           // another area starts blank; a new area is usually a
@@ -158,13 +158,13 @@ function BlockSection({
   sessionId,
   clientId,
   clientTagLabels,
-  suggestedProbeLot = null,
+  probeLotByProbeKey = {},
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
   clientTagLabels: ReadonlyArray<string>;
-  suggestedProbeLot?: string | null;
+  probeLotByProbeKey?: Record<string, string>;
 }) {
   const [editing, setEditing] = useState(false);
   // Extra passes are optional and collapsed by default — the first reading
@@ -247,7 +247,7 @@ function BlockSection({
           previousBlock={null}
           block={block}
           firstEntry={entriesSorted[0] ?? null}
-          suggestedProbeLot={suggestedProbeLot}
+          probeLotByProbeKey={probeLotByProbeKey}
           onCancel={() => setEditing(false)}
         />
       ) : (
