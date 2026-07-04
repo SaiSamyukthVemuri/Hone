@@ -30,6 +30,7 @@ export function PortalCardOnFileCard({
   card,
   publishableKey,
   livemode = false,
+  studioName = "",
 }: {
   card: ActiveCardSummary;
   // Resolved by the server-rendered portal page via
@@ -37,10 +38,13 @@ export function PortalCardOnFileCard({
   // returned ok; this component never renders if the gate is closed.
   publishableKey: string;
   // PR #323: deployment mode (server-computed). Gates the client-facing
-  // card-authorization copy. Defaults to false (test) — the existing "no live
-  // card will be charged" wording. The live wording needs legal sign-off (#324).
+  // card-authorization copy. In live mode it shows the lawyer-approved
+  // authorization; in test mode the "no live card will be charged" warning.
   livemode?: boolean;
+  // Studio name for the authorization copy. Falls back to "the studio".
+  studioName?: string;
 }) {
+  const studio = studioName.trim() || "the studio";
   const [replacing, setReplacing] = useState(false);
 
   const summary = (
@@ -65,11 +69,49 @@ export function PortalCardOnFileCard({
           style={{ color: "#6B6B6B" }}
         >
           Use this if your card expired, was replaced, or you want
-          the studio to use a different card for authorized fees.{" "}
-          {livemode
-            ? "Your card on file may be charged by the studio for authorized fees per the policy you agreed to."
-            : "Test mode only. No live card will be charged."}
+          the studio to use a different card for authorized fees.
         </p>
+        {livemode ? (
+          <div
+            className="flex flex-col gap-2 text-[12px] leading-[1.5]"
+            style={{ color: "#6B6B6B" }}
+          >
+            <p className="font-medium text-[#0A0A0A]">
+              Card-on-file authorization
+            </p>
+            <p>
+              By saving a payment card on file, you authorize {studio} to charge
+              that card for amounts you have agreed to pay under {studio}&apos;s
+              booking, cancellation, no-show, and payment policies.
+            </p>
+            <p>These charges may include, where applicable:</p>
+            <ul className="list-disc pl-5">
+              <li>appointment or treatment charges you approve;</li>
+              <li>no-show fees;</li>
+              <li>late-cancellation fees;</li>
+              <li>
+                other fees that are clearly disclosed to you and authorized
+                under the studio&apos;s policy.
+              </li>
+            </ul>
+            <p>
+              Your card will only be charged by {studio} for amounts that are
+              permitted under the policy you agreed to. Hone is the software
+              platform and is not the treatment provider or merchant of record.
+            </p>
+            <p>
+              You may contact {studio} with any questions about charges, refunds,
+              cancellation fees, or no-show fees.
+            </p>
+          </div>
+        ) : (
+          <p
+            className="text-[12px] leading-[1.5]"
+            style={{ color: "#6B6B6B" }}
+          >
+            Test mode only. No live card will be charged.
+          </p>
+        )}
         <button
           type="button"
           onClick={() => setReplacing(true)}
@@ -104,6 +146,7 @@ export function PortalCardOnFileCard({
       <PortalPaymentMethodForm
         publishableKey={publishableKey}
         livemode={livemode}
+        studioName={studioName}
         mode="replace"
         autoStart
         onCancel={() => setReplacing(false)}

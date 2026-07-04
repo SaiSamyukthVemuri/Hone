@@ -258,6 +258,38 @@ describe("sendPaymentChargeReceipt: NO new Stripe / SMS / live-mode", () => {
   });
 });
 
+describe("sendPaymentChargeReceipt: card last-4 lookup is display-only + tenant-scoped", () => {
+  it("selects ONLY last4 from client_payment_methods (no full card / other card data)", () => {
+    expect(HELPER).toMatch(/\.from\("client_payment_methods"\)/);
+    expect(HELPER).toMatch(/\.select\("last4"\)/);
+    // Never selects a full card number or PAN-like column.
+    expect(HELPER).not.toMatch(/\.select\([^)]*card_number/);
+  });
+
+  it("scopes the lookup by (payment method id, studio, client, livemode) — tenant isolation", () => {
+    const block = HELPER.slice(
+      HELPER.indexOf('.from("client_payment_methods")'),
+    ).slice(0, 400);
+    expect(block).toMatch(/\.eq\("id", attempt\.client_payment_method_id\)/);
+    expect(block).toMatch(/\.eq\("studio_id", attempt\.studio_id\)/);
+    expect(block).toMatch(/\.eq\("client_id", attempt\.client_id\)/);
+    expect(block).toMatch(/\.eq\("stripe_livemode", attempt\.stripe_livemode\)/);
+  });
+
+  it("passes the fetched last4 to the receipt template (display-only)", () => {
+    expect(HELPER).toMatch(/last4: cardLast4/);
+    // The read is display-only — it must NOT gate/branch the charge or refund.
+    expect(HELPER).not.toMatch(/paymentIntents\.|refunds\.create/);
+  });
+
+  it("is only a READ — no update/insert/delete on client_payment_methods", () => {
+    const block = HELPER.slice(
+      HELPER.indexOf('.from("client_payment_methods")'),
+    ).slice(0, 400);
+    expect(block).not.toMatch(/\.update\(|\.insert\(|\.delete\(/);
+  });
+});
+
 describe("sendPaymentChargeReceiptAction (server action)", () => {
   it("'use server' directive present (file-level)", () => {
     expect(ACTION).toMatch(/^"use server";/);

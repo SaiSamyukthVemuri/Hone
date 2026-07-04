@@ -650,6 +650,7 @@ export default async function PortalHomePage() {
                   <PortalPaymentMethodForm
                     publishableKey={publishableKeyResolution.key}
                     livemode={stripeLivemode}
+                    studioName={studio.name}
                   />
                 </section>
               )}
@@ -1048,6 +1049,7 @@ export default async function PortalHomePage() {
                   card={activeCard}
                   publishableKey={publishableKeyResolution.key}
                   livemode={stripeLivemode}
+                  studioName={studio.name}
                 />
               ) : (
                 <section className="flex flex-col gap-2">
