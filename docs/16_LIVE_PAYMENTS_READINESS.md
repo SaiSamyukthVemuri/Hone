@@ -1456,3 +1456,77 @@ Deposits · packages · gift cards · subscriptions · application fees · `chec
 ---
 
 **This runbook (PR C) is documentation only. Live payments remain OFF. It flips no env, touches no Stripe, runs no payment, creates no webhook endpoint, changes no code or copy, adds no migration, and adds no Stripe SDK call. The env flip + first live charge are separate operator actions after this merges, after legal/accounting sign-off, and after every §17.14.1 go-condition is met.**
+
+### 17.15 Willow/Chloe first-live-charge operator checklist
+
+> **READ FIRST — Live payments are still OFF.** This checklist is DOCUMENTATION ONLY. It **does not authorize the env flip** and changes no code/env/Stripe/webhook/copy. The **env flip and the first live charge are separate, supervised operator actions**, taken by hand only after every box below is satisfied. Scope is **Willow / Chloe only, one small supervised live charge** — **no** deposits, **no** packages, **no** application fees, **no** checkout, **no** Stripe Terminal, **no** second studio, **no** broad rollout, **no** self-serve.
+
+This is the concise operator condensation of §17.14; §17.14 remains the authoritative detail. Merged-state prerequisites already satisfied: ✅ legal/accounting copy approved + merged · ✅ production DB at migration 0102 · ✅ runtime/webhook/receipt live-capable · ✅ `check-stripe-gates` 15 PASS · live payments OFF. **Go order: §1 → §2 → §3 → §4 → §5 (all green) → §6 → §7 (→ §8), with §9 rehearsed and §10 clear before charging.**
+
+#### 1. Willow live Stripe Connect onboarding (in-app, Settings → Payments, LIVE)
+- [ ] `charges_enabled = true`
+- [ ] `payouts_enabled = true`
+- [ ] `details_submitted = true`; `requirements.currently_due` empty (`eventually_due` reviewed)
+- [ ] CAD bank account added + verified
+- [ ] Statement descriptor reviewed on the connected account
+- [ ] Dispute-notification email set; 2FA on the Stripe account; Radar reviewed
+
+#### 2. Live connected-account webhook endpoint (Stripe LIVE Dashboard)
+- [ ] Endpoint URL `https://hone.care/api/stripe/webhook`
+- [ ] "Listen to events on Connected accounts" enabled
+- [ ] Events subscribed exactly: `account.updated`, `capability.updated`, `setup_intent.succeeded`, `setup_intent.setup_failed`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`
+- [ ] Copy its `whsec_` for §3
+
+#### 3. Vercel Production env vars (set ALL in one batch, before any redeploy)
+- [ ] `STRIPE_ALLOW_LIVE_MODE=true`
+- [ ] `STRIPE_SECRET_KEY=sk_live_…`
+- [ ] `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_…` (build-time inlined → needs a fresh build)
+- [ ] `STRIPE_WEBHOOK_SECRET=whsec_…` (the live endpoint's)
+- [ ] Confirm `STRIPE_CONNECT_COUNTRY=CA`
+- [ ] ⚠️ NEVER deploy `sk_live_` while `STRIPE_ALLOW_LIVE_MODE` is unset/false (hard-fails every Stripe route)
+
+#### 4. Fresh production deploy
+- [ ] Trigger one fresh production build/deploy (full build so `pk_live_` inlines)
+- [ ] `hone.care` loads; Vercel logs show no `getStripe`/`STRIPE_SECRET_KEY` throw
+
+#### 5. Pre-charge verification
+- [ ] `node scripts/check-stripe-gates.mjs` = 15 PASS
+- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0102
+- [ ] Read-only SQL (`supabase db query --linked`):
+  - [ ] `select count(*) from payment_charge_attempts where stripe_livemode = true;` → 0
+  - [ ] `select count(*) from ops_alerts where severity='critical' and resolved_at is null;` → 0
+  - [ ] live `studio_payment_settings` row: `stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true`
+- [ ] Supervised client (recommend Chloe's own real card) has signed the card-authorization consent + added a live active card on file via the portal
+
+#### 6. One small supervised live charge
+- [ ] Practitioner prepares a small charge (session payment or small manual fee), CAD
+- [ ] Run charge (two-click confirm) → "Charge succeeded."
+- [ ] `payment_intent.succeeded` webhook reconciles the row (idempotent)
+- [ ] Receipt sends with the approved live wording ("Payment method: Card ending in {last4}", no tax-invoice / merchant-of-record implication)
+
+#### 7. Post-charge verification
+- [ ] Stripe LIVE Dashboard: one PaymentIntent + Charge on Willow's account, `succeeded`, correct small CAD amount, 0 application fee; webhook delivered 200
+- [ ] DB: exactly one `payment_charge_attempts` row `stripe_livemode=true, status='succeeded'`; 0 critical unresolved ops_alerts
+- [ ] Client received the live receipt; no test-mode wording
+- [ ] Watch: Connect account health · webhook deliveries · Vercel logs · `/admin/ops-alerts` · `/admin/payments/manual-review` · Resend
+
+#### 8. Optional refund (recommended close-out)
+- [ ] Issue a refund via the app's refund path → returns funds + validates the live refund lifecycle
+- [ ] `charge.refunded` reconciles → `refund_status='succeeded'`
+
+#### 9. Rollback / kill switch
+- [ ] Kill switch (fastest): unset `STRIPE_ALLOW_LIVE_MODE` + redeploy → `getStripe()` fails closed (no further live charges; ~1–3 min)
+- [ ] Bad charge: refund it via the app (or Stripe Dashboard) BEFORE rolling back keys — rollback does not un-charge
+- [ ] Full revert: restore `sk_test_` + `pk_test_` + the test `STRIPE_WEBHOOK_SECRET` + unset the flag → fresh redeploy → test mode restored
+- [ ] Live rows stay dormant, not deleted (mode-scoping hides them)
+
+#### 10. Hard no-go conditions (STOP if ANY is true)
+- [ ] Any §1 Connect check failing, or `currently_due` non-empty
+- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0102
+- [ ] Any unresolved critical ops alert
+- [ ] No live `studio_payment_settings` row, or no live active card on file
+- [ ] A pre-existing `stripe_livemode=true` charge row (unexpected)
+- [ ] Rollback/kill-switch not rehearsed, or no operator watching
+- [ ] Anything beyond one small charge, one operator-controlled card, one studio (Willow) — no deposits/packages/application fees/checkout/Terminal/second studio/broad rollout/self-serve
+
+**§17.15 is documentation only. Live payments remain OFF. It does not authorize the env flip; the env flip and the first live charge are supervised operator actions taken after every box above is satisfied. Willow/Chloe only; one small live charge only.**
