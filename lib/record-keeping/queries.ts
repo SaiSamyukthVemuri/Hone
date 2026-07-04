@@ -88,6 +88,48 @@ export async function getLatestProbeLotSuggestion(
   return lot ? lot : null;
 }
 
+// Feature A (Chloe charting feedback): while charting, suggest the most recent
+// lot/batch used for the SAME probe (probe_key) in the SAME studio, so the
+// practitioner can confirm/override it. Returns a probe_key -> lot map so the
+// form can react to the probe the practitioner selects without a round-trip.
+//
+//   * Studio-scoped: .eq("studio_id") + RLS (session_blocks_member_all). A
+//     studio never sees another studio's lots.
+//   * Same probe only: keyed by probe_key; rows with a null probe_key never
+//     contribute (a legacy free-text probe gets no suggestion → blank field).
+//   * Excludes null/blank lots and soft-deleted blocks.
+//   * Prefers a CONFIRMED lot where available, then the newest: the ordering
+//     (probe_lot_confirmed desc, created_at desc) puts the preferred row first
+//     per probe_key, and the first row per key wins.
+//
+// The suggestion is a hint only — the form auto-populates it UNCONFIRMED; the
+// practitioner must confirm or override.
+export async function getLatestProbeLotByProbeKey(
+  studioId: string,
+): Promise<Record<string, string>> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("session_blocks")
+    .select("probe_key, probe_lot_number, probe_lot_confirmed, created_at")
+    .eq("studio_id", studioId)
+    .not("probe_key", "is", null)
+    .not("probe_lot_number", "is", null)
+    .is("deleted_at", null)
+    .order("probe_key", { ascending: true })
+    .order("probe_lot_confirmed", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  const map: Record<string, string> = {};
+  for (const row of data ?? []) {
+    const key = (row.probe_key as string | null)?.trim();
+    const lot = (row.probe_lot_number as string | null)?.trim();
+    if (!key || !lot) continue;
+    // First row per probe_key wins: confirmed-first, then newest.
+    if (!(key in map)) map[key] = lot;
+  }
+  return map;
+}
+
 export async function getDisinfectantRecords(
   studioId: string,
 ): Promise<RecordKeepingDisinfectant[]> {

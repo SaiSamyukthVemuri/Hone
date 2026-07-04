@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the probe-lot auto-populate feature)
+
+- **Charting: probe lot/batch auto-populate + confirm** (Chloe feedback, Feature A — the deferred half; **no migration**). New server helper `getLatestProbeLotByProbeKey(studioId)` returns a studio-scoped `probe_key → latest lot` map from `session_blocks` (prefers confirmed, then newest; excludes null probe_key / blank lot / deleted). The charting form (`block-setup-form.tsx`) auto-populates the lot field **unconfirmed** for the selected probe ("Suggested from last use. Please confirm this lot/batch is correct." + "Confirm lot/batch"); editing un-confirms + marks manual so a probe switch never clobbers a typed value; no prior lot → blank. **Replaced** the old studio-wide sterile-item suggestion on this field. Reuses `probe_key`/`probe_lot_number`/`probe_lot_confirmed` — no schema change. **No payment/env/Stripe/live-payment change; `check-stripe-gates` 15 PASS.** Production DB stays **0102**.
+
 ## Current production status (as of the pulse-delay charting field)
 
 - **Charting: pulse delay between high-frequency pulses** (Chloe feedback, **PR A of a 2-part split**; the probe lot/batch auto-populate is **deferred to PR B**, no migration). **Migration 0102** adds `electrolysis_entries.pulse_delay_seconds numeric(4,2)` nullable + a range CHECK (`null or 0.03–1.90`) — additive, existing/single-pulse rows stay valid. When `pulse_count > 1`, both live charting forms show a "Pulse delay" field (seconds, default 0.5, range 0.03–1.90) that saves through both write paths and displays in `entry-row.tsx` ("0.50s delay"); null when `pulse_count <= 1`. **No payment/env/Stripe/live-payment change; `check-stripe-gates` 15 PASS.** **Repo migration max → 0102** (apply to prod via the migration-first process after merge, when ready — prod is still at 0101 until then).
