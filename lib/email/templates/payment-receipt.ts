@@ -71,15 +71,15 @@ export type PaymentReceiptEmailInput = {
   chargedAt: Date;
   stripePaymentIntentId: string;
   stripeChargeId: string | null;
-  // PR #201 (live payments gate preparation). Copy readiness ONLY:
-  // false (the default) renders the unchanged test-mode receipt;
-  // true renders the cautious live-mode wording below. The sender
-  // (lib/billing/payment-receipt.ts) still REFUSES any row whose
-  // stripe_livemode !== false and passes livemode: false explicitly,
-  // and the payment_charge_attempts_livemode_false_check keeps live
-  // rows out of the table entirely, so the live branch is
-  // structurally unreachable until controlled live enablement
-  // (future PR #202).
+  // Card last-4 for the live receipt's "Payment method: Card ending in {last4}"
+  // line (lawyer-approved copy). Display-only, fetched by the sender from the
+  // card row scoped to (studio, client, payment method, livemode). Null when
+  // unavailable → the receipt renders the neutral "Card on file" fallback.
+  // Never contains a full card number or any other card data.
+  last4?: string | null;
+  // false (the default) renders the test-mode receipt; true renders the
+  // lawyer-approved live-mode wording. The sender passes the row's real mode
+  // (PR #323); a live receipt is only sent once live rows exist (post env flip).
   livemode?: boolean;
 };
 
@@ -108,20 +108,19 @@ const NO_TAX_BODY_DISCLAIMER =
 const REFUND_AVAILABLE_BODY_DISCLAIMER =
   "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone.";
 
-// PR #201. Live-mode receipt copy, PENDING legal/accounting review
-// (docs/18 §10): cautious wording only. It deliberately does NOT
-// say "tax receipt", "official invoice", "charitable receipt",
-// "pay now", or "send invoice", makes no tax-compliance claim, and
-// promises nothing about refund policy beyond pointing at the
-// studio. Final wording must be approved by legal/accounting before
-// controlled live enablement; tests pin the absence of the risky
-// phrases and of all TEST MODE language in this branch.
+// Live-mode receipt copy — LAWYER-APPROVED (2026-07-04). It makes no
+// tax-invoice claim, promises no refund, and states Hone is the software
+// platform and not the treatment provider or merchant of record. Tests pin
+// this exact wording + the absence of tax-invoice / merchant-of-record /
+// refund-promise phrasing.
 const LIVE_BODY_LEAD = (studio: string) =>
-  `Receipt for card payment processed by ${studio}.`;
-const LIVE_NO_TAX_BODY_DISCLAIMER =
-  "No tax calculation is included on this receipt unless separately stated by the studio.";
-const LIVE_SUPPORT_BODY_LINE =
-  "For questions about this payment or refund eligibility, contact the studio.";
+  `This receipt confirms that a card payment was processed by ${studio}.`;
+const LIVE_TAX_DISCLAIMER = (studio: string) =>
+  `This receipt confirms payment only. It is not a tax invoice unless ${studio} separately states that tax is included or provides a separate tax invoice.`;
+const LIVE_SUPPORT_BODY_LINE = (studio: string) =>
+  `For questions about this payment, refund eligibility, cancellation fees, no-show fees, or services provided, please contact ${studio} directly.`;
+const LIVE_PLATFORM_NOTE =
+  "Hone is the software platform used by the studio and is not the treatment provider or merchant of record.";
 
 function escapeHtml(s: string): string {
   return s
@@ -167,51 +166,58 @@ export function buildPaymentReceiptEmail(
   const chargeId = input.stripeChargeId;
   const contact = input.studioContactEmail?.trim() || null;
   const livemode = input.livemode === true;
+  const last4 = input.last4?.trim() || null;
+  // Neutral fallback when the card last-4 is unavailable — never blocks the
+  // receipt over a missing display detail. Never a full card number.
+  const paymentMethod = last4 ? `Card ending in ${last4}` : "Card on file";
 
-  // PR #201: one slot per disclaimer position. The test branch is
-  // byte-identical to the pre-#201 template (pinned); the live
-  // branch swaps in the cautious wording above and never mentions
-  // TEST MODE.
+  // Mode-gated copy. TEST branch: unchanged test-mode wording. LIVE branch:
+  // lawyer-approved wording (no tax-invoice claim, no refund promise, states
+  // Hone is not the merchant of record).
   const leadDisclaimer = livemode
     ? LIVE_BODY_LEAD(studio)
     : TEST_MODE_BODY_DISCLAIMER;
   const taxDisclaimer = livemode
-    ? LIVE_NO_TAX_BODY_DISCLAIMER
+    ? LIVE_TAX_DISCLAIMER(studio)
     : NO_TAX_BODY_DISCLAIMER;
-  const refundOrSupportLine = livemode
-    ? LIVE_SUPPORT_BODY_LINE
+  const supportLine = livemode
+    ? LIVE_SUPPORT_BODY_LINE(studio)
     : REFUND_AVAILABLE_BODY_DISCLAIMER;
 
-  // Subject: TEST MODE prefix while in test mode; reason + amount so
-  // an inbox preview shows the salient facts without opening.
+  // Subject: TEST MODE prefix while in test mode; the live subject is the
+  // lawyer-approved "Receipt from {studio}: {reason} {amount}".
   const subject = livemode
     ? `Receipt from ${studio}: ${reason} ${amount}`
     : `TEST MODE receipt from ${studio}: ${reason} ${amount}`;
 
-  const lines: string[] = [
-    `Hi ${client},`,
-    "",
-    `${leadDisclaimer}`,
-    "",
-    `Studio: ${studio}`,
-    `Reason: ${reason}`,
-    `Amount: ${amount}`,
-    `Charged: ${charged}`,
-    `PaymentIntent: ${piId}`,
-  ];
-  if (chargeId) {
-    lines.push(`Charge: ${chargeId}`);
-  }
+  // Detail block differs by mode: the live receipt shows the payment method
+  // (card last-4) and no Stripe ids; the test receipt keeps the PI/Charge ids.
+  const detailLines = livemode
+    ? [
+        `Studio: ${studio}`,
+        `Amount: ${amount}`,
+        `Reason: ${reason}`,
+        `Date: ${charged}`,
+        `Payment method: ${paymentMethod}`,
+      ]
+    : [
+        `Studio: ${studio}`,
+        `Reason: ${reason}`,
+        `Amount: ${amount}`,
+        `Charged: ${charged}`,
+        `PaymentIntent: ${piId}`,
+        ...(chargeId ? [`Charge: ${chargeId}`] : []),
+      ];
+
+  const lines: string[] = [`Hi ${client},`, "", leadDisclaimer, "", ...detailLines];
   if (contact) {
     lines.push("", `Questions? Contact ${studio} at ${contact}.`);
   }
-  lines.push(
-    "",
-    taxDisclaimer,
-    refundOrSupportLine,
-    "",
-    `${studio} via Hone`,
-  );
+  lines.push("", taxDisclaimer, supportLine);
+  if (livemode) {
+    lines.push("", LIVE_PLATFORM_NOTE);
+  }
+  lines.push("", `${studio} via Hone`);
   const text = lines.join("\n") + "\n";
 
   const studioH = escapeHtml(studio);
@@ -222,6 +228,19 @@ export function buildPaymentReceiptEmail(
   const piIdH = escapeHtml(piId);
   const chargeIdH = chargeId ? escapeHtml(chargeId) : null;
   const contactH = contact ? escapeHtml(contact) : null;
+  const headline = livemode ? "Receipt" : `Receipt from ${studioH}.`;
+  const detailRowsHtml = livemode
+    ? `<strong>Studio:</strong> ${studioH}<br/>
+          <strong>Amount:</strong> ${amountH}<br/>
+          <strong>Reason:</strong> ${reasonH}<br/>
+          <strong>Date:</strong> ${chargedH}<br/>
+          <strong>Payment method:</strong> ${escapeHtml(paymentMethod)}`
+    : `<strong>Studio:</strong> ${studioH}<br/>
+          <strong>Reason:</strong> ${reasonH}<br/>
+          <strong>Amount:</strong> ${amountH}<br/>
+          <strong>Charged:</strong> ${chargedH}<br/>
+          <strong>PaymentIntent:</strong> <span style="font-family:monospace; word-break:break-all;">${piIdH}</span>
+          ${chargeIdH ? `<br/><strong>Charge:</strong> <span style="font-family:monospace; word-break:break-all;">${chargeIdH}</span>` : ""}`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -231,7 +250,7 @@ export function buildPaymentReceiptEmail(
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
         <tr><td style="padding-bottom:24px; font-family:Georgia, serif; font-weight:700; font-size:18px; letter-spacing:-0.02em;">Hone</td></tr>
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:28px; letter-spacing:-0.02em; line-height:1.15;">
-          Receipt from ${studioH}.
+          ${headline}
         </td></tr>
         <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           Hi ${clientH},
@@ -240,12 +259,7 @@ export function buildPaymentReceiptEmail(
           ${escapeHtml(leadDisclaimer)}
         </td></tr>
         <tr><td style="padding:16px 0; border-top:1px solid #E5E2DA; border-bottom:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.8;">
-          <strong>Studio:</strong> ${studioH}<br/>
-          <strong>Reason:</strong> ${reasonH}<br/>
-          <strong>Amount:</strong> ${amountH}<br/>
-          <strong>Charged:</strong> ${chargedH}<br/>
-          <strong>PaymentIntent:</strong> <span style="font-family:monospace; word-break:break-all;">${piIdH}</span>
-          ${chargeIdH ? `<br/><strong>Charge:</strong> <span style="font-family:monospace; word-break:break-all;">${chargeIdH}</span>` : ""}
+          ${detailRowsHtml}
         </td></tr>
         ${
           contactH
@@ -258,8 +272,15 @@ export function buildPaymentReceiptEmail(
           ${escapeHtml(taxDisclaimer)}
         </td></tr>
         <tr><td style="padding-top:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
-          ${escapeHtml(refundOrSupportLine)}
+          ${escapeHtml(supportLine)}
         </td></tr>
+        ${
+          livemode
+            ? `<tr><td style="padding-top:8px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; line-height:1.6; color:#9A9A9A;">
+          ${escapeHtml(LIVE_PLATFORM_NOTE)}
+        </td></tr>`
+            : ""
+        }
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${studioH} via Hone
         </td></tr>

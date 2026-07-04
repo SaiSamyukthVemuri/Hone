@@ -83,6 +83,43 @@ describe("portal replace-card surface (PR #151)", () => {
     expect(PORTAL_FORM_SOURCE).toMatch(/No charge will be made/);
   });
 
+  describe("lawyer-approved LIVE authorization copy (2026-07-04)", () => {
+    it("card-on-file card shows the approved authorization block in live mode", () => {
+      expect(PORTAL_CARD_SOURCE).toMatch(/Card-on-file authorization/);
+      expect(PORTAL_CARD_SOURCE).toMatch(
+        /By saving a payment card on file, you authorize \{studio\}/,
+      );
+      expect(PORTAL_CARD_SOURCE).toMatch(/no-show fees;/);
+      expect(PORTAL_CARD_SOURCE).toMatch(/late-cancellation fees;/);
+      expect(PORTAL_CARD_SOURCE).toMatch(
+        /not[\s\S]{0,40}the treatment provider or merchant of record/,
+      );
+      expect(PORTAL_CARD_SOURCE).toMatch(
+        /You may contact \{studio\} with any questions about charges, refunds/,
+      );
+      // Interpolates the real studio name (safe fallback) + gated on livemode.
+      expect(PORTAL_CARD_SOURCE).toMatch(/studioName/);
+      expect(PORTAL_CARD_SOURCE).toMatch(/livemode \?/);
+    });
+
+    it("replace-card form shows the approved replace authorization in live mode", () => {
+      expect(PORTAL_FORM_SOURCE).toMatch(
+        /Saving a new card will replace the current card on file for \$\{studio\}/,
+      );
+      expect(PORTAL_FORM_SOURCE).toMatch(
+        /you authorize \$\{studio\} to charge it for amounts you have agreed to pay/,
+      );
+      expect(PORTAL_FORM_SOURCE).toMatch(/studioName/);
+    });
+
+    it("preserves the mode-gated test-mode warning while live is off", () => {
+      expect(PORTAL_CARD_SOURCE).toMatch(
+        /Test mode only\. No live card will be charged\./,
+      );
+      expect(PORTAL_FORM_SOURCE).toMatch(/Test mode only/);
+    });
+  });
+
   it("portal payment-method action requires a portal session", () => {
     // The server action's identity guard is the contract that keeps
     // an unauthenticated caller from triggering a SetupIntent. Pin

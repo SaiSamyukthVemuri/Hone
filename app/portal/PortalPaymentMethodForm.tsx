@@ -82,12 +82,16 @@ export function PortalPaymentMethodForm({
   autoStart = false,
   onCancel,
   livemode = false,
+  studioName = "",
 }: {
   publishableKey: string;
   mode?: Mode;
   // PR #323: deployment mode (server-computed). Gates the "Test mode only. No
-  // charge will be made." intro copy. Defaults to false (test — existing copy).
+  // charge will be made." intro copy. In live mode the lawyer-approved
+  // replace-card authorization is shown instead.
   livemode?: boolean;
+  // Studio name for the live authorization copy. Falls back to "the studio".
+  studioName?: string;
   // PR #152. When true, the form skips its own idle "click to start"
   // button and immediately triggers the start logic on mount. The
   // Replace card flow turns this on: the OUTER "Replace card" button
@@ -110,13 +114,15 @@ export function PortalPaymentMethodForm({
 }) {
   const [start, setStart] = useState<StartState>({ kind: "idle" });
   const copy = COPY[mode];
-  // PR #323: mode-aware intro copy. In live env the "No charge / test mode"
-  // wording would be false; the live wording needs legal sign-off before #324.
+  const studio = studioName.trim() || "the studio";
+  // Mode-aware replace-card intro copy. Live: lawyer-approved authorization
+  // (2026-07-04). Test: the existing "No charge / test mode" wording. `add`
+  // mode has no intro copy (null) in either mode.
   const introCopy =
     copy.introCopy == null
       ? null
       : livemode
-        ? "Your current card will be replaced after the new card is saved. It may be charged for authorized fees per the studio's policy."
+        ? `Saving a new card will replace the current card on file for ${studio}. By saving this new card, you authorize ${studio} to charge it for amounts you have agreed to pay under ${studio}'s booking, cancellation, no-show, and payment policies, including approved appointment charges, no-show fees, late-cancellation fees, or other disclosed and authorized fees.`
         : copy.introCopy;
 
   function onClickAddCard() {

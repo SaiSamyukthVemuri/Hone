@@ -76,18 +76,27 @@ describe("receipt template: live branch (copy readiness only; unreachable at run
     }
   });
 
-  it("uses the cautious live wording (pending legal/accounting review)", () => {
-    expect(live.text).toContain(
-      "Receipt for card payment processed by Willow Electrolysis.",
+  it("uses the LAWYER-APPROVED live wording (2026-07-04), sign-off complete", () => {
+    expect(live.subject).toBe(
+      "Receipt from Willow Electrolysis: Session payment $120.00 CAD",
     );
     expect(live.text).toContain(
-      "No tax calculation is included on this receipt unless separately stated by the studio.",
+      "This receipt confirms that a card payment was processed by Willow Electrolysis.",
     );
     expect(live.text).toContain(
-      "For questions about this payment or refund eligibility, contact the studio.",
+      "This receipt confirms payment only. It is not a tax invoice unless Willow Electrolysis separately states that tax is included or provides a separate tax invoice.",
     );
+    expect(live.text).toContain(
+      "For questions about this payment, refund eligibility, cancellation fees, no-show fees, or services provided, please contact Willow Electrolysis directly.",
+    );
+    // Platform note: Hone is not the merchant of record.
+    expect(live.text).toContain(
+      "Hone is the software platform used by the studio and is not the treatment provider or merchant of record.",
+    );
+    expect(live.html).toContain("not the treatment provider or merchant of record");
+    // Sign-off complete — the PENDING marker is gone.
     const TEMPLATE = read("lib/email/templates/payment-receipt.ts");
-    expect(TEMPLATE).toMatch(/PENDING legal\/accounting review/);
+    expect(TEMPLATE).not.toMatch(/PENDING legal\/accounting review/);
   });
 
   it("never claims tax receipt / official invoice / charitable receipt / pay now / send invoice", () => {
@@ -98,9 +107,28 @@ describe("receipt template: live branch (copy readiness only; unreachable at run
     }
   });
 
-  it("still carries the factual payment details", () => {
+  it("carries the factual details but NOT the Stripe PI/Charge ids (live)", () => {
+    expect(live.text).toContain("Studio: Willow Electrolysis");
     expect(live.text).toContain("Amount: $120.00 CAD");
-    expect(live.text).toContain("PaymentIntent: pi_test_123");
+    expect(live.text).toContain("Reason: Session payment");
+    expect(live.text).toContain("Date: ");
+    // The live receipt omits the internal Stripe ids the test receipt shows.
+    expect(live.text).not.toContain("PaymentIntent: pi_test_123");
+    expect(live.text).not.toContain("Charge: ch_test_123");
+  });
+
+  it("renders the card last-4 payment method, with a neutral fallback", () => {
+    const withLast4 = buildPaymentReceiptEmail({
+      ...FIXTURE,
+      livemode: true,
+      last4: "4242",
+    });
+    expect(withLast4.text).toContain("Payment method: Card ending in 4242");
+    expect(withLast4.html).toContain("Card ending in 4242");
+    // Never a full card number.
+    expect(withLast4.text).not.toMatch(/\d{13,19}/);
+    // Fallback when last4 is unavailable.
+    expect(live.text).toContain("Payment method: Card on file");
   });
 });
 

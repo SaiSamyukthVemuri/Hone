@@ -147,6 +147,7 @@ type AttemptRow = {
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   charged_at: string | null;
+  client_payment_method_id: string | null;
   receipt_status: string | null;
   receipt_sent_at: string | null;
   receipt_email_to: string | null;
@@ -191,7 +192,7 @@ export async function sendPaymentChargeReceipt(args: {
   const { data: attemptRow } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, amount_cents, currency, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, charged_at, receipt_status, receipt_sent_at, receipt_email_to",
+      "id, studio_id, client_id, charge_reason, amount_cents, currency, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, charged_at, client_payment_method_id, receipt_status, receipt_sent_at, receipt_email_to",
     )
     .eq("id", args.attemptId)
     .eq("studio_id", args.studioId)
@@ -353,7 +354,29 @@ export async function sendPaymentChargeReceipt(args: {
     };
   }
 
-  // 4) Build the email + send.
+  // 4) DISPLAY-ONLY read: the card last-4 for the live receipt's "Payment
+  //    method: Card ending in {last4}" line (lawyer-approved copy). Scoped to
+  //    the attempt's (studio, client, payment method, livemode) tuple so tenant
+  //    isolation holds; selects ONLY last4 (never a full card number or other
+  //    card data). This changes no charge/refund/webhook behavior — it only
+  //    enriches the receipt display. If the card row is missing, last4 stays
+  //    null and the template renders the neutral "Card on file" fallback (the
+  //    receipt is never blocked over a missing display detail).
+  let cardLast4: string | null = null;
+  if (attempt.client_payment_method_id) {
+    const { data: cardRow } = await admin
+      .from("client_payment_methods")
+      .select("last4")
+      .eq("id", attempt.client_payment_method_id)
+      .eq("studio_id", attempt.studio_id)
+      .eq("client_id", attempt.client_id)
+      .eq("stripe_livemode", attempt.stripe_livemode)
+      .maybeSingle();
+    const raw = (cardRow?.last4 as string | null | undefined)?.trim();
+    cardLast4 = raw ? raw : null;
+  }
+
+  // 5) Build the email + send.
   const { subject, html, text } = buildPaymentReceiptEmail({
     studioName: studio.name,
     studioContactEmail: resolveStudioContactEmail(studio),
@@ -364,6 +387,7 @@ export async function sendPaymentChargeReceipt(args: {
     chargedAt: new Date(attempt.charged_at),
     stripePaymentIntentId: attempt.stripe_payment_intent_id,
     stripeChargeId: attempt.stripe_charge_id,
+    last4: cardLast4,
     // PR #323: pass the row's actual mode so a live row (once one exists, after
     // the #324 env flip) renders the live-copy branch. In test env every row is
     // stripe_livemode=false, so this stays the test-mode receipt today.
