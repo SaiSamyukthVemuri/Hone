@@ -116,6 +116,12 @@ describe("event_type allowlist", () => {
     );
   });
 
+  it("includes intake_submitted in the allowlist", () => {
+    expect(SOURCE).toMatch(
+      /ALLOWED_EVENT_TYPES[\s\S]*?"intake_submitted"[\s\S]*?\]\)/,
+    );
+  });
+
   it("rejects an unknown event type and logs the misuse without throwing", () => {
     // The synchronous validation guard runs before the IIFE. We
     // assert the existence of the early-return branch.

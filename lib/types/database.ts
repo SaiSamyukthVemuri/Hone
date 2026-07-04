@@ -1070,7 +1070,8 @@ export type AuditLog = {
 export type PractitionerNotificationEventType =
   | "new_booking"
   | "appointment_cancelled"
-  | "appointment_rescheduled";
+  | "appointment_rescheduled"
+  | "intake_submitted";
 
 export type PractitionerNotification = {
   id: string;

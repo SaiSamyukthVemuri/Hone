@@ -2,8 +2,8 @@
 // public.practitioner_notifications table (migration 0070).
 //
 // This module is the trust boundary between the public event sources
-// (public booking, public cancel, public reschedule) and the
-// practitioner-facing notification center. Public event sources are
+// (public booking, public cancel, public reschedule, intake submit) and
+// the practitioner-facing notification center. Public event sources are
 // anonymous visitor / token-bearing flows that cannot satisfy the
 // is_studio_member(studio_id) RLS predicate; they must write via
 // service_role. We bypass RLS deliberately here BUT every field is
@@ -38,7 +38,17 @@ import type { PractitionerNotificationEventType } from "@/lib/types/database";
 // in the table. Adding a new event type later is a one-line edit
 // here; the migration does not need to change.
 const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
-  new Set(["new_booking", "appointment_cancelled", "appointment_rescheduled"]);
+  new Set([
+    "new_booking",
+    "appointment_cancelled",
+    "appointment_rescheduled",
+    // Intake submitted. Written from submitIntakeAction after the atomic
+    // in_progress -> submitted transition wins (so it fires exactly once per
+    // submission). Body carries only the client name (already shown to studio
+    // members) + safe text — never intake answers or the intake token. href
+    // points at the authenticated intake review page.
+    "intake_submitted",
+  ]);
 
 export type RecordPractitionerNotificationInput = {
   studioId: string;
