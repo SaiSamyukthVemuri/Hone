@@ -608,6 +608,34 @@ export async function handlePaymentIntentPaymentFailed(
     };
   }
 
+  // Resolved-row mode guard (mirrors payment_intent.succeeded + charge.refunded).
+  // The event-mode guard above only checks event.livemode; the resolver + the
+  // metadata guard do NOT check the row's stripe_livemode. Post-0105 a session
+  // can hold both a test and a live attempt with the same studio/client/reason,
+  // so a mode-matching failed event could resolve the OTHER mode's row — refuse
+  // to mutate it and alert, exactly as the two other mutating handlers do.
+  if (attempt.stripe_livemode !== inferStripeLivemode()) {
+    await recordOpsAlert({
+      severity: "critical",
+      event: "payment_intent_failed_livemode_row_mismatch",
+      message:
+        "Stripe payment_intent.payment_failed resolved to a row whose stripe_livemode does not match the deployment mode. Row was NOT mutated.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      livemodeRowMismatch: true,
+    };
+  }
+
   if (attempt.status === "succeeded") {
     await recordOpsAlert({
       severity: "critical",
