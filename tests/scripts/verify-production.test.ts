@@ -181,6 +181,52 @@ describe("verify-production: fail-closed", () => {
   });
 });
 
+describe("verify-production: post-live report section (not gates)", () => {
+  it("has a non-gate report() helper that does not push to results", () => {
+    expect(CODE).toMatch(/function report\(name, detail\)/);
+    // report() console.logs an INFO line; it must NOT call record()/results.push.
+    const body = /function report\(name, detail\) \{([\s\S]*?)\n\}/.exec(CODE)?.[1] ?? "";
+    expect(body).toMatch(/INFO/);
+    expect(body).not.toMatch(/results\.push|record\(/);
+  });
+
+  it("reports runtime Stripe mode by SHAPE only — never prints the secret value", () => {
+    expect(CODE).toMatch(/function reportRuntimeMode/);
+    expect(CODE).toMatch(/startsWith\("sk_live_"\)/);
+    expect(CODE).toMatch(/STRIPE_ALLOW_LIVE_MODE === "true"/);
+    // The secret value must never be interpolated into any console/report output.
+    expect(CODE).not.toMatch(/console\.[a-z]+\([^)]*STRIPE_SECRET_KEY/);
+    expect(CODE).not.toMatch(/report\([^)]*\$\{key\}/); // only the derived `shape`, never `key`
+  });
+
+  it("reports the required mode-separated posture counts", () => {
+    expect(CODE).toMatch(/function reportPaymentsPosture/);
+    expect(CODE).toMatch(/from studio_payment_settings/);
+    expect(CODE).toMatch(/stripe_charges_enabled = true/);
+    expect(CODE).toMatch(/stripe_payouts_enabled = true/);
+    expect(CODE).toMatch(/from client_payment_methods where status = 'active'/);
+    expect(CODE).toMatch(/from payment_charge_attempts/);
+    expect(CODE).toMatch(/from stripe_events/);
+    expect(CODE).toMatch(/severity = 'warning'/); // warning ops alerts reported
+    // Wired into main() as reports, distinct from the gate section.
+    expect(CODE).toMatch(/reportRuntimeMode\(\);/);
+    expect(CODE).toMatch(/reportPaymentsPosture\(\);/);
+  });
+
+  it("redaction: never selects or prints a full Stripe/card identifier", () => {
+    // Reads only presence (is not null) / counts / booleans of id columns —
+    // never the id VALUE — and never prints a full acct_/pi_/cus_/sk_ token.
+    expect(CODE).not.toMatch(/select[^;]*\b(stripe_account_id|stripe_customer_id|stripe_payment_method_id|stripe_payment_intent_id|stripe_setup_intent_id)\b(?!\s+is\s+(not\s+)?null)/i);
+    expect(CODE).not.toMatch(/console\.[a-z]+\([^)]*(acct_|pi_|cus_|sk_live_|sk_test_|whsec_)/);
+  });
+
+  it("no stale live-disabled / test-only assumption remains in the script", () => {
+    expect(CODE).not.toMatch(/STRIPE_ALLOW_LIVE_MODE unset\/false/);
+    expect(CODE).not.toMatch(/keys test-mode|no live keys in use/i);
+    expect(CODE).not.toMatch(/before enabling live payments/i);
+  });
+});
+
 describe("verify-production: runbook + cross-reference", () => {
   it("docs/16 §17.13 documents the command + manual checks", () => {
     expect(DOC16).toMatch(/17\.13/);
@@ -193,5 +239,35 @@ describe("verify-production: runbook + cross-reference", () => {
   });
   it("docs/10 cross-references the script", () => {
     expect(DOC10).toMatch(/verify-production\.mjs/);
+  });
+
+  it("docs/16 states the current post-live truth, not stale live-disabled claims", () => {
+    // Scope the stale-claim check to the sections this PR owns (the §17.13
+    // verification section + its current-state callout). Historical/rollback
+    // sections elsewhere legitimately reference the flag being unset/false as
+    // mechanics — they are clearly dated/labeled historical.
+    const section = DOC16.slice(
+      DOC16.indexOf("### 17.13"),
+      DOC16.indexOf("### 17.14"),
+    );
+    expect(section.length).toBeGreaterThan(0);
+    expect(section).not.toMatch(/STRIPE_ALLOW_LIVE_MODE.*unset\/false/);
+    expect(section).not.toMatch(/no live keys in use/i);
+    expect(section).not.toMatch(/before enabling live payments/i);
+    // The current-state callout is present and truthful.
+    expect(section).toMatch(/Current production state \(post-live-proof\)/);
+    expect(section).toMatch(/Production is LIVE-CAPABLE/);
+    expect(section).toMatch(/Live billing is PROVEN on a controlled test studio/);
+    expect(section).toMatch(/Willow still requires her OWN onboarding/);
+    expect(section).toMatch(/Public booking card collection is OFF/);
+    expect(section).toMatch(/Manual no-show \/ late-cancellation fees remain a supervised HOLD/);
+    // §17.1 "Current status" carries the post-live UPDATE (not a bare
+    // "live payments are DISABLED" current claim).
+    const current = DOC16.slice(
+      DOC16.indexOf("### 17.1 Current status"),
+      DOC16.indexOf("### 17.2"),
+    );
+    expect(current).toMatch(/UPDATE \(2026-07-05, post-live-proof\): production is now LIVE-CAPABLE/);
+    expect(current).not.toMatch(/^- \*\*Live payments are DISABLED\.\*\*/m);
   });
 });

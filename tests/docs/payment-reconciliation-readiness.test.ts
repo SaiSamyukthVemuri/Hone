@@ -40,15 +40,25 @@ const SECTION_17 = (() => {
 // ---------------------------------------------------------------------------
 // Readiness state: live payments still disabled, enablement is separate.
 // ---------------------------------------------------------------------------
-describe("docs/16 §17: live payments remain disabled and enablement is separate", () => {
-  it("states live payments are disabled", () => {
-    expect(SECTION_17).toMatch(/live payments are disabled/i);
-    expect(SECTION_17).toMatch(/Live payments remain disabled/i);
+describe("docs/16 §17: current post-live state (live-capable; Willow still supervised)", () => {
+  // Post-live-proof (2026-07-05): live billing was proven on a controlled test
+  // studio, so §17 now leads with the current truth. The pre-flip snapshot is
+  // retained but clearly labeled historical (2026-07-02). These pins were
+  // consciously updated from the old "live payments are disabled" posture.
+  it("states the current post-live truth (live-capable, proven on a controlled test studio)", () => {
+    expect(SECTION_17).toMatch(/production is now LIVE-CAPABLE/i);
+    expect(SECTION_17).toMatch(/Live billing (is|has been) PROVEN on a controlled test studio/i);
+    // The pre-flip snapshot is retained but clearly labeled historical.
+    expect(SECTION_17).toMatch(/\(historical — 2026-07-02\)/);
   });
 
-  it("states controlled live-payment enablement is a separate, explicit, owner-approved future step", () => {
+  it("keeps Willow's own enablement supervised and does not overclaim broad rollout", () => {
+    expect(SECTION_17).toMatch(/Willow still requires her (OWN|own) (live )?onboarding/i);
+    expect(SECTION_17).toMatch(/supervised/i);
+    expect(SECTION_17).toMatch(/Public booking card collection is OFF/i);
+    // The PR #282 historical scope note (enablement was a separate step) is
+    // preserved as a record of what that PR did.
     expect(SECTION_17).toMatch(/separate[\s,]*explicit[\s\S]{0,40}owner-approved[\s\S]{0,20}future step/i);
-    expect(SECTION_17).toMatch(/controlled live-payment enablement has not started/i);
   });
 
   it("documents that PR #281 success persistence is complete and authoritative", () => {
