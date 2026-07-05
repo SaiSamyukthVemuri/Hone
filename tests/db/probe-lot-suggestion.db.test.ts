@@ -131,3 +131,111 @@ describe("getLatestProbeLotByProbeKey semantics", () => {
     expect(reduce(rows as never[])).toEqual({});
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reliability update: getProbeLotSuggestions(studioId) returns byKey + byLabel
+// (each with a confirmed flag), confirmed-preferred + newest-wins, studio-
+// scoped. This exercises the EXACT query + reduction it issues.
+// ---------------------------------------------------------------------------
+const SUGG_QUERY = `
+  select probe_key, probe_label, probe_lot_number, probe_lot_confirmed, created_at
+  from public.session_blocks
+  where studio_id = $1
+    and probe_lot_number is not null
+    and deleted_at is null
+  order by probe_lot_confirmed desc, created_at desc
+`;
+
+type SuggRow = {
+  probe_key: string | null;
+  probe_label: string | null;
+  probe_lot_number: string | null;
+  probe_lot_confirmed: boolean;
+};
+type Sugg = { lot: string; confirmed: boolean };
+
+function normalizeLabel(label: string | null): string {
+  return (label ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function reduceSuggestions(rows: SuggRow[]): {
+  byKey: Record<string, Sugg>;
+  byLabel: Record<string, Sugg>;
+} {
+  const byKey: Record<string, Sugg> = {};
+  const byLabel: Record<string, Sugg> = {};
+  for (const row of rows) {
+    const lot = row.probe_lot_number?.trim();
+    if (!lot) continue;
+    const confirmed = row.probe_lot_confirmed === true;
+    const key = row.probe_key?.trim();
+    if (key && !(key in byKey)) byKey[key] = { lot, confirmed };
+    const label = normalizeLabel(row.probe_label);
+    if (label && !(label in byLabel)) byLabel[label] = { lot, confirmed };
+  }
+  return { byKey, byLabel };
+}
+
+async function insertLabeledBlock(
+  studio: SeededStudio,
+  sessionId: string,
+  opts: {
+    probeKey: string | null;
+    label?: string | null;
+    lot: string;
+    confirmed: boolean;
+    createdAt: string;
+    deleted?: boolean;
+  },
+): Promise<void> {
+  await adminQuery(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, probe_key, probe_label, probe_lot_number, probe_lot_confirmed, created_at, deleted_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      randomUUID(), studio.studioId, sessionId,
+      opts.probeKey, opts.label ?? null, opts.lot, opts.confirmed,
+      opts.createdAt, opts.deleted ? opts.createdAt : null,
+    ],
+  );
+}
+
+describe("getProbeLotSuggestions semantics (byKey + byLabel, confirmed-aware)", () => {
+  let c: SeededStudio;
+  let cSession: string;
+  beforeAll(async () => {
+    c = await seedStudio("probe-sugg-c");
+    cSession = (await seedSession(c)).sessionId;
+    // Keyed probe K: older CONFIRMED KC beats newer unconfirmed KU.
+    await insertLabeledBlock(c, cSession, { probeKey: "K", label: "L Brand · Gold · F2", lot: "KC", confirmed: true, createdAt: "2026-01-01T00:00:00Z" });
+    await insertLabeledBlock(c, cSession, { probeKey: "K", label: "L Brand · Gold · F2", lot: "KU", confirmed: false, createdAt: "2026-06-01T00:00:00Z" });
+    // Keyed probe U: only UNCONFIRMED lot (the fallback that must be kept).
+    await insertLabeledBlock(c, cSession, { probeKey: "U", label: "Uprobe", lot: "UU", confirmed: false, createdAt: "2026-03-01T00:00:00Z" });
+    // Free-text (probe_key null) probe with a LABEL only + a lot.
+    await insertLabeledBlock(c, cSession, { probeKey: null, label: "  Sterex · Gold · Two-piece · F2 Short ", lot: "FREETEXTLOT", confirmed: false, createdAt: "2026-05-01T00:00:00Z" });
+    // Studio D isolation.
+    const d = await seedStudio("probe-sugg-d");
+    const dSession = (await seedSession(d)).sessionId;
+    await insertLabeledBlock(d, dSession, { probeKey: "K", label: "L Brand · Gold · F2", lot: "D_LOT", confirmed: true, createdAt: "2026-07-01T00:00:00Z" });
+  });
+
+  it("byKey prefers confirmed over newer unconfirmed; keeps unconfirmed fallback", async () => {
+    const { rows } = await adminQuery(SUGG_QUERY, [c.studioId]);
+    const { byKey } = reduceSuggestions(rows as SuggRow[]);
+    expect(byKey["K"]).toEqual({ lot: "KC", confirmed: true }); // confirmed beats newer unconfirmed
+    expect(byKey["U"]).toEqual({ lot: "UU", confirmed: false }); // unconfirmed fallback kept
+  });
+
+  it("byLabel provides a normalized free-text fallback (probe_key null)", async () => {
+    const { rows } = await adminQuery(SUGG_QUERY, [c.studioId]);
+    const { byLabel } = reduceSuggestions(rows as SuggRow[]);
+    expect(byLabel["sterex · gold · two-piece · f2 short"]).toEqual({ lot: "FREETEXTLOT", confirmed: false });
+  });
+
+  it("never leaks another studio's lot into byKey/byLabel", async () => {
+    const { rows } = await adminQuery(SUGG_QUERY, [c.studioId]);
+    const { byKey, byLabel } = reduceSuggestions(rows as SuggRow[]);
+    const all = [...Object.values(byKey), ...Object.values(byLabel)].map((v) => v.lot);
+    expect(all).not.toContain("D_LOT");
+  });
+});

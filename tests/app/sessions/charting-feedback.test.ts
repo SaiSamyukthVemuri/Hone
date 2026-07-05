@@ -14,6 +14,7 @@ function read(rel: string): string {
 const FORM = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
 );
+const SUGG = read("lib/record-keeping/probe-lot-suggestion.ts");
 const ACTIONS = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
 );
@@ -49,24 +50,32 @@ describe("item 2: underarms does not flood the whole Arms zone", () => {
 });
 
 describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () => {
-  it("suggests the most-recent lot for the SAME probe (probe_key map), never auto-confirms", () => {
-    // Feature A replaced the studio-wide sterile-item suggestion with a
-    // probe_key -> latest-lot map, auto-populated per selected probe.
-    expect(RK).toMatch(/getLatestProbeLotByProbeKey/);
-    expect(PAGE).toMatch(/getLatestProbeLotByProbeKey/);
-    expect(PAGE).not.toMatch(/getLatestProbeLotSuggestion/);
-    expect(FORM).toMatch(/probeLotByProbeKey/);
+  it("suggests the most-recent lot per probe (keyed + label fallback), never auto-confirms", () => {
+    // Reliability update: the page passes richer suggestions (byKey + byLabel,
+    // each with a confirmed flag); the form auto-populates per selected probe.
+    expect(RK).toMatch(/getProbeLotSuggestions/);
+    expect(PAGE).toMatch(/getProbeLotSuggestions/);
+    expect(FORM).toMatch(/probeLotSuggestions/);
+    // Confirmed-aware helper copy.
     expect(FORM).toMatch(
-      /Suggested from last use\. Please confirm this lot\/batch is correct\./,
+      /Auto-filled from last confirmed probe lot\. Please confirm this lot\/batch is correct\./,
+    );
+    expect(FORM).toMatch(
+      /Suggested from last probe lot\. Please confirm this lot\/batch is correct\./,
     );
     expect(FORM).toMatch(/Confirm lot\/batch/);
     // Old copy is gone.
     expect(FORM).not.toMatch(/Suggested from records/);
+    expect(FORM).not.toMatch(/Suggested from last use/);
   });
-  it("auto-populates from the map for the selected probe, always unconfirmed", () => {
-    // The reactive effect keys off probe_key and writes the suggestion
-    // unconfirmed; it never runs once the practitioner has edited manually.
-    expect(FORM).toMatch(/probeLotByProbeKey\[draft\.probeKey\]/);
+  it("auto-populates from the keyed-then-label suggestion, always unconfirmed", () => {
+    // The reactive effect keys off the resolved suggestion (keyed first, then
+    // normalized-label fallback) and writes it unconfirmed; it never runs once
+    // the practitioner has edited manually.
+    expect(FORM).toMatch(/resolveProbeLotSuggestion\(draft\.probeKey, probeLotSuggestions\)/);
+    // The keyed-then-label resolution lives in the shared pure module.
+    expect(SUGG).toMatch(/suggestions\.byKey\[probeKey\]/);
+    expect(SUGG).toMatch(/suggestions\.byLabel\[normalizeProbeLabel\(opt\.displayLabel\)\]/);
     expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
     expect(FORM).toMatch(
       /probeLotNumber: suggestion,\s*\n?\s*probeLotConfirmed: false/,

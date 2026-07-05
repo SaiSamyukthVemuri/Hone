@@ -20,7 +20,7 @@
 // actions already accept every field used here — no action behavior
 // change.
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
   COMMON_COMMENTS,
@@ -42,6 +42,10 @@ import {
   type ProbeBrand,
   type ProbeMaterial,
 } from "@/lib/probes";
+import {
+  resolveProbeLotSuggestion,
+  type ProbeLotSuggestions,
+} from "@/lib/record-keeping/probe-lot-suggestion";
 import type {
   ApilusModality,
   ElectrolysisEntry,
@@ -127,11 +131,12 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
-  // Feature A (Chloe charting feedback): most recent lot/batch used per probe
-  // (probe_key) in this studio. The form auto-populates the lot field from the
-  // map for the selected probe (studio-scoped, never auto-confirmed). Empty
-  // when there is nothing to suggest.
-  probeLotByProbeKey?: Record<string, string>;
+  // Feature A (reliability): most recent lot/batch per probe in this studio,
+  // keyed by probe_key AND by normalized probe_label (free-text fallback), each
+  // carrying its confirmed flag. The form auto-populates the lot field for the
+  // selected probe (studio-scoped, never auto-confirmed) — keyed match first,
+  // label fallback second. Empty when there is nothing to suggest.
+  probeLotSuggestions?: ProbeLotSuggestions;
   onCancel: () => void;
 };
 
@@ -294,7 +299,7 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
-  probeLotByProbeKey = {},
+  probeLotSuggestions = { byKey: {}, byLabel: {} },
   onCancel,
 }: Props) {
   const isEdit = !!block;
@@ -329,20 +334,24 @@ export function BlockSetupForm({
   // UNCONFIRMED — the practitioner must confirm or override. If the selected
   // probe has no prior lot, the field is left blank (a prior auto-suggestion for
   // a different probe is cleared).
+  // Keyed-then-label suggestion for the currently selected probe.
+  const activeSuggestion = useMemo(
+    () => resolveProbeLotSuggestion(draft.probeKey, probeLotSuggestions),
+    [draft.probeKey, probeLotSuggestions],
+  );
+
   useEffect(() => {
     if (lotEditedManually) return;
-    const suggestion = draft.probeKey
-      ? probeLotByProbeKey[draft.probeKey] ?? ""
-      : "";
+    const suggestion = activeSuggestion?.lot ?? "";
     setDraft((d) =>
       d.probeLotNumber === suggestion
         ? d
         : { ...d, probeLotNumber: suggestion, probeLotConfirmed: false },
     );
     // Intentionally excludes draft.probeLotNumber: we react to the PROBE
-    // changing, not to our own write.
+    // (its keyed/label suggestion) changing, not to our own write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.probeKey, probeLotByProbeKey, lotEditedManually]);
+  }, [activeSuggestion, lotEditedManually]);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -984,13 +993,18 @@ export function BlockSetupForm({
         </label>
 
         {/* Feature A: the lot field auto-populates (unconfirmed) from the most
-            recent lot used for THIS probe. This line shows while the value is
-            still the un-edited suggestion, prompting an explicit confirm. */}
+            recent lot used for THIS probe (keyed match, or label fallback).
+            The copy reflects whether that prior lot was CONFIRMED, and prompts
+            an explicit confirm. Shows only while the value is the un-edited
+            suggestion. */}
         {!lotEditedManually &&
+          activeSuggestion &&
           draft.probeLotNumber.trim() !== "" &&
-          draft.probeLotNumber === probeLotByProbeKey[draft.probeKey] && (
+          draft.probeLotNumber === activeSuggestion.lot && (
             <span className="text-xs text-neutral-500">
-              Suggested from last use. Please confirm this lot/batch is correct.
+              {activeSuggestion.confirmed
+                ? "Auto-filled from last confirmed probe lot. Please confirm this lot/batch is correct."
+                : "Suggested from last probe lot. Please confirm this lot/batch is correct."}
             </span>
           )}
 

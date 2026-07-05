@@ -34,7 +34,7 @@ import {
   getTreatmentPlanWithCount,
 } from "@/lib/treatment-plans/queries";
 import { getSessionNumberForClient } from "@/lib/treatment-time/queries";
-import { getLatestProbeLotByProbeKey } from "@/lib/record-keeping/queries";
+import { getProbeLotSuggestions } from "@/lib/record-keeping/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
@@ -166,10 +166,10 @@ export default async function SessionDetailPage({
   // practitioner selects (never auto-confirmed; studio-scoped). Electrolysis
   // only; read-only. Replaces the pre-Feature-A studio-wide sterile-item
   // suggestion on this field (which was not probe-specific).
-  const probeLotByProbeKey =
+  const probeLotSuggestions =
     session.modality === "electrolysis"
-      ? await getLatestProbeLotByProbeKey(studio.id)
-      : {};
+      ? await getProbeLotSuggestions(studio.id)
+      : { byKey: {}, byLabel: {} };
 
   // Treatment plan attachment context: the active plans the practitioner
   // can attach to (excludes closed), plus the resolved attached plan + its
@@ -418,7 +418,7 @@ export default async function SessionDetailPage({
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
-          probeLotByProbeKey={probeLotByProbeKey}
+          probeLotSuggestions={probeLotSuggestions}
           // UI defaulting only: seed a NEW treatment area from the attached
           // plan, or the client's single active plan when unattached (see
           // above). Never overrides practitioner choice or mutates data.
