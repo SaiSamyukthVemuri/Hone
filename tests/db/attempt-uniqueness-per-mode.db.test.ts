@@ -24,15 +24,22 @@ afterAll(async () => {
   await closePool();
 });
 
+// Each appointment gets its own non-overlapping slot — the studio-wide
+// no_overlapping_active_appointments_per_studio exclusion constraint refuses
+// two appointments at the same time.
+let apptSlot = 0;
 async function seedAppointment(): Promise<string> {
   const id = randomUUID();
+  const day = String(1 + apptSlot++).padStart(2, "0");
   await adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
         buffer_minutes_snapshot, blocked_ends_at)
-     values ($1, $2, $3, '2030-04-01T10:00:00Z', '2030-04-01T11:00:00Z', 60, 0,
-             '2030-04-01T11:00:00Z')`,
-    [id, s.studioId, s.clientId],
+     values ($1, $2, $3, $4, $5, 60, 0, $5)`,
+    [
+      id, s.studioId, s.clientId,
+      `2030-04-${day}T10:00:00Z`, `2030-04-${day}T11:00:00Z`,
+    ],
   );
   return id;
 }
