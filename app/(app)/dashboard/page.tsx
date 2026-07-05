@@ -817,7 +817,7 @@ function NeedsAttention({
       items.push({
         key: "stripe-not-connected",
         title: "Stripe not connected yet",
-        body: "Public booking still works without it. Connect when you're ready to accept payments later.",
+        body: "Public booking still works without it. Connect when you're ready to accept payments.",
         tone: "soft",
         href: "/settings/payments",
         cta: "Open Payments",
