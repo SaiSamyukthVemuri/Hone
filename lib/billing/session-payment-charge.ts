@@ -261,10 +261,14 @@ async function loadCardAndVerifyLineage(args: {
   // The studio's currently-configured connected account must match
   // the card row.
   if (card) {
+    // Mode-scoped (0103): a studio can hold one settings row per Stripe
+    // mode; verify against the CURRENT deployment mode's row only (the
+    // stripe_livemode !== livemode belt below stays as defense-in-depth).
     const { data: settings } = await admin
       .from("studio_payment_settings")
       .select("stripe_account_id, stripe_livemode")
       .eq("studio_id", args.studioId)
+      .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!settings) {
       reasons.push("Studio payment settings are missing.");

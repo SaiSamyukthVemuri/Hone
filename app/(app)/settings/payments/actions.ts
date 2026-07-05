@@ -21,7 +21,7 @@ import {
   refreshAccountStatusFromStripe,
   type AccountStatusSnapshot,
 } from "@/lib/stripe/account";
-import { getAppOrigin } from "@/lib/stripe/server";
+import { getAppOrigin, inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
 const GENERIC_STRIPE_ERROR =
@@ -142,10 +142,14 @@ export async function refreshStripeStatusAction(): Promise<RefreshStatusResult> 
   }
 
   const admin = createAdminClient();
+  // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
+  // refresh must load the CURRENT deployment mode's account only — never the
+  // other mode's acct_ id (Stripe rejects a test account under a live key).
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select("stripe_account_id")
     .eq("studio_id", studio.id)
+    .eq("stripe_livemode", inferStripeLivemode())
     .maybeSingle();
   if (settingsErr) {
     logInternal("refresh_status_settings_lookup_failed", {
@@ -193,10 +197,14 @@ export async function openStripeDashboardAction(): Promise<void> {
   }
 
   const admin = createAdminClient();
+  // Mode-scoped (0103): the Express dashboard login link must be minted for
+  // the CURRENT deployment mode's account only (accounts.createLoginLink on
+  // the other mode's acct_ id fails with account_invalid).
   const { data: settings } = await admin
     .from("studio_payment_settings")
     .select("stripe_account_id, stripe_charges_enabled, stripe_payouts_enabled")
     .eq("studio_id", studio.id)
+    .eq("stripe_livemode", inferStripeLivemode())
     .maybeSingle();
   if (!settings?.stripe_account_id) {
     throw new Error("No Stripe account yet. Complete onboarding first.");

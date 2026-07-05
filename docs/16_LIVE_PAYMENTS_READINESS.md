@@ -1322,7 +1322,7 @@ This is a **read-only pre-flight**, not an enablement step. Enabling live paymen
 1. [x] ✅ **DONE (2026-07-04):** Legal/accounting **written** sign-off on the live **receipt** wording AND the client-facing **card-authorization** wording (§17.14.2) — the lawyer-approved copy is merged into `payment-receipt.ts` (template) + `PortalCardOnFileCard.tsx` + `PortalPaymentMethodForm.tsx`.
 2. [ ] Live Connect **webhook endpoint** created (connected-accounts, 8 events — §17.14.4) and its `whsec_` is in hand.
 3. [ ] All four live env vars set in Vercel Production (§17.14.5) and a **fresh** production build/deploy succeeded; `VERCEL_ENV=production`.
-4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0101`).
+4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0103`).
 5. [ ] Willow **live** Connect account fully enabled (§17.14.3): `charges_enabled`, `payouts_enabled`, `details_submitted` all true; `requirements.currently_due` **empty**; CAD bank verified; statement descriptor reviewed; dispute email/recovery/2FA reviewed.
 6. [ ] Live `studio_payment_settings` row present (`stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true`).
 7. [ ] Supervised client (recommend **Chloe's own real card**) has **signed the card-authorization consent** and **added a live active card** on file via the portal.
@@ -1418,7 +1418,7 @@ select id, status, stripe_livemode, amount_cents, currency, refund_status
   order by created_at desc limit 1;                                                       -- one row, succeeded, livemode true
 select count(*) from ops_alerts where severity='critical' and resolved_at is null;       -- expect 0
 ```
-Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0101`.
+Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0103`.
 
 #### 17.14.9 Operator surfaces to watch (during + after)
 
@@ -1442,7 +1442,7 @@ Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) 
 
 - Legal/accounting copy not signed off (or reworded but the copy-only PR not merged).
 - Any Willow Connect check (§17.14.3) failing, or `requirements.currently_due` non-empty.
-- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0101`.
+- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0103`.
 - Any unresolved **critical** ops alert.
 - No live `studio_payment_settings` row, or no live active card on file.
 - A pre-existing `stripe_livemode=true` charge row (unexpected state).
@@ -1461,7 +1461,7 @@ Deposits · packages · gift cards · subscriptions · application fees · `chec
 
 > **READ FIRST — Live payments are still OFF.** This checklist is DOCUMENTATION ONLY. It **does not authorize the env flip** and changes no code/env/Stripe/webhook/copy. The **env flip and the first live charge are separate, supervised operator actions**, taken by hand only after every box below is satisfied. Scope is **Willow / Chloe only, one small supervised live charge** — **no** deposits, **no** packages, **no** application fees, **no** checkout, **no** Stripe Terminal, **no** second studio, **no** broad rollout, **no** self-serve.
 
-This is the concise operator condensation of §17.14; §17.14 remains the authoritative detail. Merged-state prerequisites already satisfied: ✅ legal/accounting copy approved + merged · ✅ production DB at migration 0102 · ✅ runtime/webhook/receipt live-capable · ✅ `check-stripe-gates` 15 PASS · live payments OFF. **Go order: §1 → §2 → §3 → §4 → §5 (all green) → §6 → §7 (→ §8), with §9 rehearsed and §10 clear before charging.**
+This is the concise operator condensation of §17.14; §17.14 remains the authoritative detail. Merged-state prerequisites already satisfied: ✅ legal/accounting copy approved + merged · ✅ production DB at migration 0103 (0103 = mode-scoped Connect provisioning — REQUIRED before Willow live onboarding; apply migration-first after the 0103 PR merges) · ✅ runtime/webhook/receipt live-capable · ✅ `check-stripe-gates` 15 PASS · live payments OFF. **Go order: §1 → §2 → §3 → §4 → §5 (all green) → §6 → §7 (→ §8), with §9 rehearsed and §10 clear before charging.**
 
 #### 1. Willow live Stripe Connect onboarding (in-app, Settings → Payments, LIVE)
 - [ ] `charges_enabled = true`
@@ -1491,7 +1491,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 5. Pre-charge verification
 - [ ] `node scripts/check-stripe-gates.mjs` = 15 PASS
-- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0102
+- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0103
 - [ ] Read-only SQL (`supabase db query --linked`):
   - [ ] `select count(*) from payment_charge_attempts where stripe_livemode = true;` → 0
   - [ ] `select count(*) from ops_alerts where severity='critical' and resolved_at is null;` → 0
@@ -1522,7 +1522,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 10. Hard no-go conditions (STOP if ANY is true)
 - [ ] Any §1 Connect check failing, or `currently_due` non-empty
-- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0102
+- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0103
 - [ ] Any unresolved critical ops alert
 - [ ] No live `studio_payment_settings` row, or no live active card on file
 - [ ] A pre-existing `stripe_livemode=true` charge row (unexpected)

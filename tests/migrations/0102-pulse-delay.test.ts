@@ -13,14 +13,16 @@ const SOURCE = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const CODE = SOURCE.replace(/--.*$/gm, "");
 
 describe("0102: migration number + scope", () => {
-  it("is the next migration after 0101", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(102);
+  it("is numbered 0102 (immediately after 0101)", () => {
+    const nums = readdirSync(MIGRATIONS_DIR)
+      .map((f) => /^(\d{4})_/.exec(f)?.[1])
+      .filter(Boolean)
+      .map((n) => Number(n));
+    // 0102 exists and 0101 precedes it; the global-max tripwire lives in the
+    // newest migration's test, so this does not re-break when later
+    // migrations land.
+    expect(nums).toContain(102);
+    expect(nums).toContain(101);
     expect(FILE).toMatch(/^0102_/);
   });
 

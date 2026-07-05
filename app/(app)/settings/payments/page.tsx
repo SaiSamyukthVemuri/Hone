@@ -1,5 +1,6 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 
@@ -20,11 +21,14 @@ export default async function PaymentsSettingsPage() {
 
   // get_studio_payment_settings_display is the display-safe read RPC
   // (display columns only, no Stripe IDs). RLS is enforced inside the
-  // RPC via is_studio_owner().
+  // RPC via is_studio_owner(). Mode-scoped (migration 0103): only the
+  // CURRENT deployment mode's row is returned — in live mode a studio with
+  // only a test binding gets zero rows, which renders the not-connected /
+  // Connect-with-Stripe state instead of the other mode's stale status.
   const supabase = await createClient();
   const { data: rows, error } = await supabase.rpc(
     "get_studio_payment_settings_display",
-    { p_studio_id: studio.id },
+    { p_studio_id: studio.id, p_stripe_livemode: inferStripeLivemode() },
   );
   if (error) {
     console.error(

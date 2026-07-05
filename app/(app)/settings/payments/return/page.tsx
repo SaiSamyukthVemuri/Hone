@@ -8,6 +8,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { refreshAccountStatusFromStripe } from "@/lib/stripe/account";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
 export const dynamic = "force-dynamic";
@@ -19,10 +20,13 @@ export default async function StripeOnboardingReturnPage() {
   }
 
   const admin = createAdminClient();
+  // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
+  // this return page must sync the CURRENT deployment mode's account only.
   const { data: settings } = await admin
     .from("studio_payment_settings")
     .select("stripe_account_id")
     .eq("studio_id", studio.id)
+    .eq("stripe_livemode", inferStripeLivemode())
     .maybeSingle();
 
   // Best-effort sync. We do NOT fail the page if Stripe is briefly
