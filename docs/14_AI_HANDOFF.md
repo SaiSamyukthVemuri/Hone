@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the payment_failed livemode-row guard)
+
+- **payment_intent.payment_failed resolved-row livemode guard.** The one mutating webhook handler that lacked the resolved-row `stripe_livemode` guard now has it (mirrors succeeded/refunded): a wrong-mode resolved row is not mutated, fires `payment_intent_failed_livemode_row_mismatch` (critical), returns `livemodeRowMismatch`. Pure insertion in that handler; succeeded/refunded/dispute/resolver byte-unchanged; matching-mode behavior unchanged; no Stripe SDK / migration / env; gates 15 PASS. First and only deliberate webhook change.
+
 ## Current production status (as of the live manual-fee hard hold)
 
 - **Live manual-fee hard hold (P1, Option A).** LIVE-mode charging is session-payments-only for launch; manual no-show / late-cancellation fees are blocked server-side (prepare + execute) via `lib/billing/live-charge-reason-allowlist.ts`, with the exact hold message surfaced in the manual-fee panel + a FeeAmountsCard note. Test mode unchanged; session payments unaffected; no migration; `runSessionPaymentCharge` untouched; gates 15 PASS. Fee amounts remain configuration-only (saving never charges).

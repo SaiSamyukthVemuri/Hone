@@ -208,6 +208,43 @@ describe("payment-webhook-reconciliation: metadata mismatch handling", () => {
   });
 });
 
+describe("resolved-row livemode guard — symmetric across ALL mutating handlers", () => {
+  // Extract each mutating handler's body so the guard is checked per-handler.
+  function handlerBody(name: string): string {
+    const start = HELPER.indexOf(`export async function ${name}(`);
+    expect(start, `${name} must exist`).toBeGreaterThan(-1);
+    const next = HELPER.indexOf("\nexport async function ", start + 1);
+    return HELPER.slice(start, next === -1 ? undefined : next);
+  }
+
+  const MUTATING = [
+    ["handlePaymentIntentSucceeded", "payment_intent_succeeded_livemode_row_mismatch"],
+    ["handlePaymentIntentPaymentFailed", "payment_intent_failed_livemode_row_mismatch"],
+    ["handleChargeRefunded", "charge_refunded_livemode_row_mismatch"],
+  ] as const;
+
+  for (const [handler, alertEvent] of MUTATING) {
+    it(`${handler} guards the resolved row's stripe_livemode and refuses to mutate on mismatch`, () => {
+      const body = handlerBody(handler);
+      // The guard compares the ROW's mode to the deployment mode.
+      expect(body).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
+      // Critical, correctly-named ops alert with the no-mutation message.
+      expect(body).toMatch(
+        new RegExp(`severity:\\s*"critical"[\\s\\S]{0,400}event:\\s*"${alertEvent}"`),
+      );
+      expect(body).toMatch(/Row was NOT mutated/);
+      // Structured no-mutation return.
+      expect(body).toMatch(/livemodeRowMismatch:\s*true/);
+      // The guard sits BEFORE the row-mutating UPDATE (no mutation on mismatch).
+      const guard = body.indexOf("livemodeRowMismatch: true");
+      const update = body.indexOf(".update(");
+      expect(guard).toBeGreaterThan(-1);
+      expect(update).toBeGreaterThan(-1);
+      expect(guard).toBeLessThan(update);
+    });
+  }
+});
+
 describe("payment_intent.succeeded: status-conditional reconciliation", () => {
   it("idempotent on already-succeeded rows (no flip, may stamp missing charge id)", () => {
     expect(HELPER).toMatch(
