@@ -23,7 +23,8 @@ const FORM_TYPE_LABELS: Record<ConsentTemplateFormType, string> = {
   general: "General",
   treatment_consent: "Treatment consent",
   policy_acknowledgement: "Policy acknowledgement",
-  card_authorization: "Card on file (deferred)",
+  // "(deferred)" was the pre-live-billing label; card-on-file is live now.
+  card_authorization: "Card-on-file authorization",
   photo_consent: "Photo consent",
 };
 

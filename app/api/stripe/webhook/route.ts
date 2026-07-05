@@ -629,12 +629,17 @@ async function handleSetupIntentSucceeded(
   //    where claim_stripe_event admits two distinct events that
   //    happen to resolve to the same (account, mode,
   //    setup_intent_id) tuple.
+  //    Mode-scoped (post-live-billing cleanup): the pre-flip retires only
+  //    the SAME-mode active card — saving a live card must not retire the
+  //    client's test card row, and vice versa. One active card per
+  //    (studio, client, mode).
   const nowIso = new Date().toISOString();
   const { error: removeErr } = await admin
     .from("client_payment_methods")
     .update({ status: "removed", removed_at: nowIso })
     .eq("studio_id", metaStudioId)
     .eq("client_id", metaClientId)
+    .eq("stripe_livemode", ctx.livemode)
     .eq("status", "active");
   if (removeErr) {
     throw new Error(

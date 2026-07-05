@@ -409,12 +409,18 @@ function CardOnFileReadiness({
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <h3 className="text-base font-medium">Card-on-file readiness</h3>
           <span className="rounded-full bg-neutral-200 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-            Not enabled
+            Booking collection off
           </span>
         </div>
+        {/* Two separate facts (post-live-billing cleanup): public BOOKING
+            never collects cards, while PORTAL card-on-file is available once
+            the client signs the authorization. The old copy conflated them
+            as "card collection is not enabled". */}
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
-          Card collection is not enabled yet. No cards are being collected.
-          This checklist prepares your studio for a later card-on-file flow.
+          Public booking does not collect cards from clients. Card-on-file is
+          available through the client portal: after a client signs the
+          card-on-file authorization, they can save a card the studio may
+          charge for authorized fees. This checklist tracks that readiness.
         </p>
       </header>
 
@@ -449,15 +455,20 @@ function CardOnFileReadiness({
                 : "No-show policy still missing; cancellation policy on file"
           }
         />
+        {/* Factual mode line — informational, never an incomplete/grey item.
+            Pre-cleanup the check-state was tied to isTestMode, which rendered
+            "Live mode enabled" as a grey unfinished task once live. */}
         <ReadinessItem
-          ok={isTestMode}
-          okLabel="Test mode — no live charges"
-          notYetLabel="Live mode enabled"
+          ok
+          okLabel={
+            isTestMode ? "Test mode — no live charges" : "Live mode enabled"
+          }
+          notYetLabel=""
         />
         <ReadinessItem
           ok={false}
-          okLabel="Card collection enabled"
-          notYetLabel="Card collection not enabled"
+          okLabel="Booking-time card collection enabled"
+          notYetLabel="Booking-time card collection not enabled (portal card-on-file is separate and available)"
         />
       </ul>
 

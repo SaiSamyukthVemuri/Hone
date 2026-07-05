@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 
 // PR #135. Server-only reads for client_payment_methods. Every
 // function is scoped by explicit (studioId, clientId) that callers
@@ -34,6 +35,9 @@ export async function getActiveCardForStudioClient(
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
+    // Mode-scoped (post-live-billing cleanup): a client's TEST card must not
+    // display as the active card while the runtime is LIVE (and vice versa).
+    .eq("stripe_livemode", inferStripeLivemode())
     .eq("status", "active")
     .order("added_at", { ascending: false })
     .limit(1)
