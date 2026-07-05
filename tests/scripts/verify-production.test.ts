@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0104 (one active card per (studio, client, mode)).
-    expect(nums[nums.length - 1]).toBe("0104");
+    // Repo max advances to 0105 (mode-scoped active payment-attempt uniqueness).
+    expect(nums[nums.length - 1]).toBe("0105");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

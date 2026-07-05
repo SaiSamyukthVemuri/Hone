@@ -15,14 +15,15 @@ const SOURCE = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const CODE = SOURCE.replace(/--.*$/gm, "");
 
 describe("0104: migration number + scope", () => {
-  it("is the repo migration max (global tripwire lives in the newest migration's test)", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(104);
+  it("is numbered 0104 (immediately after 0103)", () => {
+    const nums = readdirSync(MIGRATIONS_DIR)
+      .map((f) => /^(\d{4})_/.exec(f)?.[1])
+      .filter(Boolean)
+      .map((n) => Number(n));
+    // 0104 exists and 0103 precedes it; the global-max tripwire lives in the
+    // newest migration's test.
+    expect(nums).toContain(104);
+    expect(nums).toContain(103);
     expect(FILE).toMatch(/^0104_/);
   });
 
