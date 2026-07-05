@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0103 (mode-scoped Stripe Connect provisioning).
-    expect(nums[nums.length - 1]).toBe("0103");
+    // Repo max advances to 0104 (one active card per (studio, client, mode)).
+    expect(nums[nums.length - 1]).toBe("0104");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
