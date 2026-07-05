@@ -10,6 +10,7 @@ import {
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-eligibility";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
+import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 
 // ---------------------------------------------------------------------------
 // prepareManualFeeChargeAction (PR #145).
@@ -286,6 +287,27 @@ export async function chargeManualFeeAttemptAction(
       error:
         "Confirm the charge before running it.",
     };
+  }
+
+  // Launch hard hold (defense-in-depth): in LIVE mode, manual no-show /
+  // late-cancellation fee execution is on hold. Prepare already refuses via
+  // eligibility, but re-check at execute so a pre-existing `ready` row can
+  // never be charged live. Read-only reason lookup, scoped to this studio.
+  const admin = createAdminClient();
+  const { data: attemptForHold } = await admin
+    .from("payment_charge_attempts")
+    .select("charge_reason")
+    .eq("id", attemptId)
+    .eq("studio_id", studioId)
+    .maybeSingle();
+  if (attemptForHold?.charge_reason) {
+    const hold = liveChargeReasonBlockMessage(
+      attemptForHold.charge_reason,
+      inferStripeLivemode(),
+    );
+    if (hold) {
+      return { ok: false, outcome: "blocked", error: hold };
+    }
   }
 
   // PR #196: fee attempts execute through the unified canonical
