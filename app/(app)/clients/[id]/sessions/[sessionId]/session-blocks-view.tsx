@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import type { ElectrolysisEntry, SessionBlock } from "@/lib/types/database";
 import type {
   SessionBlockWithEntries,
@@ -71,7 +72,7 @@ type Props = {
   defaultMachineFrequency?: string | null;
   // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
-  probeLotByProbeKey?: Record<string, string>;
+  probeLotSuggestions?: ProbeLotSuggestions;
 };
 
 export function SessionBlocksView({
@@ -82,7 +83,7 @@ export function SessionBlocksView({
   clientTagLabels = [],
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
-  probeLotByProbeKey = {},
+  probeLotSuggestions = { byKey: {}, byLabel: {} },
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -99,7 +100,7 @@ export function SessionBlocksView({
           sessionId={sessionId}
           clientId={clientId}
           clientTagLabels={clientTagLabels}
-          probeLotByProbeKey={probeLotByProbeKey}
+          probeLotSuggestions={probeLotSuggestions}
         />
       ))}
 
@@ -128,7 +129,7 @@ export function SessionBlocksView({
           clientId={clientId}
           previousBlock={previousBlock}
           savedBlocks={blocks}
-          probeLotByProbeKey={probeLotByProbeKey}
+          probeLotSuggestions={probeLotSuggestions}
           // PR #191 (Chloe smoke feedback): the plan-area seed applies
           // only to the FIRST treatment area of the session. Adding
           // another area starts blank; a new area is usually a
@@ -158,13 +159,13 @@ function BlockSection({
   sessionId,
   clientId,
   clientTagLabels,
-  probeLotByProbeKey = {},
+  probeLotSuggestions = { byKey: {}, byLabel: {} },
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
   clientTagLabels: ReadonlyArray<string>;
-  probeLotByProbeKey?: Record<string, string>;
+  probeLotSuggestions?: ProbeLotSuggestions;
 }) {
   const [editing, setEditing] = useState(false);
   // Extra passes are optional and collapsed by default — the first reading
@@ -247,7 +248,7 @@ function BlockSection({
           previousBlock={null}
           block={block}
           firstEntry={entriesSorted[0] ?? null}
-          probeLotByProbeKey={probeLotByProbeKey}
+          probeLotSuggestions={probeLotSuggestions}
           onCancel={() => setEditing(false)}
         />
       ) : (

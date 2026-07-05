@@ -1,4 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import {
+  normalizeProbeLabel,
+  type ProbeLotSuggestion,
+  type ProbeLotSuggestions,
+} from "@/lib/record-keeping/probe-lot-suggestion";
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   SUPPLY_EXPIRING_WITHIN_DAYS,
@@ -128,6 +133,45 @@ export async function getLatestProbeLotByProbeKey(
     if (!(key in map)) map[key] = lot;
   }
   return map;
+}
+
+// Feature A (reliability): richer lot suggestions for the charting form.
+//   * Studio-scoped (.eq("studio_id") + RLS) — never cross-studio.
+//   * Prefer CONFIRMED over unconfirmed, then newest, within EACH of byKey /
+//     byLabel (ordering probe_lot_confirmed desc, created_at desc; first row
+//     per key/label wins). The unconfirmed fallback is retained deliberately
+//     (studios may have zero confirmed rows).
+//   * Excludes null/blank lots and soft-deleted blocks.
+//   * Carries the `confirmed` flag so the form can label the source
+//     ("Auto-filled from last confirmed probe lot" vs "Suggested from last
+//     probe lot").
+export async function getProbeLotSuggestions(
+  studioId: string,
+): Promise<ProbeLotSuggestions> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("session_blocks")
+    .select(
+      "probe_key, probe_label, probe_lot_number, probe_lot_confirmed, created_at",
+    )
+    .eq("studio_id", studioId)
+    .not("probe_lot_number", "is", null)
+    .is("deleted_at", null)
+    .order("probe_lot_confirmed", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  const byKey: Record<string, ProbeLotSuggestion> = {};
+  const byLabel: Record<string, ProbeLotSuggestion> = {};
+  for (const row of data ?? []) {
+    const lot = (row.probe_lot_number as string | null)?.trim();
+    if (!lot) continue;
+    const confirmed = row.probe_lot_confirmed === true;
+    const key = (row.probe_key as string | null)?.trim();
+    if (key && !(key in byKey)) byKey[key] = { lot, confirmed };
+    const label = normalizeProbeLabel(row.probe_label as string | null);
+    if (label && !(label in byLabel)) byLabel[label] = { lot, confirmed };
+  }
+  return { byKey, byLabel };
 }
 
 export async function getDisinfectantRecords(
