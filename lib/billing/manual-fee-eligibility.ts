@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
   type EligibilityAppointmentSummary,
@@ -162,6 +163,16 @@ export async function getManualFeeChargeEligibility(
   let cardSignatureId: string | null = null;
   let cardPaymentMethodId: string | null = null;
   const livemode = inferStripeLivemode();
+  // Launch hard hold: in LIVE mode, manual no-show / late-cancellation fee
+  // charging is on hold (session payments only). This makes prepare refuse
+  // and surfaces the hold in the manual-fee panel's blocking reasons. Test
+  // mode is unaffected. Refund/cancel/display are NOT gated by eligibility.
+  const feeChargeReason =
+    serverChargeType === "no_show" ? "no_show_fee" : "late_cancellation_fee";
+  const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode);
+  if (liveHold) {
+    reasons.push(liveHold);
+  }
   if (clientId) {
     const { data: cardRow } = await admin
       .from("client_payment_methods")

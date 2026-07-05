@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the live manual-fee hard hold)
+
+- **Live manual-fee hard hold (P1, Option A).** LIVE-mode charging is session-payments-only for launch; manual no-show / late-cancellation fees are blocked server-side (prepare + execute) via `lib/billing/live-charge-reason-allowlist.ts`, with the exact hold message surfaced in the manual-fee panel + a FeeAmountsCard note. Test mode unchanged; session payments unaffected; no migration; `runSessionPaymentCharge` untouched; gates 15 PASS. Fee amounts remain configuration-only (saving never charges).
+
 ## Current production status (as of the post-live production verifier update)
 
 - **`scripts/verify-production.mjs` updated for the post-live state.** Removed the stale "live payments should be disabled / keys test-mode" assumptions; the header + manual-check text now say production is **live-capable**. Added a **report** section (INFO lines, never gates): runtime Stripe mode of the loaded env-file (key SHAPE + flag, never the secret value), `studio_payment_settings` counts by mode, live connected-account counts with charges/payouts/status (counts only, no ids), active card counts by mode, `payment_charge_attempts` by mode/status, live webhook errored/unprocessed counts, and warning-payment-alert count. Migration-max gate stays repo-derived (= **0105**). docs/16 §17.13 refreshed + a "Current production state (post-live-proof)" callout added (live-capable · live proven on the test studio · **Willow still needs her own onboarding** · public booking card collection off · manual fees hold; partial payments/deposits/packages out of scope). Read-only/docs/script only — no Stripe/env/migration/DB-write changes; gates 15 PASS.

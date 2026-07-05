@@ -59,6 +59,13 @@ export function FeeAmountsCard({
           Set the dollar amount the studio may charge per type. Leave a
           field blank to clear the amount. Money is not charged here.
         </p>
+        <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          Live manual fee charging is currently on hold for this launch. Fee
+          amounts here are configuration only — saving never charges anyone,
+          and no-show / late-cancellation fees cannot be charged in live mode
+          unless manual fees are explicitly approved. Session payments are
+          unaffected.
+        </p>
       </div>
 
       <form onSubmit={submit} className="flex flex-col gap-4">
