@@ -234,7 +234,7 @@ describe("PR #158 card-authorization guidance is preserved", () => {
   });
 
   it("the State A 'card setup not available' wording still exists", () => {
-    expect(SOURCE).toContain("Card setup is not available yet.");
+    expect(SOURCE).toContain("Card setup is not available yet:");
   });
 });
 

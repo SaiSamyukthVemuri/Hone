@@ -61,9 +61,15 @@ describe("portal renders the State B placeholder copy when authorization is unsi
     expect(PORTAL_SOURCE).toContain("sign the card authorization form above");
   });
 
-  it("promises 'No charge will be made when you add a card.'", () => {
-    expect(PORTAL_SOURCE).toContain(
-      "No charge will be made when you add a card.",
+  it("no-charge wrapper is mode-aware: blanket promise only in test; live states later authorized charges", () => {
+    // Live branch uses the shared LIVE_SAVE_CARD_NOTE (no immediate charge
+    // + later authorized studio charges); the blanket promise stays
+    // test-branch only.
+    expect(PORTAL_SOURCE).toMatch(
+      /stripeLivemode\s*\n?\s*\? LIVE_SAVE_CARD_NOTE\s*\n?\s*: "No charge will be made when you add a card\."/,
+    );
+    expect(PORTAL_SOURCE).toMatch(
+      /stripeLivemode\s*\n?\s*\? LIVE_SIGN_CARD_NOTE\s*\n?\s*: "No charge will be made when you sign or when you add a card\."/,
     );
   });
 
@@ -106,13 +112,14 @@ describe("portal renders the State C supporting copy in the Add card block", () 
 });
 
 describe("portal State A: no template configured copy", () => {
-  it("uses 'Card setup is not available yet.' wording", () => {
-    expect(PORTAL_SOURCE).toContain("Card setup is not available yet.");
+  it("uses 'Card setup is not available yet:' wording", () => {
+    expect(PORTAL_SOURCE).toContain("Card setup is not available yet:");
   });
 
   it("explains the studio has not enabled online card setup", () => {
     expect(PORTAL_SOURCE).toContain(
-      "This studio has not enabled online card setup.",
+      // PR C: exact blocker instead of the false "has not enabled" claim.
+      "the studio has not activated its card authorization form",
     );
   });
 
@@ -163,7 +170,9 @@ describe("practitioner PaymentMethodCard renders one of four explicit branches",
       "Ask the client to open\n        their portal and complete Card authorization under Needs you.",
     );
     expect(CARD_SOURCE).toContain(
-      "Once signed, the Add card option will appear in their portal.",
+      // PR C: honest phrasing — signing alone does not guarantee the Add
+      // card option (the studio's payment setup must also be complete).
+      "Once signed, the Add card option appears in their portal once the studio's payment setup is complete.",
     );
   });
 

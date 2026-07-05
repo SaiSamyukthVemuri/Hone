@@ -901,7 +901,9 @@ export async function runSessionPaymentCharge(args: {
     return {
       ok: false,
       outcome: "failed",
-      message: "We could not start the test charge. Please try again.",
+      message: livemode
+        ? "We could not start the charge. Please try again."
+        : "We could not start the test charge. Please try again.",
     };
   }
   const claim = (Array.isArray(claimRows) ? claimRows[0] : claimRows) as
@@ -911,7 +913,9 @@ export async function runSessionPaymentCharge(args: {
     return {
       ok: false,
       outcome: "failed",
-      message: "We could not start the test charge. Please try again.",
+      message: livemode
+        ? "We could not start the charge. Please try again."
+        : "We could not start the test charge. Please try again.",
     };
   }
 

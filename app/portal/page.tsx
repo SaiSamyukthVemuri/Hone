@@ -25,6 +25,10 @@ import { PortalConsentForms } from "./PortalConsentForms";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import {
+  LIVE_SAVE_CARD_NOTE,
+  LIVE_SIGN_CARD_NOTE,
+} from "@/lib/payments/portal-card-copy";
 import { PortalPaymentMethodForm } from "./PortalPaymentMethodForm";
 import { PortalCardOnFileCard } from "./PortalCardOnFileCard";
 
@@ -562,7 +566,10 @@ export default async function PortalHomePage() {
                     className="text-[14px] leading-relaxed"
                     style={{ color: "#3F3F3F" }}
                   >
-                    Once that form is signed, the secure card form will appear here. No charge will be made when you add a card.
+                    Once that form is signed, the secure card form will appear here.{" "}
+                    {stripeLivemode
+                      ? LIVE_SAVE_CARD_NOTE
+                      : "No charge will be made when you add a card."}
                   </p>
                   <a
                     href="#forms-to-sign"
@@ -608,7 +615,10 @@ export default async function PortalHomePage() {
                     className="text-[14px] leading-relaxed"
                     style={{ color: "#3F3F3F" }}
                   >
-                    Until you sign the new version, no new card can be added on file. No charge will be made when you sign or when you add a card.
+                    Until you sign the new version, no new card can be added on file.{" "}
+                    {stripeLivemode
+                      ? LIVE_SIGN_CARD_NOTE
+                      : "No charge will be made when you sign or when you add a card."}
                   </p>
                   <a
                     href="#forms-to-sign"
@@ -639,7 +649,10 @@ export default async function PortalHomePage() {
                     className="text-[14px] leading-relaxed"
                     style={{ color: "#3F3F3F" }}
                   >
-                    You have signed card authorization. You can now add a card on file. No charge will be made when you add a card.
+                    You have signed card authorization. You can now add a card on file.{" "}
+                    {stripeLivemode
+                      ? LIVE_SAVE_CARD_NOTE
+                      : "No charge will be made when you add a card."}
                   </p>
                   <p
                     className="text-[14px] leading-relaxed"
@@ -1084,7 +1097,7 @@ export default async function PortalHomePage() {
                     Stripe jargon since the client cannot act on this
                     state. */}
                 <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
-                  Card setup is not available yet. This studio has not enabled online card setup. Please contact the studio if you have a question about payment.
+                  Card setup is not available yet: the studio has not activated its card authorization form. Please contact the studio if you have a question about payment.
                 </p>
               </section>
             ) : null}

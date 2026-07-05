@@ -50,6 +50,7 @@ export function PaymentMethodCard({
   cardAuthorizationTemplateExists,
   cardAuthorizationSigned,
   cardAuthorizationOutOfDate,
+  cardSetupBlockedByEnvironment = false,
 }: {
   clientName: string;
   activeCard: ActiveCardSummary | null;
@@ -68,6 +69,11 @@ export function PaymentMethodCard({
   // signed at all (handled by cardAuthorizationSigned=false) or has
   // signed at the current version.
   cardAuthorizationOutOfDate: boolean;
+  // PR C: exact-blocker awareness from the payment-status presenter's
+  // publishable-key gate (env-derived server-side). When true, the Add
+  // card option cannot appear in the portal regardless of signatures, and
+  // the copy must say so instead of over-promising.
+  cardSetupBlockedByEnvironment?: boolean;
 }) {
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -92,11 +98,11 @@ export function PaymentMethodCard({
       ) : !cardAuthorizationTemplateExists ? (
         <NoTemplateBlock />
       ) : !cardAuthorizationSigned ? (
-        <AuthorizationNotSignedBlock />
+        <AuthorizationNotSignedBlock cardSetupBlockedByEnvironment={cardSetupBlockedByEnvironment} />
       ) : cardAuthorizationOutOfDate ? (
         <AuthorizationOutOfDateBlock />
       ) : (
-        <AuthorizedButNoCardBlock />
+        <AuthorizedButNoCardBlock cardSetupBlockedByEnvironment={cardSetupBlockedByEnvironment} />
       )}
     </section>
   );
@@ -159,7 +165,11 @@ function NoTemplateBlock() {
 // placeholder the client now sees on the portal so both sides tell
 // the same story.
 // ---------------------------------------------------------------------------
-function AuthorizationNotSignedBlock() {
+function AuthorizationNotSignedBlock({
+  cardSetupBlockedByEnvironment,
+}: {
+  cardSetupBlockedByEnvironment: boolean;
+}) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
       <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
@@ -169,7 +179,9 @@ function AuthorizationNotSignedBlock() {
         This client cannot add a card on file yet because they have not
         signed the card authorization form. Ask the client to open
         their portal and complete Card authorization under Needs you.
-        Once signed, the Add card option will appear in their portal.
+        {cardSetupBlockedByEnvironment
+          ? " Note: online card setup is currently unavailable in this environment (payment form configuration), so the Add card option will not appear until that is resolved."
+          : " Once signed, the Add card option appears in their portal once the studio's payment setup is complete."}{" "}
         No charge is made when a card is added.
       </p>
     </div>
@@ -180,15 +192,21 @@ function AuthorizationNotSignedBlock() {
 // PR #158. State: authorization signed; no card on file. The client
 // just needs to return to the portal and complete the Add card step.
 // ---------------------------------------------------------------------------
-function AuthorizedButNoCardBlock() {
+function AuthorizedButNoCardBlock({
+  cardSetupBlockedByEnvironment,
+}: {
+  cardSetupBlockedByEnvironment: boolean;
+}) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
       <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
         Card authorization signed, but no card is on file yet.
       </p>
       <p className="text-xs text-neutral-600 dark:text-neutral-400">
-        Ask the client to open the portal and add a card. No charge is
-        made when a card is added.
+        {cardSetupBlockedByEnvironment
+          ? "Online card setup is currently unavailable in this environment (payment form configuration); the Add card option will not appear until that is resolved."
+          : "Ask the client to open the portal and add a card."}{" "}
+        No charge is made when a card is added.
       </p>
     </div>
   );

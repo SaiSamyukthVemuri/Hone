@@ -320,7 +320,11 @@ export async function executeSessionPaymentChargeAction(
     return {
       ok: false,
       outcome: "blocked",
-      error: "Confirm the test charge before running it.",
+      // Mode-aware (PR C): a LIVE operator must never be told a real
+      // charge is a "test charge" at the confirmation step.
+      error: inferStripeLivemode()
+        ? "Confirm the charge before running it."
+        : "Confirm the test charge before running it.",
     };
   }
 

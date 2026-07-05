@@ -37,6 +37,10 @@ const PORTAL_FORM = path.resolve(
   "../../../app/portal/PortalPaymentMethodForm.tsx",
 );
 const PORTAL_FORM_SOURCE = readFileSync(PORTAL_FORM, "utf8");
+const SHARED_CARD_COPY = readFileSync(
+  path.resolve(__dirname, "../../../lib/payments/portal-card-copy.ts"),
+  "utf8",
+);
 
 const ACTION_FILE = path.resolve(
   __dirname,
@@ -58,9 +62,13 @@ describe("portal replace-card surface (PR #151)", () => {
     // The exact disclaimer copy must remain. Future PRs that
     // weaken or remove it (e.g. as part of a live-mode rollout)
     // must update this assertion deliberately.
-    expect(PORTAL_CARD_SOURCE).toMatch(
+    // PR C: the disclaimer is centralized in lib/payments/portal-card-copy
+    // so the two surfaces cannot drift; both components must render the
+    // shared constant, and the constant must keep the exact wording.
+    expect(SHARED_CARD_COPY).toMatch(
       /Test mode only\. No live card will be charged\./,
     );
+    expect(PORTAL_CARD_SOURCE).toMatch(/\{TEST_MODE_CARD_NOTE\}/);
     // Defensive: do not introduce wording that implies the card
     // WILL be charged (positive claim). The "No live card will
     // be charged" copy above is fine; this assertion catches a
@@ -76,11 +84,11 @@ describe("portal replace-card surface (PR #151)", () => {
     expect(PORTAL_FORM_SOURCE).toMatch(/saveButton: "Save new card"/);
   });
 
-  it("Replace mode copy says current card will be replaced and no charge", () => {
+  it("Replace mode copy says current card will be replaced + the shared test-mode note", () => {
     expect(PORTAL_FORM_SOURCE).toMatch(
       /current card will be replaced after the new card is saved/,
     );
-    expect(PORTAL_FORM_SOURCE).toMatch(/No charge will be made/);
+    expect(PORTAL_FORM_SOURCE).toMatch(/\$\{TEST_MODE_CARD_NOTE\}/);
   });
 
   describe("lawyer-approved LIVE authorization copy (2026-07-04)", () => {
@@ -112,11 +120,10 @@ describe("portal replace-card surface (PR #151)", () => {
       expect(PORTAL_FORM_SOURCE).toMatch(/studioName/);
     });
 
-    it("preserves the mode-gated test-mode warning while live is off", () => {
-      expect(PORTAL_CARD_SOURCE).toMatch(
-        /Test mode only\. No live card will be charged\./,
-      );
-      expect(PORTAL_FORM_SOURCE).toMatch(/Test mode only/);
+    it("preserves the mode-gated test-mode warning (shared constant)", () => {
+      expect(PORTAL_CARD_SOURCE).toMatch(/TEST_MODE_CARD_NOTE/);
+      expect(PORTAL_FORM_SOURCE).toMatch(/TEST_MODE_CARD_NOTE/);
+      expect(SHARED_CARD_COPY).toMatch(/Test mode only/);
     });
   });
 
