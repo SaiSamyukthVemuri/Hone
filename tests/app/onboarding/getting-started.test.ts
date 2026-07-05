@@ -35,7 +35,8 @@ function signals(over: Partial<GettingStartedSignals> = {}): GettingStartedSigna
     hasNextVisitNote: true,
     sterileItems: 1,
     disinfectants: 1,
-    testPaymentAttempts: 2,
+    paymentAttempts: 2,
+    runtimeLivemode: false,
     ...over,
   };
 }
@@ -62,7 +63,7 @@ describe("buildGettingStarted", () => {
         disinfectants: 0,
         hasProbeLot: false,
         appointments: 0,
-        testPaymentAttempts: 0,
+        paymentAttempts: 0,
       }),
     );
     expect(none.autoDone).toBe(all.autoTotal - 5);
@@ -90,17 +91,39 @@ describe("buildGettingStarted", () => {
     expect(findE("probe-lot").status).toBe("todo");
   });
 
-  it("payments items keep the off/pending posture", () => {
+  it("payments items are state-driven by runtime mode (test runtime)", () => {
     const out = buildGettingStarted(signals());
     const items = out.sections.find((s) => s.key === "payments")!.items;
     expect(items.map((i) => i.key)).toEqual([
       "test-payments",
-      "live-off",
-      "legal-pending",
-      "stripe-checklist-pending",
+      "payment-mode",
+      "legal-approved",
+      "stripe-connect",
     ]);
+    // Test runtime: live is off IN THIS ENVIRONMENT (a fact about the
+    // deployment, not a product-wide claim) and stays a todo.
+    expect(items[1].label).toBe("Live payments are off in this environment");
     expect(items[1].status).toBe("review");
-    expect(items[1].explanation).toMatch(/No real cards can be charged/);
+    expect(items[1].explanation).toMatch(/No real cards can be charged here/);
+  });
+
+  it("payments items are state-driven by runtime mode (live runtime)", () => {
+    const out = buildGettingStarted(signals({ runtimeLivemode: true, paymentAttempts: 1 }));
+    const items = out.sections.find((s) => s.key === "payments")!.items;
+    expect(items.map((i) => i.key)).toEqual([
+      "payments-used",
+      "payment-mode",
+      "legal-approved",
+      "stripe-connect",
+    ]);
+    expect(items[0].label).toBe("Payments available (live)");
+    expect(items[0].status).toBe("done");
+    expect(items[1].label).toBe("Live payments enabled");
+    expect(items[1].status).toBe("done");
+    // Live-capable surface: never the stale pre-launch claims.
+    const all = items.map((i) => i.label + " " + i.explanation).join(" ");
+    expect(all).not.toMatch(/Live payments are off(?! in this environment)/);
+    expect(all).not.toMatch(/review pending|checklist pending/i);
   });
 });
 
@@ -125,7 +148,7 @@ describe("placement + page", () => {
       "Client can book",
       "Probe lot can be recorded",
       "Aftercare\\/risks can be marked",
-      "Live payments remain off",
+      "Payments run in the studio",
     ]) {
       expect(PAGE).toMatch(new RegExp(line));
     }
@@ -159,6 +182,6 @@ describe("safety", () => {
       expect(src).not.toMatch(/revenue enabled/i);
     }
     expect(PAGE).toMatch(/public-health\/legal review/);
-    expect(PAGE).toMatch(/Live payments remain off/);
+    expect(PAGE).toMatch(/Payments run in the studio/);
   });
 });

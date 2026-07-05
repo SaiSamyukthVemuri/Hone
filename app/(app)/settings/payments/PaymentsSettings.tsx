@@ -27,6 +27,19 @@ export type StripeStatusView = {
 
 export type PaymentsSettingsProps = {
   status: StripeStatusView;
+  // Shared payment-status presenter outputs (PR A). ALL status copy is
+  // derived server-side (lib/payments/payment-status-presenter.ts) and
+  // passed in as plain data — this client component makes no payment-state
+  // claims of its own. runtimeMode comes from the DEPLOYMENT
+  // (inferStripeLivemode()), never from the nullable settings row.
+  runtimeMode: "test" | "live";
+  banner: {
+    tone: "ready" | "warning" | "info";
+    headline: string;
+    detail: string;
+  };
+  portalCardMessage: string;
+  bookingCardMessage: string;
   // Count of active services with positive price_cents. Used by the
   // C1 readiness card only. Not a card-collection gate. Free
   // consultations are intentionally not counted because the product
@@ -82,6 +95,10 @@ function statusCopy(status: StripeStatusView): {
 
 export function PaymentsSettings({
   status,
+  runtimeMode,
+  banner,
+  portalCardMessage,
+  bookingCardMessage,
   paidServiceCount,
   hasCancellationPolicy,
   hasNoShowPolicy,
@@ -152,26 +169,34 @@ export function PaymentsSettings({
   const dashboardEnabled = status.chargesEnabled || status.payoutsEnabled;
   const copy = statusCopy(status);
 
-  // Banner shown above the status card whenever Hone is not yet
-  // collecting from clients. Phase 1 is unconditionally non-live
-  // for client booking, so this banner shows whenever the account
-  // is not on live mode — which is every Phase 1 environment.
-  const showTestBanner = status.livemode !== true;
+  // State-driven status banner (presenter-derived, passed in as data).
+  // Pre-PR-A this was an amber "Test mode" banner keyed off the ROW's
+  // livemode — null (not connected) read as test even on a live
+  // deployment. The banner now reflects runtime mode + Connect capability:
+  // live-ready, test-ready, payouts-pending WARNING, or setup guidance.
+  const bannerStyles =
+    banner.tone === "ready"
+      ? "border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-950/30"
+      : banner.tone === "warning"
+        ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
+        : "border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900/50";
+  const bannerText =
+    banner.tone === "ready"
+      ? "text-green-900 dark:text-green-100"
+      : banner.tone === "warning"
+        ? "text-amber-900 dark:text-amber-100"
+        : "text-neutral-900 dark:text-neutral-100";
 
   return (
     <div className="flex flex-col gap-4">
-      {showTestBanner && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
-          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-            Test mode: not collecting payments from clients yet
-          </p>
-          <p className="mt-1 text-sm text-amber-900/80 dark:text-amber-100/80">
-            Stripe setup here is for testing. Public booking still does
-            not ask clients for a card. We&apos;ll let you know before
-            that changes.
-          </p>
-        </div>
-      )}
+      <div className={`rounded-lg border p-4 ${bannerStyles}`}>
+        <p className={`text-sm font-medium ${bannerText}`}>
+          {banner.headline}
+        </p>
+        <p className={`mt-1 text-sm opacity-80 ${bannerText}`}>
+          {banner.detail}
+        </p>
+      </div>
 
       <section className="flex flex-col gap-5 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <header className="flex flex-col gap-1">
@@ -265,14 +290,14 @@ export function PaymentsSettings({
         </div>
       </section>
 
+      {/* State-driven card-on-file + booking-collection facts (presenter).
+          Replaces the pre-PR-A static payments-not-enabled/coming-later
+          block, which was false once live billing shipped. */}
       <div className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
-        <p className="font-medium">
-          Client payments are not enabled in Hone yet.
-        </p>
+        <p className="font-medium">{portalCardMessage}</p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
-          This page does not turn on card-on-file booking. Public booking
-          continues to work without a card step. Connecting Stripe here
-          prepares your studio for accepting payments in a future update.
+          {bookingCardMessage} Saving settings on this page never charges
+          anyone.
         </p>
       </div>
 
@@ -281,7 +306,7 @@ export function PaymentsSettings({
           status.chargesEnabled && status.onboardingCompletedAt != null
         }
         paidServiceCount={paidServiceCount}
-        livemode={status.livemode}
+        runtimeMode={runtimeMode}
         hasCancellationPolicy={hasCancellationPolicy}
         hasNoShowPolicy={hasNoShowPolicy}
       />
@@ -385,23 +410,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function CardOnFileReadiness({
   connectComplete,
   paidServiceCount,
-  livemode,
+  runtimeMode,
   hasCancellationPolicy,
   hasNoShowPolicy,
 }: {
   connectComplete: boolean;
   paidServiceCount: number;
-  livemode: boolean | null;
+  runtimeMode: "test" | "live";
   hasCancellationPolicy: boolean;
   hasNoShowPolicy: boolean;
 }) {
   const hasPaidService = paidServiceCount > 0;
   const hasBothPolicies = hasCancellationPolicy && hasNoShowPolicy;
-  // Mode display: anything other than explicit `true` is treated as
-  // test mode for this card. Phase 1 environments are unconditionally
-  // test mode for client booking; livemode === true would represent
-  // an unexpected configuration we do not currently support.
-  const isTestMode = livemode !== true;
+  // Mode display comes from the DEPLOYMENT runtime, never from the
+  // nullable settings row (pre-PR-A, a not-yet-connected studio on a
+  // LIVE deployment rendered "Test mode" here — the row-null bug).
+  const isTestMode = runtimeMode !== "live";
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -472,12 +496,16 @@ function CardOnFileReadiness({
         />
       </ul>
 
+      {/* Truthful posture note (replaces the stale "when card-on-file
+          becomes available / fees not part of this release" footer). */}
       <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
         <p>
-          When card-on-file becomes available, it will only apply to
-          paid services. Free consultations will keep working with no
-          card step. Hone will not charge clients at booking. No-show
-          or cancellation fee charging is not part of this release.
+          Card-on-file applies to paid services only; free consultations
+          stay card-free. Hone does not charge clients at booking. Manual
+          no-show and late-cancellation fees are configuration only — money
+          is never charged automatically, and a practitioner runs each fee
+          explicitly against a saved, authorized card. During the supervised
+          launch, run manual fees only if explicitly approved.
         </p>
       </div>
 

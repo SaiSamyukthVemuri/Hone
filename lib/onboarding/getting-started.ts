@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getActiveServices } from "@/lib/booking/queries";
 
 // PR #215: Getting Started / onboarding checklist. A practical setup
@@ -49,7 +50,11 @@ export type GettingStartedSignals = {
   hasNextVisitNote: boolean;
   sterileItems: number;
   disinfectants: number;
-  testPaymentAttempts: number;
+  // CURRENT-mode payment attempt count (scoped by inferStripeLivemode();
+  // pre-PR-A this was an unscoped count, so a live attempt ticked the
+  // "test-mode payments" item).
+  paymentAttempts: number;
+  runtimeLivemode: boolean;
 };
 
 function auto(
@@ -279,31 +284,52 @@ export function buildGettingStarted(
     {
       key: "payments",
       title: "Payments",
+      // State-driven (PR A): the pre-live static claims ("Live payments are
+      // off", "Legal review pending", "Willow checklist pending") were false
+      // once live billing shipped. Mode comes from the deployment runtime;
+      // the attempts count is CURRENT-mode scoped.
       items: [
         auto(
-          "test-payments",
-          "Test-mode payments available",
-          "Prepare and run test charges from a session.",
-          s.testPaymentAttempts > 0,
+          s.runtimeLivemode ? "payments-used" : "test-payments",
+          s.runtimeLivemode
+            ? "Payments available (live)"
+            : "Test-mode payments available",
+          s.runtimeLivemode
+            ? "Prepare and run charges from a session against a saved, authorized card."
+            : "Prepare and run test charges from a session.",
+          s.paymentAttempts > 0,
           null,
         ),
-        review(
-          "live-off",
-          "Live payments are off",
-          "No real cards can be charged. Collected revenue is not enabled yet.",
+        // Live runtime: a done auto item. Test runtime: an informational
+        // review item (an environment fact, not a completable task — it
+        // must not sit as an eternal todo or skew auto progress).
+        s.runtimeLivemode
+          ? auto(
+              "payment-mode",
+              "Live payments enabled",
+              "This deployment runs in Stripe live mode. Studio readiness is shown in Settings \u2192 Payments.",
+              true,
+              "/settings/payments",
+            )
+          : review(
+              "payment-mode",
+              "Live payments are off in this environment",
+              "This environment runs in Stripe test mode. No real cards can be charged here.",
+              "/settings/payments",
+            ),
+        auto(
+          "legal-approved",
+          "Legal/accounting review",
+          "Lawyer-approved payment copy is live (receipts and card authorization).",
+          true,
           null,
         ),
-        review(
-          "legal-pending",
-          "Legal/accounting review pending",
-          "Required before live payments can be considered.",
-          null,
-        ),
-        review(
-          "stripe-checklist-pending",
-          "Willow Stripe live checklist pending",
-          "Payouts, live webhook, and statement descriptor still need review.",
-          null,
+        auto(
+          "stripe-connect",
+          "Stripe Connect (per studio)",
+          "Connect status, payouts, and live/test readiness are shown in Settings \u2192 Payments.",
+          true,
+          "/settings/payments",
         ),
       ],
     },
@@ -345,7 +371,11 @@ export async function getGettingStartedSignals(
     count("clients"),
     count("record_keeping_sterile_items"),
     count("record_keeping_disinfectants"),
-    count("payment_charge_attempts"),
+    supabase
+      .from("payment_charge_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("studio_id", studio.id)
+      .eq("stripe_livemode", inferStripeLivemode()),
     supabase
       .from("session_blocks")
       .select(
@@ -393,6 +423,7 @@ export async function getGettingStartedSignals(
     hasNextVisitNote: notes.some((n) => !!n.next_session_note?.trim()),
     sterileItems: sterile.count ?? 0,
     disinfectants: disinfectants.count ?? 0,
-    testPaymentAttempts: payments.count ?? 0,
+    paymentAttempts: payments.count ?? 0,
+    runtimeLivemode: inferStripeLivemode(),
   };
 }

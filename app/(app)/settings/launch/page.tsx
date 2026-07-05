@@ -146,9 +146,9 @@ export default async function LaunchChecklistPage() {
     },
     {
       title: "Card-on-file",
-      status: "not_enabled",
+      status: "manual",
       detail:
-        "Not enabled. No cards are being collected. The Payments page shows readiness only; no card collection or charging is active.",
+        "Clients save a card in the client portal after signing the card authorization; readiness and live/test status are shown on the Payments page. Booking-time card collection is off — clients can still book without entering a card.",
       cta: { label: "Open Payments", href: "/settings/payments" },
     },
     {
@@ -187,8 +187,8 @@ export default async function LaunchChecklistPage() {
 
       <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950/30">
         <p className="font-medium text-amber-900 dark:text-amber-100">
-          Card-on-file is not enabled. Hone is not collecting or charging
-          client cards.
+          Payment status is shown on the Payments page. Booking-time card
+          collection is off; nothing on this checklist charges anyone.
         </p>
         <p className="mt-1 text-amber-900/80 dark:text-amber-100/80">
           Some items below are manual reminders. Use this as an onboarding

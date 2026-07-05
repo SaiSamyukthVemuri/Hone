@@ -77,9 +77,9 @@ export function PolicySettingsForm({ initial }: Props) {
           Cancellation and no-show policy
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          These policies will be shown to clients before card-on-file is
-          enabled in a future release. No cards are collected yet. Saving
-          these policies does not enable card collection.
+          These policies are shown to clients in the portal when they sign
+          the card-on-file authorization. Saving these policies does not
+          collect a card or charge anyone.
         </p>
         {/* Formatting help mirrors PostcareSettingsForm so practitioners
             who edited postcare already know the shortcuts and tokens.
@@ -166,9 +166,8 @@ export function PolicySettingsForm({ initial }: Props) {
 
       <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
         These policies are practitioner-authored. Hone does not draft
-        legal language for you. When card-on-file becomes available,
-        what you write here is what your clients will see and agree to
-        before their card is saved.
+        legal language for you. What you write here is what your clients
+        see and agree to before their card is saved on file.
       </p>
     </form>
   );

@@ -64,7 +64,7 @@ const FIRST_CONSULTATION = [
   "Aftercare/risks can be marked",
   "Procedure record appears",
   "Record can be printed/exported",
-  "Live payments remain off",
+  "Payments run in the studio\u2019s configured Stripe mode",
 ];
 
 export default async function GettingStartedPage() {
@@ -120,7 +120,8 @@ export default async function GettingStartedPage() {
             the future-onboarding section was removed. */}
         <p className="mt-2 text-xs text-neutral-500">
           Record-keeping support still needs public-health/legal review
-          before relying on it operationally. Live payments remain off.
+          before relying on it operationally. Payment readiness is shown
+          in Settings \u2192 Payments.
         </p>
       </section>
 

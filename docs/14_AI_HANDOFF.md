@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the payment-status presenter, PR A)
+
+- **Shared payment-status presenter (PR A).** `lib/payments/payment-status-presenter.ts` is the single source for payment-state copy (runtime mode / Connect capability / portal card capability / booking-collection / manual-fee posture / per-row badges). Settings→Payments, launch, policy, and getting-started no longer make static payments-are-off claims; the row-null→"Test mode" bug is fixed (mode = runtime, never the nullable row). "Ready" requires charges AND payouts. Remaining planned: PR B (admin state panel), PR C (panel/portal/lib strings), PR D (source guards). No migration; repo max stays 0105 (= prod).
+
 ## Current production status (as of the practice-metrics mode scoping)
 
 - **Practice-metrics mode scoping (display-only; no migration).** The dashboard Payments card now counts the CURRENT deployment mode's attempts only (`inferStripeLivemode()`-scoped query) and its labels flip with the mode — live counts are never rendered under "Test mode only" copy; test-only status lines are hidden in live. Stale pre-0101 DB-CHECK comment removed. Repo migration max stays **0105** (= prod). No payment-logic/env/Stripe change; gates 15 PASS.

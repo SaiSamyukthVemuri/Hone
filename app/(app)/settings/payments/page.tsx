@@ -1,6 +1,16 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import {
+  bookingCardCollection,
+  bookingCardCopy,
+  connectBannerCopy,
+  currentRuntimeMode,
+  deriveConnectCapability,
+  derivePortalCardCapability,
+  portalCardCopy,
+  publishableKeyOk,
+} from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 
@@ -74,17 +84,57 @@ export default async function PaymentsSettingsPage() {
   const hasNoShowPolicy =
     (studio.no_show_policy_text ?? "").trim().length > 0;
 
+  // Shared payment-status presenter (PR A): ALL status copy on this page is
+  // derived server-side and passed down as plain strings — the client
+  // component makes no claims of its own. Runtime mode comes from the
+  // deployment (inferStripeLivemode()), never from the nullable row.
+  const runtimeMode = currentRuntimeMode();
+  const connect = deriveConnectCapability(
+    row
+      ? {
+          accountStatus: row.account_status ?? null,
+          chargesEnabled: row.charges_enabled === true,
+          payoutsEnabled: row.payouts_enabled === true,
+        }
+      : error
+        ? undefined // read error → "unknown", never an all-clear
+        : null,
+  );
+  // Active card-authorization template presence (read-only; same table the
+  // portal gate reads). Errors degrade to "unknown" rather than a claim.
+  const { data: authTemplate, error: authTemplateErr } = await supabase
+    .from("consent_form_templates")
+    .select("id")
+    .eq("studio_id", studio.id)
+    .eq("form_type", "card_authorization")
+    .eq("status", "active")
+    .eq("is_live", true)
+    .limit(1)
+    .maybeSingle();
+  const portalCard = authTemplateErr
+    ? "unknown"
+    : derivePortalCardCapability({
+        connect,
+        hasActiveAuthorizationTemplate: authTemplate != null,
+        publishableKeyOk: publishableKeyOk(),
+      });
+  const banner = connectBannerCopy(runtimeMode, connect);
+
   return (
     <section className="flex flex-col gap-8">
       <div>
         <h2 className="text-xl font-medium">Payments</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Connect this studio to Stripe so it can accept payments later.
-          Public booking does not collect cards from clients yet.
+          Connect this studio to Stripe to accept payments.{" "}
+          {bookingCardCopy(bookingCardCollection())}
         </p>
       </div>
       <PaymentsSettings
         status={status}
+        runtimeMode={runtimeMode}
+        banner={banner}
+        portalCardMessage={portalCardCopy(portalCard)}
+        bookingCardMessage={bookingCardCopy(bookingCardCollection())}
         paidServiceCount={paidServiceCount}
         hasCancellationPolicy={hasCancellationPolicy}
         hasNoShowPolicy={hasNoShowPolicy}
