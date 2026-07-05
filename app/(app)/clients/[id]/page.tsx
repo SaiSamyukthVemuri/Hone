@@ -574,6 +574,7 @@ export default async function ClientCheatSheetPage({
                 id: t.id,
                 title: t.title,
                 form_type: t.form_type,
+                version: t.version,
               }))}
             latestSignatures={consentLatestSignatures}
           />

@@ -2,6 +2,10 @@ import type {
   ConsentFormTemplate,
 } from "@/lib/types/database";
 import type { PractitionerSignatureSummary } from "@/lib/consent/queries";
+import {
+  consentRowState,
+  summarizeConsent,
+} from "@/lib/consent/signature-status";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
 // PR #134. Practitioner-side per-client consent card. Renders on the
@@ -29,7 +33,10 @@ export function ConsentSignaturesCard({
   latestSignatures,
 }: {
   clientName: string;
-  activeTemplates: Pick<ConsentFormTemplate, "id" | "title" | "form_type">[];
+  activeTemplates: Pick<
+    ConsentFormTemplate,
+    "id" | "title" | "form_type" | "version"
+  >[];
   latestSignatures: PractitionerSignatureSummary[];
 }) {
   const latestByTemplateId = new Map<string, PractitionerSignatureSummary>();
@@ -38,6 +45,10 @@ export function ConsentSignaturesCard({
       latestByTemplateId.set(s.template_id, s);
     }
   }
+
+  // Pre-treatment summary across the studio's non-card consent forms, so a
+  // missing / out-of-date required form is obvious before charting a session.
+  const summary = summarizeConsent(activeTemplates, latestByTemplateId);
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -53,6 +64,35 @@ export function ConsentSignaturesCard({
         </div>
       </div>
 
+      {summary.total > 0 &&
+        (summary.needsAttention === 0 ? (
+          <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+            All {summary.total} consent form{summary.total === 1 ? "" : "s"} up to
+            date for {clientName}.
+          </p>
+        ) : (
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            {summary.needsAttention} of {summary.total} consent form
+            {summary.total === 1 ? "" : "s"} need attention before treatment
+            {(summary.notSigned > 0 || summary.outdated > 0) && (
+              <>
+                {": "}
+                {[
+                  summary.notSigned > 0
+                    ? `${summary.notSigned} not signed`
+                    : null,
+                  summary.outdated > 0
+                    ? `${summary.outdated} need re-sign`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </>
+            )}
+            .
+          </p>
+        ))}
+
       {activeTemplates.length === 0 ? (
         <p className="text-xs italic text-neutral-500">
           No active consent forms configured for this studio.
@@ -61,40 +101,35 @@ export function ConsentSignaturesCard({
         <ul className="flex flex-col gap-2">
           {activeTemplates.map((t) => {
             const sig = latestByTemplateId.get(t.id);
-            // PR #137. Photo-consent forms have three states:
-            //   * accepted -> green Consent granted
-            //   * denied   -> amber Consent denied (NOT treated as
-            //                 missing; the row is a legitimate
-            //                 immutable response)
-            //   * no row   -> neutral Not answered
-            // Every other form_type keeps the legacy Signed /
-            // Not signed shape.
+            // PR #137: photo_consent has accepted/denied/no-answer. This PR
+            // adds an "Outdated" state (signed an OLDER template version than
+            // the current active one → needs a re-sign). card_authorization
+            // keeps its legacy Signed/Not-signed shape (no outdated) via
+            // consentRowState — its re-sign flow lives elsewhere, untouched.
             const isPhoto = t.form_type === "photo_consent";
-            const badgeStyle = isPhoto
-              ? sig
-                ? sig.response === "denied"
-                  ? "rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-950 dark:text-amber-200"
-                  : "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
-              : sig
-                ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400";
-            const badgeLabel = isPhoto
-              ? sig
-                ? sig.response === "denied"
-                  ? "Consent denied"
-                  : "Consent granted"
-                : "Not answered"
-              : sig
-                ? "Signed"
-                : "Not signed";
-            const subline = isPhoto
-              ? sig
-                ? `${sig.response === "denied" ? "Denied" : "Granted"} · `
-                : null
-              : sig
-                ? "Signed "
-                : null;
+            const state = consentRowState(t, sig);
+            const EMERALD =
+              "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200";
+            const AMBER =
+              "rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-950 dark:text-amber-200";
+            const NEUTRAL =
+              "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400";
+            const badge = {
+              signed: { style: EMERALD, label: "Signed" },
+              granted: { style: EMERALD, label: "Consent granted" },
+              denied: { style: AMBER, label: "Consent denied" },
+              outdated: { style: AMBER, label: "Outdated" },
+              not_signed: { style: NEUTRAL, label: "Not signed" },
+              not_answered: { style: NEUTRAL, label: "Not answered" },
+            }[state];
+            const subline =
+              state === "granted"
+                ? "Granted · "
+                : state === "denied"
+                  ? "Denied · "
+                  : state === "signed" || state === "outdated"
+                    ? "Signed "
+                    : null;
             return (
               <li
                 key={t.id}
@@ -112,6 +147,11 @@ export function ConsentSignaturesCard({
                       {sig.signature_name}
                       {" · "}
                       v{sig.template_version}
+                      {state === "outdated" && (
+                        <span className="text-amber-700 dark:text-amber-300">
+                          {" · "}re-sign needed (current v{t.version})
+                        </span>
+                      )}
                     </p>
                   ) : (
                     <p className="text-[11px] text-neutral-500">
@@ -119,7 +159,7 @@ export function ConsentSignaturesCard({
                     </p>
                   )}
                 </div>
-                <span className={badgeStyle}>{badgeLabel}</span>
+                <span className={badge.style}>{badge.label}</span>
               </li>
             );
           })}
