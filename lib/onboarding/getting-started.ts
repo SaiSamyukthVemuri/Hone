@@ -8,7 +8,8 @@ import { getActiveServices } from "@/lib/booking/queries";
 // guidance where it cannot. No migration: V1 deliberately has no
 // manual mark-as-done persistence (storing it would need a new
 // table/column; documented decision). Read-only; pilot wording only
-// (live payments stay off; record-keeping support, not compliance).
+// (payments section is runtime-mode aware; record-keeping support,
+// not compliance).
 
 export type ChecklistStatus = "done" | "todo" | "review";
 

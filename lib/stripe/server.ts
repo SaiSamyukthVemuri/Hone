@@ -1,9 +1,9 @@
-// Server-only Stripe client + key-mode enforcement (Phase 1 onboarding plumbing).
+// Server-only Stripe client + key-mode enforcement.
 //
-// Phase 1 rule: Stripe LIVE mode is OFF everywhere by default, including
-// Vercel Production. Live mode requires an explicit one-time opt-in
-// (`STRIPE_ALLOW_LIVE_MODE === "true"`) which this branch never sets
-// and which lives behind a separate review.
+// Mode rule: Stripe LIVE mode requires an explicit opt-in
+// (`STRIPE_ALLOW_LIVE_MODE === "true"`) alongside the sk_live_ key.
+// Production has been flipped live via the supervised operator process
+// (docs/16 §17.15); environments without the opt-in stay test-mode.
 //
 // Key acceptance matrix:
 //
@@ -122,10 +122,9 @@ export function inferStripeLivemode(): boolean {
 }
 
 /**
- * Country for Express connected-account creation. Phase 1 hardcodes
- * Canada to match the current Willow Electrolysis rollout. To
- * generalize, plumb a per-studio `country` column into the schema and
- * read it here. The hardcode is a deliberate Phase 1 scope choice.
+ * Country for Express connected-account creation. Hardcoded to Canada
+ * for the current single-country rollout. To generalize, plumb a
+ * per-studio `country` column into the schema and read it here.
  */
 export const STRIPE_CONNECT_COUNTRY: string =
   process.env.STRIPE_CONNECT_COUNTRY ?? "CA";

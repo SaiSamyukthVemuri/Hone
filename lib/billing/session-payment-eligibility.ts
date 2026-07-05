@@ -239,9 +239,9 @@ export async function getSessionPaymentEligibility(
   // 4) Studio Stripe Connect status. Lookup mirrors the SetupIntent
   //    action so a studio whose onboarding has not completed cannot
   //    have a session payment prepared even if the card row from
-  //    step 2 somehow exists. stripe_livemode=false is the v1
-  //    requirement; the new payment_charge_attempts
-  //    _livemode_false_check makes the DB also refuse a live row.
+  //    step 2 somehow exists. The settings row must match the
+  //    deployment mode (the read below is mode-scoped; a mode belt
+  //    double-checks it).
   let resolvedStripeAccountId: string | null = stripeAccountIdFromCard;
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // eligibility verifies against the CURRENT deployment mode's row only

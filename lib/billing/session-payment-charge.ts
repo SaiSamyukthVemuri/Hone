@@ -10,7 +10,8 @@ import { buildChargeDescription } from "@/lib/billing/charge-description";
 // runSessionPaymentCharge (PR #173).
 // ---------------------------------------------------------------------------
 //
-// Test-mode-only execution helper for a prepared session_payment
+// Mode-aware execution helper (test or live, per the deployment) for a
+// prepared session_payment
 // payment_charge_attempts row. Faithful port of
 // lib/billing/the (removed, PR #218) legacy manual-fee executor:runManualFeeCharge (PR #146)
 // adapted for the canonical payment_charge_attempts ledger
@@ -43,10 +44,10 @@ import { buildChargeDescription } from "@/lib/billing/charge-description";
 //      paths with severity matching the manual fee precedent.
 //
 // What this helper deliberately does NOT do:
-//   * Does NOT charge a live card. Three structural guards block
-//     it (inferStripeLivemode() early return; payment_charge_attempts
-//     _livemode_false_check DB CHECK; key-format gate in lib/stripe
-//     /server.ts).
+//   * Charges only in the deployment's Stripe mode: the row, card,
+//     settings, and customer must all match inferStripeLivemode()
+//     (mode-consistency guards below); the key/env gate in
+//     lib/stripe/server.ts is the platform-level brace.
 //   * Does NOT send a receipt email. Receipt path is PR #172's
 //     follow-up.
 //   * Does NOT refund or retry a failed/cancelled row. PR #173
@@ -62,10 +63,12 @@ import { buildChargeDescription } from "@/lib/billing/charge-description";
 const RECONCILIATION_WINDOW_MINUTES = 60;
 const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
+// Mode-mismatch refusal (row stripe_livemode vs deployment mode); the
+// historical constant/outcome name is kept — renaming is an API change.
 const LIVE_MODE_BLOCKED_MESSAGE =
-  "Live charges are not enabled for this test-mode release.";
+  "This payment's mode does not match the current deployment mode.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
-  "This test charge is pending and needs manual review before retrying.";
+  "This charge is pending and needs manual review before retrying.";
 // PR #281: Stripe reported success but Hone could not confirm the local
 // ledger write. Surfaced to the practitioner verbatim; carries no card
 // data, raw Stripe payload, secrets, or sensitive client data.
@@ -74,7 +77,7 @@ const SUCCESS_NOT_PERSISTED_MESSAGE =
 const GENERIC_LINEAGE_MISMATCH_MESSAGE =
   "Card or studio details no longer match this session payment. Refresh and try again.";
 const AUTHENTICATION_REQUIRED_MESSAGE =
-  "The saved card requires customer authentication and could not be charged off-session in this test flow.";
+  "The saved card requires customer authentication and could not be charged off-session.";
 
 // PR #196: reason-scoped deterministic key. session_payment keeps its
 // historical format so in-flight rows replay identically; fee reasons

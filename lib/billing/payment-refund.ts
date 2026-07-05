@@ -8,8 +8,10 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // PR #178. refundPaymentChargeAttempt.
 // ---------------------------------------------------------------------------
 //
-// Test-mode-only manual refund helper for a succeeded
-// payment_charge_attempts row. Reason-agnostic by construction:
+// Manual refund helper for a succeeded payment_charge_attempts row.
+// Mode-aware: runs in the deployment's Stripe mode (test or live) and
+// refuses rows whose stripe_livemode does not match it.
+// Reason-agnostic by construction:
 // today only `session_payment` rows reach status='succeeded' in
 // production, but the same helper will refund a future
 // `late_cancellation_fee` or `no_show_fee` row without code
@@ -18,10 +20,10 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 //
 // What this helper DOES
 // ---------------------
-//   1. Refuses to run in live mode (inferStripeLivemode() === true
-//      short-circuits with outcome 'live_mode_blocked'; the
-//      payment_charge_attempts_livemode_false_check on the row +
-//      the Stripe key gate are the braces).
+//   1. Refuses a row whose stripe_livemode differs from the deployment
+//      mode (outcome 'live_mode_blocked' — the historical enum name for
+//      the mode-mismatch refusal; renaming it is an API change). The
+//      Stripe key/env gate remains the platform-level brace.
 //   2. Loads the attempt row. Verifies studio scope (the action
 //      layer is responsible for resolving studio_id from the
 //      authenticated practitioner; this helper additionally re-

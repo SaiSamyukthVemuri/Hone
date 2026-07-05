@@ -9,12 +9,10 @@
 // writing to the canonical ledger via a future PR.
 //
 // What this template DOES contain:
-//   * A test-mode disclaimer in both subject and body. The receipt
-//     is sent only when the row's stripe_livemode = false, which
-//     is structurally enforced by the
-//     payment_charge_attempts_livemode_false_check CHECK (PR #171
-//     migration 0073). The disclaimer in the body keeps that
-//     posture visible to the client.
+//   * Mode-branched on the ROW's stripe_livemode (PR #323): test rows
+//     carry the test-mode disclaimer in subject and body; live rows use
+//     the lawyer-approved live wording (2026-07-04). The sender passes
+//     the attempt row's mode — never the runtime's.
 //   * The studio name (from studios.name).
 //   * The client's name (greeting only; the body never includes
 //     other PII).
@@ -36,13 +34,13 @@
 //   * No tax calculation. The body explicitly says so to set
 //     the right expectation; PR #169's docs/16 §12.8 captures
 //     the v1 decision.
-//   * No "tax receipt" or "official invoice" wording. The
-//     subject is "Receipt" + the test-mode prefix.
+//   * No "tax receipt" or "official invoice" wording. The live body
+//     carries the approved not-a-tax-invoice disclaimer; the test
+//     subject carries the TEST MODE prefix.
 //   * No refund policy. Refunds are deferred (docs/16 §5.5,
 //     blocker for live payments); the body says so plainly.
-//   * No live-payment claim. The disclaimer "Stripe test-mode
-//     charge -- no live card was charged" appears in both the
-//     subject and the body.
+//   * The test branch says plainly that no live card was charged;
+//     the live branch never carries test wording.
 //   * No client portal link, no auth token, no PII beyond the
 //     greeting name. This is the same minimal-blast-radius
 //     posture the portal magic-link email follows.
@@ -53,9 +51,8 @@
 //   * Georgia-serif "Hone" wordmark + headline
 //   * system sans-serif body
 //   * "<studio> via Hone" uppercase caption footer
-// A future live-mode receipt PR will adjust the disclaimer
-// language but should reuse this shell so the visual look is
-// uniform across the client email surface.
+// Both mode branches reuse this shell so the visual look is uniform
+// across the client email surface.
 
 export type PaymentReceiptEmailInput = {
   studioName: string;

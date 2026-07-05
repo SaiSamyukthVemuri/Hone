@@ -85,7 +85,7 @@ type RefundAction = (formData: FormData) => Promise<RefundResult>;
 // PR #174 was the UX hardening pass after PR #173 shipped Stripe
 // test-mode execution. Before #174 the card relied on React local
 // state (executeSuccess / success) to show the PaymentIntent id
-// immediately after Run test charge; that state was lost on
+// immediately after Run charge; that state was lost on
 // refresh, leaving the practitioner with a bare "Succeeded" label
 // and no Stripe ids. The fix is two-part:
 //   1. lib/billing/session-payment-eligibility.ts SELECT widened to
@@ -111,13 +111,13 @@ type RefundAction = (formData: FormData) => Promise<RefundResult>;
 //   * No webhook handler logic.
 //   * No "Pay now" affordance. No "Charge card" affordance. No
 //     "Collect payment" label. The only money-moving button is
-//     Run test charge, which is explicitly framed as Stripe test
+//     Run charge, which is framed per the deployment mode
 //     mode.
 //   * No client-facing surface. Sessions are practitioner-only.
 //   * No receipt claim. The succeeded panel explicitly notes
 //     "No receipt was sent in this PR."
 //   * No live-payment claim. Every reference to a successful
-//     charge uses "Test charge succeeded," never "Payment
+//     charge uses "Charge succeeded," never "Payment
 //     complete" or "Live payment."
 
 const CENTS_PER_DOLLAR = 100;
@@ -449,7 +449,7 @@ function AttemptStatusPanel({
 }
 
 // ---------------------------------------------------------------------------
-// PR #173 + #174. Ready panel. The Run test charge button lives
+// PR #173 + #174. Ready panel. The Run charge button lives
 // here and survives refresh. Two-click confirm prevents accidental
 // double-tap charges.
 // ---------------------------------------------------------------------------
@@ -592,7 +592,7 @@ function ReadyPanel({
 // the row to pending_stripe but the create call did not return a
 // terminal status (network blip, unknown error after claim, etc.).
 // Mirrors ManualFeeChargeCard's PendingPanel: tells the operator
-// the test charge may need manual review, surfaces the PI id if
+// the charge may need manual review, surfaces the PI id if
 // the row has one, and explicitly avoids any Run-style button.
 // ---------------------------------------------------------------------------
 function PendingPanel({
@@ -627,7 +627,7 @@ function PendingPanel({
 // ---------------------------------------------------------------------------
 // PR #174. Succeeded panel. Survives page refresh because every
 // rendered field comes from the persisted row. Explicitly says
-// "Test charge succeeded" rather than "Payment complete" to keep
+// "Charge succeeded" rather than "Payment complete" to keep
 // the test-mode posture unambiguous.
 // ---------------------------------------------------------------------------
 function SucceededPanel({
@@ -645,7 +645,7 @@ function SucceededPanel({
 }) {
   // PR #181. Top-of-card state model. When the persisted row carries
   // refund_status='succeeded' the practitioner-facing top status MUST
-  // read "Test payment refunded", not "Test charge succeeded". Without
+  // read "Payment refunded", not "Charge succeeded". Without
   // this promotion Chloe sees a green succeeded heading + the refund
   // sub-panel saying refunded simultaneously, which reads as
   // "succeeded but also refunded" -- confusing. The new top heading
@@ -860,7 +860,7 @@ function ReceiptSubPanel({
 // PR #178. Refund sub-panel for the succeeded state. Drives off
 // the persisted refund_status column (migration 0078) so the
 // already-refunded + pending + failed-refund states survive a
-// page refresh. The Refund test charge button only renders when
+// page refresh. The Refund charge button only renders when
 // refund_status is null or 'failed' (the latter so a terminal
 // failure can be retried after the operator investigates).
 //
@@ -868,8 +868,8 @@ function ReceiptSubPanel({
 //   * Header: "Refund"
 //   * Idle state: "This creates a Stripe test-mode refund for
 //     this charge. No live money is moved."
-//   * Action button: "Refund test charge"
-//   * Confirm button: "Confirm: refund test charge ($X.XX)"
+//   * Action button: "Refund charge"
+//   * Confirm button: "Confirm: refund charge ($X.XX)"
 //   * Succeeded state: "Test refund succeeded."
 //   * Failed state: "Test refund failed."
 //   * Pending state: "Refund pending."
