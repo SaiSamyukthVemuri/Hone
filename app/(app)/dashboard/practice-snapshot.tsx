@@ -112,23 +112,40 @@ export function PracticeSnapshot({
         </Card>
 
         <Card title="Payments">
-          {/* PR #323: the single FACTUAL state claim is mode-aware. The
-              remaining test-mode metric labels below are internal + inert until
-              the #324 env flip; they are reworded in the copy fast-follow. */}
+          {/* Mode-aware card (the promised #323 copy fast-follow, done after
+              live billing was proven). The counts come from the CURRENT
+              deployment mode only (practice-metrics is scoped by
+              inferStripeLivemode()), so the labels flip with the mode —
+              live counts are never rendered under test-mode copy. The
+              test-only status lines below are hidden in live. */}
           <Stat label="Live payments" value={livemode ? "On" : "Off"} />
-          <Stat label="Test payments" value="Available" />
-          <Stat label="Collected revenue" value="Not enabled yet" />
+          {!livemode && <Stat label="Test payments" value="Available" />}
+          {!livemode && (
+            <Stat label="Collected revenue" value="Not enabled yet" />
+          )}
           <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
             <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-              Test mode only ({metrics.periodLabel})
+              {livemode ? "Live payments" : "Test mode only"} (
+              {metrics.periodLabel})
             </p>
-            <Stat label="Test payments prepared" value={metrics.testPayments.prepared} />
-            <Stat label="Test payments charged" value={metrics.testPayments.charged} />
-            <Stat label="Test refunds" value={metrics.testPayments.refunds} />
+            <Stat
+              label={livemode ? "Payments prepared" : "Test payments prepared"}
+              value={metrics.testPayments.prepared}
+            />
+            <Stat
+              label={livemode ? "Payments charged" : "Test payments charged"}
+              value={metrics.testPayments.charged}
+            />
+            <Stat
+              label={livemode ? "Refunds" : "Test refunds"}
+              value={metrics.testPayments.refunds}
+            />
           </div>
-          <p className="text-[11px] text-neutral-500">
-            Collected revenue will appear after live payments are enabled.
-          </p>
+          {!livemode && (
+            <p className="text-[11px] text-neutral-500">
+              Collected revenue will appear after live payments are enabled.
+            </p>
+          )}
         </Card>
 
         {/* PR #225: treatment-memory loop health. Studio-level only;
