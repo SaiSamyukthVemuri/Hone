@@ -214,14 +214,27 @@ describe("service value wording (live payments disabled)", () => {
   });
 
   it("payments card: the Live payments state is mode-aware; test metrics stay explicit", () => {
-    // PR #323: the single factual state claim is now mode-gated (On/Off); the
-    // remaining test-mode metric labels are deferred to the copy fast-follow.
+    // The #323-promised copy fast-follow: every payment label is now
+    // mode-aware. Test-mode copy stays in source for the test branch.
     expect(SNAPSHOT).toMatch(/label="Live payments" value=\{livemode \? "On" : "Off"\}/);
     expect(SNAPSHOT).toMatch(/label="Test payments" value="Available"/);
     expect(SNAPSHOT).toMatch(/Test mode only/);
     expect(SNAPSHOT).toMatch(/Test payments prepared/);
     expect(SNAPSHOT).toMatch(/Test payments charged/);
     expect(SNAPSHOT).toMatch(/Test refunds/);
+  });
+
+  it("payments card: NO test-mode copy can render in live mode (labels flip with the mode)", () => {
+    // The heading and all three metric labels are ternaries on livemode —
+    // live counts are never displayed under "Test mode only" copy.
+    expect(SNAPSHOT).toMatch(/\{livemode \? "Live payments" : "Test mode only"\}/);
+    expect(SNAPSHOT).toMatch(/livemode \? "Payments prepared" : "Test payments prepared"/);
+    expect(SNAPSHOT).toMatch(/livemode \? "Payments charged" : "Test payments charged"/);
+    expect(SNAPSHOT).toMatch(/livemode \? "Refunds" : "Test refunds"/);
+    // The test-only status/revenue claims are hidden in live.
+    expect(SNAPSHOT).toMatch(/\{!livemode && <Stat label="Test payments" value="Available" \/>\}/);
+    expect(SNAPSHOT).toMatch(/\{!livemode && \(\s*\n?\s*<Stat label="Collected revenue" value="Not enabled yet" \/>/);
+    expect(SNAPSHOT).toMatch(/Collected revenue will appear after live payments are enabled\./);
   });
 });
 
@@ -248,9 +261,15 @@ describe("action metrics + Today section", () => {
 });
 
 describe("data behavior safety", () => {
-  it("metrics are read-only over existing tables; test payments clearly scoped", () => {
+  it("metrics are read-only over existing tables; payment counts are CURRENT-mode scoped", () => {
     expect(METRICS).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
-    expect(METRICS).toMatch(/stripe_livemode=false by DB CHECK/);
+    // Live mode counts only live attempts; test mode only test attempts.
+    // (The pre-0101 "stripe_livemode=false by DB CHECK" claim is defunct —
+    // the query must scope by the deployment mode, never a literal.)
+    const block = METRICS.slice(METRICS.indexOf('.from("payment_charge_attempts")'));
+    expect(block.slice(0, 400)).toMatch(/\.eq\("stripe_livemode", inferStripeLivemode\(\)\)/);
+    expect(METRICS).not.toMatch(/stripe_livemode=false by DB CHECK/);
+    expect(METRICS).not.toMatch(/\.eq\("stripe_livemode", (true|false)\)/);
     expect(METRICS).not.toMatch(/paymentIntents|stripeClient|getStripe/);
   });
 });

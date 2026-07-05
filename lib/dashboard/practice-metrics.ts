@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   getClientProcedureRecords,
@@ -7,8 +8,9 @@ import {
 
 // PR #208: Practice Dashboard V1 metrics. Read-only aggregation over
 // EXISTING tables (appointments + services price join, sessions /
-// session_blocks via the record-keeping procedure read, and clearly
-// labeled test-mode payment_charge_attempts counts). No payment
+// session_blocks via the record-keeping procedure read, and
+// CURRENT-mode payment_charge_attempts counts — the card labels flip
+// between test and live with inferStripeLivemode()). No payment
 // calculation, executor, or gate is touched; live payments remain
 // disabled, so nothing here is "revenue": the UI labels everything
 // as booked/completed SERVICE VALUE based on service menu prices.
@@ -197,6 +199,10 @@ export function summarizeChartedWithin24h(
   return { completedCount: rows.length, chartedWithin24hCount: charted };
 }
 
+// CURRENT-mode payment-attempt counts (the query is scoped by
+// inferStripeLivemode()). The historical "testPayments" field/type names
+// are kept for API stability; in a live deployment these are LIVE counts
+// and the snapshot card labels them accordingly.
 export type TestPaymentMetrics = {
   prepared: number;
   charged: number;
@@ -245,13 +251,17 @@ export async function getPracticeDashboardMetrics(
         .eq("studio_id", studioId)
         .gte("starts_at", startUtc.toISOString())
         .lt("starts_at", endUtc.toISOString()),
-      // Test-mode-only ledger counts for the period. Every row in
-      // payment_charge_attempts is stripe_livemode=false by DB CHECK;
-      // the card labels these explicitly as test-mode.
+      // CURRENT-mode ledger counts for the period. (The pre-0101
+      // all-rows-are-test-mode invariant is defunct: 0101 dropped that
+      // CHECK, prepare stamps inferStripeLivemode(), and 0105 allows one
+      // test AND one live attempt per slot — an unscoped count would mix
+      // modes and could double-count a single real-world payment. The
+      // card labels flip with the mode.)
       supabase
         .from("payment_charge_attempts")
         .select("status, refund_status")
         .eq("studio_id", studioId)
+        .eq("stripe_livemode", inferStripeLivemode())
         .gte("created_at", startUtc.toISOString())
         .lt("created_at", endUtc.toISOString()),
       // Same 100-session window as before; only the parameter shape

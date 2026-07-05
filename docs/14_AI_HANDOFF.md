@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of the practice-metrics mode scoping)
+
+- **Practice-metrics mode scoping (display-only; no migration).** The dashboard Payments card now counts the CURRENT deployment mode's attempts only (`inferStripeLivemode()`-scoped query) and its labels flip with the mode — live counts are never rendered under "Test mode only" copy; test-only status lines are hidden in live. Stale pre-0101 DB-CHECK comment removed. Repo migration max stays **0105** (= prod). No payment-logic/env/Stripe change; gates 15 PASS.
+
 ## Current production status (as of mode-scoped attempt uniqueness)
 
 - **Mode-scoped active payment-attempt uniqueness (migration 0105).** The 0073 active-attempt uniques on `payment_charge_attempts` gain `stripe_livemode` (session: `(session_id, mode)`; fees: `(appointment_id, reason, mode)`) and the eligibility existing-attempt reads (session + both fee ledgers) are mode-scoped — a test attempt can no longer block or masquerade as a live attempt, and vice versa; same-mode duplicate protection preserved. No charge-execution/Stripe-SDK/env change; gates 15 PASS. **Repo migration max → 0105; prod is at 0104 until the migration-first apply is approved.**
