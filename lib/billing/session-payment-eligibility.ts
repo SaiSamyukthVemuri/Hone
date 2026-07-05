@@ -298,6 +298,10 @@ export async function getSessionPaymentEligibility(
     // are nullable on the row and on the summary; populated only
     // after the sendPaymentChargeReceipt helper claims and
     // updates the row.
+    // Mode-scoped (0105): existing attempts are read for the CURRENT
+    // deployment mode only — a test attempt must never masquerade as (or
+    // block) a live one, and vice versa. The 0105 partial unique enforces
+    // the same per-mode invariant structurally.
     const { data: attemptRows } = await admin
       .from("payment_charge_attempts")
       .select(
@@ -306,6 +310,7 @@ export async function getSessionPaymentEligibility(
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
       .eq("charge_reason", "session_payment")
+      .eq("stripe_livemode", livemode)
       .order("created_at", { ascending: false });
     existingAttempts = (attemptRows ?? []).map((row) => ({
       id: row.id as string,

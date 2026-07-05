@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of mode-scoped attempt uniqueness)
+
+- **Mode-scoped active payment-attempt uniqueness (migration 0105).** The 0073 active-attempt uniques on `payment_charge_attempts` gain `stripe_livemode` (session: `(session_id, mode)`; fees: `(appointment_id, reason, mode)`) and the eligibility existing-attempt reads (session + both fee ledgers) are mode-scoped — a test attempt can no longer block or masquerade as a live attempt, and vice versa; same-mode duplicate protection preserved. No charge-execution/Stripe-SDK/env change; gates 15 PASS. **Repo migration max → 0105; prod is at 0104 until the migration-first apply is approved.**
+
 ## Current production status (as of the payment-mode cosmetic cleanup)
 
 - **Payment-mode cosmetic cleanup + migration 0104** (post-live-proof; no payment-logic/env/Stripe change). Live billing was PROVEN on the controlled test studio (2 live charges + receipts + full refund, all reconciled, 0 errors). This cleanup fixes the drift it surfaced: consent label rename ("Card-on-file authorization"), Settings→Payments copy separates booking-collection (off) vs portal card-on-file (available), the mode line no longer renders grey in live, `getActiveCardForStudioClient` + the webhook card pre-flip are mode-scoped, and **0104** rescopes `one_active_per_pair` to (studio, client, **mode**) so a live card save cannot silently collide with an active test card. **Repo migration max → 0104; prod is at 0103 until the migration-first apply is approved.** `check-stripe-gates` 15 PASS.
