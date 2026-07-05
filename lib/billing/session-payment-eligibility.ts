@@ -243,12 +243,16 @@ export async function getSessionPaymentEligibility(
   //    requirement; the new payment_charge_attempts
   //    _livemode_false_check makes the DB also refuse a live row.
   let resolvedStripeAccountId: string | null = stripeAccountIdFromCard;
+  // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
+  // eligibility verifies against the CURRENT deployment mode's row only
+  // (the stripe_livemode !== livemode belt below stays as defense-in-depth).
   const { data: settings } = await admin
     .from("studio_payment_settings")
     .select(
       "stripe_account_id, stripe_account_status, stripe_livemode",
     )
     .eq("studio_id", args.studioId)
+    .eq("stripe_livemode", livemode)
     .maybeSingle();
   if (!settings) {
     reasons.push(

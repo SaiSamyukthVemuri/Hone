@@ -998,10 +998,12 @@ async function loadPaymentStatus(
   studioId: string,
 ): Promise<PaymentStatusForDashboard | null> {
   // Uses the same display-safe RPC the Payments settings page reads from.
-  // No Stripe SDK calls, no secrets, no Stripe IDs returned.
+  // No Stripe SDK calls, no secrets, no Stripe IDs returned. Mode-scoped
+  // (migration 0103): reads the CURRENT deployment mode's row only, so the
+  // dashboard never reflects the other mode's stale status.
   const { data, error } = await supabase.rpc(
     "get_studio_payment_settings_display",
-    { p_studio_id: studioId },
+    { p_studio_id: studioId, p_stripe_livemode: inferStripeLivemode() },
   );
   if (error) {
     // Surface for the page renderer's "Needs attention" branch only;

@@ -322,10 +322,14 @@ async function handleStripeEvent(
       //   coalesce(p_onboarding_completed_at, sps.stripe_onboarding_completed_at)
       // so a non-null value overwrites. Sending null on subsequent
       // webhooks preserves the original first-completion timestamp.
+      // Mode-scoped (0103): a studio can hold one settings row per Stripe
+      // mode; preserve-first-completion must read the row for THIS event's
+      // mode only (never the other mode's timestamp).
       const { data: existingSettings } = await admin
         .from("studio_payment_settings")
         .select("stripe_onboarding_completed_at")
         .eq("studio_id", ctx.studioId)
+        .eq("stripe_livemode", ctx.livemode)
         .maybeSingle();
       const onboardingCompletedAtForRpc =
         existingSettings?.stripe_onboarding_completed_at != null

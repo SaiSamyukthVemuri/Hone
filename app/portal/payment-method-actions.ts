@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import {
   createCardOnFileSetupIntent,
@@ -150,12 +151,16 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
   //    onboarding has finished. We do NOT require charges_enabled
   //    here because SetupIntent does not move money; a card can be
   //    saved while a fresh account is still awaiting payouts setup.
+  //    Mode-scoped (0103): a studio can hold one settings row per Stripe
+  //    mode; the SetupIntent must be created on the CURRENT deployment
+  //    mode's connected account only.
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
       "stripe_account_id, stripe_account_status, stripe_livemode, stripe_charges_enabled",
     )
     .eq("studio_id", session.studioId)
+    .eq("stripe_livemode", inferStripeLivemode())
     .maybeSingle();
   if (settingsErr) {
     console.error(

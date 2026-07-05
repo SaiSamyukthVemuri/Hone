@@ -281,10 +281,13 @@ export async function refreshAccountStatusFromStripe(params: {
   // record. We therefore SEND null to the RPC if the stored value
   // is already set; only the first observation of charges_enabled
   // (when the stored timestamp is still null) writes a real value.
+  // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
+  // read the CURRENT deployment mode's row only.
   const { data: existingSettings } = await admin
     .from("studio_payment_settings")
     .select("stripe_onboarding_completed_at")
     .eq("studio_id", params.studioId)
+    .eq("stripe_livemode", livemode)
     .maybeSingle();
   const onboardingCompletedAtForRpc =
     existingSettings?.stripe_onboarding_completed_at != null
