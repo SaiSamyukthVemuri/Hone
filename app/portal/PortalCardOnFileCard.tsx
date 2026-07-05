@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PortalPaymentMethodForm } from "./PortalPaymentMethodForm";
+import { TEST_MODE_CARD_NOTE } from "@/lib/payments/portal-card-copy";
 
 // PR #151. Read-only card-on-file summary + Replace card affordance.
 //
@@ -109,7 +110,7 @@ export function PortalCardOnFileCard({
             className="text-[12px] leading-[1.5]"
             style={{ color: "#6B6B6B" }}
           >
-            Test mode only. No live card will be charged.
+            {TEST_MODE_CARD_NOTE}
           </p>
         )}
         <button

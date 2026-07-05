@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -633,6 +634,7 @@ export default async function ClientCheatSheetPage({
                 }
                 cardAuthorizationSigned={cardAuthorizationSigned}
                 cardAuthorizationOutOfDate={cardAuthorizationOutOfDate}
+                cardSetupBlockedByEnvironment={!publishableKeyOk()}
               />
             );
           })()}

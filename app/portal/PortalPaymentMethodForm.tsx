@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TEST_MODE_CARD_NOTE } from "@/lib/payments/portal-card-copy";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe, type Stripe as StripeJs } from "@stripe/stripe-js";
 import { createCardSetupIntentAction } from "./payment-method-actions";
@@ -69,7 +70,7 @@ const COPY: Record<
     successHeadline:
       "Card updated. The new card may take a moment to appear on the page.",
     introCopy:
-      "Your current card will be replaced after the new card is saved. No charge will be made. Test mode only.",
+      `Your current card will be replaced after the new card is saved. ${TEST_MODE_CARD_NOTE}`,
     startingHeadline: "Preparing secure card form...",
     startErrorMessage:
       "We could not open the secure card form. Please try again.",

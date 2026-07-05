@@ -94,8 +94,12 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 
 const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
-const LIVE_MODE_BLOCKED_MESSAGE =
-  "Live refunds are not enabled for this test-mode release.";
+// Mode-mismatch refusal (PR C): fires when the ROW's stripe_livemode does
+// not equal the deployment mode. The old wording falsely claimed live
+// refunds were disabled; live refunds are real (proven in the controlled
+// live test). Mirrors payment-receipt.ts's mode-mismatch wording.
+const MODE_MISMATCH_MESSAGE =
+  "This payment's mode does not match the current deployment mode.";
 const ROUTE = "lib/billing/payment-refund:refundPaymentChargeAttempt";
 
 function buildRefundIdempotencyKey(attemptId: string): string {
@@ -294,7 +298,7 @@ export async function refundPaymentChargeAttempt(args: {
     return {
       ok: false,
       outcome: "live_mode_blocked",
-      message: LIVE_MODE_BLOCKED_MESSAGE,
+      message: MODE_MISMATCH_MESSAGE,
     };
   }
   if (!attempt.stripe_charge_id) {

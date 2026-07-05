@@ -265,8 +265,18 @@ export async function getSessionPaymentEligibility(
       );
     }
     if (settings.stripe_account_status !== "enabled") {
+      // PR C: map the internal status enum to plain language instead of
+      // interpolating raw DB values ("restricted") into practitioner UI.
+      const statusLabel =
+        settings.stripe_account_status === "pending"
+          ? "Stripe is still reviewing the studio's information"
+          : settings.stripe_account_status === "restricted"
+            ? "Stripe needs more information from the studio"
+            : settings.stripe_account_status === "rejected"
+              ? "Stripe declined the studio's account"
+              : "The studio's Stripe account is not enabled yet";
       reasons.push(
-        `Studio Stripe account status is "${settings.stripe_account_status ?? "unknown"}". Complete Stripe onboarding before preparing a session payment.`,
+        `${statusLabel}. Complete Stripe onboarding before preparing a session payment.`,
       );
     }
     if (settings.stripe_livemode !== livemode) {

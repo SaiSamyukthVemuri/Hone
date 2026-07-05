@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of panel/portal payment strings, PR C)
+
+- **PR C (string-only).** Charge-confirm + executor-failure copy is mode-aware; refund mode-mismatch wording no longer claims live refunds are disabled; portal no-charge wrappers are mode-aware via `lib/payments/portal-card-copy.ts` (live: later-authorized-charges clarification; legal blocks byte-identical, adversarially verified); portal card-setup-unavailable names the exact blocker; PaymentMethodCard names the publishable-key blocker and stops over-promising; eligibility no longer leaks raw status enums. Remaining planned: PR D (source guards). No migration; repo max stays 0105 (= prod).
+
 ## Current production status (as of admin smart payment status, PR B)
 
 - **Admin smart payment status (PR B).** Admin home banner shows the real Stripe runtime + current-mode studio capability counts; studio detail shows per-mode (test/live) capability/status/count cards with redacted account suffixes; new-studio checklist says payments connect per studio; shared `AdminModeBadge` (row-mode, null → "unknown"). All reads via the redaction-first `lib/payments/admin-payment-status.ts` helper. Remaining planned: PR C (panel/portal/lib strings), PR D (source guards). No migration; repo max stays 0105 (= prod).
