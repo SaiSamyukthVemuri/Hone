@@ -22,6 +22,13 @@ function read(rel: string): string {
 // Every runtime file that queries the table directly (from the exhaustive
 // pre-fix inventory). If a NEW .from("studio_payment_settings") call site
 // appears elsewhere, the repo-wide scan below catches it.
+// Deliberately BOTH-mode reader (PR B): the admin status helper fetches a
+// studio's test AND live settings rows to display them side by side, and
+// splits every count by the ROW's own stripe_livemode — mode-correct by
+// construction, so it is exempt from the per-block current-mode filter rule
+// below (its platform-summary read IS current-mode scoped).
+const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts"];
+
 const TABLE_READERS = [
   "app/portal/payment-method-actions.ts",
   "app/(app)/settings/payments/actions.ts",
@@ -66,7 +73,7 @@ describe("every studio_payment_settings read is mode-scoped", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(out).toEqual([...TABLE_READERS].sort());
+    expect(out).toEqual([...TABLE_READERS, ...BOTH_MODE_READERS].sort());
   });
 });
 

@@ -94,7 +94,10 @@ test.describe("operator creates a studio + owner invitation", () => {
     await expect(page.getByText(ownerEmail)).toBeVisible();
     // Owner invitation is pending until the owner's first sign-in.
     await expect(page.getByText(/owner · pending/i)).toBeVisible();
-    await expect(page.getByText(/Live payments remain disabled/)).toBeVisible();
+    // PR B: accurate onboarding copy — payments connect per studio.
+    await expect(
+      page.getByText(/Payments are not connected until the studio completes Stripe/),
+    ).toBeVisible();
   });
 
   test("rejects a reserved / malformed slug with an inline error (no studio created)", async ({
@@ -145,7 +148,11 @@ test.describe("Admin Console V1 (PR #255)", () => {
     await expect(
       page.getByText("Internal operator tools for invite-only studio setup."),
     ).toBeVisible();
-    await expect(page.getByText("Live payments are disabled.")).toBeVisible();
+    // PR B: state-driven banner. The e2e stack runs in Stripe test mode.
+    await expect(page.getByText(/Stripe runtime:/)).toBeVisible();
+    await expect(
+      page.getByText(/test mode — no real charges/),
+    ).toBeVisible();
     // Overview cards + studios table render (the studios table exists because
     // the wizard test seeded a studio earlier; either way the heading shows).
     await expect(
@@ -191,7 +198,13 @@ test.describe("Admin studio detail privacy (PR #256)", () => {
     await expect(
       page.getByRole("heading", { name: "Setup checks", level: 2 }),
     ).toBeVisible();
-    await expect(page.getByText("Live payments disabled")).toBeVisible();
+    // PR B: per-mode payment status section (redacted, counts only). The
+    // seeded studio has no Stripe rows, so both mode cards say not
+    // connected.
+    await expect(page.getByText(/account ids are redacted/)).toBeVisible();
+    await expect(
+      page.getByText(/No test-mode row — not connected in this mode\./),
+    ).toBeVisible();
 
     // The seeded client NAME must NOT appear anywhere on the detail page.
     await expect(page.getByText(seed.clientName)).toHaveCount(0);
