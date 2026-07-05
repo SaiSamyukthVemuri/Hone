@@ -44,12 +44,12 @@ import type {
 //      Old signatures against a pre-edit template version do NOT
 //      satisfy the gate; this mirrors PR #170's enforcement on the
 //      manual fee path and on createCardSetupIntentAction.
-//   5. The studio_payment_settings row exists with stripe_account_id,
-//      stripe_account_status='enabled', and stripe_livemode=false.
+//   5. The studio_payment_settings row exists for the current Stripe
+//      livemode with stripe_account_id and stripe_account_status='enabled'.
 //   6. No existing active payment_charge_attempts row (status in
 //      ready, pending_stripe, succeeded) is already sitting against
-//      the same (session_id, charge_reason='session_payment') pair.
-//      The DB partial unique
+//      the same (session_id, charge_reason='session_payment',
+//      stripe_livemode=current deployment mode) tuple. The DB partial unique
 //      payment_charge_attempts_active_session_payment_uniq is the
 //      structural backstop for the race; this pre-INSERT check is
 //      defense-in-depth + the source of the practitioner-facing
@@ -239,9 +239,8 @@ export async function getSessionPaymentEligibility(
   // 4) Studio Stripe Connect status. Lookup mirrors the SetupIntent
   //    action so a studio whose onboarding has not completed cannot
   //    have a session payment prepared even if the card row from
-  //    step 2 somehow exists. stripe_livemode=false is the v1
-  //    requirement; the new payment_charge_attempts
-  //    _livemode_false_check makes the DB also refuse a live row.
+  //    step 2 somehow exists. The lookup is mode-scoped so a test
+  //    Connect row cannot make a live payment eligible, and vice versa.
   let resolvedStripeAccountId: string | null = stripeAccountIdFromCard;
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // eligibility verifies against the CURRENT deployment mode's row only
@@ -278,9 +277,9 @@ export async function getSessionPaymentEligibility(
       stripeAccountIdFromCard ?? (settings.stripe_account_id as string | null);
   }
 
-  // 5) Existing attempts. Read every payment_charge_attempts row
-  //    for this session + reason so the UI can show the history
-  //    even when an active row blocks a new prepare.
+  // 5) Existing attempts. Read payment_charge_attempts rows for this
+  //    session + reason in the CURRENT Stripe mode so a test attempt
+  //    cannot block or masquerade as a live attempt, and vice versa.
   let existingAttempts: SessionPaymentExistingAttemptSummary[] = [];
   if (sessionSummary) {
     // PR #174 widened the SELECT to carry every field the
@@ -306,6 +305,7 @@ export async function getSessionPaymentEligibility(
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
       .eq("charge_reason", "session_payment")
+      .eq("stripe_livemode", livemode)
       .order("created_at", { ascending: false });
     existingAttempts = (attemptRows ?? []).map((row) => ({
       id: row.id as string,
