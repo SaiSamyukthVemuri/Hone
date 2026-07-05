@@ -281,7 +281,10 @@ function SuccessPanel({
             ).
           </li>
           <li>Run a smoke test (docs/20 §4).</li>
-          <li>Live payments remain disabled.</li>
+          <li>
+            Payments are not connected until the studio completes Stripe
+            setup (Settings &rarr; Payments).
+          </li>
         </ol>
       </section>
 

@@ -53,11 +53,17 @@ describe("privacy: no raw client data is selected or rendered", () => {
     expect(PAGE_CODE).not.toMatch(/\.from\("studios"\)\s*\n?\s*\.select\("\*"\)/);
   });
 
-  it("selects NO clinical / payment / token / audit content columns", () => {
+  it("selects NO clinical / token / audit content columns; payment data is capability-only + redacted", () => {
     expect(PAGE_CODE).not.toMatch(
       /treatment_area_text|tolerance_text|reaction_text|caution_note|exposed_person|probe_lot/i,
     );
-    expect(PAGE_CODE).not.toMatch(/stripe_|payment_intent|client_secret|livemode/i);
+    // PR B consciously allows payment CAPABILITY display on this page via
+    // the redaction-first helper. The page itself still never touches raw
+    // payment identifiers or Stripe columns:
+    expect(PAGE_CODE).not.toMatch(/payment_intent|client_secret|stripe_account_id|stripe_customer|fingerprint/i);
+    expect(PAGE_CODE).not.toMatch(/\.from\("(studio_payment_settings|client_payment_methods|payment_charge_attempts)"\)/);
+    expect(PAGE_CODE).toMatch(/loadStudioPaymentStatus/); // reads go through the helper
+    expect(PAGE_CODE).toMatch(/accountIdRedacted/);       // redacted suffix only
     expect(PAGE_CODE).not.toMatch(/token|audit_event/i);
     // No client contact columns.
     expect(PAGE_CODE).not.toMatch(/phone|\baddress\b/i);
@@ -81,7 +87,13 @@ describe("shows operational metadata + aggregate counts + setup flags", () => {
     expect(PAGE).toMatch(/Owner invite/);
     expect(PAGE).toMatch(/Counts/);
     expect(PAGE).toMatch(/Setup checks/);
-    expect(PAGE).toMatch(/Live payments disabled/);
+    // PR B: the inverted hardcoded "Live payments disabled" green flag is
+    // gone; payments render as a state-driven capability flag + per-mode
+    // status cards (redacted, counts only).
+    expect(PAGE).not.toMatch(/Live payments disabled/);
+    expect(PAGE).toMatch(/Payments \(\$\{payments\.runtimeMode\} mode\)/);
+    expect(PAGE).toMatch(/PaymentModeCard/);
+    expect(PAGE).toMatch(/account ids are redacted/);
     // Aggregate-only disclaimer.
     expect(PAGE).toMatch(/Aggregate counts only/);
   });

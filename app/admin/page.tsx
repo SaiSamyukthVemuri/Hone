@@ -1,5 +1,9 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  loadPlatformPaymentSummary,
+  type PlatformPaymentSummary,
+} from "@/lib/payments/admin-payment-status";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   readReminderHeartbeat,
@@ -223,6 +227,9 @@ async function loadConsole(): Promise<{
 export default async function AdminIndexPage() {
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
+  // PR B (smart payment status): platform payment summary — capability
+  // COUNTS only, current-mode, via the shared presenter. No identifiers.
+  const paymentSummary = await loadPlatformPaymentSummary(createAdminClient());
   // PR #265: operator-visible health of the external every-15-min reminder
   // scheduler. Read the Upstash heartbeat and classify server-side so the
   // status badge does not depend on client-rendered time.
@@ -240,7 +247,7 @@ export default async function AdminIndexPage() {
         </p>
       </header>
 
-      <PaymentsBanner />
+      <PaymentsBanner summary={paymentSummary} />
       <StudioSetupCard />
       <OverviewCards overview={overview} />
       <ReminderSchedulerCard status={reminderScheduler} />
@@ -256,13 +263,37 @@ export default async function AdminIndexPage() {
   );
 }
 
-function PaymentsBanner() {
+// State-driven platform payment banner (PR B). Replaces the pre-live
+// hardcoded payments-off note with the deployment's ACTUAL Stripe runtime
+// mode plus current-mode studio capability counts (counts only — no
+// identifiers). A load error is said out loud, never rendered as all-clear.
+function PaymentsBanner({ summary }: { summary: PlatformPaymentSummary }) {
+  const live = summary.runtimeMode === "live";
   return (
     <div
       role="note"
-      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      className={`rounded-lg border px-4 py-3 text-sm dark:bg-opacity-30 ${
+        live
+          ? "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          : "border-neutral-300 bg-neutral-50 text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+      }`}
     >
-      Live payments are disabled.
+      <p className="font-medium">
+        Stripe runtime: {live ? "LIVE mode — real charges possible" : "test mode — no real charges"}
+      </p>
+      {summary.loadError ? (
+        <p className="mt-1">
+          Studio payment summary could not be loaded. Check ops alerts before
+          assuming payments are healthy.
+        </p>
+      ) : (
+        <p className="mt-1">
+          Studios ({summary.studios}) in {summary.runtimeMode} mode:{" "}
+          {summary.ready} ready · {summary.payoutsPending} payouts pending ·{" "}
+          {summary.onboarding} onboarding · {summary.notConnected} not
+          connected.
+        </p>
+      )}
     </div>
   );
 }

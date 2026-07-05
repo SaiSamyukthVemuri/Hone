@@ -41,9 +41,19 @@ describe("operator-only access (reuses the /admin layout isAdmin gate)", () => {
 });
 
 describe("Admin Console V1 surface", () => {
-  it("renders the console header and the live-payments-disabled banner", () => {
+  it("renders the console header and a STATE-DRIVEN payment banner (PR B)", () => {
     expect(PAGE).toMatch(/Internal operator tools for invite-only studio setup\./);
-    expect(PAGE).toMatch(/Live payments are disabled\./);
+    // The pre-live hardcoded payments-off note is gone; the banner reflects
+    // the deployment's actual Stripe runtime + current-mode capability
+    // counts, and a load error is never rendered as all-clear.
+    expect(PAGE).not.toMatch(/Live payments are disabled\./);
+    expect(PAGE).toMatch(/Stripe runtime:/);
+    expect(PAGE).toMatch(/LIVE mode — real charges possible/);
+    expect(PAGE).toMatch(/test mode — no real charges/);
+    expect(PAGE).toMatch(/payouts pending/);
+    expect(PAGE).toMatch(/not\s*\n?\s*connected/);
+    expect(PAGE).toMatch(/summary could not be loaded/);
+    expect(PAGE).toMatch(/loadPlatformPaymentSummary/);
   });
 
   it("has a Studio setup card linking to the New Studio Wizard", () => {

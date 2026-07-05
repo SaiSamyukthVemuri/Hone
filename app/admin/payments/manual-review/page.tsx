@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { isAdmin } from "@/lib/admin";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -172,19 +173,7 @@ function EmptyCard({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ModeBadge({ livemode }: { livemode: boolean }) {
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase ${
-        livemode
-          ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"
-          : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-      }`}
-    >
-      {livemode ? "live mode" : "test mode"}
-    </span>
-  );
-}
+
 
 function IdLine({ label, value }: { label: string; value: string | null }) {
   if (!value) return null;
@@ -202,7 +191,7 @@ function StuckAttemptCard({ attempt }: { attempt: StuckAttemptView }) {
         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium uppercase text-amber-800 dark:bg-amber-950 dark:text-amber-300">
           {attempt.status ?? "unknown"}
         </span>
-        <ModeBadge livemode={attempt.livemode} />
+        <AdminModeBadge livemode={attempt.livemode} />
         {attempt.chargeReason && (
           <span className="text-sm font-medium">{attempt.chargeReason}</span>
         )}

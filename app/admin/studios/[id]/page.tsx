@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  loadStudioPaymentStatus,
+  type StudioModeRow,
+} from "@/lib/payments/admin-payment-status";
+import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
 // PR #256: admin studio-detail privacy follow-up. Operator-only (the /admin
@@ -105,6 +110,9 @@ export default async function AdminStudioPage({
   const { id } = await params;
   const studio = await loadStudioDetail(id);
   if (!studio) notFound();
+  // PR B: per-studio payment status — capability/status/counts only, both
+  // modes, redacted account suffix. Read via the shared admin helper.
+  const payments = await loadStudioPaymentStatus(createAdminClient(), id);
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"
@@ -172,8 +180,39 @@ export default async function AdminStudioPage({
             label="Availability configured"
           />
           <Flag ok={Boolean(studio.slug)} label="Booking slug set" />
-          <Flag ok label="Live payments disabled" />
+          <Flag
+            ok={
+              (payments.runtimeMode === "live"
+                ? payments.live.capability
+                : payments.test.capability) === "ready"
+            }
+            label={`Payments (${payments.runtimeMode} mode): ${
+              payments.runtimeMode === "live"
+                ? payments.live.capability
+                : payments.test.capability
+            }`}
+          />
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-xl font-medium">Payments</h2>
+        <p className="mb-3 max-w-prose text-sm text-neutral-500">
+          Runtime: {payments.runtimeMode} mode. Capability, status, and
+          mode-separated counts only — account ids are redacted; no payment,
+          card, or customer identifiers are shown.
+        </p>
+        {payments.loadError ? (
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            Payment status could not be loaded. Check ops alerts before
+            assuming this studio is healthy.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-4">
+            <PaymentModeCard label="Live" row={payments.live} />
+            <PaymentModeCard label="Test" row={payments.test} />
+          </div>
+        )}
       </section>
 
       <section className="flex flex-wrap gap-4 text-sm">
@@ -224,5 +263,55 @@ function Flag({ ok, label }: { ok: boolean; label: string }) {
       <span aria-hidden="true">{ok ? "✓" : "—"}</span>
       {label}
     </span>
+  );
+}
+
+// PR B: one mode's payment posture. Redaction-first — the helper only ever
+// returns capability/status/counts plus a redacted account suffix.
+function PaymentModeCard({ label, row }: { label: "Live" | "Test"; row: StudioModeRow }) {
+  return (
+    <div className="min-w-[240px] rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="font-medium">{label} row</span>
+        <AdminModeBadge livemode={label === "Live"} />
+      </div>
+      {row.exists ? (
+        <dl className="flex flex-col gap-1">
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Capability</dt>
+            <dd className="font-medium">{row.capability}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Account status</dt>
+            <dd>{row.accountStatus ?? "-"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Charges enabled</dt>
+            <dd>{row.chargesEnabled ? "yes" : "no"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Payouts enabled</dt>
+            <dd>{row.payoutsEnabled ? "yes" : "no"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Account</dt>
+            <dd className="font-mono">{row.accountIdRedacted ?? "-"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Active cards</dt>
+            <dd>{row.activeCards}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-neutral-500">Attempts</dt>
+            <dd>
+              {row.attempts.succeeded} succeeded · {row.attempts.active} active ·{" "}
+              {row.attempts.other} other
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="text-neutral-500">No {label.toLowerCase()}-mode row — not connected in this mode.</p>
+      )}
+    </div>
   );
 }

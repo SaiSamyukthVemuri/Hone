@@ -100,7 +100,10 @@ describe("the wizard page is a safe internal surface", () => {
   it("success state shows the booking URL and the setup checklist incl. live payments disabled", () => {
     expect(PAGE).toMatch(/\/book\/\$\{studio\.slug\}/);
     expect(PAGE).toMatch(/Next setup steps/);
-    expect(PAGE).toMatch(/Live payments remain disabled/);
+    // PR B: accurate onboarding copy — payments are per-studio, not
+    // globally disabled.
+    expect(PAGE).not.toMatch(/Live payments remain disabled/);
+    expect(PAGE).toMatch(/Payments are not connected until the studio completes Stripe/);
   });
 });
 
