@@ -22,11 +22,10 @@ import {
 // has atomic duplicate-protection.
 //
 // What this helper does:
-//   1. Refuses to run in live mode (inferStripeLivemode is the
-//      brace; the payment_charge_attempts_livemode_false_check on
-//      the row is the belt; the helper does not need its own
-//      env-var read because the row-level CHECK + the upstream
-//      action's auth gate already cover the test-mode posture).
+//   1. Runs in the deployment's Stripe mode and refuses a row whose
+//      stripe_livemode does not match it (the mode-mismatch guard
+//      below); the receipt template then branches on the ROW's mode
+//      (test disclaimer vs the lawyer-approved live wording).
 //   2. Loads the attempt row + verifies it is studio-scoped,
 //      succeeded, and has the Stripe ids the email needs (PI id
 //      mandatory; charge id optional).

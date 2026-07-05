@@ -71,7 +71,7 @@ export type SessionPaymentCardAuthorizationSummary = {
 // failure_message_safe) so the session detail page can render rich
 // succeeded / failed / pending panels after a page refresh. Before
 // PR #174 the card relied on React local state (executeSuccess) to
-// show the PaymentIntent id immediately after Run test charge; that
+// show the PaymentIntent id immediately after Run charge; that
 // state was lost on reload, leaving the practitioner with a bare
 // "Succeeded" label. The fields here are the same set ManualFeeCharge
 // Card has read since PR #146; the session payment card now mirrors

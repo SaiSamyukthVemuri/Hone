@@ -8,7 +8,8 @@ import type { ClientsNeedingAttention } from "@/lib/dashboard/clients-needing-at
 
 // PR #208: Practice Dashboard V1 snapshot. Plain, iPad-friendly cards:
 // appointment counts, booked/completed SERVICE VALUE (service-menu
-// prices; NEVER labeled revenue while live payments are disabled), a
+// prices; NEVER labeled revenue — collected totals are not a
+// dashboard metric), a
 // payments status card that keeps the test-mode posture explicit, and
 // Hone-specific action cards linking into Record Keeping.
 
@@ -104,7 +105,7 @@ export function PracticeSnapshot({
             label="Completed service value"
             value={formatCad(a.completedValueCents)}
           />
-          {/* REQUIRED posture copy while live payments are disabled. */}
+          {/* REQUIRED posture copy for the test-mode branch. */}
           <p className="text-[11px] text-neutral-500">
             Values are based on booked service prices, not collected live
             payments.

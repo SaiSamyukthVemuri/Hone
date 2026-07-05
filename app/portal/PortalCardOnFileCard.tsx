@@ -17,8 +17,9 @@ import { TEST_MODE_CARD_NOTE } from "@/lib/payments/portal-card-copy";
 // What this component does NOT do:
 //   * No Stripe call directly. The form below handles loadStripe.
 //   * No row mutation. The webhook is the only writer.
-//   * No live mode. Production behavior depends on the same
-//     test-mode posture every other card-on-file surface uses.
+//   * Mode-aware copy only: the livemode prop (from the server's
+//     inferStripeLivemode()) picks the lawyer-approved live wording
+//     vs the shared test-mode note; no behavior differs by mode here.
 
 type ActiveCardSummary = {
   brand: string;

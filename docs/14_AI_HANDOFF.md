@@ -2,6 +2,10 @@
 
 **If you are an AI agent continuing work on Hone, read this first.**
 
+## Current production status (as of source guards, PR D — messaging plan complete)
+
+- **PR D closes the app-wide smart-payment-messaging plan.** Permanent source guards ban the stale payments-off/coming-later claims in runtime code, require presenter-sourced status copy, and require shared null-safe admin mode badges; the sweep also caught and fixed three missed mode-unaware strings in the charge executor (string-only). Comment-only cleanup of defunct pre-0101 invariants. **State:** prod = repo migration max = 0105 · live billing proven on the controlled test studio (2 charges + receipts + refund) · payment messaging state-driven app-wide · Willow/Chloe still needs her own live onboarding + supervised first charge (docs/16 §17.15) · public booking card collection off · manual fees hold/explicit-approval.
+
 ## Current production status (as of panel/portal payment strings, PR C)
 
 - **PR C (string-only).** Charge-confirm + executor-failure copy is mode-aware; refund mode-mismatch wording no longer claims live refunds are disabled; portal no-charge wrappers are mode-aware via `lib/payments/portal-card-copy.ts` (live: later-authorized-charges clarification; legal blocks byte-identical, adversarially verified); portal card-setup-unavailable names the exact blocker; PaymentMethodCard names the publishable-key blocker and stops over-promising; eligibility no longer leaks raw status enums. Remaining planned: PR D (source guards). No migration; repo max stays 0105 (= prod).
