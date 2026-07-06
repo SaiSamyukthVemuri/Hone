@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import {
   adminQuery,
   asUser,
@@ -10,16 +11,31 @@ import { buildBookingMarketingConsentRow } from "@/lib/booking/marketing-consent
 
 // Proves the row the booking action builds (buildBookingMarketingConsentRow)
 // actually persists into booking_tracking_consents (migration 0106), for both
-// consent=true and consent=false, and stays studio-scoped under RLS.
+// consent=true and consent=false, referencing a REAL appointment (FK), and
+// stays studio-scoped under RLS.
 
 let a: SeededStudio;
 let b: SeededStudio;
 
-async function insertBuilt(studioId: string, consent: boolean, apptId: string) {
+async function seedAppointment(studio: SeededStudio): Promise<string> {
+  const id = randomUUID();
+  await adminQuery(
+    `insert into public.appointments
+       (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
+        buffer_minutes_snapshot, blocked_ends_at)
+     values ($1, $2, $3, '2030-03-01T10:00:00Z', '2030-03-01T11:00:00Z', 60, 0,
+             '2030-03-01T11:00:00Z')`,
+    [id, studio.studioId, studio.clientId],
+  );
+  return id;
+}
+
+async function insertBuilt(studio: SeededStudio, consent: boolean) {
+  const appointmentId = await seedAppointment(studio);
   const row = buildBookingMarketingConsentRow({
-    studioId,
-    appointmentId: apptId,
-    clientId: null,
+    studioId: studio.studioId,
+    appointmentId,
+    clientId: studio.clientId,
     consent,
   });
   await adminQuery(
@@ -40,8 +56,8 @@ async function insertBuilt(studioId: string, consent: boolean, apptId: string) {
 beforeAll(async () => {
   a = await seedStudio("bmc-a");
   b = await seedStudio("bmc-b");
-  await insertBuilt(a.studioId, true, "11111111-1111-1111-1111-111111111111");
-  await insertBuilt(a.studioId, false, "22222222-2222-2222-2222-222222222222");
+  await insertBuilt(a, true);
+  await insertBuilt(a, false);
 });
 
 afterAll(async () => {
