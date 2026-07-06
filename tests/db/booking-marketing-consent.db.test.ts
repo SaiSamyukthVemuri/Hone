@@ -17,15 +17,20 @@ import { buildBookingMarketingConsentRow } from "@/lib/booking/marketing-consent
 let a: SeededStudio;
 let b: SeededStudio;
 
+// Distinct day per appointment so two appointments never overlap (the
+// no_overlapping_active_appointments_per_studio exclusion constraint, 0029).
+let apptSlot = 0;
 async function seedAppointment(studio: SeededStudio): Promise<string> {
   const id = randomUUID();
+  const day = String(1 + apptSlot++).padStart(2, "0"); // 2030-03-01, -02, ...
+  const start = `2030-03-${day}T10:00:00Z`;
+  const end = `2030-03-${day}T11:00:00Z`;
   await adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
         buffer_minutes_snapshot, blocked_ends_at)
-     values ($1, $2, $3, '2030-03-01T10:00:00Z', '2030-03-01T11:00:00Z', 60, 0,
-             '2030-03-01T11:00:00Z')`,
-    [id, studio.studioId, studio.clientId],
+     values ($1, $2, $3, $4, $5, 60, 0, $5)`,
+    [id, studio.studioId, studio.clientId, start, end],
   );
   return id;
 }
