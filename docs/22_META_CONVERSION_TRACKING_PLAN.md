@@ -1,70 +1,97 @@
-# Meta Pixel + Conversions API booking-conversion pipeline — Plan
+# Studio Marketing & Conversion Tracking Plan (platform-agnostic)
 
-Status (2026-07-06): **Audit complete. Foundation library shipped (pure, not wired, sends nothing). Everything else is BLOCKED pending approval.** This document is the source of truth for the phased rollout.
+Status (2026-07-06): **Architecture + docs only.** No tracking enabled, no sender wired, no browser pixel, no data sent to any provider, no env var, and **no migration in this PR** (proposed below, approval-gated). Meta is the **first provider adapter**, not the design — the layer is provider-agnostic.
 
-## What shipped in this PR (safe, migration-free, not enabled)
-- `lib/conversion/meta-capi.ts` — server-only, PURE payload + hashing builder. No network I/O, no DB reads, not imported by the booking flow. It encodes the data-minimization boundary in code.
-- `tests/lib/conversion/meta-capi.test.ts` — proves hashing (not raw), deterministic `event_id`, gating (disabled/missing config → skip), and a static guard that clinical/PII field names can never enter the payload.
+> This supersedes the earlier Meta-only framing. The inert Meta payload primitives from PR #345 (`lib/conversion/meta-capi.ts`) are now consumed by a generic adapter.
 
-Nothing in this PR sends data to Meta, changes any privacy claim, adds a DB column, or touches Willow's site.
+## What shipped in this PR (inert)
+- `lib/conversion/types.ts` — provider-agnostic types: `TrackingProvider`, `ConversionEventName`, `ConversionEvent`, `ProviderConfig`, `ProviderPayload`, `SendResult`, `ConversionProviderAdapter`, `DeliveryRecord`, `MarketingConsent`.
+- `lib/conversion/service.ts` (server-only) — `deliverConversionEvent(event, ctx)`: gates on config + consent, dedupes by `(eventId, provider)`, dispatches to injected adapters, **never throws**, emits only safe `DeliveryRecord` status. Does no network itself; **called from nothing in the app**.
+- `lib/conversion/adapters/meta.ts` (server-only) — first adapter. `buildPayload` maps `booking_confirmed → Meta "Schedule"` reusing #345's tested hashing/minimization; **`send()` is a not-wired skip** (no network, no token).
+- Tests proving gating, dedup, per-studio isolation, redaction, booking-safety, and payload minimization.
 
-## BLOCKERS (require approval / are not in this repo)
-1. **Willow marketing-site repo is not on this machine.** Phase 2 (Pixel base script, PageView/Lead/InitiateCheckout, consent banner, privacy edits on willowelectrolysis.com) is **specced below** but must be applied in the Willow repo.
-2. **Phase 3 needs a DB migration** (per-studio Meta config on `studios` + dedup columns on `appointments`). Per instruction: proposed below, **not created/applied** — needs approval.
-3. **Privacy/legal blocker.** `app/privacy/page.tsx:243` currently states: *"We do not use third-party advertising cookies, behavioral tracking cookies, or analytics cookies that share data with advertising networks."* Enabling Meta contradicts a **published promise**. No cookie-consent banner or marketing-consent mechanism exists. This is a legal decision (Ontario PIPEDA/PHIPA) requiring **owner + counsel approval** before any production enablement.
+## Architecture
 
-## Phase 1 audit answers
-1. **Pixel base script (Willow):** site-wide `<head>`/root layout of the Willow Next.js app — load only after cookie consent, no-op if `NEXT_PUBLIC_META_PIXEL_ID` is unset.
-2. **Lead fires:** only after a **successful** contact-form submit (server-confirmed), never on click.
-3. **InitiateCheckout fires:** on click of any booking link to Hone — "Book Consultation" / "Book a Free Consultation" / any `href` to `hone.care/book/willow-electrolysis`.
-4. **Hone booking-confirmed point:** `app/book/[slug]/actions.ts:754–776` — the `appointments` insert with `status:"confirmed"`, returning `created.id`. Single, unambiguous point; there is no separate "pending" state. Mirror the fire-and-forget hook at `:818` (`recordPractitionerNotification`).
-5. **CAPI direct from Hone? YES — preferred.** Hone owns the confirmed event and already has the client email/phone + reliability patterns. The Willow webhook (Phase 4) is a fallback only.
-6. **Per-studio config needed:** `meta_pixel_id`, `meta_capi_enabled` (default false), `meta_test_event_code`. The **CAPI token is a GLOBAL server env** (`META_CAPI_TOKEN`) — Hone has no per-studio secret vault (matches `STRIPE_SECRET_KEY`/`RESEND_API_KEY`).
-7. **Consent gating:** none exists (only an SMS-delivery checkbox). Must add marketing/tracking consent (booking-form checkbox and/or Willow cookie banner) + a per-studio `meta_capi_enabled` gate; skip + log a safe reason when consent/config absent.
-8. **Privacy changes required:** remove the "no advertising cookies" claim, add Meta as a sub-processor (privacy + terms), disclose conversion tracking/retargeting + CAPI, add a booking-form disclosure/consent, counsel review.
-9. **Data sent to Meta (minimal):** `event_name:"Schedule"`, `event_time`, `event_id:"hone_booking_{appointment_id}"`, `action_source:"website"`, `event_source_url` (public booking URL), `user_data`: **SHA-256** hashed email + hashed phone, client IP + user-agent (only if lawfully available), `custom_data.service_category`: **generic modality only** (`electrolysis`/`laser`/`consultation`/`other`).
-10. **Never sent:** client name, raw email/phone, appointment/booking notes, intake answers, contraindications, allergies, skin notes, fitzpatrick type, body areas, photos, cancellation reasons, treatment parameters, tokens — and **never the free-text service NAME** (for electrolysis it encodes intimate body areas, e.g. "Brazilian"; it is reduced to a generic category).
+### 1. Internal Hone conversion events (provider-neutral)
+`lead_submitted` · `booking_started` · `booking_confirmed` · `appointment_completed` · `client_converted` · `referral_created`
 
-## Proposed migration (NOT created — approve first)
+### 2. Generic conversion event service
+Accepts a provider-agnostic `ConversionEvent`; checks studio tracking config; checks marketing consent; loads the studio's enabled providers; sends only to enabled providers; failure never blocks booking; logs safe `skipped | sent | failed` status; never logs raw email/phone/tokens/clinical data.
+
+### 3. Provider adapter interface
+```ts
+type ConversionProviderAdapter = {
+  provider: TrackingProvider;
+  buildPayload(event: ConversionEvent, config: ProviderConfig): ProviderPayload | null;
+  send(payload: ProviderPayload, config: ProviderConfig): Promise<SendResult>;
+};
+```
+- **Meta (implemented, inert):** `booking_confirmed → Schedule`, generic `service_category` only, hashed email/phone, no clinical data, `send()` not wired.
+- **Future adapters:** Google Ads (Enhanced/Offline), GA4 (Measurement Protocol), TikTok (Events API), Pinterest (CAPI), LinkedIn (CAPI), Microsoft Ads (UET/offline).
+
+### 4. Schema proposal (MIGRATION — NOT applied; approve first)
 ```sql
--- studios: per-studio Meta config (token stays in global env, not DB)
-alter table public.studios
-  add column if not exists meta_pixel_id text,
-  add column if not exists meta_capi_enabled boolean not null default false,
-  add column if not exists meta_test_event_code text;
+-- Per-studio provider config. Token is NOT stored here — only a server-side
+-- secret REFERENCE; the raw token lives in server env and is resolved by the
+-- sender. RLS: studio members only (is_studio_member).
+create table if not exists public.studio_tracking_providers (
+  id                       uuid primary key default gen_random_uuid(),
+  studio_id                uuid not null references public.studios(id) on delete cascade,
+  provider                 text not null check (provider in
+                             ('meta','google_ads','ga4','tiktok','pinterest','linkedin','microsoft_ads','custom')),
+  enabled                  boolean not null default false,
+  browser_tag_id           text,
+  server_token_secret_ref  text,
+  conversion_action_id     text,
+  test_event_code          text,
+  consent_mode             text,
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now(),
+  unique (studio_id, provider)
+);
 
--- appointments: dedup/idempotency markers, mirroring the email-send-claim pattern
-alter table public.appointments
-  add column if not exists meta_capi_sent_at       timestamptz,
-  add column if not exists meta_capi_send_attempts integer not null default 0,
-  add column if not exists meta_capi_claimed_at    timestamptz;
--- + a claim_meta_capi_send(appointment_id) RPC mirroring claim_email_send (0080)
+-- Delivery log for dedup + observability. No PII: hashed/none only.
+create table if not exists public.conversion_event_deliveries (
+  id                  uuid primary key default gen_random_uuid(),
+  studio_id           uuid not null references public.studios(id) on delete cascade,
+  provider            text not null,
+  internal_event_name text not null,
+  event_id            text not null,
+  status              text not null check (status in ('skipped','sent','failed')),
+  skipped_reason      text,
+  provider_event_id   text,          -- redacted/opaque
+  last_error_safe     text,
+  attempted_at        timestamptz,
+  created_at          timestamptz not null default now(),
+  unique (studio_id, provider, event_id)   -- deterministic dedup
+);
+
+-- Booking marketing consent (separable from clinical/payment consent). Booking
+-- MUST continue if declined. Either these columns on appointments, or a table:
+create table if not exists public.booking_tracking_consents (
+  id             uuid primary key default gen_random_uuid(),
+  studio_id      uuid not null references public.studios(id) on delete cascade,
+  appointment_id uuid references public.appointments(id) on delete cascade,
+  granted        boolean not null,
+  source         text,               -- e.g. 'public_booking_form'
+  policy_version text,
+  created_at     timestamptz not null default now()
+);
 ```
 
-## Phase 3 wiring plan (after migration approval)
-- `sendMetaScheduleEvent(...)`: claim → build (`lib/conversion/meta-capi.ts`) → POST to `graph.facebook.com/v.../{pixel_id}/events` with a 15s `AbortController` timeout → stamp `meta_capi_sent_at` on success; on failure clear claim + `recordOpsAlert` (warning, redacted). Read `META_CAPI_TOKEN` server-side; **never** to the client bundle/logs.
-- Call it as a **fire-and-forget** IIFE right after the appointment insert (mirror `:818`) so ad tracking can never fail or delay a booking.
-- Gate: only if `meta_capi_enabled && meta_pixel_id && consent satisfied && token present` — else skip + log a safe reason.
+### 5. Data minimization
+**Allowed:** event name · event time · deterministic event id · source URL · hashed email/phone (if consented) · IP/user-agent (only if lawful/available) · generic service category.
+**Forbidden:** raw email/phone in logs · names · treatment notes · intake answers · contraindications · body areas · photos · appointment notes · cancellation reasons · exact sensitive service names · payment/card data · Stripe ids (unless redacted and necessary).
 
-## Willow-site spec (apply in the Willow repo — not present here)
-- `NEXT_PUBLIC_META_PIXEL_ID` (public, frontend-safe). No id → the loader no-ops (no script, no error).
-- Base Pixel loaded **after cookie consent**; `PageView` on load.
-- `Lead` after successful contact submit; `InitiateCheckout` on booking-link click, passing `eventID: "hone_booking_..."` is not possible pre-booking, so generate a client `event_id` for InitiateCheckout only (Schedule dedup happens server-side by appointment id).
-- Add a minimal cookie-consent banner; load Pixel only post-consent, OR flag as owner/legal decision before production.
-- Privacy page: disclose Meta Pixel + conversion tracking + that booking events may be measured; remove any "no tracking / zero cookies" claim; link to Meta ad-preferences opt-out.
+## Phased PR sequence
+1. **#345 (merged)** — inert Meta payload/hashing primitives.
+2. **#346 (open)** — provider-agnostic privacy/consent/terms copy.
+3. **THIS PR** — provider-agnostic types + service + Meta adapter (inert, not wired, no migration).
+4. **Migration PR (approval-gated)** — the 3 tables above + a `claim`/dedup RPC.
+5. **Consent-capture PR (+ migration)** — booking-form marketing-consent checkbox + record.
+6. **Sender-wiring PR** — implement `metaAdapter.send()` (timeout, redaction, ops-alert), and call `deliverConversionEvent` as a fire-and-forget side effect at the booking-confirmed point (`app/book/[slug]/actions.ts`), gated on config + consent.
+7. **Studio settings UI PR** — per-provider config editor.
+8. **Studio website PR** — Pixel + cookie banner in the studio's own repo (not Hone).
 
-## Env vars
-- Hone (server-only): `META_CAPI_TOKEN` (never `NEXT_PUBLIC_`).
-- Willow (public): `NEXT_PUBLIC_META_PIXEL_ID`.
-
-## How to test in Meta Events Manager
-- Set `meta_test_event_code` (studio) → events land in **Test Events**. Verify the `Schedule` event shows hashed `em`/`ph` (green "processed"), `action_source: website`, and the `event_id` matches `hone_booking_{appointment_id}`. Confirm no `custom_data` beyond `service_category`, and that it is one of `electrolysis`/`laser`/`consultation`/`other`.
-
-## Rollout checklist
-1. Owner + Ontario counsel approve the privacy/consent changes.
-2. Approve + apply the migration.
-3. Wire the sender behind the flag; verify with a test-event code (Test Events tab).
-4. Update Hone privacy + terms; add booking-form disclosure/consent.
-5. Apply the Willow-site Pixel + consent banner + privacy edits.
-6. Enable per studio (`meta_capi_enabled=true`, set `meta_pixel_id`) once consent infra is live.
-7. Confirm no clinical/PII fields ever appear in Events Manager payloads.
+## Confirmation
+Provider-agnostic (Meta is one adapter). No tracking enabled; no sender wired; no data can be sent to any provider from this PR. Provider tokens are server-side only (config stores a reference, never the token). Per-studio isolation enforced by caller-scoped configs + the proposed `unique (studio_id, provider)` constraints.
