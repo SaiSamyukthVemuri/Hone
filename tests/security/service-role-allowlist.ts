@@ -385,4 +385,22 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",
     scopeGuard: '.eq("studio_id"',
   },
+  {
+    path: "lib/conversion/dispatch.ts",
+    purpose: "Fire-and-forget booking-conversion dispatch from the public (session-less) booking action.",
+    why: "Reads the studio's enabled tracking providers + writes delivery status, all explicitly scoped to the booking's studio_id. Sends nothing unless consent + an enabled provider config + a decryptable token all hold; never throws.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "app/(app)/settings/tracking/actions.ts",
+    purpose: "Authenticated OWNER settings action.",
+    why: "Owner-gated via getCurrentPractitionerWithStudio() (role === 'owner'); every write is scoped to that studio.id. Encrypts the provider token before storing; never persists a raw token.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/settings/tracking/page.tsx",
+    purpose: "Authenticated OWNER settings page (redacted status read).",
+    why: "Owner-gated via getCurrentPractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
 ];

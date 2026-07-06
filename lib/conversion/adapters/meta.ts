@@ -12,8 +12,12 @@ import type {
   ConversionProviderAdapter,
   ProviderConfig,
   ProviderPayload,
+  SendContext,
   SendResult,
 } from "@/lib/conversion/types";
+
+const META_GRAPH_VERSION = "v21.0";
+const DEFAULT_TIMEOUT_MS = 12_000;
 
 // Meta Conversions API adapter — the first provider adapter. buildPayload is
 // pure and reuses the inert, tested primitives from lib/conversion/meta-capi.ts
@@ -65,14 +69,51 @@ export const metaAdapter: ConversionProviderAdapter = {
     };
   },
 
-  // NOT WIRED in this PR. The real delivery (an HTTP POST to the Meta Graph
-  // API events endpoint for the studio's pixel, with a server-only token +
-  // timeout) is added only after approval. Returning a not-wired skip means
-  // that even if this were called, no data is sent.
+  // Real delivery: POST the (already minimized + hashed) payload to the Meta
+  // Graph API events endpoint for the studio's pixel. The access token is
+  // passed in the request BODY (never the URL, so it can't leak into request
+  // logs) and comes from ctx (server-resolved). Timed out, and every failure
+  // returns a REDACTED, PII-free/token-free errorSafe — the raw provider
+  // response is never surfaced.
   async send(
-    _payload: ProviderPayload,
-    _config: ProviderConfig,
+    payload: ProviderPayload,
+    config: ProviderConfig,
+    ctx?: SendContext,
   ): Promise<SendResult> {
-    return { ok: false, retryable: true, errorSafe: "sender_not_wired" };
+    // Token is the studio's OWN token, decrypted server-side by the dispatcher
+    // and passed via ctx — never a global env token, never on the config.
+    const token = ctx?.token;
+    if (!token) return { ok: false, retryable: false, errorSafe: "missing_token" };
+    const pixelId = config.browserTagId;
+    if (!pixelId) return { ok: false, retryable: false, errorSafe: "missing_pixel_id" };
+
+    // URL carries NO secret. Token goes in the JSON body.
+    const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(pixelId)}/events`;
+    const body = { ...(payload.body as Record<string, unknown>), access_token: token };
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      ctx?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        // Do NOT echo the raw provider response (may contain ids). Success only.
+        return { ok: true, providerEventId: null };
+      }
+      const retryable = res.status === 429 || res.status >= 500;
+      return { ok: false, retryable, errorSafe: `meta_http_${res.status}` };
+    } catch {
+      // Timeout / network — never include the raw error object.
+      return { ok: false, retryable: true, errorSafe: "meta_network_or_timeout" };
+    } finally {
+      clearTimeout(timer);
+    }
   },
 };

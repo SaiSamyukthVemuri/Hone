@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
@@ -7,14 +7,7 @@ const FILE = "0106_studio_marketing_tracking.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
 describe("0106 studio marketing tracking — number", () => {
-  it("is the repo migration max (global tripwire lives in the newest migration's test)", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(106);
+  it("is migration 0106 (repo-max tripwire now lives in the newest migration test, 0107)", () => {
     expect(FILE).toMatch(/^0106_/);
   });
 });
@@ -117,12 +110,15 @@ describe("0106 — data minimization: NO clinical / PII / token-value columns", 
   });
 });
 
-describe("0106 — conversion service remains unwired/inert", () => {
+describe("0106 — sender stays gated (production inert without config)", () => {
   function read(rel: string): string {
     return readFileSync(path.resolve(__dirname, "../../", rel), "utf8");
   }
-  it("meta adapter send() is still a not-wired skip; service does no network", () => {
-    expect(read("lib/conversion/adapters/meta.ts")).toContain('errorSafe: "sender_not_wired"');
+  it("dispatch short-circuits on missing consent and on zero enabled configs", () => {
+    const D = read("lib/conversion/dispatch.ts");
+    expect(D).toMatch(/if \(!params\.consentGranted\) return;/);
+    expect(D).toMatch(/if \(!rows \|\| rows\.length === 0\) return;/);
+    // The pure routing service still does no network itself.
     expect(read("lib/conversion/service.ts")).not.toContain("fetch(");
   });
 });
