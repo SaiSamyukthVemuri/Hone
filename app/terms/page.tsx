@@ -218,6 +218,41 @@ export default function TermsOfServicePage() {
         at any time by emailing privacy@hone.care.
       </P>
 
+      <H3 id="dpa-studio-marketing">
+        7.9 Studio-controlled marketing and analytics providers
+      </H3>
+      <P>
+        Hone may provide integration tools that let a studio enable optional
+        marketing or analytics providers (for example Meta, Google, TikTok,
+        Pinterest, LinkedIn, or Microsoft Ads). Enabling a provider is
+        studio-controlled. Where a studio enables one, and subject to applicable
+        consent and configuration:
+      </P>
+      <UL>
+        <li>
+          You are responsible for choosing and configuring your providers, and
+          for your own ad accounts, pixels, datasets, provider settings, consent
+          banners, and privacy disclosures on your own website.
+        </li>
+        <li>
+          The provider account, dataset, pixel, and tokens belong to you, not to
+          Hone, unless we state otherwise.
+        </li>
+        <li>
+          Hone does not mix conversion data across studios, and does not use one
+          studio&rsquo;s tracking data for another studio&rsquo;s advertising.
+        </li>
+        <li>
+          Any marketing tracking Hone may conduct for its own website is
+          separate from studio-owned tracking.
+        </li>
+        <li>
+          Hone sends only minimal, non-clinical conversion data to these
+          providers, and does not send clinical, intake, treatment, photo,
+          body-area, or appointment-note information.
+        </li>
+      </UL>
+
       <H2 id="payment-and-billing">8. Payment and billing</H2>
       <P>
         Pricing for paid plans is published at hone.care/pricing. Pricing may
