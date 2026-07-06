@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
@@ -7,14 +7,7 @@ const FILE = "0106_studio_marketing_tracking.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
 describe("0106 studio marketing tracking — number", () => {
-  it("is the repo migration max (global tripwire lives in the newest migration's test)", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(106);
+  it("is migration 0106 (repo-max tripwire now lives in the newest migration test, 0107)", () => {
     expect(FILE).toMatch(/^0106_/);
   });
 });
