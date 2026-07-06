@@ -105,3 +105,10 @@ Buttons: **Accept marketing cookies** · **Reject non-essential cookies** · *Ma
 
 ## Confirmation
 Provider-agnostic (not Meta-only); no tracking enabled; no sender/pixel/token/env; no data can be sent to any provider from this PR. The Meta foundation (docs/22, `lib/conversion/meta-capi.ts`) remains inert and imported nowhere.
+
+## Secret architecture (0107): self-serve encrypted tokens
+- Each studio/provider stores its OWN token, **AES-256-GCM-encrypted** in `studio_tracking_providers.encrypted_server_token` under one server-side master key `TRACKING_TOKEN_ENCRYPTION_KEY`.
+- **No global shared token** across studios; **no per-studio Vercel env var** (that does not scale); **no raw token** in the DB, client bundle, or logs — only ciphertext + `server_token_last4` are stored, and only last4 is shown.
+- Studio **owners** self-serve add/rotate/delete their token in Settings → Marketing & analytics tracking (owner-only RLS via `is_studio_owner`).
+- A future KMS/vault can replace `token-crypto.ts` without changing the stored shape (still an opaque `encrypted` string).
+- Env needed later (server-only): `TRACKING_TOKEN_ENCRYPTION_KEY` (32-byte hex/base64). Tracking stays disabled by default and inert until the key is set AND an owner adds an enabled provider config with a token.

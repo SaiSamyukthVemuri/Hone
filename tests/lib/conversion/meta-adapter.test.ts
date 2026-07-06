@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { metaAdapter } from "@/lib/conversion/adapters/meta";
@@ -74,17 +74,44 @@ describe("meta adapter — buildPayload", () => {
   });
 });
 
-describe("meta adapter — send() is NOT wired (no data leaves)", () => {
-  it("returns a not-wired skip and performs no network", async () => {
+describe("meta adapter — send() (token via ctx; no global env)", () => {
+  it("skips with missing_token when no token is supplied (no network)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
     const p = metaAdapter.buildPayload(event(), config)!;
-    const res = await metaAdapter.send(p, config);
-    expect(res).toEqual({ ok: false, retryable: true, errorSafe: "sender_not_wired" });
+    const res = await metaAdapter.send(p, config); // no ctx.token
+    expect(res).toEqual({ ok: false, retryable: false, errorSafe: "missing_token" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
-  it("adapter source is server-only and has no live Graph API fetch", () => {
+
+  it("POSTs to the Graph API with the token in the BODY (never the URL), on success returns ok", async () => {
+    const fetchSpy = vi.fn(async (_url: unknown, _init: unknown) => ({ ok: true, status: 200 }) as Response);
+    vi.stubGlobal("fetch", fetchSpy);
+    const p = metaAdapter.buildPayload(event(), config)!;
+    const res = await metaAdapter.send(p, config, { token: "SECRET_TOKEN" });
+    expect(res).toEqual({ ok: true, providerEventId: null });
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain("/PX1/events");
+    expect(String(url)).not.toContain("SECRET_TOKEN"); // token NOT in URL
+    const body = JSON.parse((init as unknown as RequestInit).body as string);
+    expect(body.access_token).toBe("SECRET_TOKEN"); // token in body
+    vi.unstubAllGlobals();
+  });
+
+  it("maps HTTP failures to a redacted errorSafe (no raw provider response)", async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    vi.stubGlobal("fetch", fetchSpy);
+    const p = metaAdapter.buildPayload(event(), config)!;
+    const res = await metaAdapter.send(p, config, { token: "T" });
+    expect(res).toEqual({ ok: false, retryable: true, errorSafe: "meta_http_500" });
+    vi.unstubAllGlobals();
+  });
+
+  it("does not read a global env token (no process.env in the adapter source)", () => {
     const SRC = readFileSync(path.resolve(__dirname, "../../../lib/conversion/adapters/meta.ts"), "utf8");
     expect(SRC).toContain('import "server-only"');
-    expect(SRC).not.toContain("fetch(");
-    expect(SRC).not.toContain("graph.facebook");
     expect(SRC).not.toContain("process.env");
+    expect(SRC).not.toContain("META_CAPI_TOKEN");
   });
 });

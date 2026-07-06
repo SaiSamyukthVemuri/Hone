@@ -52,6 +52,7 @@ import {
   MARKETING_CONSENT_FIELD,
   parseMarketingConsent,
 } from "@/lib/booking/marketing-consent";
+import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
 // error logs so a raw client email never lands in server logs while
@@ -875,6 +876,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   // Single helper call up front; downstream lines share the same origin.
   const appOrigin = getRequiredAppOrigin();
+
+  // Fire-and-forget provider-agnostic conversion tracking (booking_confirmed).
+  // Fully gated inside dispatchBookingConversion: sends NOTHING unless the
+  // studio has an enabled provider config AND its token decrypts — so this is
+  // inert in production today. Never throws; a confirmed booking must not fail
+  // because tracking failed. No clinical data / no raw email/phone is logged.
+  void dispatchBookingConversion({
+    studioId: studio.id,
+    appointmentId: created.id,
+    eventTimeUnixSeconds: Math.floor(
+      new Date(created.created_at as string).getTime() / 1000,
+    ),
+    consentGranted: marketingConsent,
+    email: normalizedEmail,
+    phone: clientPhone,
+    serviceModality: service.modality,
+    eventSourceUrl: `${appOrigin}/book/${slug}`,
+  });
   // Emails. New confirmation + reminder + reschedule URLs use the random
   // appointment_token column; legacy /cancel/[hmac] route still validates
   // older in-flight links.
