@@ -7,6 +7,7 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { isConsultationService } from "@/lib/booking/consultation";
+import { MARKETING_CONSENT_FIELD } from "@/lib/booking/marketing-consent";
 import { REFERRAL_SOURCE_OPTIONS } from "@/lib/booking/referral-source";
 import {
   fetchNextAvailableDateAction,
@@ -165,6 +166,10 @@ export function PublicBookForm({
   // checkbox value verbatim. The helper copy below names STOP so the
   // client knows how to opt out before they consent.
   const [smsConsent, setSmsConsent] = useState(false);
+  // Optional marketing/analytics consent (PR: booking consent capture).
+  // Opt-in only, defaults false, never prechecked; separate from SMS +
+  // treatment + payment consents. Declining does NOT block booking.
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoading] = useTransition();
@@ -337,6 +342,7 @@ export function PublicBookForm({
         : combineAreasAndNotes(areasWanted, notes),
     );
     fd.set("sms_consent", smsConsent ? "true" : "false");
+    fd.set(MARKETING_CONSENT_FIELD, marketingConsent ? "true" : "false");
     // PR #163. Optional "How did you hear about us?" answer. Empty
     // string means the visitor did not answer; the action layer
     // normalises that to null. Allowed values are validated
@@ -722,6 +728,37 @@ export function PublicBookForm({
           >
             You can reply STOP at any time. Email will still be used
             for appointment messages.
+          </span>
+        </span>
+      </label>
+
+      {/* Optional marketing/analytics consent. Opt-in only; never
+          prechecked; separate from SMS + treatment + payment consents.
+          Declining does NOT block booking. Value is captured into
+          booking_tracking_consents (migration 0106); no provider is wired
+          and no data is sent from this form. */}
+      <label className="flex items-start gap-3 text-[14px] leading-[1.5]">
+        <input
+          type="checkbox"
+          checked={marketingConsent}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+          className="mt-1 h-4 w-4 flex-none"
+        />
+        <span>
+          <span className="block">
+            Optional marketing and analytics tracking: This studio may use
+            advertising or analytics tools to understand whether people book
+            after visiting its website or ads. If you agree, limited booking
+            event information may be shared with the studio&rsquo;s configured
+            marketing providers. Clinical information, treatment notes, intake
+            answers, photos, and body-area details are not shared for
+            advertising.
+          </span>
+          <span
+            className="mt-1 block text-[12px]"
+            style={{ color: "#6B6B6B" }}
+          >
+            You can book even if you decline this optional tracking.
           </span>
         </span>
       </label>

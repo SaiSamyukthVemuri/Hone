@@ -47,6 +47,11 @@ import {
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isConsultationService } from "@/lib/booking/consultation";
+import {
+  buildBookingMarketingConsentRow,
+  MARKETING_CONSENT_FIELD,
+  parseMarketingConsent,
+} from "@/lib/booking/marketing-consent";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
 // error logs so a raw client email never lands in server logs while
@@ -333,6 +338,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // flow intact. The server-side consent gate below decides whether
   // a "true" here actually stamps sms_consent_at.
   const smsConsent = formData.get("sms_consent") === "true";
+  // Optional marketing/analytics consent (opt-in; false unless explicitly
+  // checked). Captured after a successful booking; declining never blocks it.
+  const marketingConsent = parseMarketingConsent(
+    formData.get(MARKETING_CONSENT_FIELD),
+  );
   const phone = nullable(formData.get("phone"));
   const notes = nullable(formData.get("notes"));
   // PR #163. "How did you hear about us?" optional answer. Empty
@@ -825,6 +835,35 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientId: clientId,
     href: `/calendar/${created.id}`,
   });
+
+  // Fire-and-forget marketing/analytics consent capture. The appointment is
+  // already committed, so this NEVER fails or delays the booking (a failed
+  // insert only logs a safe, PII-free signal). Records exactly one
+  // booking_tracking_consents row (migration 0106) — consent bookkeeping only,
+  // separate from clinical/payment consent. No provider is contacted and no
+  // data is sent anywhere; this only stores whether the client opted in.
+  void (async () => {
+    try {
+      const { error: consentErr } = await admin
+        .from("booking_tracking_consents")
+        .insert(
+          buildBookingMarketingConsentRow({
+            studioId: studio.id,
+            appointmentId: created.id,
+            clientId,
+            consent: marketingConsent,
+          }),
+        );
+      if (consentErr) {
+        logInternalBookingError("public_booking_marketing_consent_insert_failed", {
+          code: consentErr.code,
+          studioId: studio.id,
+        });
+      }
+    } catch {
+      // Consent capture must never break a confirmed booking.
+    }
+  })();
 
   await admin.from("appointment_audit").insert({
     appointment_id: created.id,
