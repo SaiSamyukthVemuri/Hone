@@ -230,7 +230,13 @@ export default function PrivacyPolicyPage() {
         <strong>In connection with a business transfer</strong>, such as a
         merger or sale of assets, with notice to affected users.
       </P>
-      <P>We do not share personal information for marketing purposes.</P>
+      <P>
+        Hone does not sell your personal information and does not share it for
+        Hone&rsquo;s own marketing. A studio may enable optional marketing or
+        analytics integrations for its own booking pages; where enabled and
+        consented, limited non-clinical booking event data may be shared with
+        that studio&rsquo;s configured provider, as described in Section 7.
+      </P>
 
       <H2 id="cookies-and-tracking">7. Cookies and tracking</H2>
       <P>We use cookies for:</P>
@@ -240,10 +246,64 @@ export default function PrivacyPolicyPage() {
         <li>Security (preventing cross-site request forgery)</li>
       </UL>
       <P>
-        We do not use third-party advertising cookies, behavioral tracking
-        cookies, or analytics cookies that share data with advertising
-        networks.
+        Hone does not enable advertising or behavioral tracking by default, and
+        Hone itself does not use third-party advertising cookies to target you
+        across the web.
       </P>
+
+      <H3 id="studio-marketing-integrations">
+        7.1 Optional studio-enabled marketing and analytics integrations
+      </H3>
+      <P>
+        A studio may choose to enable third-party marketing or analytics
+        integrations for its own booking pages and ads &mdash; for example Meta,
+        Google, TikTok, Pinterest, LinkedIn, Microsoft Ads, or similar
+        providers. Where a studio enables such an integration and, where
+        applicable, you consent, Hone may send limited booking or conversion
+        event information to the studio&rsquo;s configured provider, and may
+        process these events on the studio&rsquo;s behalf.
+      </P>
+      <P>
+        The pixel, tag, dataset, token, or ad account used belongs to the
+        studio, not to Hone, unless we state otherwise. Hone does not mix one
+        studio&rsquo;s conversion data with another&rsquo;s. You can still
+        complete a booking even if you decline non-essential marketing tracking,
+        subject to any separate cookie choices on the studio&rsquo;s own website.
+      </P>
+      <P>
+        When such an integration is enabled and consented, Hone may send only
+        minimal, non-clinical conversion data, which may include:
+      </P>
+      <UL>
+        <li>the event name or type (for example, that a booking was confirmed)</li>
+        <li>the event time and a booking-derived event identifier</li>
+        <li>the booking page address (event source URL)</li>
+        <li>
+          hashed contact identifiers, such as a hashed email or phone number,
+          where consent and configuration permit
+        </li>
+        <li>
+          a generic service category only, such as consultation, electrolysis,
+          laser, or other
+        </li>
+        <li>
+          basic browser context such as IP address or user agent, only where
+          legally permitted and collected as part of the booking request
+        </li>
+      </UL>
+      <P>
+        Hone does not send sensitive clinical information to marketing or
+        analytics providers. In particular, Hone does not send:
+      </P>
+      <UL>
+        <li>intake answers or other health information</li>
+        <li>treatment notes or appointment notes</li>
+        <li>contraindications or allergies</li>
+        <li>body areas or treatment photos</li>
+        <li>cancellation reasons</li>
+        <li>exact, sensitive service names</li>
+        <li>raw access tokens or portal links</li>
+      </UL>
 
       <H2 id="your-rights-under-pipeda">8. Your rights under PIPEDA</H2>
       <P>
