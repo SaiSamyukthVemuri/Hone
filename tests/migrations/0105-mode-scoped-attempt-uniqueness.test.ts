@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // Migration 0105: mode-scope the active payment-attempt duplicate protection.
@@ -14,14 +14,7 @@ const SOURCE = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const CODE = SOURCE.replace(/--.*$/gm, "");
 
 describe("0105: migration number + scope", () => {
-  it("is the repo migration max (global tripwire lives in the newest migration's test)", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(105);
+  it("is migration 0105 (the repo-max tripwire now lives in the newest migration's test, 0106)", () => {
     expect(FILE).toMatch(/^0105_/);
   });
 
