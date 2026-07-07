@@ -21,8 +21,8 @@ import type {
 //   2. a studio_tracking_providers row exists AND enabled = true
 //   3. claim_conversion_delivery wins the atomic (studio, provider, event_id)
 //      dedup claim
-//   4. the adapter resolves THIS studio's per-studio secret from its
-//      server_token_secret_ref (else it skips) — no global shared token
+//   4. THIS studio's own token decrypts (AES-256-GCM from encrypted_server_token,
+//      passed to the adapter via ctx) — no global shared token, no env ref
 //
 // Reliability: NEVER throws (the booking is already committed). Provider
 // failures record a `failed` delivery row + a WARNING ops alert (not critical),

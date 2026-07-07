@@ -90,9 +90,9 @@ export type ConversionProviderAdapter = {
     event: ConversionEvent,
     config: ProviderConfig,
   ): ProviderPayload | null;
-  // Deliver a built payload. Resolves the per-studio secret from
-  // config.serverTokenSecretRef; without a resolvable secret it skips safely
-  // (never throws, never logs the token or raw response).
+  // Deliver a built payload using the studio's own token supplied via
+  // ctx.token (decrypted server-side by the dispatcher). Without a token it
+  // skips safely (never throws, never logs the token or raw response).
   send(
     payload: ProviderPayload,
     config: ProviderConfig,
