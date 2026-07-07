@@ -100,12 +100,19 @@ describe("booking action — non-blocking consent capture (source)", () => {
   });
 });
 
-describe("no provider send / tracking remains inert", () => {
-  it("the conversion sender is still not wired anywhere in the booking action", () => {
-    expect(ACTION).not.toMatch(/conversion\/service|conversion\/adapters|deliverConversionEvent|metaAdapter/);
-    expect(ACTION).not.toMatch(/graph\.facebook|fbq\(|gtag\(/);
+describe("conversion dispatch is wired but gated (no browser pixel; inert by default)", () => {
+  it("the booking action calls the gated dispatcher fire-and-forget (no browser pixel)", () => {
+    expect(ACTION).toMatch(/void dispatchBookingConversion\(\{/);
+    // The dispatcher is gated on consent inside itself; the action passes the
+    // captured consent value.
+    expect(ACTION).toMatch(/consentGranted: marketingConsent/);
+    // No browser pixel/tag is added to the booking flow.
+    expect(ACTION).not.toMatch(/graph\.facebook|fbq\(|gtag\(|ttq\./);
   });
-  it("the meta adapter send() is still a not-wired skip", () => {
-    expect(read("lib/conversion/adapters/meta.ts")).toContain('errorSafe: "sender_not_wired"');
+  it("the dispatcher only sends after consent + an enabled provider config", () => {
+    const D = read("lib/conversion/dispatch.ts");
+    expect(D).toMatch(/if \(!params\.consentGranted\) return;/);
+    expect(D).toMatch(/\.eq\("enabled", true\)/);
+    expect(D).toMatch(/if \(!rows \|\| rows\.length === 0\) return;/);
   });
 });

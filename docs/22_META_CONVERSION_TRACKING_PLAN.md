@@ -95,3 +95,5 @@ create table if not exists public.booking_tracking_consents (
 
 ## Confirmation
 Provider-agnostic (Meta is one adapter). No tracking enabled; no sender wired; no data can be sent to any provider from this PR. Provider tokens are server-side only (config stores a reference, never the token). Per-studio isolation enforced by caller-scoped configs + the proposed `unique (studio_id, provider)` constraints.
+
+> **Secret model update (0107 / self-serve):** provider tokens are now stored **AES-256-GCM-encrypted per studio** in `studio_tracking_providers.encrypted_server_token` (one server-side master key `TRACKING_TOKEN_ENCRYPTION_KEY`); studio owners add/rotate/delete their own token in Settings → Marketing & analytics tracking. No global shared token, no per-studio Vercel env var, no raw token in the DB/client/logs. The dispatcher decrypts server-side and passes the plaintext to the adapter's `send()` via `SendContext`.

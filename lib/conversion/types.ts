@@ -53,14 +53,14 @@ export type ConversionEvent = {
   serviceCategory?: string | null;
 };
 
-// Per-studio provider configuration. NOTE: only a server-side secret REFERENCE
-// is stored — never the raw token, which lives in server env and is resolved by
-// the (future) sender. Nothing here is client-safe to expose beyond browserTagId.
+// Per-studio provider configuration for the ADAPTER. It never carries the token
+// itself: the studio's token is stored AES-256-GCM-encrypted in the DB, the
+// dispatcher decrypts it server-side, and the plaintext is passed to send() via
+// SendContext only. Nothing here is a secret beyond browserTagId (a public id).
 export type ProviderConfig = {
   provider: TrackingProvider;
   enabled: boolean;
   browserTagId?: string | null; // e.g. Meta Pixel id / GA4 measurement id
-  serverTokenSecretRef?: string | null; // NAME/ref of a server-only secret, not the token
   conversionActionId?: string | null; // e.g. Google Ads conversion action
   testEventCode?: string | null;
   consentMode?: string | null;
@@ -76,6 +76,11 @@ export type SendResult =
   | { ok: true; providerEventId?: string | null }
   | { ok: false; retryable: boolean; errorSafe: string };
 
+// Server-side send context. The dispatcher decrypts the studio's own token from
+// the DB (AES-256-GCM) and passes the plaintext here — the token never lives on
+// the config, in env, or in the client bundle, and is never logged.
+export type SendContext = { token: string; timeoutMs?: number };
+
 // The adapter contract every provider implements.
 export type ConversionProviderAdapter = {
   provider: TrackingProvider;
@@ -85,9 +90,14 @@ export type ConversionProviderAdapter = {
     event: ConversionEvent,
     config: ProviderConfig,
   ): ProviderPayload | null;
-  // Deliver a built payload. NOT implemented in this PR (returns a not-wired
-  // skip) — real network delivery lands in the approved wiring PR.
-  send(payload: ProviderPayload, config: ProviderConfig): Promise<SendResult>;
+  // Deliver a built payload using the studio's own token supplied via
+  // ctx.token (decrypted server-side by the dispatcher). Without a token it
+  // skips safely (never throws, never logs the token or raw response).
+  send(
+    payload: ProviderPayload,
+    config: ProviderConfig,
+    ctx?: SendContext,
+  ): Promise<SendResult>;
 };
 
 export type DeliveryStatus = "skipped" | "sent" | "failed";

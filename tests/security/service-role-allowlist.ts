@@ -386,6 +386,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/conversion/dispatch.ts",
+    purpose: "Fire-and-forget booking-conversion dispatch from the public (session-less) booking action.",
+    why: "Reads the studio's enabled tracking providers + writes delivery status, all explicitly scoped to the booking's studio_id. Sends nothing unless consent + an enabled provider config + a decryptable token all hold; never throws.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
     path: "app/(app)/settings/tracking/actions.ts",
     purpose: "Authenticated OWNER settings action.",
     why: "Owner-gated via getCurrentPractitionerWithStudio() (role === 'owner'); every write is scoped to that studio.id. Encrypts the provider token before storing; never persists a raw token.",
