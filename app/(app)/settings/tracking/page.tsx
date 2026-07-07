@@ -1,33 +1,18 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import type { TrackingProvider } from "@/lib/conversion/types";
-import { TrackingProviderForm } from "./TrackingProviderForm";
+import { TrackingProviderSelector } from "./TrackingProviderSelector";
 import {
   clearTrackingTokenAction,
   saveTrackingProviderConfigAction,
 } from "./actions";
 
-// Provider-agnostic: Meta is the first available adapter; the others are
-// planned. These "coming soon" entries are DISPLAY ONLY — no token fields, no
-// actions, no rows created, nothing sent. (Typed to the provider enum so the
-// list can't drift from the backend's supported set.)
-const COMING_SOON_PROVIDERS: ReadonlyArray<{
-  provider: Exclude<TrackingProvider, "meta" | "custom">;
-  label: string;
-  detail: string;
-}> = [
-  { provider: "google_ads", label: "Google Ads", detail: "Enhanced / Offline Conversions" },
-  { provider: "ga4", label: "Google Analytics 4", detail: "Measurement Protocol" },
-  { provider: "tiktok", label: "TikTok", detail: "Events API" },
-  { provider: "pinterest", label: "Pinterest", detail: "Conversions API" },
-  { provider: "linkedin", label: "LinkedIn", detail: "Conversions API" },
-  { provider: "microsoft_ads", label: "Microsoft Ads", detail: "Offline conversions (UET)" },
-];
-
-// Owner-only marketing/analytics provider settings. Self-serve: the owner adds
-// their own Pixel/Dataset id + CAPI token; the token is encrypted at rest and
-// only its last4 + status are ever shown. The raw/encrypted token is NEVER
-// selected here or sent to the client. Tracking is disabled by default.
+// Owner-only marketing/analytics provider settings. Self-serve provider
+// selector: the owner picks a provider and sees its onboarding instructions.
+// Meta is available now with editable token fields; other providers show
+// onboarding overviews but NO editable fields and NO save. The owner adds their
+// own Pixel/Dataset id + CAPI token; the token is encrypted at rest and only
+// its last4 + status are ever shown. The raw/encrypted token is NEVER selected
+// here or sent to the client. Tracking is disabled by default.
 
 type ProviderRow = {
   provider: string;
@@ -56,7 +41,8 @@ export default async function TrackingSettingsPage() {
       "provider, enabled, browser_tag_id, test_event_code, server_token_last4, token_status",
     )
     .eq("studio_id", studio.id);
-  const meta = (data as ProviderRow[] | null)?.find((r) => r.provider === "meta") ?? null;
+  const meta =
+    (data as ProviderRow[] | null)?.find((r) => r.provider === "meta") ?? null;
 
   return (
     <section className="flex flex-col gap-4 px-5 py-6">
@@ -73,64 +59,26 @@ export default async function TrackingSettingsPage() {
         </p>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           <strong>Meta is available now.</strong> Additional providers can be
-          added later — this is a provider-agnostic integration, not a
-          Meta-only feature.
+          added later — this is a provider-agnostic integration, not a Meta-only
+          feature. Choose a provider below to see its setup instructions.
         </p>
       </header>
 
-      <div className="flex flex-col gap-2">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Available now
-        </h3>
-        <TrackingProviderForm
-          provider="meta"
-          providerLabel="Meta — Facebook &amp; Instagram (Conversions API)"
-          current={
-            meta
-              ? {
-                  enabled: meta.enabled,
-                  browserTagId: meta.browser_tag_id,
-                  testEventCode: meta.test_event_code,
-                  tokenLast4: meta.server_token_last4,
-                  tokenStatus: meta.token_status,
-                }
-              : null
-          }
-          saveAction={saveTrackingProviderConfigAction}
-          clearTokenAction={clearTrackingTokenAction}
-        />
-      </div>
-
-      {/* Coming soon: DISPLAY ONLY. No inputs, no token fields, no actions —
-          these do not create config rows or send anything. */}
-      <div className="flex flex-col gap-2">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Coming soon
-        </h3>
-        <ul className="grid gap-2 sm:grid-cols-2">
-          {COMING_SOON_PROVIDERS.map((p) => (
-            <li
-              key={p.provider}
-              aria-disabled="true"
-              className="flex items-center justify-between rounded-lg border border-dashed border-neutral-200 px-4 py-3 opacity-70 dark:border-neutral-800"
-            >
-              <span className="flex flex-col">
-                <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                  {p.label}
-                </span>
-                <span className="text-xs text-neutral-500">{p.detail}</span>
-              </span>
-              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-                Coming soon
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="text-xs text-neutral-500">
-          These providers aren&rsquo;t connected yet — no token can be added and
-          nothing is sent to them.
-        </p>
-      </div>
+      <TrackingProviderSelector
+        metaCurrent={
+          meta
+            ? {
+                enabled: meta.enabled,
+                browserTagId: meta.browser_tag_id,
+                testEventCode: meta.test_event_code,
+                tokenLast4: meta.server_token_last4,
+                tokenStatus: meta.token_status,
+              }
+            : null
+        }
+        saveAction={saveTrackingProviderConfigAction}
+        clearTokenAction={clearTrackingTokenAction}
+      />
     </section>
   );
 }
