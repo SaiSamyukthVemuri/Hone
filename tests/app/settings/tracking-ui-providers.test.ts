@@ -2,74 +2,83 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// UI/copy-only: the tracking settings page must read as a provider-agnostic
-// integration (Meta available now; others coming soon), and the coming-soon
-// providers must be inert display cards (no token fields, no actions).
-const PAGE = readFileSync(
-  path.resolve(__dirname, "../../../app/(app)/settings/tracking/page.tsx"),
-  "utf8",
-);
-const FORM = readFileSync(
-  path.resolve(__dirname, "../../../app/(app)/settings/tracking/TrackingProviderForm.tsx"),
-  "utf8",
-);
+// Provider selector + onboarding UI (source pins; vitest env is "node", no DOM).
+function read(rel: string): string {
+  return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
+}
+const PAGE = read("app/(app)/settings/tracking/page.tsx");
+const SELECTOR = read("app/(app)/settings/tracking/TrackingProviderSelector.tsx");
+const FORM = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
 
-describe("tracking settings UI — provider-agnostic framing", () => {
-  it("intro says studio-owned providers + Meta available now + not Meta-only", () => {
+describe("tracking page — provider-agnostic intro + delegates to the selector", () => {
+  it("intro says studio-owned providers, Meta available now, not Meta-only", () => {
     expect(PAGE).toMatch(/studio-owned marketing and analytics providers/);
     expect(PAGE).toMatch(/Meta is available now\./);
-    expect(PAGE).toMatch(/provider-agnostic integration, not a\s+Meta-only feature/);
+    expect(PAGE).toMatch(/provider-agnostic integration, not a Meta-only\s+feature/);
+    expect(PAGE).toMatch(/Choose a provider below to see its setup instructions\./);
   });
-
-  it("keeps the privacy / data-minimization language", () => {
+  it("keeps privacy/data-minimization language + owner gate", () => {
     expect(PAGE).toMatch(/token encrypted/);
     expect(PAGE).toMatch(/minimal, non-clinical booking event/);
-    expect(PAGE).toMatch(/only when a\s+client has agreed to marketing tracking/);
+    expect(PAGE).toMatch(/practitioner\.role !== "owner"/);
   });
-
-  it("shows Meta under 'Available now'", () => {
-    expect(PAGE).toMatch(/Available now/);
-    expect(PAGE).toMatch(/Meta — Facebook &amp; Instagram \(Conversions API\)/);
-  });
-
-  it("lists the other providers as 'Coming soon'", () => {
-    expect(PAGE).toMatch(/Coming soon/);
-    for (const label of ["Google Ads", "Google Analytics 4", "TikTok", "Pinterest", "LinkedIn", "Microsoft Ads"]) {
-      expect(PAGE).toContain(label);
-    }
+  it("renders the selector; the page itself has no token input / no sender code", () => {
+    expect(PAGE).toMatch(/<TrackingProviderSelector/);
+    expect(PAGE).not.toMatch(/type="password"/);
+    expect(PAGE).not.toMatch(/dispatchBookingConversion|token-crypto|graph\.facebook|fbq\(/);
   });
 });
 
-describe("tracking settings UI — coming-soon providers are INERT", () => {
-  // The coming-soon block is the text after the "Coming soon" heading.
-  const comingSoon = PAGE.slice(PAGE.indexOf("Coming soon"));
+describe("selector — renders every provider; Meta editable, others read-only", () => {
+  it("maps the whole registry into the provider <select>", () => {
+    expect(SELECTOR).toMatch(/PROVIDER_REGISTRY\.map\(\(p\) =>/);
+    expect(SELECTOR).toMatch(/<option key=\{p\.provider\}/);
+    expect(SELECTOR).toMatch(/p\.status === "coming_soon" \? " — Coming soon" : ""/);
+  });
+  it("shows the editable Meta panel only for the available + editable provider", () => {
+    expect(SELECTOR).toMatch(/entry\.status === "available" && entry\.editable \?/);
+    expect(SELECTOR).toMatch(/<MetaPanel/);
+    expect(SELECTOR).toMatch(/<ComingSoonPanel/);
+  });
+  it("the Meta panel has 'How to get your Meta details' + the editable token form", () => {
+    expect(SELECTOR).toMatch(/How to get your Meta details/);
+    // MetaPanel renders the token form; ComingSoonPanel does not.
+    const metaPanel = SELECTOR.slice(SELECTOR.indexOf("function MetaPanel"), SELECTOR.indexOf("function ComingSoonPanel"));
+    expect(metaPanel).toMatch(/<TrackingProviderForm/);
+    expect(metaPanel).toMatch(/provider="meta"/);
+  });
+});
 
-  it("renders coming-soon providers as disabled display cards (no inputs/token fields)", () => {
-    expect(comingSoon).toMatch(/aria-disabled="true"/);
+describe("selector — coming-soon panels are INERT (no fields/forms/actions)", () => {
+  const comingSoon = SELECTOR.slice(
+    SELECTOR.indexOf("function ComingSoonPanel"),
+    SELECTOR.indexOf("export function TrackingProviderSelector"),
+  );
+  it("has NO token input, NO form, NO save/clear action", () => {
+    expect(comingSoon).not.toMatch(/<TrackingProviderForm/);
     expect(comingSoon).not.toMatch(/<input/);
     expect(comingSoon).not.toMatch(/type="password"/);
-    expect(comingSoon).not.toMatch(/Conversions API token/); // no token input label
+    expect(comingSoon).not.toMatch(/<form|onSubmit/);
+    expect(comingSoon).not.toMatch(/saveAction|clearTokenAction|saveTrackingProviderConfigAction/);
   });
-
-  it("wires NO save/clear action to coming-soon providers", () => {
-    // Only the single Meta form receives the actions; the coming-soon list has none.
-    expect(PAGE.match(/saveAction=\{/g)?.length ?? 0).toBe(1);
-    expect(comingSoon).not.toMatch(/saveTrackingProviderConfigAction|clearTrackingTokenAction|saveAction=|clearTokenAction=/);
-    expect(comingSoon).not.toMatch(/<form|onSubmit|onClick/);
+  it("shows Coming soon status, future requirements, and the not-enabled note", () => {
+    expect(comingSoon).toMatch(/Coming soon/);
+    expect(comingSoon).toMatch(/Future requirements/);
+    expect(comingSoon).toMatch(/sender is not enabled yet/);
   });
-
-  it("only the Meta form (a separate component) has a token input", () => {
-    // The token input lives in TrackingProviderForm (used once, for Meta).
+  it("token input still lives ONLY in the shared Meta form component", () => {
     expect(FORM).toMatch(/type="password"/);
-    expect(PAGE).not.toMatch(/type="password"/);
+    expect(SELECTOR).not.toMatch(/type="password"/);
   });
 });
 
-describe("tracking settings UI — no tracking/sender behavior changed", () => {
-  it("the page still does not touch the sender/crypto/actions logic", () => {
-    expect(PAGE).not.toMatch(/dispatchBookingConversion|token-crypto|encryptTrackingProviderToken|graph\.facebook|fbq\(/);
+describe("selector — help links / video are safe", () => {
+  it("renders official help links + a video fallback, no inline youtube", () => {
+    expect(SELECTOR).toMatch(/entry\.helpLinks\.map/);
+    expect(SELECTOR).toMatch(/VIDEO_COMING_SOON_FALLBACK/);
+    expect(SELECTOR).not.toMatch(/youtube\.com|youtu\.be/i);
   });
-  it("remains owner-gated", () => {
-    expect(PAGE).toMatch(/practitioner\.role !== "owner"/);
+  it("no sender/dispatch/crypto in the selector", () => {
+    expect(SELECTOR).not.toMatch(/dispatchBookingConversion|token-crypto|encryptTrackingProviderToken|graph\.facebook|fbq\(|gtag\(/);
   });
 });
