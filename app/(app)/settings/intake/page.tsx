@@ -169,6 +169,10 @@ export default async function IntakeAndPostcarePage() {
               postcare_review_prompt_text:
                 studio.postcare_review_prompt_text ?? "",
               postcare_contact_email: studio.postcare_contact_email ?? "",
+              postcare_delivery_mode:
+                studio.postcare_delivery_mode === "auto_on_complete"
+                  ? "auto_on_complete"
+                  : "manual",
             }}
             studioOwnerEmail={studio.owner_email}
           />

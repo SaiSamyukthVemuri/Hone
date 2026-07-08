@@ -32,6 +32,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/calendar/postcare-auto-send.ts",
+    purpose: "Fail-soft postcare auto-send helper (migration 0110), called from the completion actions after the caller's studio is already resolved.",
+    why: "Service-role read/claim/record for the postcare send-state columns; the studioId is passed in by the authenticated completion action and EVERY query is scoped to it.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "app/(app)/clients/[id]/images/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

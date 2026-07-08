@@ -443,6 +443,12 @@ export async function markAppointmentCompleteAction(
     return { ok: false, error: "Could not mark this appointment complete." };
   }
 
+  // Migration 0110: if the studio opted into auto_on_complete, send postcare
+  // now. Fail-soft + idempotent (never throws; shares the manual sender's claim
+  // columns) — a postcare failure must never fail the completion above.
+  const { autoSendPostcareOnComplete } = await import("./postcare-auto-send");
+  await autoSendPostcareOnComplete(appointmentId, studio.id);
+
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
   revalidatePath(`/calendar/${appointmentId}`);

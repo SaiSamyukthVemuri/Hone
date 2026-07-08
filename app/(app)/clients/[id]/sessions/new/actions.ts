@@ -57,6 +57,14 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
           timestamp: new Date().toISOString(),
         }),
       );
+    } else {
+      // Migration 0110: appointment is now completed — auto-send postcare if the
+      // studio opted in. Fail-soft + idempotent (never throws), so a postcare
+      // failure never blocks session start or completion.
+      const { autoSendPostcareOnComplete } = await import(
+        "@/app/(app)/calendar/postcare-auto-send"
+      );
+      await autoSendPostcareOnComplete(args.appointmentId, args.studioId);
     }
   } catch (err) {
     console.error(

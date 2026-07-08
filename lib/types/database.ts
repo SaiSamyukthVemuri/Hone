@@ -61,6 +61,11 @@ export type Studio = {
   // the postcare email footer. When null/empty, the postcare path
   // falls back to owner_email.
   postcare_contact_email: string | null;
+  // Migration 0110: postcare delivery mode. "manual" (default) or
+  // "auto_on_complete" (auto-send when an appointment is marked complete).
+  // Optional at the type level because a studio read via `select *` before
+  // 0110 is applied won't carry it; the auto-send path defaults it to "manual".
+  postcare_delivery_mode?: "manual" | "auto_on_complete";
   // Migration 0047: practitioner/owner "New booking" notification
   // toggle. Default true preserves existing behavior. Controls ONLY
   // the operational practitioner notification; client confirmation
