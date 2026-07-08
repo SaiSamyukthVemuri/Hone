@@ -16,6 +16,16 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
+import { validateTreatmentImageUpload } from "@/lib/images/treatment-images";
+
+// Per-file upload status (PR: multi-file upload). Each selected file is
+// processed independently so one failure never blocks the others.
+type UploadFileStatus = "pending" | "uploading" | "uploaded" | "failed";
+type UploadFileResult = {
+  name: string;
+  status: UploadFileStatus;
+  error?: string;
+};
 
 // PR #271 / #272 / #273. Practitioner-only "Treatment Photos" UI.
 // PR #273 adds INLINE gallery previews: the server pre-signs a short-TTL
@@ -188,10 +198,12 @@ export function TreatmentImagesManager({
   sessionOptions?: SessionAttachOption[];
 }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  // Multi-file upload: the files chosen for the next batch + per-file results.
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [fileResults, setFileResults] = useState<UploadFileResult[]>([]);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   // PR #284: attach-at-upload context. Default "client" (no session/block).
@@ -223,52 +235,94 @@ export function TreatmentImagesManager({
 
   function onPick(e: ChangeEvent<HTMLInputElement>) {
     setError(null);
-    setSelectedName(e.target.files?.[0]?.name ?? null);
+    setFileResults([]);
+    setSelectedFiles(Array.from(e.target.files ?? []));
   }
 
-  function onUpload(e: FormEvent<HTMLFormElement>) {
+  // Multi-file upload. Each selected file is uploaded on its OWN call to the
+  // (unchanged) server action — so every file is independently validated,
+  // EXIF-stripped, and studio/client/context scoped. One file failing never
+  // blocks the others, and nothing is silently dropped: every file shows a
+  // per-file status. All files in a batch share the ONE context (client /
+  // session / treatment area) the practitioner selected above.
+  async function onUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    const form = e.currentTarget;
-    const fd = new FormData(form);
-    fd.set("clientId", clientId);
-    const file = fd.get("file");
-    if (!(file instanceof File) || file.size === 0) {
-      setError("Choose an image first.");
+    const files = selectedFiles;
+    if (files.length === 0) {
+      setError("Choose one or more images first.");
       return;
     }
-    // PR #284: attach the validated-on-the-server context ids. Client default
-    // sends neither, so the photo stays a client photo. Block requires a
-    // selected block; session requires a selected session.
-    fd.delete("sessionId");
-    fd.delete("sessionBlockId");
+
+    // Resolve + validate the shared context ONCE (same scope for the batch).
+    const context: Record<string, string> = { clientId };
     if (contextKind === "session") {
       if (!ctxSessionId) {
         setError("Choose a session, or switch to Client photo.");
         return;
       }
-      fd.set("sessionId", ctxSessionId);
+      context.sessionId = ctxSessionId;
     } else if (contextKind === "block") {
       if (!ctxSessionId || !ctxBlockId) {
         setError("Choose a treatment area, or switch to Client photo.");
         return;
       }
-      fd.set("sessionId", ctxSessionId);
-      fd.set("sessionBlockId", ctxBlockId);
+      context.sessionId = ctxSessionId;
+      context.sessionBlockId = ctxBlockId;
     }
-    startTransition(async () => {
-      const res = await uploadTreatmentImageAction(fd);
-      if (!res.ok) {
-        setError(res.error);
-        return;
+
+    const results: UploadFileResult[] = files.map((f) => ({
+      name: f.name,
+      status: "pending",
+    }));
+    setFileResults([...results]);
+    setUploading(true);
+    const update = (i: number, status: UploadFileStatus, err?: string) => {
+      results[i] = { ...results[i], status, error: err };
+      setFileResults([...results]);
+    };
+
+    let anyOk = false;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      // Per-file client-side validation — the same rules the server enforces
+      // (defense-in-depth: the server re-validates every file). An invalid file
+      // fails on its own and never blocks the valid ones.
+      const v = validateTreatmentImageUpload({
+        contentType: file.type,
+        sizeBytes: file.size,
+      });
+      if (!v.ok) {
+        update(i, "failed", v.error);
+        continue;
       }
-      form.reset();
-      setSelectedName(null);
+      update(i, "uploading");
+      try {
+        const fd = new FormData();
+        for (const [k, val] of Object.entries(context)) fd.set(k, val);
+        fd.set("file", file);
+        const res = await uploadTreatmentImageAction(fd);
+        if (res.ok) {
+          update(i, "uploaded");
+          anyOk = true;
+        } else {
+          update(i, "failed", res.error);
+        }
+      } catch {
+        update(i, "failed", "Upload failed. Please try again.");
+      }
+    }
+    setUploading(false);
+    // Clear the pending selection so a stray re-submit can't re-upload a file
+    // that already succeeded; the per-file results stay visible below. Reset
+    // the context only when the whole batch succeeded.
+    setSelectedFiles([]);
+    if (results.every((r) => r.status === "uploaded")) {
       setContextKind("client");
       setCtxSessionId("");
       setCtxBlockId("");
-      router.refresh();
-    });
+    }
+    if (anyOk) router.refresh();
   }
 
   // Open the larger in-app preview. Lazily mints a FRESH signed URL via the
@@ -412,33 +466,66 @@ export function TreatmentImagesManager({
 
           <div className="flex flex-wrap items-center gap-3">
           <label className="cursor-pointer rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
-            Choose image
+            Choose images
             <input
               type="file"
               name="file"
+              multiple
               accept="image/jpeg,image/png,image/webp"
               onChange={onPick}
               className="sr-only"
             />
           </label>
           <span className="text-sm text-neutral-600 dark:text-neutral-300">
-            {selectedName ? (
-              <>
-                Selected image:{" "}
-                <span className="font-medium">{selectedName}</span>
-              </>
+            {selectedFiles.length > 0 ? (
+              <span className="font-medium">
+                {selectedFiles.length} image
+                {selectedFiles.length === 1 ? "" : "s"} selected
+              </span>
             ) : (
-              "No image chosen yet."
+              "No images chosen yet."
             )}
           </span>
           <button
             type="submit"
-            disabled={pending || !selectedName}
+            disabled={uploading || selectedFiles.length === 0}
             className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
-            {pending ? "Uploading…" : "Attach image"}
+            {uploading
+              ? "Uploading…"
+              : selectedFiles.length > 1
+                ? `Attach ${selectedFiles.length} images`
+                : "Attach image"}
           </button>
           </div>
+          {fileResults.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1">
+              {fileResults.map((f, i) => (
+                <li
+                  key={`${f.name}-${i}`}
+                  className="flex items-center justify-between gap-3 text-xs"
+                >
+                  <span className="truncate text-neutral-600 dark:text-neutral-300">
+                    {f.name}
+                  </span>
+                  <span
+                    className={
+                      f.status === "uploaded"
+                        ? "shrink-0 text-green-600 dark:text-green-400"
+                        : f.status === "failed"
+                          ? "shrink-0 text-red-600 dark:text-red-400"
+                          : "shrink-0 text-neutral-500"
+                    }
+                  >
+                    {f.status === "pending" && "Waiting"}
+                    {f.status === "uploading" && "Uploading…"}
+                    {f.status === "uploaded" && "✓ Uploaded"}
+                    {f.status === "failed" && `✗ ${f.error ?? "Failed"}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </form>
         {error && (
           <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>

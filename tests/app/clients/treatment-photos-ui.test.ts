@@ -42,9 +42,10 @@ describe("styled upload UI", () => {
     // hidden-but-accessible (not the primary visible UI)
     expect(MANAGER).toMatch(/className="sr-only"/);
   });
-  it("shows the selected filename and disables Attach until a file is chosen", () => {
-    expect(MANAGER).toMatch(/Selected image:/);
-    expect(MANAGER).toMatch(/disabled=\{pending \|\| !selectedName\}/);
+  it("shows the selected count and disables Attach until files are chosen", () => {
+    expect(MANAGER).toMatch(/\{selectedFiles\.length\} image/);
+    expect(MANAGER).toMatch(/selected/);
+    expect(MANAGER).toMatch(/disabled=\{uploading \|\| selectedFiles\.length === 0\}/);
   });
 });
 

@@ -164,8 +164,8 @@ describe("Photo context selector UI", () => {
   });
 
   it("session/block selects submit the ids; block requires a chosen area", () => {
-    expect(MANAGER).toMatch(/fd\.set\("sessionId", ctxSessionId\)/);
-    expect(MANAGER).toMatch(/fd\.set\("sessionBlockId", ctxBlockId\)/);
+    expect(MANAGER).toMatch(/context\.sessionId = ctxSessionId/);
+    expect(MANAGER).toMatch(/context\.sessionBlockId = ctxBlockId/);
     expect(MANAGER).toMatch(/Choose a treatment area/);
   });
 
