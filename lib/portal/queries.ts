@@ -527,3 +527,41 @@ export async function getPortalAccessSummary(
     lastSeenAt: (lastSession?.last_seen_at as string | null) ?? null,
   };
 }
+
+// Recent portal access/send events for a client (Portal Access PR 3).
+// Studio-scoped, newest first. FAIL-SOFT: returns [] on any error — including
+// the pre-migration case where client_portal_access_events does not exist yet —
+// so the practitioner status card degrades gracefully. Never returns tokens.
+export type PortalAccessEventRow = {
+  id: string;
+  eventType: string;
+  channel: string | null;
+  practitionerId: string | null;
+  createdAt: string;
+};
+export async function getRecentPortalAccessEvents(
+  studioId: string,
+  clientId: string,
+  limit = 5,
+): Promise<PortalAccessEventRow[]> {
+  const admin = createAdminClient();
+  try {
+    const { data, error } = await admin
+      .from("client_portal_access_events")
+      .select("id, event_type, channel, practitioner_id, created_at")
+      .eq("studio_id", studioId)
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return data.map((r) => ({
+      id: r.id as string,
+      eventType: r.event_type as string,
+      channel: (r.channel as string | null) ?? null,
+      practitionerId: (r.practitioner_id as string | null) ?? null,
+      createdAt: r.created_at as string,
+    }));
+  } catch {
+    return [];
+  }
+}

@@ -4,6 +4,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import { issuePortalMagicLink } from "@/lib/portal/magic-link";
+import { logPortalAccessEvent } from "@/lib/portal/access-events";
 
 export type SendPortalLinkResult = { ok: true } | { ok: false; error: string };
 
@@ -25,19 +26,30 @@ export async function sendPortalLinkAction(
     return { ok: false, error: "Inactive practitioners cannot send portal links." };
   }
 
+  const admin = createAdminClient();
+
   const rl = await limitPractitionerClientEmail({
     action: "portal_link",
     practitionerId: practitioner.id,
     clientId,
   });
   if (!rl.allowed) {
+    // Record the throttled attempt (no token/email/URL — just the fact + a
+    // retry hint). Fail-soft: never blocks the response.
+    await logPortalAccessEvent(admin, {
+      studioId: studio.id,
+      clientId,
+      practitionerId: practitioner.id,
+      eventType: "portal_link_rate_limited",
+      channel: "email",
+      metadata: { retry_after_seconds: rl.retryAfterSeconds ?? 0 },
+    });
     return {
       ok: false,
       error: "Too many portal links sent to this client recently. Please try again later.",
     };
   }
 
-  const admin = createAdminClient();
   // Studio-scoped lookup: a client in another studio is not found here.
   const { data: client, error } = await admin
     .from("clients")
@@ -59,5 +71,15 @@ export async function sendPortalLinkAction(
     email: client.email,
     studioName: studio.name,
   });
-  return result.ok ? { ok: true } : { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
+
+  // Record the successful send (studio + client + practitioner + channel only).
+  await logPortalAccessEvent(admin, {
+    studioId: studio.id,
+    clientId: client.id,
+    practitionerId: practitioner.id,
+    eventType: "portal_link_sent",
+    channel: "email",
+  });
+  return { ok: true };
 }
