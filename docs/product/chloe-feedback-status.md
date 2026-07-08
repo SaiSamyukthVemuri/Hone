@@ -21,10 +21,17 @@ Maps Chloe's (Willow) feedback items to their current status as of 2026-07-08. S
 | More booking-horizon options (1–12 months) | **Shipped** | PR #372, migration 0112 | CHECK widened to 1–12; default 3; existing studios unchanged |
 | Custom horizon like "6 weeks" (weeks/days) | **Later** | — | Deferred (PR C); 1–12 months likely covers the immediate need — revisit after Chloe tests the new setting. Would need a schema change (a days/unit column) |
 
+## Payments — what IS live vs out of scope
+
+- **Live owner-run session payments** — **LIVE for approved studios** (Willow + Sam's
+  controlled studio): live Connect onboarding, charges, refunds, webhooks proven; live/test
+  isolation live. **Broad self-serve live-payment rollout is not complete** (a new studio
+  starts test-mode; live is enabled per-studio after supervised approval).
+- **Public booking card collection / deposits / packages / partial payments / live manual
+  no-show + late-cancel fees** — still OFF / hard-held; each needs a dedicated PR + approval.
+
 ## Intentionally out of scope for now (with reasons)
 
-- **Live payments / public card collection / deposits / packages / partial payments** — gated
-  OFF by design; needs payouts + legal review + a deliberate live-mode PR.
 - **Broad-SaaS SMS (A2P/10DLC, per-studio sender)** — pilot scale only; a later hardening item.
 - **Referral/conversion analytics** — the tracking framework exists but is inert per studio;
   not the next priority per the 2026-07-08 audit.

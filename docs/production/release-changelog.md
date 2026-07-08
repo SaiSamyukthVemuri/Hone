@@ -3,7 +3,7 @@
 Human-readable shipped-change history for the current wave. All entries below are **merged
 to the production branch (`claude/build-hone-saas-hOex7`) and deployed** unless noted.
 Reverse-chronological within the wave is not enforced; the table is ordered by PR number.
-For schema detail see [migration-ledger.md](./migration-ledger.md); for the live/OFF/blocked
+For schema detail see [migration-ledger.md](./migration-ledger.md); for the live / OFF / held payment
 posture see [current-state.md](./current-state.md).
 
 > Merge SHAs are recorded where captured at merge time. Earlier entries in this wave were

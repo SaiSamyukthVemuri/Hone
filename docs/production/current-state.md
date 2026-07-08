@@ -38,8 +38,13 @@ See also: [migration-ledger.md](./migration-ledger.md) · [release-changelog.md]
 - **Client portal:** passwordless magic-link login, portal tasks, practitioner send/copy
   link, portal CTA in appointment emails, append-only access-event log.
 - **Postcare:** studio templates, manual send, opt-in auto-send on completion.
-- **Payments (Stripe):** test-mode card-on-file + session charges + refunds + Connect
-  onboarding. Live mode is triple-gated OFF (see below).
+- **Payments (Stripe):** **supervised live owner-run session payments are live for approved
+  studios** (Willow + Sam's controlled studio) — live Stripe Connect onboarding, live
+  charges, live refunds, and live webhook processing are all proven; live/test isolation for
+  cards + payment attempts is live; mode-aware dashboard/admin/payment copy is live. Card-on-file,
+  receipts, and refunds work in both modes. **Broad self-serve live payments are not ready**
+  (a new studio starts in test mode and is enabled per-studio only after supervised
+  onboarding + approval). See "Still OFF / held" below for what remains disabled.
 - **Messaging:** transactional email (Resend), reminder + postcare + portal emails; SMS
   opt-in with STOP/HELP (pilot scale).
 - **Marketing/tracking:** per-studio marketing consent + encrypted provider token storage;
@@ -84,14 +89,22 @@ Details per PR in [release-changelog.md](./release-changelog.md).
 - **SMS:** live at **pilot scale** only; env-gated on `TWILIO_*`. Broad-SaaS SMS
   (A2P/10DLC registration, per-studio vs shared sender, rate-limiting) is not built.
 
-## Intentionally disabled / blocked (do not enable without a dedicated PR + approval)
+## Payments — what IS live vs what is still OFF / held
 
-- **Live payments:** `STRIPE_ALLOW_LIVE_MODE` is unset. Live charging is blocked by three
-  independent guards (key-shape check, `inferStripeLivemode()` short-circuit, DB
-  `stripe_livemode=false` CHECK). Both production studios have `stripe_payouts_enabled=false`.
-- **Live manual fees:** no-show / late-cancel fee charging is on a **server-side hard hold**
-  in live mode (`lib/billing/live-charge-reason-allowlist.ts`); only `session_payment` is
-  allowed in live. Test mode is unaffected.
+**Live (for approved studios, supervised):** owner-run **session payments** in live mode —
+live Stripe Connect onboarding, live charges, live refunds, live webhook processing, all
+proven on Willow + Sam's controlled studio. Live/test isolation for cards and payment
+attempts is live; mode-aware dashboard/admin/payment copy is live. Stripe gates remain 15 PASS.
+
+**Still OFF / held (do not enable without a dedicated PR + approval):**
+- **Broad self-serve live-payment rollout** — not complete. Live is enabled per-studio only
+  after supervised onboarding + approval; a new studio starts in test mode.
+- **Public booking card collection** — OFF (not wired; a Stripe gate proves the
+  `set_studio_require_card_on_file` path has zero runtime occurrences).
+- **Deposits / packages / partial payments** — not built.
+- **Live manual no-show / late-cancel fees** — on a **server-side hard hold** in live mode
+  (`lib/billing/live-charge-reason-allowlist.ts`); only `session_payment` charges live. Test
+  mode is unaffected.
 - **Public card collection at booking:** not wired (the `set_studio_require_card_on_file`
   path has zero runtime occurrences — a Stripe gate proves this).
 - **Deposits / packages / partial payments:** not built.

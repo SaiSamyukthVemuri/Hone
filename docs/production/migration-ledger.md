@@ -36,9 +36,9 @@
 | 0097 | intake link columns | Intake link last-sent / send-count / expires | ✅ |
 | 0098 | intake reminder columns | Intake 7d/3d reminder columns + indexes + RPC branches | ✅ |
 | 0099 | `0099_treatment_image_notes.sql` | `treatment_images.practitioner_note` | ✅ |
-| 0101 | payment live-capability | Make payment rows live-capable (still gated OFF) | ✅ |
-| 0103 | mode-scoped payment settings | Per-studio test/live payment settings scoping | ✅ |
-| 0105 | mode-scoped attempt uniqueness | Test + live attempt uniqueness per session (0105) | ✅ |
+| 0101 | payment live-capability | Make payment rows live-capable (supervised live session payments are now enabled for approved studios) | ✅ |
+| 0103 | mode-scoped payment settings | Per-studio test/live payment settings scoping (live/test isolation is live) | ✅ |
+| 0105 | mode-scoped attempt uniqueness | Test + live attempt uniqueness per session; underpins live/test card + attempt isolation | ✅ |
 | 0106 | `0106_*studio_marketing_tracking*.sql` | Per-studio marketing tracking settings + booking consent | ✅ |
 | 0107 | `0107_studio_tracking_encrypted_token.sql` | Encrypted provider token storage + owner-only RLS | ✅ (NOT pending) |
 | **0108** | `0108_electrolysis_observation_chips.sql` | **Treatment observation chips** — structured `observation_chips` on `session_blocks`; per-row backfill from legacy `comments` on edit | ✅ |
