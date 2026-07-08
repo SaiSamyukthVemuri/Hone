@@ -32,6 +32,7 @@ import {
   type QuickBookDraft,
 } from "./QuickBookDrawer";
 import { DragActionChooser } from "./DragActionChooser";
+import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
@@ -150,6 +151,9 @@ type Props = {
   // Migration 0109: studio 12h/24h display preference. Applies to visible time
   // LABELS only; grid positioning + drag-create machine values stay 24h.
   timeFormat: TimeFormat;
+  // PR C: whether the current practitioner is a studio owner. Owners can edit /
+  // delete timed blocks from the calendar; non-owners get a read-only panel.
+  isOwner: boolean;
   clients: QuickBookClient[];
   services: Service[];
   // Calendar Readability Repair: read-only visual context. Neither
@@ -187,6 +191,7 @@ export function DayColumn({
   blockedReason = null,
   tz,
   timeFormat,
+  isOwner,
   clients,
   services,
   isToday,
@@ -195,6 +200,8 @@ export function DayColumn({
   returnTo = "",
 }: Props) {
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
+  // PR C: the timed block whose edit/detail drawer is open (null = closed).
+  const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
   // PR #139. Drag-created drafts route through a chooser ("Book
   // appointment" vs "Block time") instead of opening the quick-book
   // drawer immediately. chooserDraft holds the dragged range while
@@ -661,6 +668,8 @@ export function DayColumn({
             durationMinutes={durationMinutes}
             top={top}
             height={height}
+            // PR C: one-off timed blocks are clickable → open the edit drawer.
+            onClick={() => setEditingBlock(tb)}
           />
         );
       })}
@@ -808,6 +817,16 @@ export function DayColumn({
         studioTimezone={tz}
         onClose={() => setBlockDraft(null)}
       />
+
+      {/* PR C: edit/delete a one-off timed block (owner-only; non-owners see a
+          read-only panel). Reuses the existing owner-gated Settings actions. */}
+      <TimedBlockEditDrawer
+        block={editingBlock}
+        isOwner={isOwner}
+        studioTimezone={tz}
+        timeFormat={timeFormat}
+        onClose={() => setEditingBlock(null)}
+      />
     </div>
   );
 }
@@ -824,6 +843,7 @@ function BlockoutCard({
   durationMinutes,
   top,
   height,
+  onClick,
 }: {
   label: string;
   title: string;
@@ -832,8 +852,30 @@ function BlockoutCard({
   durationMinutes: number;
   top: number;
   height: number;
+  // PR C: when provided (timed blocks only), the card is clickable → opens the
+  // edit drawer. Recurring breaks pass no onClick and stay non-interactive.
+  onClick?: () => void;
 }) {
   const twoLine = height >= TWO_LINE_THRESHOLD_PX;
+  // Stop propagation so opening the edit drawer never also triggers the empty-
+  // slot quick-book / drag-create on the column behind the card.
+  const interactive = onClick
+    ? {
+        role: "button" as const,
+        tabIndex: 0,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          onClick();
+        },
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClick();
+          }
+        },
+      }
+    : {};
   return (
     // PR #138 Part 2. Per-block / recurring-break card. Replaces
     // the prior bg-neutral-100 + border-l-neutral-300 + text-neutral-600
@@ -844,6 +886,7 @@ function BlockoutCard({
     // solid dark gray for legibility over the stripes.
     <div
       title={title}
+      {...interactive}
       style={{
         top,
         height,
@@ -851,7 +894,12 @@ function BlockoutCard({
         backgroundImage:
           "repeating-linear-gradient(135deg, transparent 0, transparent 6px, rgba(140, 133, 121, 0.18) 6px, rgba(140, 133, 121, 0.18) 8px)",
       }}
-      className="absolute inset-x-1 z-[5] overflow-hidden rounded-lg border border-[#C9C4B6] border-l-[3px] border-l-[#8C8579] px-2 py-1 text-[11px] leading-tight dark:border-stone-700 dark:border-l-stone-500 dark:bg-stone-800/80 dark:text-stone-200"
+      className={
+        "absolute inset-x-1 z-[5] overflow-hidden rounded-lg border border-[#C9C4B6] border-l-[3px] border-l-[#8C8579] px-2 py-1 text-[11px] leading-tight dark:border-stone-700 dark:border-l-stone-500 dark:bg-stone-800/80 dark:text-stone-200" +
+        (onClick
+          ? " cursor-pointer hover:border-[#8C8579] focus:outline-none focus:ring-2 focus:ring-sky-500"
+          : "")
+      }
     >
       <div style={{ color: "#3F3F3F" }}>
         {twoLine ? (
