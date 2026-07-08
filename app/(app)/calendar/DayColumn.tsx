@@ -19,7 +19,7 @@ import type {
   AppointmentWithPractitionerColor,
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
-import { localTimeString } from "@/lib/booking/tz";
+import { localTimeString, formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import {
   QuickBookDrawer,
@@ -142,6 +142,9 @@ type Props = {
   // of the generic "Blocked" when present. null/absent → "Blocked" fallback.
   blockedReason?: string | null;
   tz: string;
+  // Migration 0109: studio 12h/24h display preference. Applies to visible time
+  // LABELS only; grid positioning + drag-create machine values stay 24h.
+  timeFormat: TimeFormat;
   clients: QuickBookClient[];
   services: Service[];
   // Calendar Readability Repair: read-only visual context. Neither
@@ -178,6 +181,7 @@ export function DayColumn({
   blocked,
   blockedReason = null,
   tz,
+  timeFormat,
   clients,
   services,
   isToday,
@@ -575,8 +579,9 @@ export function DayColumn({
       {!closedDay && recurringBreaks.map((occ) => {
         const start = new Date(occ.starts_at);
         const end = new Date(occ.ends_at);
-        const localTime = localTimeString(start, tz);
-        const localEndTime = localTimeString(end, tz);
+        const localTime = localTimeString(start, tz); // 24h — positioning only
+        const dispStart = formatTimeForStudio(start, tz, timeFormat);
+        const dispEnd = formatTimeForStudio(end, tz, timeFormat);
         const [h, m] = localTime.split(":").map(Number);
         const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
         if (
@@ -600,8 +605,8 @@ export function DayColumn({
             key={occ.id}
             label={label}
             title={label}
-            startLocal={localTime}
-            endLocal={localEndTime}
+            startLocal={dispStart}
+            endLocal={dispEnd}
             durationMinutes={durationMinutes}
             top={top}
             height={height}
@@ -612,8 +617,9 @@ export function DayColumn({
       {timedBlocks.map((tb) => {
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);
-        const localTime = localTimeString(start, tz);
-        const localEndTime = localTimeString(end, tz);
+        const localTime = localTimeString(start, tz); // 24h — positioning only
+        const dispStart = formatTimeForStudio(start, tz, timeFormat);
+        const dispEnd = formatTimeForStudio(end, tz, timeFormat);
         const [h, m] = localTime.split(":").map(Number);
         const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
         if (
@@ -640,8 +646,8 @@ export function DayColumn({
             key={tb.id}
             label={label}
             title={titleNote}
-            startLocal={localTime}
-            endLocal={localEndTime}
+            startLocal={dispStart}
+            endLocal={dispEnd}
             durationMinutes={durationMinutes}
             top={top}
             height={height}
@@ -669,10 +675,11 @@ export function DayColumn({
         const serviceName = a.service?.name?.trim() || null;
         // Visible time RANGE ("9:00–10:00"), derived from the existing row
         // (starts_at + ends_at) — display only, no positioning/logic change.
-        const localEndTime = a.ends_at
-          ? localTimeString(new Date(a.ends_at), tz)
+        const dispStart = formatTimeForStudio(start, tz, timeFormat);
+        const dispEnd = a.ends_at
+          ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
           : null;
-        const timeRange = timeRangeLabel(localTime, localEndTime);
+        const timeRange = timeRangeLabel(dispStart, dispEnd);
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
         // Display-derived status (DB row unchanged). A past confirmed
         // appointment reads as "Done" (muted), a DB-completed row as

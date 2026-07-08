@@ -121,6 +121,32 @@ export function localTimeString12h(d: Date, tz: string): string {
   return f.format(d);
 }
 
+// Studio time-format preference (migration 0109). Practitioner-facing surfaces
+// pick 12h vs 24h from this; client-facing surfaces stay 12h regardless.
+export type TimeFormat = "12h" | "24h";
+
+// Resolve a studio's preference, DEFAULTING TO 12h when unset. This covers
+// pre-migration studios (loaded via `select *`, so the column is simply absent)
+// and any null — so nothing breaks before 0109 is applied, and the app default
+// is 12h with no studio special-cased.
+export function resolveTimeFormat(
+  studio: { time_format_preference?: string | null } | null | undefined,
+): TimeFormat {
+  return studio?.time_format_preference === "24h" ? "24h" : "12h";
+}
+
+// Format an instant in `tz` using a studio's chosen DISPLAY format. Timezone
+// handling is unchanged — this only selects 12h vs 24h. Use on PRACTITIONER-
+// FACING surfaces (calendar/dashboard/availability). Do NOT use for machine
+// values (grid positioning math, <input type="time"> values) — those stay 24h.
+export function formatTimeForStudio(
+  d: Date,
+  tz: string,
+  format: TimeFormat,
+): string {
+  return format === "24h" ? localTimeString(d, tz) : localTimeString12h(d, tz);
+}
+
 // "Tuesday, June 3, 2026"-style long date for transactional templates
 // (email day headers, SMS confirmation/reminder body). The email
 // templates in lib/email/templates/*.ts already render this exact

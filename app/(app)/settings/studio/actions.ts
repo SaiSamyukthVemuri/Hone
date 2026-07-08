@@ -57,6 +57,26 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to update studio: ${error.message}`);
   }
 
+  // Time-format preference (migration 0109) is written SEPARATELY and
+  // best-effort: in the brief window after this code deploys but before 0109 is
+  // applied, the column doesn't exist yet, so the rest of studio settings must
+  // still save. Reads default to 12h until then. Any error OTHER than
+  // "column does not exist" is surfaced. Once 0109 is applied this is a normal,
+  // always-successful write.
+  const timeFormat = formData.get("time_format") === "24h" ? "24h" : "12h";
+  const { error: tfError } = await supabase
+    .from("studios")
+    .update({ time_format_preference: timeFormat })
+    .eq("id", studio.id);
+  if (
+    tfError &&
+    !/time_format_preference/i.test(tfError.message) &&
+    tfError.code !== "PGRST204" &&
+    tfError.code !== "42703"
+  ) {
+    throw new Error(`Failed to update time format: ${tfError.message}`);
+  }
+
   revalidatePath("/dashboard");
   revalidatePath("/settings/studio");
   revalidatePath("/settings/team");

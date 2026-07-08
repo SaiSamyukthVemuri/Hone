@@ -17,10 +17,12 @@ import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import {
   addDays,
-  localTimeString,
+  formatTimeForStudio,
   localTimeString12h,
+  resolveTimeFormat,
   todayInTz,
   utcInstantFromLocal,
+  type TimeFormat,
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
 import { PracticeSnapshot } from "./practice-snapshot";
@@ -417,6 +419,7 @@ export default async function DashboardPage({
                   beforeToday={beforeTodayPreviews.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   tz={studio.timezone}
+                  timeFormat={resolveTimeFormat(studio)}
                 />
               </li>
             ))}
@@ -534,6 +537,7 @@ function AppointmentRow({
   beforeToday,
   linkedSession,
   tz,
+  timeFormat,
 }: {
   appt: TodayAppointment;
   pinnedNoteText: string | null;
@@ -541,6 +545,7 @@ function AppointmentRow({
   beforeToday: BeforeTodayPreview | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   tz: string;
+  timeFormat: TimeFormat;
 }) {
   // PR #236: ONE obvious primary action per row, resolved from
   // existing facts (pure helper; existing routes only).
@@ -552,7 +557,7 @@ function AppointmentRow({
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
-  const time = localTimeString(new Date(appt.starts_at), tz);
+  const time = formatTimeForStudio(new Date(appt.starts_at), tz, timeFormat);
   const performerName = appt.practitioner?.display_name?.trim();
   const performerColor = resolvePractitionerColor(appt.practitioner?.color);
   const modality = appt.service?.modality
