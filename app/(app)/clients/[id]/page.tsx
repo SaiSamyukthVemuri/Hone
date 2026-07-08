@@ -57,6 +57,9 @@ import {
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
+import { PortalAccessCard } from "./PortalAccessCard";
+import { getPortalAccessSummary } from "@/lib/portal/queries";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 // getClientTags import removed: tags no longer render on the main
 // profile (see ClientTagsCard note above). Server actions for tags
@@ -182,6 +185,12 @@ export default async function ClientCheatSheetPage({
   const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
   const intake = await getLatestIntakeForClient(studio.id, client.id);
+  // Portal access: the studio-branded login URL (no token) + read-only access
+  // hints (last link sent / last sign-in) from existing tables.
+  const portalAccess = await getPortalAccessSummary(studio.id, client.id);
+  const portalLoginUrl = studio.slug
+    ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
+    : `${getRequiredAppOrigin()}/portal/login`;
   // Self-reported Fitzpatrick on the profile is derived from the
   // latest submitted/reviewed intake only. A newer in_progress
   // reissue (no answers yet) intentionally does NOT clear the prior
@@ -560,6 +569,16 @@ export default async function ClientCheatSheetPage({
 
           {/* PR #197 (Chloe round 3): portal messages moved to the
               dedicated Messages tab; Overview stays clinical-first. */}
+
+          {/* Client portal access (Send/Copy portal link). Reuses the existing
+              secure magic-link issuance; studio-scoped + rate-limited. */}
+          <PortalAccessCard
+            clientId={client.id}
+            portalLoginUrl={portalLoginUrl}
+            clientHasEmail={!!client.email && client.email.length > 0}
+            lastLinkSentAt={portalAccess.lastLinkSentAt}
+            lastSeenAt={portalAccess.lastSeenAt}
+          />
 
           {/* PR #134. Consent / e-sign per-template signed status for
               this client. Renders active templates only; archived

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import {
   createIntakeRequestForClient,
   generateIntakeLinkUrl,
@@ -179,6 +180,19 @@ export async function requestIntakeUpdateAction(
 
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return auth;
+  if (sendEmail) {
+    const reqRl = await limitPractitionerClientEmail({
+      action: "intake_request",
+      practitionerId: auth.practitionerId,
+      clientId,
+    });
+    if (!reqRl.allowed) {
+      return {
+        ok: false,
+        error: "Too many intake requests sent to this client recently. Please try again later.",
+      };
+    }
+  }
 
   const created = await createIntakeRequestForClient({
     studioId: auth.studioId,
@@ -302,6 +316,17 @@ export async function resendIntakeEmailAction(
 
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return auth;
+  const resendRl = await limitPractitionerClientEmail({
+    action: "intake_resend",
+    practitionerId: auth.practitionerId,
+    clientId,
+  });
+  if (!resendRl.allowed) {
+    return {
+      ok: false,
+      error: "Too many intake emails sent to this client recently. Please try again later.",
+    };
+  }
   if (!auth.client.email) {
     return {
       ok: false,
