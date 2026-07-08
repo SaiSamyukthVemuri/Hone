@@ -226,9 +226,13 @@ describe("calendar touch safety", () => {
   });
 
   it("the week grid scrolls inside its own card on phones, not page-wide", () => {
-    // The wrapper keeps overflow-x-auto; the grid rows get a phone
-    // min-width so days stay readable instead of being chopped.
-    expect(CALENDAR_PAGE).toMatch(/overflow-x-auto rounded-xl/);
+    // PR B: the wrapper is now height-bounded and scrolls INTERNALLY on both
+    // axes (max-h + overflow-y-auto + overflow-x-auto), so the calendar body
+    // scrolls inside its card instead of forcing the whole page to scroll. The
+    // grid rows keep a phone min-width so days stay readable.
+    expect(CALENDAR_PAGE).toMatch(
+      /max-h-\[calc\(100dvh-13rem\)\] overflow-x-auto overflow-y-auto rounded-xl/,
+    );
     const gridCount = (
       CALENDAR_PAGE.match(
         /min-w-\[760px\] grid-cols-\[60px_repeat\(7,_minmax\(0,1fr\)\)\] md:min-w-0/g,
