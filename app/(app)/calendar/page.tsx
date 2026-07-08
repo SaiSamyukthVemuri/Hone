@@ -263,10 +263,17 @@ export default async function CalendarPage({
         </div>
       </header>
 
-      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
+      {/* Layout (PR B): the calendar body scrolls INTERNALLY — the grid is a
+          fixed 1020px, so without a height bound it forced the whole page to
+          scroll. max-h + overflow-y-auto keeps it within the viewport; the
+          day-of-week header stays sticky at the top and the time rail stays
+          sticky at the left (so hour labels remain visible while scrolling
+          across days on mobile). Drag/positioning math is viewport-relative
+          (getBoundingClientRect) and unaffected. */}
+      <div className="max-h-[calc(100dvh-13rem)] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
         <div className="min-w-[840px]">
-          <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0 border-b border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
-            <div />
+          <div className="sticky top-0 z-20 grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0 border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+            <div className="sticky left-0 z-30 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900" />
             {days.map((date, i) => {
               const isToday = date === today;
               return (
@@ -322,8 +329,14 @@ export default async function CalendarPage({
               top = (h - HOUR_START) * 2 * ROW_HEIGHT_PX lines each label
               up with the DayColumn hour boundaries. */}
           <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0">
+            {/* Time rail: sticky-left so hour labels stay visible while
+                scrolling across days on mobile. `sticky` (not `relative`) still
+                establishes the positioning context the absolute hour labels
+                rely on, so their top offsets are unchanged. z-30 keeps the rail
+                above day-column cards (z-5/6) + now-line (z-20) as columns
+                scroll under it. */}
             <div
-              className="relative border-r border-neutral-200 dark:border-neutral-800"
+              className="sticky left-0 z-30 border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
               style={{ height: GRID_HEIGHT }}
             >
               {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
