@@ -74,9 +74,8 @@ export default async function PortalLoginPage({
               {body}
             </p>
             <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
-              The link expires in 30 minutes. After you sign in, your
-              portal session may stay active on this device for a short
-              time.
+              The link expires in 1 hour. After you sign in, your portal
+              session may stay active on this device for a short time.
             </p>
           </div>
 

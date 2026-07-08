@@ -40,6 +40,9 @@ type ReminderProps = {
   timezone: string;
   cancellationUrl: string;
   rescheduleUrl: string | null;
+  // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
+  // one-time magic link. Optional so non-sender callers can omit it.
+  portalLoginUrl?: string | null;
   preCareInstructions: string | null;
   treatmentTimeLine: string | null;
 };
@@ -105,6 +108,13 @@ function reminderHtml(opts: {
             Cancel
           </a>
         </td></tr>
+        ${
+          p.portalLoginUrl
+            ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
+          View your forms, appointments, and care instructions in your <a href="${p.portalLoginUrl}" style="color:#0A0A0A; text-decoration:underline;">secure client portal</a>.
+        </td></tr>`
+            : ""
+        }
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${safeStudio} via Hone
         </td></tr>
@@ -137,7 +147,7 @@ ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}
-`;
+${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
 }
 
 export function build24hReminderEmail(p: ReminderProps): {
