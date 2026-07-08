@@ -102,6 +102,8 @@ const PRODUCTS_SUGGESTED = [
   "Your practitioner may also be a helpful source of skincare guidance. If you are dealing with hyperpigmentation, ingrown hairs, acne, or other skin concerns alongside electrolysis, ask about how to plan your care.",
 ].join("\n");
 
+type PostcareDeliveryMode = "manual" | "auto_on_complete";
+
 type Props = {
   initial: {
     postcare_aftercare_text: string;
@@ -110,12 +112,31 @@ type Props = {
     postcare_review_url: string;
     postcare_review_prompt_text: string;
     postcare_contact_email: string;
+    postcare_delivery_mode: PostcareDeliveryMode;
   };
   // studios.owner_email; shown as the fallback address that appears
   // in the postcare email Contact line when postcare_contact_email
   // is blank.
   studioOwnerEmail: string;
 };
+
+const DELIVERY_MODE_OPTIONS: ReadonlyArray<{
+  value: PostcareDeliveryMode;
+  label: string;
+  detail: string;
+}> = [
+  {
+    value: "manual",
+    label: "Manual only",
+    detail: "You click “Send postcare” on each appointment.",
+  },
+  {
+    value: "auto_on_complete",
+    label: "Automatically send after appointment completion",
+    detail:
+      "Postcare is sent once, automatically, when an appointment is marked complete. Never for cancelled or no-show appointments. Manual resend stays available.",
+  },
+];
 
 type SuggestKey = "aftercare" | "warnings" | "products";
 
@@ -131,6 +152,9 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
   );
   const [contactEmail, setContactEmail] = useState(
     initial.postcare_contact_email,
+  );
+  const [deliveryMode, setDeliveryMode] = useState<PostcareDeliveryMode>(
+    initial.postcare_delivery_mode,
   );
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
@@ -178,6 +202,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     fd.set("postcare_review_url", reviewUrl);
     fd.set("postcare_review_prompt_text", reviewPrompt);
     fd.set("postcare_contact_email", contactEmail);
+    fd.set("postcare_delivery_mode", deliveryMode);
     startTransition(async () => {
       try {
         await updateStudioPostcareAction(fd);
@@ -211,9 +236,9 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
           />
         </div>
         <p className="mt-1 text-sm text-neutral-500">
-          Content sent to the client when you click <em>Send postcare</em> on
-          an appointment. You write the clinical content; Hone never invents
-          medical advice. Send is always manual; no auto-send.
+          Content sent to the client after their appointment. You write the
+          clinical content; Hone never invents medical advice. Choose below
+          whether it sends manually or automatically on completion.
         </p>
         <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           <p className="font-medium text-neutral-800 dark:text-neutral-200">
@@ -225,6 +250,36 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
             the start of a line makes a list. <code>[label](https://example.com)</code>{" "}
             makes a link. All other HTML is escaped before sending.
           </p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium">Delivery</span>
+        <p className="text-xs text-neutral-500">
+          Auto-send delivers postcare once, automatically, when an appointment is
+          marked complete — never for cancelled or no-show appointments. Manual
+          resend from the appointment page stays available in both modes.
+        </p>
+        <div className="mt-1 flex flex-col gap-2">
+          {DELIVERY_MODE_OPTIONS.map((opt) => {
+            const selected = deliveryMode === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setDeliveryMode(opt.value)}
+                aria-pressed={selected}
+                className={`flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition ${
+                  selected
+                    ? "border-neutral-900 dark:border-neutral-100"
+                    : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
+                }`}
+              >
+                <span className="text-sm font-medium">{opt.label}</span>
+                <span className="text-xs text-neutral-500">{opt.detail}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

@@ -222,6 +222,28 @@ export async function updateStudioPostcareAction(
     throw new Error(`Failed to update postcare settings: ${error.message}`);
   }
 
+  // Migration 0110: postcare delivery mode (manual | auto_on_complete). Written
+  // SEPARATELY + best-effort so that, in the window after this code deploys but
+  // before 0110 is applied, the rest of postcare settings still save. Any error
+  // OTHER than "column does not exist" is surfaced. Once 0110 is applied this is
+  // a normal write.
+  const deliveryMode =
+    formData.get("postcare_delivery_mode") === "auto_on_complete"
+      ? "auto_on_complete"
+      : "manual";
+  const { error: modeError } = await supabase
+    .from("studios")
+    .update({ postcare_delivery_mode: deliveryMode })
+    .eq("id", studio.id);
+  if (
+    modeError &&
+    !/postcare_delivery_mode/i.test(modeError.message) &&
+    modeError.code !== "PGRST204" &&
+    modeError.code !== "42703"
+  ) {
+    throw new Error(`Failed to update postcare delivery mode: ${modeError.message}`);
+  }
+
   revalidatePath("/settings/studio");
 }
 
