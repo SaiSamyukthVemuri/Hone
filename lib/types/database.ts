@@ -40,7 +40,19 @@ export type Studio = {
   // available slots. Allowed values: 3, 4, 6. Default 3 (matches the
   // previously-hardcoded BOOKING_HORIZON_DAYS). Internal practitioner
   // booking is not subject to this limit.
-  public_booking_horizon_months: 3 | 4 | 6;
+  public_booking_horizon_months:
+    | 1
+    | 2
+    | 3
+    | 4
+    | 5
+    | 6
+    | 7
+    | 8
+    | 9
+    | 10
+    | 11
+    | 12;
   // Migration 0040: practitioner-chosen accent color for birthday
   // reminders (dashboard + client profile). Default 'purple'. Red/rose
   // is intentionally NOT an option — it's reserved for allergies/cautions.

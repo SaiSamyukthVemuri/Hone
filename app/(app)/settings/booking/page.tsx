@@ -180,7 +180,7 @@ export default async function BookingSettingsPage({
           >
             {PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.map((m) => (
               <option key={m} value={String(m)}>
-                {m} months
+                {m} month{m === 1 ? "" : "s"}
               </option>
             ))}
           </select>

@@ -32,6 +32,7 @@ import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
   isWithinPublicBookingHorizon,
+  maxPublicBookingHorizonDays,
 } from "@/lib/booking/horizon";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -235,7 +236,10 @@ export async function fetchPublicSlotsAction(params: {
 // engine / conflict logic changes.
 // ---------------------------------------------------------------------------
 
-const MAX_NEXT_AVAILABLE_SCAN_DAYS = 200;
+// Belt-and-braces cap on the next-available scan. Derived from the largest
+// configurable horizon (12 months = 372 days) plus a small margin, so the scan
+// always reaches the full horizon a studio can configure and never truncates.
+const MAX_NEXT_AVAILABLE_SCAN_DAYS = maxPublicBookingHorizonDays() + 14;
 
 export async function fetchNextAvailableDateAction(params: {
   slug: string;

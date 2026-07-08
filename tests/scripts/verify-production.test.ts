@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0111 (client portal access events).
-    expect(nums[nums.length - 1]).toBe("0111");
+    // Repo max advances to 0112 (public booking horizon expand).
+    expect(nums[nums.length - 1]).toBe("0112");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
