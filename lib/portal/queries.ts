@@ -494,3 +494,36 @@ export async function findActiveClientsForPortalLogin(
     clientId: row.id as string,
   }));
 }
+
+// Practitioner-side portal-access summary for a client (PR: Send portal link).
+// Read-only, studio-scoped: the most recent magic link ISSUED to this client
+// (client_portal_magic_links.created_at) and the last time they were seen in the
+// portal (client_portal_sessions.last_seen_at). No new table — these already
+// exist. Returns ISO strings or null. Never returns tokens.
+export async function getPortalAccessSummary(
+  studioId: string,
+  clientId: string,
+): Promise<{ lastLinkSentAt: string | null; lastSeenAt: string | null }> {
+  const admin = createAdminClient();
+  const { data: lastLink } = await admin
+    .from("client_portal_magic_links")
+    .select("created_at")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const { data: lastSession } = await admin
+    .from("client_portal_sessions")
+    .select("last_seen_at")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .not("last_seen_at", "is", null)
+    .order("last_seen_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return {
+    lastLinkSentAt: (lastLink?.created_at as string | null) ?? null,
+    lastSeenAt: (lastSession?.last_seen_at as string | null) ?? null,
+  };
+}

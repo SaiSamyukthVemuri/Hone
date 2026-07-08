@@ -489,3 +489,43 @@ export async function limitPortalMagicLink(args: {
     return { allowed: true }; // fail open
   }
 }
+
+// Practitioner-triggered client emails (portal link, intake resend, portal
+// message). Keyed per (action, practitioner, client) so one practitioner cannot
+// spam one client on any one channel. 3 per hour per bucket. Fail-open like the
+// other limiters (a limiter outage must never block a legitimate send).
+let cachedPractitionerClient: Ratelimit | null | undefined;
+function practitionerClientLimiter(): Ratelimit | null {
+  if (cachedPractitionerClient !== undefined) return cachedPractitionerClient;
+  const redis = getRedis();
+  cachedPractitionerClient = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(3, "1 h"),
+        prefix: "rl:practitioner_client_email",
+        analytics: false,
+      })
+    : null;
+  return cachedPractitionerClient;
+}
+
+export async function limitPractitionerClientEmail(args: {
+  action: string;
+  practitionerId: string;
+  clientId: string;
+}): Promise<RateLimitResult> {
+  const limiter = practitionerClientLimiter();
+  if (!limiter) return { allowed: true }; // disabled when env unset
+  try {
+    const { success, reset } = await limiter.limit(
+      `${hashId(args.action)}:${hashId(args.practitionerId)}:${hashId(args.clientId)}`,
+    );
+    if (success) return { allowed: true };
+    const retry = retryAfterSeconds(reset);
+    logRateLimitExceeded("practitioner_client_email", retry);
+    return { allowed: false, retryAfterSeconds: retry };
+  } catch (err) {
+    logBackendUnavailable("practitioner_client_email", err);
+    return { allowed: true }; // fail open
+  }
+}

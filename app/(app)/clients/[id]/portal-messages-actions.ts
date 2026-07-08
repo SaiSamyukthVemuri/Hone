@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/portal-message-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
@@ -76,6 +77,17 @@ export async function createPortalMessageAction(
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot send messages." };
+  }
+  const messageRl = await limitPractitionerClientEmail({
+    action: "portal_message",
+    practitionerId: practitioner.id,
+    clientId,
+  });
+  if (!messageRl.allowed) {
+    return {
+      ok: false,
+      error: "Too many messages sent to this client recently. Please try again later.",
+    };
   }
 
   const admin = createAdminClient();

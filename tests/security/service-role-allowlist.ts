@@ -374,6 +374,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "app/(app)/clients/[id]/portal-link-actions.ts",
+    purpose: "Practitioner 'Send portal link' — issue a portal magic link for a known client.",
+    why: "Authenticated practitioner action (studio resolved via getCurrentPractitionerWithStudio); the client lookup + magic-link insert are explicitly scoped to that studio.id — a client in another studio is not found.",
+    scopeGuard: '.eq("studio_id", studio.id)',
+  },
+  {
     path: "lib/portal/session.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (hashToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
