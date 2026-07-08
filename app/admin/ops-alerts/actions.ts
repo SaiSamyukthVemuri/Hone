@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { logAdminAction } from "@/lib/audit/admin-actions";
 
 // PR #193. Resolve an ops alert from the admin dashboard. Admin-only
 // (same ADMIN_EMAILS allowlist as every /admin action; the layout
@@ -51,6 +52,13 @@ export async function resolveOpsAlertAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user || !isAdmin(user.email)) {
+    await logAdminAction({
+      actorUserId: user?.id ?? null,
+      actorEmail: user?.email ?? null,
+      action: "ops_alert_resolved",
+      targetType: "ops_alert",
+      outcome: "blocked",
+    });
     throw new Error("Unauthorized.");
   }
 
@@ -83,8 +91,28 @@ export async function resolveOpsAlertAction(
     .eq("id", alertId)
     .is("resolved_at", null);
   if (error) {
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      targetType: "ops_alert",
+      targetId: alertId,
+      action: "ops_alert_resolved",
+      outcome: "failed",
+      metadata: { has_resolution_note: note != null },
+    });
     throw new Error(`Failed to resolve the alert: ${error.message}`);
   }
+
+  await logAdminAction({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    targetType: "ops_alert",
+    targetId: alertId,
+    action: "ops_alert_resolved",
+    outcome: "succeeded",
+    // Log WHETHER a note was added, never the note text (free-text operator input).
+    metadata: { has_resolution_note: note != null },
+  });
 
   revalidatePath("/admin/ops-alerts");
 }

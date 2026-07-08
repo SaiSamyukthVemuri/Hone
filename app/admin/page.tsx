@@ -520,6 +520,11 @@ function QuickLinks() {
             Payment manual review
           </Link>
         </li>
+        <li>
+          <Link href="/admin/audit" className="underline">
+            Admin action audit log
+          </Link>
+        </li>
         <li className="text-neutral-500">
           New studio setup runbook: docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
         </li>

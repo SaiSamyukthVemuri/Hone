@@ -103,7 +103,9 @@ describe("data privacy: NO client-level clinical data in the console", () => {
       /treatment_area_text|tolerance_text|reaction_text|caution_note|exposed_person|probe_lot/i,
     );
     expect(PAGE_CODE).not.toMatch(/stripe_|payment_intent|client_secret|livemode/i);
-    expect(PAGE_CODE).not.toMatch(/token|audit_event|\baudit\b/i);
+    // No audit/token CONTENT is selected here. A nav link to /admin/audit is fine —
+    // the audit log lives on its own isAdmin-gated page, not the console home.
+    expect(PAGE_CODE).not.toMatch(/\btoken\b|audit_event|\.from\("[^"]*audit/i);
   });
 });
 

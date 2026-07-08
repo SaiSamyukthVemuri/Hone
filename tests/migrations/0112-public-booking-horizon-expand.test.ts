@@ -1,20 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0112_public_booking_horizon_expand.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0112 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-        .filter(Boolean)
-        .map((m) => Number((m as RegExpExecArray)[1])),
-    );
-    expect(maxNum).toBe(112);
+describe("0112 — number", () => {
+  it("is migration 0112 (repo-max tripwire now lives in the newest migration test, 0113)", () => {
     expect(FILE).toMatch(/^0112_/);
   });
 });
