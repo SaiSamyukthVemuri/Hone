@@ -6,10 +6,32 @@ import type {
 import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { formatSeconds } from "@/lib/sessions/format-seconds";
+import { normalizeChips } from "@/lib/observation-chips";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
   return ELECTROLYSIS_MODES.find((m) => m.value === value)?.label ?? value;
+}
+
+// Migration 0108: structured treatment-observation chips render as their own
+// pills (separate from free-text notes). Legacy rows have observation_chips = []
+// and show nothing here — their chips are still in `comments`, so nothing is
+// lost and nothing double-displays. normalizeChips() drops any unknown value.
+function ObservationChips({ entry }: { entry: ElectrolysisEntry }) {
+  const chips = normalizeChips(entry.observation_chips);
+  if (chips.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {chips.map((c) => (
+        <span
+          key={c}
+          className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+        >
+          {c}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 // Optional treatmentParams + block are computed upstream by SessionBlocksView
@@ -219,6 +241,7 @@ export function ElectrolysisEntryRow({
               Hairs treated: {entry.hairs_treated}
             </div>
           )}
+          <ObservationChips entry={entry} />
           {entry.comments && (
             <div className="mt-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
               <span className="text-xs font-medium text-neutral-500">
@@ -291,6 +314,7 @@ export function ElectrolysisEntryRow({
             Hairs treated: {entry.hairs_treated}
           </div>
         )}
+        <ObservationChips entry={entry} />
         {entry.comments && (
           <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
             {entry.comments}

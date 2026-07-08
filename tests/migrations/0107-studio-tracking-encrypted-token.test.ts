@@ -1,20 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0107_studio_tracking_encrypted_token.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0107 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_/.exec(f)?.[1])
-        .filter(Boolean)
-        .map((n) => Number(n)),
-    );
-    expect(maxNum).toBe(107);
+describe("0107 — number", () => {
+  it("is migration 0107 (repo-max tripwire now lives in the newest migration test, 0108)", () => {
     expect(FILE).toMatch(/^0107_/);
   });
 });
