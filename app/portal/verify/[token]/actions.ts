@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { createPortalSession } from "@/lib/portal/session";
+import { logPortalAccessEvent } from "@/lib/portal/access-events";
 
 // Server action that actually consumes a portal magic-link token and
 // creates the portal session. Split out from the verify page so the
@@ -107,6 +108,15 @@ export async function verifyPortalMagicLinkAction(
     // Lost the consume race; another POST already used this token.
     redirect(`/portal/verify/${token}`);
   }
+
+  // Record the sign-in (magic link consumed) for the practitioner status view.
+  // Client action → no practitioner_id; studio + client ids only, never the
+  // token/URL. Fail-soft so it can never block the redirect.
+  await logPortalAccessEvent(admin, {
+    studioId: link.studio_id,
+    clientId: link.client_id,
+    eventType: "portal_magic_link_consumed",
+  });
 
   try {
     await createPortalSession({

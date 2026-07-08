@@ -58,7 +58,11 @@ import {
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { PortalAccessCard } from "./PortalAccessCard";
-import { getPortalAccessSummary } from "@/lib/portal/queries";
+import {
+  getPortalAccessSummary,
+  getRecentPortalAccessEvents,
+} from "@/lib/portal/queries";
+import { computePortalPendingTasks } from "@/lib/portal/pending-tasks";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 // getClientTags import removed: tags no longer render on the main
@@ -257,6 +261,20 @@ export default async function ClientCheatSheetPage({
   ]);
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
+  );
+
+  // Portal Access PR 3: outstanding portal tasks (from already-loaded data, no
+  // new queries) + recent portal access events (fail-soft: [] pre-migration).
+  const portalPendingTasks = computePortalPendingTasks({
+    intakeStatus: intake?.status ?? null,
+    activeConsentTemplates: consentTemplatesAll,
+    latestSignatures: consentLatestSignatures,
+    portalMessages,
+  });
+  const portalAccessEvents = await getRecentPortalAccessEvents(
+    studio.id,
+    client.id,
+    5,
   );
 
   const lifetimeCents = sessions.reduce(
@@ -578,6 +596,8 @@ export default async function ClientCheatSheetPage({
             clientHasEmail={!!client.email && client.email.length > 0}
             lastLinkSentAt={portalAccess.lastLinkSentAt}
             lastSeenAt={portalAccess.lastSeenAt}
+            pendingTasks={portalPendingTasks}
+            recentEvents={portalAccessEvents}
           />
 
           {/* PR #134. Consent / e-sign per-template signed status for
