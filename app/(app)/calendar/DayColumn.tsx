@@ -19,7 +19,12 @@ import type {
   AppointmentWithPractitionerColor,
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
-import { localTimeString, formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
+import {
+  localTimeString,
+  formatTimeForStudio,
+  formatClockLabel,
+  type TimeFormat,
+} from "@/lib/booking/tz";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import {
   QuickBookDrawer,
@@ -537,7 +542,12 @@ export function DayColumn({
           className="pointer-events-none absolute inset-x-1 z-[6] flex items-start rounded-md border border-sky-400/70 bg-sky-200/40 px-2 py-1 text-[11px] font-medium text-sky-900 shadow-sm dark:border-sky-500/70 dark:bg-sky-500/20 dark:text-sky-100"
         >
           <span className="truncate tabular-nums">
-            {overlay.startLabel} to {overlay.endLabel} ·{" "}
+            {/* Display-only: format the live drag-preview labels per the studio
+                12h/24h preference. The positioning uses overlay.top/height (not
+                these labels), and the submitted machine value is minutesToHHMM
+                on release — both unchanged. */}
+            {formatClockLabel(overlay.startLabel, timeFormat)} to{" "}
+            {formatClockLabel(overlay.endLabel, timeFormat)} ·{" "}
             {overlay.durationMinutes} min
           </span>
         </div>
