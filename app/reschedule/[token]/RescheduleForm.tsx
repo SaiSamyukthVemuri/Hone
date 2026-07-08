@@ -80,7 +80,8 @@ function horizonInStudio(
   tz: string,
   months: number,
 ): { min: string; max: string } {
-  const safeMonths = months === 3 || months === 4 || months === 6 ? months : 3;
+  const safeMonths =
+    Number.isInteger(months) && months >= 1 && months <= 12 ? months : 3;
   const min = todayInStudio(tz);
   const [y, m, d] = min.split("-").map(Number);
   const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));

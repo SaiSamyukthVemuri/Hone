@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
+import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
@@ -30,7 +31,12 @@ import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbea
 // studio_calendar_reservations and are simply never read by the
 // public booking page beyond that studio's selected window.
 
-const HORIZON_DAYS = 186;
+// Materialize recurring breaks across the LARGEST horizon any studio can
+// configure (12 months = 372 days) + a small margin, so a studio on a long
+// horizon never shows a bookable slot that actually falls in a recurring break
+// beyond the materialized window. Derived from the horizon presets so it tracks
+// the max automatically.
+const HORIZON_DAYS = maxPublicBookingHorizonDays() + 14;
 
 type RuleRow = {
   id: string;

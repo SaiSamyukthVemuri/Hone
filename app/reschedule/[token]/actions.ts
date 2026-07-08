@@ -18,6 +18,7 @@ import { recordPractitionerNotification } from "@/lib/notifications/practitioner
 import {
   horizonRangeInStudioTz,
   isWithinPublicBookingHorizon,
+  maxPublicBookingHorizonDays,
 } from "@/lib/booking/horizon";
 import {
   logEmailFailure,
@@ -412,7 +413,10 @@ export async function fetchRescheduleSlotsAction(params: {
 // consumed; reschedule only consumes a token on confirm.
 // ---------------------------------------------------------------------------
 
-const MAX_NEXT_AVAILABLE_SCAN_DAYS = 200;
+// Matches the public booking scan cap: derived from the largest configurable
+// horizon (12 months = 372 days) + a small margin, so a wider horizon never
+// truncates the next-available scan.
+const MAX_NEXT_AVAILABLE_SCAN_DAYS = maxPublicBookingHorizonDays() + 14;
 
 export async function fetchNextAvailableDateForRescheduleAction(params: {
   token: string;

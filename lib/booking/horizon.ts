@@ -5,23 +5,26 @@ import { addDays, localDateString } from "./tz";
 // first drawer in /calendar) is NOT subject to this limit — owners can
 // book farther out administratively.
 //
-// Migration 0036 (Booking Horizon v1) made this per-studio: each studio
-// chooses 3, 4, or 6 months. Default 3 when a caller can't supply a
-// studio for some reason. The minimum and maximum are deliberately
-// narrow so the recurring-break materialization horizon (cron +
-// per-rule on create) can be bumped to the maximum (6 months ≈ 180
-// days) without growing unbounded.
+// Migration 0036 (Booking Horizon v1) made this per-studio; migration 0112
+// (Booking Horizon v2) widened the presets to any whole month from 1 to 12.
+// Default 3 when a caller can't supply a studio for some reason. The maximum
+// (12 months) is a deliberate, safe upper bound: the recurring-break
+// materialization horizon (cron) and the public next-available scan cap are
+// both DERIVED from maxPublicBookingHorizonDays() below, so they always cover
+// the largest configurable horizon and can never drift below it.
 
-export const PUBLIC_BOOKING_HORIZON_MONTHS_VALUES = [3, 4, 6] as const;
+export const PUBLIC_BOOKING_HORIZON_MONTHS_VALUES = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+] as const;
 export type PublicBookingHorizonMonths =
   (typeof PUBLIC_BOOKING_HORIZON_MONTHS_VALUES)[number];
 
 export const DEFAULT_PUBLIC_BOOKING_HORIZON_MONTHS: PublicBookingHorizonMonths = 3;
 
-// Conservative "month" length in days. We use 31 so a "3 months" choice
-// always covers at least 3 calendar months even when the last span
-// contains a 31-day month. This matches the spirit of the previous
-// hardcoded 90 — slightly more generous, never less.
+// Conservative "month" length in days. We use 31 so an "N months" choice
+// always covers at least N calendar months even when a span contains a 31-day
+// month. This matches the spirit of the previous hardcoded 90 — slightly more
+// generous, never less.
 const DAYS_PER_HORIZON_MONTH = 31;
 
 export function horizonDaysForMonths(
@@ -30,13 +33,31 @@ export function horizonDaysForMonths(
   return months * DAYS_PER_HORIZON_MONTH;
 }
 
-// Fail-safe coerce: an unknown value (caller forgot to pass, DB has
-// drifted, etc.) gets the default 3. Keeps the booking page rendering
-// rather than crashing.
+// The longest horizon any studio can configure, in days (largest preset * 31 =
+// 12 * 31 = 372). Single source of truth for the downstream safety bounds — the
+// next-available scan cap and the recurring-break materialization window both
+// derive from this, so widening the preset list automatically extends them and
+// they can never fall below the maximum bookable horizon.
+export function maxPublicBookingHorizonDays(): number {
+  return (
+    Math.max(...PUBLIC_BOOKING_HORIZON_MONTHS_VALUES) * DAYS_PER_HORIZON_MONTH
+  );
+}
+
+// Fail-safe coerce: an unknown/out-of-range value (caller forgot to pass, DB
+// has drifted, etc.) gets the default. Keeps the booking page rendering rather
+// than crashing. Accepts any whole month 1..12.
 function normalizeMonths(
   months: number | null | undefined,
 ): PublicBookingHorizonMonths {
-  if (months === 3 || months === 4 || months === 6) return months;
+  if (
+    typeof months === "number" &&
+    Number.isInteger(months) &&
+    months >= 1 &&
+    months <= 12
+  ) {
+    return months as PublicBookingHorizonMonths;
+  }
   return DEFAULT_PUBLIC_BOOKING_HORIZON_MONTHS;
 }
 
