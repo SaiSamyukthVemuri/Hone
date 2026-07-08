@@ -28,7 +28,7 @@ the deeper runbooks: [docs/11 Runbook](./11_RUNBOOK.md),
 - Studio timezone is wrong (all public slot times will be wrong).
 - `verify-production.mjs` fails, or the treatment-image bucket is missing / not
   private.
-- Production is not on migration **0100** (current expected max).
+- Production is not on the current expected migration max. **Do not hardcode the number — derive it** from `supabase migration list --linked` and [docs/production/current-state.md](./production/current-state.md). (As of 2026-07-08 the production max is **0112**.)
 - The data-recovery expectations in §6 are not confirmed **before** real client
   data is entered.
 
@@ -78,8 +78,11 @@ Do this once per pilot studio (Chloe, Laura) in Settings:
 
 ## 3. Verify before pilot (§4 checks)
 
-- [ ] **Run `scripts/verify-production.mjs`** and confirm all checks pass,
-      including production migration max = **0100** and the `0093 bucket` check.
+- [ ] **Run `scripts/verify-production.mjs`** and confirm all checks pass
+      (an INCOMPLETE that is only the reminder-scheduler heartbeat / local Upstash
+      is acceptable), including the production migration max (**0112** as of
+      2026-07-08 — verify against `supabase migration list --linked`, do not assume)
+      and the `0093 bucket` check.
 - [ ] **Treatment-image bucket / private-policy verification.** Confirm the
       `treatment-images` bucket exists and is **private**
       (`verify-production.mjs` `0093 bucket` check), and in the Supabase
@@ -182,5 +185,7 @@ bulk operation, or accidental deletion. Confirm the following before the pilot:
   "filter by client for a complete log" notice (use the per-client filter or the
   ZIP export for a complete artifact).
 - Rollback of a bad deploy: revert the merge on the base branch and redeploy
-  production (docs/11 / docs/14); production migration stays at 0100 unless a
-  reviewed migration is applied via the migration-first process.
+  production (docs/11 / docs/14); the production migration max stays where it is
+  (**0112** as of 2026-07-08) unless a reviewed migration is applied via the
+  [migration-first process](./runbooks/migration-first-process.md). Reverting code
+  does not roll back an additive migration (old code runs fine against it).

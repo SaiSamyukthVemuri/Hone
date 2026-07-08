@@ -2,7 +2,7 @@
 
 **Audience: operator (Sam). This is an INTERNAL operator checklist for safely creating Studio #2 (Laura's studio) and any studio after it. It is NOT user-facing documentation, NOT an onboarding feature, and it adds no app surface.** The practitioner-facing guidance stays where it is: /getting-started in the app and docs/12 smokes.
 
-Written for the post-PR #223 state of the system (migrations through 0088 applied; live payments disabled). If the schema or posture has moved since, re-verify against docs/09 and docs/14 before using this.
+Last reconciled 2026-07-08 against **production migration max 0112** (live payments still disabled — test mode only). Always re-verify the current max against `supabase migration list --linked` and [docs/production/current-state.md](./production/current-state.md) before using this — do not trust a hardcoded number. (Originally written for the post-PR #223 / migration-0088 state; that reference is superseded.)
 
 > Schema note (PR #252, migration 0089): the Imported Treatment Memory tables (`import_batches`, `imported_treatment_memories`, `imported_treatment_memory_audit_events`) are studio-scoped, RLS-backed (member SELECT, owner-only INSERT/UPDATE, no delete), and need NO per-studio setup — nothing to configure. There is no UI surface yet (schema + read-model only); imported history is written by the future Quick Import flow (PR #253), not during new-studio setup.
 

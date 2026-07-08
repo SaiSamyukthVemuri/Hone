@@ -6,6 +6,13 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
+> **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
+> (production migration max **0112** as of 2026-07-08) ·
+> [migration ledger](./docs/production/migration-ledger.md) ·
+> [release changelog](./docs/production/release-changelog.md) ·
+> [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
+> summary; when it and current-state disagree, current-state + the live verifier win.
+
 | Surface | State |
 |---|---|
 | Public booking, new/existing client, next-available | **Production** |
@@ -22,7 +29,18 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Refunds (full-amount, test mode, `payment_charge_attempts`) | **Production, test mode only** (PR #178) |
 | Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
 | Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
-| SMS (Twilio) | **Implemented but disabled by default** per studio toggle and per-client consent |
+| SMS (Twilio) | **Implemented, pilot scale**, disabled by default per studio toggle + per-client consent. Broad-SaaS SMS (A2P/10DLC, sender strategy, rate-limiting) not built |
+| Treatment observation chips (structured charting toggles) | **Production** (PR #357, migration 0108) |
+| Studio 12h/24h time-format preference | **Production** (PR #359, migration 0109; default 12h) |
+| Postcare automation (auto-send on completion) | **Production, default OFF / manual** (PR #360, migration 0110; opt-in per studio, fail-soft, skipped if Resend key / postcare text missing) |
+| Calendar/booking usability (drawer override + exact clicked-time, internal scroll + mobile sticky rail, owner-only blocked-time editing, calendar 12h) | **Production** (PRs #361–#365) |
+| Client portal: practitioner send / copy login URL + resend rate limits | **Production** (PR #366; reuses hashed/single-use/60-min issuance) |
+| Portal CTA in confirmation + reminder emails; login-copy fix | **Production** (PR #367; token-free `/portal/login?studio=slug`) |
+| Multiple photo upload (per-file validate + EXIF strip + per-file status) | **Production** (PR #368; UI-only) |
+| Compact marketing-consent UI on public booking | **Production** (PR #369; default unchecked, never prechecked, consent-send logic unchanged) |
+| Client portal access events + practitioner status card | **Production** (PR #370, migration 0111; append-only, no token/PII) |
+| Public booking previous/next availability navigation | **Production** (PR #371; client-side) |
+| Public booking horizon 1–12 months | **Production** (PR #372, migration 0112; default 3, existing studios unchanged) |
 | Google Calendar sync, intake builder, signed-consent viewer, admin/support dashboard | **Backlog** |
 
 ## Who Hone is for
