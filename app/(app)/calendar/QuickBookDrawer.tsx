@@ -25,7 +25,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
 import { fetchSlotsForClientBookingAction } from "../clients/[id]/booking-actions";
 import {
   bookAppointmentForClientAction,
@@ -83,6 +83,9 @@ type Props = {
   // standard slot picker does not need it (slots arrive pre-built
   // with ISO start strings).
   studioTimezone: string;
+  // Studio 12h/24h preference (migration 0109). Formats the DISPLAYED header
+  // time only; localTime stays a 24h HH:MM machine value used for submission.
+  timeFormat: TimeFormat;
   onClose: () => void;
 };
 
@@ -117,17 +120,6 @@ function formatLocalDate(localDate: string): string {
   });
 }
 
-function formatLocalTime(localTime: string): string {
-  const [hStr, mStr] = localTime.split(":");
-  const h = Number(hStr);
-  const m = Number(mStr);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return localTime;
-  const dt = new Date(2000, 0, 1, h, m, 0);
-  return dt.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export function QuickBookDrawer({
   open,
@@ -135,6 +127,7 @@ export function QuickBookDrawer({
   clients,
   services,
   studioTimezone,
+  timeFormat,
   onClose,
 }: Props) {
   const router = useRouter();
@@ -406,7 +399,7 @@ export function QuickBookDrawer({
   if (!open || !draft) return null;
 
   const formattedDate = formatLocalDate(draft.localDate);
-  const formattedTime = formatLocalTime(draft.localTime);
+  const formattedTime = formatClockLabel(draft.localTime, timeFormat);
   // Compute the end label when a drag duration is present so the
   // drawer header reads "11:00 AM to 11:45 AM" instead of just the
   // start. Pure local-clock math against the HH:MM start; no UTC.
@@ -424,8 +417,9 @@ export function QuickBookDrawer({
   const dragDurationForHeader = draft.durationMinutes ?? null;
   const dragEndTimeLabel =
     dragDurationForHeader != null && dragDurationForHeader > 0
-      ? formatLocalTime(
+      ? formatClockLabel(
           addMinutesToLocalHHMM(draft.localTime, dragDurationForHeader),
+          timeFormat,
         )
       : null;
 

@@ -147,6 +147,37 @@ export function formatTimeForStudio(
   return format === "24h" ? localTimeString(d, tz) : localTimeString12h(d, tz);
 }
 
+// Format a naive local wall-clock "HH:MM" (24h machine value — e.g. from a
+// calendar drag / minutesToHHMM) into a DISPLAY label per the studio
+// preference: "1:00 PM" (12h) or "13:00" (24h). No timezone is applied because
+// the value is already local wall-clock; the underlying machine value is never
+// mutated. Returns the input unchanged if it isn't a valid HH:MM.
+export function formatClockLabel(hhmm: string, format: TimeFormat): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) return hhmm;
+  const h = Number(m[1]);
+  const min = m[2];
+  if (!Number.isFinite(h) || h < 0 || h > 23) return hhmm;
+  if (format === "24h") return `${String(h).padStart(2, "0")}:${min}`;
+  const period = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${min} ${period}`;
+}
+
+// Human-readable date label from a "YYYY-MM-DD" string. Rendered in UTC so a
+// bare (timezone-less) date never shifts. "2026-07-09" → "Jul 9, 2026".
+export function formatLocalDateLabel(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return ymd;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(d);
+}
+
 // "Tuesday, June 3, 2026"-style long date for transactional templates
 // (email day headers, SMS confirmation/reminder body). The email
 // templates in lib/email/templates/*.ts already render this exact
