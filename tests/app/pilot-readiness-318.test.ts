@@ -24,13 +24,13 @@ describe("returning-client booking copy no longer promises booking", () => {
 });
 
 describe("supervised pilot checklist doc (docs/21)", () => {
-  it("clearly states live payments remain disabled", () => {
-    expect(CHECKLIST).toMatch(/Live payments remain DISABLED/i);
-    expect(CHECKLIST).toMatch(/No card is ever charged|No card is charged/i);
+  it("states the current payment posture (supervised live for approved studios; booking collects no payment)", () => {
+    expect(CHECKLIST).toMatch(/supervised live[\s\S]{0,60}session[\s\S]{0,40}payments are (enabled|live) for approved studios/i);
+    expect(CHECKLIST).toMatch(/public booking still collects no payment|collects no payment|card collection is OFF/i);
   });
   it("includes the production verification step", () => {
     expect(CHECKLIST).toMatch(/verify-production\.mjs/);
-    expect(CHECKLIST).toMatch(/migration.*max.*0100|0100/);
+    expect(CHECKLIST).toMatch(/migration.*max.*0112|0112/);
   });
   it("includes treatment-image bucket / private-policy verification", () => {
     expect(CHECKLIST).toMatch(/treatment-images/);
