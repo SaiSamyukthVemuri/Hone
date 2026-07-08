@@ -73,10 +73,18 @@ describe("booking form — optional consent checkbox (source)", () => {
     expect(FORM).toMatch(/useState\(false\);\s*\n\s*\/\/ Optional marketing/);
     expect(FORM).not.toMatch(/marketingConsent[\s\S]{0,80}defaultChecked/);
   });
-  it("shows the exact required copy + the decline-still-books line", () => {
-    expect(FORM).toMatch(/Optional marketing and analytics tracking: This studio may use/);
-    expect(FORM).toMatch(/Clinical information, treatment notes, intake\s+answers, photos, and body-area details are not shared for\s+advertising\./);
-    expect(FORM).toMatch(/You can book even if you decline this optional tracking\./);
+  it("compact UI: short visible label, full privacy detail in a collapsed <details>", () => {
+    // Compact, non-conversion-hostile visible label.
+    expect(FORM).toMatch(/Optional: help this studio measure ad performance\./);
+    // Detailed explanation moved into a collapsed (no `open`) expandable.
+    expect(FORM).toMatch(/<details/);
+    expect(FORM).not.toMatch(/<details[^>]*\bopen\b/);
+    expect(FORM).toMatch(/What does this mean\?/);
+    // Privacy/legal meaning preserved: privacy-safe tools, no clinical/treatment
+    // data, and booking still works when left unchecked.
+    expect(FORM).toMatch(/privacy-safe marketing and analytics tools/);
+    expect(FORM).toMatch(/does not send clinical or treatment details/);
+    expect(FORM).toMatch(/You can book even if you leave this unchecked\./);
   });
   it("submits the consent field in FormData", () => {
     expect(FORM).toMatch(/fd\.set\(MARKETING_CONSENT_FIELD, marketingConsent \? "true" : "false"\)/);
