@@ -14,7 +14,18 @@ import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
 import { buildIntakeReminderEmail } from "@/lib/email/templates/intake-reminder";
 import { buildIcs } from "@/lib/booking/ical";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
+
+// Token-FREE studio portal login URL for the "secure client portal" CTA in
+// transactional emails. Returns null when the studio has no slug so the CTA is
+// simply omitted. NOT a magic link — the client enters their email at this page
+// to receive a secure sign-in link.
+function portalLoginUrlForStudio(studio: Pick<Studio, "slug">): string | null {
+  const slug = studio.slug?.trim();
+  if (!slug) return null;
+  return `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(slug)}`;
+}
 
 type AnyAppointment = Appointment;
 
@@ -362,6 +373,7 @@ export async function sendBookingConfirmationToClient(params: {
     cancellationUrl: params.cancellationUrl,
     rescheduleUrl: params.rescheduleUrl,
     intakeUrl: params.intakeUrl,
+    portalLoginUrl: portalLoginUrlForStudio(params.studio),
     preCareInstructions: params.service?.pre_care_instructions ?? null,
     treatmentTimeLine: params.treatmentTimeLine,
   });
@@ -497,6 +509,7 @@ export async function send24hReminderToClient(
     timezone: p.studio.timezone,
     cancellationUrl: p.cancellationUrl,
     rescheduleUrl: p.rescheduleUrl,
+    portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
   });
@@ -523,6 +536,7 @@ export async function send2hReminderToClient(
     timezone: p.studio.timezone,
     cancellationUrl: p.cancellationUrl,
     rescheduleUrl: p.rescheduleUrl,
+    portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
   });

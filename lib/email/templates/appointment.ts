@@ -59,6 +59,10 @@ type ConfirmationToClient = {
   cancellationUrl: string;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
+  // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
+  // one-time magic link — the client enters their email to receive a secure
+  // sign-in link. Optional so non-sender callers can omit it.
+  portalLoginUrl?: string | null;
   preCareInstructions: string | null;
   // Optional client-facing treatment-time line. Rendered only when the
   // studio toggle is on AND the field is set. Format: "Treatment time so
@@ -141,6 +145,13 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
             Cancel
           </a>
         </td></tr>
+        ${
+          p.portalLoginUrl
+            ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
+          View your forms, appointments, and care instructions in your <a href="${p.portalLoginUrl}" style="color:#0A0A0A; text-decoration:underline;">secure client portal</a>.
+        </td></tr>`
+            : ""
+        }
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           Hone &middot; Charting software for electrolysis and laser practitioners
         </td></tr>
@@ -164,7 +175,7 @@ ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 7 to 10 minutes):\n${p.intakeUrl}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
-
+${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
 Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
