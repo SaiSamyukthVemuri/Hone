@@ -7,6 +7,10 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { isConsultationService } from "@/lib/booking/consultation";
+import {
+  pushAvailabilityHistory,
+  popAvailabilityHistory,
+} from "@/lib/booking/availability-history";
 import { MARKETING_CONSENT_FIELD } from "@/lib/booking/marketing-consent";
 import { REFERRAL_SOURCE_OPTIONS } from "@/lib/booking/referral-source";
 import {
@@ -182,6 +186,13 @@ export function PublicBookForm({
   const [findingNext, startFindingNext] = useTransition();
   const [nextSearched, setNextSearched] = useState(false);
   const [noneInHorizon, setNoneInHorizon] = useState(false);
+  // PR A (prev/next availability nav): client-side stack of the dates the
+  // visitor jumped AWAY FROM via "Next available", so they can step back to a
+  // prior suggested day. Purely local state — no DB, no new server action.
+  // Stepping back re-runs the normal slot fetch for that day (fresh slots +
+  // normal validation, never a stale/cached slot). Reset when the service
+  // changes, since availability is service-specific.
+  const [dateHistory, setDateHistory] = useState<string[]>([]);
 
   // Keep the picker's selected serviceId pinned to the currently
   // visible bucket. When clientType flips between new and existing,
@@ -246,6 +257,14 @@ export function PublicBookForm({
     };
   }, [slug, serviceId, date, clientType]);
 
+  // Availability is service-specific, so a prior service's "next available"
+  // history is meaningless after a service switch — reset it. (Runs on mount
+  // too, which is a no-op since it starts empty.) Not tied to `date`, so a
+  // normal next/previous jump never wipes the stack.
+  useEffect(() => {
+    setDateHistory([]);
+  }, [serviceId]);
+
   function onService(v: string) {
     setServiceId(v);
   }
@@ -305,8 +324,25 @@ export function PublicBookForm({
         setNoneInHorizon(true);
         return;
       }
+      // Remember the day we're leaving so "Back to previous result" can return
+      // to it. `date` here is the currently-displayed day (pre-jump).
+      setDateHistory((h) => pushAvailabilityHistory(h, date));
       setDate(r.date);
     });
+  }
+
+  // Step back to the previously-suggested availability. Pops the history stack
+  // and re-selects that date; the slot-fetch effect above then refreshes that
+  // day's slots (so a returned day is always shown with live, validated slots —
+  // never a stale one). No booking happens here.
+  function onPrevious() {
+    const { previous, rest } = popAvailabilityHistory(dateHistory);
+    if (previous == null) return;
+    setError(null);
+    setNextSearched(false);
+    setNoneInHorizon(false);
+    setDateHistory(rest);
+    setDate(previous);
   }
 
   function submit(e: React.FormEvent) {
@@ -603,6 +639,22 @@ export function PublicBookForm({
                 )}
               </div>
             )}
+            {dateHistory.length > 0 && (
+              <button
+                type="button"
+                onClick={onPrevious}
+                disabled={findingNext}
+                className="self-start px-3 py-1.5 text-xs font-medium uppercase disabled:opacity-50"
+                style={{
+                  border: "1px solid #0A0A0A",
+                  backgroundColor: "transparent",
+                  color: "#0A0A0A",
+                  letterSpacing: "0.1em",
+                }}
+              >
+                Back to previous result
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-3">
@@ -668,6 +720,22 @@ export function PublicBookForm({
                   {findingNext ? "Finding next day..." : "Next available day"}
                 </button>
               </div>
+            )}
+            {dateHistory.length > 0 && (
+              <button
+                type="button"
+                onClick={onPrevious}
+                disabled={findingNext}
+                className="self-start px-3 py-1.5 text-xs font-medium uppercase disabled:opacity-50"
+                style={{
+                  border: "1px solid #0A0A0A",
+                  backgroundColor: "transparent",
+                  color: "#0A0A0A",
+                  letterSpacing: "0.1em",
+                }}
+              >
+                Back to previous result
+              </button>
             )}
           </div>
         )}
