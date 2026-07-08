@@ -736,32 +736,32 @@ export function PublicBookForm({
           prechecked; separate from SMS + treatment + payment consents.
           Declining does NOT block booking. Value is captured into
           booking_tracking_consents (migration 0106); no provider is wired
-          and no data is sent from this form. */}
-      <label className="flex items-start gap-3 text-[14px] leading-[1.5]">
-        <input
-          type="checkbox"
-          checked={marketingConsent}
-          onChange={(e) => setMarketingConsent(e.target.checked)}
-          className="mt-1 h-4 w-4 flex-none"
-        />
-        <span>
-          <span className="block">
-            Optional marketing and analytics tracking: This studio may use
-            advertising or analytics tools to understand whether people book
-            after visiting its website or ads. If you agree, limited booking
-            event information may be shared with the studio&rsquo;s configured
-            marketing providers. Clinical information, treatment notes, intake
-            answers, photos, and body-area details are not shared for
-            advertising.
-          </span>
-          <span
-            className="mt-1 block text-[12px]"
-            style={{ color: "#6B6B6B" }}
-          >
-            You can book even if you decline this optional tracking.
-          </span>
-        </span>
-      </label>
+          and no data is sent from this form. Compacted UI: a short visible
+          label so this optional item does not overshadow the booking task,
+          with the full privacy explanation moved into a collapsed <details>
+          (the checkbox, its default-unchecked state, and the submitted value
+          are unchanged). */}
+      <div className="text-[14px] leading-[1.5]">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={marketingConsent}
+            onChange={(e) => setMarketingConsent(e.target.checked)}
+            className="mt-1 h-4 w-4 flex-none"
+          />
+          <span>Optional: help this studio measure ad performance.</span>
+        </label>
+        <details className="ml-7 mt-1 text-[12px]" style={{ color: "#6B6B6B" }}>
+          <summary className="cursor-pointer">What does this mean?</summary>
+          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
+            <li>
+              The studio may use privacy-safe marketing and analytics tools.
+            </li>
+            <li>Hone does not send clinical or treatment details.</li>
+            <li>You can book even if you leave this unchecked.</li>
+          </ul>
+        </details>
+      </div>
 
       {/* Areas-wanted question is for new clients only. Existing
           clients have already discussed treatment areas during their
