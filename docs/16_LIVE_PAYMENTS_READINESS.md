@@ -1,8 +1,24 @@
 # 16 Live payments readiness
 
-> **Status (PR #201, 2026-06-12):** docs/18 §16 is the current gate-preparation state. Live receipt template readiness shipped (live branch unreachable; wording needs legal/accounting review); refunds are now owner-only across all charge reasons; stale pending_stripe recovery verified already-shipped; payment audit trail decided as ledger-row-based. Live payments remain disabled; controlled enablement is future PR #202 and is blocked on the PR #196 late-cancel smoke, legal/accounting review, and Willow Stripe live-account readiness.
+> **⚠️ CURRENT POSTURE (2026-07-08).** This document is the **historical pre-live readiness
+> review + the controlled live-enablement runbook**. **Supervised live owner-run session
+> payments are now LIVE for approved studios** (Willow + Sam's controlled studio): live Stripe
+> Connect onboarding, live charges, live refunds, and live webhook processing are proven;
+> live/test card + attempt isolation is live; Stripe gates **15 PASS**. Still **OFF / held:**
+> public booking card collection, deposits / packages / partial payments, and live manual
+> no-show / late-cancel fees (hard-held server-side). **Broad self-serve live payments are not
+> ready.** The "Status (PR #201)" / "NOT READY FOR LIVE PAYMENTS" notes below, the blocker
+> tables, and **any "live payments remain disabled / not ready / not active / has not started"
+> statement anywhere in this document** are the **historical pre-live record** (2026-06-08 →
+> 06-12) and are retained as history; the "Controlled live enablement" runbook (§17) is the
+> go-live procedure that was used.
+> Migration-max references in this doc (e.g. "0105") are **historical** — production max is now
+> **0112** (derive from `supabase migration list --linked`). Canonical current state:
+> [docs/production/current-state.md](./production/current-state.md).
 
-**Status: NOT READY FOR LIVE PAYMENTS** (original review PR #168, 2026-06-08; reaffirmed after PRs #170-#187, 2026-06-10; **fully re-audited in [docs/18_LIVE_PAYMENTS_AUDIT.md](./18_LIVE_PAYMENTS_AUDIT.md), PR #192, 2026-06-10: that document is the CURRENT readiness picture, scorecard, blocker table, and next-PR sequence; this one remains the historical review + checklists**). Test-mode session payments are built end-to-end (prepare, charge, receipt, refund, webhook reconciliation, billing UX) and practitioner-verified. Live payments are still blocked. Fees are not active. Several §5 blockers carry resolution notes below; the open ones are: legal review of card-authorization wording, tax/HST decision, statement descriptor review, off-session SetupIntent confirmation review, live runbook, dispute-response runbook, Willow live Stripe onboarding, supervised first live charge, late cancellation/no-show fee charging on `payment_charge_attempts`, and `manual_fee_charge_attempts` unification or retirement.
+> **[HISTORICAL — Status (PR #201, 2026-06-12); superseded, see banner above]:** docs/18 §16 is the current gate-preparation state. Live receipt template readiness shipped (live branch unreachable; wording needs legal/accounting review); refunds are now owner-only across all charge reasons; stale pending_stripe recovery verified already-shipped; payment audit trail decided as ledger-row-based. Live payments remain disabled; controlled enablement is future PR #202 and is blocked on the PR #196 late-cancel smoke, legal/accounting review, and Willow Stripe live-account readiness.
+
+**[HISTORICAL — 2026-06-10] Status: NOT READY FOR LIVE PAYMENTS** *(superseded 2026-07-08 — supervised live session payments are now live for approved studios; see the banner above)* (original review PR #168, 2026-06-08; reaffirmed after PRs #170-#187, 2026-06-10; **fully re-audited in [docs/18_LIVE_PAYMENTS_AUDIT.md](./18_LIVE_PAYMENTS_AUDIT.md), PR #192, 2026-06-10; both are retained as the historical review + checklists**). Test-mode session payments are built end-to-end (prepare, charge, receipt, refund, webhook reconciliation, billing UX) and practitioner-verified; the live paths have since been enabled for approved studios. At the 2026-06-10 date live was still blocked and fees not active. Several §5 blockers carry resolution notes below; the open ones are: legal review of card-authorization wording, tax/HST decision, statement descriptor review, off-session SetupIntent confirmation review, live runbook, dispute-response runbook, Willow live Stripe onboarding, supervised first live charge, late cancellation/no-show fee charging on `payment_charge_attempts`, and `manual_fee_charge_attempts` unification or retirement.
 
 This document is a snapshot of the live-payments readiness review. It exists because Chloe asked, verbatim: *"We need a way to start taking live cards now, not just test. No more cash. We have 3 clients signed up already. We need to get everything live."*
 
@@ -1065,7 +1081,7 @@ The Stripe gates remain intact. The only artifacts of this PR are the new sectio
 
 ### 17.1 Current status
 
-- **UPDATE (2026-07-05, post-live-proof): production is now LIVE-CAPABLE and live billing has been PROVEN on a controlled test studio** (two live charges + live receipts + a full live refund, reconciled via the live webhook; prod DB migration max = 0105; payment mode isolation + state-driven messaging landed in PRs #332–#339). `STRIPE_ALLOW_LIVE_MODE=true` with an `sk_live_` key is set in Vercel Production. **Willow still requires her own live onboarding + supervised first charge; public booking card collection is off; manual fees remain a supervised hold.** See the **"Current production state (post-live-proof)"** callout under §17.13 for the authoritative current-state summary. The two bullets immediately below are the **historical** pre-flip snapshot (2026-07-02), kept for the enablement record.
+- **UPDATE (2026-07-05, post-live-proof): production is now LIVE-CAPABLE and live billing has been PROVEN on a controlled test studio** (two live charges + live receipts + a full live refund, reconciled via the live webhook; prod DB migration max = 0112; payment mode isolation + state-driven messaging landed in PRs #332–#339). `STRIPE_ALLOW_LIVE_MODE=true` with an `sk_live_` key is set in Vercel Production. **Willow still requires her own live onboarding + supervised first charge; public booking card collection is off; manual fees remain a supervised hold.** See the **"Current production state (post-live-proof)"** callout under §17.13 for the authoritative current-state summary. The two bullets immediately below are the **historical** pre-flip snapshot (2026-07-02), kept for the enablement record.
 - **(historical — 2026-07-02) Enablement-sequence progress: live payments remain DISABLED, but the codebase is now DB-, runtime-, and copy-ready.** Completed: **PR A / #322** — migration `0101` (live-payment DB readiness), **merged AND applied to production** (prod migration max = `0101`); **PR B / #323** — runtime/webhook/receipt guards relaxed to the **env-gated model** (`inferStripeLivemode()`), so the money paths are **live-CAPABLE but inert** while the env is test; the safety-lock (`live-mode-disabled`/`-blockers`/`-gate-prep`) was **repointed** to assert the env-gated model; **copy fast-follow / #324** — internal practitioner/fee-card + settings copy neutralized so nothing reads false in live. Live is off **solely because the env is test** (`STRIPE_ALLOW_LIVE_MODE` unset, `sk_test_`). **The finalized operator runbook for the actual env flip + first live charge is [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) — that is the authoritative "how to turn it on" procedure; §17.12 remains the code-side prep ledger.**
 - **(historical — 2026-07-02) Live payments were DISABLED at the time of this snapshot.** `STRIPE_ALLOW_LIVE_MODE` was unset / `false` in production; the env/key gate (`lib/stripe/server.ts`) rejects an `sk_live_` key unless the flag is `"true"`; the Stripe gates pass (15 PASS). *(Superseded by the 2026-07-05 UPDATE above — production is now live-capable.)* **The ordered, consolidated "how to turn it on" checklist is [§17.12](#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297) + the finalized [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) runbook — flipping the env flag alone is NOT enough.** A CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`, PR #297, repointed in #323) fails if any dormancy gate is relaxed without a deliberate change.
 - **PR #281 (payment success persistence) is COMPLETE and authoritative.** A normal `succeeded` outcome now requires **Stripe success AND a proven Hone ledger write**. If Stripe succeeds but Hone cannot persist the success (DB error or zero-row update), the charge path returns `needs_manual_review` (never a clean success) and a **critical** ops alert fires (`session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows`). See docs/06 §4d.
@@ -1318,7 +1334,7 @@ This is a **read-only health check**, not an enablement step. A studio's live en
 
 As of the app-wide payment-messaging work (PRs #332–#339) and the controlled live test:
 
-- **Production is LIVE-CAPABLE.** `STRIPE_ALLOW_LIVE_MODE=true` with a `sk_live_` key in Vercel Production; prod DB migration max = **0105**; the runtime read-out is the Dashboard "Live payments" stat.
+- **Production is LIVE-CAPABLE.** `STRIPE_ALLOW_LIVE_MODE=true` with a `sk_live_` key in Vercel Production; prod DB migration max = **0112**; the runtime read-out is the Dashboard "Live payments" stat.
 - **Live billing is PROVEN on a controlled test studio** — two live charges + live receipts + a full live refund, all reconciled via the live webhook, zero errors/alerts. Payment mode isolation (0103/0104/0105) and state-driven messaging are in place.
 - **Willow still requires her OWN onboarding + checks.** Willow is not yet fully live: she needs her own live Stripe Connect onboarding (charges + payouts enabled, CAD bank verified), her §17.14.2 account review, a client card-on-file authorization + live card in the portal, the §5 pre-charge verification, and the one small supervised first charge. Nothing here authorizes an unsupervised Willow charge.
 - **Public booking card collection is OFF** — no booking-time card/deposit setting exists; public booking never asks a client for a card. Card-on-file is a portal-only flow after the client signs the authorization.
@@ -1335,7 +1351,7 @@ As of the app-wide payment-messaging work (PRs #332–#339) and the controlled l
 1. [x] ✅ **DONE (2026-07-04):** Legal/accounting **written** sign-off on the live **receipt** wording AND the client-facing **card-authorization** wording (§17.14.2) — the lawyer-approved copy is merged into `payment-receipt.ts` (template) + `PortalCardOnFileCard.tsx` + `PortalPaymentMethodForm.tsx`.
 2. [ ] Live Connect **webhook endpoint** created (connected-accounts, 8 events — §17.14.4) and its `whsec_` is in hand.
 3. [ ] All four live env vars set in Vercel Production (§17.14.5) and a **fresh** production build/deploy succeeded; `VERCEL_ENV=production`.
-4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0105`).
+4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0112`).
 5. [ ] Willow **live** Connect account fully enabled (§17.14.3): `charges_enabled`, `payouts_enabled`, `details_submitted` all true; `requirements.currently_due` **empty**; CAD bank verified; statement descriptor reviewed; dispute email/recovery/2FA reviewed.
 6. [ ] Live `studio_payment_settings` row present (`stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true`).
 7. [ ] Supervised client (recommend **Chloe's own real card**) has **signed the card-authorization consent** and **added a live active card** on file via the portal.
@@ -1431,7 +1447,7 @@ select id, status, stripe_livemode, amount_cents, currency, refund_status
   order by created_at desc limit 1;                                                       -- one row, succeeded, livemode true
 select count(*) from ops_alerts where severity='critical' and resolved_at is null;       -- expect 0
 ```
-Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0105`.
+Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0112`.
 
 #### 17.14.9 Operator surfaces to watch (during + after)
 
@@ -1455,7 +1471,7 @@ Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) 
 
 - Legal/accounting copy not signed off (or reworded but the copy-only PR not merged).
 - Any Willow Connect check (§17.14.3) failing, or `requirements.currently_due` non-empty.
-- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0105`.
+- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0112`.
 - Any unresolved **critical** ops alert.
 - No live `studio_payment_settings` row, or no live active card on file.
 - A pre-existing `stripe_livemode=true` charge row (unexpected state).
@@ -1504,7 +1520,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 5. Pre-charge verification
 - [ ] `node scripts/check-stripe-gates.mjs` = 15 PASS
-- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0105
+- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0112
 - [ ] Read-only SQL (`supabase db query --linked`):
   - [ ] `select count(*) from payment_charge_attempts where stripe_livemode = true;` → 0
   - [ ] `select count(*) from ops_alerts where severity='critical' and resolved_at is null;` → 0
@@ -1535,7 +1551,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 10. Hard no-go conditions (STOP if ANY is true)
 - [ ] Any §1 Connect check failing, or `currently_due` non-empty
-- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0105
+- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0112
 - [ ] Any unresolved critical ops alert
 - [ ] No live `studio_payment_settings` row, or no live active card on file
 - [ ] A pre-existing `stripe_livemode=true` charge row (unexpected)

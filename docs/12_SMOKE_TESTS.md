@@ -1,5 +1,12 @@
 # 12 Smoke tests
 
+> **⚠️ Payment posture (2026-07-08):** the trailing "live payments remain disabled" note that
+> appears on many smoke entries below is a **historical / point-in-time** aside. Current
+> posture: **supervised live owner-run session payments are live for approved studios** (public
+> booking card collection, deposits/packages/partial, and live manual fees remain off/held;
+> broad self-serve not ready). Canonical current state:
+> [docs/production/current-state.md](./production/current-state.md).
+
 This is the catalogue of manual smoke tests every operator and reviewer should know how to run. Some can be executed from a curl loop; many require an authenticated practitioner session and a real test appointment and cannot be done from CI or from an AI harness.
 
 Use [docs/11 Runbook](./11_RUNBOOK.md) for the SQL recipes referenced below.
