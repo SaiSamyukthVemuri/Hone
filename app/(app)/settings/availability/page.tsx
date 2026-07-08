@@ -6,7 +6,7 @@ import {
   getRecurringBreakRules,
   getUpcomingTimedBlocks,
 } from "@/lib/booking/queries";
-import { addDays, todayInTz } from "@/lib/booking/tz";
+import { addDays, todayInTz, resolveTimeFormat } from "@/lib/booking/tz";
 import { AvailabilityClient } from "./AvailabilityClient";
 import { RecurringBreaksSection } from "./RecurringBreaksSection";
 import { TimedBlocksSection } from "./TimedBlocksSection";
@@ -92,6 +92,7 @@ export default async function AvailabilitySettingsPage() {
       <RecurringBreaksSection rules={recurringRules} />
       <TimedBlocksSection
         studioTimezone={studio.timezone}
+        timeFormat={resolveTimeFormat(studio)}
         todayLocal={today}
         blocks={timedBlocks}
       />

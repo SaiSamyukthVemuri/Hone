@@ -7,12 +7,19 @@ import {
   resolveBirthdayColor,
 } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor } from "@/lib/types/database";
+import type { TimeFormat } from "@/lib/booking/tz";
+
+const TIME_FORMAT_OPTIONS: ReadonlyArray<{ value: TimeFormat; label: string }> = [
+  { value: "12h", label: "12-hour · 2:30 PM" },
+  { value: "24h", label: "24-hour · 14:30" },
+];
 
 type Props = {
   initialName: string;
   initialLegalEntity: string;
   ownerEmail: string;
   initialBirthdayColor: BirthdayReminderColor;
+  initialTimeFormat: TimeFormat;
 };
 
 export function StudioSettingsForm({
@@ -20,11 +27,13 @@ export function StudioSettingsForm({
   initialLegalEntity,
   ownerEmail,
   initialBirthdayColor,
+  initialTimeFormat,
 }: Props) {
   const [name, setName] = useState(initialName);
   const [legalEntity, setLegalEntity] = useState(initialLegalEntity);
   const [birthdayColor, setBirthdayColor] =
     useState<BirthdayReminderColor>(initialBirthdayColor);
+  const [timeFormat, setTimeFormat] = useState<TimeFormat>(initialTimeFormat);
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
     { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
@@ -41,6 +50,7 @@ export function StudioSettingsForm({
     fd.set("name", name);
     fd.set("legal_entity_name", legalEntity);
     fd.set("birthday_reminder_color", birthdayColor);
+    fd.set("time_format", timeFormat);
 
     startTransition(async () => {
       try {
@@ -113,6 +123,35 @@ export function StudioSettingsForm({
                   aria-hidden
                   className={`inline-block h-3.5 w-3.5 rounded-full ${classes.swatch}`}
                 />
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">Time format</span>
+        <p className="text-xs text-neutral-500">
+          How times are shown on your calendar, dashboard, and availability.
+          Client-facing messages (texts, emails, online booking) always use
+          12-hour time.
+        </p>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {TIME_FORMAT_OPTIONS.map((opt) => {
+            const selected = timeFormat === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setTimeFormat(opt.value)}
+                aria-pressed={selected}
+                className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                  selected
+                    ? "border-neutral-900 dark:border-neutral-100"
+                    : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
+                }`}
+              >
                 {opt.label}
               </button>
             );

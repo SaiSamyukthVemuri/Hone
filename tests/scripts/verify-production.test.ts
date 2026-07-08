@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0108 (structured electrolysis observation chips).
-    expect(nums[nums.length - 1]).toBe("0108");
+    // Repo max advances to 0109 (studio time-format preference).
+    expect(nums[nums.length - 1]).toBe("0109");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

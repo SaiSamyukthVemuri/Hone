@@ -1,4 +1,5 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { resolveTimeFormat } from "@/lib/booking/tz";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
 // PostcareSettingsForm intentionally NOT imported here. Postcare
@@ -30,6 +31,7 @@ export default async function StudioSettingsPage() {
         initialLegalEntity={studio.legal_entity_name ?? ""}
         ownerEmail={studio.owner_email}
         initialBirthdayColor={studio.birthday_reminder_color}
+        initialTimeFormat={resolveTimeFormat(studio)}
       />
       <EmailSettingsForm
         initial={{

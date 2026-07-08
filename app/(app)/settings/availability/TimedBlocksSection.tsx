@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { StudioTimedBlock } from "@/lib/types/database";
+import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import {
   createTimedBlockAction,
   deleteTimedBlockAction,
@@ -10,6 +11,9 @@ import {
 
 type Props = {
   studioTimezone: string;
+  // Migration 0109: 12h/24h preference for the DISPLAYED block times. The edit
+  // form inputs stay 24h HH:MM (formatTimeForInput) — that is a machine value.
+  timeFormat: TimeFormat;
   todayLocal: string;
   blocks: ReadonlyArray<StudioTimedBlock>;
 };
@@ -29,8 +33,13 @@ function formatCategory(c: string): string {
   return CATEGORIES.find((x) => x.value === c)?.label ?? c;
 }
 
-// Display formatting for the upcoming-blocks list.
-function formatLocal(iso: string, tz: string): { date: string; time: string } {
+// Display formatting for the upcoming-blocks list. The time honors the studio's
+// 12h/24h preference (migration 0109); the date is unchanged.
+function formatLocal(
+  iso: string,
+  tz: string,
+  format: TimeFormat,
+): { date: string; time: string } {
   const d = new Date(iso);
   const date = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -38,12 +47,7 @@ function formatLocal(iso: string, tz: string): { date: string; time: string } {
     month: "short",
     day: "numeric",
   }).format(d);
-  const time = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(d);
+  const time = formatTimeForStudio(d, tz, format);
   return { date, time };
 }
 
@@ -72,6 +76,7 @@ const DEFAULT_CATEGORY = "meeting";
 
 export function TimedBlocksSection({
   studioTimezone,
+  timeFormat,
   todayLocal,
   blocks,
 }: Props) {
@@ -324,8 +329,8 @@ export function TimedBlocksSection({
       {blocks.length > 0 && (
         <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           {blocks.map((b) => {
-            const startFmt = formatLocal(b.starts_at, studioTimezone);
-            const endFmt = formatLocal(b.ends_at, studioTimezone);
+            const startFmt = formatLocal(b.starts_at, studioTimezone, timeFormat);
+            const endFmt = formatLocal(b.ends_at, studioTimezone, timeFormat);
             const isEditing = editingId === b.id;
             return (
               <li

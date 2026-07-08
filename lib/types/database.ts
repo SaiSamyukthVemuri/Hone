@@ -19,6 +19,10 @@ export type Studio = {
   created_at: string;
   // Booking v1 additions (migration 0010)
   timezone: string;
+  // Migration 0109: practitioner-facing time display preference ("12h" | "24h",
+  // default "12h"). Optional at the type level because a studio loaded via
+  // `select *` before 0109 is applied won't carry it; read via resolveTimeFormat.
+  time_format_preference?: "12h" | "24h";
   default_appointment_duration_minutes: number;
   buffer_minutes: number;
   slug: string;

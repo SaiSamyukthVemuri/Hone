@@ -34,10 +34,13 @@ describe("timeRangeLabel", () => {
 
 describe("appointment card renders a time range + hierarchy", () => {
   it("computes and renders a visible time range", () => {
-    expect(DAYCOL).toMatch(/const timeRange = timeRangeLabel\(localTime, localEndTime\)/);
+    // Migration 0109: the displayed range honors the studio 12h/24h preference
+    // (dispStart/dispEnd via formatTimeForStudio); positioning still uses the
+    // 24h localTime. See tests/app/settings/time-format-preference.test.ts.
+    expect(DAYCOL).toMatch(/const timeRange = timeRangeLabel\(dispStart, dispEnd\)/);
     expect(DAYCOL).toMatch(/\{timeRange\}/);
     // Range is derived from the existing row (starts_at + ends_at), not new data.
-    expect(DAYCOL).toMatch(/a\.ends_at\s*\n?\s*\?\s*localTimeString\(new Date\(a\.ends_at\), tz\)/);
+    expect(DAYCOL).toMatch(/a\.ends_at\s*\n?\s*\?\s*formatTimeForStudio\(new Date\(a\.ends_at\), tz, timeFormat\)/);
   });
 
   it("keeps the client name prominent (bold, its own line in the tall card)", () => {

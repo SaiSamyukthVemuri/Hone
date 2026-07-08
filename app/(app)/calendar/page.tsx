@@ -51,7 +51,7 @@ import {
   firstOfPreviousMonthString,
   monthYearLabel,
 } from "@/lib/booking/month-grid";
-import { localTimeString } from "@/lib/booking/tz";
+import { formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
 
 type Search = Promise<{ week?: string; view?: string; month?: string }>;
 
@@ -65,6 +65,7 @@ export default async function CalendarPage({
   searchParams: Search;
 }) {
   const { studio } = await getCurrentPractitionerWithStudio();
+  const timeFormat = resolveTimeFormat(studio); // 0109: 12h/24h display pref
   const params = await searchParams;
   const today = todayInTz(studio.timezone);
   const view = parseView(params.view);
@@ -76,6 +77,7 @@ export default async function CalendarPage({
   if (view === "month") {
     return renderMonthView({
       studio,
+      timeFormat,
       today,
       monthParam: params.month,
       // Pass the same week anchor through so the Week tab in the
@@ -349,6 +351,7 @@ export default async function CalendarPage({
                 blocked={blockoutReasonByDate.has(date)}
                 blockedReason={blockoutReasonByDate.get(date) ?? null}
                 tz={studio.timezone}
+                timeFormat={timeFormat}
                 clients={drawerClients}
                 services={services}
                 isToday={date === today}
@@ -385,11 +388,12 @@ export default async function CalendarPage({
 
 async function renderMonthView(opts: {
   studio: { id: string; timezone: string };
+  timeFormat: TimeFormat;
   today: string;
   monthParam: string | undefined;
   lastWeekParam: string | undefined;
 }) {
-  const { studio, today, monthParam, lastWeekParam } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -456,7 +460,7 @@ async function renderMonthView(opts: {
   const appointmentsByDate = groupMonthAppointmentsByDate(
     appointments,
     studio.timezone,
-    (iso, tz) => localTimeString(new Date(iso), tz),
+    (iso, tz) => formatTimeForStudio(new Date(iso), tz, timeFormat),
   );
 
   const blockedByDate = groupMonthBlockedByDate(
