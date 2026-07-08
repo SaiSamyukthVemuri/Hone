@@ -1,4 +1,4 @@
-import { localLongDate, localTimeString } from "@/lib/booking/tz";
+import { localLongDate, localTimeString12h } from "@/lib/booking/tz";
 
 // Transactional SMS bodies for the three SMS types this codebase ships:
 //   - confirmation (sent inline from a successful booking)
@@ -47,15 +47,17 @@ export type ReminderSmsInput = {
 };
 
 // Compact phrase for the appointment moment used by every template:
-// "Tuesday, June 3 at 14:30". We do not include the year (it adds
-// length and noise; the client booked recently).
+// "Tuesday, June 3 at 2:30 PM". We do not include the year (it adds
+// length and noise; the client booked recently). SMS is CLIENT-FACING, so
+// the time is rendered 12-hour (localTimeString12h) — never 24-hour — while
+// the studio/appointment timezone is preserved unchanged.
 function appointmentMoment(startsAt: Date, timezone: string): string {
   const long = localLongDate(startsAt, timezone);
   // Strip the year suffix ("Tuesday, June 3, 2026" -> "Tuesday, June 3").
   // The Intl format we use always ends with ", YYYY" so a comma split
   // is safe.
   const withoutYear = long.replace(/,\s*\d{4}$/, "");
-  const time = localTimeString(startsAt, timezone);
+  const time = localTimeString12h(startsAt, timezone);
   return `${withoutYear} at ${time}`;
 }
 
@@ -99,7 +101,7 @@ export function build2hReminderSms(p: ReminderSmsInput): string {
   // For the same-day reminder, the date is redundant; only the time
   // matters. The 24h variant carries the full moment.
   const head = `Today's appointment with ${p.studioName} is at ${
-    localTimeString(p.startsAt, p.timezone)
+    localTimeString12h(p.startsAt, p.timezone)
   }`;
   const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
   const body = joinParts([head, manage]);
