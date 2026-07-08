@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import {
+  formatClockLabel,
+  formatLocalDateLabel,
+  type TimeFormat,
+} from "@/lib/booking/tz";
 
 // PR #139. Centred chooser that appears after a drag-to-create
 // selection on the calendar. The drag itself produces a
@@ -19,12 +24,16 @@ export type DragRangeDraft = {
 export function DragActionChooser({
   open,
   draft,
+  timeFormat,
   onBook,
   onBlock,
   onCancel,
 }: {
   open: boolean;
   draft: DragRangeDraft | null;
+  // Studio 12h/24h preference (migration 0109). Formats the DISPLAYED range
+  // only; draft.startLocal/endLocal stay 24h HH:MM machine values for submit.
+  timeFormat: TimeFormat;
   onBook: () => void;
   onBlock: () => void;
   onCancel: () => void;
@@ -57,7 +66,9 @@ export function DragActionChooser({
             What would you like to do?
           </h2>
           <p className="text-xs text-neutral-500 tabular-nums">
-            {draft.localDate} · {draft.startLocal} to {draft.endLocal}
+            {formatLocalDateLabel(draft.localDate)} ·{" "}
+            {formatClockLabel(draft.startLocal, timeFormat)} to{" "}
+            {formatClockLabel(draft.endLocal, timeFormat)}
           </p>
         </header>
 

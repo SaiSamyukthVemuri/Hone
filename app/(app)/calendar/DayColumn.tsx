@@ -750,6 +750,7 @@ export function DayColumn({
         clients={clients}
         services={services}
         studioTimezone={tz}
+        timeFormat={timeFormat}
         onClose={() => setDraft(null)}
       />
 
@@ -760,6 +761,7 @@ export function DayColumn({
           clears the chooser without opening anything. */}
       <DragActionChooser
         open={chooserDraft !== null}
+        timeFormat={timeFormat}
         draft={
           chooserDraft != null
             ? {
