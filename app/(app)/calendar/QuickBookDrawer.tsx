@@ -259,12 +259,18 @@ export function QuickBookDrawer({
       setOverrideConfirmed(false);
       autoOverrideRef.current = true;
     } else {
+      // Bare click on a NEW slot: the outside-availability override must start
+      // OFF for each new booking attempt — it is never sticky across slots
+      // (Chloe feedback). A drag soft-enables above; a plain click resets.
       setOverrideDurationMinutes("");
+      setOverrideEnabled(false);
+      setOverrideConfirmed(false);
       autoOverrideRef.current = false;
     }
-    // We intentionally do NOT add overrideEnabled / overrideConfirmed
-    // to the deps; a user toggle off should stick until the drawer
-    // closes or a new draft arrives.
+    // This effect keys on the DRAFT identity, so a new slot always resets the
+    // override above. Within the SAME draft it does not re-fire, so a manual
+    // override toggle sticks until the slot changes or the drawer closes — we
+    // intentionally do NOT add overrideEnabled / overrideConfirmed to the deps.
   }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
 
   // Service change after a drag (PR #128, Part 2). A drag of 105 min
@@ -528,6 +534,13 @@ export function QuickBookDrawer({
       const r = await bookAppointmentForClientAction(fd);
       if (!r.ok) {
         setError(r.error);
+        // A failed attempt must NOT leave the outside-availability override
+        // stuck on for the next attempt (Chloe feedback). Reset it off; the
+        // practitioner must explicitly re-check it to retry outside
+        // availability. The error copy stays visible so the reason is clear.
+        setOverrideEnabled(false);
+        setOverrideConfirmed(false);
+        autoOverrideRef.current = false;
         // Race-safe UX: if the booking server tells us the slot was
         // taken (or any failure), refetch slots so the picker reflects
         // current availability without reloading the page. Skip the
