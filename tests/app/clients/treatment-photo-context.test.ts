@@ -106,7 +106,9 @@ describe("UI wiring: context tags rendered, no raw IDs/paths/URLs", () => {
   it("manager never receives raw IDs / storage paths (labels only)", () => {
     expect(MANAGER).not.toMatch(/session_id|session_block_id/);
     expect(MANAGER).not.toMatch(/storage_path|storage_bucket/);
-    // no bucket/signed-url text rendered as context
-    expect(MANAGER).not.toMatch(/treatment-images|signedUrl/);
+    // no bucket string / signed-url handling rendered as context. (The
+    // validator import path "@/lib/images/treatment-images" is a module path,
+    // not the "treatment-images" bucket literal — so match the quoted bucket.)
+    expect(MANAGER).not.toMatch(/"treatment-images"|signedUrl/);
   });
 });
