@@ -64,11 +64,12 @@ describe("canonical charge path", () => {
     expect(HANDOFF).not.toMatch(/allowed only in `lib\/billing\/manual-fee-charge\.ts`/);
   });
 
-  it("README livemode CHECK claim names the canonical ledger", () => {
-    expect(README).toMatch(
-      /canonical `payment_charge_attempts` ledger \(plus the legacy, read-only `manual_fee_charge_attempts` table\)/,
-    );
-    expect(README).toMatch(/controlled live payment enablement has not started/);
+  it("README names the canonical payment_charge_attempts ledger + current live-payment posture", () => {
+    // Still names the canonical ledger (not the deleted manual_fee_charge executor)...
+    expect(README).toMatch(/`payment_charge_attempts` ledger/);
+    // ...and states the CURRENT posture (supervised live for approved studios; broad self-serve not ready).
+    expect(README).toMatch(/live for approved studios/i);
+    expect(README).toMatch(/broad self-serve live-payment rollout is not complete|broad self-serve live payments are not ready/i);
   });
 });
 
@@ -103,13 +104,18 @@ describe("product reality acknowledged", () => {
 
   it("docs/00 states the supervised-pilot vs paid-launch line", () => {
     expect(OVERVIEW).toMatch(
-      /safe for the supervised Chloe\/Laura pilot; it is NOT ready for first paid customers, broad self-serve launch, or live payments/,
+      /safe for the supervised Chloe\/Laura pilot[\s\S]{0,90}NOT ready for first paid customers, broad self-serve launch/,
     );
   });
 
-  it("live payments remain disabled, everywhere this PR touched", () => {
-    expect(README).toMatch(/Live payments remain blocked/);
-    expect(OPS_RUNBOOK).toMatch(/NOT READY FOR LIVE PAYMENTS/);
-    expect(OVERVIEW).toMatch(/\| Live payment \| \*\*Not ready/);
+  it("live-payment posture is current across the touched docs (supervised live; still-off items documented)", () => {
+    // README no longer claims live is blocked; it states the supervised-live posture + still-off items.
+    expect(README).not.toMatch(/Live payments remain blocked/);
+    expect(README).toMatch(/live for approved studios/i);
+    expect(README).toMatch(/public booking card collection/i);
+    // docs/00 payment row reflects the current posture.
+    expect(OVERVIEW).toMatch(/\| Live payment \| \*\*Supervised live for approved studios/);
+    // docs/11 runbook's manual-review note is now a point-in-time note, not a current "disabled" claim.
+    expect(OPS_RUNBOOK).not.toMatch(/Live payments remain disabled; this is operations hardening/);
   });
 });

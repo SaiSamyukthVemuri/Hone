@@ -51,10 +51,12 @@ describe("docs/00: payment claims match the shipped state", () => {
     expect(OVERVIEW).not.toMatch(/refund \+ receipt code/);
   });
 
-  it("still does NOT claim live-payment readiness (no overclaim)", () => {
-    expect(OVERVIEW).toMatch(/\| Live payment \| \*\*Not ready/);
-    expect(OVERVIEW).toMatch(/legal\/accounting review/);
-    expect(OVERVIEW).toMatch(/Willow live Stripe checklist/);
+  it("states supervised live for approved studios without overclaiming broad readiness", () => {
+    // Current posture: supervised live for approved studios...
+    expect(OVERVIEW).toMatch(/\| Live payment \| \*\*Supervised live for approved studios/);
+    // ...but explicitly NOT broad self-serve, and the still-off items are named (no overclaim).
+    expect(OVERVIEW).toMatch(/broad self-serve live payments are not ready/i);
+    expect(OVERVIEW).toMatch(/public booking card collection/i);
   });
 });
 

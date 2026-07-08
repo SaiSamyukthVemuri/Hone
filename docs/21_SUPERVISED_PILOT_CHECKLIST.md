@@ -1,19 +1,24 @@
 # 21 Supervised Pilot Readiness Checklist (Chloe / Laura)
 
 This is the practical **go / no-go** checklist for putting Hone in front of the
-first two supervised pilot practitioners. It is written for a supervised pilot
-where **live payments remain disabled** (intended — see below). It complements
-the deeper runbooks: [docs/11 Runbook](./11_RUNBOOK.md),
+first two supervised pilot practitioners. **Supervised live owner-run session
+payments are live for approved studios** (Willow + Sam's controlled studio);
+**public booking still collects no payment**, and a NEW studio starts test-mode
+until it completes its own supervised live-enablement. It complements the deeper
+runbooks: [docs/11 Runbook](./11_RUNBOOK.md),
 [docs/12 Smoke tests](./12_SMOKE_TESTS.md),
 [docs/16 Live payments readiness](./16_LIVE_PAYMENTS_READINESS.md),
-[docs/20 New studio setup runbook](./20_NEW_STUDIO_SETUP_RUNBOOK.md).
+[docs/20 New studio setup runbook](./20_NEW_STUDIO_SETUP_RUNBOOK.md),
+[docs/production/current-state.md](./production/current-state.md).
 
-> **Live payments remain DISABLED for this pilot.** No card is ever charged.
-> Booking collects no payment; the confirmation screen states so. Stripe live
-> mode is blocked in code (`lib/stripe/server.ts` throws on a live key unless
-> `STRIPE_ALLOW_LIVE_MODE === "true"`, which is never set) and is enforced by
-> `scripts/check-stripe-gates.mjs` (13 PASS). Do **not** enable live payments as
-> part of pilot setup.
+> **Payment posture:** supervised live **session payments** are enabled for
+> approved studios (live Connect + charges + refunds + webhooks proven; live/test
+> isolation live; Stripe gates 15 PASS). **Public booking card collection is
+> OFF**, deposits/packages/partial payments are not built, and **live manual
+> no-show / late-cancel fees are hard-held** server-side (only `session_payment`
+> charges live). **Broad self-serve live payments are not ready** — do not enable
+> live payments for a new/unapproved studio outside the supervised approval
+> process.
 
 ---
 
@@ -28,7 +33,7 @@ the deeper runbooks: [docs/11 Runbook](./11_RUNBOOK.md),
 - Studio timezone is wrong (all public slot times will be wrong).
 - `verify-production.mjs` fails, or the treatment-image bucket is missing / not
   private.
-- Production is not on migration **0100** (current expected max).
+- Production is not on the current expected migration max. **Do not hardcode the number — derive it** from `supabase migration list --linked` and [docs/production/current-state.md](./production/current-state.md). (As of 2026-07-08 the production max is **0112**.)
 - The data-recovery expectations in §6 are not confirmed **before** real client
   data is entered.
 
@@ -78,8 +83,11 @@ Do this once per pilot studio (Chloe, Laura) in Settings:
 
 ## 3. Verify before pilot (§4 checks)
 
-- [ ] **Run `scripts/verify-production.mjs`** and confirm all checks pass,
-      including production migration max = **0100** and the `0093 bucket` check.
+- [ ] **Run `scripts/verify-production.mjs`** and confirm all checks pass
+      (an INCOMPLETE that is only the reminder-scheduler heartbeat / local Upstash
+      is acceptable), including the production migration max (**0112** as of
+      2026-07-08 — verify against `supabase migration list --linked`, do not assume)
+      and the `0093 bucket` check.
 - [ ] **Treatment-image bucket / private-policy verification.** Confirm the
       `treatment-images` bucket exists and is **private**
       (`verify-production.mjs` `0093 bucket` check), and in the Supabase
@@ -100,12 +108,18 @@ Do this once per pilot studio (Chloe, Laura) in Settings:
       **`check-production-env-gates.mjs`** passes — confirms money paths stay
       inert and required prod env is present.
 
-## 4. What is intentionally disabled (do NOT "fix" for the pilot)
+## 4. What is intentionally disabled / held (do NOT "fix" for the pilot)
 
-- **Live payments.** No card is charged; Stripe live mode is blocked in code +
-  gate. (See the banner at the top.)
-- **Booking deposits / payment capture at booking time.** Booking never touches
-  Stripe; the confirmation states "No payment was collected for this booking."
+- **Public booking card collection.** Booking never touches Stripe; the
+  confirmation states "No payment was collected for this booking." (Live
+  owner-run *session* payments happen in-app after the appointment, not at
+  booking — and only for approved studios; see the payment posture banner above.)
+- **Live manual no-show / late-cancel fees.** Hard-held server-side; only
+  `session_payment` charges live.
+- **Broad self-serve live payments.** A new/unapproved studio stays test-mode
+  until it completes supervised live-enablement; do not flip it as part of setup.
+- **Booking deposits / packages / partial payments.** Not built; booking never
+  touches Stripe; the confirmation states "No payment was collected for this booking."
 - **Returning-client online self-booking.** The "I'm an existing client" path
   routes to the client portal (manage / reschedule / cancel only) — it does
   **not** self-book a new appointment. Returning clients are re-booked by the
@@ -182,5 +196,7 @@ bulk operation, or accidental deletion. Confirm the following before the pilot:
   "filter by client for a complete log" notice (use the per-client filter or the
   ZIP export for a complete artifact).
 - Rollback of a bad deploy: revert the merge on the base branch and redeploy
-  production (docs/11 / docs/14); production migration stays at 0100 unless a
-  reviewed migration is applied via the migration-first process.
+  production (docs/11 / docs/14); the production migration max stays where it is
+  (**0112** as of 2026-07-08) unless a reviewed migration is applied via the
+  [migration-first process](./runbooks/migration-first-process.md). Reverting code
+  does not roll back an additive migration (old code runs fine against it).

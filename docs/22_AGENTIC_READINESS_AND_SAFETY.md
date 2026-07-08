@@ -111,7 +111,7 @@ Any action with an effect outside generating text on screen requires an explicit
 - marking aftercare / risks explained
 - changing client information
 - exporting or sending records
-- any payment-related action (which additionally remains blocked entirely while live payments are disabled)
+- any payment-related action (agentic capabilities must never initiate or mutate a charge/refund in ANY mode — this rule is independent of live-payment status, which is now enabled for approved studios)
 
 Confirmation is per action and specific. A blanket "approve everything" mode is not allowed in V1. Declining a confirmation is always a no-op with no side effects.
 

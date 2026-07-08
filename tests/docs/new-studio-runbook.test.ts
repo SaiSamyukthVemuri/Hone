@@ -42,7 +42,7 @@ describe("account path is the invite flow", () => {
 
 describe("safety content", () => {
   it("do-not-touch list covers the non-negotiables", () => {
-    expect(RUNBOOK).toMatch(/Do not enable live payments\./);
+    expect(RUNBOOK).toMatch(/Do not (enable|flip) live payments/);
     expect(RUNBOOK).toMatch(/Do not use the production service role casually\./);
     expect(RUNBOOK).toMatch(/Do not alter RLS policies\./);
     expect(RUNBOOK).toMatch(/Do not touch Willow data\./);
@@ -65,10 +65,12 @@ describe("safety content", () => {
     expect(RUNBOOK).toMatch(/append-only, by design/);
   });
 
-  it("payments posture is explicit: test mode only, live disabled", () => {
-    expect(RUNBOOK).toMatch(/Live payments remain disabled product-wide\./);
-    expect(RUNBOOK).toMatch(/No STRIPE_ALLOW_LIVE_MODE, no live keys/);
-    expect(RUNBOOK).toMatch(/stripe_livemode=false/);
+  it("payments posture is explicit: new studio test-mode; supervised live for approved studios", () => {
+    // A new studio starts in test mode and is enabled per-studio only after supervised approval...
+    expect(RUNBOOK).toMatch(/new studio starts in\s*\**\s*test\s*mode|starts test-mode|stays test-mode|is test-mode/i);
+    // ...but supervised live session payments ARE already live for approved studios.
+    expect(RUNBOOK).toMatch(/supervised live[\s\S]{0,60}session[\s\S]{0,40}payments are (already )?live for approved studios/i);
+    expect(RUNBOOK).toMatch(/do not (flip|enable) live/i);
   });
 
   it("machine frequency is documented as sticky-learned, not SQL-set", () => {

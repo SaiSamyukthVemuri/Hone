@@ -1,5 +1,14 @@
 # 13 Backlog and decisions
 
+> **⚠️ HISTORICAL PER-PR LOG.** This is a dated decision log; **each entry reflects the state
+> at its own date** and is retained verbatim as history — it is NOT maintained as current
+> state. In particular, entries dated before 2026-07-08 that say "live payments remain
+> disabled / not started / production stays at 010x" are **point-in-time** and are superseded:
+> the current payment posture is **supervised live owner-run session payments live for
+> approved studios** (public booking card collection, deposits/packages/partial, and live
+> manual fees remain off/held; broad self-serve not ready), and production migration max is
+> **0112**. Canonical current state: [docs/production/current-state.md](./production/current-state.md).
+
 ## Decision log
 
 Decisions are listed roughly in the order they were made. Each entry says **what was decided**, **why**, and **what the alternative was**.

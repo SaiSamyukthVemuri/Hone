@@ -1,5 +1,13 @@
 # 10 Deployment and environment
 
+> **⚠️ Point-in-time notes below are superseded (2026-07-08).** Production migration max is
+> **0112** (all migrations applied — any "migration 00xx NOT yet applied to production" note
+> below, e.g. for 0093, is historical; 0093/0094/0107 are applied). **Supervised live
+> owner-run session payments are live for approved studios** (public booking card collection,
+> deposits/packages/partial, and live manual fees remain off/held; broad self-serve not
+> ready) — any "live payments remain disabled" aside below is historical. Canonical current
+> state: [docs/production/current-state.md](./production/current-state.md).
+
 ## Hosts and domains
 
 - **Hosting:** Vercel.

@@ -1,7 +1,19 @@
 # 18 Live Payments Readiness Audit (PR #192)
 
+> **⚠️ HISTORICAL / SUPERSEDED (as of 2026-07-08).** This is the **pre-live** readiness
+> audit dated 2026-06-10 (production was at migration **0082**). It is retained as a
+> historical record. **Current payment posture:** supervised live owner-run **session**
+> payments are now **LIVE for approved studios** (Willow + Sam's controlled studio) — live
+> Stripe Connect onboarding, live charges, live refunds, and live webhook processing are all
+> proven; live/test card + attempt isolation is live; Stripe gates remain **15 PASS**. Still
+> **OFF / held:** public booking card collection, deposits / packages / partial payments, and
+> live manual no-show / late-cancel fees (hard-held server-side). **Broad self-serve live
+> payments are not ready.** Canonical current state:
+> [docs/production/current-state.md](./production/current-state.md). The "NOT READY" verdict,
+> scorecard, and blocker tables below describe the 2026-06-10 pre-live state and are history.
+
 **Audit date:** 2026-06-10, after PR #191 (production at migration 0082, merge `0fb10bf`).
-**Verdict: NOT READY FOR LIVE PAYMENTS.** Test-mode session payments are complete and verified end to end by a real practitioner smoke (Chloe, 2026-06-10: prepare -> $25 charge -> receipt -> refund, attempt `6b71d20d`). Live payments are blocked by design and must stay blocked until the P0 blockers in §13 land. This document is an audit only; nothing in PR #192 changes runtime behavior.
+**Verdict (2026-06-10 — HISTORICAL; superseded, see the banner above): NOT READY FOR LIVE PAYMENTS.** *(As of 2026-07-08 this verdict no longer holds — supervised live session payments are live for approved studios.)* Test-mode session payments are complete and verified end to end by a real practitioner smoke (Chloe, 2026-06-10: prepare -> $25 charge -> receipt -> refund, attempt `6b71d20d`). At the 2026-06-10 audit date live payments were blocked by design and the P0 blockers in §13 were open. This document is an audit only; nothing in PR #192 changes runtime behavior.
 
 This supersedes the per-section status notes in `docs/16_LIVE_PAYMENTS_READINESS.md` (the PR #168 review) as the current readiness picture; docs/16 remains the historical record and checklist source.
 

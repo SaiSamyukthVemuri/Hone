@@ -6,6 +6,13 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
+> **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
+> (production migration max **0112** as of 2026-07-08) ·
+> [migration ledger](./docs/production/migration-ledger.md) ·
+> [release changelog](./docs/production/release-changelog.md) ·
+> [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
+> summary; when it and current-state disagree, current-state + the live verifier win.
+
 | Surface | State |
 |---|---|
 | Public booking, new/existing client, next-available | **Production** |
@@ -15,14 +22,25 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Client portal (magic-link + session cookie, two-zone UX) | **Production** |
 | Portal messages + replies | **Production** |
 | Consent + e-sign (treatment, photo, card authorization, policy ack) | **Production**, draft template wording, **lawyer review required before live use** |
-| Card-on-file (Stripe SetupIntent on connected account) | **Production, test mode only** |
-| Cancellation/no-show fee charge (PaymentIntent off-session; unified onto `payment_charge_attempts` via the canonical `session-payment-charge.ts` executor since PR #196) | **Production, test mode only**. Live charging requires a deliberate live-mode PR with legal review |
-| Session payment charge end-to-end: prepare, run, receipt, refund, webhook reconciliation, completion-to-billing UX (`payment_charge_attempts`) | **Production, test mode only** (PRs #171-#181; fees unified onto the same ledger in PR #196). Live payments remain blocked |
-| Receipts (session-payment test receipt email) | **Production, test mode only** (PR #175) |
-| Refunds (full-amount, test mode, `payment_charge_attempts`) | **Production, test mode only** (PR #178) |
+| Card-on-file (Stripe SetupIntent on connected account) | **Production** — live for approved studios + test mode; live/test card isolation is live |
+| Owner-run **session payment** charge (PaymentIntent off-session; canonical `session-payment-charge.ts` executor / `payment_charge_attempts` ledger, PR #196) | **Production — supervised live for approved studios** (Willow + Sam's controlled studio; live charges + webhooks proven). A new studio starts test-mode and is enabled per-studio after supervised onboarding; **broad self-serve live payments are not ready** |
+| Manual cancellation / no-show fee charge | **Test mode works; live is HARD-HELD server-side** (`lib/billing/live-charge-reason-allowlist.ts`) — only `session_payment` charges live; enabling live manual fees needs a dedicated PR + approval |
+| Receipts (session-payment receipt email) | **Production** — live + test (PR #175) |
+| Refunds (full-amount, `payment_charge_attempts`) | **Production** — **live refunds proven** for approved studios + test (PR #178) |
 | Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
 | Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
-| SMS (Twilio) | **Implemented but disabled by default** per studio toggle and per-client consent |
+| SMS (Twilio) | **Implemented, pilot scale**, disabled by default per studio toggle + per-client consent. Broad-SaaS SMS (A2P/10DLC, sender strategy, rate-limiting) not built |
+| Treatment observation chips (structured charting toggles) | **Production** (PR #357, migration 0108) |
+| Studio 12h/24h time-format preference | **Production** (PR #359, migration 0109; default 12h) |
+| Postcare automation (auto-send on completion) | **Production, default OFF / manual** (PR #360, migration 0110; opt-in per studio, fail-soft, skipped if Resend key / postcare text missing) |
+| Calendar/booking usability (drawer override + exact clicked-time, internal scroll + mobile sticky rail, owner-only blocked-time editing, calendar 12h) | **Production** (PRs #361–#365) |
+| Client portal: practitioner send / copy login URL + resend rate limits | **Production** (PR #366; reuses hashed/single-use/60-min issuance) |
+| Portal CTA in confirmation + reminder emails; login-copy fix | **Production** (PR #367; token-free `/portal/login?studio=slug`) |
+| Multiple photo upload (per-file validate + EXIF strip + per-file status) | **Production** (PR #368; UI-only) |
+| Compact marketing-consent UI on public booking | **Production** (PR #369; default unchecked, never prechecked, consent-send logic unchanged) |
+| Client portal access events + practitioner status card | **Production** (PR #370, migration 0111; append-only, no token/PII) |
+| Public booking previous/next availability navigation | **Production** (PR #371; client-side) |
+| Public booking horizon 1–12 months | **Production** (PR #372, migration 0112; default 3, existing studios unchanged) |
 | Google Calendar sync, intake builder, signed-consent viewer, admin/support dashboard | **Backlog** |
 
 ## Who Hone is for
@@ -97,7 +115,7 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 
 ## Warnings
 
-- **Do not flip live payments.** Live mode is structurally blocked: the Stripe key gate refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`, and the canonical `payment_charge_attempts` ledger (plus the legacy, read-only `manual_fee_charge_attempts` table) has a CHECK constraint that pins `stripe_livemode = false`. All of it must be deliberately altered in a reviewed live-mode PR; controlled live payment enablement has not started.
+- **Live payments are enabled ONLY for approved studios, supervised.** Supervised live owner-run **session payments** are live for approved studios (Willow + Sam's controlled studio) — live Connect onboarding, charges, refunds, and webhooks proven; live/test isolation live. **Do not enable live payments for a new/unapproved studio** outside the supervised onboarding + approval process. Still off/held product-wide: **public booking card collection** (off), **deposits / packages / partial payments** (not built), **live manual no-show / late-cancel fees** (hard-held server-side — only `session_payment` charges live). **Broad self-serve live-payment rollout is not complete.** See [docs/production/current-state.md](./docs/production/current-state.md) for the canonical posture.
 - **Do not enable auto-charge.** No automatic, background, batch, or public-triggered charge path exists. Charging is one manual practitioner click on a `ready` attempt. Anything different is a new design that needs review.
 - **Do not bypass RLS or security review.** Every public route, token route, RPC grant, and `SECURITY DEFINER` function in this repo was chosen carefully. See [docs/03](./docs/03_SECURITY_AND_PRIVACY.md) before changing.
 - **Do not expose tokenized routes to analytics.** PR #142 removed Vercel Analytics from `/portal/verify/[token]`, `/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/calendar-feed/[token]` structurally. Adding analytics to those subtrees re-leaks the token to a third party.
