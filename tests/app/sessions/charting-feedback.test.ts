@@ -145,11 +145,15 @@ describe("item 6: tolerance is label-based, storage unchanged", () => {
   });
 });
 
-describe("item 7: observation chips toggle and reflect in the notes", () => {
-  it("uses toggleComment/isCommentSelected (not append-only)", () => {
-    expect(FORM).toMatch(/toggleComment\(draft\.comments, c\)/);
-    expect(FORM).toMatch(/isCommentSelected\(draft\.comments, c\)/);
+describe("item 7: observation chips toggle (structural, migration 0108)", () => {
+  it("chips are structured toggles on observationChips (superseding the text/token approach)", () => {
+    // Migration 0108: chips are explicit structured state, not re-derived from
+    // the free-text `comments` string — so a selected chip can never silently
+    // drop. See tests/app/sessions/observation-chips-structured.test.ts.
+    expect(FORM).toMatch(/toggleChip\(draft\.observationChips, c\)/);
+    expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
     expect(FORM).not.toMatch(/appendComment\(/);
+    expect(FORM).not.toMatch(/toggleComment\(|isCommentSelected\(/);
   });
   it("reaction chips are single-select toggles (No visible reaction handled)", () => {
     expect(FORM).toMatch(/draft\.reactionType === r \? "" : r/);

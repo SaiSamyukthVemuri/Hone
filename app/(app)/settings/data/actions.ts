@@ -103,7 +103,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     supabase
       .from("electrolysis_entries")
       .select(
-        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
+        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -366,6 +366,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     return {
       ...e,
       areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
+      // Migration 0108: flatten structured observation chips to a
+      // semicolon-separated string (CSV's own delimiter is a comma).
+      observation_chips: Array.isArray(e.observation_chips)
+        ? (e.observation_chips as string[]).join("; ")
+        : "",
       block_primary_area: b?.primary_area ?? null,
       block_side: b?.side ?? null,
       block_custom_area_detail: b?.custom_area_detail ?? null,
@@ -412,6 +417,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "thermolysis_intensity_percent",
         "thermolysis_duration_seconds",
         "units_of_lye",
+        // Appended: structured treatment-observation chips (migration 0108),
+        // semicolon-separated. Free-text notes stay in the `comments` column.
+        "observation_chips",
         // Appended: structured area + probe from the entry's session block
         // (migrations 0039 / 0041).
         "block_primary_area",
@@ -730,7 +738,7 @@ This export contains all client records, sessions, entries, appointments, and tr
 Files included:
 - clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
 - sessions.csv: One row per session: client, performer, started_at, ended_at, price_paid_cents, session_notes.
-- electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), and comments.
+- electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.
 - laser_entries.csv: Every laser entry with zone, fluence, pulse width, treatment number, observations.
 - practitioners.csv: Active practitioners at your studio.
 - client_pricing.csv: Per-client custom pricing.

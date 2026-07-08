@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
+import { normalizeChips } from "@/lib/observation-chips";
 import {
   isNumbingStatus,
   isReactionType,
@@ -624,6 +625,10 @@ export type EntryReadingsInput = {
   pulseDelaySeconds?: number | null;
   hairsTreated?: number | null;
   comments?: string | null;
+  // Migration 0108: structured observation chips (canonical labels). Chips are
+  // now explicit state, not re-derived from `comments`, so none can silently
+  // drop. Normalized on write via normalizedChips().
+  observationChips?: string[] | null;
   galvanicMa?: number | null;
   galvanicDurationSeconds?: number | null;
   galvanicIntensityPercent?: number | null;
@@ -662,7 +667,8 @@ function readingsPresent(r: EntryReadingsInput): boolean {
     r.thermolysisIntensityPercent != null ||
     r.thermolysisDurationSeconds != null ||
     r.unitsOfLye != null ||
-    (typeof r.comments === "string" && r.comments.trim().length > 0)
+    (typeof r.comments === "string" && r.comments.trim().length > 0) ||
+    (Array.isArray(r.observationChips) && r.observationChips.length > 0)
   );
 }
 
@@ -670,6 +676,13 @@ function normalizedComments(r: EntryReadingsInput): string | null {
   return typeof r.comments === "string" && r.comments.trim().length > 0
     ? r.comments.trim()
     : null;
+}
+
+// Structured observation chips for the DB write: always a canonical, deduped
+// array (never null — the column is jsonb NOT NULL default []). Unknown/garbage
+// values collapse to [] rather than corrupting the clinical record.
+function normalizedChips(r: EntryReadingsInput): string[] {
+  return normalizeChips(r.observationChips);
 }
 
 // Server-side range validation mirroring the DB CHECK (migration 0042) so
@@ -907,6 +920,7 @@ export async function createTreatmentAreaWithEntryAction(
         pulse_delay_seconds: resolvePulseDelaySeconds(readings),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
+        observation_chips: normalizedChips(readings),
         ...structuredReadingColumns((input.mode ?? null) as SessionMode | null, readings),
         ...snap,
       });
@@ -1068,6 +1082,7 @@ export async function updateTreatmentAreaWithEntryAction(
       pulse_delay_seconds: resolvePulseDelaySeconds(readings),
       hairs_treated: readings.hairsTreated ?? null,
       comments: normalizedComments(readings),
+      observation_chips: normalizedChips(readings),
       ...structuredReadingColumns(
         (input.mode ?? null) as SessionMode | null,
         readings,
@@ -1104,6 +1119,7 @@ export async function updateTreatmentAreaWithEntryAction(
         pulse_delay_seconds: resolvePulseDelaySeconds(readings),
         hairs_treated: readings.hairsTreated ?? null,
         comments: normalizedComments(readings),
+        observation_chips: normalizedChips(readings),
         ...structuredReadingColumns(
           (input.mode ?? null) as SessionMode | null,
           readings,

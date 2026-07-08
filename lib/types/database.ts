@@ -799,6 +799,10 @@ export type ElectrolysisEntry = {
   // (0.03–1.90s). NULL for single-pulse entries and pre-0102 rows.
   pulse_delay_seconds: number | null;
   comments: string | null;
+  // Migration 0108: structured treatment-observation chips (array of canonical
+  // chip labels; see lib/observation-chips.ts). Free-text notes stay in
+  // `comments`. Defaults to [] for legacy rows. Read via normalizeChips().
+  observation_chips: string[];
   // Migration 0011: parameters moved from session level to entry level.
   apilus_modality: ApilusModality | null;
   energy_level: number | null;

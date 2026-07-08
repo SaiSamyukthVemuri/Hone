@@ -84,7 +84,7 @@ export default async function DataSettingsPage() {
               <li>
                 Electrolysis charting: treatment area, machine settings,
                 blend/galvanic &amp; thermolysis readings, probe details, pulse
-                count, hairs treated, comments
+                count, hairs treated, observation chips, comments
               </li>
               <li>Laser entries</li>
               <li>Practitioners</li>

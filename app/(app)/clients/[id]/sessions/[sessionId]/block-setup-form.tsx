@@ -55,7 +55,12 @@ import type {
   SessionBlockSide,
   SessionMode,
 } from "@/lib/types/database";
-import { isCommentSelected, toggleComment } from "@/lib/comments";
+import {
+  isChipSelected,
+  toggleChip,
+  normalizeChips,
+  hydrateLegacyChips,
+} from "@/lib/observation-chips";
 import {
   NUMBING_OPTIONS,
   REACTION_TYPES,
@@ -168,6 +173,10 @@ type Draft = {
   pulseDelay: string;
   hairsTreated: string;
   comments: string;
+  // Migration 0108: structured observation chips (canonical labels). Selection
+  // is explicit state here, NOT re-derived from `comments`, so a selected chip
+  // can never silently disappear. Free-text lives in `comments` above.
+  observationChips: string[];
   // PR #190 (migration 0082): structured client response. All optional.
   // toleranceRating is "" or "1".."5"; reactionType is "" or an
   // allowlisted value from lib/sessions/clinical-response.ts.
@@ -203,6 +212,7 @@ const EMPTY: Draft = {
   pulseDelay: String(PULSE_DELAY_DEFAULT),
   hairsTreated: "",
   comments: "",
+  observationChips: [],
   toleranceRating: "",
   reactionType: "",
   reactionNotes: "",
@@ -229,6 +239,17 @@ function initialDraft(
       machineFrequency: defaultMachineFrequency?.trim() || "",
     };
   }
+  // Migration 0108: seed structured observation chips. New rows carry
+  // observation_chips directly; legacy rows (empty chips) are hydrated from
+  // `comments` NON-destructively — matched chip tokens become chips, everything
+  // else stays as free-text — so editing an old record shows chips reliably and
+  // never double-displays them. The stored row is untouched until the
+  // practitioner saves.
+  const seededChips = normalizeChips(firstEntry?.observation_chips);
+  const hydrated =
+    seededChips.length > 0
+      ? { chips: seededChips, freeText: firstEntry?.comments ?? "" }
+      : hydrateLegacyChips(firstEntry?.comments);
   return {
     mode: block.mode ?? "",
     apilusModality: block.apilus_modality ?? "",
@@ -275,7 +296,8 @@ function initialDraft(
       firstEntry?.hairs_treated != null
         ? String(firstEntry.hairs_treated)
         : "",
-    comments: firstEntry?.comments ?? "",
+    comments: hydrated.freeText,
+    observationChips: hydrated.chips,
     // PR #190: round-trip the stored response so an edit save that
     // never touches the section preserves it unchanged.
     toleranceRating:
@@ -542,6 +564,7 @@ export function BlockSetupForm({
       pulseDelaySeconds,
       hairsTreated: hairs.value,
       comments: draft.comments,
+      observationChips: draft.observationChips,
     };
 
     startTransition(async () => {
@@ -1307,13 +1330,15 @@ export function BlockSetupForm({
             be unselected.) */}
         <div className="flex flex-wrap gap-2">
           {COMMON_COMMENTS.map((c) => {
-            const selected = isCommentSelected(draft.comments, c);
+            const selected = isChipSelected(draft.observationChips, c);
             return (
               <button
                 key={c}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => update("comments", toggleComment(draft.comments, c))}
+                onClick={() =>
+                  update("observationChips", toggleChip(draft.observationChips, c))
+                }
                 className={
                   selected
                     ? "rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900"
@@ -1364,11 +1389,14 @@ export function BlockSetupForm({
             className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         )}
+        {/* Migration 0108: this box is now free-text ONLY. Selected chips are
+            structured state (the pressed pills above stay visible regardless of
+            what's typed here), so a chip can no longer be lost by editing text. */}
         <textarea
           rows={2}
           value={draft.comments}
           onChange={(e) => update("comments", e.target.value)}
-          placeholder="Tap a chip or type a note"
+          placeholder="Add a note (optional)"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
       </div>
