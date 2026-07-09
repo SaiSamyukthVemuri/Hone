@@ -87,14 +87,19 @@ describe("3. charting: obvious finish, no new write path", () => {
     expect(SESSION_PAGE).toMatch(/Review appointment &amp; billing/);
   });
 
-  it("finish actions are links to existing routes, never submits", () => {
+  it("finish actions navigate to existing routes; no new session write/submit path", () => {
     const finish = SESSION_PAGE.slice(
       SESSION_PAGE.indexOf("Finish up"),
       SESSION_PAGE.indexOf("<DeleteSessionForm"),
     );
-    expect(finish).toMatch(/href=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
+    // Charting PR 1: "Done charting" is now the non-blocking aftercare guard,
+    // which navigates to the sessions tab (doneHref) — still no session write.
+    expect(finish).toMatch(/<DoneChartingButton/);
+    expect(finish).toMatch(/doneHref=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
     expect(finish).toMatch(/href=\{`\/calendar\/\$\{paymentApptId\}`\}/);
-    expect(finish).not.toMatch(/<form|<button|action=|type="submit"/);
+    // no NEW session-save form/submit in the finish section (the aftercare mark
+    // reuses the existing toggle action, not a new write path).
+    expect(finish).not.toMatch(/<form|type="submit"|createSession|updateSession|addElectrolysis/);
   });
 
   it("finish links are touch sized and render above Delete", () => {

@@ -487,9 +487,9 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(
       page.getByText(/Everything above is already saved as you go/),
     ).toBeVisible();
-    const doneCharting = page.getByRole("link", { name: "Done charting" });
+    const doneCharting = page.getByRole("button", { name: "Done charting" });
     await expect(doneCharting).toBeVisible();
-    await expectInsideViewport(page, doneCharting, "done charting link");
+    await expectInsideViewport(page, doneCharting, "done charting button");
     await expect(
       page.getByRole("link", { name: /Review appointment & billing/ }),
     ).toHaveCount(0);
