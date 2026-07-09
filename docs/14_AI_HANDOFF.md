@@ -4,7 +4,7 @@
 > entry reflects the state at its own date** and is retained as history — it is NOT the current
 > state. For anything time-sensitive (production migration max, live-payment posture) trust
 > **[docs/production/current-state.md](./production/current-state.md)** + the live verifier, not
-> this log. Current facts (2026-07-08): production migration max **0112**; **supervised live
+> this log. Current facts (2026-07-09): production migration max **0113**; **supervised live
 > owner-run session payments are live for approved studios** (public booking card collection,
 > deposits/packages/partial, and live manual fees remain off/held; broad self-serve not ready).
 > Pre-2026-07-08 entries below that say "live payments remain disabled" or "production stays at

@@ -5,10 +5,10 @@ other doc disagree, this doc + the live verifier win. Re-verify against
 `supabase migration list --linked` and `node scripts/verify-production.mjs` before
 trusting any number here.
 
-- **Last reconciled:** 2026-07-08
+- **Last reconciled:** 2026-07-09
 - **Production branch:** `claude/build-hone-saas-hOex7`
-- **Production HEAD:** `2d4b809777d98a33981753312c13bfd40bfe0c92`
-- **Production migration max:** **0112** (`0112_public_booking_horizon_expand.sql`) — local repo max == remote (all applied).
+- **Production HEAD:** `475e08a15db3b189c173305035a3b4df273ef1c8`
+- **Production migration max:** **0113** (`0113_admin_action_events.sql`) — local repo max == remote (all applied).
 - **Stripe gates:** 15 PASS (`node scripts/check-stripe-gates.mjs`).
 - **verify-production:** 11 PASS · 0 FAIL · 1 INCOMPLETE (the INCOMPLETE is the reminder-scheduler heartbeat, which reports INCOMPLETE only because `UPSTASH_REDIS_REST_URL/TOKEN` are unset in the *local* env used to run the script — it is not a production failure).
 - **Hosting:** Vercel production (Node 24), deploys from the production branch HEAD.
@@ -23,16 +23,26 @@ See also: [migration-ledger.md](./migration-ledger.md) · [release-changelog.md]
 
 - **Auth / tenancy:** invite-only practitioner auth (Supabase); studio resolved server-side
   (`getCurrentPractitionerWithStudio`); owner/member gating enforced server-side; RLS
-  (`is_studio_member`) on all tenant tables. Assumes one active practitioner row per user
-  (multi-studio user is not supported — see Known risks).
+  (`is_studio_member`) on all tenant tables. **Multi-studio users are supported** (PR #378/#379):
+  0 or 2+ active memberships no longer 500; a user with 2+ active studios chooses one via a
+  studio switcher, persisted in an httpOnly `hone_selected_studio` cookie that is re-validated
+  against active memberships every request (never auto-picked, never cross-studio).
 - **Public booking:** service selection, availability scan, cancel/reschedule/manage via
   hashed tokens, intake gating, compact marketing consent, confirmation/reminder emails.
-- **Practitioner calendar:** week grid, exact clicked-time booking, blocked-time editing,
-  appointment completion, studio time-format preference.
+- **Practitioner calendar:** **mobile = a single-day vertical timeline** (PR #380 — replaced
+  the sideways-scrollable week grid; date strip, prev/next day, tap-to-book, now-line, floating
+  +); **desktop = week/month grid** with a Google/Apple-style toolbar (Today / ‹ › / date range /
+  Week·Month, PR #382), one clean vertical scroll (PR #383), and an **in-context appointment
+  preview drawer** (PR #381 — click an appointment for a read-only summary + "Open full details"
+  deep link, instead of navigating away). Exact clicked-time booking, owner-only blocked-time
+  editing, appointment completion, studio 12h/24h preference.
 - **Client records:** profile, intake, versioned consent + signatures, treatment notes,
   imported treatment memory (read-model), record-keeping + audit.
 - **Charting / treatment memory:** session blocks, observation chips, probe-lot suggestion,
-  treatment areas, Before Today / Treatment Intelligence surfaces.
+  treatment areas, Before Today / Treatment Intelligence surfaces. **Charting hardening (PR
+  #384–#386, all app-layer, no migration):** a non-blocking aftercare prompt at "Done charting";
+  server-side treatment-area canonical validation (flat `AREAS` incl. "Full face" + explicit
+  "Other" custom); probe-lot studio-ownership + UUID verification on write.
 - **Photos:** private `treatment-images` bucket, service-role signed URLs, per-file EXIF
   stripping, tenant-scoped paths, multi-file upload.
 - **Client portal:** passwordless magic-link login, portal tasks, practitioner send/copy
@@ -51,11 +61,14 @@ See also: [migration-ledger.md](./migration-ledger.md) · [release-changelog.md]
   provider-agnostic conversion service with a Meta CAPI adapter (inert per studio until a
   token is configured).
 - **Admin/ops:** `/admin` surfaces (service-role), ops alerts, verifier + gate scripts,
-  cron auth, migration-max tripwire.
+  cron auth, migration-max tripwire. **Admin Action Audit Log (PR #374, migration 0113):**
+  append-only `admin_action_events` records sensitive operator actions (studio creation,
+  ops-alert resolution, demo follow-up) — who/what/which-studio/when/outcome, privacy-safe
+  metadata only; viewable at **`/admin/audit`** (linked from the admin dashboard, PR #376).
 
 ---
 
-## Recently shipped (0108 → 0112 and the surrounding UI wave)
+## Recently shipped (0108 → 0113 and the surrounding UI wave)
 
 | Area | Migration | Live status |
 |---|---|---|
@@ -71,6 +84,19 @@ See also: [migration-ledger.md](./migration-ledger.md) · [release-changelog.md]
 | Client portal access events + practitioner status card | **0111** | Live. |
 | Public booking previous/next availability navigation | none (code) | Live. |
 | Public booking horizon 1–12 months | **0112** | Live (default 3 months; existing studios unchanged). |
+| Admin Action Audit Log (`admin_action_events`, `/admin/audit`) | **0113** | Live (append-only, service-role-only, privacy-safe). |
+| Admin audit log dashboard discoverability | none (code) | Live (PR #376). |
+| Postcare auto-send setting discoverability (nav label + stale-copy fix) | none (code) | Live (PR #375; setting unchanged, still default `manual`). |
+| Portal verify-page expiry copy fix (30 min → 1 hour) | none (code) | Live (PR #377; matches the real 60-min TTL). |
+| Multi-studio-user robustness (never 500 on 0/2+ memberships) | none (code) | Live (PR #378). |
+| Multi-studio switcher + selected-studio httpOnly cookie | none (code) | Live (PR #379). |
+| Mobile single-day calendar timeline | none (code) | Live (PR #380). |
+| Desktop in-context appointment preview | none (code) | Live (PR #381). |
+| Desktop Google-style calendar toolbar | none (code) | Live (PR #382). |
+| Desktop calendar scroll cleanup (one clean vertical scroll) | none (code) | Live (PR #383). |
+| Charting: non-blocking aftercare prompt at "Done charting" | none (code) | Live (PR #384; emergency-safe, never blocks). |
+| Charting: server-side treatment-area canonical validation | none (code) | Live (PR #385; flat `AREAS` + explicit custom; legacy preserved). |
+| Charting: probe-lot studio-ownership verification on write | none (code) | Live (PR #386; free-text/manual lot preserved). |
 
 Details per PR in [release-changelog.md](./release-changelog.md).
 
@@ -115,27 +141,38 @@ attempts is live; mode-aware dashboard/admin/payment copy is live. Stripe gates 
 
 `node scripts/verify-production.mjs` → **11 PASS, 0 FAIL, 1 INCOMPLETE**. The verifier is a
 read-only production health check (not a pre-live gate). It confirms: remote migration max =
-0112; `treatment-images` bucket private + RLS policies + integrity trigger; intake link +
+0113; `treatment-images` bucket private + RLS policies + integrity trigger; intake link +
 reminder columns/indexes/RPC branches; RLS on 12/12 critical tables; 0 unresolved critical
 payment ops alerts; Stripe gates pass. The lone INCOMPLETE is the reminder-scheduler
 heartbeat (needs Upstash env to check; a standing local-run limitation, not a prod fault).
 
-## Known risks (see the 2026-07-08 readiness audit for full detail)
+## Known risks (updated 2026-07-09 after the #374–#386 wave)
 
-- **Multi-studio practitioner not supported** — a user with 0 or 2+ active practitioner rows
-  can 500 on login (`getCurrentPractitionerWithStudio`). P0 before any shared practitioner or
-  a second studio for the same owner.
-- **Portal verify-page copy** says "expire after 30 minutes" (`app/portal/verify/[token]/page.tsx`);
-  the actual TTL is 60 minutes (the login page was corrected; this sibling page was missed).
-- **No admin-action audit** — operator service-role writes via `/admin` are unlogged.
+**Resolved since the 2026-07-08 readiness audit:**
+- ~~Multi-studio practitioner not supported~~ — **RESOLVED** (PR #378 no-500; PR #379 switcher).
+- ~~Portal verify-page copy says "30 minutes"~~ — **RESOLVED** (PR #377; now "1 hour" = real TTL).
+- ~~No admin-action audit~~ — **RESOLVED** (PR #374, migration 0113; `/admin/audit`).
+- ~~Charting: free-text treatment area / aftercare not save-gated / probe-lot unverified~~ —
+  **RESOLVED for session blocks** (PR #384 aftercare prompt, #385 area canonical validation,
+  #386 probe-lot studio verification). *Remaining:* treatment-plans multi-area validation +
+  legacy `addElectrolysisEntryAction` area path (see Optional/deferred).
+
+**Still open:**
 - **Rate limiters fail OPEN** — if Upstash is down/unset, portal + booking rate limits bypass.
-- **Charting validation gaps** — free-text treatment area (no canonical catalog), probe-lot
-  number has no FK/CHECK, aftercare-explained is a reminder not a save-gate.
+- **DB-level charting constraints deferred** — the new area/probe validation is app-layer only
+  (a hard DB whitelist / composite FK would reject legacy rows and needs a migration with
+  grandfathering; intentionally not built).
+- **Observation-chip vocabulary is a placeholder** — awaiting the real list before it's finalized.
 - **Docs beyond this set may be stale** — `docs/13` / `docs/14` are large historical per-PR
   logs, not maintained as current-state. Trust this doc + the verifier, not those.
 
-## Next recommended work (not a commitment)
+## Optional / deferred (not a commitment)
 
-Per the 2026-07-08 audit: (1) this documentation repair; (2) portal verify-page copy fix;
-(3) admin-action audit log (migration-first); (4) multi-studio-user robustness; (5) charting
-validation hardening. Referral/conversion analytics and broad SMS hardening are later items.
+The 2026-07-08 audit items (docs repair, verify copy, admin audit log, multi-studio robustness,
+charting hardening) are **shipped**. Remaining optional work, none started:
+- **Charting:** treatment-plans multi-area canonical validation (PR 2b, app-layer); legacy
+  electrolysis-entry area path; real observation-chip vocabulary; DB-level constraints (needs migration).
+- **Calendar:** desktop Day view (PR D); agenda/list view (PR E); mobile bottom-sheets /
+  swipe-to-change-day / mobile appointment preview; member-own blocked-time editing.
+- **Multi-studio:** cross-device selection; a dedicated `/switch-studio` route.
+- **Later:** referral/conversion analytics; broad SaaS SMS hardening (A2P/10DLC, sender strategy).

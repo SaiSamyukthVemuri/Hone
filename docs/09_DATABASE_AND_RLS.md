@@ -1,6 +1,6 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-08 there are 112 migrations in `supabase/migrations/` (latest `0112_public_booking_horizon_expand.sql`), and production migration max = 0112 (all applied).** The canonical, regularly-reconciled ledger is [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state summary is [docs/production/current-state.md](./production/current-state.md). Always re-check the highest file in `supabase/migrations/` and `supabase migration list --linked` before trusting any count or applied-status number in a doc.
+Hone uses Supabase Postgres. **As of 2026-07-09 there are 113 migrations in `supabase/migrations/` (latest `0113_admin_action_events.sql`), and production migration max = 0113 (all applied).** The canonical, regularly-reconciled ledger is [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state summary is [docs/production/current-state.md](./production/current-state.md). Always re-check the highest file in `supabase/migrations/` and `supabase migration list --linked` before trusting any count or applied-status number in a doc.
 
 Most migrations are **additive** and **idempotent** (`drop … if exists` before `add …`); a few are deliberately destructive security-hardening migrations — notably **0091 (PR #264) drops the raw `appointments.cancellation_token` column** and two dead compatibility RPCs after the hash-at-rest cutover (0090/PR #260).
 
@@ -161,7 +161,7 @@ Use this list every time before opening a migration PR.
 ## Recent tail (0093–0112) — added 2026-07-08
 
 The historical migration table above stops at ~0092. Migrations 0093–0112 are all **applied
-in production** (prod max = 0112). One-line purposes (full ledger:
+in production** (prod max = 0113). One-line purposes (full ledger:
 [docs/production/migration-ledger.md](./production/migration-ledger.md)):
 
 - **0093** harden treatment-image storage (service-role-only + path/identity CHECKs + integrity trigger) — **applied**.

@@ -33,7 +33,7 @@ runbooks: [docs/11 Runbook](./11_RUNBOOK.md),
 - Studio timezone is wrong (all public slot times will be wrong).
 - `verify-production.mjs` fails, or the treatment-image bucket is missing / not
   private.
-- Production is not on the current expected migration max. **Do not hardcode the number — derive it** from `supabase migration list --linked` and [docs/production/current-state.md](./production/current-state.md). (As of 2026-07-08 the production max is **0112**.)
+- Production is not on the current expected migration max. **Do not hardcode the number — derive it** from `supabase migration list --linked` and [docs/production/current-state.md](./production/current-state.md). (As of 2026-07-09 the production max is **0113**.)
 - The data-recovery expectations in §6 are not confirmed **before** real client
   data is entered.
 
@@ -85,7 +85,7 @@ Do this once per pilot studio (Chloe, Laura) in Settings:
 
 - [ ] **Run `scripts/verify-production.mjs`** and confirm all checks pass
       (an INCOMPLETE that is only the reminder-scheduler heartbeat / local Upstash
-      is acceptable), including the production migration max (**0112** as of
+      is acceptable), including the production migration max (**0113** as of
       2026-07-08 — verify against `supabase migration list --linked`, do not assume)
       and the `0093 bucket` check.
 - [ ] **Treatment-image bucket / private-policy verification.** Confirm the

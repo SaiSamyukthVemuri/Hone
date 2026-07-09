@@ -1,6 +1,6 @@
 # Chloe Feedback — Shipped Status
 
-Maps Chloe's (Willow) feedback items to their current status as of 2026-07-08. Status keys:
+Maps Chloe's (Willow) feedback items to their current status as of 2026-07-09. Status keys:
 **Shipped** (live) · **Default OFF/manual** (live but opt-in) · **Later** (deferred) ·
 **Out of scope** (intentionally not building now). Reconciled against
 [../production/release-changelog.md](../production/release-changelog.md).
@@ -11,8 +11,12 @@ Maps Chloe's (Willow) feedback items to their current status as of 2026-07-08. S
 | Client-facing times should be 12-hour, not military | **Shipped** | PR #358 (SMS), #359 (0109 studio preference), #361/#362 (calendar modal + cards/drag) | Studio 12h/24h preference, default 12h; machine values stay 24h |
 | Postcare should send automatically | **Default OFF / manual** | PR #360, migration 0110 | Auto-send is opt-in per studio (`postcare_delivery_mode`); default `manual`; fail-soft; needs Resend key + postcare text |
 | Booking drawer should let me book the exact time I clicked / override | **Shipped** | PR #363 | No booking-validation weakening |
-| Calendar layout / mobile usability | **Shipped** | PR #364 | Internal scroll + mobile sticky rail |
+| Calendar is unusable, especially on mobile ("circle around the calendar") | **Shipped (redesigned)** | PR #380 (mobile), #381–#383 (desktop) | **Mobile = single-day vertical timeline** (replaced the sideways-scrollable week grid): date strip, prev/next day, tap-to-book, now-line, floating +. **Desktop:** in-context appointment preview (#381), Google-style toolbar (#382), one clean vertical scroll (#383). Earlier patches (#364 scroll/rail) superseded. |
 | Let me edit blocked time from the calendar | **Shipped (owner-only)** | PR #365 | Owner-gated server-side; members read-only. Member-own blocked-time editing = **Later** |
+| Postcare auto-send setting was hard to find | **Shipped** | PR #375 | Nav "Forms & Policies" → "Forms & Postcare"; removed stale "no auto-send" copy. Setting + behavior unchanged (still default `manual`, owner-only) |
+| Charting: aftercare should be prompted, not just optional | **Shipped** | PR #384 | Non-blocking prompt at "Done charting" when the aftercare stamp is missing; **never blocks** (emergency-safe); "Mark aftercare explained" or "Continue without marking" |
+| Charting: treatment area should be validated (not free-text typos) | **Shipped** | PR #385 | Server-side canonical validation (flat `AREAS` incl. "Full face" + explicit "Other"/custom); **legacy rows preserved, never rewritten** |
+| Charting: probe lot should be tied to inventory, not arbitrary text | **Shipped (partial)** | PR #386 | A `probe_lot_id` must be a well-formed UUID in the studio's own inventory; free-text/manual lot preserved + honestly labeled manual (never "verified"). Requiring inventory for all studios = **Later** |
 | Easier to get clients into the portal | **Shipped** | PR #366 (send/copy link + rate limits), #367 (email CTA + login copy) | Reuses hashed/single-use/60-min issuance; token-free copy URL |
 | See whether a client received/used portal access + what's pending | **Shipped** | PR #370, migration 0111 | Practitioner status card: last sent / last seen / pending tasks / recent activity |
 | Upload multiple treatment photos at once | **Shipped** | PR #368 | Per-file validate + EXIF strip + per-file status; no silent partial failure |
@@ -39,6 +43,16 @@ Maps Chloe's (Willow) feedback items to their current status as of 2026-07-08. S
 
 ## Follow-ups worth noting to Chloe
 
-- Portal **verify** page still shows "expire after 30 minutes" (actual 60) — a pending copy fix.
+- Portal **verify** page copy — **RESOLVED** (PR #377): now says "1 hour" (matches the real TTL).
 - Postcare auto-send is available but **off by default** — turning it on for Willow needs the
   pre-enable checks (Resend key + aftercare text) in the current-state doc.
+
+## Remaining optional (none started; not a commitment)
+
+- **Charting:** treatment-plans multi-area canonical validation (same rule as #385); legacy
+  electrolysis-entry area path; real observation-chip vocabulary (awaiting the list).
+- **Calendar:** desktop **Day view** + **agenda/list** view; mobile **bottom sheets** +
+  **swipe-to-change-day** + mobile appointment preview.
+- **Member-own blocked-time editing** (currently owner-only).
+- **Later:** referral/conversion analytics (framework inert per studio); broad SaaS SMS
+  hardening (A2P/10DLC, per-studio sender strategy).
