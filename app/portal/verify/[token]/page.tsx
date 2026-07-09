@@ -161,7 +161,7 @@ function Unavailable() {
               {GENERIC_LINK_ERROR}
             </h1>
             <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-              Secure links expire after 30 minutes and can only be used
+              Secure links expire after 1 hour and can only be used
               once. Request a new link from the sign-in page and try
               again.
             </p>
