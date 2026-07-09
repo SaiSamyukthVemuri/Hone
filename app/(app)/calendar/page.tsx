@@ -43,6 +43,10 @@ import {
   weekdayLabel,
 } from "./calendar-format";
 import { CalendarViewToggle } from "./ViewToggle";
+import {
+  CalendarMobileDayView,
+  type MobileDayData,
+} from "./CalendarMobileDayView";
 import { MonthView, groupMonthAppointmentsByDate } from "./MonthView";
 import { groupMonthBlockedByDate } from "./month-blocked";
 import {
@@ -53,7 +57,14 @@ import {
 } from "@/lib/booking/month-grid";
 import { formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
 
-type Search = Promise<{ week?: string; view?: string; month?: string }>;
+type Search = Promise<{
+  week?: string;
+  view?: string;
+  month?: string;
+  // Mobile day view: the selected day. Anchors the loaded week to the week
+  // containing that day; desktop still renders that whole week unchanged.
+  day?: string;
+}>;
 
 function parseView(raw: string | undefined): "week" | "month" {
   return raw === "month" ? "month" : "week";
@@ -88,9 +99,16 @@ export default async function CalendarPage({
     });
   }
 
-  const weekStartParam = params.week ?? startOfWeek(today);
+  // Anchor the loaded week. A ?day= (from the mobile day view) wins and loads
+  // the week CONTAINING that day; existing ?week= links are unchanged; else the
+  // current week. Desktop always renders the resolved 7-day week either way.
+  const weekStartParam = params.day ?? params.week ?? startOfWeek(today);
   const weekStart = startOfWeek(weekStartParam);
   const weekEnd = addDays(weekStart, 6);
+  // Mobile day view's initial selected day: the ?day= if present, else today
+  // when it's in the loaded week, else the week's first day.
+  const initialSelectedDate =
+    params.day ?? (today >= weekStart && today <= weekEnd ? today : weekStart);
 
   const startUtc = utcInstantFromLocal(weekStart, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(addDays(weekStart, 7), "00:00", studio.timezone);
@@ -222,6 +240,23 @@ export default async function CalendarPage({
     recurringByDate.set(localDate, arr);
   }
 
+  // Per-day slices of the SAME loaded week data for the mobile day view — no
+  // new query, no divergent status/tz rules (identical maps the desktop grid
+  // uses). Passed as plain JSON to the client CalendarMobileDayView.
+  const mobileDays: MobileDayData[] = days.map((date, i) => ({
+    date,
+    weekdayShort: weekdayLabel(i),
+    monthDayLabel: monthDayLabel(date),
+    appts: byDate.get(date) ?? [],
+    timedBlocks: timedBlocksByDate.get(date) ?? [],
+    recurringBreaks: recurringByDate.get(date) ?? [],
+    availability: availabilityByDow.get(i) ?? null,
+    closedDay: isClosedDate(date, i),
+    blocked: blockoutReasonByDate.has(date),
+    blockedReason: blockoutReasonByDate.get(date) ?? null,
+    isToday: date === today,
+  }));
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -237,21 +272,24 @@ export default async function CalendarPage({
             weekHref={`/calendar?view=week&week=${weekStart}`}
             monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
           />
+          {/* Week-scoped nav is desktop-only. On mobile the day view owns
+              day navigation (prev/next/Today) so these week controls would be
+              redundant + confusing. */}
           <Link
             href={`/calendar?week=${prevWeek}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             ← Prev
           </Link>
           <Link
             href="/calendar"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Today
           </Link>
           <Link
             href={`/calendar?week=${nextWeek}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Next →
           </Link>
@@ -271,7 +309,24 @@ export default async function CalendarPage({
           sticky at the left (so hour labels remain visible while scrolling
           across days on mobile). Drag/positioning math is viewport-relative
           (getBoundingClientRect) and unaffected. */}
-      <div className="max-h-[calc(100dvh-13rem)] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
+      {/* Mobile primary surface (PR: mobile calendar redesign): a single-day
+          vertical timeline. Replaces the sideways-scrollable 7-day grid on
+          small screens. Reuses the same loaded week data + the existing
+          drawers. Self-gates with md:hidden. */}
+      <CalendarMobileDayView
+        days={mobileDays}
+        initialDate={initialSelectedDate}
+        today={today}
+        tz={studio.timezone}
+        timeFormat={timeFormat}
+        isOwner={isOwner}
+        clients={drawerClients}
+        services={services}
+        returnTo={returnTo}
+      />
+
+      {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
+      <div className="hidden max-h-[calc(100dvh-13rem)] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm md:block dark:border-neutral-800 dark:bg-neutral-950">
         <div className="min-w-[840px]">
           <div className="sticky top-0 z-20 grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0 border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
             <div className="sticky left-0 z-30 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900" />
@@ -379,7 +434,7 @@ export default async function CalendarPage({
         </div>
       </div>
 
-      <p className="text-xs text-neutral-500">
+      <p className="hidden text-xs text-neutral-500 md:block">
         Click an empty time slot to draft a new appointment, or drag to
         select a duration. Click an appointment for details.
       </p>

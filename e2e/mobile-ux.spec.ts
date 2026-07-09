@@ -523,45 +523,47 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "dashboard after charting");
   });
 
-  await test.step("calendar: loads without page-wide overflow", async () => {
+  await test.step("calendar: mobile day view loads as ONE day, no page-wide overflow", async () => {
     await page.goto("/calendar");
+    // The mobile single-day timeline renders (its floating +, day controls, and
+    // tap-to-book layer) — NOT the sideways-scrollable 7-day week grid.
     await expect(
-      page.getByRole("button", { name: /open quick-book draft/i }).first(),
+      page.getByRole("button", { name: "Add appointment" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: "Previous day" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Next day" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Book on /i }).first(),
     ).toBeAttached();
-    await expectNoPageOverflow(page, "calendar");
+    // The core win: one day, vertical only — no horizontal week-grid panning.
+    await expectNoPageOverflow(page, "calendar mobile day view");
   });
 
-  await test.step("calendar: touch tap on empty grid does nothing", async () => {
+  await test.step("calendar: floating + opens a booking draft, creating nothing until submit", async () => {
     const before = (await getAppointmentsForClient(seed.studioId, clientId))
       .length;
-    const grid = page
-      .getByRole("button", { name: /open quick-book draft/i })
-      .first();
-    const box = (await grid.boundingBox())!;
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + 80);
-    await page.waitForTimeout(600);
-    await expect(DRAWER(page)).toHaveCount(0);
+    await page.getByRole("button", { name: "Add appointment" }).click();
+    // The deliberate mobile create path opens the quick-book drawer...
+    await expect(DRAWER(page)).toBeVisible({ timeout: 10_000 });
     await expect(CHOOSER(page)).toHaveCount(0);
+    // ...but nothing is created until the practitioner submits.
     const after = (await getAppointmentsForClient(seed.studioId, clientId))
       .length;
     expect(after).toBe(before);
-  });
-
-  await test.step("calendar: touch drag does not open create flow", async () => {
-    await syntheticDrag(page, "touch");
-    await page.waitForTimeout(600);
-    await expect(DRAWER(page)).toHaveCount(0);
-    await expect(CHOOSER(page)).toHaveCount(0);
-  });
-
-  await test.step("calendar: explicit + Book button is the deliberate create path", async () => {
-    await page
-      .getByRole("button", { name: /^Book on /i })
-      .first()
-      .click();
-    await expect(DRAWER(page)).toBeVisible({ timeout: 10_000 });
     await DRAWER(page).getByRole("button", { name: "Close", exact: true }).click();
     await expect(DRAWER(page)).toHaveCount(0);
+  });
+
+  await test.step("calendar: day navigation stays on one day with no page-wide overflow", async () => {
+    await page.getByRole("button", { name: "Next day" }).click();
+    await expectNoPageOverflow(page, "calendar next day");
+    await page.getByRole("button", { name: "Previous day" }).click();
+    await page.getByRole("button", { name: "Today" }).first().click();
+    await expectNoPageOverflow(page, "calendar back to today");
   });
 
   await test.step("iPad: calendar fits and touch drag stays inert", async () => {
