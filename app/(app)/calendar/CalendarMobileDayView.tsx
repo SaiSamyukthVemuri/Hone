@@ -114,8 +114,10 @@ export function CalendarMobileDayView({
 
   return (
     <div className="md:hidden">
-      {/* Sticky mobile header: date + Today + prev/next + week strip. */}
-      <div className="sticky top-14 z-20 -mx-5 border-b border-neutral-200 bg-white/95 px-5 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
+      {/* Sticky mobile header: date + Today + prev/next + week strip. Kept
+          within the app's page padding (no negative margin) so it never causes
+          horizontal page overflow. */}
+      <div className="sticky top-14 z-20 border-b border-neutral-200 bg-white/95 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-base font-semibold">
