@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { parseNewStudioInput } from "@/lib/studios/new-studio";
+import { logAdminAction } from "@/lib/audit/admin-actions";
 
 const BASE = "/admin/studios/new";
 
@@ -34,6 +35,15 @@ export async function createStudioWithOwnerInvite(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user || !isAdmin(user.email)) {
+    // Record the blocked attempt (an authenticated non-admin reaching an admin
+    // action) with the actor's own id/email; safe metadata only.
+    await logAdminAction({
+      actorUserId: user?.id ?? null,
+      actorEmail: user?.email ?? null,
+      action: "studio_created",
+      targetType: "studio",
+      outcome: "blocked",
+    });
     throw new Error("Not authorized.");
   }
 
@@ -48,6 +58,18 @@ export async function createStudioWithOwnerInvite(
   });
   if (!parsed.ok) fail(parsed.error);
   const input = parsed.value;
+
+  // Highest-risk admin write: log a 'started' event before the writes so a trail
+  // exists even if the terminal event fails. Safe metadata only (slug is the
+  // public booking slug; owner email/name are deliberately NOT logged).
+  await logAdminAction({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    action: "studio_created",
+    targetType: "studio",
+    outcome: "started",
+    metadata: { slug: input.slug },
+  });
 
   // Service-role: studios has NO INSERT policy and pending_invitations INSERT
   // is owner-only, so RLS blocks the operator (who is not yet an owner of this
@@ -103,6 +125,14 @@ export async function createStudioWithOwnerInvite(
     .select("id")
     .single();
   if (studioErr || !studio) {
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      action: "studio_created",
+      targetType: "studio",
+      outcome: "failed",
+      metadata: { slug: input.slug, reason: "studio_insert_failed" },
+    });
     fail(`Failed to create studio: ${studioErr?.message ?? "unknown error"}`);
   }
 
@@ -133,8 +163,28 @@ export async function createStudioWithOwnerInvite(
         }),
       );
     }
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      studioId: studio.id,
+      targetType: "studio",
+      targetId: studio.id,
+      action: "studio_created",
+      outcome: "failed",
+      metadata: { slug: input.slug, reason: "owner_invite_failed" },
+    });
     fail(`Failed to create owner invitation: ${inviteErr.message}`);
   }
 
+  await logAdminAction({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    studioId: studio.id,
+    targetType: "studio",
+    targetId: studio.id,
+    action: "studio_created",
+    outcome: "succeeded",
+    metadata: { slug: input.slug },
+  });
   redirect(`${BASE}?created=${studio.id}`);
 }

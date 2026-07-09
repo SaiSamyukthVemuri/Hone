@@ -116,6 +116,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "lib/audit/admin-actions.ts",
+    purpose: "Admin action audit log — sole writer + reader of admin_action_events (migration 0113).",
+    why: "admin_action_events is RLS-locked to service-role (a cross-studio, append-only OPERATOR audit log — no tenant scope by design; there is no is_admin() SQL function). Called only from isAdmin-gated /admin server code; it records/reads audit rows and stores no secrets/PII (metadata is allowlisted + redacted before insert).",
+    scopeGuard: "admin_action_events",
+  },
+  {
     path: "app/admin/ops-alerts/actions.ts",
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
