@@ -17,6 +17,7 @@ import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
+import { DoneChartingButton } from "./DoneChartingButton";
 import {
   resolveSessionPaymentDefault,
   type SessionPaymentDefaultAmount,
@@ -510,12 +511,16 @@ export default async function SessionDetailPage({
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link
-            href={`/clients/${id}?tab=sessions`}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            Done charting
-          </Link>
+          {/* PR 1 (charting hardening): "Done charting" now shows a NON-BLOCKING
+              aftercare prompt when the session has no aftercare stamp. It never
+              blocks — "Continue without marking" always proceeds. When the stamp
+              is present it behaves like the old plain link. */}
+          <DoneChartingButton
+            sessionId={session.id}
+            doneHref={`/clients/${id}?tab=sessions`}
+            aftercareExplained={session.aftercare_and_risks_explained_at != null}
+            markAction={markAftercareExplainedAction}
+          />
           {paymentApptId && (
             <Link
               href={`/calendar/${paymentApptId}`}

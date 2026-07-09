@@ -203,7 +203,14 @@ export async function markAftercareExplainedAction(
     return { ok: false, error: GENERIC_ERROR };
   }
   const sessionId = str(formData.get("session_id"), 60);
-  const explained = str(formData.get("explained"), 10) === "true";
+  // Require EXPLICIT intent. Previously any value other than "true" (including a
+  // missing/garbage field) silently CLEARED the stamp; now only the literal
+  // "true"/"false" set/clear it, and anything else is rejected without a write.
+  const explainedRaw = str(formData.get("explained"), 10);
+  if (explainedRaw !== "true" && explainedRaw !== "false") {
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  const explained = explainedRaw === "true";
   if (!sessionId) return { ok: false, error: GENERIC_ERROR };
   const supabase = await createClient();
   const { error } = await supabase

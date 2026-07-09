@@ -157,7 +157,7 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByRole("heading", { name: "Finish up" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Done charting" }),
+      page.getByRole("button", { name: "Done charting" }),
     ).toBeVisible();
     const reviewLink = page.getByRole("link", {
       name: "Review appointment & billing",
