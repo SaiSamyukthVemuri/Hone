@@ -104,15 +104,7 @@ export async function updateSession(request: NextRequest) {
     // for the same reason as Stripe: do NOT broaden to /api/twilio/*
     // because any future Twilio endpoint (status callbacks, etc.)
     // should remain explicitly gated.
-    pathname === "/api/twilio/inbound-sms" ||
-    // Preview-only, auth-free mobile-calendar movement harness (PR #380). The
-    // page itself 404s in production (VERCEL_ENV === "production") and renders
-    // ONLY fabricated data — no auth, no Supabase, no DB, no real client data —
-    // so allowlisting it here exposes no authenticated surface. It lets the
-    // mobile calendar be tested on a phone from a Preview deploy without the
-    // login-bounce-to-production problem (getRequiredAppOrigin / Supabase
-    // redirect allowlist point practitioner auth back at hone.care).
-    pathname.startsWith("/preview/");
+    pathname === "/api/twilio/inbound-sms";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
