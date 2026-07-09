@@ -2,16 +2,15 @@
 
 import { useState } from "react";
 import { AREA_REGIONS, OTHER_AREA } from "@/lib/constants";
+import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 
 const PRIMARY_AREA_MAX = 60;
 
-// True when the value is one of the canonical chip strings (any region).
+// Canonical iff the value is in the FLAT AREAS list (incl. "Full face"/"Other"),
+// case-insensitive — NOT AREA_REGIONS alone, which decomposes "Full face" and
+// would wrongly route a legitimate "Full face" value into the Other input.
 function isCanonicalArea(value: string): boolean {
-  if (!value) return false;
-  for (const group of AREA_REGIONS) {
-    if (group.areas.includes(value)) return true;
-  }
-  return false;
+  return isCanonicalTreatmentArea(value);
 }
 
 // Region-grouped chip picker for a structured anatomical area. Used by

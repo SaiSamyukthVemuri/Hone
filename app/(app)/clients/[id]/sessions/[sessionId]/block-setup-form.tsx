@@ -69,6 +69,7 @@ import {
 } from "@/lib/sessions/clinical-response";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
+import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import {
   createTreatmentAreaWithEntryAction,
@@ -473,6 +474,11 @@ export function BlockSetupForm({
       setError(`Treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
       return;
     }
+    // PR 2: explicit custom-area intent. A non-empty area that isn't canonical
+    // can only come from the picker's "Other" free-text path, so flag it so the
+    // server accepts it as a deliberate custom area (not a typo/garbage).
+    const areaIsCustom =
+      trimmedArea.length > 0 && !isCanonicalTreatmentArea(trimmedArea);
     const trimmedDetail = draft.customAreaDetail.trim();
     if (trimmedDetail.length > CUSTOM_AREA_DETAIL_MAX) {
       setError(`Specifics must be ${CUSTOM_AREA_DETAIL_MAX} characters or fewer.`);
@@ -592,6 +598,7 @@ export function BlockSetupForm({
           primaryArea: trimmedArea || null,
           side: draft.side || null,
           customAreaDetail: trimmedDetail || null,
+          areaIsCustom,
           readings,
           ...clinicalResponse,
         });
@@ -621,6 +628,7 @@ export function BlockSetupForm({
         primaryArea: trimmedArea || null,
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
+        areaIsCustom,
         readings,
         ...clinicalResponse,
       });
