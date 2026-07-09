@@ -248,13 +248,19 @@ describe("calendar touch safety", () => {
 });
 
 describe("e2e coverage exists for the mobile behavior", () => {
-  it("the mobile spec asserts overflow, menu, touch inertness, and explicit create", () => {
+  it("the mobile spec asserts overflow, menu, the single-day mobile calendar, and create", () => {
     const spec = read("e2e/mobile-ux.spec.ts");
     expect(spec).toMatch(/scrollWidth/);
     expect(spec).toMatch(/Mobile navigation/);
-    expect(spec).toMatch(/touch tap on empty grid does nothing/);
-    expect(spec).toMatch(/touch drag does not open create flow/);
-    expect(spec).toMatch(/explicit \+ Book button is the deliberate create path/);
+    // Mobile calendar redesign: a single-day view (not the 7-day week grid),
+    // the floating + create path, and one-day navigation with no page overflow.
+    expect(spec).toMatch(/mobile day view loads as ONE day, no page-wide overflow/);
+    expect(spec).toMatch(
+      /floating \+ opens a booking draft, creating nothing until submit/,
+    );
+    expect(spec).toMatch(
+      /day navigation stays on one day with no page-wide overflow/,
+    );
     expect(spec).toMatch(/desktop: header nav, account dropdown, wordmark, drag-create/);
     expect(spec).toMatch(/iPad: calendar fits and touch drag stays inert/);
   });

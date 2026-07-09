@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef } from "react";
-import type { Service, StudioTimedBlock } from "@/lib/types/database";
+import type { StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
   RecurringBreakOccurrenceWithRule,
