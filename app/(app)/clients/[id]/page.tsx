@@ -15,6 +15,7 @@ import {
   hasFromLastVisitContent,
 } from "@/components/last-session-summary";
 import { TreatmentIntelligenceCard } from "@/components/treatment-intelligence-card";
+import { LastVisitCard } from "@/components/last-visit-card";
 import { BeforeTodayCard } from "@/components/before-today-card";
 import { buildBeforeToday } from "@/lib/sessions/before-today";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
@@ -354,6 +355,20 @@ export default async function ClientCheatSheetPage({
     ? sessionPerformerName(lastTreatment, practitioners)
     : null;
 
+  // Overview "Last visit" card — derived from the SINGLE last session
+  // that is already loaded above (no new query, no new summary). Total
+  // minutes sums the last session's own blocks; the aftercare stamp
+  // (0085) and "is this the very latest session" flag are read from the
+  // same last-treatment row.
+  const lastTreatmentTotalMinutes = lastTreatmentBlocks.reduce(
+    (sum, b) => sum + (b.minutes_performed ?? 0),
+    0,
+  );
+  const lastTreatmentAftercareAt = lastTreatment
+    ? ((lastTreatment as { aftercare_and_risks_explained_at?: string | null })
+        .aftercare_and_risks_explained_at ?? null)
+    : null;
+
   // PR #210: Treatment Intelligence. One read across ALL the client's
   // sessions (cap 200) with per-entry hairs; the pure builder turns
   // recorded history into the Overview summary. Read-only; recorded-
@@ -584,6 +599,28 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </section>
+
+          {/* Chloe: "on the client overview I want to clearly see what
+              we did last time." A scannable, RETROSPECTIVE recap of the
+              single last completed session, high on Overview (after the
+              safety-first pinned notes / allergies / skin). Pure reuse
+              of the already-loaded last-treatment data + the shared
+              buildLastSessionSummary render helpers — no new query, no
+              new clinical model, no AI, clinical-first (no price). The
+              forward-looking BeforeToday prep card is separate and
+              unchanged; the Sessions-tab "Last treatment" card (fuller,
+              with price) also stays. */}
+          <LastVisitCard
+            clientId={client.id}
+            sessionId={lastTreatment?.id ?? null}
+            startedAt={lastTreatment?.started_at ?? null}
+            modality={lastTreatment?.modality ?? null}
+            performerName={lastTreatmentPerformer}
+            aftercareExplainedAt={lastTreatmentAftercareAt}
+            totalMinutes={lastTreatmentTotalMinutes}
+            isLatestSession={lastTreatment?.id === sessions[0]?.id}
+            summary={lastTreatmentSummary}
+          />
 
           {/* PR #197 (Chloe round 3): portal messages moved to the
               dedicated Messages tab; Overview stays clinical-first. */}
