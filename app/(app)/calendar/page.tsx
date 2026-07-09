@@ -299,9 +299,14 @@ export default async function CalendarPage({
       />
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
-      <div className="hidden max-h-[calc(100dvh-13rem)] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm md:block dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="min-w-[840px]">
-          <div className="sticky top-0 z-20 grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0 border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+      {/* PR B: desktop week body = ONE clean vertical scroll. The columns are
+          minmax(0,1fr) so they always flex to fit the container width — no
+          horizontal scroll and no min-width forcing on desktop. Sticky day
+          header + sticky time rail + the 1px=1min positioning math are
+          unchanged. */}
+      <div className="hidden max-h-[calc(100dvh-13rem)] overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm md:block dark:border-neutral-800 dark:bg-neutral-950">
+        <div>
+          <div className="sticky top-0 z-20 grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
             <div className="sticky left-0 z-30 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900" />
             {days.map((date, i) => {
               const isToday = date === today;
@@ -357,7 +362,7 @@ export default async function CalendarPage({
               grid-row stretch entirely. Row math is unchanged:
               top = (h - HOUR_START) * 2 * ROW_HEIGHT_PX lines each label
               up with the DayColumn hour boundaries. */}
-          <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,_minmax(0,1fr))] md:min-w-0">
+          <div className="grid grid-cols-[60px_repeat(7,_minmax(0,1fr))]">
             {/* Time rail: sticky-left so hour labels stay visible while
                 scrolling across days on mobile. `sticky` (not `relative`) still
                 establishes the positioning context the absolute hour labels
