@@ -82,7 +82,11 @@ describe("5. copy areas and settings from last session", () => {
   it("copies area identity, settings, and the structured probe", () => {
     for (const f of [
       "block_name: b.block_name",
-      "primary_area: b.primary_area",
+      // Charting PR 2: the copied area is validated (canonical -> canonical
+      // casing, legacy/custom -> preserved as explicit custom), then carried
+      // forward — never dropped. Still an area copy, just validated.
+      "primary_area: copiedPrimaryArea",
+      "validateTreatmentArea(",
       "mode: b.mode",
       "energy_level: b.energy_level",
       "minutes_performed: b.minutes_performed",

@@ -8,6 +8,10 @@ import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import {
+  validateTreatmentArea,
+  isCanonicalTreatmentArea,
+} from "@/lib/sessions/area-validation";
+import {
   isNumbingStatus,
   isReactionType,
   isToleranceRating,
@@ -120,15 +124,18 @@ function normalizeStructuredArea(input: {
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
+  // Explicit "I deliberately picked Other" signal from the client. Non-canonical
+  // primary_area is accepted ONLY when this is true (see lib/sessions/area-validation).
+  areaIsCustom?: boolean;
 }): { ok: true; value: StructuredArea } | { ok: false; error: string } {
-  const rawArea = (input.primaryArea ?? "").trim();
-  if (rawArea.length > PRIMARY_AREA_MAX) {
-    return {
-      ok: false,
-      error: `Primary area must be ${PRIMARY_AREA_MAX} characters or fewer.`,
-    };
-  }
-  const primary_area = rawArea.length === 0 ? null : rawArea;
+  // PR 2: canonical-or-explicit-custom validation against the flat AREAS list.
+  const areaCheck = validateTreatmentArea(
+    input.primaryArea,
+    input.areaIsCustom ?? false,
+    PRIMARY_AREA_MAX,
+  );
+  if (!areaCheck.ok) return { ok: false, error: areaCheck.error };
+  const primary_area = areaCheck.value;
 
   const rawSide = (input.side ?? "").trim();
   let side: SessionBlockSide | null = null;
@@ -233,6 +240,8 @@ export type CreateBlockInput = {
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
+  // PR 2: explicit "Other" custom-area intent from the client.
+  areaIsCustom?: boolean;
   // Session Logging Phase B — optional structured probe (catalog key).
   // Validated + decomposed server-side. Empty/absent → no structured probe.
   probeOptionKey?: string | null;
@@ -288,6 +297,7 @@ export async function createSessionBlockAction(
     primaryArea: input.primaryArea ?? null,
     side: input.side ?? null,
     customAreaDetail: input.customAreaDetail ?? null,
+    areaIsCustom: input.areaIsCustom ?? false,
   });
   if (!areaCheck.ok) return areaCheck;
 
@@ -374,6 +384,8 @@ export type UpdateBlockInput = {
   // Legacy probe_type / probe_size remain patchable via `patch` above and
   // are never altered by this field.
   probeOptionKey?: string | null;
+  // PR 2: explicit "Other" custom-area intent from the client.
+  areaIsCustom?: boolean;
 };
 
 export async function updateSessionBlockAction(
@@ -399,6 +411,7 @@ export async function updateSessionBlockAction(
       primaryArea: patch.primary_area ?? null,
       side: patch.side ?? null,
       customAreaDetail: patch.custom_area_detail ?? null,
+      areaIsCustom: input.areaIsCustom ?? false,
     });
     if (!areaCheck.ok) return areaCheck;
     normalizedPatch = {
@@ -516,14 +529,25 @@ export async function copyPreviousSessionAreasAction(input: {
     };
   }
 
-  const rows = prevBlocks.map((b, i) => ({
-    studio_id: studio.id,
-    session_id: input.sessionId,
-    sort_order: i + 1,
-    block_name: b.block_name,
-    primary_area: b.primary_area,
-    side: b.side,
-    custom_area_detail: b.custom_area_detail,
+  const rows = prevBlocks.map((b, i) => {
+    // PR 2: run each copied area through the same validator. A prior area that
+    // is canonical is normalized to canonical casing; a legacy/custom area is
+    // treated as explicit custom (areaIsCustom = it isn't canonical) so it is
+    // PRESERVED verbatim, never dropped or rejected. Copies never regress data.
+    const areaCheck = validateTreatmentArea(
+      b.primary_area,
+      !isCanonicalTreatmentArea(b.primary_area),
+      PRIMARY_AREA_MAX,
+    );
+    const copiedPrimaryArea = areaCheck.ok ? areaCheck.value : b.primary_area;
+    return {
+      studio_id: studio.id,
+      session_id: input.sessionId,
+      sort_order: i + 1,
+      block_name: b.block_name,
+      primary_area: copiedPrimaryArea,
+      side: b.side,
+      custom_area_detail: b.custom_area_detail,
     mode: b.mode,
     apilus_modality: b.apilus_modality,
     energy_level: b.energy_level,
@@ -540,7 +564,8 @@ export async function copyPreviousSessionAreasAction(input: {
     // Response fields deliberately absent: tolerance_rating,
     // reaction_type, reaction_notes, caution_note default to null and
     // caution_for_next_session to false.
-  }));
+    };
+  });
 
   const { error: insertErr } = await supabase
     .from("session_blocks")
@@ -801,6 +826,7 @@ export type CreateAreaWithEntryInput = {
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
+  areaIsCustom?: boolean;
   readings?: EntryReadingsInput;
   // PR #190 (migration 0082): structured client response, all optional.
   toleranceRating?: number | null;
@@ -828,6 +854,7 @@ export async function createTreatmentAreaWithEntryAction(
     primaryArea: input.primaryArea ?? null,
     side: input.side ?? null,
     customAreaDetail: input.customAreaDetail ?? null,
+    areaIsCustom: input.areaIsCustom ?? false,
   });
   if (!areaCheck.ok) return areaCheck;
 
@@ -973,6 +1000,7 @@ export type UpdateAreaWithEntryInput = {
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
+  areaIsCustom?: boolean;
   readings?: EntryReadingsInput;
   // PR #190 (migration 0082): structured client response. The edit
   // form initializes its draft from the block row and always sends
@@ -1002,6 +1030,7 @@ export async function updateTreatmentAreaWithEntryAction(
     primaryArea: input.primaryArea ?? null,
     side: input.side ?? null,
     customAreaDetail: input.customAreaDetail ?? null,
+    areaIsCustom: input.areaIsCustom ?? false,
   });
   if (!areaCheck.ok) return areaCheck;
 
