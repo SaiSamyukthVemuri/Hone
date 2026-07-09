@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// Multi-studio-user robustness. getCurrentPractitionerWithStudio /
-// requirePractitionerWithStudio must handle 0, 1, and 2+ active memberships
-// without a raw 500 (the old .maybeSingle() errored on 2+). These tests drive
-// the real resolvers with a mocked Supabase client returning 0/1/2 active rows.
+// Multi-studio switcher (PR 2). getCurrentPractitionerWithStudio /
+// requirePractitionerWithStudio must handle 0, 1, and 2+ active memberships,
+// and for 2+ must honor a VALID selected-studio cookie while NEVER auto-picking
+// and NEVER trusting a stale/forged selection. Driven with a mocked Supabase
+// client + a mocked selected-studio cookie.
 
-// redirect() halts by throwing in Next; the mock throws a recognizable marker.
 const redirectMock = vi.fn((url: string) => {
   throw new Error(`REDIRECT:${url}`);
 });
@@ -16,6 +16,11 @@ vi.mock("next/navigation", () => ({
 let mockRows: Array<Record<string, unknown>> = [];
 let mockError: { message: string } | null = null;
 let mockUser: { id: string } | null = { id: "user-1" };
+let mockSelectedStudioId: string | null = null;
+
+vi.mock("@/lib/supabase/selected-studio", () => ({
+  readSelectedStudioId: async () => mockSelectedStudioId,
+}));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
@@ -23,7 +28,6 @@ vi.mock("@/lib/supabase/server", () => ({
     from: () => ({
       select: () => ({
         eq: () => ({
-          // .eq("active", true) is the terminal, awaited call.
           eq: async () => ({ data: mockError ? null : mockRows, error: mockError }),
         }),
       }),
@@ -52,15 +56,15 @@ beforeEach(() => {
   mockRows = [];
   mockError = null;
   mockUser = { id: "user-1" };
+  mockSelectedStudioId = null;
 });
 
-describe("one active membership — unchanged behavior", () => {
-  it("getCurrentPractitionerWithStudio returns the practitioner + studio", async () => {
+describe("one active membership — unchanged behavior (cookie irrelevant)", () => {
+  it("getCurrent returns the practitioner + studio", async () => {
     mockRows = [row("owner", "s1")];
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     expect(practitioner.role).toBe("owner");
     expect(studio.id).toBe("s1");
-    // studio is stripped off the practitioner object
     expect((practitioner as Record<string, unknown>).studio).toBeUndefined();
   });
   it("resolves the member role correctly too", async () => {
@@ -68,7 +72,7 @@ describe("one active membership — unchanged behavior", () => {
     const { practitioner } = await getCurrentPractitionerWithStudio();
     expect(practitioner.role).toBe("practitioner");
   });
-  it("requirePractitionerWithStudio returns without redirecting", async () => {
+  it("require returns without redirecting", async () => {
     mockRows = [row("owner", "s1")];
     const { studio } = await requirePractitionerWithStudio();
     expect(studio.id).toBe("s1");
@@ -88,28 +92,59 @@ describe("zero active memberships — no 500, invite gate", () => {
     await expect(requirePractitionerWithStudio()).rejects.toThrow(
       /REDIRECT:\/no-access$/,
     );
-    expect(redirectMock).toHaveBeenCalledWith("/no-access");
   });
 });
 
-describe("2+ active memberships — never a raw 500; never auto-picks", () => {
-  it("getCurrent throws a CONTROLLED multi-membership error (not the maybeSingle 'multiple rows' DB error)", async () => {
+describe("2+ memberships, NO selection — chooser (never auto-pick)", () => {
+  it("getCurrent throws a CONTROLLED choose error (not the raw 'multiple rows' DB error)", async () => {
     mockRows = [row("owner", "s1"), row("practitioner", "s2")];
     await expect(getCurrentPractitionerWithStudio()).rejects.toThrow(
-      /Multiple active studio memberships \(2\)/,
+      /choose a studio/i,
     );
-    // it must NOT surface the raw supabase multiple-rows error
     await expect(getCurrentPractitionerWithStudio()).rejects.not.toThrow(
       /multiple \(or no\) rows/i,
     );
   });
-  it("require redirects to the clean multiple-studios state (no auto-pick)", async () => {
+  it("require redirects to the chooser", async () => {
     mockRows = [row("owner", "s1"), row("practitioner", "s2")];
     await expect(requirePractitionerWithStudio()).rejects.toThrow(
       /REDIRECT:\/no-access\?reason=multiple-studios/,
     );
-    expect(redirectMock).toHaveBeenCalledWith(
-      "/no-access?reason=multiple-studios",
+  });
+});
+
+describe("2+ memberships, VALID selection — resolves the selected studio", () => {
+  it("getCurrent returns the SELECTED studio (not the first row)", async () => {
+    mockRows = [row("owner", "s1"), row("practitioner", "s2")];
+    mockSelectedStudioId = "s2";
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    expect(studio.id).toBe("s2");
+    // role follows the SELECTED membership
+    expect(practitioner.role).toBe("practitioner");
+  });
+  it("require returns the selected studio without redirecting", async () => {
+    mockRows = [row("owner", "s1"), row("practitioner", "s2")];
+    mockSelectedStudioId = "s1";
+    const { studio, practitioner } = await requirePractitionerWithStudio();
+    expect(studio.id).toBe("s1");
+    expect(practitioner.role).toBe("owner");
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("2+ memberships, INVALID/stale selection — ignored, chooser", () => {
+  it("a cookie that matches no active membership is NOT trusted (getCurrent -> choose)", async () => {
+    mockRows = [row("owner", "s1"), row("practitioner", "s2")];
+    mockSelectedStudioId = "s-other"; // a studio the user is NOT a member of
+    await expect(getCurrentPractitionerWithStudio()).rejects.toThrow(
+      /choose a studio/i,
+    );
+  });
+  it("require redirects to the chooser for a stale cookie (no cross-studio leak)", async () => {
+    mockRows = [row("owner", "s1"), row("practitioner", "s2")];
+    mockSelectedStudioId = "s-other";
+    await expect(requirePractitionerWithStudio()).rejects.toThrow(
+      /REDIRECT:\/no-access\?reason=multiple-studios/,
     );
   });
 });

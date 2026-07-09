@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { signOutFromGate } from "./actions";
+import { listActiveStudioMemberships } from "@/lib/supabase/queries";
+import { signOutFromGate, switchStudioAction } from "./actions";
 
 // Invite-only "no studio access yet" gate (PR #253). Hone is invite-only
 // for supervised studios. A signed-in user with NO active practitioner
@@ -36,24 +37,19 @@ export default async function NoAccessPage() {
     redirect("/login");
   }
 
-  // Count active memberships explicitly (NOT .maybeSingle(), which errors on
-  // 2+ rows). Exactly one active studio -> they have access, send to /dashboard.
-  // Zero -> invite-only gate. Two or more -> the "multiple studios" state below.
-  const { data: memberships } = await supabase
-    .from("practitioners")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("active", true);
-  const activeCount = memberships?.length ?? 0;
-  if (activeCount === 1) {
+  // Load active memberships (RLS-scoped, no .maybeSingle()). Exactly one active
+  // studio -> they have access, send to /dashboard. Zero -> invite-only gate.
+  // Two or more -> the studio chooser below.
+  const memberships = await listActiveStudioMemberships();
+  if (memberships.length === 1) {
     // They have studio access; the gate is not for them.
     redirect("/dashboard");
   }
-  const multiple = activeCount > 1;
+  const multiple = memberships.length > 1;
 
-  const heading = multiple ? "Multiple studios detected" : "No studio access yet";
+  const heading = multiple ? "Choose a studio" : "No studio access yet";
   const body = multiple
-    ? "Your account is an active member of more than one studio. Switching between studios isn't available yet, so we can't open your workspace automatically. Please contact Hone and we'll get you to the right studio."
+    ? "Your account is an active member of more than one studio. Choose which studio you want to work in — you can switch anytime from the account menu."
     : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
 
   return (
@@ -86,6 +82,31 @@ export default async function NoAccessPage() {
         >
           {body}
         </p>
+
+        {multiple && (
+          <div className="mb-10 flex flex-col items-stretch gap-3">
+            {memberships.map((m) => (
+              <form key={m.studioId} action={switchStudioAction}>
+                <input type="hidden" name="studio_id" value={m.studioId} />
+                <button
+                  type="submit"
+                  className="flex w-full flex-col items-start gap-0.5 px-5 py-3 text-left transition-opacity hover:opacity-80"
+                  style={{ border: `1px solid ${PALETTE.ink}` }}
+                >
+                  <span
+                    className="text-[16px] font-medium"
+                    style={{ color: PALETTE.ink }}
+                  >
+                    {m.studioName}
+                  </span>
+                  <span className="text-[13px]" style={{ color: PALETTE.muted }}>
+                    {m.role === "owner" ? "Owner" : "Practitioner"}
+                  </span>
+                </button>
+              </form>
+            ))}
+          </div>
+        )}
 
         <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">
           <form action={signOutFromGate}>

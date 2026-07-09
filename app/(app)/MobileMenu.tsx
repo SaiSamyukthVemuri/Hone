@@ -16,11 +16,13 @@ export function MobileMenu({
   displayName,
   studioName,
   role,
+  canSwitchStudio,
 }: {
   admin: boolean;
   displayName: string;
   studioName: string;
   role: string;
+  canSwitchStudio: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -110,6 +112,14 @@ export function MobileMenu({
             {[
               { href: "/settings/profile", label: "Settings" },
               { href: "/getting-started", label: "Getting Started" },
+              ...(canSwitchStudio
+                ? [
+                    {
+                      href: "/no-access?reason=multiple-studios",
+                      label: "Switch studio",
+                    },
+                  ]
+                : []),
               ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
             ].map((item) => (
               <Link

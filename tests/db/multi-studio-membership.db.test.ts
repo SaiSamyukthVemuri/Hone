@@ -67,3 +67,27 @@ describe("RLS is unchanged (no weakening)", () => {
     expect(res.rowCount).toBe(0);
   });
 });
+
+describe("switch-action membership verification (RLS-enforced)", () => {
+  // Mirrors switchStudioAction's guard: it only sets the cookie if this query
+  // (run as the signed-in user) returns a row.
+  async function verifySwitch(userId: string, studioId: string) {
+    return asUser(userId, (q) =>
+      q(
+        `select id from public.practitioners
+         where user_id = $1 and studio_id = $2 and active = true`,
+        [userId, studioId],
+      ),
+    );
+  }
+
+  it("allows switching to a studio the user is an active member of", async () => {
+    const res = await verifySwitch(a.userId, b.studioId);
+    expect(res.rowCount).toBe(1);
+  });
+
+  it("REJECTS switching to a studio the user is not a member of (0 rows -> no cookie)", async () => {
+    const res = await verifySwitch(a.userId, c.studioId);
+    expect(res.rowCount).toBe(0);
+  });
+});

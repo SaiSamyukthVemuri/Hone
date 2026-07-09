@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
+import { readSelectedStudioId } from "./selected-studio";
 import type {
   ApilusModality,
   Appointment,
@@ -29,38 +30,91 @@ type ServerSupabase = Awaited<ReturnType<typeof createClient>>;
 //
 // Hone lets a user be an active practitioner in more than one studio: the
 // practitioners unique key is (studio_id, user_id) — NOT user_id — so 0, 1, or
-// 2+ active rows are all reachable states. The old resolvers used
-// `.maybeSingle()`, which ERRORS on 2+ rows (an opaque "multiple rows" DB error
-// surfacing as a raw 500). This resolver returns the count explicitly so every
-// caller can pick a safe, deterministic outcome. It NEVER auto-picks a studio
-// for a multi-membership user — a real studio switcher is deferred to a later PR.
+// 2+ active rows are all reachable states. (The old resolvers used
+// `.maybeSingle()`, which ERRORS on 2+ rows.)
+//
+// For 2+ memberships the user must CHOOSE a studio; the choice is persisted in
+// the httpOnly `hone_selected_studio` cookie (see lib/supabase/selected-studio).
+// The cookie is NEVER trusted on its own: this resolver honors it only if it
+// matches one of the user's ACTIVE memberships (the rows below are already
+// user-scoped + RLS-scoped). A missing/stale/forged value resolves to "choose"
+// (the chooser), never to another studio's data, and a studio is NEVER
+// auto-picked for a multi-membership user.
+export type StudioMembershipOption = {
+  studioId: string;
+  studioName: string;
+  role: string;
+};
+
 export type PractitionerMembership =
   | { kind: "none" }
   | { kind: "one"; value: PractitionerWithStudio }
-  | { kind: "multiple"; count: number };
+  | { kind: "selected"; value: PractitionerWithStudio }
+  | { kind: "choose"; options: StudioMembershipOption[] };
 
-async function resolveActivePractitionerMembership(
+function toValue(
+  row: Practitioner & { studio: Studio },
+): PractitionerWithStudio {
+  const { studio, ...practitioner } = row;
+  return { practitioner: practitioner as Practitioner, studio };
+}
+
+async function loadActiveMembershipRows(
   supabase: ServerSupabase,
   userId: string,
-): Promise<PractitionerMembership> {
+): Promise<Array<Practitioner & { studio: Studio }>> {
   const { data, error } = await supabase
     .from("practitioners")
     .select("*, studio:studios(*)")
     .eq("user_id", userId)
     .eq("active", true);
-
   if (error) {
     throw new Error(`Failed to load practitioner: ${error.message}`);
   }
-  const rows = (data ?? []) as Array<Practitioner & { studio: Studio }>;
-  if (rows.length === 0) return { kind: "none" };
-  if (rows.length > 1) return { kind: "multiple", count: rows.length };
+  return (data ?? []) as Array<Practitioner & { studio: Studio }>;
+}
 
-  const { studio, ...practitioner } = rows[0];
+async function resolveActivePractitionerMembership(
+  supabase: ServerSupabase,
+  userId: string,
+  selectedStudioId: string | null,
+): Promise<PractitionerMembership> {
+  const rows = await loadActiveMembershipRows(supabase, userId);
+  if (rows.length === 0) return { kind: "none" };
+  if (rows.length === 1) return { kind: "one", value: toValue(rows[0]) };
+
+  // 2+ active memberships: honor a valid selection, otherwise send to chooser.
+  if (selectedStudioId) {
+    const match = rows.find((r) => r.studio_id === selectedStudioId);
+    if (match) return { kind: "selected", value: toValue(match) };
+    // else: stale/forged selection — fall through to the chooser (never trust it).
+  }
   return {
-    kind: "one",
-    value: { practitioner: practitioner as Practitioner, studio },
+    kind: "choose",
+    options: rows.map((r) => ({
+      studioId: r.studio_id,
+      studioName: r.studio.name,
+      role: r.role,
+    })),
   };
+}
+
+// The user's active studio memberships (for the chooser + the "Switch studio"
+// affordance). RLS-scoped + user-scoped; safe to expose studio name + role.
+export async function listActiveStudioMemberships(): Promise<
+  StudioMembershipOption[]
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+  const rows = await loadActiveMembershipRows(supabase, user.id);
+  return rows.map((r) => ({
+    studioId: r.studio_id,
+    studioName: r.studio.name,
+    role: r.role,
+  }));
 }
 
 // Returns the signed-in user's active practitioner row + studio.
@@ -75,18 +129,23 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     redirect("/login");
   }
 
-  const membership = await resolveActivePractitionerMembership(supabase, user.id);
+  const selectedStudioId = await readSelectedStudioId();
+  const membership = await resolveActivePractitionerMembership(
+    supabase,
+    user.id,
+    selectedStudioId,
+  );
   if (membership.kind === "none") {
     throw new Error("No active practitioner found for the signed-in user.");
   }
-  if (membership.kind === "multiple") {
-    // Controlled (not raw-DB) error, and never an auto-picked studio. This is
-    // only reached as a server-action backstop: the middleware + shell layout
-    // redirect multi-membership users to /no-access before any page loader runs,
-    // and server actions run inside try/catch that returns a generic denial —
-    // so no raw 500 reaches the user because of multiple rows.
+  if (membership.kind === "choose") {
+    // Controlled (not raw-DB) error, and never an auto-picked studio. Reached
+    // only as a server-action backstop: the middleware + shell layout redirect
+    // multi-membership users with no valid selection to the chooser before any
+    // page loader runs, and server actions run inside try/catch that returns a
+    // generic denial — so no raw 500 reaches the user because of multiple rows.
     throw new Error(
-      `Multiple active studio memberships (${membership.count}) for the signed-in user; studio switching is not yet available.`,
+      `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
   }
   return membership.value;
@@ -99,8 +158,9 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
 // auth.users row but NO studio/practitioner — must not reach the app.
 // Instead of throwing a raw 500 (what getCurrentPractitionerWithStudio
 // does), this redirects:
-//   * no auth user            -> /login
-//   * authed, but no studio   -> /no-access  (the safe invite-only gate)
+//   * no auth user                 -> /login
+//   * authed, but no studio        -> /no-access  (the safe invite-only gate)
+//   * authed, 2+ studios, no valid selection -> /no-access?reason=multiple-studios (chooser)
 // The throwing variant stays the backstop for direct server-action POSTs
 // (those run inside try/catch and safely return a generic denial), so
 // this redirecting guard is used ONLY where a clean redirect is wanted
@@ -115,15 +175,20 @@ export async function requirePractitionerWithStudio(): Promise<PractitionerWithS
     redirect("/login");
   }
 
-  const membership = await resolveActivePractitionerMembership(supabase, user.id);
+  const selectedStudioId = await readSelectedStudioId();
+  const membership = await resolveActivePractitionerMembership(
+    supabase,
+    user.id,
+    selectedStudioId,
+  );
   if (membership.kind === "none") {
     // Authenticated but no studio membership: invite-only gate.
     redirect("/no-access");
   }
-  if (membership.kind === "multiple") {
-    // Authenticated with 2+ active studios but no switcher yet: a clean,
-    // non-500 state (never an auto-picked studio). The /no-access page shows
-    // "multiple studios" copy when the active count is > 1.
+  if (membership.kind === "choose") {
+    // Authenticated with 2+ active studios but no valid selection: send to the
+    // chooser (never an auto-picked studio). /no-access renders the chooser
+    // when the active count is > 1.
     redirect("/no-access?reason=multiple-studios");
   }
 
