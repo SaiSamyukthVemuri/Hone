@@ -48,6 +48,29 @@ export function monthDayLabel(date: string): string {
   return `${monthLabel} ${day}`;
 }
 
+// Google-style visible week range label from two YYYY-MM-DD strings:
+//   same month   -> "Jul 7 – 13, 2026"
+//   same year    -> "Jun 29 – Jul 5, 2026"
+//   cross year   -> "Dec 29, 2025 – Jan 4, 2026"
+// Pure string math (no Date construction) so it never drifts across timezones.
+export function weekRangeLabel(startStr: string, endStr: string): string {
+  const sM = parseInt(startStr.slice(5, 7), 10);
+  const sD = parseInt(startStr.slice(8, 10), 10);
+  const sY = startStr.slice(0, 4);
+  const eM = parseInt(endStr.slice(5, 7), 10);
+  const eD = parseInt(endStr.slice(8, 10), 10);
+  const eY = endStr.slice(0, 4);
+  const sMonth = MONTHS_SHORT[sM - 1] ?? "";
+  const eMonth = MONTHS_SHORT[eM - 1] ?? "";
+  if (sY !== eY) {
+    return `${sMonth} ${sD}, ${sY} – ${eMonth} ${eD}, ${eY}`;
+  }
+  if (sM !== eM) {
+    return `${sMonth} ${sD} – ${eMonth} ${eD}, ${eY}`;
+  }
+  return `${sMonth} ${sD} – ${eD}, ${eY}`;
+}
+
 // Hour-of-day → "8 AM" / "12 PM" / "1 PM". Used by the left time rail.
 export function formatHourLabel(hour24: number): string {
   const period = hour24 >= 12 ? "PM" : "AM";

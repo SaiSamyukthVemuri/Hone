@@ -1,4 +1,3 @@
-import Link from "next/link";
 import {
   getClientsForStudio,
   getCurrentPractitionerWithStudio,
@@ -41,8 +40,9 @@ import {
   formatHourLabel,
   monthDayLabel,
   weekdayLabel,
+  weekRangeLabel,
 } from "./calendar-format";
-import { CalendarViewToggle } from "./ViewToggle";
+import { CalendarToolbar } from "./CalendarToolbar";
 import {
   CalendarMobileDayView,
   type MobileDayData,
@@ -259,48 +259,21 @@ export default async function CalendarPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Calendar</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Week of {weekStart} → {weekEnd} · {studio.timezone}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <CalendarViewToggle
-            currentView="week"
-            weekHref={`/calendar?view=week&week=${weekStart}`}
-            monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
-          />
-          {/* Week-scoped nav is desktop-only. On mobile the day view owns
-              day navigation (prev/next/Today) so these week controls would be
-              redundant + confusing. */}
-          <Link
-            href={`/calendar?week=${prevWeek}`}
-            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            ← Prev
-          </Link>
-          <Link
-            href="/calendar"
-            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Today
-          </Link>
-          <Link
-            href={`/calendar?week=${nextWeek}`}
-            className="hidden rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 md:inline-block dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Next →
-          </Link>
-          <Link
-            href="/calendar/upcoming"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Upcoming
-          </Link>
-        </div>
-      </header>
+      {/* Google/Apple-style toolbar. Week-scoped step nav (Today/‹/›) is
+          desktop-only: on mobile the PR #380 day view owns day navigation, so
+          these week controls would be redundant. */}
+      <CalendarToolbar
+        view="week"
+        rangeLabel={weekRangeLabel(weekStart, weekEnd)}
+        timezone={studio.timezone}
+        weekHref={`/calendar?view=week&week=${weekStart}`}
+        monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
+        prevHref={`/calendar?week=${prevWeek}`}
+        todayHref="/calendar"
+        nextHref={`/calendar?week=${nextWeek}`}
+        upcomingHref="/calendar/upcoming"
+        hideStepNavOnMobile
+      />
 
       {/* Layout (PR B): the calendar body scrolls INTERNALLY — the grid is a
           fixed 1020px, so without a height bound it forced the whole page to
@@ -547,45 +520,21 @@ async function renderMonthView(opts: {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Calendar</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            {monthYearLabel(monthAnchor)} · {studio.timezone}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <CalendarViewToggle
-            currentView="month"
-            weekHref={lastWeekHref}
-            monthHref={`/calendar?view=month&month=${monthAnchor}`}
-          />
-          <Link
-            href={`/calendar?view=month&month=${prevMonth}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            ← Prev
-          </Link>
-          <Link
-            href={`/calendar?view=month`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Today
-          </Link>
-          <Link
-            href={`/calendar?view=month&month=${nextMonth}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Next →
-          </Link>
-          <Link
-            href="/calendar/upcoming"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Upcoming
-          </Link>
-        </div>
-      </header>
+      {/* Same Google/Apple-style toolbar as the week view, for coherent
+          switching. Month step nav stays visible on all sizes (mobile month
+          has no separate day-nav). */}
+      <CalendarToolbar
+        view="month"
+        rangeLabel={monthYearLabel(monthAnchor)}
+        timezone={studio.timezone}
+        weekHref={lastWeekHref}
+        monthHref={`/calendar?view=month&month=${monthAnchor}`}
+        prevHref={`/calendar?view=month&month=${prevMonth}`}
+        todayHref="/calendar?view=month"
+        nextHref={`/calendar?view=month&month=${nextMonth}`}
+        upcomingHref="/calendar/upcoming"
+        hideStepNavOnMobile={false}
+      />
 
       <MonthView
         monthAnchor={monthAnchor}
