@@ -82,8 +82,13 @@ describe("calendar return-nav wiring (source pins)", () => {
     expect(PAGE).toMatch(/returnTo=\{returnTo\}/);
   });
 
-  it("the appointment card link carries the return context", () => {
-    expect(DAYCOL).toMatch(/href=\{`\/calendar\/\$\{a\.id\}\$\{returnTo\}`\}/);
+  it("the appointment preview carries the return context on its full-details link", () => {
+    // PR C-lite: the card now opens an in-context preview (no navigation);
+    // DayColumn passes returnTo into the preview, whose "Open full details" deep
+    // link preserves the return context to /calendar/[id].
+    expect(DAYCOL).toMatch(/<AppointmentPreviewDrawer[\s\S]*?returnTo=\{returnTo\}/);
+    const PREVIEW = read("app/(app)/calendar/AppointmentPreviewDrawer.tsx");
+    expect(PREVIEW).toMatch(/href=\{`\/calendar\/\$\{a\.id\}\$\{returnTo\}`\}/);
   });
 
   it("the detail page reads searchParams and uses a safe back href", () => {
