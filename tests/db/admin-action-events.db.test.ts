@@ -20,8 +20,8 @@ beforeAll(async () => {
   await adminQuery(
     `insert into public.admin_action_events
        (actor_user_id, actor_email, actor_role, studio_id, target_type, target_id, action, outcome, metadata)
-     values ($1, $2, 'admin', $3, 'studio', $3, 'studio_created', 'succeeded', '{"slug":"aae"}'::jsonb)`,
-    [a.userId, "operator@example.com", a.studioId],
+     values ($1, $2, 'admin', $3, 'studio', $4, 'studio_created', 'succeeded', '{"slug":"aae"}'::jsonb)`,
+    [a.userId, "operator@example.com", a.studioId, a.studioId],
   );
 });
 afterAll(async () => {
