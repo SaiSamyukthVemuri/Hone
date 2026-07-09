@@ -12,7 +12,6 @@
 // so clicks land on event cards first and only fall through to
 // the overlay on truly empty space.
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
@@ -34,6 +33,7 @@ import {
 import { DragActionChooser } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
+import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module — a client-module value imported by a Server Component
@@ -202,6 +202,11 @@ export function DayColumn({
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
+  // PR C-lite: the appointment whose in-context preview drawer is open. Holds
+  // the appointment object already in this column's props — no new query.
+  const [preview, setPreview] = useState<AppointmentWithPractitionerColor | null>(
+    null,
+  );
   // PR #139. Drag-created drafts route through a chooser ("Book
   // appointment" vs "Block time") instead of opening the quick-book
   // drawer immediately. chooserDraft holds the dragged range while
@@ -716,9 +721,15 @@ export function DayColumn({
                 ? "No-show"
                 : null;
         return (
-          <Link
+          <button
             key={a.id}
-            href={`/calendar/${a.id}${returnTo}`}
+            type="button"
+            // PR C-lite: clicking an appointment opens an in-context preview
+            // drawer (Google/Apple-style) instead of navigating away. The full
+            // detail route (/calendar/[id]) is unchanged and reachable from the
+            // preview's "Open full details" link. z-10 keeps this above the
+            // empty-slot booking overlay, so a card click never books.
+            onClick={() => setPreview(a)}
             style={{ top, height }}
             title={
               serviceName
@@ -732,7 +743,7 @@ export function DayColumn({
             // red unique. softCardClasses still exists for any
             // future practitioner-color surface but is not used on
             // the per-appointment card any more.
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg text-left border-l-4 ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
               // Hierarchy (Chloe / Fresha-readability): time range, then the
@@ -759,7 +770,7 @@ export function DayColumn({
                 </span>
               </div>
             )}
-          </Link>
+          </button>
         );
       })}
 
@@ -826,6 +837,17 @@ export function DayColumn({
         studioTimezone={tz}
         timeFormat={timeFormat}
         onClose={() => setEditingBlock(null)}
+      />
+
+      {/* PR C-lite: read-only in-context appointment preview. Full editor +
+          lifecycle/payment actions stay on the unchanged /calendar/[id] route,
+          reachable from the preview's "Open full details" link. */}
+      <AppointmentPreviewDrawer
+        appointment={preview}
+        studioTimezone={tz}
+        timeFormat={timeFormat}
+        returnTo={returnTo}
+        onClose={() => setPreview(null)}
       />
     </div>
   );

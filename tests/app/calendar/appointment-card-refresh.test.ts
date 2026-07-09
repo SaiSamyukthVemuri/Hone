@@ -51,9 +51,11 @@ describe("appointment card renders a time range + hierarchy", () => {
     expect(DAYCOL).toMatch(/serviceName && \(\s*\n?\s*<div className="truncate text-\[10px\] opacity-70">\s*\n?\s*\{serviceName\}/);
   });
 
-  it("keeps the terminal/cancelled dim + the click link unchanged", () => {
+  it("keeps the terminal/cancelled dim; the card opens the in-context preview", () => {
     expect(DAYCOL).toMatch(/terminal \? "opacity-60" : ""/);
-    expect(DAYCOL).toMatch(/href=\{`\/calendar\/\$\{a\.id\}\$\{returnTo\}`\}/);
+    // PR C-lite: the appointment card is a button that opens the preview drawer
+    // (no navigation); the /calendar/[id] deep link lives in the preview.
+    expect(DAYCOL).toMatch(/onClick=\{\(\) => setPreview\(a\)\}/);
   });
 });
 
