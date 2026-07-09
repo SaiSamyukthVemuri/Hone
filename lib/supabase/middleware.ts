@@ -137,15 +137,25 @@ export async function updateSession(request: NextRequest) {
     const isAdminRoute =
       pathname === "/admin" || pathname.startsWith("/admin/");
     if (!(isAdminRoute && isAdmin(user.email))) {
-      const { data: practitioner } = await supabase
+      // Count active memberships explicitly (NOT .maybeSingle(), which errors
+      // on 2+ rows). A user may be an active practitioner in more than one
+      // studio (unique key is (studio_id, user_id)):
+      //   * 0 active  -> /no-access (invite-only gate)
+      //   * exactly 1 -> proceed unchanged (the single-studio pilot path)
+      //   * 2+ active -> /no-access?reason=multiple-studios (clean, non-500;
+      //                  studio switching is deferred to a later PR)
+      const { data: memberships } = await supabase
         .from("practitioners")
         .select("id")
         .eq("user_id", user.id)
-        .eq("active", true)
-        .maybeSingle();
-      if (!practitioner) {
+        .eq("active", true);
+      const activeCount = memberships?.length ?? 0;
+      if (activeCount !== 1) {
         const url = request.nextUrl.clone();
         url.pathname = "/no-access";
+        if (activeCount > 1) {
+          url.searchParams.set("reason", "multiple-studios");
+        }
         return NextResponse.redirect(url);
       }
     }

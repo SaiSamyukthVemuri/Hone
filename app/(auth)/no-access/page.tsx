@@ -36,16 +36,25 @@ export default async function NoAccessPage() {
     redirect("/login");
   }
 
-  const { data: practitioner } = await supabase
+  // Count active memberships explicitly (NOT .maybeSingle(), which errors on
+  // 2+ rows). Exactly one active studio -> they have access, send to /dashboard.
+  // Zero -> invite-only gate. Two or more -> the "multiple studios" state below.
+  const { data: memberships } = await supabase
     .from("practitioners")
     .select("id")
     .eq("user_id", user.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (practitioner) {
+    .eq("active", true);
+  const activeCount = memberships?.length ?? 0;
+  if (activeCount === 1) {
     // They have studio access; the gate is not for them.
     redirect("/dashboard");
   }
+  const multiple = activeCount > 1;
+
+  const heading = multiple ? "Multiple studios detected" : "No studio access yet";
+  const body = multiple
+    ? "Your account is an active member of more than one studio. Switching between studios isn't available yet, so we can't open your workspace automatically. Please contact Hone and we'll get you to the right studio."
+    : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
 
   return (
     <main
@@ -68,16 +77,14 @@ export default async function NoAccessPage() {
           className="font-[var(--font-fraunces)] mb-6 text-[32px] font-bold leading-[1.05]"
           style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
         >
-          No studio access yet
+          {heading}
         </h1>
 
         <p
           className="mb-10 text-[16px] leading-[1.6]"
           style={{ color: PALETTE.muted }}
         >
-          Hone is currently invite-only for supervised studios. Use the email
-          address your studio invitation was sent to, or contact Hone if you
-          believe you should have access.
+          {body}
         </p>
 
         <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">
