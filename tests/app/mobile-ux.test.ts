@@ -225,20 +225,22 @@ describe("calendar touch safety", () => {
     expect(DAY_COLUMN).toMatch(/onClick=\{\(\) => openDraftAtY\(0\)\}/);
   });
 
-  it("the week grid scrolls inside its own card on phones, not page-wide", () => {
-    // PR B: the wrapper is now height-bounded and scrolls INTERNALLY on both
-    // axes (max-h + overflow-y-auto + overflow-x-auto), so the calendar body
-    // scrolls inside its card instead of forcing the whole page to scroll. The
-    // grid rows keep a phone min-width so days stay readable.
+  it("the desktop week grid is desktop-only with ONE clean vertical scroll; phones use the day view", () => {
+    // PR #380 moved phones to the single-day timeline; the week grid is now
+    // hidden md:block (desktop-only). Desktop PR B made that body a single
+    // vertical scroll — no horizontal-scroll / min-width machinery.
     expect(CALENDAR_PAGE).toMatch(
-      /max-h-\[calc\(100dvh-13rem\)\] overflow-x-auto overflow-y-auto rounded-xl/,
+      /hidden max-h-\[calc\(100dvh-13rem\)\] overflow-y-auto rounded-xl[^"]*md:block/,
     );
+    expect(CALENDAR_PAGE).not.toMatch(/overflow-x-auto/);
+    expect(CALENDAR_PAGE).not.toMatch(/min-w-\[840px\]|min-w-\[760px\]/);
+    // header + body still share the same 7-day grid template
     const gridCount = (
-      CALENDAR_PAGE.match(
-        /min-w-\[760px\] grid-cols-\[60px_repeat\(7,_minmax\(0,1fr\)\)\] md:min-w-0/g,
-      ) ?? []
+      CALENDAR_PAGE.match(/grid-cols-\[60px_repeat\(7,_minmax\(0,1fr\)\)\]/g) ?? []
     ).length;
-    expect(gridCount).toBe(2);
+    expect(gridCount).toBeGreaterThanOrEqual(2);
+    // phones get the single-day timeline, not the week grid
+    expect(CALENDAR_PAGE).toMatch(/<CalendarMobileDayView/);
   });
 
   it("booking business rules and persistence are untouched", () => {
