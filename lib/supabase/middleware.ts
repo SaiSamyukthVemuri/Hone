@@ -137,26 +137,44 @@ export async function updateSession(request: NextRequest) {
     const isAdminRoute =
       pathname === "/admin" || pathname.startsWith("/admin/");
     if (!(isAdminRoute && isAdmin(user.email))) {
-      // Count active memberships explicitly (NOT .maybeSingle(), which errors
-      // on 2+ rows). A user may be an active practitioner in more than one
-      // studio (unique key is (studio_id, user_id)):
-      //   * 0 active  -> /no-access (invite-only gate)
-      //   * exactly 1 -> proceed unchanged (the single-studio pilot path)
-      //   * 2+ active -> /no-access?reason=multiple-studios (clean, non-500;
-      //                  studio switching is deferred to a later PR)
+      // Load active memberships explicitly (NOT .maybeSingle(), which errors on
+      // 2+ rows). A user may be an active practitioner in more than one studio
+      // (unique key is (studio_id, user_id)):
+      //   * 0 active   -> /no-access (invite-only gate)
+      //   * exactly 1  -> proceed unchanged (the single-studio pilot path)
+      //   * 2+ active  -> proceed IF the hone_selected_studio cookie names one
+      //                   of the active studios; otherwise send to the chooser
+      //                   (/no-access?reason=multiple-studios). The cookie is
+      //                   validated against the RLS-scoped membership set here,
+      //                   so a stale/forged value never grants access.
       const { data: memberships } = await supabase
         .from("practitioners")
-        .select("id")
+        .select("studio_id")
         .eq("user_id", user.id)
         .eq("active", true);
-      const activeCount = memberships?.length ?? 0;
-      if (activeCount !== 1) {
+      const activeStudioIds = (memberships ?? []).map(
+        (m) => m.studio_id as string,
+      );
+      const selectedStudioId = request.cookies.get(
+        "hone_selected_studio",
+      )?.value;
+      const hasValidSelection =
+        selectedStudioId != null && activeStudioIds.includes(selectedStudioId);
+      const usable =
+        activeStudioIds.length === 1 ||
+        (activeStudioIds.length > 1 && hasValidSelection);
+      if (!usable) {
         const url = request.nextUrl.clone();
         url.pathname = "/no-access";
-        if (activeCount > 1) {
+        if (activeStudioIds.length > 1) {
           url.searchParams.set("reason", "multiple-studios");
         }
-        return NextResponse.redirect(url);
+        const redirectResponse = NextResponse.redirect(url);
+        // Clear a stale/forged selection so it can't linger.
+        if (selectedStudioId != null && !hasValidSelection) {
+          redirectResponse.cookies.delete("hone_selected_studio");
+        }
+        return redirectResponse;
       }
     }
   }

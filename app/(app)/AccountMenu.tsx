@@ -16,11 +16,13 @@ export function AccountMenu({
   studioName,
   role,
   admin,
+  canSwitchStudio,
 }: {
   displayName: string;
   studioName: string;
   role: string;
   admin: boolean;
+  canSwitchStudio: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -86,6 +88,9 @@ export function AccountMenu({
           {[
             { href: "/settings/profile", label: "Settings" },
             { href: "/getting-started", label: "Getting Started" },
+            ...(canSwitchStudio
+              ? [{ href: "/no-access?reason=multiple-studios", label: "Switch studio" }]
+              : []),
             ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
           ].map((item) => (
             <Link

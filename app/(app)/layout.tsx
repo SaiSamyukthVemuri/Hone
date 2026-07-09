@@ -3,7 +3,10 @@ import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
-import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  listActiveStudioMemberships,
+  requirePractitionerWithStudio,
+} from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
@@ -18,6 +21,10 @@ export default async function AppLayout({
   // never render the app shell, nav, or any studio data.
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const admin = isAdmin(practitioner.email);
+
+  // Show the "Switch studio" affordance only when the user is an active
+  // practitioner in 2+ studios. RLS-scoped; a single-studio user sees nothing new.
+  const canSwitchStudio = (await listActiveStudioMemberships()).length > 1;
 
   // PR #164. Unread notification count for the header badge. RLS
   // gates the count by studio membership; a failed count (network,
@@ -109,6 +116,7 @@ export default async function AppLayout({
               studioName={studio.name}
               role={practitioner.role}
               admin={admin}
+              canSwitchStudio={canSwitchStudio}
             />
           </div>
 
@@ -125,6 +133,7 @@ export default async function AppLayout({
               displayName={practitioner.display_name}
               studioName={studio.name}
               role={practitioner.role}
+              canSwitchStudio={canSwitchStudio}
             />
           </div>
         </div>
