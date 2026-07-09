@@ -4,24 +4,24 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0112** (`0112_public_booking_horizon_expand.sql`).
-- **Total migrations in repo: 112** (`0001` … `0112`).
-- **Applied status:** local repo max == remote (linked project) max == **0112**. Every
-  migration `0001`–`0112` is applied in production.
+- **Production migration max = 0113** (`0113_admin_action_events.sql`).
+- **Total migrations in repo: 113** (`0001` … `0113`).
+- **Applied status:** local repo max == remote (linked project) max == **0113**. Every
+  migration `0001`–`0113` is applied in production.
 - The repo-max is enforced as a test tripwire: the newest migration test
-  (`tests/migrations/0112-public-booking-horizon-expand.test.ts`) asserts it is the repo
+  (`tests/migrations/0113-admin-action-events.test.ts`) asserts it is the repo
   max, and `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
   new migration lands, those pins move to the new number.
 
-> **Scope of this v1 ledger.** The recent tail (0089–0112) is enumerated below with a
+> **Scope of this v1 ledger.** The recent tail (0089–0113) is enumerated below with a
 > one-line purpose and applied status. Full per-migration narrative for **0001–0088** lives
 > in `docs/09_DATABASE_AND_RLS.md` (migration table + per-range notes) and the per-PR entries
 > in `docs/13_BACKLOG_AND_DECISIONS.md` / `docs/14_AI_HANDOFF.md`. A fully generated
-> 0001–0112 one-line ledger is a documentation follow-up (see current-state "docs follow-up").
+> 0001–0113 one-line ledger is a documentation follow-up (see current-state "docs follow-up").
 
 ---
 
-## Recent tail (0089 → 0112)
+## Recent tail (0089 → 0113)
 
 | # | Filename | Purpose | Applied |
 |---|---|---|---|
@@ -46,13 +46,14 @@
 | **0110** | `0110_studio_postcare_delivery_mode.sql` | **Postcare delivery mode** (`studios.postcare_delivery_mode` text, default `manual`, CHECK `manual`/`auto_on_complete`) — enables opt-in auto-send; default OFF | ✅ |
 | **0111** | `0111_client_portal_access_events.sql` | **Client portal access events** — append-only, studio-scoped, SELECT-only RLS (`is_studio_member`), no INSERT/UPDATE/DELETE policy (service-role writes only), composite same-studio FK, no token/URL/PII columns | ✅ |
 | **0112** | `0112_public_booking_horizon_expand.sql` | **Public booking horizon 1–12** — widen `studios.public_booking_horizon_months` CHECK from `(3,4,6)` to `(1..12)`; default 3 unchanged; existing values unchanged | ✅ |
+| **0113** | `0113_admin_action_events.sql` | **Admin Action Audit Log** — append-only `admin_action_events` (operator-action events). RLS enabled with **no policies** (service-role reads + writes only; admin authorized at the app layer); **no foreign keys** (audit durability); write grants revoked from `authenticated`/`anon`; **no token/URL/IP/email/clinical/payment columns**; metadata allowlisted + redacted | ✅ |
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
-`docs/13`/`docs/14`; all are applied — production max is 0112.)
+`docs/13`/`docs/14`; all are applied — production max is 0113.)
 
 ---
 
-## Notes on the newest five (0108–0112)
+## Notes on the newest six (0108–0113)
 
 - **0108 observation chips** — additive; legacy chip data is backfilled from the free-text
   `comments` field **on row edit**, so rows never re-edited retain unstructured chips (a
@@ -66,11 +67,16 @@
   inserts only via the app's service-role paths.
 - **0112 booking horizon expand** — CHECK-only change; no column add, no default change, no
   data backfill; existing `3/4/6` values remain valid.
+- **0113 admin action events** — append-only operator-action audit log; **service-role-only**
+  (RLS enabled, no policies + write grants revoked), **no FK** (event survives referenced-row
+  deletion), and **no column** for any token, URL, IP, email, or clinical/payment value.
+  Applied **migration-first** (before the #374 code merge); reads/writes go only through
+  `lib/audit/admin-actions.ts` from `isAdmin`-gated `/admin` code.
 
 ## Correcting prior stale statements
 
 Earlier docs (e.g. `docs/09`, `docs/14`) contain "0096 not yet applied", "0095 NOT yet
 applied", "0093/0094 must not be applied until approved" language written **before** those
-migrations were applied. As of 2026-07-08, **all of 0093, 0094, 0095, 0096, 0107 are applied**
-(production max is 0112). Trust this ledger + `supabase migration list --linked`, not the
+migrations were applied. As of 2026-07-09, **all of 0093, 0094, 0095, 0096, 0107 are applied**
+(production max is 0113). Trust this ledger + `supabase migration list --linked`, not the
 historical per-PR prose.

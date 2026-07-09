@@ -1334,7 +1334,7 @@ This is a **read-only health check**, not an enablement step. A studio's live en
 
 As of the app-wide payment-messaging work (PRs #332–#339) and the controlled live test:
 
-- **Production is LIVE-CAPABLE.** `STRIPE_ALLOW_LIVE_MODE=true` with a `sk_live_` key in Vercel Production; prod DB migration max = **0112**; the runtime read-out is the Dashboard "Live payments" stat.
+- **Production is LIVE-CAPABLE.** `STRIPE_ALLOW_LIVE_MODE=true` with a `sk_live_` key in Vercel Production; prod DB migration max = **0113**; the runtime read-out is the Dashboard "Live payments" stat.
 - **Live billing is PROVEN on a controlled test studio** — two live charges + live receipts + a full live refund, all reconciled via the live webhook, zero errors/alerts. Payment mode isolation (0103/0104/0105) and state-driven messaging are in place.
 - **Willow still requires her OWN onboarding + checks.** Willow is not yet fully live: she needs her own live Stripe Connect onboarding (charges + payouts enabled, CAD bank verified), her §17.14.2 account review, a client card-on-file authorization + live card in the portal, the §5 pre-charge verification, and the one small supervised first charge. Nothing here authorizes an unsupervised Willow charge.
 - **Public booking card collection is OFF** — no booking-time card/deposit setting exists; public booking never asks a client for a card. Card-on-file is a portal-only flow after the client signs the authorization.
@@ -1351,7 +1351,7 @@ As of the app-wide payment-messaging work (PRs #332–#339) and the controlled l
 1. [x] ✅ **DONE (2026-07-04):** Legal/accounting **written** sign-off on the live **receipt** wording AND the client-facing **card-authorization** wording (§17.14.2) — the lawyer-approved copy is merged into `payment-receipt.ts` (template) + `PortalCardOnFileCard.tsx` + `PortalPaymentMethodForm.tsx`.
 2. [ ] Live Connect **webhook endpoint** created (connected-accounts, 8 events — §17.14.4) and its `whsec_` is in hand.
 3. [ ] All four live env vars set in Vercel Production (§17.14.5) and a **fresh** production build/deploy succeeded; `VERCEL_ENV=production`.
-4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0112`).
+4. [ ] Deployment healthy: `hone.care` loads, **no `getStripe`/`STRIPE_SECRET_KEY` throw** in logs, `node scripts/check-stripe-gates.mjs` = **15 PASS**, `node --env-file=.env.local scripts/verify-production.mjs` = **PRODUCTION VERIFIED ✓** (migration max `0113`).
 5. [ ] Willow **live** Connect account fully enabled (§17.14.3): `charges_enabled`, `payouts_enabled`, `details_submitted` all true; `requirements.currently_due` **empty**; CAD bank verified; statement descriptor reviewed; dispute email/recovery/2FA reviewed.
 6. [ ] Live `studio_payment_settings` row present (`stripe_livemode=true`, `stripe_account_status='enabled'`, `charges_enabled=true`).
 7. [ ] Supervised client (recommend **Chloe's own real card**) has **signed the card-authorization consent** and **added a live active card** on file via the portal.
@@ -1447,7 +1447,7 @@ select id, status, stripe_livemode, amount_cents, currency, refund_status
   order by created_at desc limit 1;                                                       -- one row, succeeded, livemode true
 select count(*) from ops_alerts where severity='critical' and resolved_at is null;       -- expect 0
 ```
-Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0112`.
+Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) — expect **PRODUCTION VERIFIED ✓**, migration max `0113`.
 
 #### 17.14.9 Operator surfaces to watch (during + after)
 
@@ -1471,7 +1471,7 @@ Also run `node --env-file=.env.local scripts/verify-production.mjs` (read-only) 
 
 - Legal/accounting copy not signed off (or reworded but the copy-only PR not merged).
 - Any Willow Connect check (§17.14.3) failing, or `requirements.currently_due` non-empty.
-- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0112`.
+- Deployment unhealthy: `getStripe` throw, `check-stripe-gates` ≠ 15 PASS, `verify-production` not `PRODUCTION VERIFIED ✓`, or migration max ≠ `0113`.
 - Any unresolved **critical** ops alert.
 - No live `studio_payment_settings` row, or no live active card on file.
 - A pre-existing `stripe_livemode=true` charge row (unexpected state).
@@ -1520,7 +1520,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 5. Pre-charge verification
 - [ ] `node scripts/check-stripe-gates.mjs` = 15 PASS
-- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0112
+- [ ] `node --env-file=.env.local scripts/verify-production.mjs` = PRODUCTION VERIFIED ✓, migration max 0113
 - [ ] Read-only SQL (`supabase db query --linked`):
   - [ ] `select count(*) from payment_charge_attempts where stripe_livemode = true;` → 0
   - [ ] `select count(*) from ops_alerts where severity='critical' and resolved_at is null;` → 0
@@ -1551,7 +1551,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 
 #### 10. Hard no-go conditions (STOP if ANY is true)
 - [ ] Any §1 Connect check failing, or `currently_due` non-empty
-- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0112
+- [ ] Unhealthy deploy: `getStripe` throw · gates ≠ 15 PASS · `verify-production` not ✓ · migration max ≠ 0113
 - [ ] Any unresolved critical ops alert
 - [ ] No live `studio_payment_settings` row, or no live active card on file
 - [ ] A pre-existing `stripe_livemode=true` charge row (unexpected)
