@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
 import type { ElectrolysisMode } from "@/lib/types/database";
 import {
   PULSE_COUNT_DEFAULT,
@@ -254,13 +255,23 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   );
 
   const supabase = await createClient();
+  // PR 3: never trust a client-supplied probe_lot_id. It must be a well-formed
+  // UUID that belongs to THIS studio's probe_lots inventory; otherwise reject.
+  // (An absent/free-text lot is fine — probe_lot_number is a separate manual
+  // field and is not made "inventory-verified" here.)
+  const lotCheck = await validateProbeLotId(
+    supabase,
+    studio.id,
+    nullableString(formData.get("probe_lot_id")),
+  );
+  if (!lotCheck.ok) throw new Error(lotCheck.error);
   const { error } = await supabase.from("electrolysis_entries").insert({
     session_id: sessionId,
     block_id: blockId,
     area,
     areas,
     probe_size: probeSize,
-    probe_lot_id: nullableString(formData.get("probe_lot_id")),
+    probe_lot_id: lotCheck.value,
     mode,
     intensity: nullableNumber(formData.get("intensity")),
     duration_seconds: nullableNumber(formData.get("duration_seconds")),
