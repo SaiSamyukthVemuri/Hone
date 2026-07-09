@@ -148,14 +148,13 @@ export default async function IntakeAndPostcarePage() {
           <div className="border-t border-neutral-200 dark:border-neutral-800" />
           <div className="flex flex-col gap-2">
             <h2 id="postcare" className="scroll-mt-24 text-xl font-medium">
-              Postcare email content
+              Postcare
             </h2>
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Used by the manual <em>Send postcare</em> button on an
-              appointment. You write the clinical content; Hone never
-              invents medical advice. Send is always manual; no
-              auto-send. Postcare data lives on the studio record and
-              is unchanged by moving this editor here.
+              Configure the postcare instructions clients receive and choose
+              whether postcare is sent manually or automatically after completed
+              appointments. You write the clinical content; Hone never invents
+              medical advice. Postcare data lives on the studio record.
             </p>
           </div>
           <PostcareSettingsForm
@@ -187,6 +186,18 @@ export default async function IntakeAndPostcarePage() {
               policy_updated_at: studio.policy_updated_at,
             }}
           />
+        </div>
+      )}
+
+      {!isOwner && (
+        <div className="mt-4 flex flex-col gap-2">
+          <div className="border-t border-neutral-200 dark:border-neutral-800" />
+          <h2 id="postcare" className="scroll-mt-24 text-xl font-medium">
+            Postcare
+          </h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Only studio owners can edit postcare delivery settings.
+          </p>
         </div>
       )}
     </section>
