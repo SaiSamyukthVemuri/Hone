@@ -284,6 +284,20 @@ export function sessionPerformerName(
   return match.display_name?.trim() ? match.display_name : match.email;
 }
 
+// Migration 0114: a voided pass (deleted_at set) stays in the DB but must never
+// appear in an active view. Every loader that embeds entries strips soft-deleted
+// rows through this helper so downstream consumers (charting, Last Visit,
+// Treatment Intelligence, before-today, exports) only ever see active passes.
+function stripDeletedEntries(session: SessionWithEntries): SessionWithEntries {
+  return {
+    ...session,
+    electrolysis_entries: (session.electrolysis_entries ?? []).filter(
+      (e) => !e.deleted_at,
+    ),
+    laser_entries: (session.laser_entries ?? []).filter((e) => !e.deleted_at),
+  };
+}
+
 export async function getClientById(
   studioId: string,
   clientId: string,
@@ -325,7 +339,9 @@ export async function getClientById(
   return {
     client: client as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
-    sessions: (sessionsRes.data ?? []) as SessionWithEntries[],
+    sessions: ((sessionsRes.data ?? []) as SessionWithEntries[]).map(
+      stripDeletedEntries,
+    ),
     practitioners,
   };
 }
@@ -588,7 +604,7 @@ export async function getSessionForClient(
     .maybeSingle();
 
   if (error) throw new Error(`Failed to load session: ${error.message}`);
-  return (data ?? null) as SessionWithEntries | null;
+  return data ? stripDeletedEntries(data as SessionWithEntries) : null;
 }
 
 export async function getRecentEntryForClient(
@@ -614,10 +630,13 @@ export async function getRecentEntryForClient(
   if (sessErr) throw new Error(`Failed to load recent session: ${sessErr.message}`);
 
   for (const row of sessionRows ?? []) {
-    const entries = (row as unknown as { [k: string]: (ElectrolysisEntry | LaserEntry)[] })[
-      entryTable
-    ];
-    if (entries && entries.length > 0) {
+    // Migration 0114: never suggest defaults from a voided pass.
+    const entries = (
+      (row as unknown as { [k: string]: (ElectrolysisEntry | LaserEntry)[] })[
+        entryTable
+      ] ?? []
+    ).filter((e) => !e.deleted_at);
+    if (entries.length > 0) {
       // Sessions return entries in insertion order; take the latest.
       const sorted = [...entries].sort(
         (a, b) =>
@@ -638,7 +657,7 @@ export async function getLaserTreatmentCountsForClient(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("sessions")
-    .select("id, laser_entries(zone)")
+    .select("id, laser_entries(zone, deleted_at)")
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .eq("modality", "laser")
@@ -649,9 +668,14 @@ export async function getLaserTreatmentCountsForClient(
 
   const counts: Record<string, number> = {};
   for (const row of data ?? []) {
-    const entries = (row as unknown as { laser_entries: { zone: string }[] })
-      .laser_entries;
+    const entries = (
+      row as unknown as {
+        laser_entries: { zone: string; deleted_at: string | null }[];
+      }
+    ).laser_entries;
     for (const e of entries ?? []) {
+      // Migration 0114: a voided pass does not count toward "Treatment #".
+      if (e.deleted_at) continue;
       counts[e.zone] = (counts[e.zone] ?? 0) + 1;
     }
   }
@@ -815,6 +839,7 @@ export async function getSessionWithBlocks(
       .from("electrolysis_entries")
       .select("*")
       .eq("session_id", sessionId)
+      .is("deleted_at", null) // Migration 0114: exclude voided passes.
       .order("created_at", { ascending: true }),
   ]);
 

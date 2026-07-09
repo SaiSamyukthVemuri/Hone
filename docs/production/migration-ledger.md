@@ -4,12 +4,12 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0113** (`0113_admin_action_events.sql`).
-- **Total migrations in repo: 113** (`0001` … `0113`).
-- **Applied status:** local repo max == remote (linked project) max == **0113**. Every
-  migration `0001`–`0113` is applied in production.
+- **Production migration max = 0114** (`0114_entry_soft_delete.sql`).
+- **Total migrations in repo: 114** (`0001` … `0114`).
+- **Applied status:** local repo max == remote (linked project) max == **0114**. Every
+  migration `0001`–`0114` is applied in production.
 - The repo-max is enforced as a test tripwire: the newest migration test
-  (`tests/migrations/0113-admin-action-events.test.ts`) asserts it is the repo
+  (`tests/migrations/0114-entry-soft-delete.test.ts`) asserts it is the repo
   max, and `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
   new migration lands, those pins move to the new number.
 
@@ -47,6 +47,7 @@
 | **0111** | `0111_client_portal_access_events.sql` | **Client portal access events** — append-only, studio-scoped, SELECT-only RLS (`is_studio_member`), no INSERT/UPDATE/DELETE policy (service-role writes only), composite same-studio FK, no token/URL/PII columns | ✅ |
 | **0112** | `0112_public_booking_horizon_expand.sql` | **Public booking horizon 1–12** — widen `studios.public_booking_horizon_months` CHECK from `(3,4,6)` to `(1..12)`; default 3 unchanged; existing values unchanged | ✅ |
 | **0113** | `0113_admin_action_events.sql` | **Admin Action Audit Log** — append-only `admin_action_events` (operator-action events). RLS enabled with **no policies** (service-role reads + writes only; admin authorized at the app layer); **no foreign keys** (audit durability); write grants revoked from `authenticated`/`anon`; **no token/URL/IP/email/clinical/payment columns**; metadata allowlisted + redacted | ✅ |
+| **0114** | `0114_entry_soft_delete.sql` | **Audited "Remove/void pass"** — adds `deleted_at`/`deleted_by`/`delete_reason` (+ active partial indexes) to `electrolysis_entries` and `laser_entries`, mirroring the `session_blocks` soft-delete triad (0019). Lets a practitioner remove ONE pass from a multi-pass area without hard-deleting the clinical record. **Additive**; nullable; no backfill; **no RLS change** (the pre-existing entry DELETE policy is left intact but unused — the code PR switches the entry delete actions to soft-delete). Applied **migration-first** (before the code merge). | ✅ |
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
 `docs/13`/`docs/14`; all are applied — production max is 0113.)

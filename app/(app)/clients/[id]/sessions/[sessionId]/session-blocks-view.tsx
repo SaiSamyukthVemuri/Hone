@@ -19,6 +19,7 @@ import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
+import { RemovePassButton } from "@/components/remove-pass-button";
 import { deleteElectrolysisEntryAction } from "./actions";
 
 // Area-first view of an electrolysis session (Session Logging Phase A).
@@ -365,18 +366,17 @@ function BlockSection({
                           : undefined
                       }
                       action={
-                        <form action={deleteElectrolysisEntryAction}>
-                          <input type="hidden" name="id" value={e.id} />
-                          <input type="hidden" name="session_id" value={sessionId} />
-                          <input type="hidden" name="client_id" value={clientId} />
-                          <button
-                            type="submit"
-                            aria-label="Delete entry"
-                            className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                          >
-                            ✕
-                          </button>
-                        </form>
+                        <RemovePassButton
+                          action={deleteElectrolysisEntryAction}
+                          entryId={e.id}
+                          sessionId={sessionId}
+                          clientId={clientId}
+                          ariaLabel={
+                            entriesSorted.length > 1
+                              ? `Remove pass ${idx + 1}`
+                              : "Remove pass"
+                          }
+                        />
                       }
                     />
                   </li>

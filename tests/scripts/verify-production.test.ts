@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0113 (admin action events).
-    expect(nums[nums.length - 1]).toBe("0113");
+    // Repo max advances to 0114 (entry soft-delete / "Remove pass").
+    expect(nums[nums.length - 1]).toBe("0114");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

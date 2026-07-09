@@ -44,6 +44,7 @@ import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
 import { NextVisitNoteForm } from "./NextVisitNoteForm";
 import { CopyPreviousAreasButton } from "./CopyPreviousAreasButton";
+import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
 import {
   addLaserEntryAction,
@@ -565,18 +566,13 @@ function LaserEntriesSection({
           <LaserEntryRow
             entry={e}
             action={
-              <form action={deleteLaserEntryAction}>
-                <input type="hidden" name="id" value={e.id} />
-                <input type="hidden" name="session_id" value={sessionId} />
-                <input type="hidden" name="client_id" value={clientId} />
-                <button
-                  type="submit"
-                  aria-label="Delete entry"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  ✕
-                </button>
-              </form>
+              <RemovePassButton
+                action={deleteLaserEntryAction}
+                entryId={e.id}
+                sessionId={sessionId}
+                clientId={clientId}
+                ariaLabel={sorted.length > 1 ? "Remove laser pass" : "Remove pass"}
+              />
             }
           />
         </li>

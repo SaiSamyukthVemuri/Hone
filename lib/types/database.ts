@@ -846,6 +846,11 @@ export type ElectrolysisEntry = {
   thermolysis_intensity_percent: number | null;
   thermolysis_duration_seconds: number | null;
   units_of_lye: number | null;
+  // Migration 0114: audited soft-delete ("Remove/void pass"). A voided pass is
+  // hidden from all active views but the row is preserved. NULL = active.
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
 };
 
 // Migration 0019: block-level treatment params. SessionMode mirrors the
@@ -932,6 +937,10 @@ export type LaserEntry = {
   observation_notes: string | null;
   ejection_results: string | null;
   created_at: string;
+  // Migration 0114: audited soft-delete ("Remove/void pass"). NULL = active.
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
 };
 
 export type ProbeLot = {
