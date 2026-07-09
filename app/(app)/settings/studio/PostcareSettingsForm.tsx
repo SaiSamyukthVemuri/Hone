@@ -256,9 +256,9 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Delivery</span>
         <p className="text-xs text-neutral-500">
-          Auto-send delivers postcare once, automatically, when an appointment is
-          marked complete — never for cancelled or no-show appointments. Manual
-          resend from the appointment page stays available in both modes.
+          Automatic postcare sends once when an appointment is marked complete.
+          It never sends for cancelled or no-show appointments. Manual resend
+          from the appointment page stays available in both modes.
         </p>
         <div className="mt-1 flex flex-col gap-2">
           {DELIVERY_MODE_OPTIONS.map((opt) => {
