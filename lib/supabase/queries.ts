@@ -23,6 +23,46 @@ export type PractitionerWithStudio = {
   studio: Studio;
 };
 
+type ServerSupabase = Awaited<ReturnType<typeof createClient>>;
+
+// Resolution of a signed-in user's ACTIVE practitioner memberships.
+//
+// Hone lets a user be an active practitioner in more than one studio: the
+// practitioners unique key is (studio_id, user_id) — NOT user_id — so 0, 1, or
+// 2+ active rows are all reachable states. The old resolvers used
+// `.maybeSingle()`, which ERRORS on 2+ rows (an opaque "multiple rows" DB error
+// surfacing as a raw 500). This resolver returns the count explicitly so every
+// caller can pick a safe, deterministic outcome. It NEVER auto-picks a studio
+// for a multi-membership user — a real studio switcher is deferred to a later PR.
+export type PractitionerMembership =
+  | { kind: "none" }
+  | { kind: "one"; value: PractitionerWithStudio }
+  | { kind: "multiple"; count: number };
+
+async function resolveActivePractitionerMembership(
+  supabase: ServerSupabase,
+  userId: string,
+): Promise<PractitionerMembership> {
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*, studio:studios(*)")
+    .eq("user_id", userId)
+    .eq("active", true);
+
+  if (error) {
+    throw new Error(`Failed to load practitioner: ${error.message}`);
+  }
+  const rows = (data ?? []) as Array<Practitioner & { studio: Studio }>;
+  if (rows.length === 0) return { kind: "none" };
+  if (rows.length > 1) return { kind: "multiple", count: rows.length };
+
+  const { studio, ...practitioner } = rows[0];
+  return {
+    kind: "one",
+    value: { practitioner: practitioner as Practitioner, studio },
+  };
+}
+
 // Returns the signed-in user's active practitioner row + studio.
 // Redirects to /login if no auth user, or throws if the user has no practitioner row.
 export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWithStudio> {
@@ -35,22 +75,21 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     redirect("/login");
   }
 
-  const { data, error } = await supabase
-    .from("practitioners")
-    .select("*, studio:studios(*)")
-    .eq("user_id", user.id)
-    .eq("active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to load practitioner: ${error.message}`);
-  }
-  if (!data) {
+  const membership = await resolveActivePractitionerMembership(supabase, user.id);
+  if (membership.kind === "none") {
     throw new Error("No active practitioner found for the signed-in user.");
   }
-
-  const { studio, ...practitioner } = data as Practitioner & { studio: Studio };
-  return { practitioner: practitioner as Practitioner, studio };
+  if (membership.kind === "multiple") {
+    // Controlled (not raw-DB) error, and never an auto-picked studio. This is
+    // only reached as a server-action backstop: the middleware + shell layout
+    // redirect multi-membership users to /no-access before any page loader runs,
+    // and server actions run inside try/catch that returns a generic denial —
+    // so no raw 500 reaches the user because of multiple rows.
+    throw new Error(
+      `Multiple active studio memberships (${membership.count}) for the signed-in user; studio switching is not yet available.`,
+    );
+  }
+  return membership.value;
 }
 
 // Route-guard variant of getCurrentPractitionerWithStudio for the
@@ -76,23 +115,19 @@ export async function requirePractitionerWithStudio(): Promise<PractitionerWithS
     redirect("/login");
   }
 
-  const { data, error } = await supabase
-    .from("practitioners")
-    .select("*, studio:studios(*)")
-    .eq("user_id", user.id)
-    .eq("active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to load practitioner: ${error.message}`);
-  }
-  if (!data) {
+  const membership = await resolveActivePractitionerMembership(supabase, user.id);
+  if (membership.kind === "none") {
     // Authenticated but no studio membership: invite-only gate.
     redirect("/no-access");
   }
+  if (membership.kind === "multiple") {
+    // Authenticated with 2+ active studios but no switcher yet: a clean,
+    // non-500 state (never an auto-picked studio). The /no-access page shows
+    // "multiple studios" copy when the active count is > 1.
+    redirect("/no-access?reason=multiple-studios");
+  }
 
-  const { studio, ...practitioner } = data as Practitioner & { studio: Studio };
-  return { practitioner: practitioner as Practitioner, studio };
+  return membership.value;
 }
 
 export async function getPractitionersForStudio(
