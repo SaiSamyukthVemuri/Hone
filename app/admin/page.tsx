@@ -249,6 +249,7 @@ export default async function AdminIndexPage() {
 
       <PaymentsBanner summary={paymentSummary} />
       <StudioSetupCard />
+      <AuditLogCard />
       <OverviewCards overview={overview} />
       <ReminderSchedulerCard status={reminderScheduler} />
       <StudiosSection studios={studios} />
@@ -295,6 +296,29 @@ function PaymentsBanner({ summary }: { summary: PlatformPaymentSummary }) {
         </p>
       )}
     </div>
+  );
+}
+
+// PR: make the admin audit log (PR #374, migration 0113) discoverable from the
+// admin dashboard. Admin-only surface (the /admin layout + the /admin/audit page
+// both gate on isAdmin); this card is rendered inside the operator dashboard only.
+function AuditLogCard() {
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-lg font-medium">Admin audit log</h2>
+      <p className="mt-1 max-w-prose text-sm text-neutral-600 dark:text-neutral-400">
+        Review sensitive operator/admin actions such as studio creation, ops
+        alert resolution, and demo follow-up.
+      </p>
+      <div className="mt-4">
+        <Link
+          href="/admin/audit"
+          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        >
+          View audit log
+        </Link>
+      </div>
+    </section>
   );
 }
 
@@ -522,7 +546,7 @@ function QuickLinks() {
         </li>
         <li>
           <Link href="/admin/audit" className="underline">
-            Admin action audit log
+            Admin audit log
           </Link>
         </li>
         <li className="text-neutral-500">
