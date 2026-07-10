@@ -82,8 +82,11 @@ type SessionRow = {
   next_session_note: string | null;
   aftercare_and_risks_explained_at: string | null;
   modality: string;
-  electrolysis_entries: Array<{ hairs_treated: number | null }> | null;
-  laser_entries: Array<{ id: string }> | null;
+  electrolysis_entries: Array<{
+    hairs_treated: number | null;
+    deleted_at: string | null;
+  }> | null;
+  laser_entries: Array<{ id: string; deleted_at: string | null }> | null;
 };
 
 type BlockRow = ClinicalSummaryBlock & {
@@ -104,7 +107,7 @@ export async function getBeforeTodayPreviews(
   const { data: sessionRows } = await supabase
     .from("sessions")
     .select(
-      "id, client_id, started_at, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated), laser_entries(id)",
+      "id, client_id, started_at, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
     )
     .eq("studio_id", studioId)
     .in("client_id", ids)
@@ -158,8 +161,11 @@ export async function getBeforeTodayPreviews(
   for (const clientId of ids) {
     const clientSessions = (sessionsByClient.get(clientId) ?? []).map((s) => ({
       ...s,
-      electrolysis_entries: s.electrolysis_entries ?? [],
-      laser_entries: s.laser_entries ?? [],
+      // Migration 0114: voided passes never count in the dashboard preview.
+      electrolysis_entries: (s.electrolysis_entries ?? []).filter(
+        (e) => !e.deleted_at,
+      ),
+      laser_entries: (s.laser_entries ?? []).filter((e) => !e.deleted_at),
     }));
     const clientBlockMap = new Map<string, BlockRow[]>();
     for (const s of clientSessions) {

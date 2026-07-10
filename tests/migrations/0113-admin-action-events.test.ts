@@ -6,15 +6,16 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0113_admin_action_events.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0113 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
+describe("0113 — number", () => {
+  it("0113 exists; the repo-max tripwire now lives in the 0114 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
         .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(113);
+    // 0113 is no longer the newest migration (0114 added the entry soft-delete).
+    expect(maxNum).toBeGreaterThanOrEqual(113);
     expect(FILE).toMatch(/^0113_/);
   });
 });

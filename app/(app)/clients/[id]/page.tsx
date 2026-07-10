@@ -382,7 +382,7 @@ export default async function ClientCheatSheetPage({
     const { data: intelBlocks } = await supabaseForIntel
       .from("session_blocks")
       .select(
-        "session_id, primary_area, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated)",
+        "session_id, primary_area, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -395,14 +395,15 @@ export default async function ClientCheatSheetPage({
       blocks: ((intelBlocks ?? []) as Array<
         Omit<IntelligenceBlockInput, "entry_hairs"> & {
           electrolysis_entries:
-            | Array<{ hairs_treated: number | null }>
+            | Array<{ hairs_treated: number | null; deleted_at: string | null }>
             | null;
         }
       >).map((b) => ({
         ...b,
-        entry_hairs: (b.electrolysis_entries ?? []).map(
-          (e) => e.hairs_treated,
-        ),
+        // Migration 0114: voided passes don't contribute hairs to intelligence.
+        entry_hairs: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.hairs_treated),
       })),
     });
   }

@@ -338,50 +338,67 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
   revalidatePath(`/clients/${clientId}`);
 }
 
-export async function deleteElectrolysisEntryAction(
+// Migration 0114: a treatment PASS (an electrolysis_entries / laser_entries row)
+// is removed by an AUDITED SOFT-DELETE — deleted_at/deleted_by/delete_reason —
+// NEVER a hard delete. The clinical record is preserved (and still visible in
+// audit/history) but hidden from every active view. This mirrors the
+// session_blocks soft-delete pattern (softDeleteSessionBlockAction, 0019). Only
+// the selected pass is voided; the block/area, session, appointment, client,
+// other passes, and photos are untouched.
+async function softDeleteEntry(
+  table: "electrolysis_entries" | "laser_entries",
   formData: FormData,
 ): Promise<void> {
   const id = formData.get("id");
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
+  const rawReason = formData.get("reason");
   if (typeof id !== "string" || !id) throw new Error("Missing entry id.");
   if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
   if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+  // Reason is optional but captured for the audit trail when provided.
+  const reason =
+    typeof rawReason === "string" && rawReason.trim().length > 0
+      ? rawReason.trim()
+      : null;
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    throw new Error("Inactive practitioners cannot remove passes.");
+  }
+  // Verifies the session belongs to THIS studio + client (rejects cross-studio).
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("electrolysis_entries")
-    .delete()
+  const { data, error } = await supabase
+    .from(table)
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: practitioner.id,
+      delete_reason: reason,
+    })
     .eq("id", id)
-    .eq("session_id", sessionId);
-  if (error) throw new Error(`Failed to delete entry: ${error.message}`);
+    .eq("session_id", sessionId)
+    // Guard: only an ACTIVE pass can be removed — rejects double-void and, with
+    // RLS, any entry outside the caller's studio (0 rows updated).
+    .is("deleted_at", null)
+    .select("id");
+  if (error) throw new Error(`Failed to remove pass: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error("This pass has already been removed.");
+  }
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
+export async function deleteElectrolysisEntryAction(
+  formData: FormData,
+): Promise<void> {
+  await softDeleteEntry("electrolysis_entries", formData);
+}
+
 export async function deleteLaserEntryAction(formData: FormData): Promise<void> {
-  const id = formData.get("id");
-  const sessionId = formData.get("session_id");
-  const clientId = formData.get("client_id");
-  if (typeof id !== "string" || !id) throw new Error("Missing entry id.");
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
-  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
-
-  const { studio } = await getCurrentPractitionerWithStudio();
-  await assertSessionVisible(studio.id, clientId, sessionId);
-
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("laser_entries")
-    .delete()
-    .eq("id", id)
-    .eq("session_id", sessionId);
-  if (error) throw new Error(`Failed to delete entry: ${error.message}`);
-  revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
-  revalidatePath(`/clients/${clientId}`);
+  await softDeleteEntry("laser_entries", formData);
 }
 
 export async function updateSessionPriceAction(formData: FormData): Promise<void> {
