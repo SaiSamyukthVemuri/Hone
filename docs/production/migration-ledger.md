@@ -4,15 +4,15 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0117** (`0117_session_audit_cross_tenant_insert_hardening.sql`).
-- **Applied status:** local repo max == remote (linked project) max == **0117**. Every
-  migration `0001`–`0117` is applied in production. 0117 was applied **migration-first**
-  (policy-only tightening; the sole app writer already complied, so no code change was
-  needed). 0116 was applied **code-first** — *after* PR #395's hash-only code merged +
-  deployed — because it destructively dropped a column the deployed code had written.
-- **Total migrations in repo: 117** (`0001` … `0117`).
+- **Production migration max = 0118** (`0118_intake_terminal_immutability.sql`).
+- **Applied status:** local repo max == remote (linked project) max == **0118**. Every
+  migration `0001`–`0118` is applied in production. 0117 and 0118 were applied
+  **migration-first** (0118 is a trigger-only add; the app flows already complied, so no
+  code change was needed). 0116 was applied **code-first** — *after* PR #395's hash-only
+  code merged + deployed — because it destructively dropped a column the deployed code wrote.
+- **Total migrations in repo: 118** (`0001` … `0118`).
 - The repo-max is enforced as a test tripwire: the newest migration test
-  (`tests/migrations/0117-session-audit-cross-tenant-insert-hardening.test.ts`) asserts it is
+  (`tests/migrations/0118-intake-terminal-immutability.test.ts`) asserts it is
   the repo max, and `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
   new migration lands, those pins move to the new number.
 
@@ -54,6 +54,7 @@
 | **0115** | `0115_entry_hard_delete_hardening.sql` | **Entry hard-delete hardening** — closes the residual hard-delete path an independent audit confirmed: **drops** the `for delete to authenticated` RLS policy on `electrolysis_entries` + `laser_entries` (kept by 0087) and **revokes** `truncate, delete` from `anon, authenticated`, so removals go only through the audited soft-delete UPDATE (0114/#391). **Policy/grant-only**; no schema/data change; **hardens** RLS (does not weaken it); `service_role` unaffected (maintenance path preserved). Applied **migration-first**. | ✅ |
 | **0116** | `0116_drop_calendar_feed_raw_token.sql` | **Calendar-feed credential hash-only at rest** — **drops** the raw `practitioners.calendar_feed_token` column + its partial unique index (kept `calendar_feed_token_hash` from 0079, which the feed route authenticates by). Removes the only same-studio-member-readable feed credential; raw token now surfaced only once at generate/rotate. Existing subscriptions keep working (hash lookup); no reconnect. **Drop-only**; no other schema/data/RLS change. Applied **code-first** (2026-07-10, after PR #395's hash-only code deployed — destructive drop of a written column). | ✅ |
 | **0117** | `0117_session_audit_cross_tenant_insert_hardening.sql` | **session_audit cross-tenant INSERT hardening** — tightens the `session_audit_studio_member_insert` policy so a new audit row's `session_id` must belong to a studio the caller is an active member of (mirrors the SELECT scoping), in addition to the existing actor binding. Closes a confirmed cross-tenant integrity-write (Studio A could attach a fabricated audit event to a Studio B session). **Policy-only** (INSERT policy replaced, stricter); no SELECT/UPDATE/DELETE/grant/schema/data change; **hardens** RLS. A read-only audit found **0** cross-studio-mismatched historical rows. No code change needed (the sole app writer already complied). Applied **migration-first**. | ✅ |
+| **0118** | `0118_intake_terminal_immutability.sql` | **Intake terminal-state immutability** — adds a `BEFORE UPDATE` trigger on `client_intake_forms` so that, for authenticated end-users (service-role exempt), once `status ∈ (submitted, reviewed)` the answers (`responses`) and `submitted_at` are immutable, status cannot regress to `in_progress`, and `reviewed_by` must be the caller's own active practitioner (review attribution immutable once reviewed). Closes a same-tenant clinical-record integrity defect (a member could directly PATCH a submitted/reviewed intake). **Trigger-only**; no schema/policy/grant/data change; no RLS weakening. Draft editing, review, and reissue-based corrections (a NEW intake row) are unaffected — the multi-row model already preserves originals. No code change needed. Applied **migration-first**. | ✅ |
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
 `docs/13`/`docs/14`; all are applied — production max is 0113.)
