@@ -34,6 +34,11 @@ const NO_DELETE_TABLES = [
   "treatment_goals",
   "client_personal_notes",
 ];
+// NOTE: this list asserts what migration 0087 *itself* kept. electrolysis_entries
+// and laser_entries were later HARDENED by migration 0115 (their delete policy
+// dropped + grant revoked) once passes became soft-delete-only (0114/PR #391),
+// so in the FINAL DB state those two are NOT member-deletable. The final posture
+// is proven in tests/db/clinical-delete-posture.db.test.ts + the 0115 test.
 const DELETE_KEPT_TABLES = [
   "electrolysis_entries",
   "laser_entries",

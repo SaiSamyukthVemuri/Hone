@@ -126,6 +126,39 @@ const blockedCases: BlockedCase[] = [
   },
 ];
 
+// Migration 0115: treatment PASSES (electrolysis_entries / laser_entries) go
+// FURTHER than the RLS-default-deny group above. 0087 had kept a member DELETE
+// policy on them; 0115 drops it AND revokes the DELETE/TRUNCATE grant from
+// authenticated. Because the grant itself is gone (not just the policy), an
+// authenticated member's hard DELETE now raises `permission denied` (it
+// REJECTS) rather than silently affecting zero rows — the stronger posture used
+// by treatment_images (0092). Removals must go through the soft-delete UPDATE
+// path (PR #391).
+async function seedElectrolysisPass(): Promise<string> {
+  const id = randomUUID();
+  await adminQuery(
+    `insert into public.electrolysis_entries (id, session_id, area)
+     values ($1, $2, 'chin')`,
+    [id, sessionId],
+  );
+  return id;
+}
+async function seedLaserPass(): Promise<string> {
+  const laserSessionId = randomUUID();
+  await adminQuery(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+     values ($1, $2, $3, $4, 'laser')`,
+    [laserSessionId, s.studioId, s.clientId, s.practitionerId],
+  );
+  const id = randomUUID();
+  await adminQuery(
+    `insert into public.laser_entries (id, session_id, zone)
+     values ($1, $2, 'upper lip')`,
+    [id, laserSessionId],
+  );
+  return id;
+}
+
 describe("D: members cannot DELETE from protected clinical tables", () => {
   for (const c of blockedCases) {
     it(`${c.table}: DELETE affects zero rows and the row survives`, async () => {
@@ -145,43 +178,96 @@ describe("D: members cannot DELETE from protected clinical tables", () => {
   }
 });
 
+describe("D: treatment passes are hard-delete-blocked + soft-delete-only after 0115", () => {
+  it("member same-studio hard DELETE on electrolysis_entries is denied; row survives", async () => {
+    const id = await seedElectrolysisPass();
+    await expect(
+      userQuery(
+        s.userId,
+        `delete from public.electrolysis_entries where id = $1`,
+        [id],
+      ),
+    ).rejects.toThrow(); // permission denied (grant revoked by 0115)
+    const survives = await adminQuery(
+      `select id from public.electrolysis_entries where id = $1`,
+      [id],
+    );
+    expect(survives.rowCount).toBe(1);
+  });
+
+  it("member same-studio hard DELETE on laser_entries is denied; row survives", async () => {
+    const id = await seedLaserPass();
+    await expect(
+      userQuery(s.userId, `delete from public.laser_entries where id = $1`, [id]),
+    ).rejects.toThrow();
+    const survives = await adminQuery(
+      `select id from public.laser_entries where id = $1`,
+      [id],
+    );
+    expect(survives.rowCount).toBe(1);
+  });
+
+  it("member TRUNCATE on electrolysis_entries is denied (revoked by 0115)", async () => {
+    await expect(
+      userQuery(s.userId, `truncate table public.electrolysis_entries`),
+    ).rejects.toThrow();
+  });
+
+  it("member CAN still soft-delete a pass via UPDATE (Remove pass path intact)", async () => {
+    const id = await seedElectrolysisPass();
+    const upd = await userQuery(
+      s.userId,
+      `update public.electrolysis_entries
+         set deleted_at = now(), deleted_by = $2, delete_reason = 'test'
+       where id = $1 and deleted_at is null`,
+      [id, s.practitionerId],
+    );
+    expect(upd.rowCount).toBe(1);
+    // Already-removed pass cannot be voided again (guarded by deleted_at is null).
+    const again = await userQuery(
+      s.userId,
+      `update public.electrolysis_entries
+         set deleted_at = now()
+       where id = $1 and deleted_at is null`,
+      [id],
+    );
+    expect(again.rowCount).toBe(0);
+    // The row still physically exists (soft, not hard).
+    const survives = await adminQuery(
+      `select deleted_at from public.electrolysis_entries where id = $1`,
+      [id],
+    );
+    expect(survives.rowCount).toBe(1);
+    expect(survives.rows[0].deleted_at).not.toBeNull();
+  });
+
+  it("a DIFFERENT studio's member cannot hard-delete (denied) NOR read this studio's pass", async () => {
+    const other = await seedStudio("delete-posture-other");
+    const id = await seedElectrolysisPass();
+    // DELETE is denied at the role level (grant revoked) regardless of studio.
+    await expect(
+      userQuery(
+        other.userId,
+        `delete from public.electrolysis_entries where id = $1`,
+        [id],
+      ),
+    ).rejects.toThrow();
+    // And RLS still hides the row cross-studio.
+    const read = await userQuery(
+      other.userId,
+      `select id from public.electrolysis_entries where id = $1`,
+      [id],
+    );
+    expect(read.rowCount).toBe(0);
+    const survives = await adminQuery(
+      `select id from public.electrolysis_entries where id = $1`,
+      [id],
+    );
+    expect(survives.rowCount).toBe(1);
+  });
+});
+
 describe("D: intentionally-deletable tables still allow member DELETE", () => {
-  it("electrolysis_entries: member DELETE removes the row", async () => {
-    const id = randomUUID();
-    await adminQuery(
-      `insert into public.electrolysis_entries (id, session_id, area)
-       values ($1, $2, 'chin')`,
-      [id, sessionId],
-    );
-    const attempt = await userQuery(
-      s.userId,
-      `delete from public.electrolysis_entries where id = $1`,
-      [id],
-    );
-    expect(attempt.rowCount).toBe(1);
-  });
-
-  it("laser_entries: member DELETE removes the row", async () => {
-    const laserSessionId = randomUUID();
-    await adminQuery(
-      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
-       values ($1, $2, $3, $4, 'laser')`,
-      [laserSessionId, s.studioId, s.clientId, s.practitionerId],
-    );
-    const id = randomUUID();
-    await adminQuery(
-      `insert into public.laser_entries (id, session_id, zone)
-       values ($1, $2, 'upper lip')`,
-      [id, laserSessionId],
-    );
-    const attempt = await userQuery(
-      s.userId,
-      `delete from public.laser_entries where id = $1`,
-      [id],
-    );
-    expect(attempt.rowCount).toBe(1);
-  });
-
   it("treatment_plan_stages: member DELETE removes the row", async () => {
     const planId = randomUUID();
     await adminQuery(
@@ -222,22 +308,34 @@ describe("D: intentionally-deletable tables still allow member DELETE", () => {
 });
 
 describe("D: cross-studio members cannot use the allowed DELETEs either", () => {
-  it("a stranger's DELETE on electrolysis_entries affects zero rows", async () => {
+  // NOTE: electrolysis_entries used to be the example here, but 0115 removed
+  // its member DELETE entirely (covered above). This uses a still-deletable
+  // table (treatment_plan_stages) to prove the allowed DELETEs stay
+  // studio-scoped: a stranger's DELETE affects zero rows and the row survives.
+  it("a stranger's DELETE on treatment_plan_stages affects zero rows", async () => {
     const stranger = await seedStudio("delete-stranger");
+    const planId = randomUUID();
+    await adminQuery(
+      `insert into public.treatment_plans (id, studio_id, client_id, name)
+       values ($1, $2, $3, 'Harness plan')`,
+      [planId, s.studioId, s.clientId],
+    );
     const id = randomUUID();
     await adminQuery(
-      `insert into public.electrolysis_entries (id, session_id, area)
-       values ($1, $2, 'brow')`,
-      [id, sessionId],
+      `insert into public.treatment_plan_stages
+         (id, plan_id, studio_id, how_often_unit, visit_length_minutes,
+          stage_length_value, stage_length_unit)
+       values ($1, $2, $3, 'weekly', 30, 4, 'weeks')`,
+      [id, planId, s.studioId],
     );
     const attempt = await userQuery(
       stranger.userId,
-      `delete from public.electrolysis_entries where id = $1`,
+      `delete from public.treatment_plan_stages where id = $1`,
       [id],
     );
     expect(attempt.rowCount).toBe(0);
     const survives = await adminQuery(
-      `select id from public.electrolysis_entries where id = $1`,
+      `select id from public.treatment_plan_stages where id = $1`,
       [id],
     );
     expect(survives.rowCount).toBe(1);

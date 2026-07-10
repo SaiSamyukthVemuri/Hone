@@ -8,7 +8,7 @@ trusting any number here.
 - **Last reconciled:** 2026-07-09
 - **Production branch:** `claude/build-hone-saas-hOex7`
 - **Production HEAD:** `475e08a15db3b189c173305035a3b4df273ef1c8`
-- **Production migration max:** **0114** (`0114_entry_soft_delete.sql`) — local repo max == remote (all applied).
+- **Production migration max:** **0115** (`0115_entry_hard_delete_hardening.sql`) — local repo max == remote (all applied).
 - **Stripe gates:** 15 PASS (`node scripts/check-stripe-gates.mjs`).
 - **verify-production:** 11 PASS · 0 FAIL · 1 INCOMPLETE (the INCOMPLETE is the reminder-scheduler heartbeat, which reports INCOMPLETE only because `UPSTASH_REDIS_REST_URL/TOKEN` are unset in the *local* env used to run the script — it is not a production failure).
 - **Hosting:** Vercel production (Node 24), deploys from the production branch HEAD.
