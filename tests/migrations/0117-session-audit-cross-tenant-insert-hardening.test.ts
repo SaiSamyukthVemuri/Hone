@@ -13,15 +13,16 @@ const FILE = "0117_session_audit_cross_tenant_insert_hardening.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0117 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
+describe("0117 — number", () => {
+  it("0117 exists; the repo-max tripwire now lives in the 0118 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
         .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(117);
+    // 0117 is no longer newest (0118 added intake terminal-immutability).
+    expect(maxNum).toBeGreaterThanOrEqual(117);
     expect(FILE).toMatch(/^0117_/);
   });
 });
