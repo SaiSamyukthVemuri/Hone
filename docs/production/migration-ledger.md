@@ -4,14 +4,12 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Repo migration max = 0116** (`0116_drop_calendar_feed_raw_token.sql`).
-- **Applied (remote) migration max = 0115** — **0116 is PENDING**. Because 0116 is a
-  *destructive* drop of a column the currently-deployed code still writes
-  (`calendar_feed_token` on rotate/clear), it is applied **code-first**: apply 0116 only
-  AFTER the accompanying hash-only code is merged + deployed, to avoid a window where the
-  old code errors on the dropped column. Existing feed subscriptions are unaffected either
-  way (the route authenticates by hash). Until then, repo (0116) is intentionally one ahead
-  of remote (0115).
+- **Production migration max = 0116** (`0116_drop_calendar_feed_raw_token.sql`).
+- **Applied status:** local repo max == remote (linked project) max == **0116**. Every
+  migration `0001`–`0116` is applied in production. 0116 was applied **code-first** —
+  *after* PR #395's hash-only code merged + deployed — because it destructively drops a
+  column the deployed code had written (`calendar_feed_token` on rotate/clear); existing
+  feed subscriptions were unaffected throughout (the route authenticates by hash).
 - **Total migrations in repo: 116** (`0001` … `0116`).
 - The repo-max is enforced as a test tripwire: the newest migration test
   (`tests/migrations/0116-drop-calendar-feed-raw-token.test.ts`) asserts it is the repo
@@ -54,7 +52,7 @@
 | **0113** | `0113_admin_action_events.sql` | **Admin Action Audit Log** — append-only `admin_action_events` (operator-action events). RLS enabled with **no policies** (service-role reads + writes only; admin authorized at the app layer); **no foreign keys** (audit durability); write grants revoked from `authenticated`/`anon`; **no token/URL/IP/email/clinical/payment columns**; metadata allowlisted + redacted | ✅ |
 | **0114** | `0114_entry_soft_delete.sql` | **Audited "Remove/void pass"** — adds `deleted_at`/`deleted_by`/`delete_reason` (+ active partial indexes) to `electrolysis_entries` and `laser_entries`, mirroring the `session_blocks` soft-delete triad (0019). Lets a practitioner remove ONE pass from a multi-pass area without hard-deleting the clinical record. **Additive**; nullable; no backfill; **no RLS change** (the pre-existing entry DELETE policy is left intact but unused — the code PR switches the entry delete actions to soft-delete). Applied **migration-first** (before the code merge). | ✅ |
 | **0115** | `0115_entry_hard_delete_hardening.sql` | **Entry hard-delete hardening** — closes the residual hard-delete path an independent audit confirmed: **drops** the `for delete to authenticated` RLS policy on `electrolysis_entries` + `laser_entries` (kept by 0087) and **revokes** `truncate, delete` from `anon, authenticated`, so removals go only through the audited soft-delete UPDATE (0114/#391). **Policy/grant-only**; no schema/data change; **hardens** RLS (does not weaken it); `service_role` unaffected (maintenance path preserved). Applied **migration-first**. | ✅ |
-| **0116** | `0116_drop_calendar_feed_raw_token.sql` | **Calendar-feed credential hash-only at rest** — **drops** the raw `practitioners.calendar_feed_token` column + its partial unique index (kept `calendar_feed_token_hash` from 0079, which the feed route authenticates by). Removes the only same-studio-member-readable feed credential; raw token now surfaced only once at generate/rotate. Existing subscriptions keep working (hash lookup); no reconnect. **Drop-only**; no other schema/data/RLS change. Applied **code-first** (after the hash-only code deploys — destructive drop of a written column). | ⏳ pending |
+| **0116** | `0116_drop_calendar_feed_raw_token.sql` | **Calendar-feed credential hash-only at rest** — **drops** the raw `practitioners.calendar_feed_token` column + its partial unique index (kept `calendar_feed_token_hash` from 0079, which the feed route authenticates by). Removes the only same-studio-member-readable feed credential; raw token now surfaced only once at generate/rotate. Existing subscriptions keep working (hash lookup); no reconnect. **Drop-only**; no other schema/data/RLS change. Applied **code-first** (2026-07-10, after PR #395's hash-only code deployed — destructive drop of a written column). | ✅ |
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
 `docs/13`/`docs/14`; all are applied — production max is 0113.)

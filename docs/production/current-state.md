@@ -5,10 +5,10 @@ other doc disagree, this doc + the live verifier win. Re-verify against
 `supabase migration list --linked` and `node scripts/verify-production.mjs` before
 trusting any number here.
 
-- **Last reconciled:** 2026-07-09
+- **Last reconciled:** 2026-07-10
 - **Production branch:** `claude/build-hone-saas-hOex7`
-- **Production HEAD:** `475e08a15db3b189c173305035a3b4df273ef1c8`
-- **Production migration max:** **0115** (`0115_entry_hard_delete_hardening.sql`) — local repo max == remote (all applied).
+- **Production HEAD:** `b31fd3993047c36d8e11d63e737fbaf7b6fd0914`
+- **Production migration max:** **0116** (`0116_drop_calendar_feed_raw_token.sql`) — local repo max == remote (all applied). 0116 dropped the raw `practitioners.calendar_feed_token` column (calendar-feed credential is now hash-only at rest; `calendar_feed_token_hash` retained); existing subscriptions preserved, no forced practitioner reconnect.
 - **Stripe gates:** 15 PASS (`node scripts/check-stripe-gates.mjs`).
 - **verify-production:** 11 PASS · 0 FAIL · 1 INCOMPLETE (the INCOMPLETE is the reminder-scheduler heartbeat, which reports INCOMPLETE only because `UPSTASH_REDIS_REST_URL/TOKEN` are unset in the *local* env used to run the script — it is not a production failure).
 - **Hosting:** Vercel production (Node 24), deploys from the production branch HEAD.
