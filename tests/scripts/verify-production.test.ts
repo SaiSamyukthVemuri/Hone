@@ -86,17 +86,18 @@ describe("verify-production: covers every required check", () => {
   });
 
   it("the derived expected max tracks the repo's current migration max", () => {
-    // Independently compute the repo max the same way the script does, and pin
-    // the current value. When a new migration lands this fails, forcing a
-    // conscious review of the pre-live verifier (drift tripwire) — but the
-    // SCRIPT itself never goes stale, because it derives at run time.
+    // REPO-max invariant (drift tripwire) — pins the newest migration FILE in the
+    // repo. Migration 0119 was applied to the hosted project migration-first on
+    // 2026-07-10, so repo and hosted now reconcile at 0119 (the verifier's
+    // "Remote migration max" check PASSES). This assertion still fails on the next
+    // new migration, forcing a conscious review of the pre-live verifier.
     const nums = readdirSync(join(process.cwd(), "supabase", "migrations"))
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0118 (intake terminal-state immutability).
-    expect(nums[nums.length - 1]).toBe("0118");
+    // Repo max advances to 0119 (clinical-record finalization boundary, Phase 1).
+    expect(nums[nums.length - 1]).toBe("0119");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
