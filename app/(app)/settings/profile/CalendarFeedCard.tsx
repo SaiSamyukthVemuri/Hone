@@ -8,27 +8,33 @@ import {
 
 // Calendar feed card on Settings → Profile.
 //
-// Renders three states:
-//   - never created: "Generate calendar feed URL" CTA only.
-//   - active: feed URL displayed, Copy + Regenerate + Disable controls.
-//   - rotating: armed "Replace existing URL?" confirmation that the
-//     practitioner must click again to actually replace.
+// Migration 0116: the raw feed token is HASH-ONLY at rest, so the card never
+// receives the raw token from the DB. It gets `initialActive` (whether a feed
+// hash exists) and shows the actual URL only from the token a generate/rotate
+// action just returned. Renders:
+//   - never created (!active): "Generate calendar feed URL" CTA.
+//   - active, link just shown (fresh token): URL + Copy + Regenerate + Disable.
+//   - active, link not in view (existing feed, raw not stored): "active — the
+//     link is shown only once; regenerate to get a new one" + Regenerate +
+//     Disable. The existing subscription keeps working.
 //
-// The card is explicit that this is one-way and read-only, and that
-// anyone holding the URL can view appointments (no login required by
-// Google Calendar's poller).
+// The card is explicit that this is one-way and read-only, and that anyone
+// holding the URL can view appointments (no login required by the poller).
 
 type Props = {
   appOrigin: string;
-  initialToken: string | null;
+  initialActive: boolean;
 };
 
 function feedUrl(appOrigin: string, token: string): string {
   return `${appOrigin}/calendar-feed/${token}.ics`;
 }
 
-export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
-  const [token, setToken] = useState<string | null>(initialToken);
+export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
+  // `token` is the raw token from a just-run generate/rotate (shown once);
+  // `active` is whether a feed exists at all (hash present).
+  const [token, setToken] = useState<string | null>(null);
+  const [active, setActive] = useState(initialActive);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +49,7 @@ export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
         return;
       }
       setToken(r.token);
+      setActive(true);
       setConfirmRotate(false);
     });
   }
@@ -60,6 +67,7 @@ export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
         return;
       }
       setToken(r.token);
+      setActive(true);
       setConfirmRotate(false);
     });
   }
@@ -73,6 +81,7 @@ export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
         return;
       }
       setToken(null);
+      setActive(false);
       setConfirmRotate(false);
     });
   }
@@ -106,7 +115,7 @@ export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
         below to revoke the old one.
       </div>
 
-      {!token && (
+      {!active && (
         <div className="flex flex-col gap-2">
           <p className="text-sm text-neutral-700 dark:text-neutral-300">
             No calendar feed URL yet.
@@ -124,25 +133,41 @@ export function CalendarFeedCard({ appOrigin, initialToken }: Props) {
         </div>
       )}
 
-      {token && (
+      {active && (
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
-            <span className="text-xs uppercase tracking-wider text-neutral-500">
-              Your calendar feed URL
-            </span>
-            <code className="break-all text-xs text-neutral-800 dark:text-neutral-200">
-              {feedUrl(appOrigin, token)}
-            </code>
-          </div>
+          {token ? (
+            <div className="flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
+              <span className="text-xs uppercase tracking-wider text-neutral-500">
+                Your calendar feed URL
+              </span>
+              <code className="break-all text-xs text-neutral-800 dark:text-neutral-200">
+                {feedUrl(appOrigin, token)}
+              </code>
+              <span className="text-xs text-neutral-500">
+                Copy this now — for your security Hone stores only a hashed
+                copy, so the link is shown only this once.
+              </span>
+            </div>
+          ) : (
+            <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+              Your calendar feed is active and any existing subscription keeps
+              working. For your security the link is shown only once, when you
+              generate or regenerate it — Hone does not store the link itself.
+              Regenerate to get a new link (this replaces the old one), or
+              disable the feed.
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={copy}
-              disabled={pending}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
-            >
-              {copied ? "Copied" : "Copy feed URL"}
-            </button>
+            {token && (
+              <button
+                type="button"
+                onClick={copy}
+                disabled={pending}
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+              >
+                {copied ? "Copied" : "Copy feed URL"}
+              </button>
+            )}
             {!confirmRotate && (
               <button
                 type="button"

@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #182. Source-grep tests pin the rotation/clear action's switch
-// to writing BOTH the raw token AND the new hash column. Phase 1
-// keeps the raw column populated for rollout safety (the existing
-// settings UI reads it on page render); phase 2 will null the raw
-// column once the UI no longer reads from it.
+// PR #182 + migration 0116 (phase 2). Source-grep tests pin the rotation/clear
+// action to writing ONLY the hash column. The raw calendar_feed_token column
+// was dropped in 0116 (hash-only at rest); the settings UI now reads feed
+// existence from the hash and renders the URL only from the action's one-time
+// return value.
 
 const ACTIONS_PATH = path.resolve(
   __dirname,
@@ -45,11 +45,12 @@ describe("rotateCalendarFeedTokenAction: uses the shared helpers", () => {
   });
 });
 
-describe("rotateCalendarFeedTokenAction: writes both columns (phase 1)", () => {
-  it("the UPDATE body sets calendar_feed_token AND calendar_feed_token_hash", () => {
+describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)", () => {
+  it("the UPDATE body sets calendar_feed_token_hash and NOT the raw token", () => {
     expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token: token,\s*\n?\s*calendar_feed_token_hash: tokenHash,\s*\n?\s*\}\)/,
+      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: tokenHash,\s*\n?\s*\}\)/,
     );
+    expect(ACTIONS).not.toMatch(/calendar_feed_token: token,/);
   });
 
   it("scopes the update to the calling practitioner", () => {
@@ -81,11 +82,12 @@ describe("rotateCalendarFeedTokenAction: writes both columns (phase 1)", () => {
   });
 });
 
-describe("clearCalendarFeedTokenAction: nulls both columns", () => {
-  it("nulls both raw + hash columns", () => {
+describe("clearCalendarFeedTokenAction: nulls ONLY the hash (phase 2 / 0116)", () => {
+  it("nulls calendar_feed_token_hash and NOT the raw column", () => {
     expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token: null,\s*\n?\s*calendar_feed_token_hash: null,\s*\n?\s*\}\)/,
+      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: null,\s*\n?\s*\}\)/,
     );
+    expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
   });
 });
 
@@ -107,12 +109,12 @@ describe("settings actions: PR #182 phase-1 boundaries", () => {
   });
 });
 
-describe("PR #182 phase-1 honesty: raw column writes remain (transitional)", () => {
-  it("the rotation action STILL writes calendar_feed_token (phase 1 transitional)", () => {
-    // Phase 2 will remove this once the UI no longer reads the raw
-    // column. Pinning it now documents the deliberate phase-1
-    // posture; a future refactor that silently drops the raw write
-    // without removing the UI dependency would be caught here.
-    expect(ACTIONS).toMatch(/calendar_feed_token: token,/);
+describe("phase 2 (migration 0116): raw-token writes are gone", () => {
+  it("the actions no longer write the raw calendar_feed_token column", () => {
+    // 0116 dropped the raw column; the UI reads existence from the hash and
+    // renders the URL only from the action's one-time return value. A refactor
+    // that reintroduced a raw-column write would be caught here.
+    expect(ACTIONS).not.toMatch(/calendar_feed_token: token,/);
+    expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
   });
 });
