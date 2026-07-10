@@ -3,39 +3,11 @@
 import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { rowsToCsv } from "@/lib/csv";
 
 export type ExportResult =
   | { ok: true; filename: string; base64: string }
   | { ok: false; error: string };
-
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  let s: string;
-  if (typeof value === "string") {
-    s = value;
-  } else if (typeof value === "object") {
-    s = JSON.stringify(value);
-  } else {
-    s = String(value);
-  }
-  // Quote whenever the value contains a comma, quote, CR, or LF.
-  if (/[",\r\n]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function rowsToCsv(
-  headers: ReadonlyArray<string>,
-  rows: ReadonlyArray<Record<string, unknown>>,
-): string {
-  const lines = [headers.map(csvCell).join(",")];
-  for (const row of rows) {
-    lines.push(headers.map((h) => csvCell(row[h])).join(","));
-  }
-  // Trailing newline so downstream tools recognize the last row consistently.
-  return `${lines.join("\n")}\n`;
-}
 
 function slugify(s: string): string {
   const cleaned = s
