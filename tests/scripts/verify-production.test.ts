@@ -95,8 +95,8 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0116 (drop raw calendar-feed token).
-    expect(nums[nums.length - 1]).toBe("0116");
+    // Repo max advances to 0117 (session_audit cross-tenant INSERT hardening).
+    expect(nums[nums.length - 1]).toBe("0117");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
