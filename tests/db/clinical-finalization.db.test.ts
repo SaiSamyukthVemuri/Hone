@@ -358,16 +358,27 @@ describe("0119 — finalized session is frozen (all roles, no bypass)", () => {
     ).rejects.toThrow();
   });
 
-  it("blocks hard-delete of a finalized session (member AND service-role)", async () => {
+  it("blocks hard-delete of a finalized session (member cannot; service-role guard raises)", async () => {
     const { studio, sessionId } = await finalized();
-    await expect(
-      userQuery(studio.userId, "delete from public.sessions where id = $1", [
-        sessionId,
-      ]),
-    ).rejects.toThrow();
+    // Member: `sessions` has no DELETE RLS policy, so the delete is prevented by RLS
+    // (matches 0 rows, or errors on a missing grant) — either way the row survives.
+    await userQuery(studio.userId, "delete from public.sessions where id = $1", [
+      sessionId,
+    ]).catch(() => undefined);
+    const afterMember = await adminQuery(
+      "select 1 from public.sessions where id = $1",
+      [sessionId],
+    );
+    expect(afterMember.rowCount).toBe(1);
+    // Service-role (bypassrls): the BEFORE DELETE guard raises — no bypass.
     await expect(
       adminQuery("delete from public.sessions where id = $1", [sessionId]),
     ).rejects.toThrow();
+    const afterAdmin = await adminQuery(
+      "select 1 from public.sessions where id = $1",
+      [sessionId],
+    );
+    expect(afterAdmin.rowCount).toBe(1);
   });
 
   it("blocks changing finalization attribution directly", async () => {
