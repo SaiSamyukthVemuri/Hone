@@ -56,7 +56,8 @@ export default async function LaunchChecklistPage() {
   const hasBothPolicies =
     nonEmpty(studio.cancellation_policy_text) &&
     nonEmpty(studio.no_show_policy_text);
-  const hasFeedToken = nonEmpty(practitioner.calendar_feed_token);
+  // Migration 0116: feed existence is now derived from the hash (hash-only at rest).
+  const hasFeedToken = nonEmpty(practitioner.calendar_feed_token_hash);
   const hasSlug = nonEmpty(studio.slug);
   const studioReady = nonEmpty(studio.name) && hasSlug;
   const bookingUrl = hasSlug

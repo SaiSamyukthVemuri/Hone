@@ -9,7 +9,9 @@ import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
 // Endpoint: GET /calendar-feed/<token>.ics
 //
 // Lookup model: the [token] path segment is a high-entropy random
-// string stored on practitioners.calendar_feed_token (migration 0046).
+// string matched by its SHA-256 hash against
+// practitioners.calendar_feed_token_hash (migrations 0079/0116; the raw
+// token is never stored — hash-only at rest).
 // The route resolves the practitioner via the admin client (anon /
 // authenticated callers have no row-level access to practitioners by
 // token), then loads the practitioner's appointments and renders an

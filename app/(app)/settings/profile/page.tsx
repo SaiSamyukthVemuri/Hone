@@ -22,7 +22,7 @@ export default async function ProfileSettingsPage() {
       <ColorPicker initialColor={practitioner.color} />
       <CalendarFeedCard
         appOrigin={getRequiredAppOrigin()}
-        initialToken={practitioner.calendar_feed_token}
+        initialActive={!!practitioner.calendar_feed_token_hash}
       />
     </section>
   );

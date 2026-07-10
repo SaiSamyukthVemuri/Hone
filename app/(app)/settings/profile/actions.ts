@@ -107,8 +107,9 @@ export async function rotateCalendarFeedTokenAction(): Promise<CalendarFeedResul
   const tokenHash = hashCalendarFeedToken(token);
   const { error } = await supabase
     .from("practitioners")
+    // Migration 0116: hash-only at rest. Only the SHA-256 hash is stored; the
+    // raw token is returned once (below) and never persisted or re-read.
     .update({
-      calendar_feed_token: token,
       calendar_feed_token_hash: tokenHash,
     })
     .eq("id", practitioner.id);
@@ -130,8 +131,8 @@ export async function clearCalendarFeedTokenAction(): Promise<CalendarFeedResult
   const supabase = await createClient();
   const { error } = await supabase
     .from("practitioners")
+    // Migration 0116: hash-only at rest — clearing the hash revokes the feed.
     .update({
-      calendar_feed_token: null,
       calendar_feed_token_hash: null,
     })
     .eq("id", practitioner.id);

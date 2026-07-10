@@ -600,12 +600,10 @@ export type Practitioner = {
   terms_version: string | null;
   privacy_accepted_at: string | null;
   privacy_version: string | null;
-  // Migration 0046: per-practitioner secret token for the private
-  // calendar feed at /calendar-feed/<token>.ics. Null until the
-  // practitioner generates one; UNIQUE among non-null values.
-  calendar_feed_token: string | null;
-  // Migration 0079: SHA-256 hash of the calendar feed token
-  // (hash-at-rest, phase 1). Added here by the PR #221 drift check.
+  // Migration 0079/0116: SHA-256 hash of the calendar feed token — the ONLY
+  // at-rest form of the credential. The raw calendar_feed_token column (0046)
+  // was dropped in 0116; the raw token is surfaced only once at generate/rotate.
+  // The feed route authenticates by hashing the URL's token and matching this.
   calendar_feed_token_hash: string | null;
   // Migration 0084 (PR #203): sticky machine-frequency default.
   // Last-used value, written by the treatment-area save actions;

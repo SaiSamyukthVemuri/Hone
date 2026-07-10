@@ -17,15 +17,16 @@ const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 // never trips a negative assertion. Presence checks use the raw SQL.
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0115 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
+describe("0115 — number", () => {
+  it("0115 exists; the repo-max tripwire now lives in the 0116 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
         .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(115);
+    // 0115 is no longer newest (0116 dropped the raw calendar-feed token).
+    expect(maxNum).toBeGreaterThanOrEqual(115);
     expect(FILE).toMatch(/^0115_/);
   });
 });
