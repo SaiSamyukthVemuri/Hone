@@ -28,6 +28,11 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
+  // Migration 0119 (Clinical Record — Phase 1): studio-scoped feature flag for
+  // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
+  // studio during supervised rollout. Optional at the type level for rows loaded
+  // via `select *` before 0119 is applied.
+  clinical_finalization_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -676,6 +681,16 @@ export type ProbeType =
   | "ITH";
 export type MachineFrequency = "13.56 MHz" | "27.12 MHz";
 
+export type SessionRecordStatus = "draft" | "finalized" | "void";
+// Migration 0119: provenance. Existing rows are 'legacy' (never finalizable);
+// sessions created after rollout default to 'native'. Only native drafts can be
+// finalized. legacy_classification is descriptive-only and never affects reads.
+export type SessionRecordOrigin = "native" | "legacy";
+export type SessionLegacyClassification =
+  | "clearly_completed"
+  | "clearly_incomplete"
+  | "ambiguous";
+
 export type Session = {
   id: string;
   studio_id: string;
@@ -689,6 +704,16 @@ export type Session = {
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
+  // Migration 0119 (Clinical Record — Phase 1): finalization lifecycle. New +
+  // existing sessions default to 'draft' (editable). 'finalized' locks the
+  // clinical content (DB-enforced) and points at the immutable snapshot.
+  record_status: SessionRecordStatus;
+  record_origin: SessionRecordOrigin;
+  legacy_classification: SessionLegacyClassification | null;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  record_version: number;
+  current_snapshot_id: string | null;
   // Migration 0013: soft delete.
   deleted_at: string | null;
   deleted_by: string | null;

@@ -18,6 +18,7 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
 import { DoneChartingButton } from "./DoneChartingButton";
+import { FinalizeSessionCard } from "./FinalizeSessionCard";
 import {
   resolveSessionPaymentDefault,
   type SessionPaymentDefaultAmount,
@@ -276,6 +277,32 @@ export default async function SessionDetailPage({
       ? ` · ${priorLaserCount} laser session${priorLaserCount === 1 ? "" : "s"} previously`
       : "";
 
+  // Clinical Record — Phase 1. Finalize summary props, only when the studio-scoped
+  // flag is on (otherwise the card is not rendered and no extra query runs).
+  const finalizationEnabled = studio.clinical_finalization_enabled === true;
+  // A finalized (or void) record is read-only regardless of the flag's current
+  // state. Every existing/draft session is false, so behavior is unchanged until a
+  // studio opts in and explicitly finalizes (migration-first safe).
+  const isFinalized =
+    session.record_status === "finalized" || session.record_status === "void";
+  const finalizeAreasCount = blockData?.blocks.length ?? 0;
+  const finalizePassesCount =
+    session.electrolysis_entries.length + session.laser_entries.length;
+  const finalizedByName = session.finalized_by
+    ? (clientData.practitioners.find((p) => p.id === session.finalized_by)
+        ?.display_name ?? null)
+    : null;
+  let finalizePhotosCount = 0;
+  if (finalizationEnabled) {
+    const supabaseForPhotos = await createClient();
+    const { count } = await supabaseForPhotos
+      .from("treatment_images")
+      .select("id", { count: "exact", head: true })
+      .eq("studio_id", studio.id)
+      .eq("session_id", session.id);
+    finalizePhotosCount = count ?? 0;
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
@@ -363,6 +390,22 @@ export default async function SessionDetailPage({
         />
       </div>
 
+      {/* Clinical Record — Phase 1: when finalized, the record is read-only.
+          The clinical content below is preserved and shown for reference; edits
+          are blocked at the database. Corrections/amendments are a later phase. */}
+      {isFinalized && (
+        <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-800 dark:bg-emerald-950/30">
+          <span className="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-white">
+            Finalized · read-only
+          </span>
+          <p className="mt-2 text-emerald-900 dark:text-emerald-100">
+            This clinical record is finalized. The treatment recorded below is
+            preserved unchanged; edits are locked. Corrections and amendments (a
+            later phase) will be added without altering the original.
+          </p>
+        </section>
+      )}
+
       {/* PR #190 (clinical memory): the plan written at the previous
           visit, surfaced where Chloe starts working. Renders only
           when a note exists. */}
@@ -401,7 +444,8 @@ export default async function SessionDetailPage({
       {/* PR #194: one-tap seed from the previous session, only when
           this chart has no treatment areas yet (duplication-proof)
           and a previous session exists. */}
-      {session.modality === "electrolysis" &&
+      {!isFinalized &&
+        session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
         previousSessionAny &&
@@ -432,13 +476,15 @@ export default async function SessionDetailPage({
         />
       ) : (
         <>
-          <LogLaserEntryForm
-            sessionId={session.id}
-            clientId={id}
-            lastEntry={lastEntryNotFromThisSession as LaserEntry | null}
-            treatmentCounts={treatmentCounts}
-            action={addLaserEntryAction}
-          />
+          {!isFinalized && (
+            <LogLaserEntryForm
+              sessionId={session.id}
+              clientId={id}
+              lastEntry={lastEntryNotFromThisSession as LaserEntry | null}
+              treatmentCounts={treatmentCounts}
+              action={addLaserEntryAction}
+            />
+          )}
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">
               Entries this session
@@ -469,12 +515,20 @@ export default async function SessionDetailPage({
             you when {clientFirstName} comes back.
           </p>
         </div>
-        <NextVisitNoteForm
-          sessionId={session.id}
-          clientId={id}
-          initialNote={session.next_session_note ?? ""}
-          action={updateNextSessionNoteAction}
-        />
+        {isFinalized ? (
+          <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
+            {session.next_session_note?.trim()
+              ? session.next_session_note
+              : "No next-visit note."}
+          </p>
+        ) : (
+          <NextVisitNoteForm
+            sessionId={session.id}
+            clientId={id}
+            initialNote={session.next_session_note ?? ""}
+            action={updateNextSessionNoteAction}
+          />
+        )}
       </section>
 
       {/* PR #235: the risks/aftercare stamp is markable right where
@@ -488,11 +542,19 @@ export default async function SessionDetailPage({
             Recorded on the client procedure record for this session.
           </p>
         </div>
-        <AftercareExplainedToggle
-          sessionId={session.id}
-          explainedAt={session.aftercare_and_risks_explained_at ?? null}
-          action={markAftercareExplainedAction}
-        />
+        {isFinalized ? (
+          <p className="text-sm text-neutral-800 dark:text-neutral-200">
+            {session.aftercare_and_risks_explained_at
+              ? "Risks & aftercare explained (recorded on the procedure record)."
+              : "Risks & aftercare were not marked as explained."}
+          </p>
+        ) : (
+          <AftercareExplainedToggle
+            sessionId={session.id}
+            explainedAt={session.aftercare_and_risks_explained_at ?? null}
+            action={markAftercareExplainedAction}
+          />
+        )}
       </section>
 
       {/* PR #238 (Chloe pilot): "How do I save and complete the
@@ -516,12 +578,21 @@ export default async function SessionDetailPage({
               aftercare prompt when the session has no aftercare stamp. It never
               blocks — "Continue without marking" always proceeds. When the stamp
               is present it behaves like the old plain link. */}
-          <DoneChartingButton
-            sessionId={session.id}
-            doneHref={`/clients/${id}?tab=sessions`}
-            aftercareExplained={session.aftercare_and_risks_explained_at != null}
-            markAction={markAftercareExplainedAction}
-          />
+          {isFinalized ? (
+            <Link
+              href={`/clients/${id}?tab=sessions`}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+            >
+              Back to sessions
+            </Link>
+          ) : (
+            <DoneChartingButton
+              sessionId={session.id}
+              doneHref={`/clients/${id}?tab=sessions`}
+              aftercareExplained={session.aftercare_and_risks_explained_at != null}
+              markAction={markAftercareExplainedAction}
+            />
+          )}
           {paymentApptId && (
             <Link
               href={`/calendar/${paymentApptId}`}
@@ -533,9 +604,33 @@ export default async function SessionDetailPage({
         </div>
       </section>
 
-      <div className="pt-6">
-        <DeleteSessionForm sessionId={session.id} clientId={id} />
-      </div>
+      {/* Clinical Record — Phase 1: finalization boundary, studio-flag-gated.
+          "Done charting" above stays navigation-only; this is the record
+          lifecycle action. Does NOT change treatment-memory reads yet. */}
+      {finalizationEnabled && (
+        <FinalizeSessionCard
+          sessionId={session.id}
+          clientId={id}
+          recordStatus={session.record_status}
+          recordOrigin={session.record_origin}
+          recordVersion={session.record_version}
+          finalizedAt={session.finalized_at}
+          finalizedByName={finalizedByName}
+          snapshotVersion={session.record_status === "finalized" ? 1 : null}
+          areasCount={finalizeAreasCount}
+          passesCount={finalizePassesCount}
+          photosCount={finalizePhotosCount}
+          aftercareExplained={session.aftercare_and_risks_explained_at != null}
+        />
+      )}
+
+      {/* A finalized clinical record cannot be soft-deleted (DB-guarded); the
+          destructive control is withdrawn once finalized. */}
+      {!isFinalized && (
+        <div className="pt-6">
+          <DeleteSessionForm sessionId={session.id} clientId={id} />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,30 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // Migration 0118: a BEFORE UPDATE trigger makes submitted/reviewed intake
 // answers immutable to authenticated end-users (service-role exempt), closing a
-// same-tenant clinical-record integrity defect. Carries the repo-max tripwire
-// (moved here from 0117). Behavioral proof lives in
-// tests/db/intake-terminal-immutability.db.test.ts.
+// same-tenant clinical-record integrity defect. Behavioral proof lives in
+// tests/db/intake-terminal-immutability.db.test.ts. The repo migration-max
+// tripwire lives with the newest migration's test (0119), not here.
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0118_intake_terminal_immutability.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
-
-describe("0118 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
-    const maxNum = Math.max(
-      ...readdirSync(MIGRATIONS_DIR)
-        .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-        .filter(Boolean)
-        .map((m) => Number((m as RegExpExecArray)[1])),
-    );
-    expect(maxNum).toBe(118);
-    expect(FILE).toMatch(/^0118_/);
-  });
-});
 
 describe("0118 — intake terminal-state immutability trigger", () => {
   it("creates a BEFORE UPDATE trigger on client_intake_forms", () => {
