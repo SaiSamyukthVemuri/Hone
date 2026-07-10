@@ -7,7 +7,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 ## Status
 
 > **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0115** as of 2026-07-10) ·
+> (production migration max **0116** as of 2026-07-10) ·
 > [migration ledger](./docs/production/migration-ledger.md) ·
 > [release changelog](./docs/production/release-changelog.md) ·
 > [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a

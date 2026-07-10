@@ -42,12 +42,18 @@ posture see [current-state.md](./current-state.md).
 | #384 | none | Live | Charting: non-blocking aftercare prompt at "Done charting" | Warns when `sessions.aftercare_and_risks_explained_at` is NULL; "Mark aftercare explained" (existing toggle) or "Continue without marking" — **never blocks (emergency-safe)**; toggle hardened to explicit true/false. Stamp field already exists (0085). No migration; **no `mark_appointment_complete` RPC change**; no payment/email/SMS/postcare change. Merge SHA `39a63ab44843df260719991f0aff776c865b7628` |
 | #385 | none | Live | Charting: server-side treatment-area canonical validation | New writes require a canonical area (flat `AREAS`, incl. "Full face", case-normalized) **or** explicit "Other"/custom; unflagged arbitrary text rejected. All four session-block write paths + copy path covered; **legacy rows never validated on read, never rewritten**. App-layer, no migration/RLS/payment/email/SMS. treatment_plans multi-area deferred. Merge SHA `1ecaec383c530daf1471c14c42817d906a5da46b` |
 | #386 | none | Live | Charting: probe-lot studio verification on write | A client `probe_lot_id` must be a well-formed UUID belonging to the caller's own studio (studio- + RLS-scoped), else rejected; free-text/manual `probe_lot_number` preserved and **never made inventory-verified**. Live block flow unchanged. App-layer, no migration/RLS/payment/email/SMS. Merge SHA `475e08a15db3b189c173305035a3b4df273ef1c8` |
+| #391 | **0114** | Live | Charting: audited soft-delete ("Remove pass") for one pass in a multi-pass area | Adds `deleted_at`/`deleted_by`/`delete_reason` (+ active partial indexes) to `electrolysis_entries` + `laser_entries` (mirrors `session_blocks` 0019); removes a mistaken pass without hard-deleting the clinical record. Additive; nullable; no backfill; read paths filter voided passes. No payment/email/SMS. Merge SHA `5012612c563aac6f6d543c44e491f307b4cd2d4f` |
+| #393 | **0115** | Live | Entry hard-delete hardening (closes an independent-audit finding) | Drops the residual `for delete to authenticated` RLS policy on `electrolysis_entries` + `laser_entries` (kept by 0087) and revokes `truncate, delete` from `anon, authenticated`, so passes are soft-delete-only. **Hardens** RLS (does not weaken); `service_role` unaffected. Policy/grant-only. No payment/email/SMS. Merge SHA `e5ef80ffe88585fe00935c8cb8dcda73197f5c08` |
+| #395 | **0116** | Live | Calendar-feed credential hash-only at rest (closes an independent-audit finding) | Drops the raw `practitioners.calendar_feed_token` column + its unique index; keeps `calendar_feed_token_hash` (0079), which the feed route authenticates by. Existing subscriptions preserved — no forced reconnect; raw token surfaced only once at generate/rotate. Applied **code-first** (destructive drop of a written column). No payment/email/SMS. Merge SHA `b31fd3993047c36d8e11d63e737fbaf7b6fd0914` |
 
 ## Migration-first PRs in this wave
 
-The migration-bearing PRs (#357/0108, #359/0109, #360/0110, #370/0111, #372/0112, **#374/0113**)
-were shipped **migration-first**: the migration was applied to production and verified **before**
-the code merge/deploy. See [../runbooks/migration-first-process.md](../runbooks/migration-first-process.md).
+The migration-bearing PRs (#357/0108, #359/0109, #360/0110, #370/0111, #372/0112, **#374/0113**,
+**#391/0114**, **#393/0115**) were shipped **migration-first**: the migration was applied to
+production and verified **before** the code merge/deploy. **#395/0116** is the one deliberate
+exception — a **code-first** apply, because it destructively drops a column the deployed code
+still wrote, so the code that stopped writing it was deployed first, then the column dropped.
+See [../runbooks/migration-first-process.md](../runbooks/migration-first-process.md).
 
 ## Provenance
 
