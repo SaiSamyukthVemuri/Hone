@@ -13,15 +13,16 @@ const FILE = "0116_drop_calendar_feed_raw_token.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0116 — number (repo-max tripwire)", () => {
-  it("is the repo migration max", () => {
+describe("0116 — number", () => {
+  it("0116 exists; the repo-max tripwire now lives in the 0117 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
         .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(116);
+    // 0116 is no longer newest (0117 hardened the session_audit INSERT policy).
+    expect(maxNum).toBeGreaterThanOrEqual(116);
     expect(FILE).toMatch(/^0116_/);
   });
 });

@@ -4,16 +4,16 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0116** (`0116_drop_calendar_feed_raw_token.sql`).
-- **Applied status:** local repo max == remote (linked project) max == **0116**. Every
-  migration `0001`–`0116` is applied in production. 0116 was applied **code-first** —
-  *after* PR #395's hash-only code merged + deployed — because it destructively drops a
-  column the deployed code had written (`calendar_feed_token` on rotate/clear); existing
-  feed subscriptions were unaffected throughout (the route authenticates by hash).
-- **Total migrations in repo: 116** (`0001` … `0116`).
+- **Production migration max = 0117** (`0117_session_audit_cross_tenant_insert_hardening.sql`).
+- **Applied status:** local repo max == remote (linked project) max == **0117**. Every
+  migration `0001`–`0117` is applied in production. 0117 was applied **migration-first**
+  (policy-only tightening; the sole app writer already complied, so no code change was
+  needed). 0116 was applied **code-first** — *after* PR #395's hash-only code merged +
+  deployed — because it destructively dropped a column the deployed code had written.
+- **Total migrations in repo: 117** (`0001` … `0117`).
 - The repo-max is enforced as a test tripwire: the newest migration test
-  (`tests/migrations/0116-drop-calendar-feed-raw-token.test.ts`) asserts it is the repo
-  max, and `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
+  (`tests/migrations/0117-session-audit-cross-tenant-insert-hardening.test.ts`) asserts it is
+  the repo max, and `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
   new migration lands, those pins move to the new number.
 
 > **Scope of this v1 ledger.** The recent tail (0089–0113) is enumerated below with a
@@ -53,6 +53,7 @@
 | **0114** | `0114_entry_soft_delete.sql` | **Audited "Remove/void pass"** — adds `deleted_at`/`deleted_by`/`delete_reason` (+ active partial indexes) to `electrolysis_entries` and `laser_entries`, mirroring the `session_blocks` soft-delete triad (0019). Lets a practitioner remove ONE pass from a multi-pass area without hard-deleting the clinical record. **Additive**; nullable; no backfill; **no RLS change** (the pre-existing entry DELETE policy is left intact but unused — the code PR switches the entry delete actions to soft-delete). Applied **migration-first** (before the code merge). | ✅ |
 | **0115** | `0115_entry_hard_delete_hardening.sql` | **Entry hard-delete hardening** — closes the residual hard-delete path an independent audit confirmed: **drops** the `for delete to authenticated` RLS policy on `electrolysis_entries` + `laser_entries` (kept by 0087) and **revokes** `truncate, delete` from `anon, authenticated`, so removals go only through the audited soft-delete UPDATE (0114/#391). **Policy/grant-only**; no schema/data change; **hardens** RLS (does not weaken it); `service_role` unaffected (maintenance path preserved). Applied **migration-first**. | ✅ |
 | **0116** | `0116_drop_calendar_feed_raw_token.sql` | **Calendar-feed credential hash-only at rest** — **drops** the raw `practitioners.calendar_feed_token` column + its partial unique index (kept `calendar_feed_token_hash` from 0079, which the feed route authenticates by). Removes the only same-studio-member-readable feed credential; raw token now surfaced only once at generate/rotate. Existing subscriptions keep working (hash lookup); no reconnect. **Drop-only**; no other schema/data/RLS change. Applied **code-first** (2026-07-10, after PR #395's hash-only code deployed — destructive drop of a written column). | ✅ |
+| **0117** | `0117_session_audit_cross_tenant_insert_hardening.sql` | **session_audit cross-tenant INSERT hardening** — tightens the `session_audit_studio_member_insert` policy so a new audit row's `session_id` must belong to a studio the caller is an active member of (mirrors the SELECT scoping), in addition to the existing actor binding. Closes a confirmed cross-tenant integrity-write (Studio A could attach a fabricated audit event to a Studio B session). **Policy-only** (INSERT policy replaced, stricter); no SELECT/UPDATE/DELETE/grant/schema/data change; **hardens** RLS. A read-only audit found **0** cross-studio-mismatched historical rows. No code change needed (the sole app writer already complied). Applied **migration-first**. | ✅ |
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
 `docs/13`/`docs/14`; all are applied — production max is 0113.)
