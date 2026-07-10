@@ -124,6 +124,41 @@ const blockedCases: BlockedCase[] = [
       return id;
     },
   },
+  // Migration 0115: treatment PASSES are now soft-delete-only. The
+  // authenticated DELETE policy + grant (0087) were removed, so a member's
+  // direct hard DELETE must now affect zero rows (removals go through the
+  // soft-delete UPDATE path, PR #391). These two moved here from the
+  // intentionally-deletable group below.
+  {
+    table: "electrolysis_entries",
+    seed: async () => {
+      const id = randomUUID();
+      await adminQuery(
+        `insert into public.electrolysis_entries (id, session_id, area)
+         values ($1, $2, 'chin')`,
+        [id, sessionId],
+      );
+      return id;
+    },
+  },
+  {
+    table: "laser_entries",
+    seed: async () => {
+      const laserSessionId = randomUUID();
+      await adminQuery(
+        `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+         values ($1, $2, $3, $4, 'laser')`,
+        [laserSessionId, s.studioId, s.clientId, s.practitionerId],
+      );
+      const id = randomUUID();
+      await adminQuery(
+        `insert into public.laser_entries (id, session_id, zone)
+         values ($1, $2, 'upper lip')`,
+        [id, laserSessionId],
+      );
+      return id;
+    },
+  },
 ];
 
 describe("D: members cannot DELETE from protected clinical tables", () => {
@@ -145,43 +180,68 @@ describe("D: members cannot DELETE from protected clinical tables", () => {
   }
 });
 
-describe("D: intentionally-deletable tables still allow member DELETE", () => {
-  it("electrolysis_entries: member DELETE removes the row", async () => {
+// Migration 0115: treatment passes are soft-delete-only. A member's direct
+// hard DELETE is blocked (covered by the blockedCases loop above), but the
+// approved soft-delete UPDATE path (PR #391) must still work same-studio, and
+// cross-studio access stays blocked.
+describe("D: treatment passes are soft-delete-only after 0115", () => {
+  it("member CAN soft-delete an electrolysis pass via UPDATE (Remove pass path intact)", async () => {
     const id = randomUUID();
     await adminQuery(
       `insert into public.electrolysis_entries (id, session_id, area)
        values ($1, $2, 'chin')`,
       [id, sessionId],
     );
-    const attempt = await userQuery(
+    const upd = await userQuery(
       s.userId,
+      `update public.electrolysis_entries
+         set deleted_at = now(), deleted_by = $2, delete_reason = 'test'
+       where id = $1 and deleted_at is null`,
+      [id, s.practitionerId],
+    );
+    expect(upd.rowCount).toBe(1);
+    // Already-removed pass cannot be voided again (guarded by deleted_at is null).
+    const again = await userQuery(
+      s.userId,
+      `update public.electrolysis_entries
+         set deleted_at = now()
+       where id = $1 and deleted_at is null`,
+      [id],
+    );
+    expect(again.rowCount).toBe(0);
+    // The row still physically exists (soft, not hard).
+    const survives = await adminQuery(
+      `select deleted_at from public.electrolysis_entries where id = $1`,
+      [id],
+    );
+    expect(survives.rowCount).toBe(1);
+    expect(survives.rows[0].deleted_at).not.toBeNull();
+  });
+
+  it("a DIFFERENT studio's member cannot hard-delete OR read this studio's electrolysis pass", async () => {
+    const other = await seedStudio("delete-posture-other");
+    const id = randomUUID();
+    await adminQuery(
+      `insert into public.electrolysis_entries (id, session_id, area)
+       values ($1, $2, 'chin')`,
+      [id, sessionId],
+    );
+    const del = await userQuery(
+      other.userId,
       `delete from public.electrolysis_entries where id = $1`,
       [id],
     );
-    expect(attempt.rowCount).toBe(1);
-  });
-
-  it("laser_entries: member DELETE removes the row", async () => {
-    const laserSessionId = randomUUID();
-    await adminQuery(
-      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
-       values ($1, $2, $3, $4, 'laser')`,
-      [laserSessionId, s.studioId, s.clientId, s.practitionerId],
-    );
-    const id = randomUUID();
-    await adminQuery(
-      `insert into public.laser_entries (id, session_id, zone)
-       values ($1, $2, 'upper lip')`,
-      [id, laserSessionId],
-    );
-    const attempt = await userQuery(
-      s.userId,
-      `delete from public.laser_entries where id = $1`,
+    expect(del.rowCount).toBe(0);
+    const read = await userQuery(
+      other.userId,
+      `select id from public.electrolysis_entries where id = $1`,
       [id],
     );
-    expect(attempt.rowCount).toBe(1);
+    expect(read.rowCount).toBe(0);
   });
+});
 
+describe("D: intentionally-deletable tables still allow member DELETE", () => {
   it("treatment_plan_stages: member DELETE removes the row", async () => {
     const planId = randomUUID();
     await adminQuery(
