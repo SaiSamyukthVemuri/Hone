@@ -7,7 +7,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 ## Status
 
 > **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0118** as of 2026-07-10; repo max **0119** = Clinical Record Phase 1 finalization boundary, staged, not yet applied) ·
+> (production migration max **0119** as of 2026-07-10 = Clinical Record Phase 1 finalization boundary, applied migration-first; feature flag default OFF, PR #399 code pending merge) ·
 > [migration ledger](./docs/production/migration-ledger.md) ·
 > [release changelog](./docs/production/release-changelog.md) ·
 > [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
