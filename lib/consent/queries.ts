@@ -5,6 +5,7 @@ import type {
   ClientConsentSignatureResponse,
   ConsentFormTemplate,
 } from "@/lib/types/database";
+import { consentRowState, type ConsentRowState } from "./signature-status";
 
 // PR #134. Shared read-side queries for consent templates and
 // signatures. Every function is scoped by an explicit studioId
@@ -150,6 +151,15 @@ export type PractitionerSignatureSummary = Pick<
   | "signature_name"
   | "signed_at"
   | "response"
+  // P1-A (signed-consent visibility): the columns that hold the ACTUAL agreed
+  // content — the exact form copy the client saw + the human-readable photo
+  // response label + the integrity hash + created_at. Stored immutably at sign
+  // time (0057/0060) but previously never surfaced to the practitioner, so the
+  // practitioner could not open the complete signed record.
+  | "template_body_snapshot"
+  | "response_label_snapshot"
+  | "template_hash"
+  | "created_at"
 >;
 
 export async function getLatestSignaturesForPractitionerView(
@@ -160,7 +170,7 @@ export async function getLatestSignaturesForPractitionerView(
   const { data, error } = await admin
     .from("client_consent_signatures")
     .select(
-      "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response",
+      "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response, template_body_snapshot, response_label_snapshot, template_hash, created_at",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -188,4 +198,47 @@ export async function getLatestSignaturesForPractitionerView(
     result.push(r);
   }
   return result;
+}
+
+// P1-A: the client's photo-consent state, for the at-a-glance summary shown in
+// the treatment-image workflow. Returns null when the studio has no active
+// photo_consent template (photo consent isn't in use → no banner). Otherwise
+// returns the resolved granted/denied/not_answered/outdated state so the images
+// page can render "consented / not consented / not completed / needs review".
+// Studio-scoped; never accepts a client-supplied key.
+export async function getPhotoConsentStateForClient(
+  studioId: string,
+  clientId: string,
+): Promise<ConsentRowState | null> {
+  const admin = createAdminClient();
+  const { data: template } = await admin
+    .from("consent_form_templates")
+    .select("id, form_type, version")
+    .eq("studio_id", studioId)
+    .eq("form_type", "photo_consent")
+    .eq("status", "active")
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!template) return null;
+
+  const { data: sig } = await admin
+    .from("client_consent_signatures")
+    .select("template_version, response")
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("template_id", template.id as string)
+    .order("signed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return consentRowState(
+    { form_type: template.form_type as string, version: template.version as number },
+    sig
+      ? {
+          template_version: sig.template_version as number,
+          response: sig.response as string | null,
+        }
+      : undefined,
+  );
 }
