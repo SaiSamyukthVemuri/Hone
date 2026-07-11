@@ -617,6 +617,58 @@ export async function softDeleteSessionBlockAction(
   return { ok: true };
 }
 
+export type RemoveSessionAreaResult =
+  | { ok: true; entriesRemoved: number; imagesRemoved: number }
+  | { ok: false; error: string };
+
+// Willow P1-B: remove a whole incorrectly-recorded treatment AREA from a DRAFT
+// chart via the atomic aggregate soft-delete RPC (migration 0123). The block +
+// its block-scoped electrolysis passes + its block-scoped images are voided in
+// ONE trusted transaction with a mandatory reason and full actor/time
+// attribution; finalized/void records are rejected by the RPC. Unlike the
+// block-only softDeleteSessionBlockAction above, this does NOT orphan children.
+export async function removeSessionAreaAction(
+  input: SoftDeleteBlockInput,
+): Promise<RemoveSessionAreaResult> {
+  const reason = input.reason.trim();
+  if (reason.length < 10) {
+    return {
+      ok: false,
+      error: "Please give a reason for removing this area (at least 10 characters).",
+    };
+  }
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (!practitioner.active) {
+    return { ok: false, error: "Inactive practitioners cannot remove areas." };
+  }
+  // Defense in depth: the RPC re-derives studio + actor from auth.uid(); this
+  // early lineage check gives a clean error before the round-trip.
+  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("soft_delete_session_area", {
+    p_session_id: input.sessionId,
+    p_block_id: input.blockId,
+    p_reason: reason,
+  });
+  if (error) {
+    // A plpgsql check_violation (23514) carries a safe, human message.
+    const business = error.code === "23514";
+    return {
+      ok: false,
+      error: business ? error.message : "Couldn't remove the area right now. Please try again.",
+    };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
+  revalidatePath(`/clients/${input.clientId}`);
+  return {
+    ok: true,
+    entriesRemoved: Number(row?.entries_removed ?? 0),
+    imagesRemoved: Number(row?.images_removed ?? 0),
+  };
+}
+
 // =====================================================================
 // One-page charting (Session Logging refactor).
 //

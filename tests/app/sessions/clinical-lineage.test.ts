@@ -130,11 +130,13 @@ describe("block-actions.ts enforces full client lineage (PR #286)", () => {
     expect(BLOCK_ACTIONS).not.toMatch(/await assertSessionInStudio\(/);
   });
 
-  it("validates session∈client at every charting action (6 call sites, all with input.clientId)", () => {
+  it("validates session∈client at every charting action (7 call sites, all with input.clientId)", () => {
+    // 6 original + removeSessionAreaAction (Willow P1-B) — every charting write
+    // re-checks the session belongs to the route client.
     const calls = BLOCK_ACTIONS.match(
       /await assertSessionForClient\(studio\.id, input\.clientId, input\.sessionId\)/g,
     );
-    expect(calls?.length).toBe(6);
+    expect(calls?.length).toBe(7);
   });
 
   it("every block-actions server action gates on assertSessionForClient", () => {
