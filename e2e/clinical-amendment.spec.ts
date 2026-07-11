@@ -101,9 +101,12 @@ test("finalized-record amendment: valid flow persists one amendment + audit even
   });
 
   await test.step("a prominent 'Nothing was saved' error with a reference id appears", async () => {
-    const alert = page.getByRole("alert");
+    // Scope to the error panel by its text: the page carries other empty
+    // aria-live (role="alert") regions, so the bare role would be ambiguous.
+    const alert = page
+      .getByRole("alert")
+      .filter({ hasText: /nothing was saved/i });
     await expect(alert).toBeVisible({ timeout: 20_000 });
-    await expect(alert).toContainText(/nothing was saved\./i);
     await expect(alert).toContainText(/reference:/i);
     await expect(page.getByText(/later information added\./i)).toHaveCount(0);
   });
