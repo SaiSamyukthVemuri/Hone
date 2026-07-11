@@ -17,15 +17,16 @@ const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 // avoids them) can't satisfy or trip the greps.
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0119 — repo migration-max tripwire", () => {
-  it("is the repo migration max (moves to the newest migration's test)", () => {
+describe("0119 — exists", () => {
+  it("0119 is present; the repo-max tripwire now lives in the 0120 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
         .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(119);
+    // 0119 is no longer newest (0120 added corrections & amendments).
+    expect(maxNum).toBeGreaterThanOrEqual(119);
     expect(FILE).toMatch(/^0119_/);
   });
 });

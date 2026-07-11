@@ -19,6 +19,7 @@ import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
 import { DoneChartingButton } from "./DoneChartingButton";
 import { FinalizeSessionCard } from "./FinalizeSessionCard";
+import { RecordVersionsPanel } from "./RecordVersionsPanel";
 import {
   resolveSessionPaymentDefault,
   type SessionPaymentDefaultAmount,
@@ -301,6 +302,68 @@ export default async function SessionDetailPage({
       .eq("studio_id", studio.id)
       .eq("session_id", session.id);
     finalizePhotosCount = count ?? 0;
+  }
+
+  // Clinical Record — Phase 2. Corrections & amendments UI (studio-flag-gated,
+  // native + finalized only). Fetches the version lineage + amendments; the raw
+  // snapshot JSON is never selected/exposed.
+  const correctionsEnabled = studio.clinical_corrections_enabled === true;
+  const showVersionsPanel =
+    correctionsEnabled && isFinalized && session.record_origin === "native";
+  let versionRows: {
+    version_no: number;
+    version_type: "original" | "correction";
+    finalized_at: string;
+    corrected_by_display_name: string | null;
+    correction_reason: string | null;
+    is_current: boolean;
+  }[] = [];
+  let amendmentRows: {
+    id: string;
+    amendment_type: string;
+    reason: string;
+    body: string | null;
+    authored_by_display_name: string | null;
+    authored_at: string;
+    applies_to_version: number | null;
+  }[] = [];
+  if (showVersionsPanel) {
+    const sb = await createClient();
+    const { data: snaps } = await sb
+      .from("clinical_record_snapshots")
+      .select(
+        "id, version_no, version_type, finalized_at, corrected_by_display_name, correction_reason",
+      )
+      .eq("session_id", session.id)
+      .order("version_no", { ascending: true });
+    const versionBySnapshot = new Map<string, number>();
+    versionRows = (snaps ?? []).map((s) => {
+      versionBySnapshot.set(s.id as string, s.version_no as number);
+      return {
+        version_no: s.version_no as number,
+        version_type: s.version_type as "original" | "correction",
+        finalized_at: s.finalized_at as string,
+        corrected_by_display_name: (s.corrected_by_display_name as string | null) ?? null,
+        correction_reason: (s.correction_reason as string | null) ?? null,
+        is_current: s.id === session.current_snapshot_id,
+      };
+    });
+    const { data: amends } = await sb
+      .from("clinical_record_amendments")
+      .select(
+        "id, amendment_type, reason, body, authored_by_display_name, authored_at, applies_to_snapshot_id",
+      )
+      .eq("session_id", session.id)
+      .order("authored_at", { ascending: true });
+    amendmentRows = (amends ?? []).map((a) => ({
+      id: a.id as string,
+      amendment_type: a.amendment_type as string,
+      reason: a.reason as string,
+      body: (a.body as string | null) ?? null,
+      authored_by_display_name: (a.authored_by_display_name as string | null) ?? null,
+      authored_at: a.authored_at as string,
+      applies_to_version: versionBySnapshot.get(a.applies_to_snapshot_id as string) ?? null,
+    }));
   }
 
   return (
@@ -621,6 +684,25 @@ export default async function SessionDetailPage({
           passesCount={finalizePassesCount}
           photosCount={finalizePhotosCount}
           aftercareExplained={session.aftercare_and_risks_explained_at != null}
+        />
+      )}
+
+      {/* Clinical Record — Phase 2: corrections & amendments (studio-flag-gated,
+          native finalized only). Shows the version lineage + append/correct flows.
+          Never renders for legacy records. */}
+      {showVersionsPanel && (
+        <RecordVersionsPanel
+          sessionId={session.id}
+          clientId={id}
+          recordVersion={session.record_version}
+          currentSnapshotId={session.current_snapshot_id}
+          versions={versionRows}
+          amendments={amendmentRows}
+          sessionFields={{
+            session_notes: session.session_notes,
+            next_session_note: session.next_session_note ?? null,
+            modality: session.modality,
+          }}
         />
       )}
 
