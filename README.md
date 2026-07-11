@@ -7,7 +7,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 ## Status
 
 > **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0119** as of 2026-07-10 = Clinical Record Phase 1 finalization boundary, applied migration-first; feature flag default OFF, PR #399 code pending merge) ·
+> (production migration max **0120** as of 2026-07-11 = Clinical Record Phase 2 corrections/amendments backend; Phase 1 finalization (0119, PR #399) + Phase 2 backend (0120, PR #400) are **merged + deployed but dormant** — both clinical flags default OFF for all studios and the corrections/amendments **customer workflow is parked**; PR #402 shipped amendment-path reliability/observability only, no migration) ·
 > [migration ledger](./docs/production/migration-ledger.md) ·
 > [release changelog](./docs/production/release-changelog.md) ·
 > [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
@@ -18,6 +18,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Public booking, new/existing client, next-available | **Production** |
 | Authenticated practitioner app, calendar, charting, postcare | **Production** |
 | Clinical memory: structured tolerance/reaction/caution per treatment block, next-session notes, last-session context at the point of care | **Production** (PR #190) |
+| Clinical record: finalization boundary (Phase 1, 0119/#399) + corrections/amendments backend (Phase 2, 0120/#400) + amendment-path reliability/observability (#402) | **Deployed but DORMANT** — both flags OFF for all studios; Phase 1 was production-exercised on a controlled test studio; Phase 2 **customer workflow is parked** and not approved for Willow |
 | Practitioner signup | **Invite-only during the pilot** (PR #189). Magic-link login creates an account only for emails with a pending team invitation |
 | Client portal (magic-link + session cookie, two-zone UX) | **Production** |
 | Portal messages + replies | **Production** |
