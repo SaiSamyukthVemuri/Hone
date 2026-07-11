@@ -109,6 +109,8 @@ const DRAWER = (page: Page) =>
   page.getByRole("dialog", { name: "New appointment" });
 const CHOOSER = (page: Page) =>
   page.getByRole("dialog", { name: "Choose action for selected time" });
+const BLOCK_DRAWER = (page: Page) =>
+  page.getByRole("dialog", { name: "Block time" });
 
 test("mobile: shell, core pages, calendar touch safety", async ({
   page,
@@ -528,7 +530,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     // The mobile single-day timeline renders (its floating +, day controls, and
     // tap-to-book layer) — NOT the sideways-scrollable 7-day week grid.
     await expect(
-      page.getByRole("button", { name: "Add appointment" }),
+      page.getByRole("button", { name: "Add appointment or block time" }),
     ).toBeVisible({ timeout: 15_000 });
     await expect(
       page.getByRole("button", { name: "Previous day" }),
@@ -543,19 +545,51 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(page, "calendar mobile day view");
   });
 
-  await test.step("calendar: floating + opens a booking draft, creating nothing until submit", async () => {
+  await test.step("calendar: floating + opens the Book/Block chooser; Book still creates nothing until submit", async () => {
     const before = (await getAppointmentsForClient(seed.studioId, clientId))
       .length;
-    await page.getByRole("button", { name: "Add appointment" }).click();
-    // The deliberate mobile create path opens the quick-book drawer...
+    await page
+      .getByRole("button", { name: "Add appointment or block time" })
+      .click();
+    // The + now opens a chooser (Book appointment / Block time), not the booking
+    // drawer directly.
+    await expect(CHOOSER(page)).toBeVisible({ timeout: 10_000 });
+    await expect(
+      CHOOSER(page).getByRole("button", { name: "Book appointment" }),
+    ).toBeVisible();
+    await expect(
+      CHOOSER(page).getByRole("button", { name: "Block time" }),
+    ).toBeVisible();
+    // Book appointment -> the quick-book drawer; nothing created until submit.
+    await CHOOSER(page).getByRole("button", { name: "Book appointment" }).click();
     await expect(DRAWER(page)).toBeVisible({ timeout: 10_000 });
-    await expect(CHOOSER(page)).toHaveCount(0);
-    // ...but nothing is created until the practitioner submits.
     const after = (await getAppointmentsForClient(seed.studioId, clientId))
       .length;
     expect(after).toBe(before);
     await DRAWER(page).getByRole("button", { name: "Close", exact: true }).click();
     await expect(DRAWER(page)).toHaveCount(0);
+  });
+
+  await test.step("calendar: + -> Block time opens the reused block drawer prefilled with the selected day", async () => {
+    await page
+      .getByRole("button", { name: "Add appointment or block time" })
+      .click();
+    await expect(CHOOSER(page)).toBeVisible({ timeout: 10_000 });
+    await CHOOSER(page).getByRole("button", { name: "Block time" }).click();
+    // The desktop block-create drawer is reused (no mobile-only model): a date
+    // (prefilled with the selected day), start/end, optional reason, Save block.
+    await expect(BLOCK_DRAWER(page)).toBeVisible({ timeout: 10_000 });
+    await expect(
+      BLOCK_DRAWER(page).getByText(/^\d{4}-\d{2}-\d{2}$/),
+    ).toBeVisible();
+    await expect(
+      BLOCK_DRAWER(page).getByRole("button", { name: "Save block" }),
+    ).toBeVisible();
+    await expectNoPageOverflow(page, "mobile block-time drawer");
+    await BLOCK_DRAWER(page)
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(BLOCK_DRAWER(page)).toHaveCount(0);
   });
 
   await test.step("calendar: day navigation stays on one day with no page-wide overflow", async () => {

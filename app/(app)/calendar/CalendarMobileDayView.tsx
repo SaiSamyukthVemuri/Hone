@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
@@ -10,6 +10,8 @@ import type {
 import { addDays, minutesToHHMM, type TimeFormat } from "@/lib/booking/tz";
 import { HOUR_END, HOUR_START } from "./calendar-constants";
 import { QuickBookDrawer, type QuickBookClient } from "./QuickBookDrawer";
+import { QuickBlockDrawer, type QuickBlockDraft } from "./QuickBlockDrawer";
+import { DragActionChooser, type DragRangeDraft } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { MobileDayTimeline } from "./MobileDayTimeline";
 import type { DayAvailability } from "./DayColumn";
@@ -75,6 +77,22 @@ export function CalendarMobileDayView({
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(
     null,
   );
+  // "+" opens a chooser (Book appointment / Block time); the chosen action then
+  // opens the existing QuickBook / QuickBlock drawers — same model as desktop
+  // DayColumn (no mobile-only model). Block-time create mirrors the desktop
+  // calendar block-create authorization (available to active practitioners);
+  // edit/delete stays owner-gated via TimedBlockEditDrawer below.
+  const [chooserDraft, setChooserDraft] = useState<DragRangeDraft | null>(null);
+  const [blockDraft, setBlockDraft] = useState<QuickBlockDraft | null>(null);
+  // Keep the selected day pill scrolled into view within the horizontally
+  // scrollable date strip (narrow screens).
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = stripRef.current?.querySelector<HTMLElement>(
+      '[data-selected="true"]',
+    );
+    el?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [selectedDate]);
 
   const idx = Math.max(
     0,
@@ -97,10 +115,11 @@ export function CalendarMobileDayView({
     else router.push("/calendar");
   }
 
-  // Floating "+" default: on today within working hours, the next rounded
+  // Floating "+" default time: on today within working hours, the next rounded
   // 30-min mark; otherwise the first visible working time (HOUR_START). Never
-  // Willow-specific — derived purely from the visible-hours constants.
-  function bookFromPlus() {
+  // Willow-specific — derived purely from the visible-hours constants. Opens the
+  // Book/Block chooser prefilled with a 60-min default range for the selected day.
+  function openPlusChooser() {
     let minutes = HOUR_START * 60;
     if (day.date === today) {
       const now = minuteOfDayInTz(tz);
@@ -109,7 +128,12 @@ export function CalendarMobileDayView({
         minutes = rounded;
       }
     }
-    setDraft({ localDate: day.date, localTime: minutesToHHMM(minutes) });
+    const end = Math.min(minutes + 60, HOUR_END * 60);
+    setChooserDraft({
+      localDate: day.date,
+      startLocal: minutesToHHMM(minutes),
+      endLocal: minutesToHHMM(end > minutes ? end : minutes + 30),
+    });
   }
 
   return (
@@ -152,30 +176,51 @@ export function CalendarMobileDayView({
           </div>
         </div>
 
-        {/* Compact week strip — NAVIGATION ONLY (pills), never an interactive
-            grid. Tap a day to switch within the loaded week (no fetch). */}
-        <div className="mt-2 flex gap-1">
+        {/* Weekday/date strip — tap a day to switch within the loaded week (no
+            fetch). Horizontally scrollable on narrow screens (min-width per pill;
+            flex-1 fills on wider ones) — the container scrolls, never the page.
+            The selected pill is scrolled into view (see effect above). Today keeps
+            a high-contrast ring so it stays identifiable even when selected. */}
+        <div ref={stripRef} className="mt-2 flex gap-1 overflow-x-auto pb-1">
           {days.map((d) => {
             const selected = d.date === selectedDate;
+            const dateNum = d.monthDayLabel.replace(/^[A-Za-z]+\s/, "");
+            const hasAppts = d.appts.length > 0;
             return (
               <button
                 key={d.date}
                 type="button"
+                data-selected={selected}
                 onClick={() => setSelectedDate(d.date)}
                 aria-pressed={selected}
+                aria-label={`${d.isToday ? "Today, " : ""}${d.weekdayShort} ${dateNum}${selected ? ", selected" : ""}`}
                 className={
-                  "flex flex-1 flex-col items-center rounded-md py-1 text-[11px] leading-tight transition " +
+                  "flex min-h-[44px] min-w-[2.75rem] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md py-1 text-[11px] leading-tight transition " +
                   (selected
                     ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
                     : d.isToday
                       ? "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100"
-                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900")
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900") +
+                  (d.isToday
+                    ? " ring-2 ring-inset ring-sky-500 dark:ring-sky-400"
+                    : "")
                 }
               >
                 <span className="font-medium uppercase">{d.weekdayShort}</span>
-                <span className="tabular-nums">
-                  {d.monthDayLabel.replace(/^[A-Za-z]+\s/, "")}
-                </span>
+                <span className="tabular-nums">{dateNum}</span>
+                {/* Appointment indicator dot — visible with contrast in both the
+                    selected (black) and normal pill states. */}
+                <span
+                  aria-hidden
+                  className={
+                    "h-1 w-1 rounded-full " +
+                    (hasAppts
+                      ? selected
+                        ? "bg-white dark:bg-neutral-900"
+                        : "bg-sky-500"
+                      : "bg-transparent")
+                  }
+                />
               </button>
             );
           })}
@@ -209,15 +254,42 @@ export function CalendarMobileDayView({
         />
       </div>
 
-      {/* Floating "+" (kept per Chloe). Context-aware default time. */}
+      {/* Floating "+" (kept per Chloe). Opens the Book/Block chooser. */}
       <button
         type="button"
-        aria-label="Add appointment"
-        onClick={bookFromPlus}
+        aria-label="Add appointment or block time"
+        onClick={openPlusChooser}
         className="fixed bottom-6 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-neutral-900 text-3xl font-light text-white shadow-lg active:scale-95 dark:bg-white dark:text-neutral-900"
       >
         +
       </button>
+
+      {/* "+" chooser — reuses the desktop drag-action chooser (Book / Block). */}
+      <DragActionChooser
+        open={chooserDraft !== null}
+        draft={chooserDraft}
+        timeFormat={timeFormat}
+        onCancel={() => setChooserDraft(null)}
+        onBook={() => {
+          if (chooserDraft) {
+            setDraft({
+              localDate: chooserDraft.localDate,
+              localTime: chooserDraft.startLocal,
+            });
+          }
+          setChooserDraft(null);
+        }}
+        onBlock={() => {
+          if (chooserDraft) {
+            setBlockDraft({
+              localDate: chooserDraft.localDate,
+              startLocal: chooserDraft.startLocal,
+              endLocal: chooserDraft.endLocal,
+            });
+          }
+          setChooserDraft(null);
+        }}
+      />
 
       {/* Reused drawers — identical props/behaviour to the desktop DayColumn. */}
       <QuickBookDrawer
@@ -228,6 +300,14 @@ export function CalendarMobileDayView({
         studioTimezone={tz}
         timeFormat={timeFormat}
         onClose={() => setDraft(null)}
+      />
+      {/* Block-time create — the same block-create drawer the desktop DayColumn
+          uses (available to active practitioners). */}
+      <QuickBlockDrawer
+        open={blockDraft !== null}
+        draft={blockDraft}
+        studioTimezone={tz}
+        onClose={() => setBlockDraft(null)}
       />
       <TimedBlockEditDrawer
         block={editingBlock}

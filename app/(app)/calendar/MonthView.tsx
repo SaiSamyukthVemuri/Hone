@@ -104,22 +104,27 @@ export function MonthView({
                     : "")
                 : null
             : null;
-          // The week view URL the day click navigates to. Snap the
-          // clicked date to its containing week so the week view
-          // header carries a consistent start, exactly matching what
-          // the week prev/next links pass.
-          const weekHref = `/calendar?view=week&week=${startOfWeek(cellDate)}`;
+          // Navigate to the tapped date, preserving the EXACT day. `?day=` is
+          // the mobile day view's selected-day param (page.tsx): it loads the
+          // week CONTAINING this date, so on mobile the day view opens focused on
+          // the tapped date (not the week start) and on desktop the correct week
+          // renders. Fixes the bug where tapping e.g. Thu the 23rd opened the
+          // week start (Sun the 19th). Works across week/month boundaries; the
+          // date is a studio-tz day-key so no device-tz shift occurs.
+          const dayHref = `/calendar?view=week&week=${startOfWeek(cellDate)}&day=${cellDate}`;
           return (
             <Link
               key={cellDate}
-              href={weekHref}
-              aria-label={`Open week of ${cellDate}`}
+              href={dayHref}
+              aria-label={`Open ${cellDate}`}
               className={[
                 // Border + min height to keep the grid even across
                 // months that need 5 or 6 visible weeks.
                 "relative flex min-h-[112px] flex-col gap-1 border-b border-l border-neutral-100 px-2 py-1.5 transition-colors first:border-l-0 dark:border-neutral-800/60",
                 "hover:bg-neutral-50 dark:hover:bg-neutral-900",
-                isTodayCell ? "bg-sky-50/70 dark:bg-sky-950/25" : "",
+                isTodayCell
+                  ? "bg-sky-50/70 dark:bg-sky-950/25 border-t-2 border-t-sky-500"
+                  : "",
                 !inMonth
                   ? "bg-neutral-50/40 dark:bg-neutral-900/40 opacity-70"
                   : "",
@@ -131,18 +136,28 @@ export function MonthView({
                 .join(" ")}
             >
               <div className="flex items-baseline justify-between">
-                <span
-                  className={
-                    "text-[12px] " +
-                    (isTodayCell
-                      ? "font-semibold text-neutral-900 dark:text-neutral-100"
-                      : inMonth
+                {isTodayCell ? (
+                  // Today: a filled high-contrast circle so it is immediately
+                  // obvious at a glance (light + dark), distinct from any other
+                  // day's plain number.
+                  <span
+                    aria-label="Today"
+                    className="inline-flex min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-sky-600 px-1 text-[12px] font-semibold tabular-nums text-white dark:bg-sky-500"
+                  >
+                    {dayOfMonth(cellDate)}
+                  </span>
+                ) : (
+                  <span
+                    className={
+                      "text-[12px] " +
+                      (inMonth
                         ? "font-medium text-neutral-700 dark:text-neutral-300"
                         : "font-normal text-neutral-400 dark:text-neutral-600")
-                  }
-                >
-                  {dayOfMonth(cellDate)}
-                </span>
+                    }
+                  >
+                    {dayOfMonth(cellDate)}
+                  </span>
+                )}
                 {closed && inMonth && (
                   <span className="text-[9px] uppercase tracking-wider text-neutral-400">
                     Closed
