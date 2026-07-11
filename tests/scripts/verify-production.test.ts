@@ -87,12 +87,11 @@ describe("verify-production: covers every required check", () => {
 
   it("the derived expected max tracks the repo's current migration max", () => {
     // REPO-max invariant (drift tripwire) — pins the newest migration FILE in the
-    // repo, SEPARATE from the hosted-applied max. Migration 0119 was applied to the
-    // hosted project migration-first on 2026-07-10. Migration 0120 (Phase 2 —
-    // corrections & amendments) is added to the repo by this PR but is NOT yet
-    // applied to hosted (hosted applied max remains 0119 until the approved,
-    // controlled apply). Until that apply, verify-production.mjs will (correctly)
-    // report a repo(0120)-vs-remote(0119) mismatch — the signal to apply 0120.
+    // repo. Migrations 0119 (2026-07-10) and 0120 (2026-07-11, Phase 2 corrections
+    // & amendments) were both applied to the hosted project migration-first, so repo
+    // and hosted reconcile at 0120 (the verifier's "Remote migration max" PASSES).
+    // This assertion still fails on the next new migration, forcing a conscious
+    // review of the pre-live verifier.
     const nums = readdirSync(join(process.cwd(), "supabase", "migrations"))
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
