@@ -22,9 +22,10 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0122 by Google Calendar — Phase A (0121 connection foundation
-    // + 0122 OAuth state). Bump this tripwire consciously when adding migrations.
-    expect(maxNum).toBe(122);
+    // Advanced to 0123 by Willow P1-B (0123 soft_delete_session_area RPC), on
+    // top of Google Calendar — Phase A (0121/0122). Bump this tripwire
+    // consciously when adding migrations.
+    expect(maxNum).toBe(123);
     expect(FILE).toMatch(/^0120_/);
   });
 });

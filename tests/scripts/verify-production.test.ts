@@ -97,12 +97,12 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0122 (Google Calendar — Phase A: 0121 connection
-    // foundation + 0122 OAuth state). These are additive + dormant and were
+    // Repo max advances to 0123 (Willow P1-B: soft_delete_session_area RPC),
+    // on top of Google Calendar — Phase A (0121/0122). 0123 is additive and was
     // APPLIED to hosted production migration-first on 2026-07-11 (ahead of the
-    // PR #404 code merge), so repo and hosted reconcile at 0122 and the
+    // PR #406 code merge), so repo and hosted reconcile at 0123 and the
     // verifier's "Remote migration max" PASSES.
-    expect(nums[nums.length - 1]).toBe("0122");
+    expect(nums[nums.length - 1]).toBe("0123");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

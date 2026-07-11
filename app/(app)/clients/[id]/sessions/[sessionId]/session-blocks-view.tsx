@@ -20,7 +20,9 @@ import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
 import { RemovePassButton } from "@/components/remove-pass-button";
+import { RemoveAreaButton } from "@/components/remove-area-button";
 import { deleteElectrolysisEntryAction } from "./actions";
+import { removeSessionAreaAction } from "./block-actions";
 
 // Area-first view of an electrolysis session (Session Logging Phase A).
 // Each session_blocks row renders as a "treatment area" section; the word
@@ -272,13 +274,23 @@ function BlockSection({
                 {title.text}
               </h3>
             </div>
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-            >
-              Edit
-            </button>
+            <div className="flex flex-wrap items-start justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+              >
+                Edit
+              </button>
+              <RemoveAreaButton
+                action={removeSessionAreaAction}
+                blockId={block.id}
+                sessionId={sessionId}
+                clientId={clientId}
+                areaLabel={title.text}
+                passCount={block.electrolysis_entries.length}
+              />
+            </div>
           </div>
 
           {paramsLine && (
