@@ -98,10 +98,10 @@ describe("verify-production: covers every required check", () => {
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
     // Repo max advances to 0122 (Google Calendar — Phase A: 0121 connection
-    // foundation + 0122 OAuth state). These are additive + dormant and are NOT
-    // yet applied to hosted production (this PR stops before hosted apply), so
-    // until they are applied the verifier's "Remote migration max" reports an
-    // EXPECTED mismatch (repo 0122 vs remote 0120).
+    // foundation + 0122 OAuth state). These are additive + dormant and were
+    // APPLIED to hosted production migration-first on 2026-07-11 (ahead of the
+    // PR #404 code merge), so repo and hosted reconcile at 0122 and the
+    // verifier's "Remote migration max" PASSES.
     expect(nums[nums.length - 1]).toBe("0122");
   });
   it("0093 bucket private + policies/trigger", () => {
