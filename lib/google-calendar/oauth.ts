@@ -1,0 +1,245 @@
+import "server-only";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  GOOGLE_AUTH_ENDPOINT,
+  GOOGLE_CALENDAR_LIST_ENDPOINT,
+  GOOGLE_REVOKE_ENDPOINT,
+  GOOGLE_TOKEN_ENDPOINT,
+  GOOGLE_USERINFO_ENDPOINT,
+  REQUESTED_SCOPES,
+  getGoogleOAuthClient,
+  getOAuthRedirectUri,
+} from "./config";
+
+// Thin, server-only Google OAuth 2.0 + Calendar REST client (Phase A).
+// Direct `fetch`, no SDK. Never logs tokens, authorization codes, or PKCE
+// values; all functions fail closed (return a typed error) instead of throwing
+// secrets into a stack trace.
+
+// --- PKCE + CSPRNG helpers ---
+function base64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export function randomUrlToken(bytes = 32): string {
+  return base64url(randomBytes(bytes));
+}
+
+export function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export type Pkce = { verifier: string; challenge: string };
+export function generatePkce(): Pkce {
+  const verifier = base64url(randomBytes(64)); // 43..128 chars per RFC 7636
+  const challenge = base64url(createHash("sha256").update(verifier).digest());
+  return { verifier, challenge };
+}
+
+// --- Authorization URL ---
+// prompt: 'consent' is forced only for a first connection / reconnect_required /
+// when no usable refresh token is stored (Google withholds a refresh token on a
+// silent re-grant). include_granted_scopes=true enables Phase B incremental
+// authorization to add the event scopes without dropping the Phase A grant.
+export function buildAuthorizationUrl(opts: {
+  state: string;
+  codeChallenge: string;
+  loginHint?: string;
+  forceConsent: boolean;
+}): string | null {
+  const client = getGoogleOAuthClient();
+  if (!client) return null;
+  const params = new URLSearchParams({
+    client_id: client.clientId,
+    redirect_uri: getOAuthRedirectUri(),
+    response_type: "code",
+    scope: REQUESTED_SCOPES.join(" "),
+    access_type: "offline",
+    include_granted_scopes: "true",
+    code_challenge: opts.codeChallenge,
+    code_challenge_method: "S256",
+    state: opts.state,
+  });
+  if (opts.forceConsent) params.set("prompt", "consent");
+  if (opts.loginHint) params.set("login_hint", opts.loginHint);
+  return `${GOOGLE_AUTH_ENDPOINT}?${params.toString()}`;
+}
+
+// --- Code exchange ---
+export type TokenExchangeResult =
+  | {
+      ok: true;
+      accessToken: string;
+      refreshToken: string | null; // Google omits it on a silent re-grant
+      expiresInSeconds: number;
+      grantedScopes: string[];
+    }
+  | { ok: false; reason: string };
+
+export async function exchangeAuthorizationCode(opts: {
+  code: string;
+  codeVerifier: string;
+}): Promise<TokenExchangeResult> {
+  const client = getGoogleOAuthClient();
+  if (!client) return { ok: false, reason: "oauth_client_unavailable" };
+  try {
+    const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: opts.code,
+        redirect_uri: getOAuthRedirectUri(),
+        client_id: client.clientId,
+        client_secret: client.clientSecret,
+        code_verifier: opts.codeVerifier,
+      }),
+    });
+    if (!res.ok) return { ok: false, reason: `token_http_${res.status}` };
+    const body = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      scope?: string;
+    };
+    if (!body.access_token) return { ok: false, reason: "no_access_token" };
+    return {
+      ok: true,
+      accessToken: body.access_token,
+      refreshToken: body.refresh_token ?? null,
+      expiresInSeconds: typeof body.expires_in === "number" ? body.expires_in : 3600,
+      grantedScopes: (body.scope ?? "").split(" ").filter(Boolean),
+    };
+  } catch {
+    return { ok: false, reason: "token_exchange_network_error" };
+  }
+}
+
+// --- Access-token refresh (Phase A persists only the refresh token; an access
+// token is re-minted on demand, e.g. to list calendars for selection). Google
+// MAY rotate the refresh token; the caller must re-encrypt+store a rotated one. ---
+export type RefreshResult =
+  | {
+      ok: true;
+      accessToken: string;
+      expiresInSeconds: number;
+      rotatedRefreshToken: string | null;
+    }
+  | { ok: false; reason: string; invalidGrant: boolean };
+
+export async function refreshAccessToken(refreshToken: string): Promise<RefreshResult> {
+  const client = getGoogleOAuthClient();
+  if (!client) return { ok: false, reason: "oauth_client_unavailable", invalidGrant: false };
+  try {
+    const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: client.clientId,
+        client_secret: client.clientSecret,
+      }),
+    });
+    if (!res.ok) {
+      // 400 invalid_grant = the grant was revoked/expired -> reconnect_required.
+      let invalidGrant = false;
+      if (res.status === 400) {
+        try {
+          const err = (await res.json()) as { error?: string };
+          invalidGrant = err.error === "invalid_grant";
+        } catch {
+          /* ignore parse error */
+        }
+      }
+      return { ok: false, reason: `refresh_http_${res.status}`, invalidGrant };
+    }
+    const body = (await res.json()) as {
+      access_token?: string;
+      expires_in?: number;
+      refresh_token?: string;
+    };
+    if (!body.access_token) return { ok: false, reason: "no_access_token", invalidGrant: false };
+    return {
+      ok: true,
+      accessToken: body.access_token,
+      expiresInSeconds: typeof body.expires_in === "number" ? body.expires_in : 3600,
+      rotatedRefreshToken: body.refresh_token ?? null,
+    };
+  } catch {
+    return { ok: false, reason: "refresh_network_error", invalidGrant: false };
+  }
+}
+
+// --- Account identity (OIDC userinfo) ---
+export type UserInfoResult =
+  | { ok: true; sub: string; email: string | null }
+  | { ok: false; reason: string };
+
+export async function fetchUserInfo(accessToken: string): Promise<UserInfoResult> {
+  try {
+    const res = await fetch(GOOGLE_USERINFO_ENDPOINT, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return { ok: false, reason: `userinfo_http_${res.status}` };
+    const body = (await res.json()) as { sub?: string; email?: string };
+    if (!body.sub) return { ok: false, reason: "no_sub" };
+    return { ok: true, sub: body.sub, email: body.email ?? null };
+  } catch {
+    return { ok: false, reason: "userinfo_network_error" };
+  }
+}
+
+// --- Calendar list (least-privilege discovery + selection validation) ---
+export type GoogleCalendarListEntry = {
+  id: string;
+  summary: string;
+  accessRole: string;
+  primary: boolean;
+};
+export type CalendarListResult =
+  | { ok: true; calendars: GoogleCalendarListEntry[] }
+  | { ok: false; reason: string };
+
+export async function fetchCalendarList(accessToken: string): Promise<CalendarListResult> {
+  try {
+    const res = await fetch(`${GOOGLE_CALENDAR_LIST_ENDPOINT}?minAccessRole=writer&maxResults=250`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return { ok: false, reason: `calendarlist_http_${res.status}` };
+    const body = (await res.json()) as {
+      items?: Array<{ id?: string; summary?: string; accessRole?: string; primary?: boolean }>;
+    };
+    const calendars = (body.items ?? [])
+      .filter((c): c is { id: string; summary?: string; accessRole?: string; primary?: boolean } =>
+        typeof c.id === "string" && c.id.length > 0,
+      )
+      // Never expose Google-supplied descriptions; only id + summary + role.
+      .map((c) => ({
+        id: c.id,
+        summary: typeof c.summary === "string" ? c.summary : c.id,
+        accessRole: typeof c.accessRole === "string" ? c.accessRole : "unknown",
+        primary: c.primary === true,
+      }));
+    return { ok: true, calendars };
+  } catch {
+    return { ok: false, reason: "calendarlist_network_error" };
+  }
+}
+
+// --- Revocation (disconnect) ---
+export async function revokeToken(token: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const res = await fetch(GOOGLE_REVOKE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }),
+    });
+    // Google returns 200 on success; 400 for an already-invalid token (which is
+    // still an acceptable end state for disconnect).
+    if (res.ok || res.status === 400) return { ok: true };
+    return { ok: false, reason: `revoke_http_${res.status}` };
+  } catch {
+    return { ok: false, reason: "revoke_network_error" };
+  }
+}

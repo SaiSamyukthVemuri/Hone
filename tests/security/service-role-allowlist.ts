@@ -32,6 +32,24 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/api/google-calendar/oauth/callback/route.ts",
+    purpose: "Google Calendar Phase A OAuth callback (authenticated, browser-called with the session).",
+    why: "After auth.getUser() + single-use state consumption, the practitioner is re-checked and the connection persisted scoped to the state-bound studio/practitioner/user; every admin query filters those ids.",
+    scopeGuard: '.eq("studio_id", consumed.studioId)',
+  },
+  {
+    path: "lib/google-calendar/connection.ts",
+    purpose: "Google Calendar Phase A connection metadata + service-role writes (ciphertext table is browser-inaccessible).",
+    why: "Callers pass the authenticated studio_id + practitioner_id (resolved via getCurrentPractitionerWithStudio in the actions/callback); every read/write is scoped to both ids so a row can never cross studios.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
+    path: "lib/google-calendar/state.ts",
+    purpose: "Google Calendar Phase A OAuth state/PKCE store (default-deny table, service-role only).",
+    why: "State is looked up by the SHA-256 state hash and consumed single-use only after the nonce + calling user match the stored binding (user_mismatch reject); no browser role can read the table.",
+    scopeGuard: "user_mismatch",
+  },
+  {
     path: "app/(app)/calendar/postcare-auto-send.ts",
     purpose: "Fail-soft postcare auto-send helper (migration 0110), called from the completion actions after the caller's studio is already resolved.",
     why: "Service-role read/claim/record for the postcare send-state columns; the studioId is passed in by the authenticated completion action and EVERY query is scoped to it.",

@@ -36,6 +36,15 @@ export type Studio = {
   // Migration 0120 (Clinical Record — Phase 2): studio-scoped flag for corrections
   // & amendments. Separate from Phase 1; default OFF. Optional for pre-0120 rows.
   clinical_corrections_enabled?: boolean;
+  // Migration 0121 (Google Calendar — Phase A): studio-scoped feature flags, all
+  // default OFF. Only `google_calendar_connection_enabled` is used in Phase A
+  // (gates the Connect UI + OAuth start). The other three name future phases
+  // (outbound push / inbound busy / two-way edits) and remain OFF + unused.
+  // Optional at the type level for rows loaded via `select *` before 0121.
+  google_calendar_connection_enabled?: boolean;
+  google_calendar_outbound_sync_enabled?: boolean;
+  google_calendar_inbound_busy_enabled?: boolean;
+  google_calendar_two_way_updates_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;

@@ -306,6 +306,18 @@ export async function setStudioCorrectionsEnabled(
   );
 }
 
+// Google Calendar — Phase A. Toggle the studio-scoped connection flag so the
+// e2e can exercise the flag gate (card hidden when OFF, shown when ON).
+export async function setStudioGoogleCalendarConnectionEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set google_calendar_connection_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
