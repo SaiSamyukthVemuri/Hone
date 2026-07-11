@@ -98,10 +98,10 @@ describe("verify-production: covers every required check", () => {
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
     // Repo max advances to 0123 (Willow P1-B: soft_delete_session_area RPC),
-    // on top of Google Calendar — Phase A (0121/0122, applied migration-first).
-    // 0123 is additive and is NOT yet applied to hosted production (this PR
-    // stops before hosted apply), so until it is applied the verifier's "Remote
-    // migration max" reports an EXPECTED mismatch (repo 0123 vs remote 0122).
+    // on top of Google Calendar — Phase A (0121/0122). 0123 is additive and was
+    // APPLIED to hosted production migration-first on 2026-07-11 (ahead of the
+    // PR #406 code merge), so repo and hosted reconcile at 0123 and the
+    // verifier's "Remote migration max" PASSES.
     expect(nums[nums.length - 1]).toBe("0123");
   });
   it("0093 bucket private + policies/trigger", () => {
