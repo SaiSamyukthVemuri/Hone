@@ -33,7 +33,15 @@ async function addImage(studio: SeededStudio, sessionId: string, blockId: string
     `insert into public.treatment_images
        (id, studio_id, client_id, session_id, session_block_id, storage_path, content_type, size_bytes)
      values ($1,$2,$3,$4,$5,$6,'image/jpeg',1024)`,
-    [id, studio.studioId, studio.clientId, sessionId, blockId, `${studio.studioId}/${id}.jpg`],
+    [
+      id,
+      studio.studioId,
+      studio.clientId,
+      sessionId,
+      blockId,
+      // Must match treatment_images_path_shape_chk: <studio_id>/<client_id>/<file>.
+      `${studio.studioId}/${studio.clientId}/${id}.jpg`,
+    ],
   );
   return id;
 }
