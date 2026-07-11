@@ -1,8 +1,40 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { amendSessionAction, correctSessionAction } from "./correction-actions";
+
+// A failed amend/correct always carries a correlatable request id (server log).
+type Failure = { message: string; requestId: string };
+
+// Prominent, accessible failure panel: high-contrast, "Nothing was saved", the
+// server message, and a reference id support can correlate to the server log.
+// Focusable (tabIndex=-1) so the caller can move focus to it.
+function FormErrorPanel({
+  failure,
+  panelRef,
+}: {
+  failure: Failure | null;
+  panelRef: RefObject<HTMLDivElement | null>;
+}) {
+  if (!failure) return null;
+  return (
+    <div
+      ref={panelRef}
+      role="alert"
+      tabIndex={-1}
+      className="rounded-md border-2 border-red-400 bg-red-50 p-3 text-sm text-red-900 outline-none dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+    >
+      <p className="font-semibold">Nothing was saved.</p>
+      <p className="mt-0.5">{failure.message}</p>
+      {failure.requestId && (
+        <p className="mt-1 text-xs tabular-nums text-red-800/80 dark:text-red-300/80">
+          Reference: {failure.requestId}
+        </p>
+      )}
+    </div>
+  );
+}
 
 // Clinical Record — Phase 2. Rendered only for a NATIVE, FINALIZED session when the
 // studio-scoped `clinical_corrections_enabled` flag is on. Three tabs:
@@ -174,10 +206,9 @@ export function RecordVersionsPanel({
           sessionId={sessionId}
           clientId={clientId}
           currentSnapshotId={currentSnapshotId}
-          onDone={() => {
-            setTab("history");
-            router.refresh();
-          }}
+          // Stay on the Amend tab so the explicit success/error state remains
+          // visible; refresh so the amendment lands in History in the background.
+          onSaved={() => router.refresh()}
         />
       )}
 
@@ -201,23 +232,32 @@ function AmendForm({
   sessionId,
   clientId,
   currentSnapshotId,
-  onDone,
+  onSaved,
 }: {
   sessionId: string;
   clientId: string;
   currentSnapshotId: string | null;
-  onDone: () => void;
+  onSaved: () => void;
 }) {
   const [type, setType] = useState("late_note");
   const [reason, setReason] = useState("");
   const [body, setBody] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [success, setSuccess] = useState(false);
   const [pending, startTransition] = useTransition();
+  const errorRef = useRef<HTMLDivElement | null>(null);
+
+  function fail(f: Failure) {
+    setFailure(f);
+    // Move focus to the error so it is announced and impossible to miss.
+    requestAnimationFrame(() => errorRef.current?.focus());
+  }
 
   function submit() {
-    setError(null);
+    setFailure(null);
+    setSuccess(false);
     if (!currentSnapshotId) {
-      setError("No finalized version to amend.");
+      fail({ message: "No finalized version to amend.", requestId: "" });
       return;
     }
     const fd = new FormData();
@@ -230,15 +270,32 @@ function AmendForm({
     startTransition(async () => {
       const r = await amendSessionAction(fd);
       if (!r.ok) {
-        setError(r.error);
+        // Keep the fields, keep the panel open; show a prominent, correlatable error.
+        fail({ message: r.error, requestId: r.requestId });
         return;
       }
-      onDone();
+      // Clear the fields ONLY on confirmed success; show the explicit success state.
+      setReason("");
+      setBody("");
+      setSuccess(true);
+      onSaved();
     });
   }
 
   return (
     <div className="flex flex-col gap-3">
+      <FormErrorPanel failure={failure} panelRef={errorRef} />
+      {success && (
+        <div
+          role="status"
+          className="rounded-md border-2 border-emerald-400 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+        >
+          <p className="font-semibold">Later information added.</p>
+          <p className="mt-0.5">
+            It appears in History; the original finalized record is unchanged.
+          </p>
+        </div>
+      )}
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Appends information that was missing. This does <strong>not</strong> change or
         overwrite anything already recorded.
@@ -274,7 +331,6 @@ function AmendForm({
           className="w-full rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
         />
       </label>
-      {error && <p className="text-xs text-red-700" role="alert">{error}</p>}
       <button
         type="button"
         onClick={submit}
@@ -304,11 +360,17 @@ function CorrectForm({
   const before = sessionFields[field] ?? "";
   const [after, setAfter] = useState<string>(before);
   const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [pending, startTransition] = useTransition();
+  const errorRef = useRef<HTMLDivElement | null>(null);
+
+  function fail(f: Failure) {
+    setFailure(f);
+    requestAnimationFrame(() => errorRef.current?.focus());
+  }
 
   function submit() {
-    setError(null);
+    setFailure(null);
     const fd = new FormData();
     fd.set("session_id", sessionId);
     fd.set("client_id", clientId);
@@ -318,7 +380,8 @@ function CorrectForm({
     startTransition(async () => {
       const r = await correctSessionAction(fd);
       if (!r.ok) {
-        setError(r.error);
+        // Keep the fields, keep the panel open; show a prominent, correlatable error.
+        fail({ message: r.error, requestId: r.requestId });
         return;
       }
       onDone();
@@ -327,6 +390,7 @@ function CorrectForm({
 
   return (
     <div className="flex flex-col gap-3">
+      <FormErrorPanel failure={failure} panelRef={errorRef} />
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Fixes a value that was recorded incorrectly. This creates a{" "}
         <strong>new version</strong> — the current version{" "}
@@ -375,7 +439,6 @@ function CorrectForm({
           className="w-full rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
         />
       </label>
-      {error && <p className="text-xs text-red-700" role="alert">{error}</p>}
       <button
         type="button"
         onClick={submit}
