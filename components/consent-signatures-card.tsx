@@ -7,6 +7,7 @@ import {
   summarizeConsent,
 } from "@/lib/consent/signature-status";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { SignedConsentViewer } from "@/components/signed-consent-viewer";
 
 // PR #134. Practitioner-side per-client consent card. Renders on the
 // client profile. Server Component because it has no interactivity:
@@ -157,6 +158,13 @@ export function ConsentSignaturesCard({
                     <p className="text-[11px] text-neutral-500">
                       {isPhoto ? "Not answered" : "Not signed"}
                     </p>
+                  )}
+                  {sig && (
+                    <SignedConsentViewer
+                      record={sig}
+                      formType={t.form_type}
+                      currentVersion={t.version}
+                    />
                   )}
                 </div>
                 <span className={badge.style}>{badge.label}</span>

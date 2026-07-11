@@ -18,6 +18,8 @@ import {
   TreatmentImagesManager,
   type SessionAttachOption,
 } from "./TreatmentImagesManager";
+import { getPhotoConsentStateForClient } from "@/lib/consent/queries";
+import { photoConsentSummary } from "@/lib/consent/signed-record";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
 // requirePractitionerWithStudio layout; data is loaded with the RLS client
@@ -164,6 +166,11 @@ export default async function ClientImagesPage({
     };
   });
 
+  // P1-A: at-a-glance photo-consent status, right where photos are handled.
+  // null = the studio has no active photo-consent template (no banner).
+  const photoConsentState = await getPhotoConsentStateForClient(studio.id, id);
+  const photoConsent = photoConsentState ? photoConsentSummary(photoConsentState) : null;
+
   return (
     <div className="flex flex-col gap-6">
       <Link
@@ -178,6 +185,20 @@ export default async function ClientImagesPage({
           Stored privately. Visible to practitioners in this studio.
         </p>
       </header>
+      {photoConsent && (
+        <p
+          role="status"
+          className={
+            photoConsent.tone === "ok"
+              ? "rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+              : photoConsent.tone === "warn"
+                ? "rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+                : "rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900/50 dark:text-neutral-300"
+          }
+        >
+          {photoConsent.label}
+        </p>
+      )}
       <TreatmentImagesManager
         clientId={id}
         images={rows}
