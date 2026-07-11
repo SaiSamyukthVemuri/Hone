@@ -240,10 +240,18 @@ export async function seedFinalizedSession(
   const clientId = randomUUID();
   const sessionId = randomUUID();
   const blockId = randomUUID();
+  // Unique per call: this helper may be invoked more than once for the SAME
+  // studio, and clients carry a per-studio normalized-email unique constraint.
+  const uniq = randomUUID().slice(0, 8);
   await sql(
     `insert into public.clients (id, studio_id, name, email)
      values ($1, $2, $3, $4)`,
-    [clientId, seed.studioId, `Amend Client ${seed.runId}`, `e2e-amend-${seed.runId}@harness.local`],
+    [
+      clientId,
+      seed.studioId,
+      `Amend Client ${seed.runId}-${uniq}`,
+      `e2e-amend-${seed.runId}-${uniq}@harness.local`,
+    ],
   );
   await sql(
     `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
