@@ -1,5 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+// A fresh 64-hex value per call (state_hash carries a global unique index).
+function hex64(): string {
+  return createHash("sha256").update(randomUUID()).digest("hex");
+}
 import {
   adminQuery,
   closePool,
@@ -158,7 +163,7 @@ describe("0122 — google_oauth_states", () => {
          (id, state_hash, session_nonce_hash, studio_id, practitioner_id, user_id,
           encrypted_pkce_verifier, encryption_key_version, expires_at)
        values ($1,$2,$3,$4,$5,$6,$7,$8, now() + ($9 || ' minutes')::interval)`,
-      [id, HEX64, HEX64, studio.studioId, studio.practitionerId, studio.userId, "v1:1:iv:tag:ct", 1, String(expiresInMinutes)],
+      [id, hex64(), hex64(), studio.studioId, studio.practitionerId, studio.userId, "v1:1:iv:tag:ct", 1, String(expiresInMinutes)],
     );
     return id;
   }
