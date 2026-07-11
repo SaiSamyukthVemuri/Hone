@@ -33,6 +33,9 @@ export type Studio = {
   // studio during supervised rollout. Optional at the type level for rows loaded
   // via `select *` before 0119 is applied.
   clinical_finalization_enabled?: boolean;
+  // Migration 0120 (Clinical Record — Phase 2): studio-scoped flag for corrections
+  // & amendments. Separate from Phase 1; default OFF. Optional for pre-0120 rows.
+  clinical_corrections_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -690,6 +693,72 @@ export type SessionLegacyClassification =
   | "clearly_completed"
   | "clearly_incomplete"
   | "ambiguous";
+
+// Migration 0120 (Clinical Record — Phase 2): corrections & amendments.
+export type SnapshotVersionType = "original" | "correction";
+export type ClinicalAmendmentType =
+  | "late_note"
+  | "clarification"
+  | "missing_detail"
+  | "photo"
+  | "other";
+
+// A row of clinical_record_snapshots including Phase 2 lineage fields. Read-only;
+// the snapshot JSON itself is never surfaced to ordinary practitioners.
+export type ClinicalRecordSnapshotMeta = {
+  id: string;
+  studio_id: string;
+  session_id: string;
+  version_no: number;
+  content_hash: string;
+  hash_algorithm: string;
+  canonicalization_version: number;
+  finalized_by: string | null;
+  finalized_at: string;
+  version_type: SnapshotVersionType;
+  supersedes_snapshot_id: string | null;
+  correction_reason: string | null;
+  corrected_by: string | null;
+  corrected_by_display_name: string | null;
+  corrected_at: string | null;
+  created_at: string;
+};
+
+export type ClinicalRecordAmendment = {
+  id: string;
+  studio_id: string;
+  session_id: string;
+  applies_to_snapshot_id: string;
+  amendment_type: ClinicalAmendmentType;
+  reason: string;
+  body: string | null;
+  structured_addition: Record<string, unknown> | null;
+  linked_entity_type: string | null;
+  linked_entity_id: string | null;
+  authored_by: string;
+  authored_by_display_name: string | null;
+  authored_at: string;
+  content_hash: string;
+  created_at: string;
+};
+
+export type ClinicalAuditEvent = {
+  id: string;
+  studio_id: string;
+  session_id: string;
+  operation_type: "correction" | "amendment";
+  actor_practitioner_id: string;
+  actor_display_name: string | null;
+  record_version_before: number | null;
+  record_version_after: number | null;
+  snapshot_id: string | null;
+  previous_snapshot_id: string | null;
+  amendment_id: string | null;
+  affected_entity_type: string | null;
+  affected_entity_ids: string[] | null;
+  reason: string | null;
+  occurred_at: string;
+};
 
 export type Session = {
   id: string;
