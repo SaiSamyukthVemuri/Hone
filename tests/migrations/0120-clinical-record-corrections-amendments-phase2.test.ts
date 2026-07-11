@@ -22,7 +22,9 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(maxNum).toBe(120);
+    // Advanced to 0122 by Google Calendar — Phase A (0121 connection foundation
+    // + 0122 OAuth state). Bump this tripwire consciously when adding migrations.
+    expect(maxNum).toBe(122);
     expect(FILE).toMatch(/^0120_/);
   });
 });

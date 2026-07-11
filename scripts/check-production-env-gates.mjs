@@ -97,6 +97,54 @@ function opsAlertRecipientCount() {
     .filter((entry) => entry.length > 0).length;
 }
 
+// Google Calendar OAuth/crypto env (Phase A). NAMES only, never values.
+const GOOGLE_CALENDAR_ENV = {
+  key: "GOOGLE_TOKEN_ENCRYPTION_KEY",
+  keyVersion: "GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION",
+  clientId: "GOOGLE_OAUTH_CLIENT_ID",
+  clientSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+};
+
+function decodedKeyLength(raw) {
+  try {
+    const t = String(raw).trim();
+    const buf = /^[0-9a-fA-F]{64}$/.test(t)
+      ? Buffer.from(t, "hex")
+      : Buffer.from(t, "base64");
+    return buf.length;
+  } catch {
+    return -1;
+  }
+}
+
+// { pass, dormant, problems }. Absence of ALL vars = pass+dormant (non-breaking);
+// any partial/malformed config = fail with shape problems (names only).
+function googleCalendarConfigGate() {
+  const names = Object.values(GOOGLE_CALENDAR_ENV);
+  const anySet = names.some((n) => !isMissing(n));
+  if (!anySet) return { pass: true, dormant: true, problems: [] };
+
+  const problems = [];
+  for (const n of names) {
+    if (isMissing(n)) problems.push(`${n} (missing while other Google vars are set)`);
+  }
+  if (!isMissing(GOOGLE_CALENDAR_ENV.key)) {
+    const len = decodedKeyLength(process.env[GOOGLE_CALENDAR_ENV.key]);
+    if (len !== 32) {
+      problems.push(
+        `${GOOGLE_CALENDAR_ENV.key} (must decode to exactly 32 bytes; got ${len < 0 ? "unparseable" : len})`,
+      );
+    }
+  }
+  if (!isMissing(GOOGLE_CALENDAR_ENV.keyVersion)) {
+    const v = Number(String(process.env[GOOGLE_CALENDAR_ENV.keyVersion]).trim());
+    if (!Number.isInteger(v) || v <= 0) {
+      problems.push(`${GOOGLE_CALENDAR_ENV.keyVersion} (must be a positive integer)`);
+    }
+  }
+  return { pass: problems.length === 0, dormant: false, problems };
+}
+
 function main() {
   if (!isProductionDeploy()) {
     process.stdout.write(
@@ -111,6 +159,34 @@ function main() {
   // Run every gate, print one PASS/FAIL line each, then exit non-zero if ANY
   // failed (so one fix-and-redeploy surfaces all missing config at once).
   let failed = false;
+
+  // Gate 3 — Google Calendar OAuth/crypto config SHAPE (Phase A).
+  // Validate-if-present, NON-BREAKING: total absence (Google Calendar
+  // unprovisioned) PASSES so the current production deploy is unaffected and
+  // the connection flag stays OFF; a PARTIAL/MALFORMED config FAILS the build
+  // (truncated encryption key, missing key version, only some vars set) before
+  // any studio can enable the flag.
+  const gcal = googleCalendarConfigGate();
+  if (gcal.pass) {
+    process.stdout.write(
+      gcal.dormant
+        ? `PASS google-calendar-env: Google Calendar is unprovisioned (all vars absent) — ` +
+            `dormant; the connection flag must stay OFF until GOOGLE_TOKEN_ENCRYPTION_KEY ` +
+            `(+ _VERSION), GOOGLE_OAUTH_CLIENT_ID/SECRET are set.\n`
+        : `PASS google-calendar-env: Google Calendar OAuth/crypto config present and well-formed.\n`,
+    );
+  } else {
+    failed = true;
+    // NAMES + shape problems only — never any value.
+    process.stderr.write(
+      `FAIL google-calendar-env: Google Calendar config is partially set or malformed in production: ` +
+        `${gcal.problems.join("; ")}.\n` +
+        `A half-configured or malformed Google integration must not ship: a truncated ` +
+        `GOOGLE_TOKEN_ENCRYPTION_KEY fails closed at runtime and a missing key version breaks ` +
+        `rotation. Fix: set ALL of ${Object.values(GOOGLE_CALENDAR_ENV).join(", ")} correctly, ` +
+        `or unset them all to keep the feature dormant.\n`,
+    );
+  }
 
   // Gate 1 — public rate-limit Upstash vars (PR #262).
   const missing = REQUIRED_PUBLIC_RATELIMIT_ENV.filter(isMissing);

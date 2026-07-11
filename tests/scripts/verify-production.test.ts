@@ -97,8 +97,12 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0120 (clinical-record corrections & amendments, Phase 2).
-    expect(nums[nums.length - 1]).toBe("0120");
+    // Repo max advances to 0122 (Google Calendar — Phase A: 0121 connection
+    // foundation + 0122 OAuth state). These are additive + dormant and are NOT
+    // yet applied to hosted production (this PR stops before hosted apply), so
+    // until they are applied the verifier's "Remote migration max" reports an
+    // EXPECTED mismatch (repo 0122 vs remote 0120).
+    expect(nums[nums.length - 1]).toBe("0122");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
