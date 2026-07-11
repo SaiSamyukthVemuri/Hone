@@ -212,6 +212,123 @@ export async function seedOperatorAuthUser(): Promise<{ email: string }> {
   return { email };
 }
 
+// PR: amendment-path reliability. Seed a NATIVE, FINALIZED, corrections-enabled
+// session so the spec can drive the real Amend flow (UI -> server action ->
+// PostgREST RPC -> amendment row + audit event). The finalize call runs as the
+// authenticated owner (role + request.jwt.claims, exactly how PostgREST presents
+// a logged-in user) so finalize_session's auth.uid()/RLS behave as in production;
+// no runtime auth bypass. Both clinical flags are turned on for the studio.
+export async function seedFinalizedSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string; snapshotId: string }> {
+  await sql(
+    `update public.studios
+        set clinical_finalization_enabled = true,
+            clinical_corrections_enabled = true
+      where id = $1`,
+    [seed.studioId],
+  );
+  const prac = (
+    await sql<{ id: string; user_id: string }>(
+      `select id, user_id from public.practitioners
+        where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  if (!prac) throw new Error("seedFinalizedSession: owner practitioner not found");
+
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.clients (id, studio_id, name, email)
+     values ($1, $2, $3, $4)`,
+    [clientId, seed.studioId, `Amend Client ${seed.runId}`, `e2e-amend-${seed.runId}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+     values ($1, $2, $3, $4, 'electrolysis')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id)
+     values ($1, $2, $3)`,
+    [blockId, seed.studioId, sessionId],
+  );
+  await sql(
+    `insert into public.electrolysis_entries (id, session_id, area, block_id)
+     values ($1, $2, 'chin', $3)`,
+    [randomUUID(), sessionId, blockId],
+  );
+
+  // Finalize as the authenticated owner (auth.uid() + RLS active).
+  const client = new PgClient({ connectionString: E2E_DB_URL });
+  await client.connect();
+  let snapshotId: string;
+  try {
+    await client.query("begin");
+    await client.query("set local role authenticated");
+    await client.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: prac.user_id, role: "authenticated" }),
+    ]);
+    const fin = await client.query(
+      "select * from public.finalize_session($1, $2)",
+      [sessionId, 1],
+    );
+    snapshotId = fin.rows[0].snapshot_id as string;
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    await client.end();
+  }
+  return { clientId, sessionId, snapshotId };
+}
+
+// Toggle a studio's corrections flag mid-test to drive a REAL server-side
+// failure (the server action re-reads the flag on every call) without mocking.
+export async function setStudioCorrectionsEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set clinical_corrections_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
+// Ground-truth checks the amend spec asserts against the real DB.
+export async function getAmendmentCount(sessionId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::text as n from public.clinical_record_amendments where session_id = $1`,
+    [sessionId],
+  );
+  return Number(rows[0]?.n ?? "0");
+}
+
+export async function getClinicalAuditEventCount(
+  sessionId: string,
+  operationType: string,
+): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::text as n from public.clinical_audit_events
+      where session_id = $1 and operation_type = $2`,
+    [sessionId, operationType],
+  );
+  return Number(rows[0]?.n ?? "0");
+}
+
+export async function getSessionRecordState(
+  sessionId: string,
+): Promise<{ record_version: number; current_snapshot_id: string | null }> {
+  const rows = await sql<{ record_version: number; current_snapshot_id: string | null }>(
+    `select record_version, current_snapshot_id from public.sessions where id = $1`,
+    [sessionId],
+  );
+  return rows[0];
+}
+
 // Read-only lookups the spec uses to bridge between UI steps.
 
 // Intake links are SIGNED tokens (lib/intake/tokens.ts), not stored
