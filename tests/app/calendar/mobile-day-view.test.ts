@@ -14,6 +14,7 @@ function read(rel: string): string {
 const PAGE = read("app/(app)/calendar/page.tsx");
 const MOBILE = read("app/(app)/calendar/CalendarMobileDayView.tsx");
 const TIMELINE = read("app/(app)/calendar/MobileDayTimeline.tsx");
+const MONTHVIEW = read("app/(app)/calendar/MonthView.tsx");
 
 describe("mobile renders a single day, not the 7-day week grid", () => {
   it("mounts the mobile day view; desktop grid is now md-only", () => {
@@ -25,10 +26,14 @@ describe("mobile renders a single day, not the 7-day week grid", () => {
     expect(MOBILE).toMatch(/<MobileDayTimeline/);
     expect(MOBILE).not.toMatch(/<DayColumn/);
   });
-  it("has NO horizontal week-grid panning: one vertical scroll, no overflow-x / min-w week grid", () => {
+  it("has NO horizontal week-grid panning: the day timeline scrolls vertically; only the compact date strip scrolls horizontally", () => {
     expect(MOBILE).toMatch(/overflow-y-auto overscroll-contain/);
-    expect(MOBILE).not.toMatch(/overflow-x/);
+    // The day timeline itself never pans horizontally.
     expect(TIMELINE).not.toMatch(/overflow-x|min-w-\[840px\]|grid-cols-\[60px_repeat\(7/);
+    // The old 7-day horizontal week grid is gone from mobile; the ONLY horizontal
+    // scroll is the compact weekday/date navigation strip (not a grid).
+    expect(MOBILE).not.toMatch(/min-w-\[840px\]|grid-cols-\[60px_repeat\(7/);
+    expect(MOBILE).toMatch(/ref=\{stripRef\}[\s\S]*overflow-x-auto/);
   });
   it("reuses the SAME loaded week data (no divergent query)", () => {
     expect(PAGE).toMatch(/const mobileDays: MobileDayData\[\]/);
@@ -88,9 +93,10 @@ describe("mobile cards + create flow reuse existing paths (no new server actions
     expect(MOBILE).toMatch(/onBookAt=\{\(localTime\) =>/);
     expect(MOBILE).toMatch(/<QuickBookDrawer/);
   });
-  it("floating + is present and books at a context-aware default (not always top-of-day)", () => {
-    expect(MOBILE).toMatch(/aria-label="Add appointment"/);
-    expect(MOBILE).toMatch(/function bookFromPlus/);
+  it("floating + opens the Book/Block chooser at a context-aware default (not always top-of-day)", () => {
+    expect(MOBILE).toMatch(/aria-label="Add appointment or block time"/);
+    expect(MOBILE).toMatch(/function openPlusChooser/);
+    expect(MOBILE).toMatch(/onClick=\{openPlusChooser\}/);
     expect(MOBILE).toMatch(/Math\.ceil\(now \/ 30\)/);
   });
   it("introduces NO new booking/block server action", () => {
@@ -99,6 +105,61 @@ describe("mobile cards + create flow reuse existing paths (no new server actions
         /"use server"|bookAppointmentForClientAction|createCalendarTimedBlockAction|updateTimedBlockAction/,
       );
     }
+  });
+});
+
+describe("month view tapping a date preserves the EXACT date (not the week start)", () => {
+  it("day cell navigates with ?day=<exact date>, so the tapped day is not snapped to week start", () => {
+    // The bug: tapping Thu the 23rd opened the week start (Sun the 19th). The day
+    // href must carry the exact cellDate via ?day= (the mobile selected-day param).
+    expect(MONTHVIEW).toMatch(/const dayHref = `\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`/);
+    expect(MONTHVIEW).not.toMatch(/href=\{weekHref\}/); // old week-only href is gone
+    expect(MONTHVIEW).toMatch(/href=\{dayHref\}/);
+  });
+  it("page consumes ?day= as the selected day (already wired), anchoring the containing week", () => {
+    expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);
+  });
+  it("today is unmistakable in the month grid (filled badge + accent), distinct from other days", () => {
+    expect(MONTHVIEW).toMatch(/aria-label="Today"/);
+    expect(MONTHVIEW).toMatch(/rounded-full bg-sky-600/);
+    expect(MONTHVIEW).toMatch(/border-t-2 border-t-sky-500/);
+  });
+});
+
+describe("mobile + chooser (Book / Block) and block-time reuse", () => {
+  it("the + opens the reused DragActionChooser (not QuickBook directly)", () => {
+    expect(MOBILE).toMatch(/import \{ DragActionChooser/);
+    expect(MOBILE).toMatch(/<DragActionChooser/);
+    expect(MOBILE).toMatch(/setChooserDraft\(/);
+  });
+  it("choosing Book opens QuickBookDrawer; choosing Block opens QuickBlockDrawer (reused, no new model)", () => {
+    expect(MOBILE).toMatch(/onBook=\{/);
+    expect(MOBILE).toMatch(/onBlock=\{/);
+    expect(MOBILE).toMatch(/<QuickBlockDrawer/);
+    expect(MOBILE).toMatch(/import \{ QuickBlockDrawer/);
+    // Block create reuses the desktop drawer/action — no server action in this file.
+    expect(MOBILE).not.toMatch(/"use server"|createCalendarTimedBlockAction|updateTimedBlockAction/);
+  });
+  it("block-time create prefills the selected day + a start/end range", () => {
+    expect(MOBILE).toMatch(/localDate: chooserDraft\.localDate/);
+    expect(MOBILE).toMatch(/startLocal: minutesToHHMM\(minutes\)/);
+    expect(MOBILE).toMatch(/endLocal: minutesToHHMM/);
+  });
+});
+
+describe("mobile date strip: today survives selection, appt dots, scroll + a11y", () => {
+  it("today keeps a high-contrast ring even when it is the selected pill", () => {
+    expect(MOBILE).toMatch(/d\.isToday[\s\S]*ring-2 ring-inset ring-sky-500/);
+  });
+  it("shows an appointment indicator dot per day with appointments", () => {
+    expect(MOBILE).toMatch(/const hasAppts = d\.appts\.length > 0/);
+  });
+  it("pills are horizontally scrollable, keep the selected one in view, with a11y labels + 44px targets", () => {
+    expect(MOBILE).toMatch(/overflow-x-auto/);
+    expect(MOBILE).toMatch(/data-selected=\{selected\}/);
+    expect(MOBILE).toMatch(/scrollIntoView\(\{ inline: "center"/);
+    expect(MOBILE).toMatch(/aria-label=\{`\$\{d\.isToday \? "Today, " : ""\}/);
+    expect(MOBILE).toMatch(/min-h-\[44px\]/);
   });
 });
 

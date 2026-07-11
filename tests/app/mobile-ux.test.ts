@@ -254,11 +254,15 @@ describe("e2e coverage exists for the mobile behavior", () => {
     const spec = read("e2e/mobile-ux.spec.ts");
     expect(spec).toMatch(/scrollWidth/);
     expect(spec).toMatch(/Mobile navigation/);
-    // Mobile calendar redesign: a single-day view (not the 7-day week grid),
-    // the floating + create path, and one-day navigation with no page overflow.
+    // Mobile calendar: a single-day view (not the 7-day week grid), the floating
+    // + Book/Block chooser + block-time path, and one-day navigation with no
+    // page overflow.
     expect(spec).toMatch(/mobile day view loads as ONE day, no page-wide overflow/);
     expect(spec).toMatch(
-      /floating \+ opens a booking draft, creating nothing until submit/,
+      /floating \+ opens the Book\/Block chooser; Book still creates nothing until submit/,
+    );
+    expect(spec).toMatch(
+      /Block time opens the reused block drawer prefilled with the selected day/,
     );
     expect(spec).toMatch(
       /day navigation stays on one day with no page-wide overflow/,
