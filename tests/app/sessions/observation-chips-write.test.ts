@@ -33,6 +33,22 @@ describe("SimplifiedEntryForm uses STRUCTURED chips, not legacy append-to-commen
   });
 });
 
+describe("block-setup-form preloads legacy chips as SELECTED controls (Chloe's edit surface)", () => {
+  const src = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
+  it("seeds observationChips via the shared resolveDisplayChips contract (structured OR legacy-from-comments)", () => {
+    expect(src).toMatch(/resolveDisplayChips\(firstEntry\?\.observation_chips, firstEntry\?\.comments\)/);
+    expect(src).toMatch(/observationChips: hydrated\.chips/);
+    expect(src).toMatch(/comments: hydrated\.freeText/);
+  });
+  it("renders each chip as a toggle that reflects selection (aria-pressed) + persists on save", () => {
+    expect(src).toMatch(/isChipSelected\(draft\.observationChips/);
+    expect(src).toMatch(/toggleChip\(draft\.observationChips/);
+    expect(src).toMatch(/aria-pressed=\{selected\}/);
+    // The block save action already persists observation_chips (updateTreatmentAreaWithEntryAction).
+    expect(src).toMatch(/observationChips: draft\.observationChips/);
+  });
+});
+
 describe("entry-row renders chips from structured OR legacy comments (display fix)", () => {
   const src = read("components/entry-row.tsx");
   it("resolves display chips via resolveDisplayChips (hydrates legacy rows)", () => {

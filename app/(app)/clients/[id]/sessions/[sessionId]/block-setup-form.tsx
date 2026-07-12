@@ -58,8 +58,7 @@ import type {
 import {
   isChipSelected,
   toggleChip,
-  normalizeChips,
-  hydrateLegacyChips,
+  resolveDisplayChips,
 } from "@/lib/observation-chips";
 import {
   NUMBING_OPTIONS,
@@ -246,11 +245,15 @@ function initialDraft(
   // else stays as free-text — so editing an old record shows chips reliably and
   // never double-displays them. The stored row is untouched until the
   // practitioner saves.
-  const seededChips = normalizeChips(firstEntry?.observation_chips);
-  const hydrated =
-    seededChips.length > 0
-      ? { chips: seededChips, freeText: firstEntry?.comments ?? "" }
-      : hydrateLegacyChips(firstEntry?.comments);
+  // Chip-loading fix: seed the SAME way the entry-row renders — via the single
+  // resolveDisplayChips contract. Structured chips preload directly; a LEGACY
+  // entry (empty observation_chips) hydrates its chips out of `comments` so
+  // reopening an old treatment area shows them as SELECTED controls, with the
+  // remaining free-text as the note. Stored data is untouched until save.
+  const hydrated = (() => {
+    const r = resolveDisplayChips(firstEntry?.observation_chips, firstEntry?.comments);
+    return { chips: r.chips, freeText: r.note };
+  })();
   return {
     mode: block.mode ?? "",
     apilusModality: block.apilus_modality ?? "",

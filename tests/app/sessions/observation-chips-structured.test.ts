@@ -27,9 +27,10 @@ describe("block-setup-form — chips are STRUCTURAL state, not derived from text
     expect(FORM).toMatch(/value=\{draft\.comments\}/); // textarea = free-text only
     expect(FORM).toMatch(/observationChips: draft\.observationChips/); // in save payload
   });
-  it("edit-load hydrates legacy chip-in-comments records non-destructively", () => {
-    expect(FORM).toMatch(/normalizeChips\(firstEntry\?\.observation_chips\)/);
-    expect(FORM).toMatch(/hydrateLegacyChips\(firstEntry\?\.comments\)/);
+  it("edit-load hydrates legacy chip-in-comments records non-destructively (via resolveDisplayChips)", () => {
+    // Chip-loading fix: seeding routes through the shared, tested resolveDisplayChips
+    // contract (structured chips OR legacy chips hydrated from comments).
+    expect(FORM).toMatch(/resolveDisplayChips\(firstEntry\?\.observation_chips, firstEntry\?\.comments\)/);
     expect(FORM).toMatch(/comments: hydrated\.freeText/);
     expect(FORM).toMatch(/observationChips: hydrated\.chips/);
   });
