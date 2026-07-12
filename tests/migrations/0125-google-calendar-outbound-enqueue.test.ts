@@ -94,7 +94,8 @@ describe("0125 — condition 1: append-only suppression telemetry (no contended 
 
 describe("0125 — condition 2: health-aware reaper + global control in claim", () => {
   it("claim early-returns when the global worker control is OFF/absent (no reap, no claim)", () => {
-    expect(SQL).toMatch(/select worker_enabled into v_enabled from public\.calendar_sync_control where id = true/);
+    // Table-aliased (a bare `id` would collide with the RETURNS TABLE (id …) column).
+    expect(SQL).toMatch(/select ctl\.worker_enabled into v_enabled\s*\n?\s*from public\.calendar_sync_control ctl where ctl\.id = true/);
     expect(SQL).toMatch(/if not found or v_enabled is not true then\s*\n?\s*return;/);
   });
   it("releases UNHEALTHY expired-processing to pending with a restored attempt (not dead)", () => {
