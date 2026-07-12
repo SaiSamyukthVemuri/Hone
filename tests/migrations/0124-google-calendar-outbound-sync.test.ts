@@ -19,7 +19,9 @@ describe("0124 — migration identity + additive/dormant", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    expect(max).toBe(124);
+    // 0124 was the max when it shipped; later migrations (0125 = B2.3-a) advance
+    // it further, so assert 0124 is present and sequential, not that it is the tip.
+    expect(max).toBeGreaterThanOrEqual(124);
     expect(FILE).toMatch(/^0124_.*outbound_sync.*\.sql$/);
   });
 

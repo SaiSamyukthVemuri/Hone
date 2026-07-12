@@ -395,6 +395,19 @@ export type Appointment = {
   intake_reminder_3d_sent_at: string | null;
   intake_reminder_3d_send_attempts: number;
   intake_reminder_3d_claimed_at: string | null;
+  // Migration 0125 (Google Calendar B2.3-a): outbound-sync source-of-truth
+  // versioning + reschedule lineage. sync_version is trigger-maintained
+  // (bump_appointment_sync_version) and monotonically increases when a
+  // serialized field (starts_at/ends_at/status) changes; it is the source
+  // version in the deterministic outbox idempotency key. The rescheduled_*
+  // lineage + cancellation_kind are written by the reschedule/cancel RPCs in
+  // B2.4 (dormant here); the enqueue trigger reads them for carry-forward
+  // rebind + delete-vs-reschedule disambiguation. The app never writes
+  // sync_version directly.
+  sync_version: number;
+  rescheduled_from_appointment_id: string | null;
+  rescheduled_to_appointment_id: string | null;
+  cancellation_kind: string | null;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and

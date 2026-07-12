@@ -97,15 +97,14 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0124 (Google Calendar — Phase B / PR B1: dormant
-    // outbound-sync foundation — calendar_event_links + calendar_sync_outbox +
-    // claim/result RPCs), on top of Willow P1-B (0123) and Google Calendar —
-    // Phase A (0121/0122). 0124 was APPLIED to the hosted project migration-first
-    // on 2026-07-12 (ahead of the PR #407 code merge), so repo and hosted
-    // reconcile at 0124 and the verifier's "Remote migration max" PASSES. This
-    // assertion still fails on the next new migration, forcing a conscious review
-    // of the pre-live verifier.
-    expect(nums[nums.length - 1]).toBe("0124");
+    // Repo max advances to 0125 (Google Calendar — Phase B2.3-a: dormant outbound
+    // enqueue + claim activation boundary), on top of 0124 (B1 outbound-sync
+    // foundation), Willow P1-B (0123), and Phase A (0121/0122). 0125 is repo-only
+    // until its separately-approved migration-first hosted apply; UNTIL then the
+    // live verifier's "Remote migration max" will (correctly) report expected 0125
+    // vs remote 0124 — the intended pending-apply signal. This assertion still
+    // fails on the next new migration, forcing a conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0125");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
