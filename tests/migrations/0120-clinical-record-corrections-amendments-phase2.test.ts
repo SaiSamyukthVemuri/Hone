@@ -22,10 +22,13 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0123 by Willow P1-B (0123 soft_delete_session_area RPC), on
-    // top of Google Calendar — Phase A (0121/0122). Bump this tripwire
-    // consciously when adding migrations.
-    expect(maxNum).toBe(123);
+    // Advanced to 0124 by Google Calendar — Phase B / PR B1 (0124
+    // outbound-sync foundation: calendar_event_links + calendar_sync_outbox +
+    // claim/result RPCs), on top of Willow P1-B (0123) and Google Calendar —
+    // Phase A (0121/0122). Bump this tripwire consciously when adding
+    // migrations. 0124 is additive + dormant and is repo-only until its
+    // migration-first hosted apply.
+    expect(maxNum).toBe(124);
     expect(FILE).toMatch(/^0120_/);
   });
 });
