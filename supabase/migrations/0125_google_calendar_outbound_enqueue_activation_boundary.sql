@@ -419,7 +419,10 @@ declare
   v_enabled boolean;
 begin
   -- (i) GLOBAL runtime control. Missing/unreadable => fail-safe disabled.
-  select worker_enabled into v_enabled from public.calendar_sync_control where id = true;
+  -- Alias the table: a bare `id` would be ambiguous with this function's
+  -- RETURNS TABLE (id uuid, …) output column.
+  select ctl.worker_enabled into v_enabled
+    from public.calendar_sync_control ctl where ctl.id = true;
   if not found or v_enabled is not true then
     return;                                              -- zero rows; NO reap, NO claim, NO mutation
   end if;

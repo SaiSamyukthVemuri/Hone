@@ -12,15 +12,24 @@ import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "@/lib/goo
 // reachable (the harness enforces localhost); NO real Google call is made (the op
 // is a mock; the token manager is a stub). This is the discipline B2.3 relies on.
 
+// The B2.1 handler's execution-time gate still requires broad calendar.events
+// (handler.ts REQUIRED_OUTBOUND_SCOPE — untouched here; aligning it to .owned is a
+// B2.4 item). Migration 0125's claim eligibility requires calendar.events.owned.
+// So a connection that must pass BOTH gates holds both scopes; the DB check is a
+// SUPERSET (@>) so the extra broad scope is harmless.
 const EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const OWNED_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned";
 
 afterAll(async () => {
   await closePool();
 });
 
 // claim_calendar_sync_op is a GLOBAL drain; isolate each test's view of the queue.
+// 0125 added the global worker control (default OFF) at the claim boundary — enable
+// it so the transport loop can claim.
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
+  await adminQuery("update public.calendar_sync_control set worker_enabled = true");
 });
 
 function mapRow(r: Record<string, unknown>): ClaimedJob {
@@ -68,12 +77,22 @@ function pgStore(): ConnectionStore {
   };
 }
 
-async function seedEligibleConnection(studio: SeededStudio): Promise<string> {
+async function seedEligibleConnection(
+  studio: SeededStudio,
+  enableFlag = true,
+): Promise<string> {
   const connId = randomUUID();
   await adminQuery(
     "insert into public.calendar_connections (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner) values ($1,$2,$3,'connected',$4,'primary',true)",
-    [connId, studio.studioId, studio.practitionerId, [EVENTS_SCOPE]],
+    [connId, studio.studioId, studio.practitionerId, [EVENTS_SCOPE, OWNED_SCOPE]],
   );
+  await adminQuery(
+    "insert into public.calendar_connection_secrets (connection_id, studio_id, encrypted_refresh_token, encryption_key_version) values ($1,$2,'v1:1:iv:tag:ct',1)",
+    [connId, studio.studioId],
+  );
+  if (enableFlag) {
+    await adminQuery("update public.studios set google_calendar_outbound_sync_enabled = true where id=$1", [studio.studioId]);
+  }
   return connId;
 }
 
@@ -145,9 +164,12 @@ describe("cron adapter claim -> handle -> record", () => {
     expect(row.rows[0].processed_at).not.toBeNull();
   });
 
-  it("an ineligible connection (outbound flag off) records a retry, not done", async () => {
+  it("an ineligible connection (outbound flag off) is HELD at claim time, not claimed", async () => {
+    // Under migration 0125 eligibility moved into claim_calendar_sync_op (Option A):
+    // an ineligible connection's job is never handed out, so it does not decay —
+    // it stays pending with attempts untouched, ready to drain when health returns.
     const studio = await seedStudio("gcalAdapterOff");
-    const connId = await seedEligibleConnection(studio);
+    const connId = await seedEligibleConnection(studio, /* enableFlag */ false);
     const job = await insertOutboxJob(studio, connId);
     const store = pgStore();
     const tokenManager: TokenManager = {
@@ -173,13 +195,13 @@ describe("cron adapter claim -> handle -> record", () => {
         handleCalendarSyncJob(j, {
           store,
           tokenManager,
-          isStudioOutboundEnabled: async () => false, // flag OFF
+          isStudioOutboundEnabled: async () => false,
           operations: { "event.create": async () => ({ code: "ok" }) },
         }),
     });
-    expect(summary.retried).toBe(1);
+    expect(summary.claimed).toBe(0); // held at the claim boundary
     const row = await adminQuery("select status, attempts from public.calendar_sync_outbox where id=$1", [job.id]);
-    // Recorded as a retry -> back to pending (claimed once, so attempts = 1).
-    expect(row.rows[0].status).toBe("pending");
+    expect(row.rows[0].status).toBe("pending"); // still pending
+    expect(Number(row.rows[0].attempts)).toBe(0); // no decay
   });
 });
