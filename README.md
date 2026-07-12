@@ -7,7 +7,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 ## Status
 
 > **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0120** as of 2026-07-11 = Clinical Record Phase 2 corrections/amendments backend; Phase 1 finalization (0119, PR #399) + Phase 2 backend (0120, PR #400) are **merged + deployed but dormant** — both clinical flags default OFF for all studios and the corrections/amendments **customer workflow is parked**; PR #402 shipped amendment-path reliability/observability only, no migration) ·
+> (production migration max **0124** as of 2026-07-12 = Google Calendar Phase B1 dormant outbound-sync schema/queue foundation, PR #407, applied migration-first + merged + deployed **DORMANT** — schema live but inert: no worker, no enqueue path, no Google event write, all Google sync flags OFF, Willow not connected. Also live-but-dormant: Clinical Record Phase 1 finalization (0119, PR #399) + Phase 2 corrections/amendments backend (0120, PR #400), both clinical flags OFF and the corrections **customer workflow parked**) ·
 > [migration ledger](./docs/production/migration-ledger.md) ·
 > [release changelog](./docs/production/release-changelog.md) ·
 > [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
@@ -42,7 +42,8 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Client portal access events + practitioner status card | **Production** (PR #370, migration 0111; append-only, no token/PII) |
 | Public booking previous/next availability navigation | **Production** (PR #371; client-side) |
 | Public booking horizon 1–12 months | **Production** (PR #372, migration 0112; default 3, existing studios unchanged) |
-| Google Calendar sync, intake builder, signed-consent viewer, admin/support dashboard | **Backlog** |
+| Google Calendar sync | **Foundation deployed, DORMANT — no sync active.** Phase A connection/OAuth foundation (0121/0122, PR #404) + Phase B1 outbound-sync schema/queue (`calendar_event_links`, `calendar_sync_outbox`, service-role claim/result RPCs; 0124, PR #407) are deployed. **No worker, no enqueue path, no Google event write, no inbound busy, no availability change.** All Google sync flags OFF; one controlled Phase A connection (Sam's studio) exists; Willow not connected. Outbound/inbound/two-way sync = design intent, not shipped |
+| Intake builder, admin/support dashboard | **Backlog** |
 
 ## Who Hone is for
 

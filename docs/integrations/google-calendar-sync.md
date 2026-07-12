@@ -1,14 +1,24 @@
 # Google Calendar Two-Way Sync — Architecture
 
-Canonical design for Hone's Google Calendar integration across all phases. **Only
-Phase A (connection & OAuth foundation) is implemented today.** Everything after
-"Phase B" is design intent, not shipped. When this doc and the code disagree, the
-code + the migration ledger win.
+Canonical design for Hone's Google Calendar integration across all phases. **Two
+things are deployed today: Phase A (connection & OAuth foundation) and the Phase B1
+dormant outbound-sync schema/queue foundation.** Everything that actually *moves an
+event* — the enqueue path, the drain worker, inbound busy, two-way edits — is design
+intent, not shipped. When this doc and the code disagree, the code + the migration
+ledger win.
 
-- **Status:** Phase A implemented (migrations 0121/0122, dormant). All Google
-  flags default **OFF**. No event sync exists. No production connection created.
-- **Willow:** not connected. Willow is never used for initial integration
-  testing (see §Rollout).
+- **Status:** Phase A implemented (migrations 0121/0122) and **Phase B1 outbound-sync
+  schema deployed (migration 0124, PR #407 merged 2026-07-12)** — both **dormant**.
+  All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
+  is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
+  worker, no enqueue path, no trigger enqueues, no Google event has been created or
+  modified, no Google API call has occurred, and no event scope has been requested.
+- **Production exercised:** the Phase A OAuth connection was exercised once on **Sam's
+  controlled studio** (one connection exists). **Phase B1 outbox/event-link behavior
+  has NOT been production-exercised** — `calendar_event_links` and `calendar_sync_outbox`
+  are empty (0 rows).
+- **Willow:** not connected; all Google flags OFF. Willow is never used for initial
+  integration testing (see §Rollout). No sync feature is approved for Willow.
 
 ---
 
@@ -312,11 +322,12 @@ responsibility**; B1 only reserves the column and records the contract.
 ## 7. Later phases (design intent, NOT implemented)
 
 - **Phase B — Hone → Google (outbound).** Split into schema-first + behavior:
-  - **B1 (DONE — migration 0124, dormant): built.** The `calendar_event_links`
-    mapping + durable `calendar_sync_outbox` + the claim/result queue RPCs, with
-    no runtime wiring. See §3b for the full data model, four-state queue,
-    idempotency contract, lease/backoff constants, and the orphan reaper. **No
-    behavior ships in B1.**
+  - **B1 (DEPLOYED — migration 0124 applied + PR #407 merged 2026-07-12, dormant).**
+    The `calendar_event_links` mapping + durable `calendar_sync_outbox` + the
+    service-role-only claim/result queue RPCs, with no runtime wiring. See §3b for
+    the full data model, four-state queue, idempotency contract, lease/backoff
+    constants, and the orphan reaper. **No behavior ships in B1** — the schema is
+    live but inert (0 rows, no worker, no enqueue, nothing reads it).
   - **B2 (design intent, NOT built): behavior.** Enqueue at the DB commit point
     (inside the cancel/complete/no_show/reschedule RPCs + the 0030 mirror trigger
     for creates/blocks) via a fixed allow-listed serializer (§6); a drain worker
