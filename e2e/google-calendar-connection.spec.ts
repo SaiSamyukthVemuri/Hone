@@ -36,7 +36,7 @@ test("Google Calendar card: flag-gated, dormant, fail-closed when unconfigured",
     await expect(
       page.getByText(/one-way subscription that never imports events/i),
     ).toBeVisible();
-    await expect(page.getByText(/No event read or write access is requested yet/i)).toBeVisible();
+    await expect(page.getByText(/No event read or write access is requested when you/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /connect google calendar/i })).toBeVisible();
   });
 
