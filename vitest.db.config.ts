@@ -30,6 +30,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),
+      // Mirror the unit config: `server-only` is a bundler-only marker Next
+      // consumes at build; stub it so DB tests can import server-only worker
+      // modules (Google Calendar sync core) against the local stack.
+      "server-only": path.resolve(__dirname, "./tests/stubs/server-only.ts"),
     },
   },
 });

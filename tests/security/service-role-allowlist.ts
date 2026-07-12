@@ -50,6 +50,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "user_mismatch",
   },
   {
+    path: "lib/google-calendar/sync/connection-store.ts",
+    purpose: "Google Calendar Phase B2.1 worker ConnectionStore — service-role reads/writes of the connection + ciphertext for the background sync worker (dormant; not activated).",
+    why: "Every read/write is re-derived by (connectionId, studioId) — the worker never trusts a job payload's ids alone — so a connection/secret can never cross studios; the ciphertext table stays browser-inaccessible.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "app/(app)/calendar/postcare-auto-send.ts",
     purpose: "Fail-soft postcare auto-send helper (migration 0110), called from the completion actions after the caller's studio is already resolved.",
     why: "Service-role read/claim/record for the postcare send-state columns; the studioId is passed in by the authenticated completion action and EVERY query is scoped to it.",

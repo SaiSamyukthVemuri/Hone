@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase B, PR B1. POSITIVE dormancy proof.
+// Google Calendar — Phase B outbound-sync dormancy proof.
 //
-// PR B1 adds the outbound-sync SCHEMA + queue foundation (migration 0124) and
-// nothing else. There must be NO runtime behavior: no application code path
-// reads, writes, enqueues to, or drains the new tables/RPCs; the only place the
-// new names appear in TypeScript is the inert row types in lib/types/database.ts
-// (declared for a future phase, imported by nothing yet). This test fails the
-// moment any runtime module starts referencing the outbound-sync surface — that
-// is Phase B2's PR, not B1's.
+// PR B1 added the outbound-sync SCHEMA + queue foundation (migration 0124).
+// PR B2.1 added the transport-neutral WORKER CORE + token lifecycle under
+// lib/google-calendar/sync — which necessarily references the tables/RPCs — but
+// it is DORMANT: nothing activates it (no app route/action imports it, no cron
+// schedule, no enqueue path). The "not activated" guarantee is proven by
+// tests/app/google-calendar/b2-1-worker-core-dormant.test.ts. This test keeps the
+// remaining dormancy invariants: NO application (app/) path references the
+// outbound-sync surface, no enqueue call sites exist, and the row types stay
+// inert. The B2.1 worker-core directory is the ONE allowed home for the runtime
+// references (alongside the inert types file) and is excluded below.
 
 const ROOT = process.cwd();
 const NEW_SYMBOLS = [
@@ -20,11 +23,12 @@ const NEW_SYMBOLS = [
   "record_calendar_sync_result",
 ];
 
-// Runtime source roots. lib/types/database.ts is the ONE allowed home for the
-// (inert, unused) row types, so it is excluded from the "no reference" scan and
-// asserted separately.
+// Runtime source roots. Two locations are the allowed homes for the outbound-sync
+// surface and are excluded from the "no reference" scan: lib/types/database.ts
+// (inert row types) and lib/google-calendar/sync (the B2.1 dormant worker core).
 const SCAN_DIRS = ["app", "lib", "components"];
 const ALLOWED_TYPE_FILE = join("lib", "types", "database.ts");
+const WORKER_CORE_DIR = join("lib", "google-calendar", "sync");
 
 function walk(dir: string): string[] {
   const abs = join(ROOT, dir);
@@ -49,15 +53,26 @@ function walk(dir: string): string[] {
 }
 
 describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
-  it("no runtime module references the outbound-sync tables or RPCs", () => {
+  it("no runtime module OUTSIDE the dormant worker core references the tables or RPCs", () => {
     const offenders: string[] = [];
     for (const dir of SCAN_DIRS) {
       for (const rel of walk(dir)) {
-        if (rel === ALLOWED_TYPE_FILE) continue;
+        if (rel === ALLOWED_TYPE_FILE || rel.startsWith(WORKER_CORE_DIR)) continue;
         const src = readFileSync(join(ROOT, rel), "utf8");
         for (const sym of NEW_SYMBOLS) {
           if (src.includes(sym)) offenders.push(`${rel} → ${sym}`);
         }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("no application (app/) route or action references the outbound-sync surface", () => {
+    const offenders: string[] = [];
+    for (const rel of walk("app")) {
+      const src = readFileSync(join(ROOT, rel), "utf8");
+      for (const sym of [...NEW_SYMBOLS, "google-calendar/sync"]) {
+        if (src.includes(sym)) offenders.push(`${rel} → ${sym}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -74,14 +89,15 @@ describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
     expect(types).not.toMatch(/\.rpc\(\s*["'`](claim_calendar_sync_op|record_calendar_sync_result)/);
   });
 
-  it("the deployed Google client has no outbound enqueue/claim/drain surface", () => {
+  it("the Phase-A Google client (outside the worker core) has no event surface", () => {
     const dir = join("lib", "google-calendar");
     for (const rel of walk(dir)) {
+      if (rel.startsWith(WORKER_CORE_DIR)) continue; // the B2.1 worker core is the allowed home
       const src = readFileSync(join(ROOT, rel), "utf8");
       for (const sym of NEW_SYMBOLS) {
-        expect(src.includes(sym), `${rel} must not reference ${sym} in PR B1`).toBe(false);
+        expect(src.includes(sym), `${rel} must not reference ${sym}`).toBe(false);
       }
-      // No event-writing Google API calls yet (Phase B2+).
+      // The Phase-A files still make no event-writing Google API calls.
       expect(src).not.toMatch(/events\.(insert|update|delete|patch)/);
       expect(src).not.toMatch(/\/calendars\/[^/]*\/events/);
     }
