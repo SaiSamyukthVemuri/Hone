@@ -3,34 +3,52 @@
 import { useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ConnectionMetadata } from "@/lib/google-calendar/connection";
+import type { ConnectionReadiness } from "@/lib/google-calendar/readiness";
 import type { GoogleCalendarListEntry } from "@/lib/google-calendar/oauth";
 import {
   startGoogleCalendarConnectAction,
+  startGoogleCalendarEventScopeUpgradeAction,
   disconnectGoogleCalendarAction,
   listWritableCalendarsAction,
   selectWriteCalendarAction,
   designateSelfAsCalendarOwnerAction,
 } from "./google-calendar-actions";
 
-// Google Calendar connection card on Settings → Profile (Phase A).
+// Google Calendar connection card on Settings → Profile.
 //
-// This is the OAuth CONNECTION foundation only. It is deliberately distinct from
-// the one-way, read-only iCal CalendarFeedCard above it. While outbound/inbound/
-// two-way sync remain OFF, a connected account shows an explicit dormant banner
-// ("Connected. Event synchronization has not been enabled.") so nobody assumes
-// two-way sync is live.
+// Phase A = the OAuth CONNECTION foundation. Phase B2.2 adds the incremental
+// calendar.events scope upgrade + reconnect UX. Readiness is DERIVED server-side
+// (passed in as `readiness`), never stored. NOTHING here syncs events: even a
+// fully "outbound_scope_ready" connection shows the dormant banner
+// ("Event synchronization is still disabled"). No token/scope/state is exposed.
 
-type Props = { connection: ConnectionMetadata | null; isOwner: boolean };
+type Props = {
+  connection: ConnectionMetadata | null;
+  readiness: ConnectionReadiness;
+  isOwner: boolean;
+};
 
 const STATUS_MESSAGES: Record<string, { tone: "ok" | "warn"; text: string }> = {
   connected: { tone: "ok", text: "Google Calendar connected." },
+  event_scope_granted: { tone: "ok", text: "Calendar event access granted. Your connection is ready for future event sync — synchronization is still disabled." },
+  event_scope_not_granted: { tone: "warn", text: "Connected, but calendar event access was not granted. You can grant it any time — nothing was changed." },
+  account_mismatch: { tone: "warn", text: "That Google account is different from the one already connected. Disconnect first to switch accounts." },
   denied: { tone: "warn", text: "Connection cancelled — no access was granted." },
-  error: { tone: "warn", text: "Something went wrong connecting. Nothing was saved — please try again." },
+  error: { tone: "warn", text: "Something went wrong. Nothing was saved — please try again." },
   insufficient_scope: { tone: "warn", text: "The required calendar permission wasn't granted. Please reconnect and allow calendar access." },
   reconnect_required: { tone: "warn", text: "Google didn't return a usable token. Please reconnect." },
 };
 
-export function GoogleCalendarCard({ connection, isOwner }: Props) {
+const READINESS_LABEL: Record<ConnectionReadiness, string> = {
+  disconnected: "Not connected",
+  error: "Connection error",
+  reconnect_required: "Reconnect required",
+  connected_phase_a: "Connected (not the studio write calendar)",
+  scope_upgrade_required: "Event access not granted",
+  outbound_scope_ready: "Ready for future event sync",
+};
+
+export function GoogleCalendarCard({ connection, readiness, isOwner }: Props) {
   const params = useSearchParams();
   const gcal = params.get("gcal");
   const banner = gcal ? STATUS_MESSAGES[gcal] : null;
@@ -43,12 +61,14 @@ export function GoogleCalendarCard({ connection, isOwner }: Props) {
 
   const status = connection?.connectionStatus ?? "disconnected";
   const isConnected = status === "connected";
-  const needsReconnect = status === "reconnect_required" || status === "revoked" || status === "error";
+  const needsReconnect = readiness === "reconnect_required" || status === "error";
+  const needsEventScope = readiness === "scope_upgrade_required";
+  const outboundReady = readiness === "outbound_scope_ready";
 
-  function connect() {
+  function go(action: () => Promise<{ ok: true; url: string } | { ok: false; error: string }>) {
     setError(null);
     startTransition(async () => {
-      const r = await startGoogleCalendarConnectAction();
+      const r = await action();
       if (!r.ok) {
         setError(r.error);
         return;
@@ -56,6 +76,8 @@ export function GoogleCalendarCard({ connection, isOwner }: Props) {
       window.location.href = r.url;
     });
   }
+  const connect = () => go(startGoogleCalendarConnectAction);
+  const grantEventAccess = () => go(startGoogleCalendarEventScopeUpgradeAction);
 
   function disconnect() {
     setError(null);
@@ -138,13 +160,39 @@ export function GoogleCalendarCard({ connection, isOwner }: Props) {
         <div className="flex flex-col gap-2 text-sm">
           <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/50">
             <p className="font-medium text-neutral-900 dark:text-neutral-100">
-              Connected — event synchronization has not been enabled.
+              Google Calendar is connected. Event synchronization is still disabled.
             </p>
             <p className="mt-0.5 text-neutral-600 dark:text-neutral-400">
-              Hone is not yet reading or writing calendar events. Nothing changes on your
+              Hone is not reading or writing calendar events. Nothing changes on your
               Google Calendar or in Hone booking until sync is turned on for your studio.
             </p>
           </div>
+
+          {/* Event-scope upgrade CTA — shown when this connection is the studio's
+              designated write target but is missing the calendar.events grant. */}
+          {needsEventScope && (
+            <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-800 dark:bg-amber-950/30">
+              <p className="text-sm text-amber-900 dark:text-amber-200">
+                Additional Google Calendar permission is required before Hone can create or
+                update events. This grants only calendar event access; it does not turn on
+                synchronization.
+              </p>
+              <button
+                type="button"
+                onClick={grantEventAccess}
+                disabled={pending}
+                className="w-fit rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              >
+                {pending ? "Redirecting…" : "Grant calendar event access"}
+              </button>
+            </div>
+          )}
+          {outboundReady && (
+            <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+              Connected and ready for future event sync. Synchronization is still disabled.
+            </p>
+          )}
+
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-neutral-700 dark:text-neutral-300">
             <dt className="text-neutral-500">Google account</dt>
             <dd>{connection?.googleAccountEmail ?? "—"}</dd>
@@ -152,8 +200,12 @@ export function GoogleCalendarCard({ connection, isOwner }: Props) {
             <dd className="tabular-nums">{connection?.writeCalendarId ?? "—"}</dd>
             <dt className="text-neutral-500">Studio calendar owner</dt>
             <dd>{connection?.isStudioCalendarOwner ? "Yes (this calendar)" : "No"}</dd>
+            <dt className="text-neutral-500">Event-scope readiness</dt>
+            <dd>{READINESS_LABEL[readiness]}</dd>
             <dt className="text-neutral-500">Access granted</dt>
             <dd className="break-words text-xs">{(connection?.grantedScopes ?? []).join(", ") || "—"}</dd>
+            <dt className="text-neutral-500">Last authorization error</dt>
+            <dd>{connection?.lastErrorCode ?? "—"}</dd>
             <dt className="text-neutral-500">Last authorized</dt>
             <dd>
               {connection?.lastSuccessfulAuthAt
@@ -250,13 +302,15 @@ export function GoogleCalendarCard({ connection, isOwner }: Props) {
         <div className="flex flex-col gap-2">
           {needsReconnect && connection?.googleAccountEmail && (
             <p className="text-sm text-amber-800 dark:text-amber-300">
-              Reconnect needed for {connection.googleAccountEmail}.
+              {status === "revoked"
+                ? `Google access was revoked for ${connection.googleAccountEmail}. Reconnect to restore it.`
+                : `Reconnect needed for ${connection.googleAccountEmail}.`}
             </p>
           )}
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Hone will ask Google only for your account identity and the list of your
-            calendars (to pick one). No event read or write access is requested yet, and
-            no events are synced.
+            calendars (to pick one). No event read or write access is requested when you
+            first connect, and no events are synced.
           </p>
           <button
             type="button"

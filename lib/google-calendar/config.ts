@@ -27,6 +27,9 @@ export const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/aut
 export const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 export const GOOGLE_REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 export const GOOGLE_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo";
+// Fallback-only (B2.2): used to read the granted scopes when the token response
+// omits the `scope` field. NOT a standard round-trip.
+export const GOOGLE_TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo";
 export const GOOGLE_CALENDAR_LIST_ENDPOINT =
   "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 
@@ -55,8 +58,17 @@ export const PHASE_B_ADDITIONAL_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
 ] as const;
 
-// The scopes actually requested in this phase.
+// The scopes actually requested for the INITIAL Phase-A connect.
 export const REQUESTED_SCOPES = PHASE_A_SCOPES;
+
+// Phase B2.2 event-scope upgrade: the SINGLE additional scope Hone needs to
+// write its own calendar events. calendar.events is the minimum — NOT broad
+// full-`calendar`, NOT calendar.readonly, NOT contacts/Gmail/Drive/profile.
+// Requested via incremental authorization (include_granted_scopes=true) so the
+// Phase-A grant is preserved. No event sync happens until a later phase.
+export const EVENT_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// The calendar-list discovery scope (Phase A) the connection must retain.
+export const CALENDAR_DISCOVERY_SCOPE = PHASE_A_SCOPES[2];
 
 // Fixed, server-built redirect URI. NEVER derived from a request header (host-
 // header injection guard). Must be registered EXACTLY in the Google Cloud

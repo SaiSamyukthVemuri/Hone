@@ -240,16 +240,16 @@ describe("callback route — validation order + safety (source)", () => {
 });
 
 describe("GoogleCalendarCard — dormant messaging + iCal distinction (source)", () => {
-  it("states event sync is not enabled while dormant", () => {
-    expect(CARD).toMatch(/event synchronization has not been enabled/i);
+  it("states event sync is still disabled while dormant (B2.2 wording)", () => {
+    expect(CARD).toMatch(/Event synchronization is still disabled/i);
   });
 
   it("distinguishes itself from the one-way read-only iCal feed", () => {
     expect(CARD).toMatch(/one-way subscription that never imports events/i);
   });
 
-  it("only requests identity + calendar list, no event access (onboarding copy)", () => {
-    expect(CARD).toMatch(/No event read or write access is requested yet/i);
+  it("only requests identity + calendar list on first connect (onboarding copy)", () => {
+    expect(CARD).toMatch(/No event read or write access is requested when you/i);
   });
 });
 

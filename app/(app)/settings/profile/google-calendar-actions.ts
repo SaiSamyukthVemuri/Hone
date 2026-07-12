@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
+  EVENT_WRITE_SCOPE,
   OAUTH_NONCE_COOKIE,
   OAUTH_STATE_TTL_SECONDS,
   getGoogleOAuthClient,
@@ -97,6 +98,65 @@ export async function startGoogleCalendarConnectAction(): Promise<StartResult> {
 
   // httpOnly nonce cookie for the double-submit callback binding. SameSite=Lax
   // (NOT Strict) so it is sent on Google's top-level cross-site redirect back.
+  const jar = await cookies();
+  jar.set({
+    name: OAUTH_NONCE_COOKIE,
+    value: state.nonce,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: OAUTH_STATE_TTL_SECONDS,
+  });
+
+  return { ok: true, url };
+}
+
+// Phase B2.2 — start the incremental-authorization EVENT-SCOPE UPGRADE. Requests
+// ONLY calendar.events (include_granted_scopes=true preserves the Phase-A grant),
+// access_type=offline, prompt=consent (unconditionally — see buildAuthorizationUrl).
+// This doubles as the reconnect flow (Testing-mode tokens expire in 7 days). It
+// enqueues nothing and syncs nothing; it only requests the write permission a
+// FUTURE phase will use.
+export async function startGoogleCalendarEventScopeUpgradeAction(): Promise<StartResult> {
+  const ctx = await requireConnectionContext();
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+  const { practitioner, studio } = ctx;
+
+  // Hard guard: the outbound sync flag must remain OFF. Requesting the write
+  // scope must never be entangled with enabling synchronization.
+  if (studio.google_calendar_outbound_sync_enabled === true) {
+    return { ok: false, error: "Outbound sync is enabled; the scope upgrade is managed separately." };
+  }
+  if (!isGoogleTokenCryptoConfigured() || !getGoogleOAuthClient()) {
+    return { ok: false, error: "Google Calendar sync is not configured yet. Contact support." };
+  }
+
+  // There must be an existing connection to upgrade.
+  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  if (!existing || existing.connectionStatus === "disconnected") {
+    return { ok: false, error: "Connect your Google account first." };
+  }
+
+  const state = await createOAuthState({
+    studioId: studio.id,
+    practitionerId: practitioner.id,
+    userId: practitioner.user_id ?? "",
+    redirectPath: "/settings/profile",
+  });
+  if (!state.ok) {
+    return { ok: false, error: "Could not start the permission upgrade. Please try again." };
+  }
+
+  const url = buildAuthorizationUrl({
+    state: state.state,
+    codeChallenge: state.codeChallenge,
+    loginHint: existing.googleAccountEmail ?? undefined,
+    forceConsent: true, // prompt=consent unconditionally (reliable refresh-token re-issue + doubles as reconnect)
+    scopes: [EVENT_WRITE_SCOPE], // only the missing scope; include_granted_scopes preserves Phase A
+  });
+  if (!url) return { ok: false, error: "Google Calendar sync is not configured yet." };
+
   const jar = await cookies();
   jar.set({
     name: OAUTH_NONCE_COOKIE,

@@ -5,6 +5,7 @@ import {
   GOOGLE_CALENDAR_LIST_ENDPOINT,
   GOOGLE_REVOKE_ENDPOINT,
   GOOGLE_TOKEN_ENDPOINT,
+  GOOGLE_TOKENINFO_ENDPOINT,
   GOOGLE_USERINFO_ENDPOINT,
   REQUESTED_SCOPES,
   getGoogleOAuthClient,
@@ -46,6 +47,10 @@ export function buildAuthorizationUrl(opts: {
   codeChallenge: string;
   loginHint?: string;
   forceConsent: boolean;
+  // The scopes to request. Defaults to the Phase-A connect set. The B2.2 event-
+  // scope upgrade passes ONLY [calendar.events]; include_granted_scopes=true
+  // preserves the already-granted Phase-A scopes (incremental authorization).
+  scopes?: readonly string[];
 }): string | null {
   const client = getGoogleOAuthClient();
   if (!client) return null;
@@ -53,7 +58,7 @@ export function buildAuthorizationUrl(opts: {
     client_id: client.clientId,
     redirect_uri: getOAuthRedirectUri(),
     response_type: "code",
-    scope: REQUESTED_SCOPES.join(" "),
+    scope: (opts.scopes ?? REQUESTED_SCOPES).join(" "),
     access_type: "offline",
     include_granted_scopes: "true",
     code_challenge: opts.codeChallenge,
@@ -168,6 +173,28 @@ export async function refreshAccessToken(refreshToken: string): Promise<RefreshR
     };
   } catch {
     return { ok: false, reason: "refresh_network_error", invalidGrant: false };
+  }
+}
+
+// --- Granted-scope fallback (B2.2) ---
+// The token-response `scope` field is the PRIMARY, authoritative source of what a
+// grant contains (parsed by the caller). This tokeninfo call is a FALLBACK used
+// only when that field is missing/empty, so the callback can still verify the
+// event scope was granted. Never a standard round-trip; never logs the token.
+export type TokenInfoResult =
+  | { ok: true; scopes: string[] }
+  | { ok: false; reason: string };
+
+export async function fetchTokenInfoScopes(accessToken: string): Promise<TokenInfoResult> {
+  try {
+    const res = await fetch(
+      `${GOOGLE_TOKENINFO_ENDPOINT}?access_token=${encodeURIComponent(accessToken)}`,
+    );
+    if (!res.ok) return { ok: false, reason: `tokeninfo_http_${res.status}` };
+    const body = (await res.json()) as { scope?: string };
+    return { ok: true, scopes: (body.scope ?? "").split(" ").filter(Boolean) };
+  } catch {
+    return { ok: false, reason: "tokeninfo_network_error" };
   }
 }
 
