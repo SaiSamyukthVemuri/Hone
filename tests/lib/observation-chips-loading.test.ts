@@ -5,6 +5,7 @@ import {
   hydrateLegacyChips,
   toggleChip,
   isChipSelected,
+  chipsEqual,
   OBSERVATION_CHIPS,
 } from "@/lib/observation-chips";
 
@@ -77,5 +78,55 @@ describe("resolveDisplayChips — LEGACY rows (chips stored in comments)", () =>
     const d = resolveDisplayChips([], legacy);
     expect(d.chips).toEqual(h.chips);
     expect(d.note).toBe(h.freeText);
+  });
+});
+
+// Gate 5 — mixed legacy + structured data behaviour (the six required row shapes).
+describe("mixed legacy/structured rows", () => {
+  it("(1) legacy chip tokens ONLY → chips render, empty note", () => {
+    expect(resolveDisplayChips([], `${A}, ${B}`)).toEqual({ chips: [A, B], note: "" });
+  });
+  it("(2) free text ONLY → no chips, note verbatim", () => {
+    expect(resolveDisplayChips([], "client anxious about pain")).toEqual({ chips: [], note: "client anxious about pain" });
+  });
+  it("(3) legacy chip tokens PLUS free text → chips + chip-stripped note", () => {
+    expect(resolveDisplayChips([], `${A}, sensitive around lip, ${B}`)).toEqual({
+      chips: [A, B],
+      note: "sensitive around lip",
+    });
+  });
+  it("(4) structured chips PLUS historical comments → structured takes precedence; comment stays the note; NO double-display", () => {
+    // The comment even mentions a chip word; it is NOT re-extracted (structured wins).
+    const r = resolveDisplayChips([A], `${B} noted earlier, follow up`);
+    expect(r.chips).toEqual([A]); // only the structured chip — B is not double-added
+    expect(r.note).toBe(`${B} noted earlier, follow up`); // comment shown as-is
+  });
+  it("(5) RENAMED/variant legacy value uses an explicit alias (not dropped)", () => {
+    // 'hyper-pigmentation' / 'hyper pigmentation' alias -> 'Hyperpigmentation'.
+    expect(resolveDisplayChips([], "hyper-pigmentation, mild").chips).toEqual(["Hyperpigmentation"]);
+    expect(resolveDisplayChips([], "hyper pigmentation").chips).toEqual(["Hyperpigmentation"]);
+    expect(normalizeChips(["hyper-pigmentation"])).toEqual(["Hyperpigmentation"]);
+  });
+  it("(6) UNKNOWN historical value is never discarded — it stays visible as a note", () => {
+    const r = resolveDisplayChips([], `${A}, some bespoke observation the studio typed`);
+    expect(r.chips).toEqual([A]);
+    expect(r.note).toBe("some bespoke observation the studio typed"); // preserved, not dropped
+  });
+  it("precedence: any structured value suppresses legacy hydration entirely", () => {
+    // Even a comment that is ALL chip tokens is not re-hydrated when structured exists.
+    const r = resolveDisplayChips([A], `${B}, ${C}`);
+    expect(r.chips).toEqual([A]);
+    expect(r.note).toBe(`${B}, ${C}`);
+  });
+});
+
+describe("chipsEqual (read-back comparison contract)", () => {
+  it("detects missing / additional / duplicate / order-insensitive equality", () => {
+    expect(chipsEqual([A, B], [B, A])).toBe(true); // order-insensitive
+    expect(chipsEqual([A], [A, B])).toBe(false); // missing
+    expect(chipsEqual([A, B], [A])).toBe(false); // additional
+    expect(chipsEqual([A, "coarse hair"], [A])).toBe(true); // dup normalizes equal
+    expect(chipsEqual([], [])).toBe(true); // empty
+    expect(chipsEqual([A, "junk"], [A])).toBe(true); // unknown ignored by normalize
   });
 });

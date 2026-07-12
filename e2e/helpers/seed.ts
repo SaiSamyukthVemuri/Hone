@@ -386,6 +386,22 @@ export async function seedE2eDraftSessionWithLegacyChipEntry(
   return { clientId, sessionId };
 }
 
+// Read-back the stored observation_chips of a session's electrolysis entry —
+// 'first' (earliest, edited by block-setup-form) or 'last' (newest, created by
+// SimplifiedEntryForm). Ground truth for the chip save-cycle e2e.
+export async function getEntryObservationChips(
+  sessionId: string,
+  which: "first" | "last" = "first",
+): Promise<string[]> {
+  const rows = await sql<{ observation_chips: string[] }>(
+    `select observation_chips from public.electrolysis_entries
+      where session_id = $1 and deleted_at is null
+      order by created_at ${which === "first" ? "asc" : "desc"} limit 1`,
+    [sessionId],
+  );
+  return rows[0]?.observation_chips ?? [];
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(

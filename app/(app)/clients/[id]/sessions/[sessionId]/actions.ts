@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
-import { normalizeChips } from "@/lib/observation-chips";
+import { chipsEqual, normalizeChips } from "@/lib/observation-chips";
 import type { ElectrolysisMode } from "@/lib/types/database";
 import {
   PULSE_COUNT_DEFAULT,
@@ -163,7 +163,9 @@ async function ensureBlockForSession(
   return created.id;
 }
 
-export async function addElectrolysisEntryAction(formData: FormData): Promise<void> {
+export async function addElectrolysisEntryAction(
+  formData: FormData,
+): Promise<{ observationChips: string[] }> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
   const areas = parseAreasJson(formData.get("areas"));
@@ -282,37 +284,61 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     nullableString(formData.get("probe_lot_id")),
   );
   if (!lotCheck.ok) throw new Error(lotCheck.error);
-  const { error } = await supabase.from("electrolysis_entries").insert({
-    session_id: sessionId,
-    block_id: blockId,
-    area,
-    areas,
-    probe_size: probeSize,
-    probe_lot_id: lotCheck.value,
-    mode,
-    intensity: nullableNumber(formData.get("intensity")),
-    duration_seconds: nullableNumber(formData.get("duration_seconds")),
-    pulse_count: pulseCount,
-    pulse_delay_seconds: pulseDelaySeconds,
-    comments: nullableString(formData.get("comments")),
-    observation_chips: observationChips,
-    apilus_modality: apilusModality,
-    energy_level: energyLevel,
-    minutes_performed: minutesPerformed,
-    probe_type: probeType,
-    machine_frequency: machineFrequency,
-    hairs_treated: hairsTreated,
-    galvanic_ma: galvanicMa,
-    galvanic_duration_seconds: galvanicDurationSeconds,
-    galvanic_intensity_percent: galvanicIntensityPercent,
-    thermolysis_intensity_percent: thermolysisIntensityPercent,
-    thermolysis_duration_seconds: thermolysisDurationSeconds,
-    units_of_lye: unitsOfLye,
-  });
+  const { data: inserted, error } = await supabase
+    .from("electrolysis_entries")
+    .insert({
+      session_id: sessionId,
+      block_id: blockId,
+      area,
+      areas,
+      probe_size: probeSize,
+      probe_lot_id: lotCheck.value,
+      mode,
+      intensity: nullableNumber(formData.get("intensity")),
+      duration_seconds: nullableNumber(formData.get("duration_seconds")),
+      pulse_count: pulseCount,
+      pulse_delay_seconds: pulseDelaySeconds,
+      comments: nullableString(formData.get("comments")),
+      observation_chips: observationChips,
+      apilus_modality: apilusModality,
+      energy_level: energyLevel,
+      minutes_performed: minutesPerformed,
+      probe_type: probeType,
+      machine_frequency: machineFrequency,
+      hairs_treated: hairsTreated,
+      galvanic_ma: galvanicMa,
+      galvanic_duration_seconds: galvanicDurationSeconds,
+      galvanic_intensity_percent: galvanicIntensityPercent,
+      thermolysis_intensity_percent: thermolysisIntensityPercent,
+      thermolysis_duration_seconds: thermolysisDurationSeconds,
+      units_of_lye: unitsOfLye,
+    })
+    // Read-back verification (below): select the persisted row.
+    .select("observation_chips")
+    .single();
 
-  if (error) throw new Error(`Failed to add entry: ${error.message}`);
+  if (error || !inserted) {
+    throw new Error(`Failed to add entry: ${error?.message ?? "the entry did not persist"}`);
+  }
+
+  // PERSISTED-ROW VERIFICATION (structural guard against the silent partial-write
+  // defect class that caused this incident: an insert can "succeed" yet the
+  // clinical field never land). Re-read the stored observation_chips and compare
+  // it, under canonical normalization, to what was submitted. Any missing /
+  // additional / duplicated / dropped chip FAILS VISIBLY — the caller keeps the
+  // form open and shows the error, so a save can never LOOK successful while the
+  // observations were lost.
+  const storedChips = normalizeChips((inserted as { observation_chips: unknown }).observation_chips);
+  if (!chipsEqual(storedChips, observationChips)) {
+    throw new Error(
+      "Your observations may not have saved correctly. The saved record did not match what you selected — nothing was cleared; please try again.",
+    );
+  }
+
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+  // Return the VERIFIED stored value so the caller acts only on confirmed state.
+  return { observationChips: storedChips };
 }
 
 export async function addLaserEntryAction(formData: FormData): Promise<void> {

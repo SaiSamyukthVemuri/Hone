@@ -19,6 +19,29 @@ const CANONICAL = new Map<string, string>(
   OBSERVATION_CHIPS.map((c) => [c.trim().toLowerCase(), c]),
 );
 
+// Explicit BACKWARD-COMPATIBLE aliases: a legacy stored token (lowercased) → the
+// current canonical chip label. No chip label has ever been renamed (verified
+// against git history), so these cover only unambiguous spelling/spacing variants
+// of the SAME observation. This is the ONE place to add a mapping if a chip is
+// ever renamed, so legacy stored values keep resolving to the current chip
+// instead of being dropped. It NEVER maps a clinically-distinct term. Anything
+// not resolved here stays visible as free-text (never silently discarded).
+export const OBSERVATION_CHIP_ALIASES: Readonly<Record<string, string>> = {
+  "hyper-pigmentation": "Hyperpigmentation",
+  "hyper pigmentation": "Hyperpigmentation",
+};
+
+// Resolve a raw token to its canonical chip label (direct match first, then an
+// explicit alias). Casing/whitespace-insensitive. Returns undefined for anything
+// that is not a known chip or alias.
+function canonicalFor(token: string): string | undefined {
+  const key = token.trim().toLowerCase();
+  const direct = CANONICAL.get(key);
+  if (direct) return direct;
+  const aliased = OBSERVATION_CHIP_ALIASES[key];
+  return aliased ? CANONICAL.get(aliased.trim().toLowerCase()) : undefined;
+}
+
 // Coerce an unknown stored value (jsonb) into a clean canonical chip array:
 // keep only known chips (normalized to canonical casing), dedup, drop anything
 // unrecognized. Never throws — a null/garbage/legacy value yields [] rather than
@@ -29,7 +52,7 @@ export function normalizeChips(value: unknown): string[] {
   const seen = new Set<string>();
   for (const v of value) {
     if (typeof v !== "string") continue;
-    const canon = CANONICAL.get(v.trim().toLowerCase());
+    const canon = canonicalFor(v);
     if (canon && !seen.has(canon)) {
       seen.add(canon);
       out.push(canon);
@@ -57,6 +80,19 @@ export function resolveDisplayChips(
   return { chips, note: freeText };
 }
 
+// Canonical-set equality of two chip collections. Both sides are normalized
+// (known chips only, canonical casing, deduped) and compared order-insensitively,
+// so this detects a MISSING, ADDITIONAL, DUPLICATED, or silently DROPPED chip.
+// Used by the write action's persisted-row read-back verification.
+export function chipsEqual(a: unknown, b: unknown): boolean {
+  const na = normalizeChips(a);
+  const nb = normalizeChips(b);
+  if (na.length !== nb.length) return false;
+  const sa = [...na].sort();
+  const sb = [...nb].sort();
+  return sa.every((v, i) => v === sb[i]);
+}
+
 export function isChipSelected(
   chips: readonly string[],
   chip: string,
@@ -69,7 +105,7 @@ export function isChipSelected(
 // never write a non-canonical value into structured state). Selecting is
 // idempotent (no duplicates); deselecting removes every casing match.
 export function toggleChip(chips: readonly string[], chip: string): string[] {
-  const canon = CANONICAL.get(chip.trim().toLowerCase());
+  const canon = canonicalFor(chip);
   if (!canon) return [...chips];
   return isChipSelected(chips, canon)
     ? chips.filter((c) => c.toLowerCase() !== canon.toLowerCase())
@@ -94,7 +130,7 @@ export function hydrateLegacyChips(comments: string | null | undefined): {
   const seen = new Set<string>();
   for (const tok of tokens) {
     if (tok.length === 0) continue;
-    const canon = CANONICAL.get(tok.toLowerCase());
+    const canon = canonicalFor(tok);
     if (canon) {
       if (!seen.has(canon)) {
         seen.add(canon);
