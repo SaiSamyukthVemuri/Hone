@@ -1389,3 +1389,69 @@ export type ImportedTreatmentMemoryAuditEvent = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+// Google Calendar — Phase B, PR B1 (migration 0124). SCHEMA-ONLY types; NO
+// runtime code reads or writes these tables in B1 (they document the dormant
+// outbound-sync foundation for B2/B3).
+export type CalendarEventLinkSyncStatus =
+  | "pending"
+  | "synced"
+  | "conflict"
+  | "error"
+  | "deleted";
+
+export type CalendarEventLink = {
+  id: string;
+  studio_id: string;
+  connection_id: string;
+  hone_entity_type: "appointment" | "timed_block";
+  hone_entity_id: string;
+  google_calendar_id: string;
+  google_event_id: string | null;
+  google_ical_uid: string | null;
+  source_system: "hone" | "google";
+  last_hone_version: number; // metadata only in B1
+  google_etag: string | null;
+  sync_status: CalendarEventLinkSyncStatus;
+  last_sync_direction: "hone_to_google" | "google_to_hone" | null;
+  last_synced_at: string | null;
+  last_error_code: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CalendarSyncOutboxOpType =
+  | "event.create"
+  | "event.update"
+  | "event.delete"
+  | "full.resync";
+
+// Four-state model ONLY (no 'failed'). pending/processing/done/dead.
+export type CalendarSyncOutboxStatus = "pending" | "processing" | "done" | "dead";
+
+export type CalendarSyncOutbox = {
+  id: string;
+  studio_id: string;
+  connection_id: string;
+  op_type: CalendarSyncOutboxOpType;
+  hone_entity_type: "appointment" | "timed_block" | null;
+  hone_entity_id: string | null;
+  // Operational metadata ONLY — never PHI/tokens/raw Google content. B2 builds
+  // this server-side via a fixed allow-listed serializer from typed params.
+  payload: Record<string, unknown>;
+  idempotency_key: string; // deterministic; {type}:{id}:{op}:{source_version}
+  status: CalendarSyncOutboxStatus;
+  priority: number; // 0..1000; LOWER = higher priority; default 100
+  attempts: number;
+  max_attempts: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
+  claim_token: string | null;
+  lease_expires_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  processed_at: string | null; // set ONLY on 'done'
+  created_at: string;
+  updated_at: string;
+};

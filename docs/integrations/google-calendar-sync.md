@@ -98,6 +98,108 @@ Deliberately NOT created in Phase A: `calendar_event_links`,
 
 ---
 
+## 3b. Data model & queue foundation (Phase B — PR B1, migration 0124)
+
+Migration **0124** adds the **dormant** outbound-sync schema and durable queue.
+It is additive and default-deny where sensitive; it introduces **no runtime
+behavior** — no enqueue is wired, no drain worker exists, no Google event API is
+called, no studio flag turns anything on. It is the schema/queue substrate that
+Phase B2 (the enqueue + drain worker) will build on. Behavioral proof:
+`tests/db/google-calendar-outbound-sync.db.test.ts`; static/shape proof:
+`tests/migrations/0124-…test.ts`; positive-dormancy proof (no runtime module
+references the new surface): `tests/app/google-calendar/outbound-sync-dormant.test.ts`.
+
+- **`calendar_event_links`** — maps a Hone entity to its Google event.
+  Polymorphic by design: `hone_entity_type ∈ {appointment, timed_block}` +
+  `hone_entity_id`, with **no** direct FK to `appointments`/`studio_timed_blocks`
+  (a linked entity can be hard-deleted; the link is soft-deleted/reconciled, not
+  cascaded away). Holds `google_calendar_id`, `google_event_id` (null until the
+  create round-trips), `google_ical_uid`, `google_etag`, `sync_status ∈
+  {pending,synced,conflict,error,deleted}`, `last_sync_direction`,
+  `last_hone_version` (**metadata only** — a monotonic marker for a future
+  compare-before-write; nothing reads it in B1), `source_system ∈ {hone,google}`,
+  and `deleted_at` for soft delete. Same-studio composite FK to
+  `calendar_connections(id, studio_id)` **ON DELETE RESTRICT**. Two partial
+  uniques: one **active** link per Hone entity (`WHERE deleted_at is null`) and
+  one **active** mapping per `(connection, google_calendar_id, google_event_id)`
+  (`WHERE google_event_id is not null and deleted_at is null`) — soft-deleting a
+  link frees both slots for a clean replacement. **Member-readable**
+  (`is_studio_member` SELECT) so a settings/health view can show link state; all
+  writes are service-role only (the member SELECT policy is added now to avoid a
+  later policy-only migration).
+- **`calendar_sync_outbox`** — the durable transactional outbox (one row per
+  pending Google operation). `op_type ∈ {event.create, event.update,
+  event.delete, full.resync}`; entity ops carry `hone_entity_type` +
+  `hone_entity_id`, `full.resync` carries neither (a CHECK enforces this).
+  `payload jsonb` is **operational metadata only** (see §6). **Four-state model:
+  `status ∈ {pending, processing, done, dead}`** — there is no separate `failed`
+  state; a retryable failure returns to `pending`, exhaustion is `dead`.
+  `priority integer` (**0..1000, lower = higher priority, default 100**),
+  `attempts`/`max_attempts` (`attempts ≤ max_attempts`, `max_attempts > 0`),
+  `next_attempt_at`, lease fields (`claimed_at`, `claim_token`,
+  `lease_expires_at`), diagnostics (`last_error_code`, `last_error_message`),
+  and `processed_at` (set **only** on a terminal `done`). A bidirectional CHECK
+  ties the claim metadata to the `processing` state (all three set iff
+  processing; all null otherwise). Same-studio composite FK **ON DELETE
+  RESTRICT**. **Default-deny** (RLS on + REVOKE ALL from browser roles + no
+  policy; service-role only) — the queue is invisible to the browser.
+- **Idempotency key** — `calendar_sync_outbox.idempotency_key` carries a
+  deterministic key `{hone_entity_type}:{hone_entity_id}:{op_type}:{source_version}`
+  under a **FULL** unique index (across *all* statuses, no `WHERE`), so an enqueue
+  is exactly-once even against an already-`done` or `dead` row. Recovery from a
+  `dead` key is an explicit `source_version` bump or a `full.resync`, never a
+  silent re-enqueue. **`sync_generation` is deferred to B2** — the epoch/fence for
+  a disconnect→reconnect that must invalidate in-flight ops is documented in the
+  migration and here, but intentionally not added in B1 (adding it now would be a
+  dormant column with no writer).
+
+### Claim / result RPCs (trusted, service-role only)
+
+Two `SECURITY DEFINER` RPCs (pinned `search_path`, `EXECUTE` granted to
+`service_role` only — `authenticated`/`anon` cannot call them) form the queue
+contract the future drain worker will use. They exist but are **called by
+nothing** in B1.
+
+- **`claim_calendar_sync_op(p_batch_size)`** — bounded batch (clamped to **1..25**),
+  `FOR UPDATE SKIP LOCKED`, claims due work `ORDER BY priority ASC, next_attempt_at
+  ASC, created_at ASC`, stamps a fresh `claim_token` + a **fixed 5-minute lease**,
+  increments `attempts`, and returns **safe operational fields only** (never
+  credential material). It is claimable when `pending` and due, or when
+  `processing` with an **expired lease** (crash recovery) and under the attempt
+  cap. **Orphan reaper:** a `processing` row whose lease has expired **and** is
+  already at `max_attempts` is transitioned to **`dead`** (claim metadata cleared,
+  `processed_at` left null) *inside* the claim call rather than being handed out
+  again — so a worker that dies at the attempt ceiling cannot strand a row in
+  `processing` forever.
+- **`record_calendar_sync_result(id, claim_token, ok, error_code, error_message,
+  retry_after_seconds)`** — validates the `claim_token` (mismatch/stale →
+  `stale_token`, no-op) and the terminal state (`done`/`dead` → `already_*`,
+  no-op). On success → `done`, sets `processed_at`, clears the lease, **retains**
+  prior diagnostics. On a retryable failure → back to `pending` at
+  `now() + retry_after_seconds` (**bounded 5s..21600s**; out-of-range raises), lease
+  cleared, diagnostics set. On exhaustion (`attempts ≥ max_attempts`) → `dead`,
+  `processed_at` stays null, `last_error_message` capped to 500 chars. Backoff is
+  **caller-supplied and bounded** in B1 (the worker owns the curve); the RPC only
+  enforces the envelope.
+
+### Connection teardown & the RESTRICT decision
+
+Both new tables use `ON DELETE RESTRICT` to `calendar_connections`. The deployed
+disconnect path (`lib/google-calendar/connection.ts::disconnectConnection`)
+**does not delete** the connection row — it deletes the secrets row and *updates*
+the connection to `status='disconnected'`, `disconnected_at`,
+`is_studio_calendar_owner=false`. So RESTRICT never blocks a normal disconnect;
+it only guards a *hard delete* of the connection while links/queue rows still
+reference it. The one path that *would* hard-delete a connection is a
+**practitioner or studio removal** (0121's connection→practitioner/studio FK is
+`ON DELETE CASCADE`); with RESTRICT children present, that delete now blocks.
+**Reconciliation is a B2/B3 responsibility, not B1:** before a practitioner/studio
+is removed, B2+ must soft-delete the entity links and drain/settle the outbox
+(or explicitly tombstone them), then remove the connection. B1 **does not change
+the disconnect path** — it was inspected and left intact.
+
+---
+
 ## 4. Token encryption & key rotation
 
 Reuses the AES-256-GCM primitive of `lib/conversion/token-crypto.ts` but with a
@@ -198,16 +300,33 @@ reason, any clinical/session/chart/snapshot data, payment/price/buffer, intake/
 consent, internal ids/tokens. No PHI in any log or ops alert. This preserves the
 PHI-free posture of the existing iCal feed.
 
+**B1 stance:** `calendar_sync_outbox.payload` exists (jsonb, default `'{}'`) but is
+written by nothing in B1. The migration documents that the payload is operational
+metadata only, produced by a **fixed, allow-listed serializer over typed params**
+— never a free-form spread of an entity row. That serializer, and the enforcement
+that the queue never carries the "never sent" fields above, is **B2's
+responsibility**; B1 only reserves the column and records the contract.
+
 ---
 
 ## 7. Later phases (design intent, NOT implemented)
 
-- **Phase B — Hone → Google:** durable `calendar_sync_outbox` enqueued at the DB
-  commit point (inside the cancel/complete/no_show/reschedule RPCs + the 0030
-  mirror trigger for creates/blocks); a drain worker (`/api/cron/calendar-sync`,
-  riding the external 15-min scheduler) with exponential backoff + dead-letter;
-  `calendar_event_links` mapping; reschedule handled as a linked delete(old) +
-  create(new). Booking never blocks on a Google call.
+- **Phase B — Hone → Google (outbound).** Split into schema-first + behavior:
+  - **B1 (DONE — migration 0124, dormant): built.** The `calendar_event_links`
+    mapping + durable `calendar_sync_outbox` + the claim/result queue RPCs, with
+    no runtime wiring. See §3b for the full data model, four-state queue,
+    idempotency contract, lease/backoff constants, and the orphan reaper. **No
+    behavior ships in B1.**
+  - **B2 (design intent, NOT built): behavior.** Enqueue at the DB commit point
+    (inside the cancel/complete/no_show/reschedule RPCs + the 0030 mirror trigger
+    for creates/blocks) via a fixed allow-listed serializer (§6); a drain worker
+    (`/api/cron/calendar-sync`, riding the external 15-min scheduler) that claims
+    via `claim_calendar_sync_op`, calls Google, and reports via
+    `record_calendar_sync_result` with an exponential-backoff curve; reschedule
+    handled as a linked delete(old) + create(new). Adds the `sync_generation`
+    epoch (deferred from B1) so a disconnect→reconnect invalidates in-flight ops.
+    Booking never blocks on a Google call. Requires ONE reconnect for Sam via
+    incremental auth to add `calendar.events` (Phase A withheld the event scope).
 - **Phase C — Google → Hone busy:** `external_calendar_busy_events` (per-
   practitioner, separate from the GiST-excluded shadow), merged into
   `getAvailableSlots`; initial + incremental sync with `singleEvents=true` to
