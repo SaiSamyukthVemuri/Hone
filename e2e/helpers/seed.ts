@@ -318,6 +318,35 @@ export async function setStudioGoogleCalendarConnectionEnabled(
   );
 }
 
+// Google Calendar — Phase B2.2. Seed a CONNECTED owner connection (+ a dummy
+// encrypted secret so readiness sees a usable token) so the e2e can exercise the
+// derived readiness rendering (Grant-event-access CTA vs ready) WITHOUT a live
+// Google round-trip. The ciphertext is never decrypted for readiness (existence
+// only), so a placeholder is fine.
+export async function seedE2eGoogleConnection(
+  studioId: string,
+  grantedScopes: string[],
+): Promise<void> {
+  const owner = await sql<{ id: string }>(
+    `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+    [studioId],
+  );
+  const practitionerId = owner[0]?.id;
+  const connId = randomUUID();
+  await sql(
+    `insert into public.calendar_connections
+       (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, google_account_id, google_account_email)
+     values ($1,$2,$3,'connected',$4,'primary',true,'e2e-sub','e2e-google@example.com')`,
+    [connId, studioId, practitionerId, grantedScopes],
+  );
+  await sql(
+    `insert into public.calendar_connection_secrets
+       (connection_id, studio_id, encrypted_refresh_token, refresh_token_last4, encryption_key_version)
+     values ($1,$2,'v1:1:iv:tag:ct','1234',1)`,
+    [connId, studioId],
+  );
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(

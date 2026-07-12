@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { deriveConnectionReadiness, type ConnectionReadiness } from "./readiness";
 
 // calendar_connections / calendar_connection_secrets access. All writes are
 // service-role (admin client); the ciphertext table is never read by browser
@@ -75,6 +76,42 @@ export async function getRefreshTokenCiphertext(
     .eq("studio_id", studioId)
     .maybeSingle();
   return (secret?.encrypted_refresh_token as string | null) ?? null;
+}
+
+// The server-verified Google account id (sub) of the existing connection, if
+// any. Used by the B2.2 scope-upgrade callback to REJECT account switching — a
+// returned identity that differs must never overwrite the stored credentials.
+export async function getConnectionAccountId(
+  studioId: string,
+  practitionerId: string,
+): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("calendar_connections")
+    .select("google_account_id")
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .maybeSingle();
+  return (data?.google_account_id as string | null) ?? null;
+}
+
+// Load the connection metadata + the DERIVED readiness in one server call. This
+// is the single readiness source the settings UI consumes (and B2.3 will reuse).
+export async function getOwnConnectionReadiness(
+  studioId: string,
+  practitionerId: string,
+): Promise<{ metadata: ConnectionMetadata | null; readiness: ConnectionReadiness }> {
+  const metadata = await getOwnConnectionMetadata(studioId, practitionerId);
+  if (!metadata) return { metadata: null, readiness: "disconnected" };
+  const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
+  const readiness = deriveConnectionReadiness({
+    connectionStatus: metadata.connectionStatus,
+    grantedScopes: metadata.grantedScopes,
+    hasUsableRefreshToken: !!ciphertext,
+    isStudioCalendarOwner: metadata.isStudioCalendarOwner,
+    writeCalendarId: metadata.writeCalendarId,
+  });
+  return { metadata, readiness };
 }
 
 export type PersistResult =

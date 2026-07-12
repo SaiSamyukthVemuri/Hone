@@ -3,7 +3,7 @@ import { ProfileForm } from "./ProfileForm";
 import { ColorPicker } from "./ColorPicker";
 import { CalendarFeedCard } from "./CalendarFeedCard";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
-import { getOwnConnectionMetadata } from "@/lib/google-calendar/connection";
+import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export default async function ProfileSettingsPage() {
@@ -12,9 +12,9 @@ export default async function ProfileSettingsPage() {
   // Google Calendar — Phase A. The card renders ONLY when the studio flag is on;
   // when it's off the card is hidden and the server actions reject anyway.
   const googleEnabled = studio.google_calendar_connection_enabled === true;
-  const googleConnection = googleEnabled
-    ? await getOwnConnectionMetadata(studio.id, practitioner.id)
-    : null;
+  const google = googleEnabled
+    ? await getOwnConnectionReadiness(studio.id, practitioner.id)
+    : { metadata: null, readiness: "disconnected" as const };
 
   return (
     <section className="flex flex-col gap-8">
@@ -35,7 +35,8 @@ export default async function ProfileSettingsPage() {
       />
       {googleEnabled && (
         <GoogleCalendarCard
-          connection={googleConnection}
+          connection={google.metadata}
+          readiness={google.readiness}
           isOwner={practitioner.role === "owner"}
         />
       )}

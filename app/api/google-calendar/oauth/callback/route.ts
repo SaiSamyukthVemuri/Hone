@@ -4,18 +4,24 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
+  CALENDAR_DISCOVERY_SCOPE,
   DEFAULT_RETURN_PATH,
+  EVENT_WRITE_SCOPE,
   OAUTH_NONCE_COOKIE,
-  PHASE_A_SCOPES,
 } from "@/lib/google-calendar/config";
 import {
   exchangeAuthorizationCode,
   fetchCalendarList,
+  fetchTokenInfoScopes,
   fetchUserInfo,
 } from "@/lib/google-calendar/oauth";
 import { consumeOAuthState } from "@/lib/google-calendar/state";
 import { encryptGoogleSecret } from "@/lib/google-calendar/token-crypto";
-import { persistConnectedFromCallback } from "@/lib/google-calendar/connection";
+import {
+  getConnectionAccountId,
+  getOwnConnectionMetadata,
+  persistConnectedFromCallback,
+} from "@/lib/google-calendar/connection";
 
 // Google OAuth 2.0 authorization-code CALLBACK — Phase A.
 //
@@ -76,25 +82,51 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const token = await exchangeAuthorizationCode({ code, codeVerifier: consumed.codeVerifier });
   if (!token.ok) return redirect(consumed.redirectPath, "error");
 
-  // Least-privilege check: the grant must include calendar-list discovery, or
-  // selection is impossible. (We requested only Phase A scopes.)
-  const hasDiscovery = token.grantedScopes.includes(PHASE_A_SCOPES[2]);
-  if (!hasDiscovery) return redirect(consumed.redirectPath, "insufficient_scope");
+  // Granted-scope verification. PRIMARY: the token-response `scope` field. It is
+  // authoritative for what the grant contains and costs no extra call. FALLBACK
+  // ONLY: tokeninfo, when the response omitted `scope`.
+  let grantedScopes = token.grantedScopes;
+  if (grantedScopes.length === 0) {
+    const ti = await fetchTokenInfoScopes(token.accessToken);
+    if (ti.ok) grantedScopes = ti.scopes;
+  }
+
+  // The connection must retain calendar-list discovery, or selection is
+  // impossible. (An event-scope upgrade preserves it via include_granted_scopes.)
+  if (!grantedScopes.includes(CALENDAR_DISCOVERY_SCOPE)) {
+    return redirect(consumed.redirectPath, "insufficient_scope");
+  }
 
   // Verify the connected Google account identity server-side (never trust the
   // redirect); this is what we store as google_account_id/email.
   const info = await fetchUserInfo(token.accessToken);
   if (!info.ok) return redirect(consumed.redirectPath, "error");
 
-  // Discover calendars and pick a validated default write target (the primary
-  // calendar, which is guaranteed to have come from Google for THIS connection).
-  const list = await fetchCalendarList(token.accessToken);
-  const defaultWriteCalendar = list.ok
-    ? (list.calendars.find((c) => c.primary)?.id ?? list.calendars[0]?.id ?? "primary")
-    : "primary";
+  // ACCOUNT-SWITCH PROTECTION. If a connection already exists, the returned Google
+  // identity MUST match it. On a mismatch we STOP — never overwrite credentials or
+  // granted_scopes; the practitioner must explicitly disconnect first.
+  const existing = await getOwnConnectionMetadata(consumed.studioId, consumed.practitionerId);
+  const existingAccountId = await getConnectionAccountId(consumed.studioId, consumed.practitionerId);
+  const isReauth = existingAccountId !== null;
+  if (existingAccountId !== null && existingAccountId !== info.sub) {
+    return redirect(consumed.redirectPath, "account_mismatch");
+  }
 
-  // Encrypt the refresh token before storage. If Google withheld one (silent
-  // re-grant), persist preserves an existing token or fails reconnect_required.
+  // Preserve the existing write-calendar selection on a re-auth (a scope upgrade
+  // must not reset the practitioner's chosen calendar). Discover a default only
+  // for an initial connect / when none is set.
+  let writeCalendarId = existing?.writeCalendarId ?? null;
+  if (!writeCalendarId) {
+    const list = await fetchCalendarList(token.accessToken);
+    writeCalendarId = list.ok
+      ? (list.calendars.find((c) => c.primary)?.id ?? list.calendars[0]?.id ?? "primary")
+      : "primary";
+  }
+
+  // Encrypt the (possibly rotated) refresh token before storage. If Google
+  // withheld one (silent re-grant), persist PRESERVES the existing encrypted
+  // token; if encryption fails we redirect error and never store plaintext — the
+  // existing token stays intact (the B2.1 fail-closed posture).
   let encryptedRefreshToken: string | null = null;
   let refreshTokenLast4: string | null = null;
   let keyVersion = 0;
@@ -111,9 +143,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     practitionerId: consumed.practitionerId,
     googleAccountId: info.sub,
     googleAccountEmail: info.email,
-    grantedScopes: token.grantedScopes,
+    grantedScopes,
     tokenExpiresAt: new Date(Date.now() + token.expiresInSeconds * 1000).toISOString(),
-    writeCalendarId: defaultWriteCalendar,
+    writeCalendarId,
     encryptedRefreshToken,
     refreshTokenLast4,
     // If no token this run, keyVersion stays 0 but is unused (persist preserves
@@ -124,5 +156,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return redirect(consumed.redirectPath, persisted.reason === "no_refresh_token" ? "reconnect_required" : "error");
   }
 
-  return redirect(consumed.redirectPath, "connected");
+  // Non-destructive outcome banners (readiness itself is derived on the card):
+  //   - event scope granted        -> affirm readiness for future sync
+  //   - re-auth without the scope   -> the upgrade was denied/partial (Phase A intact)
+  //   - initial connect            -> connected
+  const hasEvents = grantedScopes.includes(EVENT_WRITE_SCOPE);
+  const status = hasEvents ? "event_scope_granted" : isReauth ? "event_scope_not_granted" : "connected";
+  return redirect(consumed.redirectPath, status);
 }
