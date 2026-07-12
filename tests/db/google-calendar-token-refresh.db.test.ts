@@ -135,13 +135,16 @@ describe("advisory-lock single-flight", () => {
   });
 
   it("does NOT serialize DIFFERENT connections (they refresh in parallel)", async () => {
-    const studio = await seedStudio("gcalTokB");
-    const connA = await seedConnection(studio, "rt-A");
-    const connB = await seedConnection(studio, "rt-B");
+    // Two separate studios: calendar_connections is one-per-practitioner +
+    // one-owner-per-studio, so two distinct connections need distinct studios.
+    const studioA = await seedStudio("gcalTokB1");
+    const studioB = await seedStudio("gcalTokB2");
+    const connA = await seedConnection(studioA, "rt-A");
+    const connB = await seedConnection(studioB, "rt-B");
     const { client, state } = trackingClient(60);
     const tm1 = managerWith(client);
     const tm2 = managerWith(client);
-    await Promise.all([tm1.ensureAccessToken(connA, studio.studioId), tm2.ensureAccessToken(connB, studio.studioId)]);
+    await Promise.all([tm1.ensureAccessToken(connA, studioA.studioId), tm2.ensureAccessToken(connB, studioB.studioId)]);
     expect(state.max).toBe(2); // distinct lock keys => overlap allowed
   });
 });
