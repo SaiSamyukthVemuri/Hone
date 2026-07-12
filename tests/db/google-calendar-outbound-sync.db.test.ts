@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
@@ -12,6 +12,18 @@ import {
 // foundation (migration 0124): constraints, tenant isolation, the deterministic
 // idempotency key, the four-state model, and the claim/result RPCs incl. the
 // stale-lease dead transition + backoff bounds + token validation.
+
+// claim_calendar_sync_op is a GLOBAL service-role drain (it claims across all
+// studios, not one tenant), and tests/db share one long-lived local database, so
+// rows seeded by earlier tests would otherwise be visible to a later claim and
+// make any global rowCount assertion non-deterministic (the harness rule:
+// "assertions must scope by these ids, never by global counts"). The outbox is
+// touched only by this file, so clearing it before each test makes the global
+// claim see exactly the rows the test under exercise seeded. Tenant isolation is
+// still proven by the per-id / cross-studio assertions below.
+beforeEach(async () => {
+  await adminQuery("delete from public.calendar_sync_outbox");
+});
 
 afterAll(async () => {
   await closePool();
