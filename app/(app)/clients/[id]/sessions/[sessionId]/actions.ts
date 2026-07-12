@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
+import { normalizeChips, verifyStoredChips } from "@/lib/observation-chips";
 import type { ElectrolysisMode } from "@/lib/types/database";
 import {
   PULSE_COUNT_DEFAULT,
@@ -162,7 +163,55 @@ async function ensureBlockForSession(
   return created.id;
 }
 
-export async function addElectrolysisEntryAction(formData: FormData): Promise<void> {
+// Chip-loading fix — the write action reports a DISCRIMINATED outcome so the form
+// can tell the three states apart and NEVER blind-retry a write that may already
+// have persisted:
+//   * ok          — verified: the row was created AND a SEPARATE read-back of the
+//                   stored observation_chips matched what was submitted.
+//   * invalid     — nothing was inserted; the submitted chips were unreadable
+//                   (malformed JSON) or not an array. Safe to fix + resubmit.
+//   * not_persisted — the insert itself failed; no row exists. Safe to retry.
+//   * unverified  — a row WAS created (entryId returned) but the stored chips
+//                   could not be confirmed. NOT atomic — the row is not rolled
+//                   back (no transaction/RPC in scope) — so the caller must NOT
+//                   silently resubmit; it surfaces a recovery message + reload.
+export type AddElectrolysisEntryResult =
+  | { ok: true; entryId: string; observationChips: string[] }
+  | { ok: false; code: "invalid_input"; error: string }
+  | { ok: false; code: "not_persisted"; error: string }
+  | { ok: false; code: "unverified"; entryId: string; error: string };
+
+const CHIPS_UNREADABLE_ERROR =
+  "Your observations couldn't be read, so nothing was saved. Please re-select them and try again.";
+const CHIPS_UNVERIFIED_ERROR =
+  "This pass may have been saved, but we couldn't confirm your observations recorded correctly. Don't re-add it — reload the session to check first.";
+
+// Strict parse of the submitted observation_chips form field.
+//   * Absent / blank string  → no chips selected (valid; normalizes to []).
+//   * Valid JSON array       → canonicalized + deduped via normalizeChips.
+//   * Present, non-empty, but NOT parseable JSON → invalid (fail before insert).
+//   * Parses to a non-array (object/string/number/boolean/null) → invalid.
+// Never coerces malformed/non-array input to [] — that would silently discard the
+// practitioner's selections and then "verify" the empty value as success.
+function parseSubmittedChips(
+  raw: FormDataEntryValue | null,
+): { ok: true; chips: string[] } | { ok: false } {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return { ok: true, chips: [] };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false };
+  }
+  if (!Array.isArray(parsed)) return { ok: false };
+  return { ok: true, chips: normalizeChips(parsed) };
+}
+
+export async function addElectrolysisEntryAction(
+  formData: FormData,
+): Promise<AddElectrolysisEntryResult> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
   const areas = parseAreasJson(formData.get("areas"));
@@ -174,6 +223,18 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
   // adds `areas text[]`, but the column stays around for backwards compat
   // until a follow-up migration drops it. Mirror the first array value.
   const area = areas[0];
+
+  // Chip-loading fix: parse the STRUCTURED observation chips FIRST, before any
+  // studio lookup / session read / insert. A malformed or non-array payload
+  // fails the whole action here — nothing is inserted, no verification query
+  // runs, and we never silently coerce lost selections to [] and then "verify"
+  // that empty value as success (the exact silent-loss path this incident is
+  // about). Absent/blank/empty-array all normalize to [] and proceed.
+  const chipParse = parseSubmittedChips(formData.get("observation_chips"));
+  if (!chipParse.ok) {
+    return { ok: false, code: "invalid_input", error: CHIPS_UNREADABLE_ERROR };
+  }
+  const observationChips = chipParse.chips;
 
   const modeRaw = formData.get("mode");
   const mode =
@@ -265,36 +326,86 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     nullableString(formData.get("probe_lot_id")),
   );
   if (!lotCheck.ok) throw new Error(lotCheck.error);
-  const { error } = await supabase.from("electrolysis_entries").insert({
-    session_id: sessionId,
-    block_id: blockId,
-    area,
-    areas,
-    probe_size: probeSize,
-    probe_lot_id: lotCheck.value,
-    mode,
-    intensity: nullableNumber(formData.get("intensity")),
-    duration_seconds: nullableNumber(formData.get("duration_seconds")),
-    pulse_count: pulseCount,
-    pulse_delay_seconds: pulseDelaySeconds,
-    comments: nullableString(formData.get("comments")),
-    apilus_modality: apilusModality,
-    energy_level: energyLevel,
-    minutes_performed: minutesPerformed,
-    probe_type: probeType,
-    machine_frequency: machineFrequency,
-    hairs_treated: hairsTreated,
-    galvanic_ma: galvanicMa,
-    galvanic_duration_seconds: galvanicDurationSeconds,
-    galvanic_intensity_percent: galvanicIntensityPercent,
-    thermolysis_intensity_percent: thermolysisIntensityPercent,
-    thermolysis_duration_seconds: thermolysisDurationSeconds,
-    units_of_lye: unitsOfLye,
-  });
+  const { data: inserted, error } = await supabase
+    .from("electrolysis_entries")
+    .insert({
+      session_id: sessionId,
+      block_id: blockId,
+      area,
+      areas,
+      probe_size: probeSize,
+      probe_lot_id: lotCheck.value,
+      mode,
+      intensity: nullableNumber(formData.get("intensity")),
+      duration_seconds: nullableNumber(formData.get("duration_seconds")),
+      pulse_count: pulseCount,
+      pulse_delay_seconds: pulseDelaySeconds,
+      comments: nullableString(formData.get("comments")),
+      observation_chips: observationChips,
+      apilus_modality: apilusModality,
+      energy_level: energyLevel,
+      minutes_performed: minutesPerformed,
+      probe_type: probeType,
+      machine_frequency: machineFrequency,
+      hairs_treated: hairsTreated,
+      galvanic_ma: galvanicMa,
+      galvanic_duration_seconds: galvanicDurationSeconds,
+      galvanic_intensity_percent: galvanicIntensityPercent,
+      thermolysis_intensity_percent: thermolysisIntensityPercent,
+      thermolysis_duration_seconds: thermolysisDurationSeconds,
+      units_of_lye: unitsOfLye,
+    })
+    // Return ONLY the new row id here. This is the value produced by the INSERT
+    // statement (a RETURNING clause) — NOT a post-commit re-read — so the chip
+    // verification below deliberately does a SEPARATE query by this id.
+    .select("id")
+    .single();
 
-  if (error) throw new Error(`Failed to add entry: ${error.message}`);
+  if (error || !inserted) {
+    // The insert itself failed → no row exists. Safe for the caller to retry.
+    return {
+      ok: false,
+      code: "not_persisted",
+      error: `Failed to add entry: ${error?.message ?? "the entry did not persist"}`,
+    };
+  }
+  const entryId = (inserted as { id: string }).id;
+
+  // PERSISTED-ROW VERIFICATION (structural guard against the silent partial-write
+  // defect class behind this incident: an insert can "succeed" yet the clinical
+  // field never land). This is a SEPARATE read of the row we just created, by its
+  // exact id and scoped to the session (already confirmed to belong to this
+  // studio via assertSessionVisible; RLS enforces the studio boundary), then a
+  // STRICT check of the raw stored array (raw duplicates / non-canonical / non-array
+  // all fail — never masked by dedup).
+  const { data: verifyRow, error: verifyErr } = await supabase
+    .from("electrolysis_entries")
+    .select("observation_chips")
+    .eq("id", entryId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+
+  // NOTE ON ATOMICITY: the insert has already committed. There is no transaction
+  // or RPC in this emergency scope to roll it back, so a verification failure is a
+  // PERSISTED-but-UNVERIFIED state, not a clean pre-insert failure. We return the
+  // created entryId and a recovery message; we do NOT delete the row and do NOT
+  // report success. The caller must block a blind resubmit (which would create a
+  // duplicate clinical entry) and route the practitioner to reload/inspect.
+  if (verifyErr || !verifyRow) {
+    return { ok: false, code: "unverified", entryId, error: CHIPS_UNVERIFIED_ERROR };
+  }
+  const verdict = verifyStoredChips(
+    (verifyRow as { observation_chips: unknown }).observation_chips,
+    observationChips,
+  );
+  if (!verdict.ok) {
+    return { ok: false, code: "unverified", entryId, error: CHIPS_UNVERIFIED_ERROR };
+  }
+
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+  // Verified: return the created id + the confirmed stored value.
+  return { ok: true, entryId, observationChips };
 }
 
 export async function addLaserEntryAction(formData: FormData): Promise<void> {

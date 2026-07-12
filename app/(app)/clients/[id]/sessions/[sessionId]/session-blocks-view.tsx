@@ -278,6 +278,7 @@ function BlockSection({
               <button
                 type="button"
                 onClick={() => setEditing(true)}
+                data-testid={`edit-area-${block.id}`}
                 className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
@@ -417,6 +418,7 @@ function BlockSection({
             <button
               type="button"
               onClick={() => setAddingPass(true)}
+              data-testid={`add-pass-${block.id}`}
               className="self-start rounded-md border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               + Add another pass

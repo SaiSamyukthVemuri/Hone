@@ -347,6 +347,67 @@ export async function seedE2eGoogleConnection(
   );
 }
 
+// Emergency chip-loading fix. Seed a DRAFT electrolysis session with one entry
+// whose observations live in the LEGACY `comments` field (observation_chips = [],
+// as pre-0108 / legacy-form rows do), reproducing Chloe's exact data so the e2e
+// can prove the chips now render as pills. Returns the client + session ids.
+export async function seedE2eDraftSessionWithLegacyChipEntry(
+  seed: E2eSeed,
+  comments: string,
+): Promise<{
+  clientId: string;
+  sessionId: string;
+  blockId: string;
+  entryId: string;
+}> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const blockId = randomUUID();
+  const entryId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Chip Client ${seed.runId}-${uniq}`, `e2e-chip-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'electrolysis')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id, primary_area) values ($1,$2,$3,'Chin')`,
+    [blockId, seed.studioId, sessionId],
+  );
+  // observation_chips defaults to '[]' (0108); the chips are only in comments.
+  await sql(
+    `insert into public.electrolysis_entries (id, session_id, area, areas, block_id, comments)
+     values ($1,$2,'Chin',array['Chin']::text[],$3,$4)`,
+    [entryId, sessionId, blockId, comments],
+  );
+  return { clientId, sessionId, blockId, entryId };
+}
+
+// Read-back the stored observation_chips of a session's electrolysis entry —
+// 'first' (earliest, edited by block-setup-form) or 'last' (newest, created by
+// SimplifiedEntryForm). Ground truth for the chip save-cycle e2e.
+export async function getEntryObservationChips(
+  sessionId: string,
+  which: "first" | "last" = "first",
+): Promise<string[]> {
+  const rows = await sql<{ observation_chips: string[] }>(
+    `select observation_chips from public.electrolysis_entries
+      where session_id = $1 and deleted_at is null
+      order by created_at ${which === "first" ? "asc" : "desc"} limit 1`,
+    [sessionId],
+  );
+  return rows[0]?.observation_chips ?? [];
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
