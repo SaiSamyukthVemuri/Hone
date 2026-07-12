@@ -80,17 +80,57 @@ export function resolveDisplayChips(
   return { chips, note: freeText };
 }
 
-// Canonical-set equality of two chip collections. Both sides are normalized
-// (known chips only, canonical casing, deduped) and compared order-insensitively,
-// so this detects a MISSING, ADDITIONAL, DUPLICATED, or silently DROPPED chip.
-// Used by the write action's persisted-row read-back verification.
-export function chipsEqual(a: unknown, b: unknown): boolean {
-  const na = normalizeChips(a);
-  const nb = normalizeChips(b);
-  if (na.length !== nb.length) return false;
-  const sa = [...na].sort();
-  const sb = [...nb].sort();
-  return sa.every((v, i) => v === sb[i]);
+// Reason a persisted row FAILED verification (for logging/telemetry; never shown
+// raw to the practitioner).
+export type StoredChipsVerificationFailure =
+  | "not-array" // the stored value wasn't a JSON array at all
+  | "non-string-member" // an array member wasn't a string
+  | "noncanonical" // a member isn't EXACTLY a canonical chip label (unknown, alias-form, or wrong casing)
+  | "duplicate" // the RAW stored array contains a repeated member
+  | "missing" // an expected chip is absent from the stored array
+  | "unexpected"; // the stored array contains a chip that wasn't submitted
+
+export type StoredChipsVerification =
+  | { ok: true }
+  | { ok: false; reason: StoredChipsVerificationFailure };
+
+// STRICT persisted-row verification for the write action's read-back. Unlike a
+// normalize-both-sides set-equality (which would DEDUP the stored value and thus
+// HIDE a raw duplicate the database actually holds), this inspects the RAW stored
+// array element-by-element:
+//   * must be an array;
+//   * every member must be a string;
+//   * every member must be EXACTLY a canonical chip label — we insert canonical
+//     labels, so a value coming back non-canonical (unknown / alias-form / wrong
+//     casing) means the stored data is not what we wrote → fail (documented
+//     contract: noncanonical stored casing/spacing FAILS raw verification rather
+//     than being silently canonicalized away);
+//   * NO raw duplicates (a repeated member fails — never masked by dedup);
+//   * the set of members must equal `expected` exactly (no missing, no extra).
+// `expected` is the canonical, unique array we submitted to the insert. Returns a
+// structured verdict so the caller can distinguish verified success from a
+// persisted-but-unverified write.
+export function verifyStoredChips(
+  raw: unknown,
+  expected: readonly string[],
+): StoredChipsVerification {
+  if (!Array.isArray(raw)) return { ok: false, reason: "not-array" };
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") return { ok: false, reason: "non-string-member" };
+    const canon = canonicalFor(v);
+    if (!canon || canon !== v) return { ok: false, reason: "noncanonical" };
+    if (seen.has(v)) return { ok: false, reason: "duplicate" };
+    seen.add(v);
+  }
+  const exp = new Set(expected);
+  // Any expected chip not present in the raw stored set → missing.
+  for (const e of exp) {
+    if (!seen.has(e)) return { ok: false, reason: "missing" };
+  }
+  // Any stored chip that wasn't expected → unexpected extra.
+  if (seen.size !== exp.size) return { ok: false, reason: "unexpected" };
+  return { ok: true };
 }
 
 export function isChipSelected(

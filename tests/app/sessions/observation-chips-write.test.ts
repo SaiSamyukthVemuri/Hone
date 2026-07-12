@@ -9,14 +9,22 @@ import { join } from "node:path";
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-describe("addElectrolysisEntryAction persists structured chips", () => {
+describe("addElectrolysisEntryAction persists + verifies structured chips", () => {
   const src = read("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts");
-  it("parses the observation_chips form field and normalizes it", () => {
-    expect(src).toMatch(/formData\.get\("observation_chips"\)/);
-    expect(src).toMatch(/normalizeChips\(parsedChips\)/);
+  it("parses the chip payload via the strict contract (malformed → invalid_input, no insert)", () => {
+    expect(src).toMatch(/parseSubmittedChips\(formData\.get\("observation_chips"\)\)/);
+    expect(src).toMatch(/code: "invalid_input"/);
   });
   it("writes observation_chips into the entry insert (was previously omitted)", () => {
     expect(src).toMatch(/observation_chips: observationChips/);
+  });
+  it("verifies via a SEPARATE read by the inserted id, scoped to the session", () => {
+    expect(src).toMatch(/\.eq\("id", entryId\)/);
+    expect(src).toMatch(/\.eq\("session_id", sessionId\)/);
+    expect(src).toMatch(/verifyStoredChips\(/);
+  });
+  it("a persisted-but-unverified write returns the entryId (no rollback pretense)", () => {
+    expect(src).toMatch(/code: "unverified", entryId/);
   });
 });
 
@@ -30,6 +38,15 @@ describe("SimplifiedEntryForm uses STRUCTURED chips, not legacy append-to-commen
   });
   it("sends observation_chips as JSON, separate from the free-text notes", () => {
     expect(src).toMatch(/fd\.set\("observation_chips", JSON\.stringify\(draft\.observationChips\)\)/);
+  });
+  it("switches on the discriminated result and BLOCKS blind retry on unverified", () => {
+    // ok → reset; unverified → recovery lock (no auto-resubmit → no duplicate entry).
+    expect(src).toMatch(/if \(res\.ok\)/);
+    expect(src).toMatch(/res\.code === "unverified"/);
+    expect(src).toMatch(/setRecovery\(/);
+    // The save button is disabled and submit() short-circuits while in recovery.
+    expect(src).toMatch(/disabled=\{pending \|\| recovery !== null\}/);
+    expect(src).toMatch(/if \(recovery\) return;/);
   });
 });
 

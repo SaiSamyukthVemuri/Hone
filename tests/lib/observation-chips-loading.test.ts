@@ -5,7 +5,7 @@ import {
   hydrateLegacyChips,
   toggleChip,
   isChipSelected,
-  chipsEqual,
+  verifyStoredChips,
   OBSERVATION_CHIPS,
 } from "@/lib/observation-chips";
 
@@ -118,15 +118,82 @@ describe("mixed legacy/structured rows", () => {
     expect(r.chips).toEqual([A]);
     expect(r.note).toBe(`${B}, ${C}`);
   });
+  it("(7) CASING variants in legacy comments normalize with no data loss", () => {
+    expect(resolveDisplayChips([], "COARSE HAIR, slight EDEMA").chips).toEqual([A, B]);
+  });
+  it("(8) SPACING variants (extra internal/edge whitespace) normalize", () => {
+    expect(resolveDisplayChips([], "  Coarse hair ,   Slight edema  ").chips).toEqual([A, B]);
+  });
+  it("(9) HYPHENATION/punctuation variant resolves via the explicit alias only", () => {
+    expect(resolveDisplayChips([], "hyper-pigmentation").chips).toEqual(["Hyperpigmentation"]);
+    // A punctuation variant with NO alias is NOT guessed — it stays as a note.
+    expect(resolveDisplayChips([], "coarse-hair").chips).toEqual([]);
+    expect(resolveDisplayChips([], "coarse-hair").note).toBe("coarse-hair");
+  });
+  it("(10) empty string comment → no chips, empty note", () => {
+    expect(resolveDisplayChips([], "")).toEqual({ chips: [], note: "" });
+  });
+  it("(11) null comment → no chips, empty note", () => {
+    expect(resolveDisplayChips([], null)).toEqual({ chips: [], note: "" });
+  });
+  it("(12) empty structured array falls through to legacy hydration", () => {
+    expect(resolveDisplayChips([], `${A}`).chips).toEqual([A]);
+  });
+  it("(13) multiple structured chips all render (order preserved, deduped)", () => {
+    expect(resolveDisplayChips([A, B, C], "").chips).toEqual([A, B, C]);
+  });
+  it("(14) DUPLICATE legacy tokens collapse to one canonical chip", () => {
+    expect(resolveDisplayChips([], `${A}, ${A}, ${B}`).chips).toEqual([A, B]);
+  });
+  it("(15) DUPLICATE structured values collapse to one", () => {
+    expect(resolveDisplayChips(["Coarse hair", "coarse hair"], "").chips).toEqual([A]);
+  });
+  it("(16) MIXED known + unknown legacy tokens: known→chips, unknown→note", () => {
+    const r = resolveDisplayChips([], `${A}, mystery thing, ${C}, another note`);
+    expect(r.chips).toEqual([A, C]);
+    expect(r.note).toBe("mystery thing, another note");
+  });
 });
 
-describe("chipsEqual (read-back comparison contract)", () => {
-  it("detects missing / additional / duplicate / order-insensitive equality", () => {
-    expect(chipsEqual([A, B], [B, A])).toBe(true); // order-insensitive
-    expect(chipsEqual([A], [A, B])).toBe(false); // missing
-    expect(chipsEqual([A, B], [A])).toBe(false); // additional
-    expect(chipsEqual([A, "coarse hair"], [A])).toBe(true); // dup normalizes equal
-    expect(chipsEqual([], [])).toBe(true); // empty
-    expect(chipsEqual([A, "junk"], [A])).toBe(true); // unknown ignored by normalize
+// Gate 4 — STRICT persisted-row verification. Unlike a normalize-both-sides
+// equality, this inspects the RAW stored array and must NOT let a database
+// duplicate / non-canonical / non-array value pass as a verified success.
+describe("verifyStoredChips (strict read-back contract)", () => {
+  it("exact canonical match → ok", () => {
+    expect(verifyStoredChips([A, B], [A, B])).toEqual({ ok: true });
+  });
+  it("reordered but canonical + unique → ok (order-insensitive)", () => {
+    expect(verifyStoredChips([B, A], [A, B])).toEqual({ ok: true });
+  });
+  it("empty vs empty → ok", () => {
+    expect(verifyStoredChips([], [])).toEqual({ ok: true });
+  });
+  it("stored array MISSING an expected chip → fails", () => {
+    expect(verifyStoredChips([A], [A, B])).toEqual({ ok: false, reason: "missing" });
+  });
+  it("stored array with an UNEXPECTED extra chip → fails", () => {
+    expect(verifyStoredChips([A, B], [A])).toEqual({ ok: false, reason: "unexpected" });
+  });
+  it("stored RAW DUPLICATE → fails (never masked by dedup)", () => {
+    // The crux of Gate 4: ["Coarse hair","Coarse hair"] must NOT verify against ["Coarse hair"].
+    expect(verifyStoredChips([A, A], [A])).toEqual({ ok: false, reason: "duplicate" });
+  });
+  it("stored NON-CANONICAL casing/spacing → fails (documented: raw must be exactly canonical)", () => {
+    expect(verifyStoredChips(["coarse hair"], [A])).toEqual({ ok: false, reason: "noncanonical" });
+    expect(verifyStoredChips(["hyper-pigmentation"], ["Hyperpigmentation"])).toEqual({
+      ok: false,
+      reason: "noncanonical",
+    });
+  });
+  it("stored UNKNOWN value → fails (not silently treated as success)", () => {
+    expect(verifyStoredChips(["totally unknown"], [])).toEqual({ ok: false, reason: "noncanonical" });
+  });
+  it("stored NON-ARRAY value → fails", () => {
+    expect(verifyStoredChips("Coarse hair", [A]).ok).toBe(false);
+    expect(verifyStoredChips({ 0: A }, [A]).ok).toBe(false);
+    expect(verifyStoredChips(null, []).ok).toBe(false);
+  });
+  it("stored array with a NON-STRING member → fails", () => {
+    expect(verifyStoredChips([A, 42], [A]).ok).toBe(false);
   });
 });

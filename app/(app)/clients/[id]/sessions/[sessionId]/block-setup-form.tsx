@@ -1346,6 +1346,7 @@ export function BlockSetupForm({
               <button
                 key={c}
                 type="button"
+                data-testid={`obs-chip-${c}`}
                 aria-pressed={selected}
                 onClick={() =>
                   update("observationChips", toggleChip(draft.observationChips, c))
@@ -1432,6 +1433,7 @@ export function BlockSetupForm({
           type="button"
           onClick={submit}
           disabled={pending}
+          data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {pending ? "Saving…" : "Save treatment area"}

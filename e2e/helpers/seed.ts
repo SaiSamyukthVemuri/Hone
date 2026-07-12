@@ -354,7 +354,12 @@ export async function seedE2eGoogleConnection(
 export async function seedE2eDraftSessionWithLegacyChipEntry(
   seed: E2eSeed,
   comments: string,
-): Promise<{ clientId: string; sessionId: string }> {
+): Promise<{
+  clientId: string;
+  sessionId: string;
+  blockId: string;
+  entryId: string;
+}> {
   const prac = (
     await sql<{ id: string }>(
       `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
@@ -364,6 +369,7 @@ export async function seedE2eDraftSessionWithLegacyChipEntry(
   const clientId = randomUUID();
   const sessionId = randomUUID();
   const blockId = randomUUID();
+  const entryId = randomUUID();
   const uniq = randomUUID().slice(0, 8);
   await sql(
     `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
@@ -381,9 +387,9 @@ export async function seedE2eDraftSessionWithLegacyChipEntry(
   await sql(
     `insert into public.electrolysis_entries (id, session_id, area, areas, block_id, comments)
      values ($1,$2,'Chin',array['Chin']::text[],$3,$4)`,
-    [randomUUID(), sessionId, blockId, comments],
+    [entryId, sessionId, blockId, comments],
   );
-  return { clientId, sessionId };
+  return { clientId, sessionId, blockId, entryId };
 }
 
 // Read-back the stored observation_chips of a session's electrolysis entry —

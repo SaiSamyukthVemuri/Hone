@@ -76,6 +76,11 @@ export function SimplifiedEntryForm({
 }: Props) {
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [error, setError] = useState<string | null>(null);
+  // Set when a save PERSISTED but its observations couldn't be confirmed. The
+  // write is not atomic (no rollback in scope), so a blind resubmit would create
+  // a SECOND clinical entry. While set, the form locks: the save button is
+  // disabled and the only way forward is to reload + inspect the record.
+  const [recovery, setRecovery] = useState<string | null>(null);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -95,6 +100,9 @@ export function SimplifiedEntryForm({
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // In the persisted-but-unverified recovery state, refuse to resubmit — the
+    // row may already exist and a second insert would duplicate it.
+    if (recovery) return;
     setError(null);
     if (draft.areas.length === 0) {
       setError("Pick at least one area.");
@@ -137,10 +145,23 @@ export function SimplifiedEntryForm({
 
     startTransition(async () => {
       try {
-        await addElectrolysisEntryAction(fd);
-        setDraft(emptyDraft());
-        setSavedLabel(pickSavedLabel());
-        window.setTimeout(() => setSavedLabel(null), 1500);
+        const res = await addElectrolysisEntryAction(fd);
+        if (res.ok) {
+          setDraft(emptyDraft());
+          setSavedLabel(pickSavedLabel());
+          window.setTimeout(() => setSavedLabel(null), 1500);
+          return;
+        }
+        if (res.code === "unverified") {
+          // A row MAY exist but its observations weren't confirmed. Lock the
+          // form so the practitioner can't blind-resubmit and duplicate the
+          // clinical entry; the draft is preserved for reference.
+          setRecovery(res.error);
+          return;
+        }
+        // invalid_input / not_persisted → nothing was inserted. Safe to fix and
+        // retry; keep the form + draft as-is and show the error.
+        setError(res.error);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to add entry.");
       }
@@ -150,6 +171,7 @@ export function SimplifiedEntryForm({
   return (
     <form
       onSubmit={submit}
+      data-testid="add-pass-form"
       className="flex flex-col gap-4 rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
     >
       <div className="flex items-center justify-between">
@@ -379,6 +401,7 @@ export function SimplifiedEntryForm({
               <button
                 key={c}
                 type="button"
+                data-testid={`obs-chip-${c}`}
                 aria-pressed={selected}
                 onClick={() =>
                   update("observationChips", toggleChip(draft.observationChips, c))
@@ -410,10 +433,28 @@ export function SimplifiedEntryForm({
         </p>
       )}
 
+      {recovery && (
+        <div
+          role="alert"
+          data-testid="add-pass-recovery"
+          className="flex flex-col gap-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          <span>{recovery}</span>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="self-start rounded-md border border-amber-500 px-3 py-1.5 text-xs font-medium hover:bg-amber-100 dark:hover:bg-amber-900"
+          >
+            Reload session
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={pending}
+          data-testid="add-pass-submit"
+          disabled={pending || recovery !== null}
           className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {pending ? "Adding…" : "Add pass"}
