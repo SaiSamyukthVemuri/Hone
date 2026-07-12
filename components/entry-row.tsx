@@ -6,19 +6,21 @@ import type {
 import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { formatSeconds } from "@/lib/sessions/format-seconds";
-import { normalizeChips } from "@/lib/observation-chips";
+import { resolveDisplayChips } from "@/lib/observation-chips";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
   return ELECTROLYSIS_MODES.find((m) => m.value === value)?.label ?? value;
 }
 
-// Migration 0108: structured treatment-observation chips render as their own
-// pills (separate from free-text notes). Legacy rows have observation_chips = []
-// and show nothing here — their chips are still in `comments`, so nothing is
-// lost and nothing double-displays. normalizeChips() drops any unknown value.
-function ObservationChips({ entry }: { entry: ElectrolysisEntry }) {
-  const chips = normalizeChips(entry.observation_chips);
+// Migration 0108 + chip-loading fix: structured treatment-observation chips
+// render as their own pills (separate from free-text notes). For LEGACY rows
+// (observation_chips = []) the chips are still in `comments`, so we hydrate them
+// via resolveDisplayChips so pre-0108 / legacy-form observations still render as
+// pills (the caller shows the chip-stripped free-text as the note — no
+// double-display). normalizeChips() drops any unknown value; stored data is
+// never mutated.
+function ObservationChips({ chips }: { chips: string[] }) {
   if (chips.length === 0) return null;
   return (
     <div className="mt-1 flex flex-wrap gap-1">
@@ -76,6 +78,12 @@ export function ElectrolysisEntryRow({
     probe_size: entry.probe_size,
     machine_frequency: entry.machine_frequency,
   };
+
+  // Chip-loading fix: resolve the chips to show (structured column, else legacy
+  // chips hydrated from comments) and the note (chip-stripped free-text) ONCE, so
+  // pills + notes stay consistent and legacy chips reliably render. Display-only;
+  // the stored row is never rewritten here.
+  const display = resolveDisplayChips(entry.observation_chips, entry.comments);
 
   // Migration 0042: structured blend/galvanic readings. When any are
   // present, show grouped Galvanic / Thermolysis lines instead of the
@@ -241,20 +249,21 @@ export function ElectrolysisEntryRow({
               Hairs treated: {entry.hairs_treated}
             </div>
           )}
-          <ObservationChips entry={entry} />
-          {entry.comments && (
+          <ObservationChips chips={display.chips} />
+          {display.note && (
             <div className="mt-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
               <span className="text-xs font-medium text-neutral-500">
                 Notes:
               </span>{" "}
-              <span className="whitespace-pre-wrap">{entry.comments}</span>
+              <span className="whitespace-pre-wrap">{display.note}</span>
             </div>
           )}
           {!showTop &&
             !hasStructured &&
             legacyReadings.length === 0 &&
             entry.hairs_treated == null &&
-            !entry.comments && (
+            display.chips.length === 0 &&
+            !display.note && (
               <div className="text-xs text-neutral-400">No readings recorded.</div>
             )}
         </div>
@@ -314,10 +323,10 @@ export function ElectrolysisEntryRow({
             Hairs treated: {entry.hairs_treated}
           </div>
         )}
-        <ObservationChips entry={entry} />
-        {entry.comments && (
+        <ObservationChips chips={display.chips} />
+        {display.note && (
           <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-            {entry.comments}
+            {display.note}
           </div>
         )}
       </div>

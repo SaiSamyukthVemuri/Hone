@@ -12,7 +12,7 @@ import {
   PULSE_DELAY_MAX,
 } from "@/lib/constants";
 import type { SessionBlock } from "@/lib/types/database";
-import { appendComment } from "@/lib/comments";
+import { isChipSelected, toggleChip } from "@/lib/observation-chips";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
@@ -45,6 +45,10 @@ type Draft = {
   pulse_delay: string;
   hairs_treated: string;
   comments: string;
+  // Chip-loading fix: structured observation chips (canonical labels), stored in
+  // electrolysis_entries.observation_chips — NOT appended into `comments`. Toggle
+  // state so a chip can be selected AND deselected, and persists after refresh.
+  observationChips: string[];
 };
 
 function emptyDraft(): Draft {
@@ -60,6 +64,7 @@ function emptyDraft(): Draft {
     pulse_delay: String(PULSE_DELAY_DEFAULT),
     hairs_treated: "",
     comments: "",
+    observationChips: [],
   };
 }
 
@@ -126,6 +131,9 @@ export function SimplifiedEntryForm({
     fd.set("pulse_delay_seconds", draft.pulse_delay);
     fd.set("hairs_treated", draft.hairs_treated);
     fd.set("comments", draft.comments);
+    // Structured chips as a JSON array (the action normalizes + persists to
+    // observation_chips). Kept SEPARATE from the free-text comments above.
+    fd.set("observation_chips", JSON.stringify(draft.observationChips));
 
     startTransition(async () => {
       try {
@@ -359,26 +367,39 @@ export function SimplifiedEntryForm({
             </div>
           </div>
         )}
-        <span className="text-sm font-medium">Comments</span>
+        <span className="text-sm font-medium">Observations</span>
+        {/* Chip-loading fix: observation chips are STRUCTURED TOGGLES — tap to
+            select (shows pressed), tap again to deselect. They persist to
+            observation_chips (not the notes), so they render as pills and reload
+            after refresh. Free-text notes are the separate box below. */}
         <div className="flex flex-wrap gap-2">
-          {COMMON_COMMENTS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() =>
-                update("comments", appendComment(draft.comments, c))
-              }
-              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
-            >
-              + {c}
-            </button>
-          ))}
+          {COMMON_COMMENTS.map((c) => {
+            const selected = isChipSelected(draft.observationChips, c);
+            return (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={selected}
+                onClick={() =>
+                  update("observationChips", toggleChip(draft.observationChips, c))
+                }
+                className={
+                  selected
+                    ? "rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                }
+              >
+                {selected ? c : `+ ${c}`}
+              </button>
+            );
+          })}
         </div>
+        <span className="text-sm font-medium">Notes</span>
         <textarea
           rows={2}
           value={draft.comments}
           onChange={(e) => update("comments", e.target.value)}
-          placeholder="Tap a chip or type a note"
+          placeholder="Type any free-text note"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
       </div>

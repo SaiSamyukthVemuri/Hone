@@ -347,6 +347,45 @@ export async function seedE2eGoogleConnection(
   );
 }
 
+// Emergency chip-loading fix. Seed a DRAFT electrolysis session with one entry
+// whose observations live in the LEGACY `comments` field (observation_chips = [],
+// as pre-0108 / legacy-form rows do), reproducing Chloe's exact data so the e2e
+// can prove the chips now render as pills. Returns the client + session ids.
+export async function seedE2eDraftSessionWithLegacyChipEntry(
+  seed: E2eSeed,
+  comments: string,
+): Promise<{ clientId: string; sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const blockId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Chip Client ${seed.runId}-${uniq}`, `e2e-chip-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'electrolysis')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id, primary_area) values ($1,$2,$3,'Chin')`,
+    [blockId, seed.studioId, sessionId],
+  );
+  // observation_chips defaults to '[]' (0108); the chips are only in comments.
+  await sql(
+    `insert into public.electrolysis_entries (id, session_id, area, areas, block_id, comments)
+     values ($1,$2,'Chin',array['Chin']::text[],$3,$4)`,
+    [randomUUID(), sessionId, blockId, comments],
+  );
+  return { clientId, sessionId };
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(

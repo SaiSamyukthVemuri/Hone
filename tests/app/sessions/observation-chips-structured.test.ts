@@ -53,13 +53,15 @@ describe("block-actions — persists chips structurally + preserves comments", (
 });
 
 describe("entry-row — chips render as their own pills; legacy rows unaffected", () => {
-  it("renders an ObservationChips block driven by normalizeChips", () => {
+  it("renders an ObservationChips block driven by resolveDisplayChips (structured OR legacy comments)", () => {
     expect(ROW).toMatch(/function ObservationChips/);
-    expect(ROW).toMatch(/normalizeChips\(entry\.observation_chips\)/);
+    // Chip-loading fix: chips + note are resolved once (structured column, else
+    // legacy chips hydrated from comments) so legacy rows still render pills.
+    expect(ROW).toMatch(/resolveDisplayChips\(entry\.observation_chips, entry\.comments\)/);
     expect(ROW).toMatch(/if \(chips\.length === 0\) return null/); // empty → nothing (no double display)
   });
-  it("appears in BOTH the readings variant and the full variant", () => {
-    expect(ROW.match(/<ObservationChips entry=\{entry\} \/>/g)?.length).toBe(2);
+  it("appears in BOTH the readings variant and the full variant, driven by display.chips", () => {
+    expect(ROW.match(/<ObservationChips chips=\{display\.chips\} \/>/g)?.length).toBe(2);
   });
 });
 

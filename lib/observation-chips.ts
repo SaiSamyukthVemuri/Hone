@@ -38,6 +38,25 @@ export function normalizeChips(value: unknown): string[] {
   return out;
 }
 
+// Single DISPLAY/preload contract for a stored entry (structured column +
+// legacy comments). Returns the chips to show as pills and the free-text note to
+// show separately — WITHOUT ever mutating stored data. Structured rows use their
+// observation_chips (+ full comments as the note). Legacy rows (empty structured
+// column) hydrate chips out of `comments` so pre-0108 observations still render
+// as pills, and the note shows the remaining free-text so nothing double-shows
+// and nothing is lost. Used by the read (entry row) AND edit-preload paths.
+export function resolveDisplayChips(
+  observationChips: unknown,
+  comments: string | null | undefined,
+): { chips: string[]; note: string } {
+  const structured = normalizeChips(observationChips);
+  if (structured.length > 0) {
+    return { chips: structured, note: (comments ?? "").trim() };
+  }
+  const { chips, freeText } = hydrateLegacyChips(comments);
+  return { chips, note: freeText };
+}
+
 export function isChipSelected(
   chips: readonly string[],
   chip: string,

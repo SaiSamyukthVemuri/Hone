@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
+import { normalizeChips } from "@/lib/observation-chips";
 import type { ElectrolysisMode } from "@/lib/types/database";
 import {
   PULSE_COUNT_DEFAULT,
@@ -254,6 +255,22 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     pulseCount,
   );
 
+  // Chip-loading fix: persist STRUCTURED observation chips. The simplified entry
+  // form now sends a JSON array of canonical chip labels; normalizeChips keeps
+  // only known chips (canonical casing, deduped) and collapses anything
+  // else/garbage to [] (the column is jsonb NOT NULL default []). Free-text
+  // notes stay in `comments`; chips are never dropped into or lost from it.
+  const rawChips = formData.get("observation_chips");
+  let parsedChips: unknown = [];
+  if (typeof rawChips === "string" && rawChips.trim().length > 0) {
+    try {
+      parsedChips = JSON.parse(rawChips);
+    } catch {
+      parsedChips = [];
+    }
+  }
+  const observationChips = normalizeChips(parsedChips);
+
   const supabase = await createClient();
   // PR 3: never trust a client-supplied probe_lot_id. It must be a well-formed
   // UUID that belongs to THIS studio's probe_lots inventory; otherwise reject.
@@ -278,6 +295,7 @@ export async function addElectrolysisEntryAction(formData: FormData): Promise<vo
     pulse_count: pulseCount,
     pulse_delay_seconds: pulseDelaySeconds,
     comments: nullableString(formData.get("comments")),
+    observation_chips: observationChips,
     apilus_modality: apilusModality,
     energy_level: energyLevel,
     minutes_performed: minutesPerformed,
