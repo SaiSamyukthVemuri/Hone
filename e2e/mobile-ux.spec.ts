@@ -366,8 +366,9 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     // PR #238: on phones the sections are a stable native select
     // (the draggable tab row felt unstable in Chloe's retest). All
-    // six sections are options; picking one navigates; the select
-    // always shows the active section.
+    // sections are options; picking one navigates; the select
+    // always shows the active section. Willow PR A added the
+    // "Consultation" section (dedicated consultation + skin/hair notes).
     const sectionSelect = page
       .getByRole("navigation", { name: "Client profile sections" })
       .locator("select");
@@ -381,6 +382,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       "Treatment Plans",
       "Messages",
       "Health & Forms",
+      "Consultation",
       "Personal Notes",
     ]);
     // 16px-safe: the focused select must not trigger iOS page zoom.
