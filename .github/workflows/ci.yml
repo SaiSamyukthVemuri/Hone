@@ -154,8 +154,14 @@ jobs:
           # locally; bump deliberately and re-verify grants parity.
           version: 2.102.0
 
-      - name: Start local Supabase database
-        run: supabase db start
+      - name: Start local Supabase (DB + REST API)
+        # Was `supabase db start` (Postgres only). The DB-integration lane now
+        # also exercises server-side code that reaches Supabase over the REST API
+        # via createAdminClient() (e.g. the REAL getSessionPaymentEligibility
+        # resolver) — that needs kong (54321), not just Postgres (54322). Bring
+        # up the same trimmed stack the browser-e2e job uses (proven in CI); the
+        # node-pg harness (54322) and `db reset --local` are unaffected.
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         # Fails the job if ANY migration 0001-current cannot apply to
