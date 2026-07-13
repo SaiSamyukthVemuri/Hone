@@ -9,9 +9,13 @@ ledger win.
 
 - **Status:** Phase A implemented (migrations 0121/0122) and **Phase B1 outbound-sync
   schema deployed (migration 0124, PR #407 merged 2026-07-12)** — both **dormant**.
+  **Phase B2.3-a (migration 0125 — outbound enqueue + claim activation boundary) is
+  authored in-repo and DORMANT, but NOT yet applied to production** (repo max 0125,
+  hosted max 0124; pending a separately-approved migration-first apply — see §3c).
   All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
   is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
-  worker, no enqueue path, no trigger enqueues, no Google event has been created or
+  worker, no enqueue path (0125 adds triggers but they no-op while every studio's
+  outbound flag is OFF), no trigger enqueues, no Google event has been created or
   modified, no Google API call has occurred, and no event scope has been requested.
 - **Production exercised:** the Phase A OAuth connection was exercised once on **Sam's
   controlled studio** (one connection exists). **Phase B1 outbox/event-link behavior
@@ -203,10 +207,146 @@ it only guards a *hard delete* of the connection while links/queue rows still
 reference it. The one path that *would* hard-delete a connection is a
 **practitioner or studio removal** (0121's connection→practitioner/studio FK is
 `ON DELETE CASCADE`); with RESTRICT children present, that delete now blocks.
-**Reconciliation is a B2/B3 responsibility, not B1:** before a practitioner/studio
-is removed, B2+ must soft-delete the entity links and drain/settle the outbox
-(or explicitly tombstone them), then remove the connection. B1 **does not change
-the disconnect path** — it was inspected and left intact.
+**Reconciliation is a B2 responsibility, not B1.** Because `ON DELETE RESTRICT`
+also counts *soft-deleted* rows, soft-deleting the links does **not** release the
+FK. Tenant teardown therefore **hard-purges** the studio's `calendar_sync_outbox`
+rows and then its `calendar_event_links` rows (both reference
+`calendar_connections`) in the same transaction as, and before, the
+practitioner/studio removal — after which the CASCADE proceeds. The historical
+obligation of the link/outbox ledger ends with the tenant, and the departed
+practitioner's Google events remain in their own calendar (teardown does not
+auto-delete Google events). The per-appointment `AFTER DELETE` enqueue trigger
+(B2.3-a) is a no-op during teardown because the links are purged first (no active
+link found). B1 **did not change the disconnect path** — it was inspected and left
+intact; the hard-purge teardown routine itself lands in B2.4.
+
+---
+
+## 3c. Outbound enqueue + claim activation boundary (Phase B2.3-a, migration 0125)
+
+Migration **0125** wires the DB-side outbound-sync foundation the future drain
+worker will consume. It is **additive + DORMANT** and ships with **no production
+caller** (the `/api/cron/calendar-sync` route + its cron registration are B2.3-b /
+B2.3-c). No Google call, no event scope requested, no re-consent, no studio flag
+enabled, and the global worker control defaults OFF. Behavioural proof:
+`tests/db/google-calendar-b2-3a-enqueue-claim.db.test.ts`; static proof:
+`tests/migrations/0125-…test.ts`.
+
+- **Intent vs health — two independent gates.**
+  - *Intent gate* (enqueue + canonical link bookkeeping — create/rebind — no Google
+    call): studio `google_calendar_outbound_sync_enabled` ON **+** an owner
+    connection row exists (`is_studio_calendar_owner`) **+** a `write_calendar_id`
+    is selected. It **does not** require `connected` status, event scope, or a
+    usable refresh token, so a **transient connection outage never erases calendar
+    intent** — changes made during an outage accumulate as `pending` jobs.
+  - *Health gate* (claim / external execution): global worker control ON **+** studio
+    intent ON **+** `connected` **+** owner **+** `write_calendar_id` **+**
+    `granted_scopes @> calendar_required_event_scopes()` (superset) **+** a usable
+    encrypted refresh token. When unhealthy, jobs stay `pending`, attempts **do not
+    decay** (Option A). A pause is a *health* condition, not an intent one.
+- **Runtime global worker control** — a singleton `calendar_sync_control`
+  (`worker_enabled`, default **OFF**, service-role only) is authoritative at the
+  **claim** boundary. While OFF/absent (fail-safe), `claim_calendar_sync_op`
+  returns zero rows and performs zero queue mutations (no reap-to-dead, no attempt
+  increment, no lease). It is a runtime (data) control, distinct from the
+  deployment-time env default and the external cron schedule (B2.3-b).
+- **Health-aware expired-lease reaper — single-health-read invariant.** Inside
+  `claim_calendar_sync_op`, connection health is evaluated **exactly once per stale
+  processing row** (a `stale` CTE that locks the rows `FOR UPDATE OF … SKIP LOCKED`
+  and materializes one `is_healthy` + `at_max` per row); a single `UPDATE … CASE`
+  then applies **exactly one** transition, so a row can never be released **and**
+  dead-lettered by two independently evaluated predicates, and two concurrent claim
+  calls cannot process the same stale row twice. Healthy-at-max → `dead` (deployed
+  contract); **unhealthy → released to `pending` with its lease-consuming attempt
+  restored** (`attempts = greatest(attempts-1, 0)`, claim metadata cleared) so a
+  transient outage never terminally kills an operation or permanently decays
+  attempts; healthy-below-max is left for the claimable CTE. (Pilot pending-age
+  thresholds may need recalibration once real reconnect behaviour is observed —
+  revisit in B2.4, not this PR.)
+- **Genuinely never-raise triggers, with deduped markers.** The enqueue +
+  AFTER-DELETE triggers swallow any failure (link, outbox, telemetry) so a booking is
+  never aborted; the `ops_alerts` skip marker — including its **deduplicating
+  `ON CONFLICT DO NOTHING`** against a partial unique index
+  (`ops_alerts_calendar_enqueue_skip_dedup_uniq` on `(studio_id, safe_details->>
+  'dedup_key')` where `event='calendar_enqueue_skipped' and resolved_at is null`) —
+  is written entirely inside a **nested** guarded block, so even an index/predicate
+  mismatch cannot re-raise and abort the operation. At most **one unresolved marker
+  per (studio, appointment)**; a resolved marker never blocks a fresh one. The
+  AFTER-DELETE marker carries no `appointment_id` (the row is gone;
+  `ops_alerts.appointment_id` is `ON DELETE SET NULL`) and dedups on the same
+  `dedup_key`. Honest limitation: if both the enqueue and its marker fail there is no
+  durable trace — the **reconciliation sweep** (B2.3-b) is the recovery net.
+- **Append-only suppression telemetry** — `calendar_sync_metric_events` is
+  append-only (one row per event, random PK); there is **no** contended
+  `(studio_id, metric, day)` counter row, so concurrent suppressed enqueues never
+  serialize inside a booking transaction.
+- **Queue-health eligible-vs-parked split.** The `calendar_sync_queue_health` view
+  keeps **parked (currently-ineligible) work visible** — it still counts in total
+  `pending` + `oldest_pending_due` — while separately reporting `eligible_pending`,
+  `parked_pending`, `oldest_eligible_pending_due`, and `oldest_parked_pending_due`,
+  so a reconnect window never makes work invisible and operators can tell "worker
+  not draining eligible work" from "work intentionally held (connection not
+  healthy)". No separate parked-age alert ships in B2.3-a.
+- **Repair primitives — full-unique-safe; a dead row is never reopened.** Because
+  the idempotency index is FULL (all statuses), every repair mints a **genuinely
+  new** key: `repair_bump_appointment_sync_version` does a real `sync_version`
+  increment → a strictly-higher organic key (reconcile Classes 1–3, and Class 4 for
+  a still-present cancelled appointment); `repair_enqueue_orphan_link_delete` uses a
+  `reconcile_generation`-scoped tombstone key for a link whose appointment row is
+  gone. The four-class reconciliation sweep (missing link+job / orphaned link /
+  link version behind appointment / surplus event) runs app-side in B2.3-b.
+- **Entity-tombstone CHECK change** — the one deliberate change to a deployed
+  object: `calendar_sync_outbox_entity_chk` is relaxed so `event.delete` may be
+  **entity-less** (carrying a link tombstone after its appointment row is gone).
+  `event.create`/`event.update` still require an entity; `full.resync` still carries
+  none. (The 0124 file + its static test are historical and unchanged; the 0125
+  tests document the new live contract.)
+- **No eager write-calendar link repoint.** Changing `write_calendar_id` must NOT
+  repoint an existing link's `google_calendar_id` — that would falsely claim the
+  event lives on the new calendar while it still exists on the old, and destroy the
+  old coordinates the move needs. 0125 adds **no** such bulk update (a static test
+  pins this). The correct bookkeeping is: bump `sync_generation`, **preserve** each
+  link's existing `google_calendar_id` + `google_event_id`, start a
+  generation-scoped full-resync carrying the old/new calendar context, and repoint
+  the link only at the **successful delete-old/create-new move boundary** — all
+  **B2.4** (worker-side).
+- **Stable resync cursor (design intent, B2.4 enumerator).** A full-resync
+  enumerator paginates by the **immutable appointment UUID** under a pinned snapshot
+  (`created_at <= snapshot_started_at`), never by the mutable `starts_at`, so an
+  appointment moving mid-enumeration is neither skipped nor double-visited;
+  post-snapshot mutations are covered organically. On a **write-calendar change**
+  the resync **preserves the actual Google location** (the old `google_calendar_id`
+  + `google_event_id`) until the worker completes the approved delete-old/create-new
+  move; the link's `google_calendar_id` is repointed **only** at that successful
+  move boundary. Worker-side move + partial-move recovery + stale-generation fencing
+  remain B2.4 inputs.
+- **Un-cancel is defensive.** Hone has **no** user-facing un-cancel flow today; the
+  transition-into-`confirmed` rows (matrix rows 3/8) + tests exist so a future
+  un-cancel feature reuses this contract rather than deriving a second calendar
+  rule.
+- **No production caller before B2.3-b/B2.3-c.** All monitoring + reconciliation
+  paths must be deployed and tested before the first caller of
+  `claim_calendar_sync_op` is registered.
+
+### B2.4 input list (owed by the next phase, NOT built in B2.3-a)
+
+- `reschedule_appointment` / cancel RPC **lineage wiring** — populate
+  `rescheduled_from/to` + `cancellation_kind` so the enqueue trigger's rebind +
+  delete-suppression activate (dormant until then; reschedule falls back to
+  delete-old + create-new, still correct).
+- **`.owned` boundary validation** — `accessRole = "owner"` correspondence; the
+  cross-boundary GET response (404 vs 403); the write-calendar picker owner-only rule.
+- **`invalid_grant` → delete the encrypted secret** (not only flag the connection),
+  which the usable-secret eligibility check already treats as ineligible.
+- **Worker-side calendar move + delayed link repoint** — preserve old event
+  coordinates, validate create-new/delete-old ordering, repoint the link only at the
+  successful move boundary, fence older generations from reversing a completed move,
+  repair partial move completion.
+- **Stale-generation fencing**, the Google-call lifecycle tests, the four-class
+  reconciliation **sweep** + dead-row alert + heartbeat/retention (B2.3-b), the
+  hard-purge teardown routine, and — before Willow — **privacy-policy publication +
+  scope justification + consent-screen verification** for the sensitive `.owned`
+  scope.
 
 ---
 
@@ -289,12 +429,33 @@ session:
 
 Phase A requests the **minimum** scopes: `openid`, `userinfo.email`, and
 `calendar.calendarlist.readonly` (the narrowest official scope that makes calendar
-selection possible — grants NO event access). Phase B will add
-`calendar.events` (write Hone-owned events) and `calendar.readonly` (read busy)
-via **incremental authorization** (`include_granted_scopes=true`). Sam's
-controlled connection will require exactly **one** additional consent/reconnect
-when Phase B ships. Requesting event access before event sync exists would violate
+selection possible — grants NO event access). Phase B's **working** event-write
+scope is the narrower **`calendar.events.owned`** (CRUD on calendars the connected
+account owns), not broad `calendar.events`; broad `calendar.events` is retained as
+a **documented fallback** for a future customer who must write to a *non-owned*
+shared calendar. Because both DB-side consumers read the required scope from a
+single SQL source (`calendar_required_event_scopes()`, migration 0125) and the app
+reads `config.EVENT_WRITE_SCOPE`, a switch to broad `calendar.events` is a
+**tracked migration** (expected 0126) carrying the function body + the app constant
++ the consent-screen disclosure + fresh re-consent — never an untracked production
+`CREATE OR REPLACE`. Phase B eligibility uses **superset containment** (`granted_scopes
+@> calendar_required_event_scopes()`), so Google-bundled extra identity scopes (e.g.
+`userinfo.profile`, which Sam's live connection carries though Phase A never
+requested it) never make a connection ineligible. Sam's controlled connection will
+require exactly **one** additional consent/reconnect (for the final chosen scope)
+when Phase B activates (B2.5). `calendar.events.owned` is still a Google
+**sensitive** scope, so external users (Willow) require Google app verification
+before activation. Requesting event access before event sync exists would violate
 least privilege.
+
+An open B2.4 validation confirms `.owned` fits Hone's product boundary before any
+live re-consent: whether `calendarList.accessRole = "owner"` corresponds to the
+`.owned` authorization boundary, and what a speculative cross-boundary GET returns
+(404 vs 403) so the handler can distinguish *event does not exist* from *not
+authorized to inspect* from *calendar outside the supported ownership boundary*.
+The write-calendar picker will exclude calendars that do not satisfy the validated
+owned-calendar rule; shared calendars owned by another person/organization are
+explicitly unsupported near-term.
 
 ---
 

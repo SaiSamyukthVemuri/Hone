@@ -23,18 +23,41 @@ import {
 // still proven by the per-id / cross-studio assertions below.
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
+  // Migration 0125 added a GLOBAL runtime worker control that gates claim; these
+  // 0124 transport tests exercise the claim/record mechanics, so enable it.
+  await adminQuery("update public.calendar_sync_control set worker_enabled = true");
 });
 
 afterAll(async () => {
   await closePool();
 });
 
+// Migration 0125 added claim-time HEALTH eligibility. The 0124 transport tests
+// prove claim/record mechanics, so seed a FULLY outbound-ready owner connection
+// (connected + owner + a selected write calendar + the .owned event scope + a
+// usable encrypted secret) and enable the studio's outbound product-intent flag,
+// so a job is claimable. Each test uses a distinct studio, so the one-owner-per-
+// studio unique is never contended.
+const OWNED_EVENT_SCOPE =
+  "https://www.googleapis.com/auth/calendar.events.owned";
 async function seedConnection(studio: SeededStudio): Promise<string> {
   const id = randomUUID();
   await adminQuery(
-    `insert into public.calendar_connections (id, studio_id, practitioner_id, connection_status)
-     values ($1,$2,$3,'connected')`,
-    [id, studio.studioId, studio.practitionerId],
+    `insert into public.calendar_connections
+       (id, studio_id, practitioner_id, connection_status,
+        is_studio_calendar_owner, write_calendar_id, granted_scopes)
+     values ($1,$2,$3,'connected',true,'primary',array[$4]::text[])`,
+    [id, studio.studioId, studio.practitionerId, OWNED_EVENT_SCOPE],
+  );
+  await adminQuery(
+    `insert into public.calendar_connection_secrets
+       (connection_id, studio_id, encrypted_refresh_token, encryption_key_version)
+     values ($1,$2,'v1:1:iv:tag:ct',1)`,
+    [id, studio.studioId],
+  );
+  await adminQuery(
+    `update public.studios set google_calendar_outbound_sync_enabled = true where id=$1`,
+    [studio.studioId],
   );
   return id;
 }
