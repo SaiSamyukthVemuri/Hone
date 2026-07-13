@@ -161,6 +161,9 @@ test("two contexts charge the same attempt concurrently: one effect, one succeed
     type: "two-context-concurrency",
     description: `executeRequestsObserved=${requestsSeen} invocations=${invocations} effects=${effects} immediateA=${immediateA} immediateB=${immediateB}`,
   });
+  console.log(
+    `[two-context] executeRequestsObserved=${requestsSeen} invocations=${invocations} effects=${effects} immediateA=${immediateA} immediateB=${immediateB}`,
+  );
   expect(effects).toBe(1);
   expect(invocations).toBeGreaterThanOrEqual(1);
   expect(invocations).toBeLessThanOrEqual(2);

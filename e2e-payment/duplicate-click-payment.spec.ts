@@ -106,6 +106,7 @@ test("rapid duplicate-click charges exactly once (one attempt, one effect)", asy
     type: "duplicate-click",
     description: `invocations=${invocations} effects=${effects}`,
   });
+  console.log(`[duplicate-click] invocations=${invocations} effects=${effects}`);
   // FINANCIAL GUARANTEE: exactly one processor effect (one real charge).
   expect(effects).toBe(1);
   // The fake never hides a duplicate app call. A rapid double-click yields 1 (the
