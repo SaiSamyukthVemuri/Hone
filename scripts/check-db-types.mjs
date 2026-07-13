@@ -77,6 +77,8 @@ const CURATED_TABLES = {
   appointments: "Appointment",
   sessions: "Session",
   session_blocks: "SessionBlock",
+  // Migration 0128 (Willow charting): per-block treated areas + laterality.
+  session_block_areas: "SessionBlockArea",
   electrolysis_entries: "ElectrolysisEntry",
   laser_entries: "LaserEntry",
   client_intake_forms: "ClientIntakeForm",
