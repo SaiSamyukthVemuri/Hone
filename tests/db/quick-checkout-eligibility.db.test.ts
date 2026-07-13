@@ -2,6 +2,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closePool, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "@/e2e/helpers/local-env";
 
+// supabase-js (@supabase/realtime-js) requires a global WebSocket at CLIENT
+// CONSTRUCTION; the DB lane's Node 20 has none, and the real app path (Next
+// server) does. Admin queries never open a realtime channel, so a no-op stub
+// satisfies the construction check with no new dependency and no production
+// change. Must be set before createAdminClient() runs.
+if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === "undefined") {
+  (globalThis as { WebSocket?: unknown }).WebSocket = class WebSocketStub {};
+}
+
 // Stage A — real-resolver smoke test. Proves the CI DB-integration lane can
 // invoke the REAL getSessionPaymentEligibility (server-only, createAdminClient →
 // local Supabase REST, nested card-authorization resolver, Stripe livemode
