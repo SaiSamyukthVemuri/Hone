@@ -104,6 +104,25 @@ export async function bookAppointmentForClientAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot book." };
   }
+  // Owner-only INTENTIONAL outside-hours override (authoritative, server-side).
+  // Booking deliberately outside published availability — the escape hatch used
+  // by the calendar Quick Book time field and the client-profile Book flow — is
+  // restricted to the studio owner, enforced HERE regardless of which UI called
+  // the action or what a forged payload claims. We scope this to the intentional
+  // case (no custom duration): the calendar drag-to-create pairs the override
+  // with a duration_minutes_override to book a non-default LENGTH, which any
+  // active practitioner may still do; that path is unchanged. The standard slot
+  // flow (no override at all) is likewise unchanged for everyone.
+  if (
+    allowOutsideAvailability &&
+    durationOverride == null &&
+    practitioner.role !== "owner"
+  ) {
+    return {
+      ok: false,
+      error: "Only the studio owner can book outside your normal availability.",
+    };
+  }
 
   const supabase = await createClient();
 
