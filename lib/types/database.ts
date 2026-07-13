@@ -686,6 +686,33 @@ export type Client = {
   normalized_email: string | null;
 };
 
+// Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR
+// ANALYSIS clinical records. Append-only; a correction is a NEW row linked via
+// supersedes_note_id (the original is never overwritten). The "latest" of a kind
+// is the newest row not superseded by any other row.
+export type ClinicalNoteKind = "consultation" | "skin_hair_analysis";
+
+export type ClientClinicalNote = {
+  id: string;
+  client_id: string;
+  studio_id: string;
+  practitioner_id: string;
+  kind: ClinicalNoteKind;
+  body: string;
+  areas: string[];
+  occurred_at: string;
+  supersedes_note_id: string | null;
+  created_at: string;
+};
+
+// Read-model: a clinical note joined with its author's display name plus a
+// derived flag for whether a later revision superseded it. Kept here (not in the
+// server-only query module) so client components can import the type.
+export type ClinicalNoteWithAuthor = ClientClinicalNote & {
+  author_name: string | null;
+  is_superseded: boolean;
+};
+
 export type ApilusModality =
   | "Multiplex"
   | "Microflash"
