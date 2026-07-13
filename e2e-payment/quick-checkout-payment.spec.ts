@@ -131,9 +131,10 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
     .fill("E2E success-path session payment");
   await modal.getByRole("button", { name: /prepare session payment/i }).click();
 
-  // The persisted 'ready' row flows in and the Run charge button appears.
-  const runCharge = modal.getByRole("button", { name: /^run charge$/i });
-  await expect(runCharge).toBeVisible();
+  // The modal loads trusted context ONCE per open (a server action), so a
+  // successful prepare shows the in-modal confirmation; the persisted 'ready' row
+  // + Run charge surface when the checkout is reopened with fresh context.
+  await expect(modal.getByText(/session payment prepared/i)).toBeVisible();
 
   // --- Exactly one prepared attempt; ledger still empty (steps 16-18).
   const preparedRows = await getSessionPaymentAttemptRows(seed.sessionId);
@@ -146,7 +147,16 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const selector = idempotencySelectorForAttempt(attemptId);
   configureFakeStripeOutcome(selector, "success");
 
+  // --- Reopen the checkout so the prepared attempt drives the Ready panel. A
+  //     'ready' attempt is still "chargeable", so the dashboard keeps Checkout.
+  await modal.getByTestId("quick-checkout-close").click();
+  await expect(modal).toHaveCount(0);
+  await checkoutButton.click();
+  await expect(modal).toBeVisible();
+
   // --- Execute the charge with the explicit two-click confirmation (21-23).
+  const runCharge = modal.getByRole("button", { name: /^run charge$/i });
+  await expect(runCharge).toBeVisible();
   await runCharge.click(); // arms the confirm step
   const confirmCharge = modal.getByRole("button", { name: /confirm: run charge/i });
   await expect(confirmCharge).toBeVisible();
