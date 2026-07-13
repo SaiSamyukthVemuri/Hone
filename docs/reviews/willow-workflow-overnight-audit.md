@@ -6,10 +6,12 @@ root cause → migration → chosen implementation → PR → status. No product
 was read into this doc (no PHI).
 
 Migration ownership (sequencing rule): the multi-area/laterality work owns **0128**
-(child table) **and 0129** (atomic write RPCs — the delete-then-insert app write
-was a data-loss risk, corrected to two SECURITY DEFINER functions). Disinfactant
-notifications, if pursued, therefore take **0130** on their own branch. No two
-unrelated branches share a number.
+(child table), **0129** (atomic write RPCs), **and 0130** (revoke the residual anon
+EXECUTE grant on those RPCs — post-apply hardening; 0129 revoked only from PUBLIC).
+0128 + 0129 are applied to hosted prod. Disinfactant
+notifications, if pursued, therefore take **0131** on their own branch (0130 is the
+areas branch's anon-EXECUTE revoke — least-privilege hardening on the 0129 RPCs, NOT
+reserved for disinfactant). No two unrelated branches share a number.
 
 ---
 
@@ -119,7 +121,7 @@ unrelated branches share a number.
   default; non-owners never get it; public booking cannot pass it. **No migration.**
 - **PR:** client-booking-outside-hours-parity. **Status:** deferred; designed.
 
-## 8. Disinfectant notification-centre integration (complaint #8) — DESIGNED, migration 0130
+## 8. Disinfectant notification-centre integration (complaint #8) — DESIGNED, migration 0131
 
 - **Source of truth:** `record_keeping_disinfectants` (`0096`: `discard_due_date`,
   `date_discarded`); read-time alert only today. `practitioner_notifications` (`0070`) —
@@ -131,10 +133,11 @@ unrelated branches share a number.
   after approval) scans due disinfectants → inserts owner-visible notifications
   (approaching/due/overdue) linking to the record, **no PHI**; new event types go in the
   helper allowlist (no CHECK change). Idempotency + repeated-cycle correctness need a
-  durable dedup key + resolved-at → **migration 0130** adds `dedup_key text` +
+  durable dedup key + resolved-at → **migration 0131** adds `dedup_key text` +
   `resolved_at timestamptz` + a partial unique `(studio_id, dedup_key) where dedup_key is
   not null and resolved_at is null`. Replacement/discard resolves prior alerts; a new
-  cycle can alert again. Takes **0130** (0129 is now the areas atomic-write RPCs).
+  cycle can alert again. Takes **0131** (0129 = areas atomic-write RPCs, 0130 = the
+  anon-EXECUTE revoke hardening on those RPCs).
 - **PR:** disinfectant-notifications (own branch). **Status:** deferred; designed.
 
 ---

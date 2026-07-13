@@ -16,16 +16,12 @@ describe("0129 — file + repo-max tripwire", () => {
   it("is the single 0129 migration (atomic session-block-area writes)", () => {
     expect(FILE).toMatch(/^0129_atomic_session_block_area_writes\.sql$/);
   });
-  it("advances the repo migration max to 0129 (0125-0128 precede; nothing 0130+)", () => {
-    const nums = FILES.map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    expect(nums[nums.length - 1]).toBe("0129");
-    for (const n of ["0125", "0126", "0127", "0128"]) {
+  it("is immediately followed by 0130 (the anon-revoke hardening; repo-max tripwire now lives there)", () => {
+    // 0130 (revoke the residual anon EXECUTE on these RPCs) now advances the repo
+    // max; the authoritative repo-max tripwire lives in the 0130 test.
+    for (const n of ["0125", "0126", "0127", "0128", "0130"]) {
       expect(FILES.some((f) => f.startsWith(`${n}_`))).toBe(true);
     }
-    expect(FILES.filter((f) => /^01(3[0-9]|[4-9]\d)_/.test(f))).toEqual([]);
   });
   it("does NOT modify migration 0128 or its table", () => {
     expect(SQL).not.toMatch(/alter table public\.session_block_areas/i);
@@ -92,9 +88,13 @@ describe("0129 — authorization + hardening", () => {
     expect(upd).not.toMatch(/sort_order = r\./);
     expect(upd).not.toMatch(/deleted_at = r\./);
   });
-  it("EXECUTE is granted to authenticated only; revoked from public/anon", () => {
+  it("grants EXECUTE to authenticated + service_role; revokes from public (0130 revokes the residual anon default-privilege grant)", () => {
+    // NOTE: 0129 revokes only from PUBLIC and never grants "to anon" — but Supabase
+    // default privileges grant anon EXECUTE at create-time, so the deployed anon
+    // grant survived. Migration 0130 revokes it explicitly; see that test.
     expect((SQL.match(/revoke all on function public\.(create|update)_session_block_with_areas[\s\S]{0,120} from public/g) ?? []).length).toBe(2);
     expect((SQL.match(/grant execute on function public\.(create|update)_session_block_with_areas[\s\S]{0,120} to authenticated/g) ?? []).length).toBe(2);
+    // 0129 itself never grants to anon (the stray grant is from default privileges).
     expect(SQL).not.toMatch(/to anon/i);
   });
 });

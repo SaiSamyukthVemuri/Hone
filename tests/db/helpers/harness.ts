@@ -129,6 +129,30 @@ export async function asUser<T>(
   }
 }
 
+// Run `fn` under an explicit Postgres role (anon / authenticated / service_role)
+// in a rolled-back transaction — for function-level EXECUTE privilege probes.
+// `role` is an allow-listed test literal, never user input.
+const ROLE_ALLOWLIST = new Set(["anon", "authenticated", "service_role"]);
+export async function asRole<T>(
+  role: "anon" | "authenticated" | "service_role",
+  fn: (query: UserQuery) => Promise<T>,
+): Promise<T> {
+  if (!ROLE_ALLOWLIST.has(role)) throw new Error(`unsupported role: ${role}`);
+  const client: PoolClient = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query(`set local role ${role}`);
+    const result = await fn((text, params = []) => client.query(text, params));
+    await client.query("rollback"); // privilege probes never persist
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Convenience: run a single statement as an authenticated user.
 export async function userQuery(
   userId: string,
