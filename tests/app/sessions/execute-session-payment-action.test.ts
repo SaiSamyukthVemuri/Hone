@@ -173,9 +173,13 @@ describe("SessionPaymentPrepareCard: Run charge button (PR #173)", () => {
     expect(CARD).toMatch(/fd\.set\("confirm_charge",\s*"true"\)/);
   });
 
-  it("renders the succeeded panel with PaymentIntent + Charge ids", () => {
-    expect(CARD).toMatch(/Charge succeeded/);
-    expect(CARD).toMatch(/PaymentIntent:/);
+  it("renders a compact Paid summary post-charge; PaymentIntent/Charge ids are owner-only", () => {
+    // The in-session post-charge state uses the compact PaymentSummaryCard
+    // ("Paid · $X"); the PaymentIntent + Charge ids move into the owner-only
+    // TechnicalPaymentDetails disclosure instead of an inline "PaymentIntent:" row.
+    expect(CARD).toMatch(/<PaymentSummaryCard/);
+    expect(CARD).toMatch(/executeSuccess\.paymentIntentId/);
+    expect(CARD).toMatch(/<TechnicalPaymentDetails/);
   });
 
   it("notes that no receipt is sent in this PR", () => {

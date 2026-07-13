@@ -159,7 +159,9 @@ describe("payment UI copy map: neutral, mode-safe strings (copy fast-follow)", (
   it("session payment card uses neutral labels + NO misleading live-mode copy", () => {
     // Neutralized so nothing reads false after the #324 env flip.
     expect(CARD).toMatch(/Run charge/);
-    expect(CARD).toMatch(/Charge succeeded\./);
+    // Compact card: the post-charge headline is now "Paid" via derivePaymentSummary
+    // (the literal "Charge succeeded." was replaced by the summary card).
+    expect(CARD).toMatch(/derivePaymentSummary/);
     // The old test-mode framing that would lie in live mode is gone.
     expect(CARD).not.toMatch(/Run test charge/);
     expect(CARD).not.toMatch(/No live card was charged/);

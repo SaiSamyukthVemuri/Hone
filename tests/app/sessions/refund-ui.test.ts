@@ -165,21 +165,24 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     );
   });
 
-  it("the succeeded state surfaces amount + refunded timestamp + stripe refund id", () => {
+  it("the succeeded state surfaces amount + refunded timestamp (raw refund id is owner-only)", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(/Refund succeeded\./);
     expect(block).toMatch(/Amount refunded/);
     expect(block).toMatch(/Refunded:/);
-    expect(block).toMatch(/Stripe refund:/);
     expect(block).toMatch(/attempt\.refundedAt/);
-    expect(block).toMatch(/attempt\.stripeRefundId/);
+    // The raw Stripe refund id is no longer inline — it lives in the owner-only
+    // Technical payment details disclosure on SucceededPanel.
+    expect(block).not.toMatch(/Stripe refund:/);
+    expect(block).not.toMatch(/attempt\.stripeRefundId/);
   });
 
-  it("the failed state surfaces the sanitised failure message + code", () => {
+  it("the failed state stays calm — no raw code/message inline (they are owner-only)", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(/Refund failed\./);
-    expect(block).toMatch(/attempt\.refundFailureMessageSafe/);
-    expect(block).toMatch(/attempt\.refundFailureCode/);
+    expect(block).toMatch(/You can try again below\./);
+    expect(block).not.toMatch(/attempt\.refundFailureMessageSafe/);
+    expect(block).not.toMatch(/attempt\.refundFailureCode/);
   });
 
   it("the pending state surfaces a calm 'Refund pending' message", () => {
