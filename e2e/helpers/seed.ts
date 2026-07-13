@@ -461,6 +461,41 @@ export async function seedE2eProbeInventoryItem(
   );
 }
 
+// Willow follow-up: seed an OVERDUE disinfectant record (record_keeping_disinfectants)
+// so the Notification Centre computes its "Replace disinfectant now" operational
+// alert. A far-past discard_due_date with no date_discarded is unambiguously
+// overdue in any studio timezone. Returns the record id.
+export async function seedE2eOverdueDisinfectant(
+  seed: E2eSeed,
+  opts: { name?: string; discardDueDate?: string; datePrepared?: string } = {},
+): Promise<{ recordId: string }> {
+  const recordId = randomUUID();
+  await sql(
+    `insert into public.record_keeping_disinfectants
+       (id, studio_id, date_prepared, disinfectant_name, discard_due_date)
+     values ($1,$2,$3,$4,$5)`,
+    [
+      recordId,
+      seed.studioId,
+      opts.datePrepared ?? "2019-12-01",
+      opts.name ?? "Barbicide E2E jar",
+      opts.discardDueDate ?? "2020-01-01",
+    ],
+  );
+  return { recordId };
+}
+
+// Read a disinfectant record's date_discarded (E2E ground truth for resolution).
+export async function getDisinfectantDateDiscarded(
+  recordId: string,
+): Promise<string | null> {
+  const rows = await sql<{ date_discarded: string | null }>(
+    `select date_discarded from public.record_keeping_disinfectants where id = $1`,
+    [recordId],
+  );
+  return rows[0]?.date_discarded ?? null;
+}
+
 // Seed a LEGACY single-area block (primary_area + block-level side, no child
 // rows) so the e2e can prove legacy records still render their single area.
 export async function seedE2eLegacyBlock(
