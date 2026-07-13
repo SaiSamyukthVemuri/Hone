@@ -31,12 +31,24 @@ describe("client-page override reuses the shared action + is owner-only in the U
   });
 });
 
-describe("server gate is authoritative + scoped to intentional outside-hours", () => {
-  it("rejects a non-owner intentional override (no custom duration)", () => {
+describe("server gate is the simple binding policy (owner-only bypass, no client trust)", () => {
+  it("gates purely on the flag + server-resolved owner role (no duration/source scoping)", () => {
     expect(ACTIONS).toMatch(
-      /allowOutsideAvailability &&\s*\n?\s*durationOverride == null &&\s*\n?\s*practitioner\.role !== "owner"/,
+      /if \(allowOutsideAvailability && practitioner\.role !== "owner"\)/,
     );
     expect(ACTIONS).toMatch(/Only the studio owner can book outside/);
+    // The old, exploitable duration-scoped gate must be gone.
+    expect(ACTIONS).not.toMatch(/durationOverride == null &&\s*\n?\s*practitioner\.role !== "owner"/);
+  });
+
+  it("keeps the pre-existing scheduling guards intact (past-time, studio scope, overlap constraint)", () => {
+    // Past-time guard.
+    expect(ACTIONS).toMatch(/in the past/i);
+    // Studio-scoped service + client lookups (tenant isolation).
+    expect(ACTIONS).toMatch(/\.from\("services"\)[\s\S]{0,200}\.eq\("studio_id", studio\.id\)/);
+    expect(ACTIONS).toMatch(/\.from\("clients"\)[\s\S]{0,200}\.eq\("studio_id", studio\.id\)/);
+    // DB exclusion-constraint (overlap/buffer/blockout) surfaced by sqlstate.
+    expect(ACTIONS).toMatch(/23P01|exclusion/i);
   });
 });
 

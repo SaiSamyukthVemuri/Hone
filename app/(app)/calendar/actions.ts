@@ -104,20 +104,23 @@ export async function bookAppointmentForClientAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot book." };
   }
-  // Owner-only INTENTIONAL outside-hours override (authoritative, server-side).
-  // Booking deliberately outside published availability — the escape hatch used
-  // by the calendar Quick Book time field and the client-profile Book flow — is
-  // restricted to the studio owner, enforced HERE regardless of which UI called
-  // the action or what a forged payload claims. We scope this to the intentional
-  // case (no custom duration): the calendar drag-to-create pairs the override
-  // with a duration_minutes_override to book a non-default LENGTH, which any
-  // active practitioner may still do; that path is unchanged. The standard slot
-  // flow (no override at all) is likewise unchanged for everyone.
-  if (
-    allowOutsideAvailability &&
-    durationOverride == null &&
-    practitioner.role !== "owner"
-  ) {
+  // AUTHORIZATION: bypassing published availability is OWNER-ONLY on every
+  // internal booking surface. This is the single server action that honours the
+  // availability-bypass flag (the client-profile Book flow and the calendar
+  // Quick Book both post to it; public booking lives in a separate file that
+  // never reads the flag). The rule is a SIMPLE, unconditional binding policy:
+  //
+  //     allow_outside_availability = true  ⇒  practitioner.role must be "owner"
+  //
+  // It is enforced on the SERVER-RESOLVED role only. NO client-supplied signal —
+  // duration, source, mode, form name, UI route, or drag-vs-click — is trusted as
+  // authorization evidence, so a non-owner cannot bypass by attaching a custom
+  // duration or forging a source label. (Because the drag-to-create path couples
+  // a custom LENGTH to the availability bypass, non-owner custom-length booking
+  // is owner-only too; see PRODUCT POLICY in docs/reviews/booking-availability-
+  // authorization.md. The standard slot flow — no bypass — is unchanged for every
+  // active practitioner.)
+  if (allowOutsideAvailability && practitioner.role !== "owner") {
     return {
       ok: false,
       error: "Only the studio owner can book outside your normal availability.",
