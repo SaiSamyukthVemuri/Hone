@@ -97,17 +97,17 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0127 (Willow PR A follow-up — fix the
-    // client_clinical_notes author-INSERT RLS shadowing defect), on top of 0126
-    // (client_clinical_notes, applied to hosted prod migration-first), 0125
-    // (Google Calendar B2.3-a, applied+merged), 0124 (B1 outbound-sync
-    // foundation), Willow P1-B (0123), and Phase A (0121/0122). 0126 is applied
-    // hosted; 0127 is repo-only until its separately-approved migration-first
+    // Repo max advances to 0130 (revoke the residual anon EXECUTE grant on the
+    // 0129 multi-area charting RPCs — least-privilege hardening), on top of 0129
+    // (atomic session-block-area write RPCs, applied to hosted prod
+    // migration-first), 0128 (session_block_areas, applied hosted), and the
+    // 0125-0127 clinical/Google-Calendar lineage. 0128 and 0129 are applied
+    // hosted; 0130 is repo-only until its separately-approved migration-first
     // hosted apply — UNTIL then the live verifier's "Remote migration max" will
-    // (correctly) report expected 0127 vs remote 0126, the intended pending-apply
+    // (correctly) report expected 0130 vs remote 0129, the intended pending-apply
     // signal. This assertion still fails on the next new migration, forcing a
     // conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0128");
+    expect(nums[nums.length - 1]).toBe("0130");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

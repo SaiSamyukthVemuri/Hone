@@ -10,6 +10,7 @@ import {
   buildBeforeToday,
   type BeforeToday,
 } from "@/lib/sessions/before-today";
+import type { SessionBlockArea } from "@/lib/types/database";
 
 // PR #212: compact "Before today" previews for the Dashboard Today
 // roster. The preview is a RENDERING of the exact same PR #211
@@ -90,6 +91,7 @@ type SessionRow = {
 };
 
 type BlockRow = ClinicalSummaryBlock & {
+  id: string;
   session_id: string;
   machine_frequency: string | null;
   probe_lot_number: string | null;
@@ -122,7 +124,7 @@ export async function getBeforeTodayPreviews(
       ? supabase
           .from("session_blocks")
           .select(
-            "session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+            "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
           )
           .eq("studio_id", studioId)
           .in("session_id", sessionIds)
@@ -136,6 +138,33 @@ export async function getBeforeTodayPreviews(
       .in("id", ids),
   ]);
   const blocks = (blockRows ?? []) as BlockRow[];
+
+  // Migration 0128: attach the structured area rows so every summary surface
+  // (last treatment, appointment prep, before-today) shows EVERY treated area +
+  // laterality, not just the legacy primary_area. One bounded, studio-scoped
+  // query over the loaded block ids — no N+1, no cross-studio rows.
+  if (blocks.length > 0) {
+    const { data: areaRows } = await supabase
+      .from("session_block_areas")
+      .select("*")
+      .eq("studio_id", studioId)
+      .in(
+        "session_block_id",
+        blocks.map((b) => b.id),
+      )
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true });
+    const areasByBlock = new Map<string, SessionBlockArea[]>();
+    for (const areaRow of (areaRows ?? []) as SessionBlockArea[]) {
+      const bucket = areasByBlock.get(areaRow.session_block_id) ?? [];
+      bucket.push(areaRow);
+      areasByBlock.set(areaRow.session_block_id, bucket);
+    }
+    for (const block of blocks) {
+      block.structured_areas = areasByBlock.get(block.id) ?? [];
+    }
+  }
+
   const clientFields = new Map(
     ((clientRows ?? []) as Array<{
       id: string;

@@ -19,6 +19,7 @@ import { LastVisitCard } from "@/components/last-visit-card";
 import { BeforeTodayCard } from "@/components/before-today-card";
 import { buildBeforeToday } from "@/lib/sessions/before-today";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
+import { attachStructuredAreas } from "@/lib/supabase/queries";
 
 // PR #259: display cap for imported treatment memory in Before Today — show
 // the latest few so the briefing stays scannable; "Showing the latest N of M"
@@ -328,7 +329,7 @@ export default async function ClientCheatSheetPage({
     const { data: recentBlocks } = await supabaseForSummary
       .from("session_blocks")
       .select(
-        "session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -337,11 +338,17 @@ export default async function ClientCheatSheetPage({
       )
       .is("deleted_at", null)
       .order("sort_order", { ascending: true });
+    // Migration 0128: attach structured areas so the Last treatment / Watch-plan
+    // summaries render EVERY treated area + laterality, not just primary_area.
+    const summaryBlockRows = (recentBlocks ?? []) as Array<
+      ClinicalSummaryBlock & { id: string; session_id: string }
+    >;
+    await attachStructuredAreas(summaryBlockRows, studio.id);
     const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
-    for (const block of recentBlocks ?? []) {
-      const sessionId = (block as { session_id: string }).session_id;
+    for (const block of summaryBlockRows) {
+      const sessionId = block.session_id;
       const list = blocksBySession.get(sessionId) ?? [];
-      list.push(block as ClinicalSummaryBlock);
+      list.push(block);
       blocksBySession.set(sessionId, list);
     }
     lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
@@ -403,7 +410,7 @@ export default async function ClientCheatSheetPage({
     const { data: intelBlocks } = await supabaseForIntel
       .from("session_blocks")
       .select(
-        "session_id, primary_area, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, deleted_at)",
+        "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -411,15 +418,21 @@ export default async function ClientCheatSheetPage({
         sessions.slice(0, 200).map((sess) => sess.id),
       )
       .is("deleted_at", null);
+    // Migration 0128: attach structured areas so the Treatment intelligence card
+    // credits EVERY treated area (a Cheeks + Sideburns block appears under both),
+    // not only the legacy primary_area.
+    const intelBlockRows = (intelBlocks ?? []) as Array<
+      Omit<IntelligenceBlockInput, "entry_hairs"> & {
+        id: string;
+        electrolysis_entries:
+          | Array<{ hairs_treated: number | null; deleted_at: string | null }>
+          | null;
+      }
+    >;
+    await attachStructuredAreas(intelBlockRows, studio.id);
     treatmentIntelligence = buildTreatmentIntelligence({
       sessionsNewestFirst: sessions,
-      blocks: ((intelBlocks ?? []) as Array<
-        Omit<IntelligenceBlockInput, "entry_hairs"> & {
-          electrolysis_entries:
-            | Array<{ hairs_treated: number | null; deleted_at: string | null }>
-            | null;
-        }
-      >).map((b) => ({
+      blocks: intelBlockRows.map((b) => ({
         ...b,
         // Migration 0114: voided passes don't contribute hairs to intelligence.
         entry_hairs: (b.electrolysis_entries ?? [])

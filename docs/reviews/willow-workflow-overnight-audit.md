@@ -6,8 +6,12 @@ root cause → migration → chosen implementation → PR → status. No product
 was read into this doc (no PHI).
 
 Migration ownership (sequencing rule): the multi-area/laterality work owns **0128**
-(child table). Disinfectant notifications, if pursued, stack on that branch as
-**0129**. No two unrelated branches share a number.
+(child table), **0129** (atomic write RPCs), **and 0130** (revoke the residual anon
+EXECUTE grant on those RPCs — post-apply hardening; 0129 revoked only from PUBLIC).
+0128 + 0129 are applied to hosted prod. Disinfactant
+notifications, if pursued, therefore take **0131** on their own branch (0130 is the
+areas branch's anon-EXECUTE revoke — least-privilege hardening on the 0129 RPCs, NOT
+reserved for disinfactant). No two unrelated branches share a number.
 
 ---
 
@@ -37,7 +41,7 @@ Migration ownership (sequencing rule): the multi-area/laterality work owns **012
   (`Follicular erythema`/`Follicular edema`) are untouched (exact-token, not substring).
 - **PR:** chips+vocab (this PR). **Migration:** none.
 
-## 2 + 3. Multiple areas under one settings block + structured laterality (complaints #2, #3) — DESIGNED, migration 0128
+## 2 + 3. Multiple areas under one settings block + structured laterality (complaints #2, #3) — IMPLEMENTED (PR #417), migrations 0128 + 0129
 
 - **Source of truth:** `session_blocks` has single `primary_area` + block-level `side`
   (`0039`: center/left/right/bilateral/n a) + `custom_area_detail`; per-entry
@@ -53,10 +57,18 @@ Migration ownership (sequencing rule): the multi-area/laterality work owns **012
   combined labels ("Left cheek", "Right sideburn", "Bilateral cheeks"). "Apply this side
   to all" shortcut. Product language: "New treatment area" → "Add settings block /
   Add areas with different settings". **Migration 0128.**
-- **PR:** willow-charting-areas (separate branch, owns 0128). **Status:** deferred —
-  large (schema + form rework + display/print/history/export + RLS + E2E); designed here.
+- **PR:** #417 (`claude/willow-multi-area-charting-ui`, owns 0128 + 0129).
+  **Status:** IMPLEMENTED + CI-green. 0128 applied + deployed (schema foundation);
+  **0129 (atomic write RPCs) pending migration-first apply then merge** (approval-
+  gated). `components/multi-area-editor.tsx` ("Areas treated with these settings",
+  add-never-replace, per-area laterality, apply-to-all); the atomic RPCs write
+  block + projection + the complete area set in one transaction with optimistic
+  concurrency; the shared `blockAreasLabel()` resolver renders **every** area +
+  laterality on **all** surfaces (charting, history, summaries, treatment-memory,
+  records, clinical export, photos, search); full iPad release E2E. No backfill;
+  legacy records render unchanged.
 
-## 6. Probe-lot inventory selector (complaint #6) — DESIGNED (likely no migration)
+## 6. Probe-lot inventory selector (complaint #6) — IMPLEMENTED (PR #417, no migration)
 
 - **Source of truth:** `record_keeping_sterile_items` (`0085`) holds probe lots;
   `session_blocks.probe_lot_number` is the charted snapshot; `getProbeLotSuggestions`
@@ -68,7 +80,15 @@ Migration ownership (sequencing rule): the multi-area/laterality work owns **012
   preselect only when exactly one active lot; clear "No active probe lots" empty state.
   Likely **no migration** (snapshot column exists; optional inventory-id link is a small
   additive column if we choose to store it).
-- **PR:** willow-charting-areas or a probe-focused PR. **Status:** deferred; designed.
+- **PR:** #417. **Status:** IMPLEMENTED + CI-green (no migration). Source of truth =
+  `record_keeping_sterile_items` probe rows (the dormant legacy `probe_lots` table is
+  NOT used). `lib/record-keeping/probe-lot-inventory.ts` (active = not past expiry;
+  expired stays selectable but flagged + last; dedup; suggest only the single active
+  or a last-used active — never silently pick) + `components/probe-lot-select.tsx`
+  (searchable; manual entry always available; "No active probe lots found" empty
+  state + inventory link; iPad-friendly). Saved lot stays the free-text snapshot on
+  `session_blocks.probe_lot_number` (no FK), written in the same atomic mutation as
+  the areas — archiving/expiring a lot never rewrites past charting.
 
 ## 4. Compact payment panel (complaint #4) — DESIGNED (no migration)
 
@@ -101,7 +121,7 @@ Migration ownership (sequencing rule): the multi-area/laterality work owns **012
   default; non-owners never get it; public booking cannot pass it. **No migration.**
 - **PR:** client-booking-outside-hours-parity. **Status:** deferred; designed.
 
-## 8. Disinfectant notification-centre integration (complaint #8) — DESIGNED, migration 0129 (stacked)
+## 8. Disinfectant notification-centre integration (complaint #8) — DESIGNED, migration 0131
 
 - **Source of truth:** `record_keeping_disinfectants` (`0096`: `discard_due_date`,
   `date_discarded`); read-time alert only today. `practitioner_notifications` (`0070`) —
@@ -113,11 +133,12 @@ Migration ownership (sequencing rule): the multi-area/laterality work owns **012
   after approval) scans due disinfectants → inserts owner-visible notifications
   (approaching/due/overdue) linking to the record, **no PHI**; new event types go in the
   helper allowlist (no CHECK change). Idempotency + repeated-cycle correctness need a
-  durable dedup key + resolved-at → **migration 0129** adds `dedup_key text` +
+  durable dedup key + resolved-at → **migration 0131** adds `dedup_key text` +
   `resolved_at timestamptz` + a partial unique `(studio_id, dedup_key) where dedup_key is
   not null and resolved_at is null`. Replacement/discard resolves prior alerts; a new
-  cycle can alert again. Stacks on the areas branch (0128) → **0129**.
-- **PR:** disinfectant-notifications (stacked on 0128 branch). **Status:** deferred; designed.
+  cycle can alert again. Takes **0131** (0129 = areas atomic-write RPCs, 0130 = the
+  anon-EXECUTE revoke hardening on those RPCs).
+- **PR:** disinfectant-notifications (own branch). **Status:** deferred; designed.
 
 ---
 

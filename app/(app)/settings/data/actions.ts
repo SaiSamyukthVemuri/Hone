@@ -4,6 +4,11 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+import {
+  blockAreasLabel,
+  type BlockArea,
+  type Laterality,
+} from "@/lib/sessions/block-areas";
 
 export type ExportResult =
   | { ok: true; filename: string; base64: string }
@@ -321,6 +326,26 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     blocksById.set(b.id, b);
   }
 
+  // Migration 0128: the structured multi-area set per block, so the export
+  // records EVERY treated area + laterality — not just the legacy first-area
+  // projection in block_primary_area/block_side. Studio-scoped, ordered.
+  const areaRowsRes = await supabase
+    .from("session_block_areas")
+    .select("session_block_id, area, laterality, display_order")
+    .eq("studio_id", studio.id)
+    .order("display_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  const areasByBlock = new Map<string, BlockArea[]>();
+  for (const r of (areaRowsRes.data ?? []) as Array<{
+    session_block_id: string;
+    area: string;
+    laterality: Laterality;
+  }>) {
+    const list = areasByBlock.get(r.session_block_id) ?? [];
+    list.push({ area: r.area, laterality: r.laterality });
+    areasByBlock.set(r.session_block_id, list);
+  }
+
   // Flatten the `areas` text[] to a semicolon-separated string so it renders
   // cleanly in spreadsheets (CSV's own delimiter is a comma), and merge the
   // structured area + probe columns from the entry's block. Null/missing
@@ -345,6 +370,15 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         : "",
       block_primary_area: b?.primary_area ?? null,
       block_side: b?.side ?? null,
+      // Migration 0128: the full ordered multi-area label ("Left cheek; Right
+      // sideburn"). Legacy single-area blocks fall back to primary_area + side,
+      // so no exported record ever collapses to only the first of several areas.
+      block_areas: b
+        ? blockAreasLabel(areasByBlock.get(b.id) ?? null, {
+            primary_area: b.primary_area,
+            side: b.side,
+          })?.replace(/ · /g, "; ") ?? null
+        : null,
       block_custom_area_detail: b?.custom_area_detail ?? null,
       probe_key: b?.probe_key ?? null,
       probe_brand: b?.probe_brand ?? null,
@@ -396,6 +430,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         // (migrations 0039 / 0041).
         "block_primary_area",
         "block_side",
+        // Appended: the full multi-area set + laterality (migration 0128),
+        // semicolon-separated ("Left cheek; Right sideburn"). block_primary_area
+        // stays for back-compat; this is the complete, non-lossy area record.
+        "block_areas",
         "block_custom_area_detail",
         "probe_key",
         "probe_brand",

@@ -184,7 +184,8 @@ describe("probe lot/batch number in charting", () => {
 
   it("PR #204 charting order and PR #203 sticky frequency are intact", () => {
     const anchors = [
-      ">Treatment area</span>",
+      // Migration 0128: the area section is now the multi-area editor, still first.
+      "<MultiAreaEditor",
       ">Machine frequency</span>",
       ">Probe</span>",
       ">Mode</span>",

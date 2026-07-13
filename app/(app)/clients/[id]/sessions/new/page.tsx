@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  attachStructuredAreas,
   getClientById,
   getCurrentPractitionerWithStudio,
 } from "@/lib/supabase/queries";
@@ -69,14 +70,20 @@ export default async function NewSessionPage({
     const { data: prevBlocks } = await supabase
       .from("session_blocks")
       .select(
-        "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
       )
       .eq("studio_id", studio.id)
       .eq("session_id", prevSession.id)
       .is("deleted_at", null)
       .order("sort_order", { ascending: true });
+    // Migration 0128: attach structured areas so the previous-session summary
+    // renders every treated area + laterality, not only the legacy primary_area.
+    const prevBlockRows = (prevBlocks ?? []) as Array<
+      ClinicalSummaryBlock & { id: string }
+    >;
+    await attachStructuredAreas(prevBlockRows, studio.id);
     previousSummary = buildLastSessionSummary({
-      blocks: (prevBlocks ?? []) as ClinicalSummaryBlock[],
+      blocks: prevBlockRows,
       nextSessionNote: prevSession.next_session_note,
     });
     previousMeta = {

@@ -2,7 +2,13 @@
 
 import { useMemo, useState } from "react";
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
-import type { ElectrolysisEntry, SessionBlock } from "@/lib/types/database";
+import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
+import type {
+  ElectrolysisEntry,
+  SessionBlock,
+  SessionBlockArea,
+} from "@/lib/types/database";
+import { resolveBlockAreas, formatAreaLabel } from "@/lib/sessions/block-areas";
 import type {
   SessionBlockWithEntries,
   TreatmentParams,
@@ -34,7 +40,24 @@ import { removeSessionAreaAction } from "./block-actions";
 //   1. primary_area (+ side / specifics)   — the structured area
 //   2. block_name                          — legacy free-text label
 //   3. "Treatment area N" placeholder      — muted; no area chosen yet
-function areaTitle(block: SessionBlock): { text: string; placeholder: boolean } {
+function areaTitle(
+  block: SessionBlock & { structured_areas?: SessionBlockArea[] },
+): { text: string; placeholder: boolean } {
+  // Multi-area (0128): structured child rows take precedence — render every
+  // area with its own laterality ("Left cheek · Right sideburn"). Legacy blocks
+  // (no child rows) fall back to primary_area + side below.
+  const structured = resolveBlockAreas(block.structured_areas ?? [], {
+    primary_area: block.primary_area,
+    side: block.side,
+  });
+  if ((block.structured_areas?.length ?? 0) > 0 && structured.length > 0) {
+    const base = structured.map((a) => formatAreaLabel(a)).join(" · ");
+    const detail = block.custom_area_detail?.trim();
+    return {
+      text: detail ? `${base} · ${detail}` : base,
+      placeholder: false,
+    };
+  }
   const area = block.primary_area?.trim();
   if (area && area.length > 0) {
     const extras: string[] = [];
@@ -76,6 +99,7 @@ type Props = {
   // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
   probeLotSuggestions?: ProbeLotSuggestions;
+  probeLotInventory?: ProbeLotOption[];
 };
 
 export function SessionBlocksView({
@@ -87,6 +111,7 @@ export function SessionBlocksView({
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -104,6 +129,7 @@ export function SessionBlocksView({
           clientId={clientId}
           clientTagLabels={clientTagLabels}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
         />
       ))}
 
@@ -133,6 +159,7 @@ export function SessionBlocksView({
           previousBlock={previousBlock}
           savedBlocks={blocks}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
           // PR #191 (Chloe smoke feedback): the plan-area seed applies
           // only to the FIRST treatment area of the session. Adding
           // another area starts blank; a new area is usually a
@@ -150,7 +177,7 @@ export function SessionBlocksView({
           onClick={() => setAdding(true)}
           className="self-start rounded-md border border-dashed border-neutral-300 px-4 py-3 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
         >
-          {blocks.length > 0 ? "+ Add another treatment area" : "+ Add treatment area"}
+          + Add settings block
         </button>
       )}
     </div>
@@ -163,12 +190,14 @@ function BlockSection({
   clientId,
   clientTagLabels,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
   clientTagLabels: ReadonlyArray<string>;
   probeLotSuggestions?: ProbeLotSuggestions;
+  probeLotInventory?: ProbeLotOption[];
 }) {
   const [editing, setEditing] = useState(false);
   // Extra passes are optional and collapsed by default — the first reading
@@ -252,6 +281,13 @@ function BlockSection({
           block={block}
           firstEntry={entriesSorted[0] ?? null}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
+          // Multi-area (0128): seed the editor from the block's structured
+          // areas; empty falls back to legacy primary_area + side in the form.
+          initialAreas={resolveBlockAreas(block.structured_areas ?? [], {
+            primary_area: block.primary_area,
+            side: block.side,
+          })}
           onCancel={() => setEditing(false)}
         />
       ) : (

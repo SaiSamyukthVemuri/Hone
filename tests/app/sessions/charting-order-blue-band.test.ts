@@ -20,7 +20,9 @@ const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
 describe("charting field order (Chloe's exact flow)", () => {
   it("Area -> Frequency -> Probe -> Mode -> Modality -> Readings -> Pulse -> Hairs -> Minutes", () => {
     const anchors = [
-      '>Treatment area</span>',
+      // Migration 0128: the single-area section is now the multi-area editor,
+      // still first (areas treated with these settings), before machine settings.
+      "<MultiAreaEditor",
       '>Machine frequency</span>',
       '>Probe</span>',
       '>Mode</span>',

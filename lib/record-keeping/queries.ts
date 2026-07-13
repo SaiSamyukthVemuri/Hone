@@ -1,9 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
+import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
+import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   normalizeProbeLabel,
   type ProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
+import {
+  buildProbeLotOptions,
+  type ProbeLotInventoryRow,
+  type ProbeLotOption,
+} from "@/lib/record-keeping/probe-lot-inventory";
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   SUPPLY_EXPIRING_WITHIN_DAYS,
@@ -91,6 +98,41 @@ export async function getLatestProbeLotSuggestion(
     .maybeSingle();
   const lot = (data?.lot_number as string | null | undefined)?.trim();
   return lot ? lot : null;
+}
+
+// Migration 0128 charting release: the full ACTIVE probe-lot inventory for the
+// charting selector. Source = record_keeping_sterile_items (the studio's live
+// sterilization log) filtered to probe rows with a lot number; the dormant
+// legacy `probe_lots` table is deliberately NOT read. Studio-scoped (.eq +
+// RLS). Expired lots ARE returned (a historical value must stay selectable) but
+// are classified isExpired and sorted last by buildProbeLotOptions. Manual entry
+// always remains available in the form; this only powers suggestions/search.
+export async function getProbeLotInventory(
+  studioId: string,
+): Promise<ProbeLotOption[]> {
+  const supabase = await createClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("lot_number, item_description, manufacturer_name, expiry_date")
+    .eq("studio_id", studioId)
+    .not("lot_number", "is", null)
+    .ilike("item_description", "%probe%")
+    .order("expiry_date", { ascending: false, nullsFirst: true })
+    .order("date_purchased", { ascending: false, nullsFirst: false })
+    .limit(500);
+  const rows: ProbeLotInventoryRow[] = ((data ?? []) as Array<{
+    lot_number: string | null;
+    item_description: string | null;
+    manufacturer_name: string | null;
+    expiry_date: string | null;
+  }>).map((r) => ({
+    lotNumber: (r.lot_number ?? "").trim(),
+    itemDescription: r.item_description ?? "",
+    manufacturerName: r.manufacturer_name ?? null,
+    expiryDate: r.expiry_date,
+  }));
+  return buildProbeLotOptions(rows, today);
 }
 
 // Feature A (Chloe charting feedback): while charting, suggest the most recent
@@ -325,7 +367,7 @@ export async function getClientProcedureRecords(
     supabase
       .from("session_blocks")
       .select(
-        "session_id, sort_order, primary_area, block_name, probe_label, probe_lot_number, minutes_performed, machine_frequency",
+        "id, session_id, sort_order, primary_area, side, block_name, probe_label, probe_lot_number, minutes_performed, machine_frequency",
       )
       .eq("studio_id", studioId)
       .in("session_id", sessionIds)
@@ -336,6 +378,13 @@ export async function getClientProcedureRecords(
       .select("id, display_name, email")
       .eq("studio_id", studioId),
   ]);
+
+  // Migration 0128: resolve EVERY treated area + laterality per block so a
+  // procedure record never shows only the first of several areas.
+  const procedureAreasByBlock = await getSessionBlockAreasByBlockIds(
+    (blocks ?? []).map((b) => b.id as string),
+    studioId,
+  );
 
   const practitionerName = new Map<string, string>(
     (practitioners ?? []).map((p) => [
@@ -353,7 +402,10 @@ export async function getClientProcedureRecords(
     const list = blocksBySession.get(sid) ?? [];
     list.push({
       name:
-        ((b.primary_area as string | null)?.trim() ||
+        (blockAreasLabel(procedureAreasByBlock.get(b.id as string), {
+          primary_area: b.primary_area as string | null,
+          side: b.side as string | null,
+        }) ||
           (b.block_name as string | null)?.trim() ||
           `Treatment area ${b.sort_order}`) as string,
       probeLabel: (b.probe_label as string | null) ?? null,
@@ -517,7 +569,7 @@ export async function getLotTraceability(
       supabase
         .from("session_blocks")
         .select(
-          "id, session_id, primary_area, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
+          "id, session_id, primary_area, side, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
         )
         .eq("studio_id", studioId)
         .ilike("probe_lot_number", pattern)
@@ -537,10 +589,18 @@ export async function getLotTraceability(
     }>).map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
 
+  // Migration 0128: resolve the full multi-area set for each block that used
+  // this lot so the usage record shows every treated area + laterality.
+  const lotAreasByBlock = await getSessionBlockAreasByBlockIds(
+    ((blockRows ?? []) as Array<{ id: string }>).map((b) => b.id),
+    studioId,
+  );
+
   type RawUsage = {
     id: string;
     session_id: string;
     primary_area: string | null;
+    side: string | null;
     block_name: string | null;
     sort_order: number;
     probe_label: string | null;
@@ -593,7 +653,10 @@ export async function getLotTraceability(
         startedAt: sess?.started_at ?? null,
         modality: sess?.modality ?? null,
         areaName:
-          b.primary_area?.trim() ||
+          blockAreasLabel(lotAreasByBlock.get(b.id), {
+            primary_area: b.primary_area,
+            side: b.side,
+          }) ||
           b.block_name?.trim() ||
           `Treatment area ${b.sort_order}`,
         probeLabel: b.probe_label,

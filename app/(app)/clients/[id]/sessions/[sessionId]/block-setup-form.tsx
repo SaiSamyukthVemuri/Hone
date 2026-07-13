@@ -46,6 +46,8 @@ import {
   resolveProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
+import { ProbeLotSelect } from "@/components/probe-lot-select";
+import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
 import type {
   ApilusModality,
   ElectrolysisEntry,
@@ -71,6 +73,8 @@ import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
+import { MultiAreaEditor } from "@/components/multi-area-editor";
+import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -143,6 +147,15 @@ type Props = {
   // selected probe (studio-scoped, never auto-confirmed) — keyed match first,
   // label fallback second. Empty when there is nothing to suggest.
   probeLotSuggestions?: ProbeLotSuggestions;
+  // Migration 0128 charting release: the studio's ACTIVE probe-lot inventory
+  // (record_keeping_sterile_items probe rows) powering the searchable selector.
+  // Manual entry always stays available; expired lots are still selectable but
+  // flagged. Empty = the selector shows the "No active probe lots found" state.
+  probeLotInventory?: ProbeLotOption[];
+  // Migration 0128: the block's structured areas on edit (empty for legacy /
+  // create). Seeds the multi-area editor; the read path falls back to
+  // primary_area + side when empty.
+  initialAreas?: BlockArea[];
   onCancel: () => void;
 };
 
@@ -157,10 +170,14 @@ type Draft = {
   probeLotNumber: string;
   machineFrequency: string;
   minutes: string;
-  // Treatment area (0039). All optional; empty → null on save.
+  // Treatment area (0039, legacy). Retained for copy/back-compat but the UI now
+  // drives the structured `areas` set (migration 0128) below.
   primaryArea: string;
   side: string; // SessionBlockSide | ""
   customAreaDetail: string;
+  // Multi-area (0128): the areas treated with these settings, each with its own
+  // laterality. This is the authoritative area input the form submits.
+  areas: BlockArea[];
   // One-page charting: the first entry's readings, captured on the same
   // page and saved with the treatment area (no second form). Phase 3 splits
   // the readings into thermolysis and galvanic so blend records both.
@@ -203,6 +220,7 @@ const EMPTY: Draft = {
   primaryArea: "",
   side: "",
   customAreaDetail: "",
+  areas: [],
   thermolysisIntensityPercent: "",
   thermolysisDurationSeconds: "",
   galvanicMa: "",
@@ -228,15 +246,18 @@ function initialDraft(
   firstEntry: ElectrolysisEntry | null | undefined,
   defaultPrimaryArea: string | null | undefined,
   defaultMachineFrequency?: string | null,
+  initialAreas?: BlockArea[],
 ): Draft {
   // Create mode: start blank, but seed the treatment area from the attached
   // plan when provided, and the machine frequency from the practitioner's
   // sticky last-used default (PR #203, migration 0084). Both editable;
   // never forced.
   if (!block) {
+    const seed = defaultPrimaryArea?.trim() || "";
     return {
       ...EMPTY,
-      primaryArea: defaultPrimaryArea?.trim() || "",
+      primaryArea: seed,
+      areas: seed ? [{ area: seed, laterality: "not_applicable" }] : [],
       machineFrequency: defaultMachineFrequency?.trim() || "",
     };
   }
@@ -264,6 +285,12 @@ function initialDraft(
     machineFrequency: block.machine_frequency ?? "",
     minutes:
       block.minutes_performed != null ? String(block.minutes_performed) : "",
+    // Multi-area (0128): structured child rows take precedence; a legacy block
+    // (no child rows) falls back to primary_area + side as a single area.
+    areas: resolveBlockAreas(initialAreas ?? [], {
+      primary_area: block.primary_area,
+      side: block.side,
+    }),
     primaryArea: block.primary_area ?? "",
     side: block.side ?? "",
     customAreaDetail: block.custom_area_detail ?? "",
@@ -327,11 +354,13 @@ export function BlockSetupForm({
   defaultPrimaryArea,
   defaultMachineFrequency,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
+  initialAreas,
   onCancel,
 }: Props) {
   const isEdit = !!block;
   const [draft, setDraft] = useState<Draft>(() =>
-    initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency),
+    initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // Feature A: whether the practitioner has typed/edited the lot themselves. A
   // saved lot on an existing block counts as manual (never clobber it). While
@@ -350,9 +379,6 @@ export function BlockSetupForm({
   // already selected (e.g. seeded from the plan, or in edit mode); the full
   // region-grouped picker only expands when there's no area yet or the
   // practitioner taps "Change".
-  const [editingArea, setEditingArea] = useState(
-    () => !(draft.primaryArea.trim().length > 0),
-  );
 
   // Feature A: auto-populate the lot/batch from the most-recent-for-this-probe
   // suggestion as the practitioner selects a probe. Runs when probe_key changes;
@@ -387,13 +413,6 @@ export function BlockSetupForm({
   // PR #270: single area-change handler shared by the body map and the
   // list-below AreaPicker, so both write the same primary_area and clearing
   // the area also clears side + specifics (no orphan side).
-  function onAreaChange(next: string) {
-    if (!next) {
-      setDraft((d) => ({ ...d, primaryArea: "", side: "", customAreaDetail: "" }));
-    } else {
-      update("primaryArea", next);
-    }
-  }
 
   // "Copy settings from another area in this session" (PR #191 rework after
   // Chloe's smoke). Copies the FULL treatment configuration a
@@ -587,6 +606,8 @@ export function BlockSetupForm({
           sessionId,
           blockId: block.id,
           firstEntryId: firstEntry?.id ?? null,
+          // Optimistic concurrency: the version this form loaded (0129).
+          expectedUpdatedAt: block.updated_at,
           mode: (draft.mode || null) as SessionMode | null,
           apilusModality: (draft.apilusModality || null) as
             | ApilusModality
@@ -603,6 +624,9 @@ export function BlockSetupForm({
           side: draft.side || null,
           customAreaDetail: trimmedDetail || null,
           areaIsCustom,
+          // Multi-area (0128): authoritative when non-empty; the action derives
+          // the legacy primary_area/side projection from it.
+          areas: draft.areas,
           readings,
           ...clinicalResponse,
         });
@@ -633,6 +657,8 @@ export function BlockSetupForm({
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
         areaIsCustom,
+        // Multi-area (0128): authoritative when non-empty.
+        areas: draft.areas,
         readings,
         ...clinicalResponse,
       });
@@ -789,7 +815,7 @@ export function BlockSetupForm({
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium">
-          {isEdit ? "Edit treatment area" : "New treatment area"}
+          {isEdit ? "Edit settings block" : "Add settings block"}
         </h3>
         {!isEdit && previousBlock && (
           <button
@@ -808,152 +834,14 @@ export function BlockSetupForm({
         </p>
       )}
 
-      {/* Treatment area first — it's the identity of this section. When an
-          area is already selected it collapses to a compact summary with a
-          "Change" affordance; the full region-grouped picker only expands
-          when there's no area yet or the practitioner taps Change. */}
-      {/* PR #269: Visual treatment-area chart part. The region-grouped
-          AreaPicker (chips) is framed as a distinct "chart part" card with a
-          live "Area being charted" preview, so area selection reads as a
-          visual chart part rather than a plain field. Reuses the existing
-          structured fields (primary_area / side / custom_area_detail); no
-          schema change, no image/upload/canvas. */}
-      <div className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
-            Chart part
-          </span>
-          <span className="text-sm font-medium">Treatment area</span>
-        </div>
-
-        {draft.primaryArea.trim().length > 0 && !editingArea ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-neutral-500">Area being charted:</span>
-            <span className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
-              {draft.primaryArea}
-              {draft.side && draft.side !== "n/a"
-                ? ` · ${SIDE_OPTIONS.find((o) => o.value === draft.side)?.label ?? draft.side}`
-                : ""}
-              {draft.customAreaDetail.trim()
-                ? ` · ${draft.customAreaDetail.trim()}`
-                : ""}
-            </span>
-            <button
-              type="button"
-              onClick={() => setEditingArea(true)}
-              className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-            >
-              Change
-            </button>
-          </div>
-        ) : (
-          <>
-            <span className="text-xs text-neutral-500">
-              Choose from the body map or use the list below. Optional; side and
-              specifics appear once an area is chosen.
-            </span>
-
-            {/* PR #270: built-in body-map picker (schematic vector body, not an
-                image/upload/canvas). Sets the same primary_area value as the
-                list-below AreaPicker via the shared onAreaChange handler. */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Body map
-              </span>
-              <BodyMapAreaPicker
-                value={draft.primaryArea}
-                onChange={onAreaChange}
-                idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5 pt-1">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Or choose from the list
-              </span>
-              <AreaPicker
-                value={draft.primaryArea}
-                onChange={onAreaChange}
-                idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
-              />
-            </div>
-
-            {/* PR #269: live preview of the chart part's area, updating as the
-                practitioner picks area / side / specifics. */}
-            <p className="pt-1 text-sm">
-              <span className="text-neutral-500">Area being charted: </span>
-              {draft.primaryArea.trim() ? (
-                <span className="font-medium">
-                  {draft.primaryArea.trim()}
-                  {draft.side && draft.side !== "n/a"
-                    ? ` · ${SIDE_OPTIONS.find((o) => o.value === draft.side)?.label ?? draft.side}`
-                    : ""}
-                  {draft.customAreaDetail.trim()
-                    ? ` · ${draft.customAreaDetail.trim()}`
-                    : ""}
-                </span>
-              ) : (
-                <span className="text-neutral-400">Area not recorded</span>
-              )}
-            </p>
-
-            {draft.primaryArea.trim().length > 0 && (
-              <>
-                <div className="flex flex-col gap-1.5 pt-1">
-                  <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                    Side
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SIDE_OPTIONS.map((opt) => {
-                      const selected = draft.side === opt.value;
-                      return (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => update("side", selected ? "" : opt.value)}
-                          aria-pressed={selected}
-                          className={
-                            // PR #235: px-3 py-1.5 (was px-2.5 py-1) so the side chips
-                          // are comfortable touch targets on phones.
-                          "rounded-full border px-3 py-1.5 text-xs " +
-                            (selected
-                              ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                              : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300")
-                          }
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <label className="flex flex-col gap-1.5 pt-1">
-                  <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                    Specifics
-                  </span>
-                  <input
-                    type="text"
-                    value={draft.customAreaDetail}
-                    onChange={(e) => update("customAreaDetail", e.target.value)}
-                    placeholder="midline, under-chin, knuckles, jawline edge…"
-                    maxLength={CUSTOM_AREA_DETAIL_MAX}
-                    className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-                  />
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => setEditingArea(false)}
-                  className="self-start text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-                >
-                  Done
-                </button>
-              </>
-            )}
-          </>
-        )}
-      </div>
+      {/* Multi-area (0128): areas treated with these settings, each with its
+          own laterality. Replaces the single-area picker; the server persists
+          canonical session_block_areas rows + a legacy primary_area/side. */}
+      <MultiAreaEditor
+        value={draft.areas}
+        onChange={(areas) => update("areas", areas)}
+        idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
+      />
 
       {/* Machine settings come after the area, in Chloe's charting
           order (PR #204): frequency (a property of the machine),
@@ -1000,17 +888,22 @@ export function BlockSetupForm({
             sterile-item records and CONFIRMED for this treatment. A
             suggestion is never saved as confirmed until the practitioner
             taps Confirm; typing always works and un-confirms. */}
-        <label className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <span className="text-sm font-medium">Probe lot/batch number</span>
-          <input
-            type="text"
+          {/* Migration 0128 charting release: searchable ACTIVE probe-lot
+              selector backed by the studio's sterile-item inventory. Manual
+              entry always works (typing sets the value and is never replaced);
+              selecting a lot fills the field. The SAVED value is still the
+              free-text lot-number snapshot on session_blocks.probe_lot_number —
+              no FK, so archiving/expiring a lot never rewrites past charting. */}
+          <ProbeLotSelect
             value={draft.probeLotNumber}
-            onChange={(e) => {
-              const value = e.target.value;
-              // Editing the lot un-confirms it (a freshly typed value has not
-              // been confirmed) and marks it a manual edit so a later probe
-              // switch never clobbers it. Clearing it back to empty re-enables
-              // auto-suggestion for the next probe.
+            options={probeLotInventory}
+            inventoryHref="/records?section=sterile"
+            onChange={(value) => {
+              // Selecting OR typing a lot un-confirms it and marks it a manual
+              // edit so a later probe switch never clobbers it. Clearing it back
+              // to empty re-enables auto-suggestion for the next probe.
               setDraft((d) => ({
                 ...d,
                 probeLotNumber: value,
@@ -1018,14 +911,11 @@ export function BlockSetupForm({
               }));
               setLotEditedManually(value.trim() !== "");
             }}
-            placeholder="e.g. 460941"
-            maxLength={120}
-            className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
           <span className="text-xs text-neutral-500">
             Used for health inspection and client procedure records.
           </span>
-        </label>
+        </div>
 
         {/* Feature A: the lot field auto-populates (unconfirmed) from the most
             recent lot used for THIS probe (keyed match, or label fallback).
@@ -1447,7 +1337,7 @@ export function BlockSetupForm({
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save treatment area"}
+          {pending ? "Saving…" : "Save settings block"}
         </button>
         <button
           type="button"

@@ -143,6 +143,47 @@ describe("buildTreatmentIntelligence: areas", () => {
     expect(a.lastTreated).toBe("2026-06-10T10:00:00Z");
   });
 
+  it("migration 0128: a multi-area block credits EVERY structured area, not just primary_area", () => {
+    // One "Cheeks + Sideburns" block must surface under BOTH area cards, so the
+    // treatment-memory summary never hides the non-primary area.
+    const out = buildTreatmentIntelligence({
+      sessionsNewestFirst: [session("s1", "2026-06-10T10:00:00Z")],
+      blocks: [
+        block("s1", {
+          primary_area: "Cheeks", // legacy projection = first area only
+          side: null,
+          structured_areas: [
+            { area: "Cheeks", laterality: "left" },
+            { area: "Sideburns", laterality: "right" },
+          ],
+          minutes_performed: 30,
+          entry_hairs: [200],
+        }),
+      ],
+    });
+    const names = out.areas.map((a) => a.name).sort();
+    expect(names).toEqual(["Cheeks", "Sideburns"]);
+    // Grouping is by area NAME (laterality aggregated out of the memory card).
+    expect(out.areas.find((a) => a.name === "Sideburns")?.sessions).toBe(1);
+  });
+
+  it("migration 0128: legacy single-area grouping is unchanged (no split by side)", () => {
+    // A legacy block charted left one visit, right the next still groups under a
+    // single "Cheek" area — laterality does not fragment the memory card.
+    const out = buildTreatmentIntelligence({
+      sessionsNewestFirst: [
+        session("new", "2026-06-10T10:00:00Z"),
+        session("old", "2026-06-01T10:00:00Z"),
+      ],
+      blocks: [
+        block("old", { primary_area: "Cheek", side: "left" }),
+        block("new", { primary_area: "Cheek", side: "right" }),
+      ],
+    });
+    expect(out.areas.map((a) => a.name)).toEqual(["Cheek"]);
+    expect(out.areas[0].sessions).toBe(2);
+  });
+
   it("blank/null area names never crash and are excluded from cards", () => {
     const out = buildTreatmentIntelligence({
       sessionsNewestFirst: [session("a", "2026-06-01T10:00:00Z")],

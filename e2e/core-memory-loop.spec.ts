@@ -118,15 +118,17 @@ test("core memory loop: booking to next-appointment memory", async ({
     await page.getByRole("button", { name: /electrolysis/i }).click();
     await page.waitForURL(/sessions\//, { timeout: 20_000 });
 
-    // The "New treatment area" form renders directly on the session
+    // The "Add settings block" form renders directly on the session
     // page. Record the clinical-memory fields the app models today:
     // area, machine frequency, probe brand + lot, minutes, tolerance,
     // reaction chip. (Per-area caution inputs were deliberately
     // retired; the session-level "For next visit" note below is the
     // caution/watch mechanism.)
     await expect(
-      page.getByRole("heading", { name: /new treatment area/i }),
+      page.getByRole("heading", { name: /add settings block/i }),
     ).toBeVisible({ timeout: 20_000 });
+    // Migration 0128: the area is added via the multi-area editor (adding "Chin"
+    // records it as the block's single treated area).
     await page.getByRole("button", { name: "Chin", exact: true }).click();
     await page.getByRole("button", { name: "13.56 MHz" }).click();
     await page.getByRole("button", { name: "Sterex" }).click();
@@ -136,7 +138,7 @@ test("core memory loop: booking to next-appointment memory", async ({
       .fill("15");
     await page.getByRole("button", { name: "Mild discomfort" }).click();
     await page.getByRole("button", { name: "+ Mild redness" }).click();
-    await page.getByRole("button", { name: /save treatment area/i }).click();
+    await page.getByRole("button", { name: /save settings block/i }).click();
     await expect(page.getByText(`E2E-LOT-${seed.runId}`).first()).toBeVisible({
       timeout: 20_000,
     });

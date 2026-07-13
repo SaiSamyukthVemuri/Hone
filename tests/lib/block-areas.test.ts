@@ -3,6 +3,7 @@ import {
   resolveBlockAreas,
   deriveLegacyProjection,
   formatAreaLabel,
+  blockAreasLabel,
   legacySideToLaterality,
   lateralityToLegacySide,
   type BlockArea,
@@ -44,11 +45,61 @@ describe("legacy side <-> laterality mapping", () => {
 });
 
 describe("combined labels", () => {
-  it("formats per-area laterality labels", () => {
+  it("formats per-area laterality labels in the canonical prefix format", () => {
     expect(formatAreaLabel({ area: "cheek", laterality: "left" })).toBe("Left cheek");
     expect(formatAreaLabel({ area: "sideburn", laterality: "right" })).toBe("Right sideburn");
-    expect(formatAreaLabel({ area: "cheeks", laterality: "bilateral" })).toBe("Both sides · cheeks");
-    expect(formatAreaLabel({ area: "Chin", laterality: "not_applicable" })).toBe("Chin");
+    expect(formatAreaLabel({ area: "cheeks", laterality: "bilateral" })).toBe("Bilateral cheeks");
+    expect(formatAreaLabel({ area: "upper lip", laterality: "midline" })).toBe("Midline upper lip");
+    expect(formatAreaLabel({ area: "Neck", laterality: "not_applicable" })).toBe("Neck");
+  });
+});
+
+describe("blockAreasLabel — the single display contract for every surface", () => {
+  it("joins multiple structured areas, preserving order and per-area laterality", () => {
+    expect(
+      blockAreasLabel(
+        [
+          { area: "cheek", laterality: "left" },
+          { area: "sideburn", laterality: "right" },
+        ],
+        { primary_area: "cheek", side: "left" },
+      ),
+    ).toBe("Left cheek · Right sideburn");
+  });
+  it("mixed laterality is NEVER flattened to one side", () => {
+    // The legacy projection would have side=null here; the label still shows both.
+    expect(
+      blockAreasLabel(
+        [
+          { area: "cheek", laterality: "left" },
+          { area: "cheek", laterality: "right" },
+        ],
+        { primary_area: "cheek", side: null },
+      ),
+    ).toBe("Left cheek · Right cheek");
+  });
+  it("structured rows OVERRIDE the legacy projection", () => {
+    expect(
+      blockAreasLabel([{ area: "chin", laterality: "bilateral" }], {
+        primary_area: "IGNORED", // legacy is only a fallback
+        side: "left",
+      }),
+    ).toBe("Bilateral chin");
+  });
+  it("falls back to legacy primary_area + side when there are no structured rows", () => {
+    expect(
+      blockAreasLabel(null, { primary_area: "Upper lip", side: "center" }),
+    ).toBe("Midline Upper lip");
+    expect(blockAreasLabel([], { primary_area: "Neck", side: "n/a" })).toBe("Neck");
+  });
+  it("keeps an unknown historical area value visible verbatim", () => {
+    expect(
+      blockAreasLabel(null, { primary_area: "Left temple (custom)", side: null }),
+    ).toBe("Left temple (custom)");
+  });
+  it("returns null when the block records no area at all", () => {
+    expect(blockAreasLabel(null, { primary_area: null, side: null })).toBeNull();
+    expect(blockAreasLabel([], { primary_area: "  ", side: null })).toBeNull();
   });
 });
 

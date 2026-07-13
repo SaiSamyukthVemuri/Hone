@@ -89,20 +89,20 @@ describe("body-map component is a schematic picker, not an image/canvas", () => 
   });
 });
 
-describe("charting form wires the body map above the list picker", () => {
-  it("renders BodyMapAreaPicker and keeps the AreaPicker as the list below", () => {
-    expect(FORM).toMatch(/<BodyMapAreaPicker/);
-    expect(FORM).toMatch(/<AreaPicker/);
-    const bodyMapAt = FORM.indexOf("<BodyMapAreaPicker");
-    const areaPickerAt = FORM.indexOf("<AreaPicker");
-    expect(bodyMapAt).toBeGreaterThan(-1);
-    expect(areaPickerAt).toBeGreaterThan(bodyMapAt); // body map first, list below
+// Migration 0128 (Willow multi-area): the block-setup form's single-area section
+// (body map + single side) was replaced by the multi-area editor. The BodyMap
+// component still exists and is tested directly above; the multi-area editor
+// reuses the shared AreaPicker to ADD areas to the set.
+const EDITOR = read("components/multi-area-editor.tsx");
+
+describe("charting form uses the multi-area editor with the shared AreaPicker", () => {
+  it("mounts the MultiAreaEditor and the editor uses the AreaPicker to add areas", () => {
+    expect(FORM).toMatch(/<MultiAreaEditor/);
+    expect(EDITOR).toMatch(/<AreaPicker/);
   });
 
-  it("uses the body-map wording and the shared area-change handler", () => {
-    expect(FORM).toMatch(/Body map/);
-    expect(FORM).toMatch(/Choose from the body map or use the list below/);
-    expect(FORM).toMatch(/onChange=\{onAreaChange\}/);
+  it("adding an area never replaces prior selections", () => {
+    expect(EDITOR).toMatch(/onChange\(\[\.\.\.value,/); // append, never replace
   });
 });
 
@@ -122,8 +122,8 @@ describe("PR #279 (item 2): a sub-area no longer floods the whole zone", () => {
   it("the exact area is still conveyed precisely by the selected area chip", () => {
     // the area chips set aria-pressed on the exact value
     expect(COMPONENT).toMatch(/const selected = value === area/);
-    // the form shows the precise "Area being charted" line
-    expect(FORM).toMatch(/Area being charted/);
+    // the multi-area editor shows each area + laterality via formatAreaLabel
+    expect(EDITOR).toMatch(/formatAreaLabel/);
   });
 });
 

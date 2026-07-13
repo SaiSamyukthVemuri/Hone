@@ -408,6 +408,121 @@ export async function getEntryObservationChips(
   return rows[0]?.observation_chips ?? [];
 }
 
+// Seed a draft electrolysis session with a client and NO blocks. The charting
+// page opens with the "Add settings block" form ready (blocks.length === 0).
+export async function seedE2eDraftElectrolysisSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Area Client ${seed.runId}-${uniq}`, `e2e-area-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'electrolysis')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  return { clientId, sessionId };
+}
+
+// Seed a probe row in the studio's sterilization inventory
+// (record_keeping_sterile_items) so the charting probe-lot selector has an
+// ACTIVE (or expired) candidate. expiryDate null = never expires.
+export async function seedE2eProbeInventoryItem(
+  seed: E2eSeed,
+  opts: {
+    lotNumber: string;
+    description?: string;
+    manufacturer?: string;
+    expiryDate?: string | null;
+  },
+): Promise<void> {
+  await sql(
+    `insert into public.record_keeping_sterile_items
+       (id, studio_id, date_purchased, item_description, manufacturer_name,
+        amount_purchased, lot_number, expiry_date)
+     values ($1,$2, current_date, $3, $4, '1 box', $5, $6)`,
+    [
+      randomUUID(),
+      seed.studioId,
+      opts.description ?? "Sterex Gold F3 probe",
+      opts.manufacturer ?? "Sterex",
+      opts.lotNumber,
+      opts.expiryDate === undefined ? null : opts.expiryDate,
+    ],
+  );
+}
+
+// Seed a LEGACY single-area block (primary_area + block-level side, no child
+// rows) so the e2e can prove legacy records still render their single area.
+export async function seedE2eLegacyBlock(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: { primaryArea: string; side?: string | null; sortOrder?: number },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, primary_area, side, sort_order)
+     values ($1,$2,$3,$4,$5,$6)`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea,
+      opts.side ?? null,
+      opts.sortOrder ?? 0,
+    ],
+  );
+  return { blockId };
+}
+
+// Read the probe-lot snapshots saved on a session's (non-deleted) blocks.
+export async function getSessionBlockProbeLots(
+  sessionId: string,
+): Promise<Array<string | null>> {
+  const rows = await sql<{ probe_lot_number: string | null }>(
+    `select probe_lot_number from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => r.probe_lot_number);
+}
+
+// Force a block's updated_at to a stale value out-of-band, to exercise the
+// optimistic-concurrency conflict (stale_block_version) from a browser edit.
+export async function bumpSessionBlockUpdatedAt(sessionId: string): Promise<void> {
+  await sql(
+    `update public.session_blocks
+        set updated_at = now() + interval '1 second'
+      where session_id = $1 and deleted_at is null`,
+    [sessionId],
+  );
+}
+
+// Read a session's structured block areas (migration 0128) for e2e ground truth.
+// Returns "<area>|<laterality>" strings ordered by block + display_order.
+export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
+  const rows = await sql<{ area: string; laterality: string }>(
+    `select a.area, a.laterality
+       from public.session_block_areas a
+       join public.session_blocks b on b.id = a.session_block_id
+      where b.session_id = $1 and b.deleted_at is null
+      order by a.session_block_id, a.display_order, a.created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => `${r.area}|${r.laterality}`);
+}
+
 // Seed a bare client under the studio (no session). Used by the clinical-notes
 // e2e to exercise the consultation/skin-hair surfaces on the client profile.
 export async function seedE2eClient(seed: E2eSeed): Promise<{ clientId: string }> {

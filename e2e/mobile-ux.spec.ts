@@ -442,7 +442,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
         page.getByRole("button", { name: /procedure risks explained/i }),
         "aftercare mark",
       ],
-      [page.getByRole("button", { name: /save treatment area/i }), "save"],
+      [page.getByRole("button", { name: /save settings block/i }), "save"],
     ];
     for (const [locator, label] of controls) {
       await locator.scrollIntoViewIfNeeded();
@@ -459,7 +459,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       .fill("10");
     await page.getByRole("button", { name: "Mild discomfort" }).click();
     await page.getByRole("button", { name: "+ Mild redness" }).click();
-    await page.getByRole("button", { name: /save treatment area/i }).click();
+    await page.getByRole("button", { name: /save settings block/i }).click();
     await expect(page.getByText(`E2E-M-${seed.runId}`).first()).toBeVisible({
       timeout: 20_000,
     });

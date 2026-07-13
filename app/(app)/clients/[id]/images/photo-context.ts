@@ -1,4 +1,4 @@
-import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
+import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import type { SessionBlockSide } from "@/lib/types/database";
 
 // PR #274. Pure, display-only helpers that turn EXISTING treatment-photo
@@ -7,6 +7,10 @@ import type { SessionBlockSide } from "@/lib/types/database";
 // fields (primary_area / side / custom_area_detail, migration 0039) into
 // human-facing context tags. These NEVER expose raw IDs, storage paths, bucket
 // names, or signed URLs — only labels. No DB/schema/security change.
+//
+// Migration 0128: a photo is attached to ONE settings block, which may treat
+// several areas. The area tag now shows EVERY treated area + laterality via the
+// shared resolver ("Left cheek · Right sideburn"), never just the first.
 
 // Chloe pilot feedback: the card said "Block photo" while the upload selector
 // said "Treatment area photo" — one consistent, practitioner-friendly label.
@@ -19,7 +23,24 @@ export type SessionBlockAreaInput = {
   primary_area: string | null;
   side: SessionBlockSide | null;
   custom_area_detail: string | null;
+  // Migration 0128: the structured multi-area set for the attached block. When
+  // present it is authoritative; otherwise the legacy primary_area + side.
+  structured_areas?: ReadonlyArray<BlockArea> | null;
 } | null;
+
+// Composes the ordered area label + optional custom detail for a block, or null
+// when the block records no area at all. Structured rows win; legacy primary_area
+// + side is the fallback. Laterality lives in the label ("Left cheek"), so the
+// old side suffix is gone.
+function composeBlockAreaText(block: SessionBlockAreaInput): string | null {
+  const label = blockAreasLabel(block?.structured_areas ?? null, {
+    primary_area: block?.primary_area ?? null,
+    side: block?.side ?? null,
+  });
+  if (!label) return null;
+  const detail = block?.custom_area_detail?.trim();
+  return detail ? `${label} · ${detail}` : label;
+}
 
 // Most-specific scope wins: block > session > client. Every image is attached
 // to a client (client_id is required), so "Client photo" is the floor.
@@ -42,16 +63,8 @@ export function treatmentPhotoAreaLabel(
   block: SessionBlockAreaInput,
 ): string | null {
   if (!sessionBlockId) return null;
-  const area = block?.primary_area?.trim();
-  if (!area) return "Area not recorded";
-  const extras: string[] = [];
-  if (block && block.side && block.side !== "n/a") {
-    const sideLabel = sessionBlockSideLabel(block.side);
-    if (sideLabel) extras.push(sideLabel);
-  }
-  const detail = block?.custom_area_detail?.trim();
-  if (detail) extras.push(detail);
-  const text = extras.length > 0 ? `${area} · ${extras.join(" · ")}` : area;
+  const text = composeBlockAreaText(block);
+  if (!text) return "Area not recorded";
   return `Treatment area: ${text}`;
 }
 
@@ -60,14 +73,5 @@ export function treatmentPhotoAreaLabel(
 // composition as treatmentPhotoAreaLabel; "Area not recorded" when blank.
 // Pure + display-only — the option's VALUE carries the id, never shown text.
 export function sessionBlockOptionLabel(block: SessionBlockAreaInput): string {
-  const area = block?.primary_area?.trim();
-  if (!area) return "Area not recorded";
-  const extras: string[] = [];
-  if (block && block.side && block.side !== "n/a") {
-    const sideLabel = sessionBlockSideLabel(block.side);
-    if (sideLabel) extras.push(sideLabel);
-  }
-  const detail = block?.custom_area_detail?.trim();
-  if (detail) extras.push(detail);
-  return extras.length > 0 ? `${area} · ${extras.join(" · ")}` : area;
+  return composeBlockAreaText(block) ?? "Area not recorded";
 }

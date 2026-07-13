@@ -138,10 +138,15 @@ describe("placement + reuse", () => {
     }
   });
 
-  it("batched: three reads for the roster, never per-appointment", () => {
-    expect(PREVIEWS.match(/\.from\(/g)?.length).toBe(3);
+  it("batched: four bounded reads for the roster, never per-appointment", () => {
+    // sessions, session_blocks, clients, and (migration 0128) session_block_areas
+    // — each ONE bounded query over the whole roster, never a per-appointment or
+    // per-session read (no N+1). The areas read is keyed by the loaded block ids.
+    expect(PREVIEWS.match(/\.from\(/g)?.length).toBe(4);
     expect(PREVIEWS).toMatch(/\.in\("client_id", ids\)/);
     expect(PREVIEWS).toMatch(/\.in\("session_id", sessionIds\)/);
+    expect(PREVIEWS).toMatch(/\.from\("session_block_areas"\)/);
+    expect(PREVIEWS).toMatch(/\.in\(\s*\n?\s*"session_block_id",/);
     // One previews call per page load, fed with the whole roster.
     expect(PAGE).toMatch(
       /getBeforeTodayPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
