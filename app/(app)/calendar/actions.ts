@@ -104,6 +104,28 @@ export async function bookAppointmentForClientAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot book." };
   }
+  // AUTHORIZATION: bypassing published availability is OWNER-ONLY on every
+  // internal booking surface. This is the single server action that honours the
+  // availability-bypass flag (the client-profile Book flow and the calendar
+  // Quick Book both post to it; public booking lives in a separate file that
+  // never reads the flag). The rule is a SIMPLE, unconditional binding policy:
+  //
+  //     allow_outside_availability = true  ⇒  practitioner.role must be "owner"
+  //
+  // It is enforced on the SERVER-RESOLVED role only. NO client-supplied signal —
+  // duration, source, mode, form name, UI route, or drag-vs-click — is trusted as
+  // authorization evidence, so a non-owner cannot bypass by attaching a custom
+  // duration or forging a source label. (Because the drag-to-create path couples
+  // a custom LENGTH to the availability bypass, non-owner custom-length booking
+  // is owner-only too; see PRODUCT POLICY in docs/reviews/booking-availability-
+  // authorization.md. The standard slot flow — no bypass — is unchanged for every
+  // active practitioner.)
+  if (allowOutsideAvailability && practitioner.role !== "owner") {
+    return {
+      ok: false,
+      error: "Only the studio owner can book outside your normal availability.",
+    };
+  }
 
   const supabase = await createClient();
 

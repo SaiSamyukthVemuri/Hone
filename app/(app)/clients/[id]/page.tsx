@@ -166,7 +166,7 @@ export default async function ClientCheatSheetPage({
   const sp = await searchParams;
   const activeTab: ProfileTab = isProfileTab(sp.tab) ? sp.tab : "overview";
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio, practitioner } = await getCurrentPractitionerWithStudio();
   const data = await getClientById(studio.id, id);
 
   if (!data) {
@@ -537,6 +537,8 @@ export default async function ClientCheatSheetPage({
               clientId={client.id}
               services={services}
               defaultDate={today}
+              timezone={studio.timezone}
+              isOwner={practitioner.role === "owner"}
             />
           </div>
         </div>
