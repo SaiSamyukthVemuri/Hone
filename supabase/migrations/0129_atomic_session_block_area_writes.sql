@@ -91,11 +91,12 @@ end;
 $$;
 
 create or replace function public.update_session_block_with_areas(
-  p_studio_id  uuid,
-  p_session_id uuid,
-  p_block_id   uuid,
-  p_block      jsonb,   -- settable session_blocks column values (patch)
-  p_areas      jsonb    -- the COMPLETE new area set
+  p_studio_id           uuid,
+  p_session_id          uuid,
+  p_block_id            uuid,
+  p_block               jsonb,       -- settable session_blocks column values (patch)
+  p_areas               jsonb,       -- the COMPLETE new area set
+  p_expected_updated_at timestamptz default null  -- optimistic-concurrency token
 )
 returns void
 language plpgsql
@@ -103,12 +104,35 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  r public.session_blocks%rowtype;
+  r        public.session_blocks%rowtype;
+  v_current timestamptz;
 begin
   if not public.is_studio_member(p_studio_id) then
     raise exception 'not authorized for studio %', p_studio_id;
   end if;
 
+  -- Lock the target block for the duration of the transaction (serializes
+  -- concurrent edits of the same block) and fetch its current version.
+  select updated_at into v_current
+    from public.session_blocks
+   where id = p_block_id
+     and studio_id = p_studio_id
+     and session_id = p_session_id
+     and deleted_at is null
+   for update;
+  if not found then
+    raise exception 'session block % not found in studio %/session %', p_block_id, p_studio_id, p_session_id;
+  end if;
+  -- Stale-edit conflict: the caller's snapshot is older than the stored row.
+  -- Surfaced with a distinct marker the application maps to a reload prompt.
+  if p_expected_updated_at is not null and v_current <> p_expected_updated_at then
+    raise exception 'stale_block_version: this settings block was changed elsewhere';
+  end if;
+
+  -- ONLY the allow-listed columns below are ever written. studio_id, session_id,
+  -- sort_order, id, deleted_at, created_at, block_name/block_notes, and every
+  -- other column are NOT read from p_block, so a caller cannot re-tenant a block
+  -- or mutate unrelated clinical fields by injecting extra JSON keys.
   r := jsonb_populate_record(null::public.session_blocks, p_block);
 
   update public.session_blocks b set
@@ -124,13 +148,7 @@ begin
     reaction_notes = r.reaction_notes,
     caution_for_next_session = coalesce(r.caution_for_next_session, false),
     caution_note = r.caution_note, numbing_status = r.numbing_status
-  where b.id = p_block_id
-    and b.studio_id = p_studio_id
-    and b.session_id = p_session_id
-    and b.deleted_at is null;
-  if not found then
-    raise exception 'session block % not found in studio %/session %', p_block_id, p_studio_id, p_session_id;
-  end if;
+  where b.id = p_block_id;
 
   -- Complete replacement of the structured area set — delete + insert in the
   -- SAME transaction, so the prior set can never be left deleted-without-replacement.
@@ -146,8 +164,8 @@ $$;
 -- Least privilege: authenticated may EXECUTE (RLS enforced inside via
 -- is_studio_member); anon/public cannot.
 revoke all on function public.create_session_block_with_areas(uuid, uuid, jsonb, jsonb) from public;
-revoke all on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb) from public;
+revoke all on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb, timestamptz) from public;
 grant execute on function public.create_session_block_with_areas(uuid, uuid, jsonb, jsonb) to authenticated;
-grant execute on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb) to authenticated;
+grant execute on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb, timestamptz) to authenticated;
 grant execute on function public.create_session_block_with_areas(uuid, uuid, jsonb, jsonb) to service_role;
-grant execute on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb) to service_role;
+grant execute on function public.update_session_block_with_areas(uuid, uuid, uuid, jsonb, jsonb, timestamptz) to service_role;

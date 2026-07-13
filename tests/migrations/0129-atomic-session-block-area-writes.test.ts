@@ -69,9 +69,28 @@ describe("0129 — authorization + hardening", () => {
   });
   it("both authorize the caller via is_studio_member + a same-studio block/session check", () => {
     expect((SQL.match(/is_studio_member\(p_studio_id\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    // create checks the session is in the studio; update checks the block is.
+    // create checks the session is in the studio; update locks + checks the block.
     expect(SQL).toMatch(/from public\.sessions\s*\n?\s*where id = p_session_id and studio_id = p_studio_id/);
-    expect(SQL).toMatch(/b\.id = p_block_id[\s\S]{0,80}b\.studio_id = p_studio_id[\s\S]{0,80}b\.session_id = p_session_id/);
+    expect(SQL).toMatch(/where id = p_block_id[\s\S]{0,120}studio_id = p_studio_id[\s\S]{0,120}session_id = p_session_id/);
+  });
+
+  it("the update locks the target block (FOR UPDATE) + enforces an optimistic-concurrency token", () => {
+    const upd = SQL.slice(SQL.indexOf("function public.update_session_block_with_areas"));
+    expect(upd).toMatch(/for update/);
+    expect(upd).toMatch(/p_expected_updated_at timestamptz default null/);
+    expect(upd).toMatch(/v_current <> p_expected_updated_at/);
+    expect(upd).toMatch(/stale_block_version/);
+  });
+
+  it("only allow-listed columns are written — studio/session/id are never read from p_block", () => {
+    const upd = SQL.slice(SQL.indexOf("function public.update_session_block_with_areas"));
+    // The update set-list assigns from r.<col> for the allow-listed fields only;
+    // it must NOT assign studio_id/session_id/id/sort_order/deleted_at from r.
+    expect(upd).not.toMatch(/studio_id = r\./);
+    expect(upd).not.toMatch(/session_id = r\./);
+    expect(upd).not.toMatch(/\bid = r\./);
+    expect(upd).not.toMatch(/sort_order = r\./);
+    expect(upd).not.toMatch(/deleted_at = r\./);
   });
   it("EXECUTE is granted to authenticated only; revoked from public/anon", () => {
     expect((SQL.match(/revoke all on function public\.(create|update)_session_block_with_areas[\s\S]{0,120} from public/g) ?? []).length).toBe(2);

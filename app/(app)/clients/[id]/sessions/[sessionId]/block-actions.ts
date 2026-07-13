@@ -962,18 +962,25 @@ export async function createTreatmentAreaWithEntryAction(
   const responseCheck = normalizeClinicalResponse(input);
   if (!responseCheck.ok) return responseCheck;
 
-  // Multi-area (0128): when `areas` is provided, it is authoritative — the block
-  // stores a legacy projection (primary_area = first area; side = shared side or
-  // null when mixed) and canonical child rows. Absent → the single-area path is
-  // unchanged (SimplifiedEntryForm + other callers keep working).
-  const areaSetCheck = input.areas ? normalizeAreaSet(input.areas) : null;
+  // Migration 0128/0129: when `areas` is provided (the area-selection form path),
+  // the structured set is CANONICAL for this block — for one area, many, OR zero
+  // — and the whole save goes through the atomic RPC (which writes the block +
+  // legacy projection + the COMPLETE area set in one transaction, replacing any
+  // stale rows). `areaRows` may be [] (an intentionally area-less block: the RPC
+  // atomically clears the child set). `areas` ABSENT → the legacy single-area
+  // path (SimplifiedEntryForm + other callers) is unchanged.
+  const areaSetCheck = input.areas !== undefined ? normalizeAreaSet(input.areas) : null;
   if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
-  const structuredAreas =
-    areaSetCheck && areaSetCheck.value.length > 0 ? areaSetCheck.value : null;
-  const proj = structuredAreas ? deriveLegacyProjection(structuredAreas) : null;
-  const blockPrimaryArea = proj ? proj.primaryArea : areaCheck.value.primary_area;
-  const blockSide = proj ? proj.side : areaCheck.value.side;
-  const blockCustomDetail = proj ? null : areaCheck.value.custom_area_detail;
+  const areaRows = areaSetCheck ? areaSetCheck.value : null;
+  const useAreaRpc = areaRows !== null;
+  const proj = areaRows && areaRows.length > 0 ? deriveLegacyProjection(areaRows) : null;
+  const blockPrimaryArea = proj
+    ? proj.primaryArea
+    : areaRows
+      ? null
+      : areaCheck.value.primary_area;
+  const blockSide = proj ? proj.side : areaRows ? null : areaCheck.value.side;
+  const blockCustomDetail = areaRows ? null : areaCheck.value.custom_area_detail;
 
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
@@ -1012,7 +1019,7 @@ export async function createTreatmentAreaWithEntryAction(
   };
 
   let block: SessionBlock;
-  if (structuredAreas) {
+  if (useAreaRpc) {
     // ATOMIC (migration 0129): the block + its legacy projection + the COMPLETE
     // structured area set are created together in one DB transaction — never a
     // block with a half-written area set, and no compensating soft-delete.
@@ -1022,7 +1029,7 @@ export async function createTreatmentAreaWithEntryAction(
         p_studio_id: studio.id,
         p_session_id: input.sessionId,
         p_block: blockFields,
-        p_areas: structuredAreas.map((a, i) => ({
+        p_areas: (areaRows ?? []).map((a, i) => ({
           area: a.area,
           laterality: a.laterality,
           display_order: i,
@@ -1087,7 +1094,7 @@ export async function createTreatmentAreaWithEntryAction(
         session_id: input.sessionId,
         block_id: block.id,
         area,
-        areas: structuredAreas ? structuredAreas.map((sa) => sa.area) : [area],
+        areas: areaRows && areaRows.length > 0 ? areaRows.map((sa) => sa.area) : [area],
         probe_lot_id: null,
         // Legacy generic intensity / duration_seconds are intentionally not
         // written; thermolysis / galvanic readings live in their own columns.
@@ -1136,6 +1143,10 @@ export type UpdateAreaWithEntryInput = {
   // When null/absent, the block had no entries and one is created if readings
   // and a treatment area are present.
   firstEntryId?: string | null;
+  // Optimistic-concurrency token: the block.updated_at the form loaded. A stale
+  // value (someone else edited the block since) makes the atomic update refuse
+  // with a distinct conflict rather than silently overwriting.
+  expectedUpdatedAt?: string | null;
   mode?: SessionMode | null;
   apilusModality?: ApilusModality | null;
   energyLevel?: number | null;
@@ -1192,18 +1203,25 @@ export async function updateTreatmentAreaWithEntryAction(
   const responseCheck = normalizeClinicalResponse(input);
   if (!responseCheck.ok) return responseCheck;
 
-  // Multi-area (0128): when `areas` is provided, it is authoritative — the block
-  // stores a legacy projection (primary_area = first area; side = shared side or
-  // null when mixed) and canonical child rows. Absent → the single-area path is
-  // unchanged (SimplifiedEntryForm + other callers keep working).
-  const areaSetCheck = input.areas ? normalizeAreaSet(input.areas) : null;
+  // Migration 0128/0129: when `areas` is provided (the area-selection form path),
+  // the structured set is CANONICAL for this block — for one area, many, OR zero
+  // — and the whole save goes through the atomic RPC (which writes the block +
+  // legacy projection + the COMPLETE area set in one transaction, replacing any
+  // stale rows). `areaRows` may be [] (an intentionally area-less block: the RPC
+  // atomically clears the child set). `areas` ABSENT → the legacy single-area
+  // path (SimplifiedEntryForm + other callers) is unchanged.
+  const areaSetCheck = input.areas !== undefined ? normalizeAreaSet(input.areas) : null;
   if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
-  const structuredAreas =
-    areaSetCheck && areaSetCheck.value.length > 0 ? areaSetCheck.value : null;
-  const proj = structuredAreas ? deriveLegacyProjection(structuredAreas) : null;
-  const blockPrimaryArea = proj ? proj.primaryArea : areaCheck.value.primary_area;
-  const blockSide = proj ? proj.side : areaCheck.value.side;
-  const blockCustomDetail = proj ? null : areaCheck.value.custom_area_detail;
+  const areaRows = areaSetCheck ? areaSetCheck.value : null;
+  const useAreaRpc = areaRows !== null;
+  const proj = areaRows && areaRows.length > 0 ? deriveLegacyProjection(areaRows) : null;
+  const blockPrimaryArea = proj
+    ? proj.primaryArea
+    : areaRows
+      ? null
+      : areaCheck.value.primary_area;
+  const blockSide = proj ? proj.side : areaRows ? null : areaCheck.value.side;
+  const blockCustomDetail = areaRows ? null : areaCheck.value.custom_area_detail;
 
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
@@ -1244,7 +1262,7 @@ export async function updateTreatmentAreaWithEntryAction(
   };
 
   let block: SessionBlock;
-  if (structuredAreas) {
+  if (useAreaRpc) {
     // ATOMIC (migration 0129): the block update + legacy projection + the
     // COMPLETE replacement area set commit together in ONE transaction. There is
     // no window where the old area rows are deleted but the new set failed
@@ -1254,13 +1272,24 @@ export async function updateTreatmentAreaWithEntryAction(
       p_session_id: input.sessionId,
       p_block_id: input.blockId,
       p_block: blockFields,
-      p_areas: structuredAreas.map((a, i) => ({
+      p_areas: (areaRows ?? []).map((a, i) => ({
         area: a.area,
         laterality: a.laterality,
         display_order: i,
       })),
+      p_expected_updated_at: input.expectedUpdatedAt ?? null,
     });
-    if (rpcErr) return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
+    if (rpcErr) {
+      // Distinct stale-edit conflict (someone changed the block since it loaded).
+      if (rpcErr.message?.includes("stale_block_version")) {
+        return {
+          ok: false,
+          error:
+            "This settings block was changed elsewhere. Reload the session and re-apply your edit.",
+        };
+      }
+      return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
+    }
     const { data: row, error: rowErr } = await supabase
       .from("session_blocks")
       .select("*")
@@ -1341,7 +1370,7 @@ export async function updateTreatmentAreaWithEntryAction(
         session_id: input.sessionId,
         block_id: input.blockId,
         area,
-        areas: structuredAreas ? structuredAreas.map((sa) => sa.area) : [area],
+        areas: areaRows && areaRows.length > 0 ? areaRows.map((sa) => sa.area) : [area],
         probe_lot_id: null,
         pulse_count: clampPulseCount(readings.pulseCount),
         pulse_delay_seconds: resolvePulseDelaySeconds(readings),

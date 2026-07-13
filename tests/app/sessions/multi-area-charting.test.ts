@@ -51,8 +51,19 @@ describe("block-setup-form drives the structured areas set", () => {
 describe("write action persists canonical rows + a safe legacy projection", () => {
   it("normalizes the area set + derives the legacy projection", () => {
     expect(ACTIONS).toMatch(/function normalizeAreaSet/);
-    expect(ACTIONS).toMatch(/deriveLegacyProjection\(structuredAreas\)/);
-    expect(ACTIONS).toMatch(/blockPrimaryArea = proj \? proj\.primaryArea/);
+    expect(ACTIONS).toMatch(/deriveLegacyProjection\(areaRows\)/);
+    expect(ACTIONS).toMatch(/blockPrimaryArea = proj/);
+  });
+  it("routes EVERY area-selection save (one, many, or zero) through the atomic RPC", () => {
+    // The write is canonical: `useAreaRpc` is driven by whether `areas` is
+    // provided, not by the count — so many→one/zero never leaves stale rows.
+    expect(ACTIONS).toMatch(/const useAreaRpc = areaRows !== null/);
+    expect(ACTIONS).toMatch(/if \(useAreaRpc\)/);
+  });
+  it("passes an optimistic-concurrency token + maps the stale conflict", () => {
+    expect(ACTIONS).toMatch(/p_expected_updated_at: input\.expectedUpdatedAt/);
+    expect(ACTIONS).toMatch(/stale_block_version/);
+    expect(ACTIONS).toMatch(/changed elsewhere/);
   });
   it("saves block + area set ATOMICALLY via the migration-0129 RPCs (no partial set)", () => {
     expect(ACTIONS).toMatch(/rpc\(\s*"create_session_block_with_areas"/);

@@ -598,6 +598,8 @@ export function BlockSetupForm({
           sessionId,
           blockId: block.id,
           firstEntryId: firstEntry?.id ?? null,
+          // Optimistic concurrency: the version this form loaded (0129).
+          expectedUpdatedAt: block.updated_at,
           mode: (draft.mode || null) as SessionMode | null,
           apilusModality: (draft.apilusModality || null) as
             | ApilusModality
