@@ -32,8 +32,9 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
   await loginAsOwner(page, studio);
 
   // Header badge reflects the operational alert (>=1 unread) on every page.
+  // (Desktop + mobile bells both exist in the DOM; assert the visible one.)
   await expect(
-    page.getByRole("link", { name: /Notifications, \d+ unread/i }),
+    page.getByRole("link", { name: /Notifications, \d+ unread/i }).first(),
   ).toBeVisible();
 
   // Notification Centre shows the overdue disinfectant alert with safe context.
@@ -45,7 +46,8 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
     alerts.getByText("A disinfectant record is overdue for replacement."),
   ).toBeVisible();
   await expect(alerts.getByText(/Barbicide E2E jar/)).toBeVisible();
-  await expect(alerts.getByText(/overdue/i)).toBeVisible();
+  // "overdue" appears in both the badge and the days-overdue line; assert one.
+  await expect(alerts.getByText(/overdue/i).first()).toBeVisible();
   // Cross-studio item is invisible.
   await expect(page.getByText("OtherStudio Cavicide")).toHaveCount(0);
 
