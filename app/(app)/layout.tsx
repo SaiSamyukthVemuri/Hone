@@ -8,6 +8,8 @@ import {
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import { isAdmin } from "@/lib/admin";
+import { todayInTz } from "@/lib/booking/tz";
+import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 
@@ -30,7 +32,15 @@ export default async function AppLayout({
   // gates the count by studio membership; a failed count (network,
   // table missing in a hypothetical staging env) silently falls
   // back to zero so the layout never breaks. Single bounded query.
-  const unreadNotifications = await loadUnreadNotificationCount(studio.id);
+  //
+  // Willow follow-up: overdue disinfectant "Replace now" records also count
+  // toward the badge (computed, not persisted) so the operational safety alert is
+  // visible from every page. Two bounded studio-scoped reads, run together.
+  const [unreadPersisted, overdueDisinfectantCount] = await Promise.all([
+    loadUnreadNotificationCount(studio.id),
+    loadOverdueDisinfectantCount(studio.id, studio.timezone),
+  ]);
+  const unreadNotifications = unreadPersisted + overdueDisinfectantCount;
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -166,6 +176,27 @@ async function loadUnreadNotificationCount(studioId: string): Promise<number> {
       .is("read_at", null);
     if (error) return 0;
     return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Willow follow-up: count of overdue disinfectant "Replace now" records for the
+// badge. Computed from the same read-time source of truth as the Records page +
+// Notification Centre (one bounded, studio-scoped, RLS-gated read). Never throws
+// — a failure falls back to zero so the header never breaks.
+async function loadOverdueDisinfectantCount(
+  studioId: string,
+  timezone: string,
+): Promise<number> {
+  try {
+    const supabase = await createClient();
+    const alerts = await loadOverdueDisinfectantAlerts(
+      supabase,
+      studioId,
+      todayInTz(timezone),
+    );
+    return alerts.length;
   } catch {
     return 0;
   }
