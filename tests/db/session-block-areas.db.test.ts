@@ -238,8 +238,13 @@ describe("0129 — area-set transitions are canonical + atomic (no stale rows)",
         [a.studioId, sid, bid, AREAS(areas), expected ?? null],
       ),
     );
+  // Read updated_at as TEXT (full microsecond precision). node-pg would coerce a
+  // timestamptz to a millisecond-precision JS Date, which loses sub-ms digits and
+  // would falsely trip the exact-equality concurrency check. The app reads it as a
+  // full-precision ISO string from PostgREST, so this mirrors the real path.
   const blockUpdatedAt = async (bid: string) =>
-    (await adminQuery(`select updated_at from public.session_blocks where id=$1`, [bid])).rows[0].updated_at as string;
+    (await adminQuery(`select updated_at::text as updated_at from public.session_blocks where id=$1`, [bid]))
+      .rows[0].updated_at as string;
 
   it("legacy-one → structured-one, then one → many, many → one, many → different many, many → zero", async () => {
     const { sessionId, blockId } = await seedSession(a); // legacy block (primary_area only, no child rows)
