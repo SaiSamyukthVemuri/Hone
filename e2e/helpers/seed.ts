@@ -433,6 +433,82 @@ export async function seedE2eDraftElectrolysisSession(
   return { clientId, sessionId };
 }
 
+// Seed a probe row in the studio's sterilization inventory
+// (record_keeping_sterile_items) so the charting probe-lot selector has an
+// ACTIVE (or expired) candidate. expiryDate null = never expires.
+export async function seedE2eProbeInventoryItem(
+  seed: E2eSeed,
+  opts: {
+    lotNumber: string;
+    description?: string;
+    manufacturer?: string;
+    expiryDate?: string | null;
+  },
+): Promise<void> {
+  await sql(
+    `insert into public.record_keeping_sterile_items
+       (id, studio_id, date_purchased, item_description, manufacturer_name,
+        amount_purchased, lot_number, expiry_date)
+     values ($1,$2, current_date, $3, $4, '1 box', $5, $6)`,
+    [
+      randomUUID(),
+      seed.studioId,
+      opts.description ?? "Sterex Gold F3 probe",
+      opts.manufacturer ?? "Sterex",
+      opts.lotNumber,
+      opts.expiryDate === undefined ? null : opts.expiryDate,
+    ],
+  );
+}
+
+// Seed a LEGACY single-area block (primary_area + block-level side, no child
+// rows) so the e2e can prove legacy records still render their single area.
+export async function seedE2eLegacyBlock(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: { primaryArea: string; side?: string | null; sortOrder?: number },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, primary_area, side, sort_order)
+     values ($1,$2,$3,$4,$5,$6)`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea,
+      opts.side ?? null,
+      opts.sortOrder ?? 0,
+    ],
+  );
+  return { blockId };
+}
+
+// Read the probe-lot snapshots saved on a session's (non-deleted) blocks.
+export async function getSessionBlockProbeLots(
+  sessionId: string,
+): Promise<Array<string | null>> {
+  const rows = await sql<{ probe_lot_number: string | null }>(
+    `select probe_lot_number from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => r.probe_lot_number);
+}
+
+// Force a block's updated_at to a stale value out-of-band, to exercise the
+// optimistic-concurrency conflict (stale_block_version) from a browser edit.
+export async function bumpSessionBlockUpdatedAt(sessionId: string): Promise<void> {
+  await sql(
+    `update public.session_blocks
+        set updated_at = now() + interval '1 second'
+      where session_id = $1 and deleted_at is null`,
+    [sessionId],
+  );
+}
+
 // Read a session's structured block areas (migration 0128) for e2e ground truth.
 // Returns "<area>|<laterality>" strings ordered by block + display_order.
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
