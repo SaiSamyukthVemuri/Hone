@@ -92,6 +92,8 @@ const CURATED_TABLES = {
   imported_treatment_memory_audit_events: "ImportedTreatmentMemoryAuditEvent",
   // Migration 0092 (PR #271): secure treatment image storage.
   treatment_images: "TreatmentImage",
+  // Migration 0126 (Willow PR A): dedicated consultation + skin/hair clinical notes.
+  client_clinical_notes: "ClientClinicalNote",
 };
 
 // Recently added columns that MUST exist in both the database and

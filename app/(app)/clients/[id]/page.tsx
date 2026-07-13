@@ -119,6 +119,14 @@ import {
 import { updateClientPersonalNotesAction } from "./personal-notes-actions";
 import { getClientPersonalNotes } from "@/lib/clients/personal-notes-queries";
 import { ClientPersonalNotesEditor } from "@/components/client-personal-notes-editor";
+import {
+  addClinicalNoteAction,
+  reviseClinicalNoteAction,
+} from "./clinical-notes-actions";
+import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
+import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
+import { ClinicalNotesSection } from "@/components/clinical-notes-section";
+import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
@@ -277,6 +285,19 @@ export default async function ClientCheatSheetPage({
     client.id,
     5,
   );
+
+  // Migration 0126: dated consultation + skin/hair analysis clinical notes.
+  // Loaded only when the Consultation tab is active so other tabs pay no cost.
+  const clinicalNoteSections =
+    activeTab === "consultation"
+      ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
+      : null;
+  // Read-only latest-of-each-kind summary for the overview appointment-prep
+  // briefing. Two light reads; only on the default overview tab.
+  const clinicalNotesSummary =
+    activeTab === "overview"
+      ? await getClinicalNotesSummary(client.id)
+      : null;
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -814,6 +835,17 @@ export default async function ClientCheatSheetPage({
             importedMemory={importedMemory}
           />
 
+          {/* Migration 0126: at-a-glance latest consultation + skin/hair
+              analysis for appointment prep. Read-only; links to the
+              Consultation tab for full dated history + add/revise. */}
+          {clinicalNotesSummary && (
+            <ClinicalNotesSummary
+              clientId={client.id}
+              consultation={clinicalNotesSummary.consultation}
+              skinHair={clinicalNotesSummary.skin_hair_analysis}
+            />
+          )}
+
           {/* PR #210: Treatment Intelligence; recorded-history summary
               (areas, minutes, hairs, latest setup, reactions, watch/
               plan). Below Client info, above Pricing. */}
@@ -872,6 +904,17 @@ export default async function ClientCheatSheetPage({
             </div>
           </section>
         </>
+      )}
+
+      {activeTab === "consultation" && clinicalNoteSections && (
+        <ClinicalNotesSection
+          clientId={client.id}
+          variant="full"
+          sections={clinicalNoteSections}
+          addAction={addClinicalNoteAction}
+          reviseAction={reviseClinicalNoteAction}
+          printHref={`/clients/${client.id}/clinical-notes/print`}
+        />
       )}
 
       {activeTab === "personal" && (

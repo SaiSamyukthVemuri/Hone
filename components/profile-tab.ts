@@ -16,6 +16,8 @@
 //   - "health" : Health & Forms (intake summary, status, deep link to
 //                /clients/[id]/intake)
 //   - "personal" : Personal Notes (practitioner-only relationship memory)
+//   - "consultation" : Consultation notes + Skin/hair analysis (dated,
+//                      append-only clinical records; migration 0126)
 
 export type ProfileTab =
   | "overview"
@@ -23,6 +25,7 @@ export type ProfileTab =
   | "treatment"
   | "messages"
   | "health"
+  | "consultation"
   | "personal";
 
 export function isProfileTab(value: string | null | undefined): value is ProfileTab {
@@ -32,6 +35,7 @@ export function isProfileTab(value: string | null | undefined): value is Profile
     value === "treatment" ||
     value === "messages" ||
     value === "health" ||
+    value === "consultation" ||
     value === "personal"
   );
 }

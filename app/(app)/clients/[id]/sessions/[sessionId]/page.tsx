@@ -59,6 +59,12 @@ import {
   attachChartEntryToPlanAction,
   detachChartEntryFromPlanAction,
 } from "../../treatment-plans-actions";
+import {
+  addClinicalNoteAction,
+  reviseClinicalNoteAction,
+} from "../../clinical-notes-actions";
+import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
+import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 
 export default async function SessionDetailPage({
   params,
@@ -94,6 +100,13 @@ export default async function SessionDetailPage({
 
   const audit = await getSessionAudit(session.id);
   const clientTags = await getClientTags(studio.id, id);
+
+  // Migration 0126: dated consultation + skin/hair analysis clinical notes,
+  // shown compact during charting (latest of each kind + inline add/revise;
+  // history bounded + collapsed).
+  const clinicalNoteSections = await buildClinicalNoteSections(id, {
+    historyLimit: 10,
+  });
 
   // PR #172. Session payment eligibility resolves whether the
   // practitioner can prepare a session_payment charge attempt
@@ -519,6 +532,30 @@ export default async function SessionDetailPage({
             previousSessionId={previousSessionAny.id}
           />
         )}
+
+      {/* Migration 0126: consultation + skin/hair analysis context during
+          charting. Collapsible so it never crowds the charting flow; the
+          latest of each kind shows at a glance and can be added/revised inline
+          without leaving the session. */}
+      <details className="group rounded-lg border border-neutral-200 dark:border-neutral-800">
+        <summary className="flex min-h-[44px] cursor-pointer items-center justify-between px-5 py-3 text-lg font-medium">
+          Consultation &amp; skin/hair analysis
+          <span className="text-xs font-normal text-neutral-500 group-open:hidden">
+            Tap to open
+          </span>
+        </summary>
+        <div className="px-5 pb-5">
+          <ClinicalNotesSection
+            clientId={id}
+            variant="compact"
+            sections={clinicalNoteSections}
+            addAction={addClinicalNoteAction}
+            reviseAction={reviseClinicalNoteAction}
+            profileHref={`/clients/${id}?tab=consultation`}
+            printHref={`/clients/${id}/clinical-notes/print`}
+          />
+        </div>
+      </details>
 
       {session.modality === "electrolysis" && blockData ? (
         <SessionBlocksView

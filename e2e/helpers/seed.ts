@@ -408,6 +408,55 @@ export async function getEntryObservationChips(
   return rows[0]?.observation_chips ?? [];
 }
 
+// Seed a bare client under the studio (no session). Used by the clinical-notes
+// e2e to exercise the consultation/skin-hair surfaces on the client profile.
+export async function seedE2eClient(seed: E2eSeed): Promise<{ clientId: string }> {
+  const clientId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [
+      clientId,
+      seed.studioId,
+      `Notes Client ${seed.runId}-${uniq}`,
+      `e2e-notes-${seed.runId}-${uniq}@harness.local`,
+    ],
+  );
+  return { clientId };
+}
+
+// Ground truth for the clinical-notes e2e: how many rows of a kind exist, and
+// the CURRENT (non-superseded) body for a kind.
+export async function getClinicalNoteCount(
+  clientId: string,
+  kind?: string,
+): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int as n from public.client_clinical_notes
+      where client_id = $1 and ($2::text is null or kind = $2)`,
+    [clientId, kind ?? null],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+export async function getLatestClinicalNoteBody(
+  clientId: string,
+  kind: string,
+): Promise<string | null> {
+  const rows = await sql<{ body: string }>(
+    `select body from public.client_clinical_notes n
+      where n.client_id = $1 and n.kind = $2
+        and not exists (
+          select 1 from public.client_clinical_notes r
+          where r.supersedes_note_id = n.id
+        )
+      order by n.occurred_at desc, n.created_at desc
+      limit 1`,
+    [clientId, kind],
+  );
+  return rows[0]?.body ?? null;
+}
+
 // Ground-truth checks the amend spec asserts against the real DB.
 export async function getAmendmentCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
