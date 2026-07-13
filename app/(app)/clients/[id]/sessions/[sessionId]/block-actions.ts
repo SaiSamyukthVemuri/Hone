@@ -12,6 +12,12 @@ import {
   isCanonicalTreatmentArea,
 } from "@/lib/sessions/area-validation";
 import {
+  isLaterality,
+  deriveLegacyProjection,
+  type BlockArea,
+  type Laterality,
+} from "@/lib/sessions/block-areas";
+import {
   isNumbingStatus,
   isReactionType,
   isToleranceRating,
@@ -156,6 +162,95 @@ function normalizeStructuredArea(input: {
   const custom_area_detail = rawDetail.length === 0 ? null : rawDetail;
 
   return { ok: true, value: { primary_area, side, custom_area_detail } };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-area + per-area laterality (migration 0128, session_block_areas).
+// ---------------------------------------------------------------------------
+const AREA_MAX = 60;
+
+export type AreaSetInput = ReadonlyArray<{ area?: string | null; laterality?: string | null }>;
+
+// Validate + canonicalize the submitted area set: each area is 1..60 chars
+// (canonical or a custom "Other" value, matching primary_area's flexibility);
+// laterality is one of the approved values; duplicate (area, laterality) pairs
+// are rejected (the DB unique enforces this too). Order is preserved.
+function normalizeAreaSet(
+  input: AreaSetInput,
+): { ok: true; value: BlockArea[] } | { ok: false; error: string } {
+  const out: BlockArea[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    const area = (raw.area ?? "").trim();
+    if (area.length === 0) continue; // blank rows are dropped, not an error
+    if (area.length > AREA_MAX) {
+      return { ok: false, error: `Treatment area must be ${AREA_MAX} characters or fewer.` };
+    }
+    const lat = raw.laterality ?? "";
+    if (!isLaterality(lat)) {
+      return { ok: false, error: "Choose a side for every selected area." };
+    }
+    const key = area.toLowerCase() + ":" + lat;
+    if (seen.has(key)) {
+      return { ok: false, error: `"${area}" is selected twice with the same side.` };
+    }
+    seen.add(key);
+    out.push({ area, laterality: lat as Laterality });
+  }
+  return { ok: true, value: out };
+}
+
+// Atomically-safe REPLACE of a block's structured area set. supabase-js has no
+// cross-statement transaction, so we: (1) delete the block's existing rows,
+// then (2) write the new set as a SINGLE bulk INSERT (one atomic statement —
+// all rows or none), then (3) READ BACK and verify the persisted set matches
+// what we intended before reporting success. The block's legacy primary_area +
+// side are maintained by the caller in the SAME save, so a child-write failure
+// degrades to legacy fallback for display (no corruption, no partial set that
+// mixes old + new) and is recoverable by re-saving. studio_id is trigger-derived
+// (the passed value is ignored by the DB); we pass it for the RLS with-check.
+async function replaceBlockAreaSet(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  blockId: string,
+  studioId: string,
+  areas: ReadonlyArray<BlockArea>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const del = await supabase
+    .from("session_block_areas")
+    .delete()
+    .eq("session_block_id", blockId);
+  if (del.error) return { ok: false, error: del.error.message };
+
+  if (areas.length > 0) {
+    const rows = areas.map((a, i) => ({
+      session_block_id: blockId,
+      studio_id: studioId,
+      area: a.area,
+      laterality: a.laterality,
+      display_order: i,
+    }));
+    const ins = await supabase.from("session_block_areas").insert(rows);
+    if (ins.error) return { ok: false, error: ins.error.message };
+  }
+
+  // Read-back verification: the persisted set must equal the intended set,
+  // in order, with no extras/missing — otherwise keep the form open.
+  const back = await supabase
+    .from("session_block_areas")
+    .select("area, laterality")
+    .eq("session_block_id", blockId)
+    .order("display_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+  if (back.error) return { ok: false, error: back.error.message };
+  const got = (back.data ?? []) as Array<{ area: string; laterality: string }>;
+  const matches =
+    got.length === areas.length &&
+    got.every((g, i) => g.area === areas[i].area && g.laterality === areas[i].laterality);
+  if (!matches) {
+    return { ok: false, error: "Saved areas could not be confirmed. Please check and save again." };
+  }
+  return { ok: true };
 }
 
 // Session Logging Phase B: the eight structured probe columns
@@ -879,6 +974,10 @@ export type CreateAreaWithEntryInput = {
   side?: string | null;
   customAreaDetail?: string | null;
   areaIsCustom?: boolean;
+  // Multi-area (0128): the full set of areas treated with these settings, each
+  // with its own laterality. When present + non-empty it is authoritative over
+  // the single primaryArea/side above (which become a legacy projection).
+  areas?: AreaSetInput;
   readings?: EntryReadingsInput;
   // PR #190 (migration 0082): structured client response, all optional.
   toleranceRating?: number | null;
@@ -916,8 +1015,21 @@ export async function createTreatmentAreaWithEntryAction(
   const responseCheck = normalizeClinicalResponse(input);
   if (!responseCheck.ok) return responseCheck;
 
+  // Multi-area (0128): when `areas` is provided, it is authoritative — the block
+  // stores a legacy projection (primary_area = first area; side = shared side or
+  // null when mixed) and canonical child rows. Absent → the single-area path is
+  // unchanged (SimplifiedEntryForm + other callers keep working).
+  const areaSetCheck = input.areas ? normalizeAreaSet(input.areas) : null;
+  if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
+  const structuredAreas =
+    areaSetCheck && areaSetCheck.value.length > 0 ? areaSetCheck.value : null;
+  const proj = structuredAreas ? deriveLegacyProjection(structuredAreas) : null;
+  const blockPrimaryArea = proj ? proj.primaryArea : areaCheck.value.primary_area;
+  const blockSide = proj ? proj.side : areaCheck.value.side;
+  const blockCustomDetail = proj ? null : areaCheck.value.custom_area_detail;
+
   const readings = input.readings ?? {};
-  const area = areaCheck.value.primary_area;
+  const area = blockPrimaryArea;
 
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
@@ -962,15 +1074,30 @@ export async function createTreatmentAreaWithEntryAction(
       probe_lot_confirmed:
         Boolean(input.probeLotConfirmed) &&
         (input.probeLotNumber ?? "").trim() !== "",
-      primary_area: areaCheck.value.primary_area,
-      side: areaCheck.value.side,
-      custom_area_detail: areaCheck.value.custom_area_detail,
+      primary_area: blockPrimaryArea,
+      side: blockSide,
+      custom_area_detail: blockCustomDetail,
       ...probeCheck.columns,
       ...responseCheck.columns,
     })
     .select("*")
     .single();
   if (blockErr) return { ok: false, error: blockErr.message };
+
+  // Multi-area: write the canonical child rows atomically-safe, then verify.
+  // On failure, soft-delete the just-created block so no orphan/partial set is
+  // left behind (mirrors the entry-failure cleanup below).
+  if (structuredAreas) {
+    const areaWrite = await replaceBlockAreaSet(supabase, block.id, studio.id, structuredAreas);
+    if (!areaWrite.ok) {
+      await supabase
+        .from("session_blocks")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("id", block.id)
+        .eq("studio_id", studio.id);
+      return { ok: false, error: `Failed to save areas: ${areaWrite.error}` };
+    }
+  }
 
   // Create the first entry only when a treatment area is present. An
   // area-less, readings-less save creates just the block (a valid "set the
@@ -991,7 +1118,7 @@ export async function createTreatmentAreaWithEntryAction(
         session_id: input.sessionId,
         block_id: block.id,
         area,
-        areas: [area],
+        areas: structuredAreas ? structuredAreas.map((sa) => sa.area) : [area],
         probe_lot_id: null,
         // Legacy generic intensity / duration_seconds are intentionally not
         // written; thermolysis / galvanic readings live in their own columns.
@@ -1053,6 +1180,10 @@ export type UpdateAreaWithEntryInput = {
   side?: string | null;
   customAreaDetail?: string | null;
   areaIsCustom?: boolean;
+  // Multi-area (0128): the full set of areas treated with these settings, each
+  // with its own laterality. When present + non-empty it is authoritative over
+  // the single primaryArea/side above (which become a legacy projection).
+  areas?: AreaSetInput;
   readings?: EntryReadingsInput;
   // PR #190 (migration 0082): structured client response. The edit
   // form initializes its draft from the block row and always sends
@@ -1092,8 +1223,21 @@ export async function updateTreatmentAreaWithEntryAction(
   const responseCheck = normalizeClinicalResponse(input);
   if (!responseCheck.ok) return responseCheck;
 
+  // Multi-area (0128): when `areas` is provided, it is authoritative — the block
+  // stores a legacy projection (primary_area = first area; side = shared side or
+  // null when mixed) and canonical child rows. Absent → the single-area path is
+  // unchanged (SimplifiedEntryForm + other callers keep working).
+  const areaSetCheck = input.areas ? normalizeAreaSet(input.areas) : null;
+  if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
+  const structuredAreas =
+    areaSetCheck && areaSetCheck.value.length > 0 ? areaSetCheck.value : null;
+  const proj = structuredAreas ? deriveLegacyProjection(structuredAreas) : null;
+  const blockPrimaryArea = proj ? proj.primaryArea : areaCheck.value.primary_area;
+  const blockSide = proj ? proj.side : areaCheck.value.side;
+  const blockCustomDetail = proj ? null : areaCheck.value.custom_area_detail;
+
   const readings = input.readings ?? {};
-  const area = areaCheck.value.primary_area;
+  const area = blockPrimaryArea;
 
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
@@ -1127,9 +1271,9 @@ export async function updateTreatmentAreaWithEntryAction(
       probe_lot_confirmed:
         Boolean(input.probeLotConfirmed) &&
         (input.probeLotNumber ?? "").trim() !== "",
-      primary_area: areaCheck.value.primary_area,
-      side: areaCheck.value.side,
-      custom_area_detail: areaCheck.value.custom_area_detail,
+      primary_area: blockPrimaryArea,
+      side: blockSide,
+      custom_area_detail: blockCustomDetail,
       ...probeCheck.columns,
       ...responseCheck.columns,
     })
@@ -1140,6 +1284,14 @@ export async function updateTreatmentAreaWithEntryAction(
     .select("*")
     .single();
   if (blockErr) return { ok: false, error: blockErr.message };
+
+  // Multi-area: atomically-safe REPLACE of the block's structured area set +
+  // read-back verify. If the block has no `areas` submitted we leave any prior
+  // child rows untouched (backward-compatible: an old single-area edit path).
+  if (structuredAreas) {
+    const areaWrite = await replaceBlockAreaSet(supabase, input.blockId, studio.id, structuredAreas);
+    if (!areaWrite.ok) return { ok: false, error: `Failed to save areas: ${areaWrite.error}` };
+  }
 
   const snap = entryMachineSnapshot({
     mode: (input.mode ?? null) as SessionMode | null,
@@ -1194,7 +1346,7 @@ export async function updateTreatmentAreaWithEntryAction(
         session_id: input.sessionId,
         block_id: input.blockId,
         area,
-        areas: [area],
+        areas: structuredAreas ? structuredAreas.map((sa) => sa.area) : [area],
         probe_lot_id: null,
         pulse_count: clampPulseCount(readings.pulseCount),
         pulse_delay_seconds: resolvePulseDelaySeconds(readings),

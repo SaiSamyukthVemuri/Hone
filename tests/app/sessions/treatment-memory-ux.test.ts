@@ -46,9 +46,12 @@ describe("1. a new treatment area never auto-copies the previous area", () => {
       FORM.indexOf("function initialDraft"),
       FORM.indexOf("export function BlockSetupForm"),
     );
-    expect(initial).toMatch(
-      /primaryArea: defaultPrimaryArea\?\.trim\(\) \|\| ""/,
-    );
+    // Migration 0128: the create draft seeds ONLY from the plan-derived default
+    // (into both the legacy primaryArea and the structured areas set); never from
+    // the previous block.
+    expect(initial).toMatch(/const seed = defaultPrimaryArea\?\.trim\(\) \|\| ""/);
+    expect(initial).toMatch(/primaryArea: seed/);
+    expect(initial).toMatch(/areas: seed \?/);
     expect(initial).not.toMatch(/previousBlock/);
   });
 });

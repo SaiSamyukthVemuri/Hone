@@ -408,6 +408,45 @@ export async function getEntryObservationChips(
   return rows[0]?.observation_chips ?? [];
 }
 
+// Seed a draft electrolysis session with a client and NO blocks. The charting
+// page opens with the "Add settings block" form ready (blocks.length === 0).
+export async function seedE2eDraftElectrolysisSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Area Client ${seed.runId}-${uniq}`, `e2e-area-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'electrolysis')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  return { clientId, sessionId };
+}
+
+// Read a session's structured block areas (migration 0128) for e2e ground truth.
+// Returns "<area>|<laterality>" strings ordered by block + display_order.
+export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
+  const rows = await sql<{ area: string; laterality: string }>(
+    `select a.area, a.laterality
+       from public.session_block_areas a
+       join public.session_blocks b on b.id = a.session_block_id
+      where b.session_id = $1 and b.deleted_at is null
+      order by a.session_block_id, a.display_order, a.created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => `${r.area}|${r.laterality}`);
+}
+
 // Seed a bare client under the studio (no session). Used by the clinical-notes
 // e2e to exercise the consultation/skin-hair surfaces on the client profile.
 export async function seedE2eClient(seed: E2eSeed): Promise<{ clientId: string }> {

@@ -35,24 +35,26 @@ describe("visual area picker renders grouped body-area chips", () => {
   });
 });
 
-describe("charting form frames the picker as a Treatment area chart part", () => {
-  it("renders a 'Chart part' / 'Treatment area' card and uses the AreaPicker", () => {
-    expect(FORM).toMatch(/Chart part/);
-    expect(FORM).toMatch(/Treatment area/);
-    expect(FORM).toMatch(/<AreaPicker/);
-    // PR #270 reworded the helper to point at the body map + the list.
-    expect(FORM).toMatch(/Choose from the body map or use the list below/);
+// Migration 0128 (Willow multi-area): the single-area "Chart part" card was
+// replaced by the multi-area editor, which itself reuses the region-grouped
+// AreaPicker to ADD areas. The picker component + AREA_REGIONS catalog are
+// unchanged (asserted above).
+const EDITOR = read("components/multi-area-editor.tsx");
+
+describe("charting form uses the multi-area editor over the shared AreaPicker", () => {
+  it("renders the MultiAreaEditor bound to the structured areas set", () => {
+    expect(FORM).toMatch(/<MultiAreaEditor/);
+    expect(FORM).toMatch(/value=\{draft\.areas\}/);
   });
 
-  it("shows a live 'Area being charted' preview with an 'Area not recorded' fallback", () => {
-    expect(FORM).toMatch(/Area being charted:/);
-    expect(FORM).toMatch(/Area not recorded/);
+  it("the multi-area editor uses the AreaPicker to add areas + the areas-treated copy", () => {
+    expect(EDITOR).toMatch(/Areas treated with these settings/);
+    expect(EDITOR).toMatch(/<AreaPicker/);
   });
 
-  it("reuses the existing structured area fields (no new schema)", () => {
-    expect(FORM).toMatch(/primaryArea/);
-    expect(FORM).toMatch(/customAreaDetail/);
-    expect(FORM).toMatch(/SIDE_OPTIONS/);
+  it("stores the structured area model (session_block_areas, migration 0128)", () => {
+    expect(FORM).toMatch(/BlockArea/);
+    expect(FORM).toMatch(/draft\.areas/);
   });
 });
 

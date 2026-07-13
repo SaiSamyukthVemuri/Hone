@@ -16,6 +16,7 @@ import type {
   ProbeType,
   Session,
   SessionBlock,
+  SessionBlockArea,
   Studio,
 } from "@/lib/types/database";
 
@@ -774,6 +775,10 @@ export async function getTodayRosterForStudio(studioId: string): Promise<
 
 export type SessionBlockWithEntries = SessionBlock & {
   electrolysis_entries: ElectrolysisEntry[];
+  // Migration 0128: structured treated areas + per-area laterality. Empty for
+  // legacy blocks; the read path (lib/sessions/block-areas.ts) falls back to
+  // primary_area + side when this is empty.
+  structured_areas: SessionBlockArea[];
 };
 
 export type SessionWithBlocks = {
@@ -855,6 +860,25 @@ export async function getSessionWithBlocks(
   const blocks = (blocksRes.data ?? []) as SessionBlock[];
   const entries = (entriesRes.data ?? []) as ElectrolysisEntry[];
 
+  // Migration 0128: structured treated areas for these blocks (RLS-scoped).
+  const blockIds = blocks.map((b) => b.id);
+  const areasByBlock = new Map<string, SessionBlockArea[]>();
+  if (blockIds.length > 0) {
+    const areasRes = await supabase
+      .from("session_block_areas")
+      .select("*")
+      .in("session_block_id", blockIds)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (areasRes.error)
+      throw new Error(`Failed to load block areas: ${areasRes.error.message}`);
+    for (const a of (areasRes.data ?? []) as SessionBlockArea[]) {
+      const bucket = areasByBlock.get(a.session_block_id) ?? [];
+      bucket.push(a);
+      areasByBlock.set(a.session_block_id, bucket);
+    }
+  }
+
   const byBlock = new Map<string, ElectrolysisEntry[]>();
   const orphan: ElectrolysisEntry[] = [];
   for (const e of entries) {
@@ -870,6 +894,7 @@ export async function getSessionWithBlocks(
   const blocksWithEntries: SessionBlockWithEntries[] = blocks.map((b) => ({
     ...b,
     electrolysis_entries: byBlock.get(b.id) ?? [],
+    structured_areas: areasByBlock.get(b.id) ?? [],
   }));
 
   return { session, blocks: blocksWithEntries, orphan_entries: orphan };
