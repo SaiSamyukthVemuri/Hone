@@ -95,7 +95,8 @@ describe("entry point is completed-appointment only", () => {
     expect(BUTTON).toMatch(/min-h-\[44px\]/);
   });
   it("the calendar appointment detail wires Checkout for completed appointments", () => {
-    expect(CAL).toMatch(/<CheckoutButton/);
+    // Via the shared AppointmentCheckoutCell (which renders CheckoutButton).
+    expect(CAL).toMatch(/<AppointmentCheckoutCell/);
     expect(CAL).toMatch(/typedStatus === "completed"/);
   });
   it("there is a single checkout flow (calendar reuses the shared component)", () => {

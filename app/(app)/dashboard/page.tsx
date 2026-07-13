@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
+import {
+  getAppointmentPaymentStates,
+  type AppointmentPaymentState,
+} from "@/lib/billing/appointment-payment-state";
 import {
   getCurrentPractitionerWithStudio,
   getPractitionersForStudio,
@@ -298,6 +303,10 @@ export default async function DashboardPage({
     }
   }
 
+  // Quick checkout (Chloe): one bounded, tenant-scoped batch loader for the
+  // visible appointments' payment state — no per-row query, no full history.
+  const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds);
+
   const beforeTodayPreviews = await getBeforeTodayPreviews(
     studio.id,
     visibleAppointments.map((a) => a.client_id),
@@ -418,6 +427,7 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   beforeToday={beforeTodayPreviews.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
+                  paymentState={paymentStates.get(appt.id) ?? "no_session"}
                   tz={studio.timezone}
                   timeFormat={resolveTimeFormat(studio)}
                 />
@@ -536,6 +546,7 @@ function AppointmentRow({
   intakeStatus,
   beforeToday,
   linkedSession,
+  paymentState,
   tz,
   timeFormat,
 }: {
@@ -544,6 +555,7 @@ function AppointmentRow({
   intakeStatus: ClientIntakeForm["status"] | null;
   beforeToday: BeforeTodayPreview | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
+  paymentState: AppointmentPaymentState;
   tz: string;
   timeFormat: TimeFormat;
 }) {
@@ -676,12 +688,21 @@ function AppointmentRow({
           )}
         </div>
       </Link>
-      <Link
-        href={nextAction.href}
-        className="self-center rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
-      >
-        {nextAction.label}
-      </Link>
+      <div className="flex flex-col items-end gap-2 self-center">
+        {/* Quick checkout (Chloe): take payment from the roster without opening
+            charting. Paid/Processing/Refunded show a status badge instead. */}
+        <AppointmentCheckoutCell
+          appointmentId={appt.id}
+          status={appt.status}
+          paymentState={paymentState}
+        />
+        <Link
+          href={nextAction.href}
+          className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
+        >
+          {nextAction.label}
+        </Link>
+      </div>
     </div>
   );
 }
