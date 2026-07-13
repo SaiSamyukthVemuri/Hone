@@ -70,15 +70,18 @@ describe("block actions: response validation and persistence", () => {
     expect(createBody).toMatch(/\.\.\.responseCheck\.columns,/);
   });
 
-  it("EDIT validates the response before the update and writes the columns", () => {
+  it("EDIT validates the response before writing the columns (via blockFields / the 0129 RPC)", () => {
     const updateBody = ACTIONS_CODE.slice(
       ACTIONS_CODE.indexOf("export async function updateTreatmentAreaWithEntryAction"),
     );
     const checkIdx = updateBody.indexOf("normalizeClinicalResponse(input)");
-    const updateIdx = updateBody.indexOf(".update({");
+    // Migration 0129: the columns are spread into the shared blockFields, written
+    // by the direct `.update(blockFields)` (single-area) or the atomic RPC.
+    const colsIdx = updateBody.indexOf("...responseCheck.columns,");
     expect(checkIdx).toBeGreaterThan(-1);
-    expect(updateIdx).toBeGreaterThan(checkIdx);
-    expect(updateBody).toMatch(/\.\.\.responseCheck\.columns,/);
+    expect(colsIdx).toBeGreaterThan(checkIdx);
+    expect(updateBody).toMatch(/\.update\(blockFields\)/);
+    expect(updateBody).toMatch(/rpc\(\s*"update_session_block_with_areas"/);
   });
 
   it("both input types accept the optional response fields", () => {

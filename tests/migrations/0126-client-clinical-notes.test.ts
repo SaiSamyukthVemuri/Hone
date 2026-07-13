@@ -27,7 +27,7 @@ describe("0126 — file + repo-max tripwire", () => {
     // 0127 (the author-INSERT policy fix) now advances the repo max; nothing
     // above 0127 may exist yet. The absolute repo-max pin lives in the 0127 test.
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(29|[3-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(3[0-9]|[4-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 });

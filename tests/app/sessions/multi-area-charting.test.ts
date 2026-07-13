@@ -54,15 +54,12 @@ describe("write action persists canonical rows + a safe legacy projection", () =
     expect(ACTIONS).toMatch(/deriveLegacyProjection\(structuredAreas\)/);
     expect(ACTIONS).toMatch(/blockPrimaryArea = proj \? proj\.primaryArea/);
   });
-  it("replaces the set as delete → bulk-insert → read-back verify (no partial set)", () => {
-    expect(ACTIONS).toMatch(/function replaceBlockAreaSet/);
-    expect(ACTIONS).toMatch(/\.from\("session_block_areas"\)\s*\n?\s*\.delete\(\)/);
-    expect(ACTIONS).toMatch(/\.from\("session_block_areas"\)\.insert\(rows\)/);
-    // Read-back verification gate.
-    expect(ACTIONS).toMatch(/Saved areas could not be confirmed/);
-  });
-  it("cleans up the block if the area write fails on create (no orphan/partial set)", () => {
-    expect(ACTIONS).toMatch(/if \(structuredAreas\) \{[\s\S]{0,400}deleted_at: new Date\(\)\.toISOString\(\)/);
+  it("saves block + area set ATOMICALLY via the migration-0129 RPCs (no partial set)", () => {
+    expect(ACTIONS).toMatch(/rpc\(\s*"create_session_block_with_areas"/);
+    expect(ACTIONS).toMatch(/rpc\(\s*"update_session_block_with_areas"/);
+    // The old non-atomic app-side delete-then-insert is gone.
+    expect(ACTIONS).not.toMatch(/function replaceBlockAreaSet/);
+    expect(ACTIONS).not.toMatch(/\.from\("session_block_areas"\)\s*\n?\s*\.delete\(\)/);
   });
 });
 

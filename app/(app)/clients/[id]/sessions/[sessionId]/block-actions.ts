@@ -200,59 +200,6 @@ function normalizeAreaSet(
   return { ok: true, value: out };
 }
 
-// Atomically-safe REPLACE of a block's structured area set. supabase-js has no
-// cross-statement transaction, so we: (1) delete the block's existing rows,
-// then (2) write the new set as a SINGLE bulk INSERT (one atomic statement —
-// all rows or none), then (3) READ BACK and verify the persisted set matches
-// what we intended before reporting success. The block's legacy primary_area +
-// side are maintained by the caller in the SAME save, so a child-write failure
-// degrades to legacy fallback for display (no corruption, no partial set that
-// mixes old + new) and is recoverable by re-saving. studio_id is trigger-derived
-// (the passed value is ignored by the DB); we pass it for the RLS with-check.
-async function replaceBlockAreaSet(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  blockId: string,
-  studioId: string,
-  areas: ReadonlyArray<BlockArea>,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const del = await supabase
-    .from("session_block_areas")
-    .delete()
-    .eq("session_block_id", blockId);
-  if (del.error) return { ok: false, error: del.error.message };
-
-  if (areas.length > 0) {
-    const rows = areas.map((a, i) => ({
-      session_block_id: blockId,
-      studio_id: studioId,
-      area: a.area,
-      laterality: a.laterality,
-      display_order: i,
-    }));
-    const ins = await supabase.from("session_block_areas").insert(rows);
-    if (ins.error) return { ok: false, error: ins.error.message };
-  }
-
-  // Read-back verification: the persisted set must equal the intended set,
-  // in order, with no extras/missing — otherwise keep the form open.
-  const back = await supabase
-    .from("session_block_areas")
-    .select("area, laterality")
-    .eq("session_block_id", blockId)
-    .order("display_order", { ascending: true })
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
-  if (back.error) return { ok: false, error: back.error.message };
-  const got = (back.data ?? []) as Array<{ area: string; laterality: string }>;
-  const matches =
-    got.length === areas.length &&
-    got.every((g, i) => g.area === areas[i].area && g.laterality === areas[i].laterality);
-  if (!matches) {
-    return { ok: false, error: "Saved areas could not be confirmed. Please check and save again." };
-  }
-  return { ok: true };
-}
-
 // Session Logging Phase B: the eight structured probe columns
 // (migration 0041) are always written as a set, derived server-side from
 // a single catalog key. The lib/probes.ts catalog is the source of truth
@@ -1045,58 +992,80 @@ export async function createTreatmentAreaWithEntryAction(
 
   const supabase = await createClient();
 
-  const { data: existing, error: countErr } = await supabase
-    .from("session_blocks")
-    .select("sort_order")
-    .eq("session_id", input.sessionId)
-    .is("deleted_at", null)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (countErr) return { ok: false, error: countErr.message };
-  const nextSort = (existing?.sort_order ?? 0) + 1;
+  // The settable block column bag, shared by both write paths.
+  const blockFields = {
+    block_name: null,
+    mode: input.mode ?? null,
+    apilus_modality: input.apilusModality ?? null,
+    energy_level: input.energyLevel ?? null,
+    minutes_performed: input.minutesPerformed ?? null,
+    machine_frequency: input.machineFrequency ?? null,
+    probe_lot_number: (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
+    // PR #279: confirmation only counts when a lot is actually present.
+    probe_lot_confirmed:
+      Boolean(input.probeLotConfirmed) && (input.probeLotNumber ?? "").trim() !== "",
+    primary_area: blockPrimaryArea,
+    side: blockSide,
+    custom_area_detail: blockCustomDetail,
+    ...probeCheck.columns,
+    ...responseCheck.columns,
+  };
 
-  const { data: block, error: blockErr } = await supabase
-    .from("session_blocks")
-    .insert({
-      studio_id: studio.id,
-      session_id: input.sessionId,
-      sort_order: nextSort,
-      block_name: null,
-      mode: input.mode ?? null,
-      apilus_modality: input.apilusModality ?? null,
-      energy_level: input.energyLevel ?? null,
-      minutes_performed: input.minutesPerformed ?? null,
-      machine_frequency: input.machineFrequency ?? null,
-      probe_lot_number:
-        (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
-      // PR #279: confirmation only counts when a lot is actually present.
-      probe_lot_confirmed:
-        Boolean(input.probeLotConfirmed) &&
-        (input.probeLotNumber ?? "").trim() !== "",
-      primary_area: blockPrimaryArea,
-      side: blockSide,
-      custom_area_detail: blockCustomDetail,
-      ...probeCheck.columns,
-      ...responseCheck.columns,
-    })
-    .select("*")
-    .single();
-  if (blockErr) return { ok: false, error: blockErr.message };
-
-  // Multi-area: write the canonical child rows atomically-safe, then verify.
-  // On failure, soft-delete the just-created block so no orphan/partial set is
-  // left behind (mirrors the entry-failure cleanup below).
+  let block: SessionBlock;
   if (structuredAreas) {
-    const areaWrite = await replaceBlockAreaSet(supabase, block.id, studio.id, structuredAreas);
-    if (!areaWrite.ok) {
-      await supabase
-        .from("session_blocks")
-        .update({ deleted_at: new Date().toISOString() })
-        .eq("id", block.id)
-        .eq("studio_id", studio.id);
-      return { ok: false, error: `Failed to save areas: ${areaWrite.error}` };
+    // ATOMIC (migration 0129): the block + its legacy projection + the COMPLETE
+    // structured area set are created together in one DB transaction — never a
+    // block with a half-written area set, and no compensating soft-delete.
+    const { data: newId, error: rpcErr } = await supabase.rpc(
+      "create_session_block_with_areas",
+      {
+        p_studio_id: studio.id,
+        p_session_id: input.sessionId,
+        p_block: blockFields,
+        p_areas: structuredAreas.map((a, i) => ({
+          area: a.area,
+          laterality: a.laterality,
+          display_order: i,
+        })),
+      },
+    );
+    if (rpcErr) return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
+    const { data: row, error: rowErr } = await supabase
+      .from("session_blocks")
+      .select("*")
+      .eq("id", newId as string)
+      .single();
+    if (rowErr || !row) {
+      return { ok: false, error: rowErr?.message ?? "Saved block could not be loaded." };
     }
+    block = row as SessionBlock;
+  } else {
+    // Area-less / legacy single-area path: a plain block insert (no area rows,
+    // so no atomicity concern).
+    const { data: existing, error: countErr } = await supabase
+      .from("session_blocks")
+      .select("sort_order")
+      .eq("session_id", input.sessionId)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (countErr) return { ok: false, error: countErr.message };
+    const nextSort = (existing?.sort_order ?? 0) + 1;
+    const { data: row, error: blockErr } = await supabase
+      .from("session_blocks")
+      .insert({
+        studio_id: studio.id,
+        session_id: input.sessionId,
+        sort_order: nextSort,
+        ...blockFields,
+      })
+      .select("*")
+      .single();
+    if (blockErr || !row) {
+      return { ok: false, error: blockErr?.message ?? "Failed to save the settings block." };
+    }
+    block = row as SessionBlock;
   }
 
   // Create the first entry only when a treatment area is present. An
@@ -1257,40 +1226,66 @@ export async function updateTreatmentAreaWithEntryAction(
   // block_name / block_notes are intentionally omitted so any legacy value
   // is preserved. Machine settings + structured area + structured probe are
   // fully overwritten from the form (which holds all of them).
-  const { data: block, error: blockErr } = await supabase
-    .from("session_blocks")
-    .update({
-      mode: input.mode ?? null,
-      apilus_modality: input.apilusModality ?? null,
-      energy_level: input.energyLevel ?? null,
-      minutes_performed: input.minutesPerformed ?? null,
-      machine_frequency: input.machineFrequency ?? null,
-      probe_lot_number:
-        (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
-      // PR #279: confirmation only counts when a lot is actually present.
-      probe_lot_confirmed:
-        Boolean(input.probeLotConfirmed) &&
-        (input.probeLotNumber ?? "").trim() !== "",
-      primary_area: blockPrimaryArea,
-      side: blockSide,
-      custom_area_detail: blockCustomDetail,
-      ...probeCheck.columns,
-      ...responseCheck.columns,
-    })
-    .eq("id", input.blockId)
-    .eq("studio_id", studio.id)
-    .eq("session_id", input.sessionId)
-    .is("deleted_at", null)
-    .select("*")
-    .single();
-  if (blockErr) return { ok: false, error: blockErr.message };
+  const blockFields = {
+    mode: input.mode ?? null,
+    apilus_modality: input.apilusModality ?? null,
+    energy_level: input.energyLevel ?? null,
+    minutes_performed: input.minutesPerformed ?? null,
+    machine_frequency: input.machineFrequency ?? null,
+    probe_lot_number: (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
+    // PR #279: confirmation only counts when a lot is actually present.
+    probe_lot_confirmed:
+      Boolean(input.probeLotConfirmed) && (input.probeLotNumber ?? "").trim() !== "",
+    primary_area: blockPrimaryArea,
+    side: blockSide,
+    custom_area_detail: blockCustomDetail,
+    ...probeCheck.columns,
+    ...responseCheck.columns,
+  };
 
-  // Multi-area: atomically-safe REPLACE of the block's structured area set +
-  // read-back verify. If the block has no `areas` submitted we leave any prior
-  // child rows untouched (backward-compatible: an old single-area edit path).
+  let block: SessionBlock;
   if (structuredAreas) {
-    const areaWrite = await replaceBlockAreaSet(supabase, input.blockId, studio.id, structuredAreas);
-    if (!areaWrite.ok) return { ok: false, error: `Failed to save areas: ${areaWrite.error}` };
+    // ATOMIC (migration 0129): the block update + legacy projection + the
+    // COMPLETE replacement area set commit together in ONE transaction. There is
+    // no window where the old area rows are deleted but the new set failed
+    // (which would previously have left only the first legacy-projected area).
+    const { error: rpcErr } = await supabase.rpc("update_session_block_with_areas", {
+      p_studio_id: studio.id,
+      p_session_id: input.sessionId,
+      p_block_id: input.blockId,
+      p_block: blockFields,
+      p_areas: structuredAreas.map((a, i) => ({
+        area: a.area,
+        laterality: a.laterality,
+        display_order: i,
+      })),
+    });
+    if (rpcErr) return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
+    const { data: row, error: rowErr } = await supabase
+      .from("session_blocks")
+      .select("*")
+      .eq("id", input.blockId)
+      .single();
+    if (rowErr || !row) {
+      return { ok: false, error: rowErr?.message ?? "Saved block could not be loaded." };
+    }
+    block = row as SessionBlock;
+  } else {
+    // No `areas` submitted → plain block update; any prior child rows are left
+    // untouched (backward-compatible single-area edit path).
+    const { data: row, error: blockErr } = await supabase
+      .from("session_blocks")
+      .update(blockFields)
+      .eq("id", input.blockId)
+      .eq("studio_id", studio.id)
+      .eq("session_id", input.sessionId)
+      .is("deleted_at", null)
+      .select("*")
+      .single();
+    if (blockErr || !row) {
+      return { ok: false, error: blockErr?.message ?? "Failed to save the settings block." };
+    }
+    block = row as SessionBlock;
   }
 
   const snap = entryMachineSnapshot({

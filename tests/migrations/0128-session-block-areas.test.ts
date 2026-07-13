@@ -16,16 +16,12 @@ describe("0128 — file + repo-max tripwire", () => {
   it("is the single 0128 migration with a purpose-encoding filename", () => {
     expect(FILE).toMatch(/^0128_session_block_areas\.sql$/);
   });
-  it("advances the repo migration max to 0128 (0125-0127 precede it; nothing 0129+)", () => {
-    const nums = FILES.map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    expect(nums[nums.length - 1]).toBe("0128");
-    for (const n of ["0125", "0126", "0127"]) {
+  it("is present; the repo-max tripwire now lives in the 0129 test (0125-0128 precede)", () => {
+    for (const n of ["0125", "0126", "0127", "0128"]) {
       expect(FILES.some((f) => f.startsWith(`${n}_`))).toBe(true);
     }
-    expect(FILES.filter((f) => /^01(29|[3-9]\d)_/.test(f))).toEqual([]);
+    // 0129 (atomic write RPCs) now advances the repo max; nothing 0130+ yet.
+    expect(FILES.filter((f) => /^01(3[0-9]|[4-9]\d)_/.test(f))).toEqual([]);
   });
   it("does NOT modify migrations 0125-0127", () => {
     // This migration file only creates the new child table + its own objects.

@@ -139,3 +139,85 @@ describe("editable + cascade", () => {
     expect(g.rows[0].n).toBe(0);
   });
 });
+
+// Migration 0129: atomic create/update RPCs. These replace the earlier
+// delete-then-insert app write; the whole block + area set commits together.
+const AREAS = (arr: Array<{ area: string; laterality: string }>) => JSON.stringify(arr);
+
+describe("0129 — atomic block + area writes (RPCs)", () => {
+  it("create_session_block_with_areas creates the block + areas + projection together", async () => {
+    const { sessionId } = await seedSession(a);
+    const blockId = await asUser(a.userId, async (q) => {
+      const r = await q(
+        `select public.create_session_block_with_areas($1,$2,$3::jsonb,$4::jsonb) as id`,
+        [a.studioId, sessionId, JSON.stringify({ primary_area: "Cheeks", side: "left" }),
+          AREAS([{ area: "Cheeks", laterality: "left" }, { area: "Sideburns", laterality: "right" }])],
+      );
+      return r.rows[0].id as string;
+    });
+    const areas = await adminQuery(
+      `select area, laterality from public.session_block_areas where session_block_id=$1 order by display_order`,
+      [blockId],
+    );
+    expect(areas.rows).toEqual([
+      { area: "Cheeks", laterality: "left" },
+      { area: "Sideburns", laterality: "right" },
+    ]);
+    const b0 = await adminQuery(`select primary_area, side from public.session_blocks where id=$1`, [blockId]);
+    expect(b0.rows[0]).toMatchObject({ primary_area: "Cheeks", side: "left" });
+  });
+
+  it("update_session_block_with_areas replaces the whole set", async () => {
+    const { sessionId, blockId } = await seedSession(a);
+    await asUser(a.userId, (q) =>
+      q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
+        [a.studioId, sessionId, blockId, AREAS([{ area: "Chin", laterality: "bilateral" }])]));
+    await asUser(a.userId, (q) =>
+      q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
+        [a.studioId, sessionId, blockId, AREAS([{ area: "Neck", laterality: "midline" }])]));
+    const areas = await adminQuery(
+      `select area, laterality from public.session_block_areas where session_block_id=$1`, [blockId]);
+    expect(areas.rows).toEqual([{ area: "Neck", laterality: "midline" }]);
+  });
+
+  it("ATOMIC: a failed replacement preserves the prior area set (NO data loss)", async () => {
+    const { sessionId, blockId } = await seedSession(a);
+    await asUser(a.userId, (q) =>
+      q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
+        [a.studioId, sessionId, blockId,
+          AREAS([{ area: "Chin", laterality: "left" }, { area: "Upper lip", laterality: "right" }])]));
+    // A replacement whose new set violates the unique(block, area, laterality)
+    // constraint must roll the WHOLE function back — delete included.
+    await expect(
+      asUser(a.userId, (q) =>
+        q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
+          [a.studioId, sessionId, blockId,
+            AREAS([{ area: "Neck", laterality: "left" }, { area: "Neck", laterality: "left" }])])),
+    ).rejects.toThrow();
+    // The committed prior set is intact — nothing was deleted-without-replacement.
+    const rows = await adminQuery(
+      `select area, laterality from public.session_block_areas where session_block_id=$1 order by display_order`,
+      [blockId]);
+    expect(rows.rows).toEqual([
+      { area: "Chin", laterality: "left" },
+      { area: "Upper lip", laterality: "right" },
+    ]);
+  });
+
+  it("a non-member cannot call the create RPC (is_studio_member gate)", async () => {
+    const { sessionId } = await seedSession(a);
+    await expect(
+      asUser(b.userId, (q) =>
+        q(`select public.create_session_block_with_areas($1,$2,'{}'::jsonb,$3::jsonb)`,
+          [a.studioId, sessionId, AREAS([{ area: "Chin", laterality: "left" }])])),
+    ).rejects.toThrow(/not authorized/i);
+  });
+
+  it("a member cannot update a block in ANOTHER studio via the RPC", async () => {
+    await expect(
+      asUser(b.userId, (q) =>
+        q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
+          [a.studioId, aBlockId, aBlockId, AREAS([{ area: "Chin", laterality: "left" }])])),
+    ).rejects.toThrow();
+  });
+});

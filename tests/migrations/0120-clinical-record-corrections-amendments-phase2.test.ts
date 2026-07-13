@@ -29,7 +29,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // Phase A (0121/0122). 0127 is additive and is repo-only until its
     // separately-approved migration-first hosted apply.
     // Bump this tripwire consciously when adding migrations.
-    expect(maxNum).toBe(128);
+    expect(maxNum).toBe(129);
     expect(FILE).toMatch(/^0120_/);
   });
 });
