@@ -6,6 +6,11 @@ import {
   type ProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
+import {
+  buildProbeLotOptions,
+  type ProbeLotInventoryRow,
+  type ProbeLotOption,
+} from "@/lib/record-keeping/probe-lot-inventory";
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   SUPPLY_EXPIRING_WITHIN_DAYS,
@@ -93,6 +98,41 @@ export async function getLatestProbeLotSuggestion(
     .maybeSingle();
   const lot = (data?.lot_number as string | null | undefined)?.trim();
   return lot ? lot : null;
+}
+
+// Migration 0128 charting release: the full ACTIVE probe-lot inventory for the
+// charting selector. Source = record_keeping_sterile_items (the studio's live
+// sterilization log) filtered to probe rows with a lot number; the dormant
+// legacy `probe_lots` table is deliberately NOT read. Studio-scoped (.eq +
+// RLS). Expired lots ARE returned (a historical value must stay selectable) but
+// are classified isExpired and sorted last by buildProbeLotOptions. Manual entry
+// always remains available in the form; this only powers suggestions/search.
+export async function getProbeLotInventory(
+  studioId: string,
+): Promise<ProbeLotOption[]> {
+  const supabase = await createClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("lot_number, item_description, manufacturer_name, expiry_date")
+    .eq("studio_id", studioId)
+    .not("lot_number", "is", null)
+    .ilike("item_description", "%probe%")
+    .order("expiry_date", { ascending: false, nullsFirst: true })
+    .order("date_purchased", { ascending: false, nullsFirst: false })
+    .limit(500);
+  const rows: ProbeLotInventoryRow[] = ((data ?? []) as Array<{
+    lot_number: string | null;
+    item_description: string | null;
+    manufacturer_name: string | null;
+    expiry_date: string | null;
+  }>).map((r) => ({
+    lotNumber: (r.lot_number ?? "").trim(),
+    itemDescription: r.item_description ?? "",
+    manufacturerName: r.manufacturer_name ?? null,
+    expiryDate: r.expiry_date,
+  }));
+  return buildProbeLotOptions(rows, today);
 }
 
 // Feature A (Chloe charting feedback): while charting, suggest the most recent

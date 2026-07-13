@@ -37,7 +37,10 @@ import {
   getTreatmentPlanWithCount,
 } from "@/lib/treatment-plans/queries";
 import { getSessionNumberForClient } from "@/lib/treatment-time/queries";
-import { getProbeLotSuggestions } from "@/lib/record-keeping/queries";
+import {
+  getProbeLotInventory,
+  getProbeLotSuggestions,
+} from "@/lib/record-keeping/queries";
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
@@ -187,6 +190,14 @@ export default async function SessionDetailPage({
     session.modality === "electrolysis"
       ? await getProbeLotSuggestions(studio.id)
       : { byKey: {}, byLabel: {} };
+
+  // Migration 0128 charting release: the studio's ACTIVE probe-lot inventory
+  // (record_keeping_sterile_items probe rows) for the searchable lot selector.
+  // Electrolysis only; studio-scoped. Manual entry always stays available.
+  const probeLotInventory =
+    session.modality === "electrolysis"
+      ? await getProbeLotInventory(studio.id)
+      : [];
 
   // Treatment plan attachment context: the active plans the practitioner
   // can attach to (excludes closed), plus the resolved attached plan + its
@@ -565,6 +576,7 @@ export default async function SessionDetailPage({
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
           // UI defaulting only: seed a NEW treatment area from the attached
           // plan, or the client's single active plan when unattached (see
           // above). Never overrides practitioner choice or mutates data.

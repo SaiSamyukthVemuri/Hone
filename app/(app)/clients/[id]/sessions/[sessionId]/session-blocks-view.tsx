@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
+import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
 import type {
   ElectrolysisEntry,
   SessionBlock,
@@ -98,6 +99,7 @@ type Props = {
   // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
   probeLotSuggestions?: ProbeLotSuggestions;
+  probeLotInventory?: ProbeLotOption[];
 };
 
 export function SessionBlocksView({
@@ -109,6 +111,7 @@ export function SessionBlocksView({
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
 }: Props) {
   // First empty treatment-area editor: when a session has no areas yet,
   // open the editor immediately so logging starts without an extra click.
@@ -126,6 +129,7 @@ export function SessionBlocksView({
           clientId={clientId}
           clientTagLabels={clientTagLabels}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
         />
       ))}
 
@@ -155,6 +159,7 @@ export function SessionBlocksView({
           previousBlock={previousBlock}
           savedBlocks={blocks}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
           // PR #191 (Chloe smoke feedback): the plan-area seed applies
           // only to the FIRST treatment area of the session. Adding
           // another area starts blank; a new area is usually a
@@ -185,12 +190,14 @@ function BlockSection({
   clientId,
   clientTagLabels,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
   clientTagLabels: ReadonlyArray<string>;
   probeLotSuggestions?: ProbeLotSuggestions;
+  probeLotInventory?: ProbeLotOption[];
 }) {
   const [editing, setEditing] = useState(false);
   // Extra passes are optional and collapsed by default — the first reading
@@ -274,6 +281,7 @@ function BlockSection({
           block={block}
           firstEntry={entriesSorted[0] ?? null}
           probeLotSuggestions={probeLotSuggestions}
+          probeLotInventory={probeLotInventory}
           // Multi-area (0128): seed the editor from the block's structured
           // areas; empty falls back to legacy primary_area + side in the form.
           initialAreas={resolveBlockAreas(block.structured_areas ?? [], {

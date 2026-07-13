@@ -46,6 +46,8 @@ import {
   resolveProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
+import { ProbeLotSelect } from "@/components/probe-lot-select";
+import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
 import type {
   ApilusModality,
   ElectrolysisEntry,
@@ -145,6 +147,11 @@ type Props = {
   // selected probe (studio-scoped, never auto-confirmed) — keyed match first,
   // label fallback second. Empty when there is nothing to suggest.
   probeLotSuggestions?: ProbeLotSuggestions;
+  // Migration 0128 charting release: the studio's ACTIVE probe-lot inventory
+  // (record_keeping_sterile_items probe rows) powering the searchable selector.
+  // Manual entry always stays available; expired lots are still selectable but
+  // flagged. Empty = the selector shows the "No active probe lots found" state.
+  probeLotInventory?: ProbeLotOption[];
   // Migration 0128: the block's structured areas on edit (empty for legacy /
   // create). Seeds the multi-area editor; the read path falls back to
   // primary_area + side when empty.
@@ -347,6 +354,7 @@ export function BlockSetupForm({
   defaultPrimaryArea,
   defaultMachineFrequency,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
+  probeLotInventory = [],
   initialAreas,
   onCancel,
 }: Props) {
@@ -880,17 +888,22 @@ export function BlockSetupForm({
             sterile-item records and CONFIRMED for this treatment. A
             suggestion is never saved as confirmed until the practitioner
             taps Confirm; typing always works and un-confirms. */}
-        <label className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <span className="text-sm font-medium">Probe lot/batch number</span>
-          <input
-            type="text"
+          {/* Migration 0128 charting release: searchable ACTIVE probe-lot
+              selector backed by the studio's sterile-item inventory. Manual
+              entry always works (typing sets the value and is never replaced);
+              selecting a lot fills the field. The SAVED value is still the
+              free-text lot-number snapshot on session_blocks.probe_lot_number —
+              no FK, so archiving/expiring a lot never rewrites past charting. */}
+          <ProbeLotSelect
             value={draft.probeLotNumber}
-            onChange={(e) => {
-              const value = e.target.value;
-              // Editing the lot un-confirms it (a freshly typed value has not
-              // been confirmed) and marks it a manual edit so a later probe
-              // switch never clobbers it. Clearing it back to empty re-enables
-              // auto-suggestion for the next probe.
+            options={probeLotInventory}
+            inventoryHref="/records?section=sterile"
+            onChange={(value) => {
+              // Selecting OR typing a lot un-confirms it and marks it a manual
+              // edit so a later probe switch never clobbers it. Clearing it back
+              // to empty re-enables auto-suggestion for the next probe.
               setDraft((d) => ({
                 ...d,
                 probeLotNumber: value,
@@ -898,14 +911,11 @@ export function BlockSetupForm({
               }));
               setLotEditedManually(value.trim() !== "");
             }}
-            placeholder="e.g. 460941"
-            maxLength={120}
-            className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
           <span className="text-xs text-neutral-500">
             Used for health inspection and client procedure records.
           </span>
-        </label>
+        </div>
 
         {/* Feature A: the lot field auto-populates (unconfirmed) from the most
             recent lot used for THIS probe (keyed match, or label fallback).
