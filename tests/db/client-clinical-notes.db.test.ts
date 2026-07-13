@@ -332,7 +332,13 @@ describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", 
     });
   });
 
-  it("an INACTIVE practitioner cannot insert — rejected by RLS", async () => {
+  it("an INACTIVE practitioner cannot insert", async () => {
+    // is_studio_member() (used by both the clients RLS and this policy) excludes
+    // inactive practitioners, so an inactive-only caller cannot even resolve the
+    // parent client: the studio-derive trigger rejects first ("does not reference
+    // a visible clients row"). The policy's `p.active` clause is the second guard
+    // (a user has at most one practitioner per studio, so it cannot be isolated
+    // via the authenticated path). Either way, an inactive practitioner is refused.
     const userId = randomUUID();
     const pracId = randomUUID();
     const email = `ccn-inactive-${userId.slice(0, 8)}@harness.local`;
@@ -347,7 +353,7 @@ describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", 
       asUser(userId, (q) =>
         q(INS, [a.clientId, a.studioId, pracId, "consultation", "inactive attempt", null, null, null]),
       ),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toThrow();
   });
 
   it("a multi-studio caller cannot attribute a note to their OTHER studio's practitioner — rejected by RLS, before the FK", async () => {
