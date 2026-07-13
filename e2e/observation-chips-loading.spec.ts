@@ -20,8 +20,10 @@ test("legacy observation chips (stored in comments) render as pills on mobile", 
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
 
-  // The three canonical chips hydrate from comments and render as pills.
-  for (const chip of ["Coarse hair", "Slight edema", "Lots of anagen"]) {
+  // The three chips hydrate from comments and render as pills. The legacy
+  // "Slight edema" spelling resolves to the current canonical label
+  // "Slight swelling (edema)" (vocabulary cleanup; no backfill).
+  for (const chip of ["Coarse hair", "Slight swelling (edema)", "Lots of anagen"]) {
     await expect(page.getByText(chip, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
   }
   // The non-chip free text is preserved as the note (nothing lost).

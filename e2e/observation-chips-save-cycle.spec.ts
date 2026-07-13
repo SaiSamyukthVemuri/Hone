@@ -24,9 +24,15 @@ import { loginAsOwner } from "./helpers/flows";
 // poll + the form's own open/close transition are the synchronization signals).
 
 const A = "Coarse hair";
-const B = "Slight edema";
+// Canonical chip labels after the vocabulary cleanup (paired plain + medical
+// term). The chip toggles + stored values use these canonical labels.
+const B = "Slight swelling (edema)";
 const C = "Lots of anagen";
-const D = "Erythema";
+const D = "Redness (erythema)";
+// The LEGACY stored spelling of B (a pre-cleanup row). Seeded into `comments`
+// to prove the old value still hydrates to the current canonical chip with no
+// backfill.
+const B_LEGACY = "Slight edema";
 const MOBILE = { width: 390, height: 844 };
 const T = 20_000;
 
@@ -62,8 +68,10 @@ test("block-setup-form EDIT: legacy chips preload SELECTED; add + remove persist
   const { clientId, sessionId, blockId } =
     await seedE2eDraftSessionWithLegacyChipEntry(
       seed,
-      // Chips A/B/C live in the LEGACY comments; "tender near jaw" is free text.
-      `${A}, ${B}, tender near jaw, ${C}`,
+      // Chips A/B/C live in the LEGACY comments; B is stored with its old
+      // pre-cleanup spelling to prove it hydrates to the canonical label.
+      // "tender near jaw" is free text.
+      `${A}, ${B_LEGACY}, tender near jaw, ${C}`,
     );
   await loginAsOwner(page, seed);
 
@@ -85,7 +93,12 @@ test("block-setup-form EDIT: legacy chips preload SELECTED; add + remove persist
       await expect(chip(page, c)).toHaveAttribute("aria-pressed", "true", { timeout: T });
     }
     // The non-chip token stays in the free-text note (not double-shown as a chip).
-    await expect(page.getByPlaceholder("Add a note (optional)")).toHaveValue(/tender near jaw/);
+    await expect(
+      page.getByPlaceholder("Add any details not covered by the observations above"),
+    ).toHaveValue(/tender near jaw/);
+    // Chip confidence: the "Selected observations" summary lists the selected
+    // observations (the paired canonical label for the legacy edema value).
+    await expect(page.getByTestId("selected-observations")).toContainText(B);
   });
 
   await test.step("save (migrates comments→observation_chips) → DB holds exactly A,B,C", async () => {
@@ -153,6 +166,11 @@ test("SimplifiedEntryForm CREATE: select 3 → persist (no dupes); reload shows 
     for (const c of [A, B, C]) {
       await chip(form, c).click();
       await expect(chip(form, c)).toHaveAttribute("aria-pressed", "true");
+    }
+    // Chip confidence: the selected-observations summary reflects all three
+    // immediately, so the practitioner sees exactly what will be saved.
+    for (const c of [A, B, C]) {
+      await expect(form.getByTestId("selected-observations")).toContainText(c);
     }
     await form.getByTestId("add-pass-submit").click();
     await pollStoredChips(sessionId, "last", [A, B, C]);

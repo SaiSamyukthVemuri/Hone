@@ -60,6 +60,7 @@ import {
   toggleChip,
   resolveDisplayChips,
 } from "@/lib/observation-chips";
+import { SelectedObservations } from "@/components/selected-observations";
 import {
   NUMBING_OPTIONS,
   REACTION_TYPES,
@@ -1362,6 +1363,9 @@ export function BlockSetupForm({
             );
           })}
         </div>
+        {/* Chip confidence (Chloe): show exactly which observations are selected
+            and will be saved, adjacent to the chips, so a tap visibly "takes". */}
+        <SelectedObservations chips={draft.observationChips} />
         {/* PR #198/#279: skin/client response options as chips. Single-select
             toggle on the reaction_type field — tap again to clear, and picking
             one (e.g. "No visible reaction") replaces any other (deliberate
@@ -1402,15 +1406,22 @@ export function BlockSetupForm({
           />
         )}
         {/* Migration 0108: this box is now free-text ONLY. Selected chips are
-            structured state (the pressed pills above stay visible regardless of
-            what's typed here), so a chip can no longer be lost by editing text. */}
-        <textarea
-          rows={2}
-          value={draft.comments}
-          onChange={(e) => update("comments", e.target.value)}
-          placeholder="Add a note (optional)"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
+            structured state (the pressed pills above + the summary stay visible
+            regardless of what's typed here), so a chip can no longer be lost by
+            editing text. Labelled "Additional notes" so it reads as distinct from
+            the structured observations. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Additional notes
+          </span>
+          <textarea
+            rows={2}
+            value={draft.comments}
+            onChange={(e) => update("comments", e.target.value)}
+            placeholder="Add any details not covered by the observations above"
+            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+        </label>
       </div>
 
       {/* PR #199 (Chloe iPad retest): the per-area next-visit and
