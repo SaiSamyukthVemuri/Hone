@@ -521,6 +521,10 @@ export default async function SessionDetailPage({
           clientId={id}
           eligibility={sessionPaymentEligibility}
           defaultAmount={sessionPaymentDefault}
+          // Trusted, server-derived owner flag — gates the owner-only Technical
+          // payment details disclosure + the Refund button (server refund
+          // authorization is unchanged; it is owner-only there too).
+          isOwner={practitioner.role === "owner"}
           prepareAction={prepareSessionPaymentChargeAction}
           executeAction={executeSessionPaymentChargeAction}
           sendReceiptAction={sendPaymentChargeReceiptAction}

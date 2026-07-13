@@ -234,12 +234,14 @@ describe("PR #174: status dispatch architecture", () => {
 });
 
 describe("PR #174: ReadyPanel (active prepared row)", () => {
-  it("renders the 'Session payment prepared' heading + amount + status + prepared timestamp", () => {
+  it("renders the compact 'Ready to charge' summary + prepared timestamp (no processor internals)", () => {
     const block = blockFor("ReadyPanel");
-    expect(block).toMatch(/Session payment prepared/);
-    expect(block).toMatch(/formatCadFromCents\(attempt\.amountCents\)/);
-    expect(block).toMatch(/STATUS_LABEL\[attempt\.status\]/);
-    expect(block).toMatch(/Prepared:\s*<FormattedDateTime iso=\{attempt\.createdAt\}/);
+    // Compact card: derivePaymentSummary → "Ready to charge · $X"; a "Prepared …
+    // not yet charged" subline. No raw status label, no PaymentIntent inline.
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    expect(block).toMatch(/Prepared/);
+    expect(block).toMatch(/<FormattedDateTime iso=\{attempt\.createdAt\}/);
   });
 
   it("renders the Run charge button with a two-click confirm", () => {
@@ -250,18 +252,23 @@ describe("PR #174: ReadyPanel (active prepared row)", () => {
     expect(block).toMatch(/fd\.set\("confirm_charge",\s*"true"\)/);
   });
 
-  it("uses the neutral Stripe-charge caution on the run-charge panel", () => {
+  it("uses a plain 'Charge client' caution (no processor-internal wording)", () => {
     const block = blockFor("ReadyPanel");
-    expect(block).toMatch(/Stripe charge/);
-    expect(block).not.toMatch(/Stripe test mode/);
-    expect(block).not.toMatch(/No live card is\s+charged/);
+    expect(block).toMatch(/Charge client/);
+    expect(block).toMatch(/saved card will be charged/);
+    // Developer-oriented "connected account / PaymentIntent" wording is gone
+    // from the default face (any ids live in the owner-only disclosure).
+    expect(block).not.toMatch(/creates a Stripe PaymentIntent on the studio/);
   });
 });
 
 describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
-  it("explicitly names test charge pending + may need manual review", () => {
+  it("shows a compact processing summary + may need manual review", () => {
     const block = blockFor("PendingPanel");
-    expect(block).toMatch(/Charge pending/);
+    // "Payment processing" comes from derivePaymentSummary; the manual-review
+    // hint stays in the subline.
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
     expect(block).toMatch(/may need manual review/);
   });
 
@@ -271,47 +278,40 @@ describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
     expect(block).not.toMatch(/Confirm: run charge/);
   });
 
-  it("surfaces the PaymentIntent id when one is on the row", () => {
+  it("keeps the PaymentIntent id owner-only (in the technical disclosure)", () => {
     const block = blockFor("PendingPanel");
+    expect(block).toMatch(/<TechnicalPaymentDetails/);
     expect(block).toMatch(/attempt\.stripePaymentIntentId/);
   });
 });
 
-describe("PR #174: SucceededPanel (post-refresh)", () => {
-  it("uses 'Charge succeeded' (not 'Payment complete')", () => {
+describe("compact SucceededPanel (post-refresh)", () => {
+  it("shows the compact 'Paid'/'Refunded' summary (derivePaymentSummary), not 'Charge succeeded'", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/Charge succeeded/);
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    expect(block).not.toMatch(/Charge succeeded/);
     expect(block).not.toMatch(/Payment complete/);
   });
 
-  it("renders PaymentIntent id from the persisted row", () => {
+  it("processor identifiers are OWNER-ONLY (technicalRowsForAttempt), never inline", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(
-      /attempt\.stripePaymentIntentId[\s\S]{0,200}PaymentIntent:/,
-    );
+    expect(block).toMatch(/<TechnicalPaymentDetails[\s\S]{0,120}technicalRowsForAttempt\(attempt\)/);
+    // No inline "PaymentIntent:" / "Charge:" / "Refund:" rows in the face.
+    expect(block).not.toMatch(/PaymentIntent:\s*\{?\s*attempt\.stripePaymentIntentId/);
+    expect(block).not.toMatch(/Charge:\s*\{?\s*attempt\.stripeChargeId/);
+    expect(block).not.toMatch(/Refund:\s*\{?\s*attempt\.stripeRefundId/);
   });
 
-  it("renders Charge id when present", () => {
-    const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/attempt\.stripeChargeId[\s\S]{0,200}Charge:/);
-  });
-
-  it("renders charged_at when present", () => {
+  it("shows charged_at as the compact subline", () => {
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(/attempt\.chargedAt/);
-    expect(block).toMatch(/Charged:\s*<FormattedDateTime/);
+    expect(block).toMatch(/<FormattedDateTime iso=\{attempt\.chargedAt\}/);
   });
 
-  it("uses neutral charge copy (no false test-mode / no-live-card claim)", () => {
-    // PR #175 replaced the "No receipt was sent in this PR" line
-    // with a real ReceiptSubPanel that drives off the persisted
-    // receipt_status column (migration 0076). The test-mode +
-    // no-live-card disclaimer stays; the receipt-not-sent claim
-    // moved to the sub-panel's send-button copy where it belongs.
+  it("drops the developer 'connected account' wording + keeps the receipt sub-panel", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/This charge ran on the studio(&apos;|')s Stripe connected account/);
-    expect(block).not.toMatch(/Stripe test-mode charge/);
-    expect(block).not.toMatch(/No live card was charged/);
+    expect(block).not.toMatch(/ran on the studio(&apos;|')s Stripe connected account/);
     expect(block).toMatch(/<ReceiptSubPanel/);
   });
 
@@ -333,19 +333,19 @@ describe("PR #174: SucceededPanel (post-refresh)", () => {
 });
 
 describe("PR #174: FailedPanel (terminal in this PR)", () => {
-  it("uses 'Charge failed' as the heading", () => {
+  it("shows a practitioner-friendly failure reason (humanChargeFailure), not the raw code", () => {
     const block = blockFor("FailedPanel");
-    expect(block).toMatch(/Charge failed/);
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/humanChargeFailure\(attempt\.failureCode\)/);
+    expect(block).toMatch(/attempt\.failedAt/);
+    // Raw code + processor message are NOT inline — they're owner-only.
+    expect(block).not.toMatch(/Code:\s*\{?\s*attempt\.failureCode/);
+    expect(block).not.toMatch(/Failure:\s*\{?\s*attempt\.failureMessageSafe/);
   });
 
-  it("renders failure_message_safe + failure_code + failed_at + PaymentIntent id when present", () => {
+  it("keeps the raw code / message / PaymentIntent OWNER-ONLY", () => {
     const block = blockFor("FailedPanel");
-    expect(block).toMatch(/attempt\.failureMessageSafe[\s\S]{0,200}Failure:/);
-    expect(block).toMatch(/attempt\.failureCode[\s\S]{0,200}Code:/);
-    expect(block).toMatch(/attempt\.failedAt/);
-    expect(block).toMatch(
-      /attempt\.stripePaymentIntentId[\s\S]{0,200}PaymentIntent:/,
-    );
+    expect(block).toMatch(/<TechnicalPaymentDetails[\s\S]{0,120}technicalRowsForAttempt\(attempt\)/);
   });
 
   it("tells the practitioner to prepare a new attempt rather than retry", () => {
@@ -401,8 +401,13 @@ describe("PR #174: forbidden copy not present anywhere in actionable JSX", () =>
     expect(CARD_CODE).not.toMatch(/Live payment/);
   });
 
-  it("does NOT say 'Receipt sent'", () => {
-    expect(CARD_CODE).not.toMatch(/Receipt sent/);
+  // Compact-card update: "Receipt sent" is now the DESIRED practitioner copy
+  // (Chloe's feedback). The privacy guard is that the FULL email is never
+  // rendered inline — the card masks it via maskReceiptEmail.
+  it("masks the receipt email — never renders the full address inline", () => {
+    expect(CARD).toMatch(/maskReceiptEmail\(/);
+    // No inline `<code>{...receiptEmailTo...}</code>` full-email render remains.
+    expect(CARD_CODE).not.toMatch(/<code>\{[^}]*receiptEmailTo[^}]*\}<\/code>/);
   });
 });
 

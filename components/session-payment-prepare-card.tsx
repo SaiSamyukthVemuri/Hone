@@ -9,6 +9,15 @@ import type {
 import type { SessionPaymentDefaultAmount } from "@/lib/billing/session-payment-default-amount";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import {
+  derivePaymentSummary,
+  humanChargeFailure,
+  maskReceiptEmail,
+  technicalRowsForAttempt,
+} from "@/lib/payments/payment-summary-presenter";
+import { PaymentSummaryCard } from "@/components/payment/payment-summary-card";
+import { ReceiptStatus } from "@/components/payment/receipt-status";
+import { TechnicalPaymentDetails } from "@/components/payment/technical-payment-details";
 
 type PrepareResult =
   | { ok: true; attemptId: string }
@@ -171,6 +180,7 @@ export function SessionPaymentPrepareCard({
   clientId,
   eligibility,
   defaultAmount = null,
+  isOwner = false,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -179,6 +189,10 @@ export function SessionPaymentPrepareCard({
   sessionId: string;
   clientId: string;
   eligibility: SessionPaymentEligibility;
+  // Server-derived studio-owner flag (trusted; from practitioner.role on the
+  // session page). Gates the owner-only Technical payment details disclosure +
+  // the Refund button (refunds are ALSO server-side owner-only — unchanged).
+  isOwner?: boolean;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -270,6 +284,7 @@ export function SessionPaymentPrepareCard({
           attempt={activeAttempt}
           sessionId={sessionId}
           clientId={clientId}
+          isOwner={isOwner}
           executeAction={executeAction}
           sendReceiptAction={sendReceiptAction}
           refundAction={refundAction}
@@ -285,7 +300,10 @@ export function SessionPaymentPrepareCard({
           main slot would use; it is just demoted to a context
           panel here. */}
       {previousTerminalAttempt && (
-        <PreviousTerminalCallout attempt={previousTerminalAttempt} />
+        <PreviousTerminalCallout
+          attempt={previousTerminalAttempt}
+          isOwner={isOwner}
+        />
       )}
 
       {/* PR #172 + PR #181 patch. Just-prepared in-session
@@ -359,12 +377,14 @@ export function SessionPaymentPrepareCard({
 // ---------------------------------------------------------------------------
 function PreviousTerminalCallout({
   attempt,
+  isOwner,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
+  isOwner: boolean;
 }) {
   switch (attempt.status) {
     case "failed":
-      return <FailedPanel attempt={attempt} />;
+      return <FailedPanel attempt={attempt} isOwner={isOwner} />;
     case "cancelled":
       return <CancelledPanel attempt={attempt} />;
     case "blocked":
@@ -404,6 +424,7 @@ function AttemptStatusPanel({
   attempt,
   sessionId,
   clientId,
+  isOwner,
   executeAction,
   sendReceiptAction,
   refundAction,
@@ -411,6 +432,7 @@ function AttemptStatusPanel({
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
+  isOwner: boolean;
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
@@ -422,23 +444,25 @@ function AttemptStatusPanel({
           attempt={attempt}
           sessionId={sessionId}
           clientId={clientId}
+          isOwner={isOwner}
           executeAction={executeAction}
         />
       );
     case "pending_stripe":
-      return <PendingPanel attempt={attempt} />;
+      return <PendingPanel attempt={attempt} isOwner={isOwner} />;
     case "succeeded":
       return (
         <SucceededPanel
           attempt={attempt}
           sessionId={sessionId}
           clientId={clientId}
+          isOwner={isOwner}
           sendReceiptAction={sendReceiptAction}
           refundAction={refundAction}
         />
       );
     case "failed":
-      return <FailedPanel attempt={attempt} />;
+      return <FailedPanel attempt={attempt} isOwner={isOwner} />;
     case "cancelled":
       return <CancelledPanel attempt={attempt} />;
     case "blocked":
@@ -457,11 +481,13 @@ function ReadyPanel({
   attempt,
   sessionId,
   clientId,
+  isOwner,
   executeAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
+  isOwner: boolean;
   executeAction: ExecuteAction;
 }) {
   const [confirmExecute, setConfirmExecute] = useState(false);
@@ -480,46 +506,45 @@ function ReadyPanel({
   // so the practitioner sees the PaymentIntent id immediately.
   if (executeSuccess) {
     return (
-      <div className="rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200">
-        <p className="font-medium">Charge succeeded.</p>
-        <p className="mt-1">
-          PaymentIntent: <code>{executeSuccess.paymentIntentId}</code>
-          {executeSuccess.chargeId && (
-            <>
-              {" "}
-              Charge: <code>{executeSuccess.chargeId}</code>
-            </>
-          )}
-        </p>
-        <p className="mt-1">
-          This charge ran on the studio&apos;s Stripe connected account.
-          Refresh to see the persisted succeeded state.
-        </p>
-      </div>
+      <PaymentSummaryCard
+        summary={{
+          kind: "paid",
+          headline: "Paid",
+          tone: "paid",
+          amountCents: attempt.amountCents,
+        }}
+        subLine="Refresh to see the full receipt options."
+      >
+        <TechnicalPaymentDetails
+          isOwner={isOwner}
+          rows={[
+            { label: "PaymentIntent", value: executeSuccess.paymentIntentId },
+            { label: "Charge", value: executeSuccess.chargeId },
+          ]}
+        />
+      </PaymentSummaryCard>
     );
   }
 
   return (
-    <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-      <p className="font-medium text-neutral-900 dark:text-neutral-100">
-        Session payment prepared
-      </p>
-      <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
-        {" · "}
-        Status: {STATUS_LABEL[attempt.status]}
-      </p>
-      <p className="mt-1">
-        Prepared: <FormattedDateTime iso={attempt.createdAt} />
-      </p>
+    <div className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950">
+      <PaymentSummaryCard
+        summary={derivePaymentSummary(attempt)}
+        subLine={
+          <>
+            Prepared <FormattedDateTime iso={attempt.createdAt} /> · not yet
+            charged
+          </>
+        }
+      />
 
       <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
         <p className="text-[11px] font-medium uppercase tracking-wider text-amber-900 dark:text-amber-200">
-          Stripe charge
+          Charge client
         </p>
         <p className="text-xs text-amber-900 dark:text-amber-200">
-          Running the charge creates a Stripe PaymentIntent on the studio&apos;s
-          connected account against the client&apos;s saved card.
+          The client&apos;s saved card will be charged{" "}
+          {formatCadFromCents(attempt.amountCents)}.
         </p>
         {executeError && (
           <p className="text-xs text-red-700 dark:text-red-400" role="alert">
@@ -597,29 +622,24 @@ function ReadyPanel({
 // ---------------------------------------------------------------------------
 function PendingPanel({
   attempt,
+  isOwner,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
+  isOwner: boolean;
 }) {
   return (
-    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-      <p className="font-medium">Charge pending.</p>
-      <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
-        {" · "}
-        Status: {STATUS_LABEL[attempt.status]}
-      </p>
-      <p className="mt-1">
-        This may need manual review if it stays pending. Reload the page in a
-        minute to recheck status.
-      </p>
-      {attempt.stripePaymentIntentId && (
-        <p className="mt-1 font-mono">
-          PaymentIntent: {attempt.stripePaymentIntentId}
-        </p>
-      )}
-      <p className="mt-1">
-        This charge is pending on the studio&apos;s Stripe connected account.
-      </p>
+    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <PaymentSummaryCard
+        summary={derivePaymentSummary(attempt)}
+        subLine="Reload in a minute to recheck. It may need manual review if it stays pending."
+      >
+        <TechnicalPaymentDetails
+          isOwner={isOwner}
+          rows={[
+            { label: "PaymentIntent", value: attempt.stripePaymentIntentId },
+          ]}
+        />
+      </PaymentSummaryCard>
     </div>
   );
 }
@@ -634,107 +654,75 @@ function SucceededPanel({
   attempt,
   sessionId,
   clientId,
+  isOwner,
   sendReceiptAction,
   refundAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
+  isOwner: boolean;
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
 }) {
-  // PR #181. Top-of-card state model. When the persisted row carries
-  // refund_status='succeeded' the practitioner-facing top status MUST
-  // read "Payment refunded", not "Charge succeeded". Without
-  // this promotion Chloe sees a green succeeded heading + the refund
-  // sub-panel saying refunded simultaneously, which reads as
-  // "succeeded but also refunded" -- confusing. The new top heading
-  // is the SINGLE current state; sub-panels handle the rest.
+  // Compact card: derivePaymentSummary picks the SINGLE current headline —
+  // "Paid" for a live charge, "Refunded" once the row carries
+  // refund_status='succeeded' — so the practitioner never sees a paid heading
+  // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
   const refunded = attempt.refundStatus === "succeeded";
   return (
     <div
       className={
         refunded
-          ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
-          : "rounded-md border border-green-300 bg-green-50 p-3 text-xs text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-200"
+          ? "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
+          : "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
       }
     >
-      <p className="font-medium">
-        {refunded ? "Payment refunded." : "Charge succeeded."}
-      </p>
-      <p className="mt-1">
-        Amount charged: {formatCadFromCents(attempt.amountCents)}
-        {attempt.chargedAt && (
-          <>
-            {" · "}
-            Charged: <FormattedDateTime iso={attempt.chargedAt} />
-          </>
-        )}
-      </p>
-      {attempt.stripePaymentIntentId && (
-        <p className="mt-1 font-mono">
-          PaymentIntent: {attempt.stripePaymentIntentId}
-        </p>
-      )}
-      {attempt.stripeChargeId && (
-        <p className="mt-1 font-mono">Charge: {attempt.stripeChargeId}</p>
-      )}
+      {/* Compact practitioner face: "Paid · $X" (or "Refunded · $X"), with the
+          charge date. Processor identifiers move into the owner-only disclosure
+          below — never shown in the default charting view. */}
+      <PaymentSummaryCard
+        summary={derivePaymentSummary(attempt)}
+        subLine={
+          refunded ? (
+            attempt.refundedAt ? (
+              <>
+                Refunded <FormattedDateTime iso={attempt.refundedAt} />
+                {attempt.refundAmountCents != null
+                  ? ` · ${formatCadFromCents(attempt.refundAmountCents)}`
+                  : ""}
+              </>
+            ) : (
+              "Refunded"
+            )
+          ) : attempt.chargedAt ? (
+            <FormattedDateTime iso={attempt.chargedAt} />
+          ) : undefined
+        }
+      >
+        {/* PR #175 receipt sub-panel: receipt status + retry, email masked. */}
+        <ReceiptSubPanel
+          attempt={attempt}
+          sessionId={sessionId}
+          clientId={clientId}
+          sendReceiptAction={sendReceiptAction}
+        />
 
-      {/* PR #181. When the row is refunded, surface the refund
-          identifiers + amount + timestamp as a peer detail block
-          right under the charge details. The RefundSubPanel below
-          still renders the same data with its own heading; this
-          block makes the refund a first-class top-card concern
-          rather than something hidden inside a sub-panel. */}
-      {refunded && (
-        <>
-          <p className="mt-2 font-medium">Refund details</p>
-          {attempt.refundAmountCents != null && (
-            <p className="mt-1">
-              Amount refunded:{" "}
-              {formatCadFromCents(attempt.refundAmountCents)}
-              {attempt.refundedAt && (
-                <>
-                  {" · "}
-                  Refunded: <FormattedDateTime iso={attempt.refundedAt} />
-                </>
-              )}
-            </p>
-          )}
-          {attempt.stripeRefundId && (
-            <p className="mt-1 font-mono">
-              Refund: {attempt.stripeRefundId}
-            </p>
-          )}
-        </>
-      )}
+        {/* PR #178 refund sub-panel: owner-only Refund button; server refund
+            authorization is unchanged (owner-only there too). */}
+        <RefundSubPanel
+          attempt={attempt}
+          sessionId={sessionId}
+          clientId={clientId}
+          isOwner={isOwner}
+          refundAction={refundAction}
+        />
 
-      <p className="mt-2">
-        This charge ran on the studio&apos;s Stripe connected account.
-      </p>
-
-      {/* PR #175. Receipt sub-panel. Visible only when the
-          charge is succeeded; reads receipt_status from the
-          persisted row so the already-sent / failed states
-          survive page refresh. */}
-      <ReceiptSubPanel
-        attempt={attempt}
-        sessionId={sessionId}
-        clientId={clientId}
-        sendReceiptAction={sendReceiptAction}
-      />
-
-      {/* PR #178. Refund sub-panel. Also succeeded-only. Reads
-          refund_status from the persisted row so the
-          already-refunded / pending / failed states survive a
-          page refresh. The Refund charge button only
-          renders when refund_status is null or 'failed'. */}
-      <RefundSubPanel
-        attempt={attempt}
-        sessionId={sessionId}
-        clientId={clientId}
-        refundAction={refundAction}
-      />
+        <TechnicalPaymentDetails
+          isOwner={isOwner}
+          rows={technicalRowsForAttempt(attempt)}
+        />
+      </PaymentSummaryCard>
     </div>
   );
 }
@@ -775,18 +763,23 @@ function ReceiptSubPanel({
         Receipt
       </p>
 
+      {/* Masked destination only — the full email never appears in the
+          practitioner card (it stays in the owner-only technical details). */}
       {(persistedSent || localSent) && (
-        <p className="text-xs text-neutral-700 dark:text-neutral-300">
-          Receipt already sent to{" "}
-          <code>{localSent?.emailTo ?? attempt.receiptEmailTo ?? "(unknown)"}</code>
+        <ReceiptStatus
+          line={{
+            kind: "sent",
+            masked:
+              maskReceiptEmail(localSent?.emailTo ?? attempt.receiptEmailTo) ||
+              null,
+          }}
+        >
           {attempt.receiptSentAt && !localSent && (
-            <>
-              {" "}
-              on <FormattedDateTime iso={attempt.receiptSentAt} />
-            </>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Sent <FormattedDateTime iso={attempt.receiptSentAt} />
+            </p>
           )}
-          .
-        </p>
+        </ReceiptStatus>
       )}
 
       {persistedFailed && !localSent && (
@@ -881,11 +874,13 @@ function RefundSubPanel({
   attempt,
   sessionId,
   clientId,
+  isOwner,
   refundAction,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
+  isOwner: boolean;
   refundAction: RefundAction;
 }) {
   const [pending, startTransition] = useTransition();
@@ -939,12 +934,6 @@ function RefundSubPanel({
               />
             </p>
           )}
-          {(localRefunded?.stripeRefundId ?? attempt.stripeRefundId) && (
-            <p className="mt-1 font-mono">
-              Stripe refund:{" "}
-              {localRefunded?.stripeRefundId ?? attempt.stripeRefundId}
-            </p>
-          )}
         </div>
       )}
 
@@ -961,12 +950,6 @@ function RefundSubPanel({
       {persistedFailed && !localRefunded && (
         <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
           <p className="font-medium">Refund failed.</p>
-          {attempt.refundFailureMessageSafe && (
-            <p className="mt-1">Failure: {attempt.refundFailureMessageSafe}</p>
-          )}
-          {attempt.refundFailureCode && (
-            <p className="mt-1 font-mono">Code: {attempt.refundFailureCode}</p>
-          )}
           <p className="mt-1">You can try again below.</p>
         </div>
       )}
@@ -977,7 +960,8 @@ function RefundSubPanel({
         </p>
       )}
 
-      {!persistedSucceeded &&
+      {isOwner &&
+        !persistedSucceeded &&
         !persistedPending &&
         !localRefunded && (
           <>
@@ -1058,35 +1042,36 @@ function RefundSubPanel({
 // ---------------------------------------------------------------------------
 function FailedPanel({
   attempt,
+  isOwner,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
+  isOwner: boolean;
 }) {
   return (
-    <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
-      <p className="font-medium">Charge failed.</p>
-      <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
-        {attempt.failedAt && (
+    <div className="rounded-md border border-red-200 bg-red-50/70 p-3 dark:border-red-900/50 dark:bg-red-950/20">
+      <PaymentSummaryCard
+        summary={derivePaymentSummary(attempt)}
+        subLine={
           <>
-            {" · "}
-            Failed: <FormattedDateTime iso={attempt.failedAt} />
+            {/* practitioner-friendly reason; raw code/message stay owner-only */}
+            {humanChargeFailure(attempt.failureCode)}
+            {attempt.failedAt && (
+              <>
+                {" "}
+                (<FormattedDateTime iso={attempt.failedAt} />)
+              </>
+            )}
           </>
-        )}
-      </p>
-      {attempt.failureMessageSafe && (
-        <p className="mt-1">Failure: {attempt.failureMessageSafe}</p>
-      )}
-      {attempt.failureCode && (
-        <p className="mt-1 font-mono">Code: {attempt.failureCode}</p>
-      )}
-      {attempt.stripePaymentIntentId && (
-        <p className="mt-1 font-mono">
-          PaymentIntent: {attempt.stripePaymentIntentId}
+        }
+      >
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          Prepare a new session payment attempt to try again.
         </p>
-      )}
-      <p className="mt-1">
-        Prepare a new session payment attempt if you need to try again.
-      </p>
+        <TechnicalPaymentDetails
+          isOwner={isOwner}
+          rows={technicalRowsForAttempt(attempt)}
+        />
+      </PaymentSummaryCard>
     </div>
   );
 }

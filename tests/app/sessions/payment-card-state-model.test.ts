@@ -88,45 +88,39 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
     );
   });
 
-  it("the top heading reads 'Payment refunded.' when refunded", () => {
+  it("the single headline comes from derivePaymentSummary ('Paid' / 'Refunded'), not dual headings", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/refunded \? "Payment refunded\." :/);
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    // No hard-coded competing headings.
+    expect(block).not.toMatch(/"Payment refunded\."/);
+    expect(block).not.toMatch(/"Charge succeeded\."/);
   });
 
-  it("the top heading reads 'Charge succeeded.' when not refunded", () => {
+  it("the refunded variant uses a neutral (not green) palette", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(
-      /refunded \? "Payment refunded\." : "Charge succeeded\."/,
-    );
+    expect(block).toMatch(/refunded\s*\?[\s\S]{0,200}border-neutral-200/);
+    // The paid (non-refunded) branch is the emerald one.
+    expect(block).toMatch(/border-emerald-200/);
   });
 
-  it("the refunded variant switches the border + background palette (amber, not green)", () => {
+  it("the refund amount + timestamp render in the compact subline (refund id is owner-only)", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(
-      /refunded\s*\?[\s\S]{0,300}border-amber-300 bg-amber-50/,
-    );
-  });
-
-  it("a refund details block (Amount refunded / Refunded / Refund id) renders when refunded", () => {
-    const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/Refund details/);
-    expect(block).toMatch(/Amount refunded:/);
-    expect(block).toMatch(/Refunded:/);
     expect(block).toMatch(/attempt\.refundedAt/);
-    expect(block).toMatch(/attempt\.stripeRefundId/);
+    expect(block).toMatch(/formatCadFromCents\(attempt\.refundAmountCents\)/);
+    // The raw refund id is NOT inline — it lives in the owner-only disclosure.
+    expect(block).not.toMatch(/Refund:\s*\{?\s*attempt\.stripeRefundId/);
   });
 
-  it("the panel uses neutral charge copy below the details (no false 'no live card' claim)", () => {
+  it("drops the developer 'connected account' wording", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(
-      /This charge ran on the studio(&apos;|')s Stripe connected account\./,
-    );
-    expect(block).not.toMatch(/No live card was charged/);
+    expect(block).not.toMatch(/ran on the studio(&apos;|')s Stripe connected account/);
   });
 
-  it("the Amount line is renamed to 'Amount charged:' so it reads as a charge total", () => {
+  it("processor identifiers are owner-only via technicalRowsForAttempt", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/Amount charged:/);
+    expect(block).toMatch(/<TechnicalPaymentDetails/);
+    expect(block).toMatch(/technicalRowsForAttempt\(attempt\)/);
   });
 });
 

@@ -155,11 +155,14 @@ describe("PR #175: ReceiptSubPanel rendering shape", () => {
     expect(block).not.toMatch(/No live card was\s+charged/);
   });
 
-  it("the already-sent state surfaces the recipient + sent timestamp", () => {
+  it("the already-sent state surfaces a MASKED recipient + sent timestamp (never the full email)", () => {
     const block = blockFor("ReceiptSubPanel");
-    expect(block).toMatch(/Receipt already sent to/);
-    expect(block).toMatch(/attempt\.receiptEmailTo/);
+    // The "Receipt sent [to …]" line is rendered by <ReceiptStatus>, fed a
+    // masked address; the raw email is never rendered inline.
+    expect(block).toMatch(/<ReceiptStatus/);
+    expect(block).toMatch(/maskReceiptEmail\(/);
     expect(block).toMatch(/attempt\.receiptSentAt/);
+    expect(block).not.toMatch(/<code>\{[^}]*receiptEmailTo[^}]*\}<\/code>/);
   });
 
   it("the failed state surfaces the sanitised failure message + code", () => {
