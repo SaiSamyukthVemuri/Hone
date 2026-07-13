@@ -17,8 +17,9 @@ import {
   configureFakeStripeOutcome,
   readFakeStripeCalls,
   countFakeStripeCalls,
+  countFakeStripeInvocations,
+  countFakeStripeEffects,
   cleanupFakeStripeLedger,
-  activeRunId,
 } from "./helpers/fake-stripe-ledger-e2e";
 
 // ===========================================================================
@@ -172,9 +173,11 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   expect(chargedRows).toHaveLength(1);
   expect(chargedRows[0].status).toBe("succeeded");
 
-  // --- Exactly one fake paymentIntents.create with the expected fields (27-28).
-  expect(countFakeStripeCalls("pi_create")).toBe(1);
+  // --- Exactly one fake paymentIntents.create: 1 invocation, 1 effect (27-28).
+  expect(countFakeStripeInvocations()).toBe(1);
+  expect(countFakeStripeEffects()).toBe(1);
   const piCall = readFakeStripeCalls().find((c) => c.method === "pi_create")!;
+  expect(piCall.replay).toBe(false);
   expect(piCall.idempotencyKey).toBe(selector);
   expect(piCall.stripeAccount).toBe(`acct_test_e2e_${seed.scenario.runId}`);
   expect(piCall.amountCents).toBe(seed.expectedAmountMinor);
@@ -208,7 +211,8 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const finalRows = await getSessionPaymentAttemptRows(seed.sessionId);
   expect(finalRows).toHaveLength(1);
   expect(finalRows[0].status).toBe("succeeded");
-  expect(countFakeStripeCalls("pi_create")).toBe(1);
+  expect(countFakeStripeInvocations()).toBe(1);
+  expect(countFakeStripeEffects()).toBe(1);
 
   // --- Clinical record untouched: before === after (step 40 / Section 6).
   const clinicalAfter = await readClinicalIntegritySnapshot(seed.sessionId);

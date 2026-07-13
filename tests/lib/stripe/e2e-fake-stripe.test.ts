@@ -184,7 +184,7 @@ describe("production-path invariance (seam)", () => {
   });
 });
 
-describe("fake-call recorder — run-isolated, idempotent, test-safe", () => {
+describe("fake-call recorder — invocation vs effect, run-isolated, test-safe", () => {
   const RUN = "run-testABC123";
   const prev = process.env.HONE_E2E_RUN_ID;
   afterEach(() => {
@@ -194,7 +194,14 @@ describe("fake-call recorder — run-isolated, idempotent, test-safe", () => {
     else process.env.HONE_E2E_RUN_ID = prev;
   });
 
-  it("records exactly one call per create + captures idempotency key + connected account + synthetic id", async () => {
+  // Invocation = every pi_create call; effect = a create that produced a NEW
+  // result for a previously-unseen idempotency key (replay=false).
+  const invocations = (run: string) =>
+    getFakeStripeCalls(run).filter((c) => c.method === "pi_create");
+  const effects = (run: string) =>
+    getFakeStripeCalls(run).filter((c) => c.method === "pi_create" && !c.replay);
+
+  it("first call: invocation 1, effect 1, replay false + captures key/account/id", async () => {
     process.env.HONE_E2E_RUN_ID = RUN;
     const stripe = createFakeStripe();
     const pi = await (stripe.paymentIntents.create as unknown as (
@@ -206,18 +213,19 @@ describe("fake-call recorder — run-isolated, idempotent, test-safe", () => {
     );
     expect(pi.id).toMatch(/^pi_test_e2e_/);
     expect(pi.status).toBe("succeeded");
-    const calls = getFakeStripeCalls(RUN);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
+    expect(invocations(RUN)).toHaveLength(1);
+    expect(effects(RUN)).toHaveLength(1);
+    expect(invocations(RUN)[0]).toMatchObject({
       method: "pi_create",
       idempotencyKey: "hone:session_payment:att1:v1",
       stripeAccount: "acct_test_123",
       amountCents: 22500,
       currency: "cad",
+      replay: false,
     });
   });
 
-  it("idempotent replay: same key → same id, NO second recorded call (no double charge)", async () => {
+  it("same idempotency key again: invocation 2, effect stays 1, 2nd is replay + same id", async () => {
     process.env.HONE_E2E_RUN_ID = RUN;
     const stripe = createFakeStripe();
     const create = stripe.paymentIntents.create as unknown as (
@@ -226,8 +234,27 @@ describe("fake-call recorder — run-isolated, idempotent, test-safe", () => {
     ) => Promise<{ id: string }>;
     const a = await create({ amount: 100, currency: "cad" }, { idempotencyKey: "k1" });
     const b = await create({ amount: 100, currency: "cad" }, { idempotencyKey: "k1" });
-    expect(a.id).toBe(b.id);
-    expect(getFakeStripeCalls(RUN)).toHaveLength(1);
+    expect(a.id).toBe(b.id); // idempotent: same synthetic result
+    // The replay is NOT hidden: two invocations recorded, only one effect.
+    expect(invocations(RUN)).toHaveLength(2);
+    expect(effects(RUN)).toHaveLength(1);
+    expect(invocations(RUN)[0].replay).toBe(false);
+    expect(invocations(RUN)[1].replay).toBe(true);
+    expect(invocations(RUN)[1].resultId).toBe(a.id);
+  });
+
+  it("different idempotency key: invocation AND effect both increase", async () => {
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const stripe = createFakeStripe();
+    const create = stripe.paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ id: string }>;
+    const a = await create({ amount: 100, currency: "cad" }, { idempotencyKey: "k1" });
+    const b = await create({ amount: 100, currency: "cad" }, { idempotencyKey: "k2" });
+    expect(a.id).not.toBe(b.id);
+    expect(invocations(RUN)).toHaveLength(2);
+    expect(effects(RUN)).toHaveLength(2);
   });
 
   it("isolates calls by run id — one run cannot read another run's calls", async () => {
@@ -262,14 +289,14 @@ describe("fake-call recorder — run-isolated, idempotent, test-safe", () => {
   });
 
   it("the recorded shape carries no client/email/card/PHI fields", () => {
-    // The recorder type is method/key/account/amount/currency/resultId only.
-    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId"];
+    // The recorder type is method/key/account/amount/currency/resultId/replay only.
+    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "replay"];
     const src = readFileSync(join(process.cwd(), "lib/stripe/e2e-fake-stripe.ts"), "utf8");
     for (const forbidden of ["email", "last4", "customer", "client_id", "card_", "signature", "cvc", "secret"]) {
       // no forbidden field is recorded (the FakeStripeCall type block)
       const typeBlock = src.slice(src.indexOf("export type FakeStripeCall"), src.indexOf("};", src.indexOf("export type FakeStripeCall")));
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
-    expect(keys.length).toBe(6);
+    expect(keys.length).toBe(7);
   });
 });

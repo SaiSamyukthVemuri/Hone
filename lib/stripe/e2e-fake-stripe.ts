@@ -37,6 +37,14 @@ export type FakeStripeCall = {
   amountCents: number | null;
   currency: string | null;
   resultId: string;
+  // INVOCATION vs EFFECT (PR #419 concurrency pass). Every adapter call is
+  // recorded (an "invocation"); replay=false marks the calls that actually
+  // created a NEW synthetic processor result for a previously-unseen idempotency
+  // key (an "effect"). A replay (same key seen before) returns the same result
+  // id and records replay=true — so a concurrency test can see TWO app-level
+  // invocations even though only ONE processor effect occurred. The fake's
+  // idempotency can therefore never HIDE a duplicate server call.
+  replay: boolean;
 };
 
 // Per-process, run-id-isolated recorder. A new Map per run id; distinct runs and
@@ -114,22 +122,29 @@ type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefin
 function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
   const key = opts?.idempotencyKey ?? null;
   const existing = idempotentResult(run, key);
+  // A replay is a create whose idempotency key already produced an effect. It
+  // returns the SAME synthetic result (Stripe's 24h idempotency window) and
+  // creates NO new processor effect — but it IS still an app-level invocation.
+  const replay = existing !== null;
   const seq = existing ? null : nextSeq(run);
   const id = existing ?? `pi_test_e2e_${run}_${seq}`;
   const chargeId = `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
   const outcome = outcomeFor(run, key);
   if (!existing) {
+    // First-seen key → THIS call is the unique processor effect.
     rememberIdempotent(run, key, id);
-    // Idempotent replay records nothing new (proves retry never double-charges).
-    record(run, {
-      method: "pi_create",
-      idempotencyKey: key,
-      stripeAccount: opts?.stripeAccount ?? null,
-      amountCents: params?.amount ?? null,
-      currency: params?.currency ?? null,
-      resultId: id,
-    });
   }
+  // Record EVERY invocation (replay flag distinguishes effect from replay) so a
+  // duplicate server call can never be concealed behind one synthetic result.
+  record(run, {
+    method: "pi_create",
+    idempotencyKey: key,
+    stripeAccount: opts?.stripeAccount ?? null,
+    amountCents: params?.amount ?? null,
+    currency: params?.currency ?? null,
+    resultId: id,
+    replay,
+  });
   // Success → succeeded (+ latest_charge); decline → non-succeeded status the
   // real executor persists as failed; processing → pending.
   const status =
@@ -159,6 +174,7 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          replay: false, // a read, not a keyed effect
         });
         return { id, status: "succeeded", latest_charge: `ch_test_e2e_${runId()}_r` };
       },
@@ -170,6 +186,7 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          replay: false,
         });
         return { id, status: "canceled" };
       },
@@ -182,18 +199,22 @@ export function createFakeStripe(): Stripe {
         const run = runId();
         const key = opts?.idempotencyKey ?? null;
         const existing = idempotentResult(run, key);
+        const replay = existing !== null;
         const id = existing ?? `re_test_e2e_${run}_${nextSeq(run)}`;
         if (!existing) {
           rememberIdempotent(run, key, id);
-          record(run, {
-            method: "refund_create",
-            idempotencyKey: key,
-            stripeAccount: opts?.stripeAccount ?? null,
-            amountCents: params?.amount ?? null,
-            currency: params?.currency ?? null,
-            resultId: id,
-          });
         }
+        // Record every refund invocation (replay flag) — same invocation/effect
+        // model as create, so a duplicate refund request can't be concealed.
+        record(run, {
+          method: "refund_create",
+          idempotencyKey: key,
+          stripeAccount: opts?.stripeAccount ?? null,
+          amountCents: params?.amount ?? null,
+          currency: params?.currency ?? null,
+          resultId: id,
+          replay,
+        });
         return { id, status: "succeeded" };
       },
     },

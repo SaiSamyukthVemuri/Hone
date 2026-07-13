@@ -40,6 +40,7 @@ const call = (over = {}) => ({
   amountCents: 22500,
   currency: "cad",
   resultId: "pi_test_e2e_x_1",
+  replay: false,
   ...over,
 });
 
