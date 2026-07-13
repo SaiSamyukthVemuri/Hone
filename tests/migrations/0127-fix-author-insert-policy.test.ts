@@ -29,15 +29,13 @@ describe("0127 — file + repo-max tripwire", () => {
     expect(FILE).toMatch(/^0127_fix_client_clinical_notes_author_insert_policy\.sql$/);
   });
 
-  it("advances the repo migration max to 0127 (nothing 0128+ yet); 0126 + 0125 precede it", () => {
-    const nums = FILES.map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    expect(nums[nums.length - 1]).toBe("0127");
+  it("is present; the repo-max tripwire now lives in the 0128 test; 0126 + 0125 precede it", () => {
+    // 0128 (session_block_areas) now advances the repo max; the absolute pin
+    // lives in the 0128 test. Nothing above 0128 may exist yet.
+    expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(2[8-9]|[3-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(29|[3-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 

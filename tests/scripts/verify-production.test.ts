@@ -107,7 +107,7 @@ describe("verify-production: covers every required check", () => {
     // (correctly) report expected 0127 vs remote 0126, the intended pending-apply
     // signal. This assertion still fails on the next new migration, forcing a
     // conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0127");
+    expect(nums[nums.length - 1]).toBe("0128");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

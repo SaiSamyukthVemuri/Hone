@@ -1009,6 +1009,19 @@ export type SessionBlockSide =
   | "bilateral"
   | "n/a";
 
+// Migration 0128 (Willow charting): multiple treated areas per settings block,
+// each with its own laterality. Additive child of session_blocks; studio_id is
+// trigger-derived from the parent block. See lib/sessions/block-areas.ts.
+export type SessionBlockArea = {
+  id: string;
+  session_block_id: string;
+  studio_id: string;
+  area: string;
+  laterality: "left" | "right" | "bilateral" | "midline" | "not_applicable";
+  display_order: number;
+  created_at: string;
+};
+
 export type SessionBlock = {
   id: string;
   studio_id: string;
