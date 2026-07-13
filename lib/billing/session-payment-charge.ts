@@ -1,7 +1,8 @@
 import "server-only";
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
+import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
@@ -606,7 +607,7 @@ async function reconcileExistingPaymentIntent(args: {
   stripeAccountId: string;
   paymentIntentId: string;
 }): Promise<SessionPaymentChargeResult> {
-  const stripe = getStripe();
+  const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.retrieve(
@@ -1002,7 +1003,7 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const stripe = getStripe();
+  const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.create(

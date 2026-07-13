@@ -24,6 +24,8 @@ import {
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
+import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
+import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";
 import { calendarReturnHref } from "../calendar-return";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import { PostcareSendButton } from "../PostcareSendButton";
@@ -183,6 +185,15 @@ export default async function AppointmentDetailPage({
     | "completed"
     | "cancelled"
     | "no_show";
+
+  // Quick checkout: the appointment's coarse payment state, so the Payment
+  // section shows Paid/Processing/Refunded or the Checkout entry — the SAME
+  // bounded loader + cell the dashboard uses (one flow, not two).
+  const checkoutPaymentState =
+    typedStatus === "completed"
+      ? (await getAppointmentPaymentStates(studio.id, [id])).get(id) ??
+        "no_session"
+      : "no_session";
 
   // Workflow fix 3 (preserved): cancel surface only for confirmed +
   // future. Past/in-progress confirmed appointments expose Mark
@@ -420,6 +431,26 @@ export default async function AppointmentDetailPage({
             appointmentId={id}
             status={typedStatus}
             endsAt={data.ends_at}
+          />
+        </section>
+      )}
+
+      {/* Quick checkout (Chloe): take payment for a completed appointment right
+          here, without navigating into charting. The modal reuses the existing
+          session-payment card + actions; charting is independent. */}
+      {typedStatus === "completed" && (
+        <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Payment
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Take payment for this appointment. Charting is separate — you can
+            finish charting later.
+          </p>
+          <AppointmentCheckoutCell
+            appointmentId={id}
+            status={typedStatus}
+            paymentState={checkoutPaymentState}
           />
         </section>
       )}

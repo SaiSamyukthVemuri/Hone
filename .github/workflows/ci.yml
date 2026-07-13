@@ -154,8 +154,14 @@ jobs:
           # locally; bump deliberately and re-verify grants parity.
           version: 2.102.0
 
-      - name: Start local Supabase database
-        run: supabase db start
+      - name: Start local Supabase (DB + REST API)
+        # Was `supabase db start` (Postgres only). The DB-integration lane now
+        # also exercises server-side code that reaches Supabase over the REST API
+        # via createAdminClient() (e.g. the REAL getSessionPaymentEligibility
+        # resolver) — that needs kong (54321), not just Postgres (54322). Bring
+        # up the same trimmed stack the browser-e2e job uses (proven in CI); the
+        # node-pg harness (54322) and `db reset --local` are unaffected.
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         # Fails the job if ANY migration 0001-current cannot apply to
@@ -240,5 +246,78 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  # PR #419. Dedicated payment browser E2E lane. Same LOCAL-only posture as
+  # browser-e2e (local Next production build + local Supabase, no secrets, no
+  # external service), but this is the ONLY lane that enables the guarded fake
+  # Stripe processor: it sets the two server-only markers (HONE_E2E_FAKE_STRIPE=1
+  # + a per-job HONE_E2E_RUN_ID) so the fake activation guard passes here and
+  # NOWHERE else. No Vercel markers, sk_test_dummy only — so no real charge,
+  # refund, email, or SMS can leave this lane. Separate job (own runner) → no
+  # port collision with browser-e2e, and a flake here never blocks the fast lane.
+  payment-browser-e2e:
+    name: payment browser e2e (fake stripe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the per-job fake-Stripe run id
+        # ONE validated run id, shared by the Next server + Playwright runner +
+        # both ledger sides. Matches the fake-Stripe guard regex
+        # (/^[a-z0-9][a-z0-9-]{7,63}$/). Fake Stripe is enabled ONLY in this job.
+        run: |
+          echo "HONE_E2E_RUN_ID=run-$(openssl rand -hex 6)" >> "$GITHUB_ENV"
+          echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          # Same pin and rationale as db-integration / browser-e2e (grants parity).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        # Same local-only auth config as browser-e2e: allow-list the local E2E app
+        # origin (port 3111) for the magic-link redirect. No production project.
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      - name: Start local Supabase stack (db + auth + mail capture)
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Payment browser E2E (quick checkout, guarded fake Stripe)
+        run: npm run test:e2e:payment
+
+      - name: Clean run-scoped fake ledger temp files
+        if: always()
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json || true
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payment-playwright-traces
           path: test-results/
           retention-days: 7
