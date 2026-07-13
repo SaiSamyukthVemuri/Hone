@@ -44,6 +44,9 @@ export type PaymentSeed = E2eSeed & {
   appointmentId: string;
   sessionId: string;
   expectedAmountMinor: number;
+  // This scenario's unique synthetic connected account (acct_test_e2e_<runId>) —
+  // used to scope fake-ledger counts to THIS scenario so specs can't contaminate.
+  connectedAccountId: string;
 };
 
 async function createLoginUser(email: string): Promise<string> {
@@ -116,6 +119,7 @@ export async function seedEligiblePaymentWithLogin(
     appointmentId: scenario.appointmentId,
     sessionId: scenario.sessionId,
     expectedAmountMinor: scenario.expectedAmountMinor,
+    connectedAccountId: `acct_test_e2e_${scenario.runId}`,
   };
 }
 

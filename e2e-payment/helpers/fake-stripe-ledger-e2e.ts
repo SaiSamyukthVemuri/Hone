@@ -129,6 +129,42 @@ export function countFakeStripeEffects(runId: string = activeRunId()): number {
   return readFakeStripeEffects(runId).length;
 }
 
+// Account-scoped variants. The ledger is shared per-JOB (one HONE_E2E_RUN_ID), so
+// scoping counts to a scenario's unique synthetic connected account proves one
+// spec's calls can never contaminate another's — even though every spec appends
+// to the same run-scoped file.
+export function invocationsForAccount(
+  account: string,
+  runId: string = activeRunId(),
+): FakeStripeCall[] {
+  return readFakeStripeInvocations(runId).filter((c) => c.stripeAccount === account);
+}
+export function effectsForAccount(
+  account: string,
+  runId: string = activeRunId(),
+): FakeStripeCall[] {
+  return readFakeStripeEffects(runId).filter((c) => c.stripeAccount === account);
+}
+export function countInvocationsForAccount(
+  account: string,
+  runId: string = activeRunId(),
+): number {
+  return invocationsForAccount(account, runId).length;
+}
+export function countEffectsForAccount(
+  account: string,
+  runId: string = activeRunId(),
+): number {
+  return effectsForAccount(account, runId).length;
+}
+// Any fake call (any method) touching this account — for no-refund / isolation proofs.
+export function callsForAccount(
+  account: string,
+  runId: string = activeRunId(),
+): FakeStripeCall[] {
+  return readFakeStripeCalls(runId).filter((c) => c.stripeAccount === account);
+}
+
 // ----- Behaviour config (the runner writes; the server reads) --------------------
 // Atomic: write a temp file then rename into place, so the server never reads a
 // half-written config. selector === null sets the default outcome.

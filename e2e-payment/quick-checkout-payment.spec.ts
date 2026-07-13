@@ -16,9 +16,9 @@ import {
   clearFakeStripeOutcome,
   configureFakeStripeOutcome,
   readFakeStripeCalls,
-  countFakeStripeCalls,
-  countFakeStripeInvocations,
-  countFakeStripeEffects,
+  callsForAccount,
+  countInvocationsForAccount,
+  countEffectsForAccount,
   cleanupFakeStripeLedger,
 } from "./helpers/fake-stripe-ledger-e2e";
 
@@ -174,8 +174,8 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   expect(chargedRows[0].status).toBe("succeeded");
 
   // --- Exactly one fake paymentIntents.create: 1 invocation, 1 effect (27-28).
-  expect(countFakeStripeInvocations()).toBe(1);
-  expect(countFakeStripeEffects()).toBe(1);
+  expect(countInvocationsForAccount(seed.connectedAccountId)).toBe(1);
+  expect(countEffectsForAccount(seed.connectedAccountId)).toBe(1);
   const piCall = readFakeStripeCalls().find((c) => c.method === "pi_create")!;
   expect(piCall.replay).toBe(false);
   expect(piCall.idempotencyKey).toBe(selector);
@@ -187,7 +187,9 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   // --- No real Stripe network request occurred (step 29 + no-network proof).
   expect(stripeNetworkRequests).toEqual([]);
   // The fake recorded the processor call; no refund path ran.
-  expect(countFakeStripeCalls("refund_create")).toBe(0);
+  expect(
+    callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),
+  ).toHaveLength(0);
 
   // --- Close the modal (step 30).
   await modal.getByTestId("quick-checkout-close").click();
@@ -211,8 +213,8 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const finalRows = await getSessionPaymentAttemptRows(seed.sessionId);
   expect(finalRows).toHaveLength(1);
   expect(finalRows[0].status).toBe("succeeded");
-  expect(countFakeStripeInvocations()).toBe(1);
-  expect(countFakeStripeEffects()).toBe(1);
+  expect(countInvocationsForAccount(seed.connectedAccountId)).toBe(1);
+  expect(countEffectsForAccount(seed.connectedAccountId)).toBe(1);
 
   // --- Clinical record untouched: before === after (step 40 / Section 6).
   const clinicalAfter = await readClinicalIntegritySnapshot(seed.sessionId);
