@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
+import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   normalizeProbeLabel,
   type ProbeLotSuggestion,
@@ -325,7 +327,7 @@ export async function getClientProcedureRecords(
     supabase
       .from("session_blocks")
       .select(
-        "session_id, sort_order, primary_area, block_name, probe_label, probe_lot_number, minutes_performed, machine_frequency",
+        "id, session_id, sort_order, primary_area, side, block_name, probe_label, probe_lot_number, minutes_performed, machine_frequency",
       )
       .eq("studio_id", studioId)
       .in("session_id", sessionIds)
@@ -336,6 +338,13 @@ export async function getClientProcedureRecords(
       .select("id, display_name, email")
       .eq("studio_id", studioId),
   ]);
+
+  // Migration 0128: resolve EVERY treated area + laterality per block so a
+  // procedure record never shows only the first of several areas.
+  const procedureAreasByBlock = await getSessionBlockAreasByBlockIds(
+    (blocks ?? []).map((b) => b.id as string),
+    studioId,
+  );
 
   const practitionerName = new Map<string, string>(
     (practitioners ?? []).map((p) => [
@@ -353,7 +362,10 @@ export async function getClientProcedureRecords(
     const list = blocksBySession.get(sid) ?? [];
     list.push({
       name:
-        ((b.primary_area as string | null)?.trim() ||
+        (blockAreasLabel(procedureAreasByBlock.get(b.id as string), {
+          primary_area: b.primary_area as string | null,
+          side: b.side as string | null,
+        }) ||
           (b.block_name as string | null)?.trim() ||
           `Treatment area ${b.sort_order}`) as string,
       probeLabel: (b.probe_label as string | null) ?? null,
@@ -517,7 +529,7 @@ export async function getLotTraceability(
       supabase
         .from("session_blocks")
         .select(
-          "id, session_id, primary_area, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
+          "id, session_id, primary_area, side, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
         )
         .eq("studio_id", studioId)
         .ilike("probe_lot_number", pattern)
@@ -537,10 +549,18 @@ export async function getLotTraceability(
     }>).map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
 
+  // Migration 0128: resolve the full multi-area set for each block that used
+  // this lot so the usage record shows every treated area + laterality.
+  const lotAreasByBlock = await getSessionBlockAreasByBlockIds(
+    ((blockRows ?? []) as Array<{ id: string }>).map((b) => b.id),
+    studioId,
+  );
+
   type RawUsage = {
     id: string;
     session_id: string;
     primary_area: string | null;
+    side: string | null;
     block_name: string | null;
     sort_order: number;
     probe_label: string | null;
@@ -593,7 +613,10 @@ export async function getLotTraceability(
         startedAt: sess?.started_at ?? null,
         modality: sess?.modality ?? null,
         areaName:
-          b.primary_area?.trim() ||
+          blockAreasLabel(lotAreasByBlock.get(b.id), {
+            primary_area: b.primary_area,
+            side: b.side,
+          }) ||
           b.block_name?.trim() ||
           `Treatment area ${b.sort_order}`,
         probeLabel: b.probe_label,

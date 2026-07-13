@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getCurrentPractitionerWithStudio,
+  getSessionBlockAreasByBlockIds,
+} from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -82,6 +85,14 @@ export default async function ClientImagesPage({
     sessions: { started_at: string } | { started_at: string }[] | null;
     session_blocks: SessionBlockAreaInput | SessionBlockAreaInput[];
   }>;
+  // Migration 0128: batch-load the structured areas for every attached block so
+  // each photo's area tag shows the full multi-area set + laterality.
+  const photoAreasByBlock = await getSessionBlockAreasByBlockIds(
+    meta
+      .map((m) => m.session_block_id)
+      .filter((x): x is string => Boolean(x)),
+    studio.id,
+  );
   const admin = createAdminClient();
   const rows = await Promise.all(
     meta.map(async (m) => {
@@ -110,9 +121,19 @@ export default async function ClientImagesPage({
         }
       }
       // Embedded to-one can arrive as an object or a single-element array.
-      const block = Array.isArray(m.session_blocks)
+      const rawBlock = Array.isArray(m.session_blocks)
         ? (m.session_blocks[0] ?? null)
         : (m.session_blocks ?? null);
+      // Migration 0128: attach the structured area set (keyed by the photo's
+      // session_block_id) so the tag shows every treated area, not just the first.
+      const block: SessionBlockAreaInput = rawBlock
+        ? {
+            ...rawBlock,
+            structured_areas: m.session_block_id
+              ? (photoAreasByBlock.get(m.session_block_id) ?? [])
+              : [],
+          }
+        : null;
       const session = Array.isArray(m.sessions)
         ? (m.sessions[0] ?? null)
         : (m.sessions ?? null);
@@ -151,6 +172,18 @@ export default async function ClientImagesPage({
     .limit(12);
   if (sessErr) throw new Error(sessErr.message);
   type EmbeddedBlock = { id: string } & NonNullable<SessionBlockAreaInput>;
+  // Migration 0128: batch-load structured areas for every block in the selector
+  // so each option shows the full multi-area set + laterality.
+  const optionAreasByBlock = await getSessionBlockAreasByBlockIds(
+    (sessionRows ?? []).flatMap((s) => {
+      const raw = s.session_blocks;
+      const blocks = (
+        Array.isArray(raw) ? raw : raw ? [raw] : []
+      ) as unknown as EmbeddedBlock[];
+      return blocks.map((b) => b.id);
+    }),
+    studio.id,
+  );
   const sessionOptions: SessionAttachOption[] = (sessionRows ?? []).map((s) => {
     const raw = s.session_blocks;
     const blocks = (
@@ -161,7 +194,10 @@ export default async function ClientImagesPage({
       startedAt: s.started_at as string,
       blocks: blocks.map((b) => ({
         id: b.id,
-        areaLabel: sessionBlockOptionLabel(b),
+        areaLabel: sessionBlockOptionLabel({
+          ...b,
+          structured_areas: optionAreasByBlock.get(b.id) ?? [],
+        }),
       })),
     };
   });

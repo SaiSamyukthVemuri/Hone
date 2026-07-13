@@ -60,21 +60,23 @@ describe("treatmentPhotoAreaLabel", () => {
       }),
     ).toBe("Treatment area: Chin");
   });
-  it("includes side (display label) and custom detail; skips n/a side", () => {
+  it("laterality is in the label prefix + custom detail appended; n/a has no prefix", () => {
+    // Migration 0128: the canonical prefix format ("Bilateral Underarms"),
+    // replacing the old "Underarms · Both sides" suffix.
     expect(
       treatmentPhotoAreaLabel("b1", {
         primary_area: "Underarms",
         side: "bilateral",
         custom_area_detail: null,
       }),
-    ).toBe("Treatment area: Underarms · Both sides");
+    ).toBe("Treatment area: Bilateral Underarms");
     expect(
       treatmentPhotoAreaLabel("b1", {
         primary_area: "Chin",
         side: "left",
         custom_area_detail: "under-chin",
       }),
-    ).toBe("Treatment area: Chin · Left · under-chin");
+    ).toBe("Treatment area: Left Chin · under-chin");
     expect(
       treatmentPhotoAreaLabel("b1", {
         primary_area: "Lip",
@@ -82,6 +84,20 @@ describe("treatmentPhotoAreaLabel", () => {
         custom_area_detail: null,
       }),
     ).toBe("Treatment area: Lip");
+  });
+
+  it("migration 0128: a multi-area block's photo shows EVERY area, not just the first", () => {
+    expect(
+      treatmentPhotoAreaLabel("b1", {
+        primary_area: "Cheeks", // legacy projection = first area only
+        side: null,
+        custom_area_detail: null,
+        structured_areas: [
+          { area: "Cheeks", laterality: "left" },
+          { area: "Sideburns", laterality: "right" },
+        ],
+      }),
+    ).toBe("Treatment area: Left Cheeks · Right Sideburns");
   });
 });
 
@@ -95,6 +111,10 @@ describe("UI wiring: context tags rendered, no raw IDs/paths/URLs", () => {
     expect(PAGE).toMatch(/treatmentPhotoScopeLabel/);
     expect(PAGE).toMatch(/treatmentPhotoAreaLabel/);
     expect(PAGE).toMatch(/session_blocks \( primary_area, side, custom_area_detail \)/);
+    // Migration 0128: the page batch-loads structured areas so multi-area photos
+    // show every treated area, not just the legacy primary_area.
+    expect(PAGE).toMatch(/getSessionBlockAreasByBlockIds/);
+    expect(PAGE).toMatch(/structured_areas/);
   });
   it("manager renders ContextTags on cards and in the modal", () => {
     expect(MANAGER).toMatch(/function ContextTags/);

@@ -1,5 +1,5 @@
-import type { SessionBlock } from "@/lib/types/database";
-import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
+import type { SessionBlock, SessionBlockArea } from "@/lib/types/database";
+import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import { apilusModalityLabel } from "@/lib/constants";
 import {
   isReactionType,
@@ -36,7 +36,13 @@ export type ClinicalSummaryBlock = Pick<
   | "reaction_notes"
   | "caution_for_next_session"
   | "caution_note"
->;
+> & {
+  // Migration 0128: structured areas for this block. When present they are the
+  // authoritative label ("Left Cheeks · Right Sideburns"); absent → legacy
+  // primary_area + side. Optional so callers that have not been updated still
+  // compile and fall back to legacy.
+  structured_areas?: ReadonlyArray<SessionBlockArea> | null;
+};
 
 // One treatment area's at-a-glance memory. Practitioner-facing
 // naming: this is a "treatment area", never a "block".
@@ -75,11 +81,14 @@ function trimmedOrNull(value: string | null | undefined): string | null {
 }
 
 function areaName(block: ClinicalSummaryBlock, index: number): string {
-  const area = trimmedOrNull(block.primary_area);
-  if (area) {
-    const side = block.side ? sessionBlockSideLabel(block.side) : null;
-    return side ? `${area} (${side})` : area;
-  }
+  // Migration 0128: every clinical surface shows EVERY treated area + laterality
+  // via the shared resolver — structured rows win, legacy primary_area + side is
+  // the fallback, and mixed laterality is never flattened to one block-level side.
+  const label = blockAreasLabel(block.structured_areas, {
+    primary_area: block.primary_area,
+    side: block.side,
+  });
+  if (label) return label;
   const legacyName = trimmedOrNull(block.block_name);
   if (legacyName) return legacyName;
   return `Treatment area ${index + 1}`;

@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  attachStructuredAreas,
+  getCurrentPractitionerWithStudio,
+} from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
@@ -305,14 +308,20 @@ export default async function AppointmentDetailPage({
       const { data: lastBlocks } = await supabase
         .from("session_blocks")
         .select(
-          "sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+          "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
         )
         .eq("studio_id", studio.id)
         .eq("session_id", lastSession.id)
         .is("deleted_at", null)
         .order("sort_order", { ascending: true });
+      // Migration 0128: attach structured areas so the appointment-card summary
+      // shows every treated area + laterality, not only the legacy primary_area.
+      const lastBlockRows = (lastBlocks ?? []) as Array<
+        ClinicalSummaryBlock & { id: string }
+      >;
+      await attachStructuredAreas(lastBlockRows, studio.id);
       lastSessionSummary = buildLastSessionSummary({
-        blocks: (lastBlocks ?? []) as ClinicalSummaryBlock[],
+        blocks: lastBlockRows,
         nextSessionNote: lastSession.next_session_note,
       });
     }

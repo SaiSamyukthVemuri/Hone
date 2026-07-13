@@ -1,7 +1,11 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getCurrentPractitionerWithStudio,
+  getSessionBlockAreasByBlockIds,
+} from "@/lib/supabase/queries";
+import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   escapeIlike,
   filterPageShortcuts,
@@ -72,7 +76,7 @@ export async function globalSearchAction(
       supabase
         .from("session_blocks")
         .select(
-          "id, session_id, primary_area, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions(client_id, started_at, client:clients(name))",
+          "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions(client_id, started_at, client:clients(name))",
         )
         .eq("studio_id", studioId)
         .is("deleted_at", null)
@@ -192,13 +196,24 @@ export async function globalSearchAction(
     });
   }
 
+  // Migration 0128: resolve the full multi-area label per matched block so a
+  // memory result shows every treated area + laterality, not just the first.
+  // (Search MATCHING still keys on primary_area/block_name text; child-area-only
+  // matches are a known recall gap tracked separately, not a display gap.)
+  const searchAreasByBlock = await getSessionBlockAreasByBlockIds(
+    (blockRows as Array<{ id: string }>).map((b) => b.id),
+    studioId,
+  );
   for (const b of blockRows) {
     const session = Array.isArray(b.session) ? b.session[0] : b.session;
     const client = Array.isArray(session?.client)
       ? session?.client[0]
       : session?.client;
     const area =
-      (b.primary_area as string | null) ||
+      blockAreasLabel(searchAreasByBlock.get(b.id as string), {
+        primary_area: b.primary_area as string | null,
+        side: b.side as string | null,
+      }) ||
       (b.block_name as string | null) ||
       "Treatment area";
     const lot = b.probe_lot_number as string | null;

@@ -87,7 +87,10 @@ export function lateralityToLegacySide(lat: Laterality): SessionBlockSide | null
   }
 }
 
-// One combined label, e.g. "Left cheek", "Right sideburn", "Both sides · cheeks".
+// One combined label in the canonical laterality-prefix format:
+// "Left cheek", "Right sideburn", "Bilateral cheeks", "Midline upper lip",
+// "Neck" (not_applicable → the bare area). This is the SINGLE display format for
+// every clinical surface (charting, history, summaries, print, export).
 export function formatAreaLabel(area: BlockArea): string {
   const a = area.area.trim();
   switch (area.laterality) {
@@ -96,13 +99,27 @@ export function formatAreaLabel(area: BlockArea): string {
     case "right":
       return `Right ${a}`;
     case "bilateral":
-      return `Both sides · ${a}`;
+      return `Bilateral ${a}`;
     case "midline":
-      return `${a} · midline`;
+      return `Midline ${a}`;
     case "not_applicable":
     default:
       return a;
   }
+}
+
+// One combined, ordered label for a block's treated areas — the SINGLE display
+// contract for every clinical surface (charting summary, history, print, export,
+// treatment-memory). Structured rows win ("Left Cheeks · Right Sideburns");
+// otherwise the legacy primary_area + side ("Left Upper lip"). Returns null when
+// the block has no area at all (callers fall back to block_name / a placeholder).
+export function blockAreasLabel(
+  structuredAreas: ReadonlyArray<BlockArea> | null | undefined,
+  legacy: { primary_area?: string | null; side?: SessionBlockSide | string | null },
+): string | null {
+  const areas = resolveBlockAreas(structuredAreas ?? null, legacy);
+  if (areas.length === 0) return null;
+  return areas.map(formatAreaLabel).join(" · ");
 }
 
 // The read contract: structured child rows win; otherwise the legacy single

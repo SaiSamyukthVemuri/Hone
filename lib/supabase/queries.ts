@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
   ApilusModality,
   Appointment,
@@ -822,6 +823,58 @@ export async function getSessionBlockById(
 // Fetches a session plus all its non-deleted blocks and the electrolysis
 // entries grouped under each block. Laser entries are out of scope for the
 // blocks restructure (blocks model electrolysis treatment-level params).
+// Batch loader (migration 0128): the structured areas for a set of already-loaded
+// session-block IDs, grouped by block id. ONE bounded, RLS-scoped query — no N+1.
+// Used by every list/history/summary/print/export surface so multi-area blocks
+// display every treated area + laterality. Studio isolation is enforced by RLS
+// (session_block_areas member policy); the caller passes block ids it already
+// read under its own studio scope, and rows for other studios are invisible.
+export async function getSessionBlockAreasByBlockIds(
+  blockIds: ReadonlyArray<string>,
+  studioId?: string,
+): Promise<Map<string, SessionBlockArea[]>> {
+  const out = new Map<string, SessionBlockArea[]>();
+  const ids = [...new Set(blockIds)].filter(Boolean);
+  if (ids.length === 0) return out;
+  const supabase = await createClient();
+  let query = supabase
+    .from("session_block_areas")
+    .select("*")
+    .in("session_block_id", ids);
+  // RLS already scopes to the caller's studio; when the caller already knows its
+  // studio id we add an explicit filter as defence-in-depth so a cross-studio
+  // block id (should one ever be passed) can never surface a foreign area row.
+  if (studioId) query = query.eq("studio_id", studioId);
+  const { data, error } = await query
+    .order("display_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(`Failed to load block areas: ${error.message}`);
+  for (const a of (data ?? []) as SessionBlockArea[]) {
+    const bucket = out.get(a.session_block_id) ?? [];
+    bucket.push(a);
+    out.set(a.session_block_id, bucket);
+  }
+  return out;
+}
+
+// Attaches the structured area rows onto a set of already-loaded blocks (each
+// carrying its own `id`). Mutates in place so every clinical summary/history/
+// print/export surface can render EVERY treated area + laterality via the shared
+// resolver, with a single bounded query. Studio-scoped when studioId is given.
+export async function attachStructuredAreas<
+  T extends { id: string; structured_areas?: ReadonlyArray<BlockArea> | null },
+>(blocks: T[], studioId?: string): Promise<T[]> {
+  if (blocks.length === 0) return blocks;
+  const byBlock = await getSessionBlockAreasByBlockIds(
+    blocks.map((b) => b.id),
+    studioId,
+  );
+  for (const block of blocks) {
+    block.structured_areas = byBlock.get(block.id) ?? [];
+  }
+  return blocks;
+}
+
 export async function getSessionWithBlocks(
   sessionId: string,
 ): Promise<SessionWithBlocks | null> {

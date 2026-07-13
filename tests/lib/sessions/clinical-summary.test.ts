@@ -105,10 +105,58 @@ describe("per-area summaries (the Chloe fix)", () => {
     expect(s.areas[0].probeLine).toBe("Ballet Gold F3");
     expect(s.areas[0].toleranceLine).toBe("5/5 - Comfortable");
     expect(s.areas[0].reactionLine).toBe("No visible reaction");
-    expect(s.areas[1].name).toBe("Upper lip (Left)");
+    expect(s.areas[1].name).toBe("Left Upper lip");
     expect(s.areas[1].settingsLine).toBe("Blend - EL 9");
     expect(s.areas[1].toleranceLine).toBe("3/5 - Moderate discomfort");
     expect(s.areas[1].reactionLine).toBe("Mild redness. Settled quickly.");
+  });
+
+  it("structured multi-area block shows EVERY area + laterality (never just one)", () => {
+    // The exact Chloe blocker: one settings block treats Left cheek + Right
+    // sideburn. The summary must show BOTH, in order, with laterality — the
+    // legacy projection here (primary_area='Cheeks', side=null for mixed) must
+    // NOT collapse the record to a single area.
+    const s = buildLastSessionSummary({
+      blocks: [
+        block({
+          sort_order: 1,
+          primary_area: "Cheeks",
+          side: null,
+          structured_areas: [
+            { area: "Cheeks", laterality: "left" },
+            { area: "Sideburns", laterality: "right" },
+          ] as unknown as NonNullable<ClinicalSummaryBlock["structured_areas"]>,
+          mode: "thermo",
+        }),
+      ],
+      nextSessionNote: null,
+    });
+    expect(s.areas).toHaveLength(1);
+    expect(s.areas[0].name).toBe("Left Cheeks · Right Sideburns");
+  });
+
+  it("structured rows OVERRIDE the legacy primary_area", () => {
+    const s = buildLastSessionSummary({
+      blocks: [
+        block({
+          primary_area: "Legacy-only-value",
+          side: "left",
+          structured_areas: [
+            { area: "Neck", laterality: "not_applicable" },
+          ] as unknown as NonNullable<ClinicalSummaryBlock["structured_areas"]>,
+        }),
+      ],
+      nextSessionNote: null,
+    });
+    expect(s.areas[0].name).toBe("Neck");
+  });
+
+  it("legacy block with NO structured rows still renders its single area", () => {
+    const s = buildLastSessionSummary({
+      blocks: [block({ primary_area: "Upper lip", side: "center" })],
+      nextSessionNote: null,
+    });
+    expect(s.areas[0].name).toBe("Midline Upper lip");
   });
 
   it("areas keep block order via sort_order", () => {

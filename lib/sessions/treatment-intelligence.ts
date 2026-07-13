@@ -4,6 +4,7 @@ import {
   reactionTypeLabel,
   type ReactionType,
 } from "@/lib/sessions/clinical-response";
+import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 
 // PR #210: Client Treatment Intelligence Summary. Pure builder that
 // turns a client's recorded treatment history (sessions + treatment
@@ -40,6 +41,13 @@ export type IntelligenceSessionInput = {
 export type IntelligenceBlockInput = {
   session_id: string;
   primary_area: string | null;
+  side?: string | null;
+  // Migration 0128: the structured treated areas for this block. When present the
+  // block contributes to EVERY area's intelligence (not just primary_area), so a
+  // "Cheeks + Sideburns" block appears under both. Grouping stays by area NAME
+  // (laterality is a per-session record detail, aggregated out of the memory
+  // card), keeping legacy single-area grouping unchanged.
+  structured_areas?: ReadonlyArray<BlockArea> | null;
   block_name: string | null;
   mode: string | null;
   apilus_modality: string | null;
@@ -106,6 +114,31 @@ function hairsPerMinute(
 ): number | null {
   if (!hairs || !minutes || hairs <= 0 || minutes <= 0) return null;
   return Math.round((hairs / minutes) * 10) / 10;
+}
+
+// The distinct area names a block treated, in display order, deduped
+// case-insensitively. Structured rows (0128) win; otherwise the legacy
+// primary_area, then block_name. Blank names are dropped (they never form a
+// card but their minutes/hairs still land in the overall totals).
+function blockAreaNames(block: IntelligenceBlockInput): string[] {
+  const resolved = resolveBlockAreas(block.structured_areas ?? null, {
+    primary_area: block.primary_area,
+    side: block.side,
+  });
+  const source =
+    resolved.length > 0
+      ? resolved.map((r) => r.area.trim())
+      : [(block.block_name ?? "").trim()];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of source) {
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
 }
 
 function modeLabelFor(block: IntelligenceBlockInput): string | null {
@@ -226,33 +259,37 @@ export function buildTreatmentIntelligence(input: {
   };
   const areasByKey = new Map<string, AreaAcc>();
   for (const b of blocksOldestFirst) {
-    const rawName = (b.primary_area ?? b.block_name ?? "").trim();
-    if (!rawName) continue;
-    const key = rawName.toLowerCase();
     const date = sessionDate.get(b.session_id) ?? "";
-    const acc = areasByKey.get(key) ?? {
-      label: rawName,
-      sessionIds: new Set<string>(),
-      blockCount: 0,
-      minutes: 0,
-      hairs: 0,
-      dates: [],
-      reactionsOldestFirst: [],
-      latest: b,
-      latestWatchNote: null,
-    };
-    acc.label = rawName; // newest spelling wins (oldest-first iteration)
-    acc.sessionIds.add(b.session_id);
-    acc.blockCount += 1;
-    acc.minutes += positive(b.minutes_performed);
-    for (const h of b.entry_hairs) acc.hairs += positive(h);
-    acc.dates.push(date);
-    acc.reactionsOldestFirst.push(b.reaction_type);
-    acc.latest = b;
-    if (b.caution_for_next_session || b.caution_note?.trim()) {
-      acc.latestWatchNote = b.caution_note?.trim() || "Previously noted";
+    // Migration 0128: a block contributes to EVERY structured area it treated
+    // (grouped by area name, laterality aggregated out of the memory card), so a
+    // "Cheeks + Sideburns" block appears under both. Legacy single-area blocks
+    // resolve to their primary_area, then block_name — unchanged grouping.
+    for (const rawName of blockAreaNames(b)) {
+      const key = rawName.toLowerCase();
+      const acc = areasByKey.get(key) ?? {
+        label: rawName,
+        sessionIds: new Set<string>(),
+        blockCount: 0,
+        minutes: 0,
+        hairs: 0,
+        dates: [],
+        reactionsOldestFirst: [],
+        latest: b,
+        latestWatchNote: null,
+      };
+      acc.label = rawName; // newest spelling wins (oldest-first iteration)
+      acc.sessionIds.add(b.session_id);
+      acc.blockCount += 1;
+      acc.minutes += positive(b.minutes_performed);
+      for (const h of b.entry_hairs) acc.hairs += positive(h);
+      acc.dates.push(date);
+      acc.reactionsOldestFirst.push(b.reaction_type);
+      acc.latest = b;
+      if (b.caution_for_next_session || b.caution_note?.trim()) {
+        acc.latestWatchNote = b.caution_note?.trim() || "Previously noted";
+      }
+      areasByKey.set(key, acc);
     }
-    areasByKey.set(key, acc);
   }
 
   const areas: AreaIntelligence[] = [...areasByKey.values()]
