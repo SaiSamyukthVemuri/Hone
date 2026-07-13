@@ -250,22 +250,43 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   returns zero rows and performs zero queue mutations (no reap-to-dead, no attempt
   increment, no lease). It is a runtime (data) control, distinct from the
   deployment-time env default and the external cron schedule (B2.3-b).
-- **Health-aware expired-lease reaper** — inside `claim_calendar_sync_op`: an
-  expired-`processing` row on a **healthy** connection at the attempt cap → `dead`
-  (the deployed contract), but on an **unhealthy** connection it is **released to
-  `pending` with its lease-consuming attempt restored** (`attempts = greatest(-1,
-  0)`), so a transient outage can never terminally kill an operation or permanently
-  decay attempts.
-- **Genuinely never-raise triggers** — the enqueue + AFTER-DELETE triggers swallow
-  any failure (link, outbox, telemetry) so a booking is never aborted; the
-  `ops_alerts` skip marker is itself written inside a **nested** guarded block, so a
-  failed marker cannot re-raise. Honest limitation: if both the enqueue and its
-  marker fail there is no durable trace — the **reconciliation sweep** (B2.3-b) is
-  the recovery net.
+- **Health-aware expired-lease reaper — single-health-read invariant.** Inside
+  `claim_calendar_sync_op`, connection health is evaluated **exactly once per stale
+  processing row** (a `stale` CTE that locks the rows `FOR UPDATE OF … SKIP LOCKED`
+  and materializes one `is_healthy` + `at_max` per row); a single `UPDATE … CASE`
+  then applies **exactly one** transition, so a row can never be released **and**
+  dead-lettered by two independently evaluated predicates, and two concurrent claim
+  calls cannot process the same stale row twice. Healthy-at-max → `dead` (deployed
+  contract); **unhealthy → released to `pending` with its lease-consuming attempt
+  restored** (`attempts = greatest(attempts-1, 0)`, claim metadata cleared) so a
+  transient outage never terminally kills an operation or permanently decays
+  attempts; healthy-below-max is left for the claimable CTE. (Pilot pending-age
+  thresholds may need recalibration once real reconnect behaviour is observed —
+  revisit in B2.4, not this PR.)
+- **Genuinely never-raise triggers, with deduped markers.** The enqueue +
+  AFTER-DELETE triggers swallow any failure (link, outbox, telemetry) so a booking is
+  never aborted; the `ops_alerts` skip marker — including its **deduplicating
+  `ON CONFLICT DO NOTHING`** against a partial unique index
+  (`ops_alerts_calendar_enqueue_skip_dedup_uniq` on `(studio_id, safe_details->>
+  'dedup_key')` where `event='calendar_enqueue_skipped' and resolved_at is null`) —
+  is written entirely inside a **nested** guarded block, so even an index/predicate
+  mismatch cannot re-raise and abort the operation. At most **one unresolved marker
+  per (studio, appointment)**; a resolved marker never blocks a fresh one. The
+  AFTER-DELETE marker carries no `appointment_id` (the row is gone;
+  `ops_alerts.appointment_id` is `ON DELETE SET NULL`) and dedups on the same
+  `dedup_key`. Honest limitation: if both the enqueue and its marker fail there is no
+  durable trace — the **reconciliation sweep** (B2.3-b) is the recovery net.
 - **Append-only suppression telemetry** — `calendar_sync_metric_events` is
   append-only (one row per event, random PK); there is **no** contended
   `(studio_id, metric, day)` counter row, so concurrent suppressed enqueues never
   serialize inside a booking transaction.
+- **Queue-health eligible-vs-parked split.** The `calendar_sync_queue_health` view
+  keeps **parked (currently-ineligible) work visible** — it still counts in total
+  `pending` + `oldest_pending_due` — while separately reporting `eligible_pending`,
+  `parked_pending`, `oldest_eligible_pending_due`, and `oldest_parked_pending_due`,
+  so a reconnect window never makes work invisible and operators can tell "worker
+  not draining eligible work" from "work intentionally held (connection not
+  healthy)". No separate parked-age alert ships in B2.3-a.
 - **Repair primitives — full-unique-safe; a dead row is never reopened.** Because
   the idempotency index is FULL (all statuses), every repair mints a **genuinely
   new** key: `repair_bump_appointment_sync_version` does a real `sync_version`
@@ -293,7 +314,12 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   enumerator paginates by the **immutable appointment UUID** under a pinned snapshot
   (`created_at <= snapshot_started_at`), never by the mutable `starts_at`, so an
   appointment moving mid-enumeration is neither skipped nor double-visited;
-  post-snapshot mutations are covered organically.
+  post-snapshot mutations are covered organically. On a **write-calendar change**
+  the resync **preserves the actual Google location** (the old `google_calendar_id`
+  + `google_event_id`) until the worker completes the approved delete-old/create-new
+  move; the link's `google_calendar_id` is repointed **only** at that successful
+  move boundary. Worker-side move + partial-move recovery + stale-generation fencing
+  remain B2.4 inputs.
 - **Un-cancel is defensive.** Hone has **no** user-facing un-cancel flow today; the
   transition-into-`confirmed` rows (matrix rows 3/8) + tests exist so a future
   un-cancel feature reuses this contract rather than deriving a second calendar

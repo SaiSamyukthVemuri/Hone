@@ -356,7 +356,7 @@ describe("genuine never-raise (a sync fault never aborts a booking)", () => {
     expect(JSON.stringify(marker.rows[0].safe_details)).not.toMatch(/@|client|name|email|phone/i);
   });
 
-  it("a marker-insert failure ALSO does not abort the booking (nested guard)", async () => {
+  it("a marker-insert failure ALSO does not abort the booking (nested guard, marker-write sabotage)", async () => {
     const a = await seedStudio("nr2");
     await seedConn(a);
     const appt = randomUUID();
@@ -368,6 +368,53 @@ describe("genuine never-raise (a sync fault never aborts a booking)", () => {
     expect((await adminQuery(`select id from public.appointments where id=$1`, [appt])).rowCount).toBe(1);
     expect(await outbox(appt)).toHaveLength(0);
     expect((await adminQuery(`select id from public.ops_alerts where appointment_id=$1`, [appt])).rowCount).toBe(0);
+  });
+
+  it("marker DEDUP: repeated enqueue failure for the same appointment keeps ONE unresolved marker", async () => {
+    const a = await seedStudio("nr3");
+    await seedConn(a);
+    const appt = randomUUID();
+    await withFailingTrigger("calendar_sync_outbox", async () => {
+      await insertAppt(a, { id: appt }); // marker 1 (dedup_key = appointment:<id>)
+      const later = slot();
+      await adminQuery(`update public.appointments set starts_at=$2, ends_at=$3 where id=$1`, [appt, later.start, later.end]); // 2nd failing enqueue, same dedup_key
+    });
+    const markers = await adminQuery(
+      `select id, safe_details from public.ops_alerts
+        where event='calendar_enqueue_skipped' and studio_id=$1 and resolved_at is null`,
+      [a.studioId],
+    );
+    expect(markers.rowCount).toBe(1); // deduped via ON CONFLICT DO NOTHING on the partial unique index
+    expect(markers.rows[0].safe_details.dedup_key).toBe(`appointment:${appt}`);
+    // A resolved marker never blocks a fresh one: resolve it, fail again -> a new marker.
+    await adminQuery(`update public.ops_alerts set resolved_at=now() where id=$1`, [markers.rows[0].id]);
+    await withFailingTrigger("calendar_sync_outbox", async () => {
+      const later = slot();
+      await adminQuery(`update public.appointments set starts_at=$2, ends_at=$3 where id=$1`, [appt, later.start, later.end]);
+    });
+    expect(
+      (await adminQuery(`select id from public.ops_alerts where event='calendar_enqueue_skipped' and studio_id=$1 and resolved_at is null`, [a.studioId])).rowCount,
+    ).toBe(1);
+  });
+
+  it("DELETE-trigger marker is guarded + deduped (no appointment_id; PHI-free)", async () => {
+    const a = await seedStudio("nr4");
+    await seedConn(a);
+    const appt = await insertAppt(a);
+    await adminQuery(`update public.calendar_event_links set google_event_id='ev-d' where hone_entity_id=$1`, [appt]);
+    await withFailingTrigger("calendar_sync_outbox", async () => {
+      await adminQuery(`delete from public.appointments where id=$1`, [appt]); // delete must SUCCEED despite the enqueue fault
+    });
+    expect((await adminQuery(`select id from public.appointments where id=$1`, [appt])).rowCount).toBe(0); // deleted
+    const marker = await adminQuery(
+      `select appointment_id, safe_details from public.ops_alerts
+        where event='calendar_enqueue_skipped' and studio_id=$1 and route='trigger:enqueue_calendar_outbound_on_delete'`,
+      [a.studioId],
+    );
+    expect(marker.rowCount).toBe(1);
+    expect(marker.rows[0].appointment_id).toBeNull(); // never references the just-deleted appointment
+    expect(marker.rows[0].safe_details.dedup_key).toBe(`appointment:${appt}`);
+    expect(JSON.stringify(marker.rows[0].safe_details)).not.toMatch(/@|client|name|email|phone/i);
   });
 });
 
@@ -437,6 +484,31 @@ describe("condition 2: health-aware expired-lease reaper", () => {
     } finally {
       await adminQuery(`insert into public.calendar_sync_control (id, worker_enabled) values (true,false) on conflict (id) do nothing`);
     }
+  });
+
+  it("single-health-read: exactly ONE transition per stale row (never released AND deaded)", async () => {
+    const a = await seedStudio("rp5");
+    const conn = await seedConn(a);
+    const id = await seedProcessing(a, conn, 8); // unhealthy-at-max after we flip status
+    await adminQuery(`update public.calendar_connections set connection_status='reconnect_required' where id=$1`, [conn]);
+    await setWorker(true);
+    await claim(25);
+    const row = (await adminQuery(`select status, attempts from public.calendar_sync_outbox where id=$1`, [id])).rows[0];
+    // Released exactly once (attempts 8->7). If two predicates had both fired it would be dead or 6.
+    expect(row.status).toBe("pending");
+    expect(Number(row.attempts)).toBe(7);
+  });
+
+  it("two concurrent claim calls do not process the same stale row twice (FOR UPDATE SKIP LOCKED)", async () => {
+    const a = await seedStudio("rp6");
+    const conn = await seedConn(a);
+    const id = await seedProcessing(a, conn, 8);
+    await adminQuery(`update public.calendar_connections set connection_status='reconnect_required' where id=$1`, [conn]); // unhealthy
+    await setWorker(true);
+    await Promise.all([claim(25), claim(25)]); // both run the reaper concurrently
+    const row = (await adminQuery(`select status, attempts from public.calendar_sync_outbox where id=$1`, [id])).rows[0];
+    expect(row.status).toBe("pending");
+    expect(Number(row.attempts)).toBe(7); // released ONCE (not 6) — SKIP LOCKED prevented double-processing
   });
 });
 
@@ -559,6 +631,25 @@ describe("entity CHECK relaxation (tombstone delete only)", () => {
     await expect(ins("full.resync", true)).rejects.toThrow(); // resync must carry none
     await expect(ins("full.resync", false)).resolves.toBeTruthy(); // resync OK entity-less
   });
+
+  it("invalid PARTIAL entity shapes fail (type xor id) for create/update/resync", async () => {
+    const a = await seedStudio("ecp");
+    const conn = await seedConn(a);
+    const insPartial = (op: string, type: string | null, entityId: string | null) =>
+      adminQuery(
+        `insert into public.calendar_sync_outbox (studio_id, connection_id, op_type, hone_entity_type, hone_entity_id, idempotency_key)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [a.studioId, conn, op, type, entityId, `k-${randomUUID()}`],
+      );
+    // create/update: type-without-id and id-without-type both reject.
+    await expect(insPartial("event.create", "appointment", null)).rejects.toThrow();
+    await expect(insPartial("event.create", null, randomUUID())).rejects.toThrow();
+    await expect(insPartial("event.update", "appointment", null)).rejects.toThrow();
+    await expect(insPartial("event.update", null, randomUUID())).rejects.toThrow();
+    // full.resync: any partial entity rejects (must carry neither).
+    await expect(insPartial("full.resync", "appointment", null)).rejects.toThrow();
+    await expect(insPartial("full.resync", null, randomUUID())).rejects.toThrow();
+  });
 });
 
 // =========================================================================
@@ -573,6 +664,40 @@ describe("queue-health view + append-only suppression telemetry", () => {
     expect(v).toBeTruthy();
     expect(Number(v.pending)).toBe(0);
     expect(Number(v.skip_markers_open)).toBe(1);
+  });
+
+  it("splits ELIGIBLE vs PARKED pending; parked still counts in total pending + oldest_pending_due", async () => {
+    // Eligible studio (healthy conn) with a pending job.
+    const elig = await seedStudio("hvElig");
+    const cElig = await seedConn(elig);
+    await adminQuery(
+      `insert into public.calendar_sync_outbox (studio_id, connection_id, op_type, hone_entity_type, hone_entity_id, idempotency_key)
+       values ($1,$2,'event.create','appointment',$3,$4)`,
+      [elig.studioId, cElig, randomUUID(), `k-${randomUUID()}`],
+    );
+    const vElig = (await adminQuery(`select * from public.calendar_sync_queue_health where studio_id=$1`, [elig.studioId])).rows[0];
+    expect(Number(vElig.pending)).toBe(1);
+    expect(Number(vElig.eligible_pending)).toBe(1);
+    expect(Number(vElig.parked_pending)).toBe(0);
+    expect(vElig.oldest_eligible_pending_due).not.toBeNull();
+    expect(vElig.oldest_parked_pending_due).toBeNull();
+
+    // Parked studio (unhealthy conn: reconnect_required) with a pending job.
+    const park = await seedStudio("hvPark");
+    const cPark = await seedConn(park, { status: "reconnect_required" });
+    await adminQuery(
+      `insert into public.calendar_sync_outbox (studio_id, connection_id, op_type, hone_entity_type, hone_entity_id, idempotency_key)
+       values ($1,$2,'event.create','appointment',$3,$4)`,
+      [park.studioId, cPark, randomUUID(), `k-${randomUUID()}`],
+    );
+    const vPark = (await adminQuery(`select * from public.calendar_sync_queue_health where studio_id=$1`, [park.studioId])).rows[0];
+    // Parked work is NOT invisible: it still counts in total pending + oldest_pending_due.
+    expect(Number(vPark.pending)).toBe(1);
+    expect(vPark.oldest_pending_due).not.toBeNull();
+    expect(Number(vPark.eligible_pending)).toBe(0);
+    expect(Number(vPark.parked_pending)).toBe(1);
+    expect(vPark.oldest_eligible_pending_due).toBeNull();
+    expect(vPark.oldest_parked_pending_due).not.toBeNull();
   });
 
   it("suppression telemetry is append-only (no shared counter row; no (studio,metric,day) unique)", async () => {

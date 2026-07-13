@@ -77,6 +77,18 @@ describe("0125 — intent-gated enqueue + genuine never-raise", () => {
     const guardedMarker = /begin[\s\S]*?insert into public\.ops_alerts[\s\S]*?exception when others then\s*null;\s*\n?\s*end;/g;
     expect((SQL.match(guardedMarker) ?? []).length).toBe(2);
   });
+  it("neither enqueue trigger function is declared STRICT (no arg-less NULL protection to rely on)", () => {
+    // Both trigger functions declare exactly this header — no STRICT.
+    expect(SQL).toMatch(/create or replace function public\.enqueue_calendar_outbound\(\)\s*\n?\s*returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as \$\$/);
+    expect(SQL).toMatch(/create or replace function public\.enqueue_calendar_outbound_on_delete\(\)\s*\n?\s*returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as \$\$/);
+    // Belt-and-suspenders: the migration declares no STRICT function at all.
+    expect(SQL.toLowerCase()).not.toMatch(/\bstrict\b/);
+  });
+  it("marker dedup: a partial unique index + ON CONFLICT DO NOTHING, both markers, inside the guard", () => {
+    expect(SQL).toMatch(/create unique index if not exists ops_alerts_calendar_enqueue_skip_dedup_uniq\s*\n?\s*on public\.ops_alerts \(studio_id, \(safe_details->>'dedup_key'\)\)\s*\n?\s*where event = 'calendar_enqueue_skipped' and resolved_at is null/);
+    expect((SQL.match(/on conflict \(studio_id, \(safe_details->>'dedup_key'\)\)\s*\n?\s*where event = 'calendar_enqueue_skipped' and resolved_at is null\s*\n?\s*do nothing/g) ?? []).length).toBe(2);
+    // Each ON CONFLICT marker sits inside a nested guard (the guardedMarker count above already proves 2 guarded markers).
+  });
   it("uses ON CONFLICT (idempotency_key) DO NOTHING (never resurrects a done/dead row)", () => {
     expect(SQL).toMatch(/on conflict \(idempotency_key\) do nothing/);
   });
@@ -98,11 +110,18 @@ describe("0125 — condition 2: health-aware reaper + global control in claim", 
     expect(SQL).toMatch(/select ctl\.worker_enabled into v_enabled\s*\n?\s*from public\.calendar_sync_control ctl where ctl\.id = true/);
     expect(SQL).toMatch(/if not found or v_enabled is not true then\s*\n?\s*return;/);
   });
-  it("releases UNHEALTHY expired-processing to pending with a restored attempt (not dead)", () => {
-    expect(SQL).toMatch(/set status = 'pending',\s*\n?\s*attempts = greatest\(o\.attempts - 1, 0\)[\s\S]{0,220}not public\.calendar_connection_outbound_ready/);
+  it("evaluates health ONCE per stale row (single-health-read reaper) under FOR UPDATE SKIP LOCKED", () => {
+    // One `stale` CTE classifies is_healthy + at_max per locked row; both branches
+    // consume that single classification (no two independent predicate re-reads).
+    expect(SQL).toMatch(/with stale as \([\s\S]{0,320}calendar_connection_outbound_ready\(o\.connection_id, o\.studio_id\) as is_healthy/);
+    expect(SQL).toMatch(/from public\.calendar_sync_outbox o\s*\n?\s*where o\.status = 'processing' and o\.lease_expires_at <= v_now\s*\n?\s*for update of o skip locked/);
   });
-  it("deads only HEALTHY expired-processing at the attempt cap", () => {
-    expect(SQL).toMatch(/set status = 'dead'[\s\S]{0,240}o\.attempts >= o\.max_attempts[\s\S]{0,120}and public\.calendar_connection_outbound_ready/);
+  it("applies EXACTLY ONE transition via a CASE on the single is_healthy read (healthy-at-max→dead, unhealthy→release)", () => {
+    expect(SQL).toMatch(/set status\s+= case when st\.is_healthy then 'dead' else 'pending' end/);
+    expect(SQL).toMatch(/attempts\s+= case when st\.is_healthy then o\.attempts else greatest\(o\.attempts - 1, 0\) end/);
+    expect(SQL).toMatch(/and \(\(st\.is_healthy and st\.at_max\) or \(not st\.is_healthy\)\)/);
+    // NOT two independent reaper UPDATEs (the old defect).
+    expect(SQL).not.toMatch(/set status = 'pending',\s*\n?\s*attempts = greatest\(o\.attempts - 1, 0\),?\s*\n?\s*claimed_at = null, claim_token = null, lease_expires_at = null,\s*\n?\s*next_attempt_at = v_now/);
   });
   it("claim eligibility uses SUPERSET containment (@>), never set equality", () => {
     expect(SQL).toMatch(/granted_scopes @> public\.calendar_required_event_scopes\(\)/);
@@ -169,5 +188,20 @@ describe("0125 — hardening: search_path, grants, no destructive/parallel struc
     expect(SQL).toMatch(/skip_markers_open/);
     expect(SQL).toMatch(/idempotency_suppressed_24h/);
     expect(SQL).toMatch(/with studio_ids as \([\s\S]{0,400}union[\s\S]{0,400}calendar_enqueue_skipped/);
+  });
+  it("the health view splits ELIGIBLE vs PARKED pending (parked still counts in total)", () => {
+    for (const field of [
+      "pending", // total
+      "eligible_pending",
+      "parked_pending",
+      "oldest_pending_due", // total
+      "oldest_eligible_pending_due",
+      "oldest_parked_pending_due",
+    ]) {
+      expect(SQL).toMatch(new RegExp(`as ${field}\\b|${field}\\b`));
+    }
+    // Parked = pending AND not-ready; eligible = pending AND ready.
+    expect(SQL).toMatch(/o\.status = 'pending'\s*\n?\s*and public\.calendar_connection_outbound_ready[\s\S]{0,60}as eligible_pending/);
+    expect(SQL).toMatch(/o\.status = 'pending'\s*\n?\s*and not public\.calendar_connection_outbound_ready[\s\S]{0,60}as parked_pending/);
   });
 });

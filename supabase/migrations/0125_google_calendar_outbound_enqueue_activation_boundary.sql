@@ -191,6 +191,18 @@ alter table public.calendar_sync_outbox add constraint calendar_sync_outbox_enti
 --    telemetry, or even the ops_alerts marker — is swallowed so a booking is
 --    NEVER aborted; the reconciliation sweep (B2.3-b) is the recovery net.
 -- ============================================================
+
+-- Dedup index for the never-raise skip marker: at most ONE UNRESOLVED
+-- calendar_enqueue_skipped ops_alert per (studio, logical entity). Keyed on a
+-- safe_details 'dedup_key' expression (NOT appointment_id — the AFTER DELETE marker
+-- cannot reference the just-deleted appointment via the ops_alerts FK). Partial +
+-- resolved_at-scoped so a resolved marker never blocks a fresh one, and so it never
+-- touches any non-calendar ops_alert. The marker INSERTs below target this index
+-- with ON CONFLICT DO NOTHING, entirely inside the nested never-raise guard.
+create unique index if not exists ops_alerts_calendar_enqueue_skip_dedup_uniq
+  on public.ops_alerts (studio_id, (safe_details->>'dedup_key'))
+  where event = 'calendar_enqueue_skipped' and resolved_at is null;
+
 create or replace function public.enqueue_calendar_outbound()
 returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 declare
@@ -289,13 +301,17 @@ begin
   return new;
 
 exception when others then
-  begin                                                   -- NESTED guard: a failed marker must not re-raise
+  begin                                                   -- NESTED guard: a failed OR conflicting marker must not re-raise
     insert into public.ops_alerts (severity, event, message, studio_id, appointment_id, route, safe_details)
     values ('warning', 'calendar_enqueue_skipped',
             'Outbound calendar enqueue failed; a Google event may be missing or stale.',
             new.studio_id, new.id, 'trigger:enqueue_calendar_outbound',
-            jsonb_build_object('tg_op', tg_op, 'sqlstate', sqlstate));   -- PHI-free
-  exception when others then null; end;
+            jsonb_build_object('tg_op', tg_op, 'sqlstate', sqlstate,   -- PHI-free
+                               'dedup_key', 'appointment:' || new.id::text))
+    on conflict (studio_id, (safe_details->>'dedup_key'))
+      where event = 'calendar_enqueue_skipped' and resolved_at is null
+    do nothing;                                           -- one unresolved marker per (studio, appointment)
+  exception when others then null; end;                   -- an index/predicate mismatch still cannot abort the booking
   return new;                                             -- booking/edit is NEVER aborted by a sync problem
 end $$;
 revoke all on function public.enqueue_calendar_outbound() from public, anon, authenticated;
@@ -334,12 +350,19 @@ begin
   end if;
   return old;
 exception when others then
-  begin
+  begin                                                   -- NESTED guard: a failed OR conflicting marker must not re-raise
+    -- No appointment_id: the row is already deleted (ops_alerts.appointment_id FK
+    -- is ON DELETE SET NULL, so referencing it here would fail). Dedup on the
+    -- entity dedup_key instead, same partial index as the enqueue marker.
     insert into public.ops_alerts (severity, event, message, studio_id, route, safe_details)
     values ('warning', 'calendar_enqueue_skipped',
             'Outbound calendar delete enqueue failed; an event may remain in Google.',
             old.studio_id, 'trigger:enqueue_calendar_outbound_on_delete',
-            jsonb_build_object('sqlstate', sqlstate));
+            jsonb_build_object('sqlstate', sqlstate,
+                               'dedup_key', 'appointment:' || old.id::text))
+    on conflict (studio_id, (safe_details->>'dedup_key'))
+      where event = 'calendar_enqueue_skipped' and resolved_at is null
+    do nothing;
   exception when others then null; end;
   return old;
 end $$;
@@ -428,23 +451,35 @@ begin
   end if;
 
   -- (ii) HEALTH-AWARE reaper (runs BEFORE selecting a batch).
-  -- (a) UNHEALTHY expired-processing -> release to pending, RESTORE the
-  --     lease-consuming attempt (bounded >= 0): an outage never terminally kills
-  --     the op nor permanently decays attempts (Option A).
+  -- SINGLE-HEALTH-READ INVARIANT: connection health is evaluated EXACTLY ONCE per
+  -- stale processing row (in the `stale` CTE), and BOTH the release-to-pending and
+  -- transition-to-dead branches consume that one classification. A row therefore
+  -- cannot be released AND dead-lettered by two independently evaluated predicates.
+  -- The rows are locked FOR UPDATE SKIP LOCKED so two concurrent claim calls cannot
+  -- process the same stale row twice. Exactly one transition is applied:
+  --   * unhealthy            -> release to pending, restore the lease-consuming
+  --                             attempt (bounded >= 0), clear claim metadata (Option A);
+  --   * healthy AND at max   -> dead (deployed contract), claim metadata cleared;
+  --   * healthy AND below max -> untouched here, reclaimed by the claimable CTE.
+  with stale as (
+    select o.id,
+           (o.attempts >= o.max_attempts) as at_max,
+           public.calendar_connection_outbound_ready(o.connection_id, o.studio_id) as is_healthy
+      from public.calendar_sync_outbox o
+     where o.status = 'processing' and o.lease_expires_at <= v_now
+     for update of o skip locked
+  )
   update public.calendar_sync_outbox o
-     set status = 'pending',
-         attempts = greatest(o.attempts - 1, 0),
+     set status           = case when st.is_healthy then 'dead' else 'pending' end,
+         attempts         = case when st.is_healthy then o.attempts else greatest(o.attempts - 1, 0) end,
+         next_attempt_at  = case when st.is_healthy then o.next_attempt_at else v_now end,
          claimed_at = null, claim_token = null, lease_expires_at = null,
-         next_attempt_at = v_now, updated_at = v_now
-   where o.status = 'processing' and o.lease_expires_at <= v_now
-     and not public.calendar_connection_outbound_ready(o.connection_id, o.studio_id);
-  -- (b) HEALTHY expired-processing at the attempt cap -> dead (deployed contract).
-  update public.calendar_sync_outbox o
-     set status = 'dead', claimed_at = null, claim_token = null, lease_expires_at = null, updated_at = v_now
-   where o.status = 'processing' and o.lease_expires_at <= v_now
-     and o.attempts >= o.max_attempts
-     and public.calendar_connection_outbound_ready(o.connection_id, o.studio_id);
-  -- (healthy expired below max: untouched -> reclaimed by the claimable CTE below)
+         updated_at = v_now
+    from stale st
+   where o.id = st.id
+     -- Only rows that take a transition: healthy-at-max (dead) or unhealthy (release).
+     -- Healthy-below-max is excluded (left for the claimable CTE) — one row, one branch.
+     and ((st.is_healthy and st.at_max) or (not st.is_healthy));
 
   -- (iii) Claim due, ELIGIBLE work only. Ineligible (unhealthy) jobs are never
   -- handed out, so their attempts/next_attempt_at do not decay.
@@ -510,6 +545,22 @@ select
              where o.studio_id = si.studio_id and o.status = 'done'), 0)       as done,
   (select min(o.next_attempt_at) from public.calendar_sync_outbox o
      where o.studio_id = si.studio_id and o.status = 'pending')               as oldest_pending_due,
+  -- ELIGIBLE vs PARKED split: parked (currently-ineligible) work STILL counts in
+  -- total pending + oldest_pending_due (a reconnect window never makes work
+  -- invisible), but operators can tell "worker not draining eligible work" from
+  -- "work intentionally held because the connection is not healthy".
+  coalesce((select count(*) from public.calendar_sync_outbox o
+             where o.studio_id = si.studio_id and o.status = 'pending'
+               and public.calendar_connection_outbound_ready(o.connection_id, o.studio_id)), 0)     as eligible_pending,
+  coalesce((select count(*) from public.calendar_sync_outbox o
+             where o.studio_id = si.studio_id and o.status = 'pending'
+               and not public.calendar_connection_outbound_ready(o.connection_id, o.studio_id)), 0) as parked_pending,
+  (select min(o.next_attempt_at) from public.calendar_sync_outbox o
+     where o.studio_id = si.studio_id and o.status = 'pending'
+       and public.calendar_connection_outbound_ready(o.connection_id, o.studio_id))                 as oldest_eligible_pending_due,
+  (select min(o.next_attempt_at) from public.calendar_sync_outbox o
+     where o.studio_id = si.studio_id and o.status = 'pending'
+       and not public.calendar_connection_outbound_ready(o.connection_id, o.studio_id))             as oldest_parked_pending_due,
   coalesce((select count(*) from public.ops_alerts a
              where a.studio_id = si.studio_id and a.event = 'calendar_enqueue_skipped'
                and a.resolved_at is null), 0)                                  as skip_markers_open,
