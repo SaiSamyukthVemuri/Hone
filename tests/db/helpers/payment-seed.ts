@@ -33,7 +33,7 @@ export type SeedOptions = {
   sessionStarted?: boolean;
   // Payment method
   withCard?: boolean;
-  cardStatus?: "active" | "inactive";
+  cardStatus?: "active" | "removed";
   cardLivemode?: boolean;
   cardPointerStale?: boolean; // point the card at a superseded signature
   // Authorization
@@ -138,8 +138,8 @@ async function seedCard(
     `insert into public.client_payment_methods
        (studio_id, client_id, stripe_account_id, stripe_livemode, stripe_customer_id,
         stripe_payment_method_id, stripe_setup_intent_id, brand, last4, exp_month, exp_year,
-        status, card_authorization_signature_id)
-     values ($1,$2,$3,$4,$5,$6,$7,'visa','4242',12,2030,$8,$9)`,
+        status, card_authorization_signature_id, removed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,'visa','4242',12,2030,$8,$9,$10)`,
     [
       ids.studio.studioId,
       ids.studio.clientId,
@@ -150,6 +150,8 @@ async function seedCard(
       ids.setupIntentId,
       opts.cardStatus ?? "active",
       pointer,
+      // removed_columns_check: a 'removed' card requires removed_at.
+      opts.cardStatus === "removed" ? new Date().toISOString() : null,
     ],
   );
 }
@@ -340,9 +342,22 @@ export async function getSessionPaymentAttempts(sessionId: string): Promise<
   return r.rows;
 }
 
-// Foreign-key-safe, run-scoped cleanup (deletes only this scenario's studio; the
-// studio cascade removes appointments/sessions/settings/customers/cards/
-// signatures/templates/attempts owned by it).
+// Foreign-key-safe, run-scoped cleanup. Deletes ONLY this scenario's rows, in
+// child→parent order (client_stripe_customers + client_payment_methods RESTRICT
+// the client/settings deletes, so the studio cascade alone can't remove them).
+// The final `delete studios` cascades clients + practitioners. Never truncates.
 export async function cleanupPaymentScenario(studioId: string): Promise<void> {
-  await adminQuery(`delete from public.studios where id=$1`, [studioId]);
+  for (const sql of [
+    `delete from public.payment_charge_attempts where studio_id=$1`,
+    `delete from public.client_payment_methods where studio_id=$1`,
+    `delete from public.client_stripe_customers where studio_id=$1`,
+    `delete from public.client_consent_signatures where studio_id=$1`,
+    `delete from public.consent_form_templates where studio_id=$1`,
+    `delete from public.studio_payment_settings where studio_id=$1`,
+    `delete from public.sessions where studio_id=$1`,
+    `delete from public.appointments where studio_id=$1`,
+    `delete from public.studios where id=$1`,
+  ]) {
+    await adminQuery(sql, [studioId]);
+  }
 }

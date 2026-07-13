@@ -140,7 +140,7 @@ describe("Stage C/D — the core eligible fixture proves ELIGIBLE via the real r
 describe("Stage E — variants resolve to the correct state via the real resolver", () => {
   const cases: Array<{ name: string; opts: Parameters<typeof seedQuickCheckoutScenario>[0]; expect: RegExp }> = [
     { name: "no saved card", opts: { withCard: false }, expect: /card on file/i },
-    { name: "inactive card", opts: { cardStatus: "inactive" }, expect: /card on file/i },
+    { name: "removed card", opts: { cardStatus: "removed" }, expect: /card on file/i },
     { name: "appointment not completed", opts: { appointmentStatus: "confirmed" }, expect: /not completed/i },
     { name: "no signature", opts: { withSignature: false }, expect: /not signed|authorization/i },
     { name: "superseded signature (old version)", opts: { signatureCurrent: false }, expect: /out of date|re-sign|authorization/i },
