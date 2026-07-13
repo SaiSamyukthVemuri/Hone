@@ -309,6 +309,87 @@ describe("dated history", () => {
   });
 });
 
+// Migration 0127: the author-INSERT policy now enforces the same-studio
+// practitioner boundary at the RLS layer (0126 had a shadowed `studio_id` that
+// degraded to a tautology, leaving only the composite FK enforcing it). RLS
+// WITH CHECK is evaluated BEFORE the FK's AFTER-trigger, so a rejection with a
+// "row-level security" message proves the POLICY (not merely the FK) enforces
+// the boundary.
+describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", () => {
+  it("positive control: a same-studio ACTIVE practitioner (the caller) can insert", async () => {
+    await asUser(a.userId, async (q) => {
+      const r = await q(INS, [
+        a.clientId,
+        a.studioId,
+        a.practitionerId,
+        "consultation",
+        "policy positive control",
+        null,
+        null,
+        null,
+      ]);
+      expect(r.rowCount).toBe(1);
+    });
+  });
+
+  it("an INACTIVE practitioner cannot insert — rejected by RLS", async () => {
+    const userId = randomUUID();
+    const pracId = randomUUID();
+    const email = `ccn-inactive-${userId.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [userId, email]);
+    await adminQuery(
+      `insert into public.practitioners
+         (id, studio_id, user_id, display_name, email, role, active)
+       values ($1,$2,$3,'Inactive',$4,'practitioner',false)`,
+      [pracId, a.studioId, userId, email],
+    );
+    await expect(
+      asUser(userId, (q) =>
+        q(INS, [a.clientId, a.studioId, pracId, "consultation", "inactive attempt", null, null, null]),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("a multi-studio caller cannot attribute a note to their OTHER studio's practitioner — rejected by RLS, before the FK", async () => {
+    // One auth user, an ACTIVE practitioner in BOTH studio A and studio B
+    // (unique key is (studio_id, user_id), so this is reachable).
+    const userId = randomUUID();
+    const pracA = randomUUID();
+    const pracB = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [
+      userId,
+      `ccn-multi-${userId.slice(0, 8)}@harness.local`,
+    ]);
+    await adminQuery(
+      `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active)
+       values ($1,$2,$3,'Multi A',$4,'practitioner',true)`,
+      [pracA, a.studioId, userId, `ccn-multi-a-${userId.slice(0, 8)}@harness.local`],
+    );
+    await adminQuery(
+      `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active)
+       values ($1,$2,$3,'Multi B',$4,'practitioner',true)`,
+      [pracB, b.studioId, userId, `ccn-multi-b-${userId.slice(0, 8)}@harness.local`],
+    );
+    // Note for A's client (studio derived to A), attributed to the caller's
+    // studio-B practitioner. is_studio_member(A) passes (caller is in A), but the
+    // practitioner clause p.studio_id = client_clinical_notes.studio_id now fails
+    // at the RLS layer — no cross-studio attribution.
+    await expect(
+      asUser(userId, (q) =>
+        q(INS, [a.clientId, a.studioId, pracB, "consultation", "cross-studio practitioner", null, null, null]),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("SELECT isolation is unchanged: studio B still cannot read studio A's notes", async () => {
+    const id = await seedNote(a, "consultation", "post-0127 isolation check");
+    await asUser(b.userId, async (q) => {
+      const r = await q(`select id from public.client_clinical_notes where id = $1`, [id]);
+      expect(r.rowCount).toBe(0);
+    });
+  });
+});
+
 // Seed a note through the authenticated author path and return its id.
 async function seedNote(
   studio: SeededStudio,

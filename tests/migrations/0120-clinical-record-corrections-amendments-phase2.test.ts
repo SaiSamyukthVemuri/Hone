@@ -22,13 +22,14 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0126 by Willow PR A (client_clinical_notes — dedicated dated
-    // consultation + skin/hair analysis records), on top of 0125 (Google Calendar
-    // B2.3-a, applied+merged), 0124 (B1 outbound-sync foundation), Willow P1-B
-    // (0123), and Google Calendar — Phase A (0121/0122). 0126 is additive and is
-    // repo-only until its separately-approved migration-first hosted apply.
+    // Advanced to 0127 by the Willow PR A follow-up (fix the client_clinical_notes
+    // author-INSERT RLS shadowing defect), on top of 0126 (client_clinical_notes,
+    // applied to hosted prod), 0125 (Google Calendar B2.3-a, applied+merged), 0124
+    // (B1 outbound-sync foundation), Willow P1-B (0123), and Google Calendar —
+    // Phase A (0121/0122). 0127 is additive and is repo-only until its
+    // separately-approved migration-first hosted apply.
     // Bump this tripwire consciously when adding migrations.
-    expect(maxNum).toBe(126);
+    expect(maxNum).toBe(127);
     expect(FILE).toMatch(/^0120_/);
   });
 });

@@ -46,6 +46,14 @@ const QUERIES = "lib/clinical-notes/queries.ts";
 const SECTION = "components/clinical-notes-section.tsx";
 const SUMMARY = "components/clinical-notes-summary.tsx";
 const PRINT = "app/(app)/clients/[id]/clinical-notes/print/page.tsx";
+const SECTION_DATA = "lib/clinical-notes/section-data.ts";
+
+// Every server-side file in the clinical-notes feature. The append-only DELETE
+// contract (0126) allows service_role/postgres hard-delete only for controlled
+// admin/tenant-teardown; the APPLICATION note paths must therefore never reach
+// for the service-role/admin client — they use the RLS-scoped user client so
+// authenticated practitioners can neither UPDATE nor DELETE.
+const CLINICAL_SERVER_FILES = [ACTIONS, QUERIES, SECTION_DATA, PRINT];
 
 describe("clinical-notes server actions — trust boundary", () => {
   const src = read(ACTIONS);
@@ -90,6 +98,21 @@ describe("clinical-notes reads stay RLS-scoped and server-only", () => {
     expect(src).toMatch(/from "@\/lib\/supabase\/server"/);
     expect(code(QUERIES)).not.toMatch(/service_role|createAdminClient/i);
   });
+});
+
+describe("application note paths never use the admin/service-role client", () => {
+  // The admin client factory is createAdminClient() from lib/supabase/admin-server.
+  // No clinical-notes server file may import it or otherwise reach for the
+  // service role — that capability is reserved for controlled admin/teardown
+  // paths, not the practitioner-facing note actions/reads.
+  for (const rel of CLINICAL_SERVER_FILES) {
+    it(`${rel} does not import or instantiate the admin/service-role client`, () => {
+      const bare = code(rel);
+      expect(bare).not.toMatch(/createAdminClient/);
+      expect(bare).not.toMatch(/lib\/supabase\/admin-server/);
+      expect(bare).not.toMatch(/service_role|SUPABASE_SERVICE_ROLE/i);
+    });
+  }
 });
 
 describe("no cross-surface leakage (import audit)", () => {

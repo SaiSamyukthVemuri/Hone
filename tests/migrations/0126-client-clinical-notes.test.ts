@@ -23,13 +23,11 @@ describe("0126 — file + repo-max tripwire", () => {
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
   });
 
-  it("advances the repo migration max to 0126 (nothing 0127+ yet)", () => {
-    const nums = FILES.map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    expect(nums[nums.length - 1]).toBe("0126");
-    const higher = FILES.filter((f) => /^01(2[7-9]|[3-9]\d)_/.test(f));
+  it("is present; the repo-max tripwire now lives in the 0127 test", () => {
+    // 0127 (the author-INSERT policy fix) now advances the repo max; nothing
+    // above 0127 may exist yet. The absolute repo-max pin lives in the 0127 test.
+    expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
+    const higher = FILES.filter((f) => /^01(2[8-9]|[3-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 });

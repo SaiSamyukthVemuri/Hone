@@ -12,13 +12,13 @@ const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0125_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
 
 describe("0125 — file + scope boundary", () => {
-  it("is the single 0125 migration; the repo-max tripwire now lives in the 0126 test", () => {
+  it("is the single 0125 migration; the repo-max tripwire now lives in the newest migration test", () => {
     expect(FILE).toBeTruthy();
     expect(FILE).toMatch(/^0125_.*\.sql$/);
-    // 0126 (Willow PR A — client_clinical_notes) now advances the repo max; nothing
-    // above 0126 may exist yet. The absolute repo-max pin lives in the 0126 test.
-    const higher = readdirSync(MIG_DIR).filter((f) => /^01(2[7-9]|[3-9]\d)_/.test(f));
-    expect(higher).toEqual([]);
+    // Later migrations (0126 client_clinical_notes, 0127 its policy fix) legitimately
+    // advance the repo max; the absolute repo-max pin lives in the newest migration's
+    // test (currently 0127), not here.
+    expect(readdirSync(MIG_DIR).filter((f) => f.startsWith("0125_"))).toHaveLength(1);
   });
 
   it("the required event scope is calendar.events.owned, never broad calendar.events", () => {

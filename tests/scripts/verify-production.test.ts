@@ -97,15 +97,17 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0126 (Willow PR A — dedicated client_clinical_notes:
-    // dated consultation + skin/hair analysis records), on top of 0125 (Google
-    // Calendar B2.3-a, applied+merged), 0124 (B1 outbound-sync foundation), Willow
-    // P1-B (0123), and Phase A (0121/0122). 0126 is repo-only until its
-    // separately-approved migration-first hosted apply; UNTIL then the live
-    // verifier's "Remote migration max" will (correctly) report expected 0126 vs
-    // remote 0125 — the intended pending-apply signal. This assertion still fails
-    // on the next new migration, forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0126");
+    // Repo max advances to 0127 (Willow PR A follow-up — fix the
+    // client_clinical_notes author-INSERT RLS shadowing defect), on top of 0126
+    // (client_clinical_notes, applied to hosted prod migration-first), 0125
+    // (Google Calendar B2.3-a, applied+merged), 0124 (B1 outbound-sync
+    // foundation), Willow P1-B (0123), and Phase A (0121/0122). 0126 is applied
+    // hosted; 0127 is repo-only until its separately-approved migration-first
+    // hosted apply — UNTIL then the live verifier's "Remote migration max" will
+    // (correctly) report expected 0127 vs remote 0126, the intended pending-apply
+    // signal. This assertion still fails on the next new migration, forcing a
+    // conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0127");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
