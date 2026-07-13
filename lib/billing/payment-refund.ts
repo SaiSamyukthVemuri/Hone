@@ -1,7 +1,8 @@
 import "server-only";
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
+import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // ---------------------------------------------------------------------------
@@ -419,7 +420,7 @@ export async function refundPaymentChargeAttempt(args: {
   //    SDK retry / a same-Stripe-keyed redelivery cannot produce
   //    a second refund object.
   // ============================================================
-  const stripe = getStripe();
+  const stripe = getSessionPaymentStripe();
   let refund: Stripe.Refund | null = null;
   try {
     refund = await stripe.refunds.create(
