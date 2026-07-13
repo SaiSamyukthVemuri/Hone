@@ -1,5 +1,9 @@
 import "server-only";
 import type Stripe from "stripe";
+import {
+  appendFakeCallToLedger,
+  readFakeOutcome,
+} from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
 // implements ONLY the methods the session-payment charge/refund path calls, makes
@@ -55,6 +59,26 @@ function record(run: string, call: FakeStripeCall): void {
   const list = callsByRun.get(run) ?? [];
   list.push(call);
   callsByRun.set(run, list);
+  // Also persist to the guarded cross-process ledger so the separate Playwright
+  // runner can observe calls. Best-effort + guarded: a no-op when fake mode is
+  // off (ordinary unit tests) so nothing here can touch the filesystem there.
+  try {
+    appendFakeCallToLedger(run, call);
+  } catch {
+    /* guard off or ledger unavailable → in-memory only */
+  }
+}
+
+// The configured outcome for this attempt (keyed by its idempotency key). Default
+// success. Read from the guarded ledger so the Playwright process selects the
+// behaviour server-side — never the browser.
+function outcomeFor(run: string, idempotencyKey: string | null): "success" | "decline" | "processing" {
+  if (!idempotencyKey) return "success";
+  try {
+    return readFakeOutcome(run, idempotencyKey);
+  } catch {
+    return "success";
+  }
 }
 function idempotentResult(
   run: string,
@@ -93,8 +117,10 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   const seq = existing ? null : nextSeq(run);
   const id = existing ?? `pi_test_e2e_${run}_${seq}`;
   const chargeId = `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
+  const outcome = outcomeFor(run, key);
   if (!existing) {
     rememberIdempotent(run, key, id);
+    // Idempotent replay records nothing new (proves retry never double-charges).
     record(run, {
       method: "pi_create",
       idempotencyKey: key,
@@ -104,7 +130,19 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
       resultId: id,
     });
   }
-  return { id, status: "succeeded", latest_charge: chargeId };
+  // Success → succeeded (+ latest_charge); decline → non-succeeded status the
+  // real executor persists as failed; processing → pending.
+  const status =
+    outcome === "decline"
+      ? "requires_payment_method"
+      : outcome === "processing"
+        ? "processing"
+        : "succeeded";
+  return {
+    id,
+    status,
+    latest_charge: outcome === "success" ? chargeId : null,
+  };
 }
 
 // Returns a Stripe-shaped object implementing only the session-payment surface.
