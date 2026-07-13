@@ -16,7 +16,7 @@ import {
 // non-destructively.
 
 const A = "Coarse hair";
-const B = "Slight edema";
+const B = "Slight swelling (edema)";
 const C = "Lots of anagen";
 
 describe("regression: the reported chips are canonical + round-trip", () => {

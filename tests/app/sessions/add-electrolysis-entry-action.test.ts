@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // and counts each so "zero inserts" / "one separate read" are directly asserted.
 
 const A = "Coarse hair";
-const B = "Slight edema";
+const B = "Slight swelling (edema)";
 
 type Ret = { data: unknown; error: unknown };
 const state = {

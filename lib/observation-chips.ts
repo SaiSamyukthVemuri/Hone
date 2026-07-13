@@ -29,6 +29,15 @@ const CANONICAL = new Map<string, string>(
 export const OBSERVATION_CHIP_ALIASES: Readonly<Record<string, string>> = {
   "hyper-pigmentation": "Hyperpigmentation",
   "hyper pigmentation": "Hyperpigmentation",
+  // Vocabulary cleanup (Chloe): the redness/erythema and swelling/edema concepts
+  // now have ONE preferred label each. These map the SAME concept's older/plain
+  // spellings to the current canonical label so legacy stored values keep
+  // resolving (never dropped). Exact-token (not substring), so clinically-distinct
+  // chips like "Follicular erythema"/"Follicular edema" (laser list) are untouched.
+  erythema: "Redness (erythema)",
+  redness: "Redness (erythema)",
+  "slight edema": "Slight swelling (edema)",
+  "slight swelling": "Slight swelling (edema)",
 };
 
 // Resolve a raw token to its canonical chip label (direct match first, then an

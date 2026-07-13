@@ -13,6 +13,7 @@ import {
 } from "@/lib/constants";
 import type { SessionBlock } from "@/lib/types/database";
 import { isChipSelected, toggleChip } from "@/lib/observation-chips";
+import { SelectedObservations } from "@/components/selected-observations";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
@@ -417,12 +418,15 @@ export function SimplifiedEntryForm({
             );
           })}
         </div>
-        <span className="text-sm font-medium">Notes</span>
+        {/* Chip confidence (Chloe): the selected observations read-out sits
+            between the chips and the free-text note, so a tap visibly "takes". */}
+        <SelectedObservations chips={draft.observationChips} />
+        <span className="text-sm font-medium">Additional notes</span>
         <textarea
           rows={2}
           value={draft.comments}
           onChange={(e) => update("comments", e.target.value)}
-          placeholder="Type any free-text note"
+          placeholder="Add any details not covered by the observations above"
           className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
       </div>

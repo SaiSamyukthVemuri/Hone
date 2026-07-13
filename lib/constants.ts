@@ -122,6 +122,13 @@ export const FITZPATRICK_TYPES: ReadonlyArray<{ value: number; label: string }> 
 ];
 
 // Quick-tap comment chips for electrolysis entries. Theresa will replace with the real list later.
+//
+// Vocabulary cleanup (Chloe): the two clinical-jargon-only terms now pair plain
+// language with the medical term so there is ONE unambiguous option per concept
+// ("Redness (erythema)", "Slight swelling (edema)") instead of jargon Chloe read
+// as redundant with plain wording. These are DISPLAY/canonical LABEL changes;
+// legacy stored values ("Erythema", "Slight edema") keep resolving via the alias
+// map in lib/observation-chips.ts — no production row is rewritten, no backfill.
 export const COMMON_COMMENTS: ReadonlyArray<string> = [
   "Dehydrated follicles",
   "Hyperpigmentation",
@@ -130,8 +137,8 @@ export const COMMON_COMMENTS: ReadonlyArray<string> = [
   "Fine hair",
   "Deep follicles",
   "Curved follicles",
-  "Erythema",
-  "Slight edema",
+  "Redness (erythema)",
+  "Slight swelling (edema)",
   "Client tolerated well",
   "Lots of anagen",
   "Lots of catagen",
