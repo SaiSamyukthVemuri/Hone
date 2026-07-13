@@ -39,8 +39,10 @@ describe("0130 — grant matrix", () => {
       "create_session_block_with_areas",
       "update_session_block_with_areas",
     ]) {
+      // string_agg (not array_agg) so the result is an unambiguous scalar string
+      // regardless of node-pg array parsing.
       const r = await adminQuery(
-        `select coalesce(array_agg(distinct coalesce(g.rolname,'PUBLIC') order by coalesce(g.rolname,'PUBLIC')), '{}') as grantees
+        `select coalesce(string_agg(distinct coalesce(g.rolname,'PUBLIC'), ',' order by coalesce(g.rolname,'PUBLIC')), '') as grantees
            from pg_proc p
            join pg_namespace n on n.oid = p.pronamespace
            cross join lateral aclexplode(p.proacl) acl
@@ -48,11 +50,7 @@ describe("0130 — grant matrix", () => {
           where n.nspname='public' and p.proname=$1 and acl.privilege_type='EXECUTE'`,
         [proname],
       );
-      expect(r.rows[0].grantees).toEqual([
-        "authenticated",
-        "postgres",
-        "service_role",
-      ]);
+      expect(r.rows[0].grantees).toBe("authenticated,postgres,service_role");
     }
   });
 
