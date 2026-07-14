@@ -8,6 +8,7 @@ import {
   OAUTH_NONCE_COOKIE,
   OAUTH_STATE_TTL_SECONDS,
   getGoogleOAuthClient,
+  safeReturnPath,
 } from "@/lib/google-calendar/config";
 import {
   decryptGoogleSecret,
@@ -57,7 +58,12 @@ async function requireConnectionContext() {
   return { ok: true as const, practitioner, studio };
 }
 
-export async function startGoogleCalendarConnectAction(): Promise<StartResult> {
+// returnPath: the in-app page to return to after the callback. Validated against
+// the open-redirect allowlist (safeReturnPath) — a browser-supplied value can only
+// ever resolve to an allow-listed settings path, never an arbitrary URL.
+export async function startGoogleCalendarConnectAction(
+  returnPath?: string,
+): Promise<StartResult> {
   const ctx = await requireConnectionContext();
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
@@ -82,7 +88,7 @@ export async function startGoogleCalendarConnectAction(): Promise<StartResult> {
     studioId: studio.id,
     practitionerId: practitioner.id,
     userId: practitioner.user_id ?? "",
-    redirectPath: "/settings/profile",
+    redirectPath: safeReturnPath(returnPath),
   });
   if (!state.ok) {
     return { ok: false, error: "Could not start the Google connection. Please try again." };
@@ -118,7 +124,9 @@ export async function startGoogleCalendarConnectAction(): Promise<StartResult> {
 // This doubles as the reconnect flow (Testing-mode tokens expire in 7 days). It
 // enqueues nothing and syncs nothing; it only requests the write permission a
 // FUTURE phase will use.
-export async function startGoogleCalendarEventScopeUpgradeAction(): Promise<StartResult> {
+export async function startGoogleCalendarEventScopeUpgradeAction(
+  returnPath?: string,
+): Promise<StartResult> {
   const ctx = await requireConnectionContext();
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
@@ -142,7 +150,7 @@ export async function startGoogleCalendarEventScopeUpgradeAction(): Promise<Star
     studioId: studio.id,
     practitionerId: practitioner.id,
     userId: practitioner.user_id ?? "",
-    redirectPath: "/settings/profile",
+    redirectPath: safeReturnPath(returnPath),
   });
   if (!state.ok) {
     return { ok: false, error: "Could not start the permission upgrade. Please try again." };
@@ -171,7 +179,9 @@ export async function startGoogleCalendarEventScopeUpgradeAction(): Promise<Star
   return { ok: true, url };
 }
 
-export async function disconnectGoogleCalendarAction(): Promise<SimpleResult> {
+export async function disconnectGoogleCalendarAction(
+  returnPath?: string,
+): Promise<SimpleResult> {
   const ctx = await requireConnectionContext();
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
@@ -187,7 +197,7 @@ export async function disconnectGoogleCalendarAction(): Promise<SimpleResult> {
     }
   }
   await disconnectConnection(studio.id, practitioner.id);
-  revalidatePath("/settings/profile");
+  revalidatePath(safeReturnPath(returnPath));
   return { ok: true };
 }
 
