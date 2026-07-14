@@ -164,7 +164,7 @@ IDs / no sensitive studio identifiers):
   code deployed; production deployment succeeded at `https://hone.care`.
 
 **Google Cloud (operator setup verified 2026-07-14, reported from the live console)**
-- Existing Hone project reused (not recreated); Google Calendar API enabled; OAuth app
+- Existing Hone project reused (not recreated); OAuth app
   remains in **Testing** (not published, not submitted for verification).
 - **Data Access delta added:** `calendar.app.created` (console classification: **Non-sensitive**)
   and `calendar.events.owned` (console classification: **Sensitive**). Broad `calendar.events`
