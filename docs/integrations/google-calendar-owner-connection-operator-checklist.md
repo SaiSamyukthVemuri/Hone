@@ -150,3 +150,76 @@ After provisioning + connecting a **test** account only:
 - **Disconnect never deletes a Hone-created Google calendar.** Disconnecting revokes
   credentials + clears local state only; removing a Hone-created calendar is a
   separate future product decision, not part of disconnect.
+
+## 6. Controlled production validation — B2.4 dedicated destination (2026-07-14)
+
+The B2.4 dual-destination feature is **deployed to production and remains dormant**;
+one controlled Sam-only validation of the `dedicated_app_created` destination was
+performed. Recorded state (no secrets / no account email / no provider or calendar
+IDs / no sensitive studio identifiers):
+
+**Deploy / migration**
+- Migration `0131` **applied** (hosted migration max = `0131`; no `0132`).
+- PR **#424 merged** (merge commit `8a25df6…`, reviewed head `3425f72…`); dual-destination
+  code deployed; production deployment succeeded at `https://hone.care`.
+
+**Google Cloud (operator setup verified 2026-07-14, reported from the live console)**
+- Existing Hone project reused (not recreated); OAuth app
+  remains in **Testing** (not published, not submitted for verification).
+- **Data Access delta added:** `calendar.app.created` (console classification: **Non-sensitive**)
+  and `calendar.events.owned` (console classification: **Sensitive**). Broad `calendar.events`
+  is **absent**; no restricted scopes; the three discovery scopes remain present.
+- **1** controlled test user listed (Willow not added). Production redirect confirmed exactly
+  `https://hone.care/api/google-calendar/oauth/callback`. The existing Hone project and Web
+  OAuth client were reused (not recreated); the current console state above — Testing status,
+  the listed test user, the exact production callback, and the two scope classifications — was
+  confirmed by Sam from the live Google Cloud console **during this validation**, not inferred
+  from the pre-existing connection. Google Calendar API enablement is shown directly by the
+  successful `Hone Appointments` calendar creation in this validation; the completed incremental
+  consent is current functional proof of the OAuth Web client, the redirect URI, and the
+  Testing test-user gate.
+
+**Vercel Production (names only — values never read)**
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY`,
+  `GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION` all present. **Encryption key version = 1** (existing
+  encrypted secret rows exist → key **not** rotated). No `HONE_E2E_FAKE_GOOGLE` / test run-id
+  in production (the synthetic-Google provider cannot activate; the fake authorize route is
+  inaccessible; the real Google transport is selected). No redeploy was needed (no env var changed).
+
+**Controlled Sam connection + dedicated destination result**
+- One controlled Sam test studio; `google_calendar_connection_enabled` was already `true`
+  (not toggled). The pre-existing discovery-only connection was preserved (connected, discovery
+  scopes only, encrypted refresh token, key version 1).
+- Owner completed the `dedicated_app_created` flow (incremental consent requested **only**
+  `calendar.app.created`). After a designed pre/post-boundary **provisioning-pending** halt on
+  the first attempt (grant safely stored, no calendar, no orphan, no false metadata), the built
+  **idempotent** "Create the Hone Appointments calendar" retry converged: **exactly one** empty
+  `Hone Appointments` secondary calendar was created and adopted.
+- Verified read-only: `destination_mode = dedicated_app_created`, app-created calendar id
+  populated, `write_calendar_id` = the app-created calendar, `selected_calendar_display_name =
+  Hone Appointments`, `destination_configured_at` set, `destination_provisioning_ambiguous_at`
+  null; derived readiness = destination-ready; **zero appointment events created**; refresh/re-entry
+  is stable (no duplicate calendar, no re-consent).
+- Exact grant counts across all connections: `calendar.app.created` = **1**, `calendar.events.owned`
+  = **0**, broad `calendar.events` = **0**.
+
+**Dormancy preserved throughout**
+- `calendar_sync_control.worker_enabled` **OFF**; outbound / inbound / two-way sync flags **OFF**
+  for every studio; `calendar_sync_outbox` = **0**; `calendar_event_links` = **0**; no appointment
+  or Google **event** mutation occurred; **Willow remains unconnected**.
+
+**Testing-mode limitation (expected, not a defect)**
+- The OAuth app is in **Testing**; Testing-mode Calendar refresh tokens may expire after
+  ~7 days. A later `reconnect_required` state around that window is **expected** — not encryption
+  failure, token corruption, worker failure, or a regression. The app was **not** published.
+
+**Explicitly NOT done (require separate authorization)**
+- `existing_owned` was **not** validated against a real Google calendar.
+- No synchronization was enabled (no worker / outbound / inbound / two-way / cron).
+- Willow was not connected or added as a Google test user; the app was not published or submitted
+  for verification.
+
+**Publication-preparation items (Testing-mode is fine without these; needed only to publish later)**
+- `https://hone.care`, `/privacy`, and `/terms` are publicly reachable (HTTP 200). Google Cloud
+  homepage/privacy-policy URLs, domain-ownership verification, and app publication/verification
+  were **not** pursued in this controlled Testing-mode validation.
