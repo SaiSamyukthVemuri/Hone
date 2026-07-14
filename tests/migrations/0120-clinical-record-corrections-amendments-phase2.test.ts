@@ -22,13 +22,12 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0130 (revoke the residual anon EXECUTE on the 0129 multi-area
-    // charting RPCs — least-privilege hardening), on top of 0129 (atomic write
-    // RPCs, applied hosted), 0128 (session_block_areas, applied hosted), and the
-    // 0125-0127 clinical/Google-Calendar lineage. 0130 is additive/grant-only and
-    // is repo-only until its separately-approved migration-first hosted apply.
-    // Bump this tripwire consciously when adding migrations.
-    expect(maxNum).toBe(130);
+    // Advanced to 0131 (Google Calendar B2.4 dual-destination scope contract +
+    // destination metadata), on top of 0130 (revoke residual anon EXECUTE),
+    // 0126-0129 clinical lineage, and the 0125 Google-Calendar activation
+    // boundary. 0131 is additive/dormant and is repo-only until its separately-
+    // approved migration-first hosted apply. Bump this tripwire consciously.
+    expect(maxNum).toBe(131);
     expect(FILE).toMatch(/^0120_/);
   });
 });

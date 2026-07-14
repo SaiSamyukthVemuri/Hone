@@ -240,8 +240,8 @@ describe("callback route — validation order + safety (source)", () => {
 });
 
 describe("GoogleCalendarCard — dormant messaging + iCal distinction (source)", () => {
-  it("states event sync is still disabled while dormant (B2.2 wording)", () => {
-    expect(CARD).toMatch(/Event synchronization is still disabled/i);
+  it("states synchronization is off while dormant (B2.4 wording)", () => {
+    expect(CARD).toMatch(/Synchronization is off\. Hone is not creating or changing appointment events\./i);
   });
 
   it("distinguishes itself from the one-way read-only iCal feed", () => {

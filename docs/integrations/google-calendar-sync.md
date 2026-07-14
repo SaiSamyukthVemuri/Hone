@@ -12,6 +12,12 @@ ledger win.
   **Phase B2.3-a (migration 0125 — outbound enqueue + claim activation boundary) is
   authored in-repo and DORMANT, but NOT yet applied to production** (repo max 0125,
   hosted max 0124; pending a separately-approved migration-first apply — see §3c).
+  **Phase B2.4 (dual outbound destination + destination-derived event scope,
+  migration 0131) is likewise authored in-repo and DORMANT, UNAPPLIED** (additive +
+  nullable; see §3d). It deliberately **precedes** B2.3-b/B2.3-c and finalizes the
+  outbound destination + scope semantics those phases consume. Granting a
+  destination permission or creating the empty Hone-owned calendar still enables
+  **no** synchronization.
   All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
   is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
   worker, no enqueue path (0125 adds triggers but they no-op while every studio's
@@ -350,6 +356,152 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
 
 ---
 
+## 3d. Dual destination — owner-selectable outbound target (Phase B2.4, migration 0131)
+
+Migration **0131** (`0131_google_calendar_dual_destination.sql`) makes the outbound
+event-write **scope contract destination-aware** and records **where** Hone will
+(later) place appointment events. It is **additive + nullable + DORMANT** and, per
+its own header, sequences on top of Phase A (0121/0122) / B1 (0124) / B2.3-a (0125):
+prod migration max was 0130, this is 0131, and it is **UNAPPLIED** to production.
+No Google API call, no event scope granted, no re-consent, no studio flag enabled,
+the global worker control stays OFF, and no enqueue / outbox row / event-link /
+appointment mutation / backfill occurs. Behavioural + shape proofs live under
+`tests/db` / `tests/migrations` for 0131.
+
+### Ordering — why B2.4 precedes B2.3-b and B2.3-c
+
+B2.4 ships **before** the reconciliation/heartbeat sweep (B2.3-b) and the
+cron/worker activation (B2.3-c) **on purpose**: B2.3-b consumes the **readiness**
+semantics (`calendar_connection_outbound_ready`) and B2.3-c consumes the **worker
+eligibility** contract, and B2.4 is precisely the change that redefines the
+destination + required-scope semantics those two phases rely on. Landing B2.4 first
+means B2.3-b / B2.3-c are built against the final contract rather than a
+soon-to-change one.
+
+### The two owner-selectable destinations (the final outbound destination boundary)
+
+An owner picks **one** appointment destination; the server **derives** the required
+OAuth scope from that choice. **The browser only selects a destination option — it
+never selects, names, or requests a scope.** This closes the previously-parked
+outbound scope-boundary item (see the open validation note in §5):
+
+| Destination (`destination_mode`) | Where events land | `accessRole` required | Derived OAuth event scope |
+|---|---|---|---|
+| `dedicated_app_created` | a dedicated calendar **Hone creates** ("Hone Appointments") | n/a (Hone owns what it created) | `https://www.googleapis.com/auth/calendar.app.created` |
+| `existing_owned` | an **existing calendar the connected user owns** | exact Google `accessRole === "owner"` | `https://www.googleapis.com/auth/calendar.events.owned` |
+
+Only an **owned** calendar qualifies for `existing_owned`: `writer`, `reader`,
+`freeBusyReader`, and otherwise-shared calendars are **excluded**. Shared calendars
+owned by another person/organization remain unsupported near-term.
+
+The required scope is the **single SQL source** of truth via the destination-aware
+`calendar_required_event_scopes(text)`: `dedicated_app_created →
+{calendar.app.created}`, `existing_owned → {calendar.events.owned}`, and **NULL
+(never `'{}'`)** for any null/unknown/malformed mode.
+`calendar_connection_outbound_ready` is rewritten **fail-closed** against the Postgres
+`any_array @> '{}'` fail-open trap: it requires `destination_mode` set **and** the
+required-scope array non-NULL **and** `cardinality >= 1` **and**
+`granted_scopes @> required` (plus connected + owner + `write_calendar_id` + a usable
+encrypted refresh token). A discovery-only connection (no destination chosen) derives
+as **not event-ready**.
+
+### Broad `calendar.events` is SUPERSEDED for outbound destination authorization
+
+Broad `https://www.googleapis.com/auth/calendar.events` is **removed from the
+outbound destination contract**: it is gone from the app request path, the callback
+acceptance, readiness, worker eligibility, and the DB scope seam
+(`calendar_required_event_scopes` maps it to nothing; the legacy 0-arg overload now
+returns NULL, never the old universal scope, never `'{}'`). It satisfies the outbound
+contract **nowhere**. Earlier sections (notably §5's incremental-authorization note)
+that describe broad `calendar.events` as the working or fallback event scope reflect
+the **previous contract** and are retained only as history — they are superseded here.
+
+### Migration 0131 schema (additive + nullable + dormant)
+
+- **`calendar_connections` — destination metadata:** `destination_mode`
+  (CHECK: NULL or one of the two known modes), `selected_calendar_display_name`
+  (safe human-readable name for the UI, never event data / PHI),
+  `destination_configured_at` (a derived-readiness **input**, never a stored
+  readiness flag; a CHECK requires `write_calendar_id` set once configured),
+  `destination_ownership_validated_at` (`existing_owned` only, CHECK-guarded),
+  `app_created_calendar_id` (`dedicated_app_created` only, CHECK-guarded; the
+  idempotency anchor — a retry that finds it set never re-creates). The two
+  provenance facts (`app_created_calendar_id` vs `destination_ownership_validated_at`)
+  are **mutually exclusive** by CHECK. Intermediate states (mode chosen + permission
+  granted, not yet provisioned/selected) are deliberately **not** over-constrained so
+  the flow can progress.
+- **`calendar_connections` — dedicated provisioning-state:**
+  `destination_provisioning_attempt_token`, `destination_provisioning_started_at`,
+  `destination_provisioning_ambiguous_at`, all **guarded by CHECK to the
+  `dedicated_app_created` mode** (they can never attach to an `existing_owned` / unset
+  row).
+- **`google_oauth_states` — destination binding:** `destination_mode` +
+  `required_event_scope`, with a **known-mode CHECK** and a **matched-pair CHECK**
+  (`(destination_mode is null) = (required_event_scope is null)` — an upgrade binds
+  both, a plain Phase-A connect binds neither). The callback additionally **re-derives**
+  the scope from the mode and compares, so a tampered single-column value cannot pass.
+  The state table stays default-deny for browser roles (0122 RLS/REVOKE unchanged) and
+  is ephemeral (10-min TTL, single-use), so there is **no backfill**.
+- **Functions:** destination-aware `calendar_required_event_scopes(text)` and
+  fail-closed `calendar_connection_outbound_ready` (signature unchanged, so the claim
+  RPC / reaper / queue-health view pick up the new logic without modification). Both
+  remain `service_role`-EXECUTE-only.
+
+### Dedicated-calendar provisioning idempotency (attempt-token reconciliation)
+
+Google `calendars.insert` accepts **no** caller-supplied resource id and **no**
+idempotency key, so an ambiguous provider response (Google created the calendar but
+the client saw a timeout/disconnect) cannot be de-duplicated by the provider. B2.4
+reconciles by a **random, NON-SENSITIVE attempt token**:
+
+- The token is minted and **persisted BEFORE** `calendars.insert`, then embedded in
+  the created calendar's **DESCRIPTION**.
+- A retry / ambiguous response is reconciled by **EXACT token match** — **never** by
+  display name (multiple calendars can share the name "Hone Appointments").
+- **Multiple matches → fail closed / needs attention** (`destination_provisioning_ambiguous_at`
+  set): **no** auto-create while ambiguous; readiness derives "needs attention" until
+  a human resolves it.
+- The description carries **only** the non-sensitive random attempt token — **no**
+  credential token, secret, account identifier, or PHI.
+
+### Destination switching is OUT OF SCOPE for B2.4 (explicit follow-up)
+
+Once a mode is selected **and configured**, B2.4 does **not** allow changing it to the
+other mode. **Recovery from a pending/ambiguous state retries the SAME mode only.**
+Switching a configured connection between `dedicated_app_created` and `existing_owned`
+is deferred to a **future product + data-lifecycle design** that must address, at
+minimum: existing-calendar cleanup, dedicated-calendar lifecycle, **event-link
+migration**, permission downgrade / re-consent, rollback, and audit history. This is
+recorded here as an explicit open follow-up — do not add ad-hoc mode switching without
+that design.
+
+### Dormancy & disconnect
+
+- Granting a destination permission or creating the empty Hone-owned secondary
+  calendar does **NOT** enable synchronization. The drain worker and **all four**
+  `google_calendar_*` studio flags stay **OFF**; no event / outbox row / event-link is
+  created; Willow stays unconnected.
+- **Disconnect NEVER deletes a Hone-created Google calendar.** Whether/how to remove a
+  Hone-created calendar on disconnect is a **separate future product decision**;
+  disconnect revokes credentials + clears local state only (consistent with the
+  existing §3b disconnect path, which updates the connection row rather than deleting
+  it).
+
+### OAuth surface (unchanged transport, destination-bound state)
+
+The exact callback path is **`/api/google-calendar/oauth/callback`**, with the redirect
+URI **built server-side** and **never derived from a request header**. The Phase-A
+discovery scopes are unchanged (`openid`,
+`https://www.googleapis.com/auth/userinfo.email`,
+`https://www.googleapis.com/auth/calendar.calendarlist.readonly`). The server-only env
+vars are unchanged and never `NEXT_PUBLIC_*`: `GOOGLE_OAUTH_CLIENT_ID`,
+`GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY` (AES-256-GCM key),
+`GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION`. See the operator checklist
+(`docs/integrations/google-calendar-owner-connection-operator-checklist.md`) for the
+Google Cloud console setup of the two destination scopes.
+
+---
+
 ## 4. Token encryption & key rotation
 
 Reuses the AES-256-GCM primitive of `lib/conversion/token-crypto.ts` but with a
@@ -456,6 +608,16 @@ authorized to inspect* from *calendar outside the supported ownership boundary*.
 The write-calendar picker will exclude calendars that do not satisfy the validated
 owned-calendar rule; shared calendars owned by another person/organization are
 explicitly unsupported near-term.
+
+> **Superseded by B2.4 (see §3d).** The paragraphs above reflect the **pre-B2.4**
+> contract, in which broad `calendar.events` was retained as a documented fallback
+> and `calendar.events.owned` was the single working event scope. Under B2.4's
+> **dual-destination** model, the required event scope is **derived from the chosen
+> destination** — `calendar.app.created` for `dedicated_app_created`,
+> `calendar.events.owned` for `existing_owned` — and broad `calendar.events` is
+> **removed from the outbound destination contract** (app request path, callback
+> acceptance, readiness, worker eligibility, and the DB scope seam); it authorizes no
+> outbound destination. The above text is kept only as history.
 
 ---
 

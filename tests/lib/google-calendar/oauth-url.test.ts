@@ -44,9 +44,13 @@ describe("Phase A scopes — least privilege", () => {
     expect(PHASE_A_SCOPES).not.toContain("https://www.googleapis.com/auth/calendar");
   });
 
-  it("reserves the event scopes for Phase B (documented, not requested now)", () => {
-    expect(PHASE_B_ADDITIONAL_SCOPES).toContain("https://www.googleapis.com/auth/calendar.events");
+  it("reserves the DESTINATION event scopes for Phase B (documented, not requested now); broad calendar.events is retired", () => {
+    expect(PHASE_B_ADDITIONAL_SCOPES).toContain("https://www.googleapis.com/auth/calendar.app.created");
+    expect(PHASE_B_ADDITIONAL_SCOPES).toContain("https://www.googleapis.com/auth/calendar.events.owned");
     expect(PHASE_B_ADDITIONAL_SCOPES).toContain("https://www.googleapis.com/auth/calendar.readonly");
+    expect(PHASE_B_ADDITIONAL_SCOPES as readonly string[]).not.toContain(
+      "https://www.googleapis.com/auth/calendar.events",
+    );
   });
 });
 

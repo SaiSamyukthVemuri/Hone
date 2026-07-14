@@ -1,5 +1,5 @@
 import "server-only";
-import { PHASE_B_ADDITIONAL_SCOPES } from "../config";
+import { hasRequiredEventScopes } from "../destination-scopes";
 import type { ClaimedJob, JobResult } from "./job-result";
 import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "./token-manager";
 
@@ -14,15 +14,12 @@ import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "./token-m
 // the full JobResult mapping. The core NEVER creates/updates/deletes a Google
 // event itself.
 
-// The calendar.events scope is required to write events. It is NOT granted in
-// Phase A; B2.2 adds it via incremental auth. Enforced here at execution time,
-// mirroring the (B2.3) Option A claim-side eligibility filter.
-export const REQUIRED_OUTBOUND_SCOPE = "https://www.googleapis.com/auth/calendar.events";
-// Sanity: the required scope is the documented Phase-B additional scope.
-const _scopeConsistency: boolean = PHASE_B_ADDITIONAL_SCOPES.includes(
-  REQUIRED_OUTBOUND_SCOPE as (typeof PHASE_B_ADDITIONAL_SCOPES)[number],
-);
-void _scopeConsistency;
+// B2.4: the required outbound event scope is DESTINATION-AWARE (derived from the
+// connection's destination_mode via hasRequiredEventScopes) — calendar.app.created
+// for a Hone-created calendar, calendar.events.owned for an existing owned
+// calendar. Broad calendar.events satisfies eligibility NOWHERE. This execution-
+// time gate mirrors the (B2.3/0131) claim-side calendar_connection_outbound_ready
+// filter. NOT granted in Phase A; B2.2 adds it via incremental auth.
 
 export type SyncOperationContext = {
   job: ClaimedJob;
@@ -55,8 +52,8 @@ export async function handleCalendarSyncJob(job: ClaimedJob, deps: HandlerDeps):
   if (conn.connectionStatus === "reconnect_required" || conn.connectionStatus === "revoked") {
     return { code: "terminal_reconnect_required", errorCode: `connection_${conn.connectionStatus}` };
   }
-  if (!conn.grantedScopes.includes(REQUIRED_OUTBOUND_SCOPE)) {
-    return { code: "terminal_insufficient_scope", errorCode: "missing_events_scope" };
+  if (!hasRequiredEventScopes(conn.destinationMode, conn.grantedScopes)) {
+    return { code: "terminal_insufficient_scope", errorCode: "missing_destination_scope" };
   }
   if (conn.connectionStatus !== "connected" || !conn.isStudioCalendarOwner) {
     return { code: "retry_ineligible", errorCode: "connection_not_eligible" };

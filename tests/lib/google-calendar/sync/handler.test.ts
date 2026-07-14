@@ -9,7 +9,10 @@ type EnsureFn = (connectionId: string, studioId: string) => Promise<TokenResult>
 // acquisition + injected-operation dispatch, across the full JobResult matrix.
 // No Google event is ever created here (operations are mocked).
 
-const EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// B2.4: eligibility is DESTINATION-AWARE. A connection needs the EXACT destination
+// scope; broad calendar.events satisfies nothing.
+const EVENTS_OWNED = "https://www.googleapis.com/auth/calendar.events.owned";
+const EVENTS_BROAD = "https://www.googleapis.com/auth/calendar.events";
 
 function job(overrides: Partial<ClaimedJob> = {}): ClaimedJob {
   return {
@@ -36,10 +39,11 @@ function conn(overrides: Partial<ConnectionAuthRow> = {}): ConnectionAuthRow {
     studioId: "studio-1",
     practitionerId: "prac-1",
     connectionStatus: "connected",
-    grantedScopes: [EVENTS_SCOPE],
+    grantedScopes: [EVENTS_OWNED],
     writeCalendarId: "primary",
     isStudioCalendarOwner: true,
     tokenExpiresAt: null,
+    destinationMode: "existing_owned",
     ...overrides,
   };
 }
@@ -73,10 +77,36 @@ describe("eligibility gate", () => {
     }
   });
 
-  it("missing calendar.events scope -> terminal_insufficient_scope", async () => {
+  it("missing destination scope -> terminal_insufficient_scope", async () => {
     const r = await handleCalendarSyncJob(
       job(),
       deps({ store: { loadConnection: async () => conn({ grantedScopes: ["openid"] }) } as unknown as HandlerDeps["store"] }),
+    );
+    expect(r.code).toBe("terminal_insufficient_scope");
+  });
+
+  it("broad calendar.events does NOT satisfy an existing_owned destination -> terminal_insufficient_scope", async () => {
+    const r = await handleCalendarSyncJob(
+      job(),
+      deps({
+        store: {
+          loadConnection: async () =>
+            conn({ destinationMode: "existing_owned", grantedScopes: [EVENTS_BROAD] }),
+        } as unknown as HandlerDeps["store"],
+      }),
+    );
+    expect(r.code).toBe("terminal_insufficient_scope");
+    expect(r.errorCode).toBe("missing_destination_scope");
+  });
+
+  it("NULL destination -> terminal_insufficient_scope (fail closed even with an event scope)", async () => {
+    const r = await handleCalendarSyncJob(
+      job(),
+      deps({
+        store: {
+          loadConnection: async () => conn({ destinationMode: null, grantedScopes: [EVENTS_OWNED] }),
+        } as unknown as HandlerDeps["store"],
+      }),
     );
     expect(r.code).toBe("terminal_insufficient_scope");
   });

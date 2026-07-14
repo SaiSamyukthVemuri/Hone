@@ -7,6 +7,7 @@ import {
 } from "./token-crypto";
 import { generatePkce, randomUrlToken, sha256Hex } from "./oauth";
 import { safeReturnPath } from "./config";
+import type { CalendarDestinationMode } from "./destination-scopes";
 
 // OAuth state + PKCE lifecycle (google_oauth_states). Service-role only.
 //
@@ -27,6 +28,12 @@ export async function createOAuthState(input: {
   practitionerId: string;
   userId: string;
   redirectPath: string | null;
+  // B2.4 — destination-BOUND upgrade intent (migration 0131). Present only for a
+  // destination scope-upgrade; a plain Phase-A connect passes null (binds neither
+  // column). The DB CHECK enforces the matched pair. The mode + its EXACT
+  // server-derived required scope are bound so the callback can reject a
+  // destination/scope that changed between start and callback.
+  destination?: { mode: CalendarDestinationMode; requiredScope: string } | null;
 }): Promise<CreateStateResult> {
   const keyVersion = currentKeyVersion();
   if (keyVersion === null) return { ok: false, reason: "encryption_unavailable" };
@@ -48,6 +55,8 @@ export async function createOAuthState(input: {
     encrypted_pkce_verifier: enc.ciphertext,
     encryption_key_version: enc.keyVersion,
     redirect_path: safeReturnPath(input.redirectPath),
+    destination_mode: input.destination?.mode ?? null,
+    required_event_scope: input.destination?.requiredScope ?? null,
   });
   if (error) return { ok: false, reason: "state_insert_failed" };
 
@@ -62,6 +71,11 @@ export type ConsumeStateResult =
       userId: string;
       codeVerifier: string;
       redirectPath: string;
+      // B2.4 destination binding (null for a plain Phase-A connect). The callback
+      // uses these to reject a destination/scope that changed between start and
+      // callback and to require the EXACT bound scope in the actual grant.
+      destinationMode: CalendarDestinationMode | null;
+      requiredEventScope: string | null;
     }
   | { ok: false; reason: string };
 
@@ -76,7 +90,7 @@ export async function consumeOAuthState(input: {
   const { data: row, error } = await admin
     .from("google_oauth_states")
     .select(
-      "id, session_nonce_hash, studio_id, practitioner_id, user_id, encrypted_pkce_verifier, redirect_path, expires_at, consumed_at",
+      "id, session_nonce_hash, studio_id, practitioner_id, user_id, encrypted_pkce_verifier, redirect_path, expires_at, consumed_at, destination_mode, required_event_scope",
     )
     .eq("state_hash", stateHash)
     .maybeSingle();
@@ -115,5 +129,7 @@ export async function consumeOAuthState(input: {
     userId: row.user_id as string,
     codeVerifier: dec.secret,
     redirectPath: safeReturnPath(row.redirect_path as string | null),
+    destinationMode: (row.destination_mode as CalendarDestinationMode | null) ?? null,
+    requiredEventScope: (row.required_event_scope as string | null) ?? null,
   };
 }

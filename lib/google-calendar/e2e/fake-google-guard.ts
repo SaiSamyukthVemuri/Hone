@@ -1,0 +1,87 @@
+import "server-only";
+
+// Server-only activation guard for the E2E fake Google integration. Mirrors the
+// proven fake-Stripe guard (lib/stripe/e2e-fake-guard.ts) exactly.
+//
+// This module decides NOTHING about OAuth/calendar business logic. It answers one
+// question — "may the fake Google provider activate in THIS runtime?" — and is
+// FAIL-CLOSED: fake mode is OFF unless an explicit server-only marker is present
+// AND no deployed-environment signal is present.
+//
+// Why the markers are safe:
+//   * They are server-only env vars (HONE_E2E_*), NEVER NEXT_PUBLIC_*, so the
+//     browser can never read or set them.
+//   * They are not derived from any request input (no header/cookie/query/form).
+//   * Any Vercel/AWS/K8s runtime is rejected outright — those signals are always
+//     present in a deployed environment and never on the local E2E server.
+//
+// Why NODE_ENV is intentionally NOT the gate: the local E2E web server runs
+// `next start` (NODE_ENV=production), so rejecting on NODE_ENV=production would
+// break the ONLY environment fake mode is meant for. The real boundary is the
+// positive HONE_E2E_* markers plus the deployment rejection — a combination that
+// cannot exist in any deployed environment.
+
+// A run id must be an explicit, well-formed, per-run token (the E2E harness
+// generates one). Its presence is a second positive marker that cannot exist in a
+// deployed environment.
+export function isValidE2eRunId(runId: string | undefined | null): boolean {
+  return typeof runId === "string" && /^[a-z0-9][a-z0-9-]{7,63}$/i.test(runId);
+}
+
+// Environment signals that prove a HOSTED/deployed runtime. If ANY is present, the
+// fake Google provider is refused unconditionally.
+function deployedEnvironmentSignal(env: NodeJS.ProcessEnv): string | null {
+  if (env.VERCEL === "1") return "VERCEL";
+  if (env.VERCEL_ENV) return `VERCEL_ENV=${env.VERCEL_ENV}`;
+  if (env.AWS_REGION || env.AWS_EXECUTION_ENV) return "AWS";
+  if (env.KUBERNETES_SERVICE_HOST) return "KUBERNETES";
+  return null;
+}
+
+// Throws (fail-closed) unless the fake Google provider is explicitly + safely
+// enabled.
+export function assertE2eFakeGoogleAllowed(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  // 1) Explicit server-only opt-in (default OFF).
+  if (env.HONE_E2E_FAKE_GOOGLE !== "1") {
+    throw new Error("Fake Google is not enabled (HONE_E2E_FAKE_GOOGLE !== '1').");
+  }
+  // 2) A valid per-run marker that cannot exist in a deployed environment.
+  if (!isValidE2eRunId(env.HONE_E2E_RUN_ID)) {
+    throw new Error("Fake Google requires a valid HONE_E2E_RUN_ID.");
+  }
+  // 3) Reject ANY hosted/deployed runtime outright.
+  const signal = deployedEnvironmentSignal(env);
+  if (signal) {
+    throw new Error(`Fake Google cannot run in a deployed environment (${signal}).`);
+  }
+}
+
+// Non-throwing predicate for consumers: true only when the guard passes.
+export function isE2eFakeGoogleEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  try {
+    assertE2eFakeGoogleAllowed(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// FAIL-LOUD deployment guard. If the fake flag is REQUESTED in a deployed
+// environment, throw rather than silently ignoring it — a misconfiguration or
+// attempted bypass must surface immediately, never fall back quietly to the real
+// Google path. A no-op when the flag is absent (i.e. always, in production).
+export function assertFakeGoogleNotRequestedInDeployment(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (env.HONE_E2E_FAKE_GOOGLE !== "1") return; // not requested → nothing to guard
+  const signal = deployedEnvironmentSignal(env);
+  if (signal) {
+    throw new Error(
+      `HONE_E2E_FAKE_GOOGLE must never be set in a deployed environment (${signal}).`,
+    );
+  }
+}

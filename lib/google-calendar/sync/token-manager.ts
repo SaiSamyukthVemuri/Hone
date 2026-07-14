@@ -31,6 +31,10 @@ export type ConnectionAuthRow = {
   writeCalendarId: string | null;
   isStudioCalendarOwner: boolean;
   tokenExpiresAt: string | null;
+  // B2.4: the chosen destination. The worker's execution-time scope gate DERIVES
+  // the required event scope from it (calendar.app.created / calendar.events.owned)
+  // — broad calendar.events satisfies eligibility nowhere.
+  destinationMode: string | null;
 };
 
 // DB access, injected so the worker core is testable against a local disposable

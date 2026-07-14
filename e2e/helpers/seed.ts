@@ -356,6 +356,52 @@ export async function setStudioGoogleCalendarConnectionEnabled(
   );
 }
 
+// Toggle the OWNER practitioner's active flag — proves the inactive-practitioner
+// server-side denial in the destination E2E.
+export async function setE2eOwnerActive(studioId: string, active: boolean): Promise<void> {
+  await sql(
+    `update public.practitioners set active = $2 where studio_id = $1 and role = 'owner'`,
+    [studioId, active],
+  );
+}
+
+// Read the owner connection's destination state (for E2E assertions of what the
+// server actually stored). Returns null when no connection exists.
+export async function getE2eOwnerConnectionState(
+  studioId: string,
+): Promise<{
+  destination_mode: string | null;
+  write_calendar_id: string | null;
+  app_created_calendar_id: string | null;
+  destination_ownership_validated_at: string | null;
+  destination_provisioning_ambiguous_at: string | null;
+  granted_scopes: string[];
+} | null> {
+  const rows = await sql<{
+    destination_mode: string | null;
+    write_calendar_id: string | null;
+    app_created_calendar_id: string | null;
+    destination_ownership_validated_at: string | null;
+    destination_provisioning_ambiguous_at: string | null;
+    granted_scopes: string[];
+  }>(
+    `select destination_mode, write_calendar_id, app_created_calendar_id,
+            destination_ownership_validated_at, destination_provisioning_ambiguous_at, granted_scopes
+       from public.calendar_connections
+      where studio_id = $1 and connection_status <> 'disconnected'
+      order by created_at desc limit 1`,
+    [studioId],
+  );
+  return rows[0] ?? null;
+}
+
+// Dormancy assertions for the destination E2E: outbox + event-link counts.
+export async function getE2eCalendarSyncCounts(): Promise<{ outbox: number; links: number }> {
+  const outbox = await sql<{ n: string }>(`select count(*)::text as n from public.calendar_sync_outbox`);
+  const links = await sql<{ n: string }>(`select count(*)::text as n from public.calendar_event_links`);
+  return { outbox: Number(outbox[0]?.n ?? "0"), links: Number(links[0]?.n ?? "0") };
+}
+
 // Google Calendar — Phase B2.2. Seed a CONNECTED owner connection (+ a dummy
 // encrypted secret so readiness sees a usable token) so the e2e can exercise the
 // derived readiness rendering (Grant-event-access CTA vs ready) WITHOUT a live
@@ -364,6 +410,10 @@ export async function setStudioGoogleCalendarConnectionEnabled(
 export async function seedE2eGoogleConnection(
   studioId: string,
   grantedScopes: string[],
+  // B2.4: optional destination. When 'existing_owned'/'dedicated_app_created' the
+  // connection is seeded as a fully-configured destination (so readiness can reach
+  // outbound_scope_ready with the matching event scope). Null = no destination.
+  destinationMode: "existing_owned" | "dedicated_app_created" | null = null,
 ): Promise<void> {
   const owner = await sql<{ id: string }>(
     `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
@@ -371,11 +421,17 @@ export async function seedE2eGoogleConnection(
   );
   const practitionerId = owner[0]?.id;
   const connId = randomUUID();
+  const ownedValidatedAt = destinationMode === "existing_owned" ? new Date().toISOString() : null;
+  const appCreatedId = destinationMode === "dedicated_app_created" ? "e2e-hone-appointments-cal" : null;
+  const configuredAt = destinationMode ? new Date().toISOString() : null;
   await sql(
     `insert into public.calendar_connections
-       (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, google_account_id, google_account_email)
-     values ($1,$2,$3,'connected',$4,'primary',true,'e2e-sub','e2e-google@example.com')`,
-    [connId, studioId, practitionerId, grantedScopes],
+       (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, google_account_id, google_account_email,
+        destination_mode, selected_calendar_display_name, app_created_calendar_id, destination_ownership_validated_at, destination_configured_at)
+     values ($1,$2,$3,'connected',$4,'primary',true,'e2e-sub','e2e-google@example.com',
+        $5,$6,$7,$8,$9)`,
+    [connId, studioId, practitionerId, grantedScopes, destinationMode,
+     destinationMode ? "Hone Appointments" : null, appCreatedId, ownedValidatedAt, configuredAt],
   );
   await sql(
     `insert into public.calendar_connection_secrets

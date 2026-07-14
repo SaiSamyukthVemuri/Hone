@@ -28,17 +28,14 @@ describe("0130 — file + repo-max tripwire", () => {
     expect(FILE).toMatch(/^0130_revoke_anon_calendar_charting_rpc_execute\.sql$/);
   });
 
-  it("advances the repo migration max to 0130 (0126-0129 precede; nothing 0131+)", () => {
-    const nums = FILES.map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    expect(nums[nums.length - 1]).toBe("0130");
+  it("is present; the repo-max tripwire now lives in the 0131 test (0126-0129 precede)", () => {
+    // The absolute repo-max pin moved to the 0131 test (Google Calendar B2.4
+    // dual-destination). 0130 is present; nothing above 0131 may exist yet.
+    expect(FILES.some((f) => f.startsWith("0130_"))).toBe(true);
     for (const n of ["0126", "0127", "0128", "0129"]) {
       expect(FILES.some((f) => f.startsWith(`${n}_`))).toBe(true);
     }
-    // Nothing 0131+ yet (the disinfactant migration, if pursued, is 0131).
-    expect(FILES.filter((f) => /^01(3[1-9]|[4-9]\d)_/.test(f))).toEqual([]);
+    expect(FILES.filter((f) => /^01(3[2-9]|[4-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("migration 0129 is byte-for-byte unchanged", () => {

@@ -9,7 +9,7 @@ import type { ConnectionAuthRow, ConnectionStore } from "./token-manager";
 // The ciphertext table is never exposed to a browser role (Phase A posture).
 
 const AUTH_COLUMNS =
-  "id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at";
+  "id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at, destination_mode";
 
 function toAuthRow(row: Record<string, unknown>): ConnectionAuthRow {
   return {
@@ -21,6 +21,7 @@ function toAuthRow(row: Record<string, unknown>): ConnectionAuthRow {
     writeCalendarId: (row.write_calendar_id as string | null) ?? null,
     isStudioCalendarOwner: row.is_studio_calendar_owner === true,
     tokenExpiresAt: (row.token_expires_at as string | null) ?? null,
+    destinationMode: (row.destination_mode as string | null) ?? null,
   };
 }
 
