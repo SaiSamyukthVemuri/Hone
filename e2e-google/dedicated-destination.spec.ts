@@ -29,7 +29,7 @@ async function chooseDedicatedAndGrant(page: import("@playwright/test").Page) {
   await expect(page.getByRole("button", { name: /Grant permission to create a calendar/i })).toBeVisible();
   await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
   // The fake OAuth round-trip returns to the integrations page with the grant.
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
 }
 
 test("Flow A — dedicated: only app.created requested, exactly one calendar, ready, dormant", async ({ page }) => {

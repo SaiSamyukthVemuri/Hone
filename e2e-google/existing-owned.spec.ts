@@ -45,7 +45,7 @@ test("Flow B — existing owned: only events.owned requested, owner-only picker,
   await page.getByRole("button", { name: /^Use an existing calendar$/i }).click();
   await expect(page.getByRole("button", { name: /Grant permission to use your calendar/i })).toBeVisible();
   await page.getByRole("button", { name: /Grant permission to use your calendar/i }).click();
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
 
   // The ACTIVE OAuth request asked for ONLY calendar.events.owned.
   for (const s of fakeAuthorizeScopeSets()) {

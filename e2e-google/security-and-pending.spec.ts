@@ -63,7 +63,7 @@ test("account switch is rejected — a different Google identity never replaces 
   await page.goto("/settings/integrations");
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
   await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
   await expect(page.getByText(/different from the one already connected/i)).toBeVisible();
   // Pre-replacement: the event scope was NOT stored.
   const st = await getE2eOwnerConnectionState(seed.studioId);
@@ -81,7 +81,7 @@ test("partial grant is rejected pre-replacement — previous grant preserved, st
   await page.goto("/settings/integrations");
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
   await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
   await expect(page.getByText(/permission wasn't granted/i)).toBeVisible();
   // Still on the permission step; no destination scope stored.
   await expect(page.getByRole("button", { name: /Grant permission to create a calendar/i })).toBeVisible();
@@ -110,7 +110,7 @@ test("dedicated PROVISIONING-PENDING — grant kept, provisioning fails, retryab
   await page.goto("/settings/integrations");
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
   await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
   // Grant succeeded (credentials replaced) — provisioning now fails.
   await page.getByRole("button", { name: /Create the Hone Appointments calendar/i }).click();
   await expect(page.getByRole("alert")).toBeVisible();
@@ -135,7 +135,7 @@ test("existing-owned SELECTION-PENDING — grant kept, awaiting calendar selecti
   await page.goto("/settings/integrations");
   await page.getByRole("button", { name: /^Use an existing calendar$/i }).click();
   await page.getByRole("button", { name: /Grant permission to use your calendar/i }).click();
-  await page.waitForURL(/\/settings\/integrations/);
+  await page.waitForURL(/gcal=/);
   // Grant succeeded (retained); selection still pending (no destination stored yet).
   await expect(page.getByRole("button", { name: /Choose a calendar you own/i })).toBeVisible();
   const st = await getE2eOwnerConnectionState(seed.studioId);
