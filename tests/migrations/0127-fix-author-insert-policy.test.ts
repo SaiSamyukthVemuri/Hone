@@ -29,13 +29,13 @@ describe("0127 — file + repo-max tripwire", () => {
     expect(FILE).toMatch(/^0127_fix_client_clinical_notes_author_insert_policy\.sql$/);
   });
 
-  it("is present; the repo-max tripwire now lives in the 0130 test; 0126 + 0125 precede it", () => {
-    // The absolute repo-max pin lives in the 0130 test. Nothing above 0130 (the
-    // disinfactant migration, if pursued, is 0131) may exist yet.
+  it("is present; the repo-max tripwire now lives in the 0131 test; 0126 + 0125 precede it", () => {
+    // The absolute repo-max pin lives in the 0131 test (Google Calendar B2.4).
+    // Nothing above 0131 may exist yet.
     expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(3[1-9]|[4-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(3[2-9]|[4-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 

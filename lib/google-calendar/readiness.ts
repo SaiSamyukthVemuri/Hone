@@ -1,5 +1,6 @@
 import "server-only";
-import { CALENDAR_DISCOVERY_SCOPE, EVENT_WRITE_SCOPE } from "./config";
+import { CALENDAR_DISCOVERY_SCOPE } from "./config";
+import { hasRequiredEventScopes } from "./destination-scopes";
 
 // Google Calendar — Phase B2.2: connection READINESS is a DERIVED, server-side
 // value. It is NOT a stored column and NOT a connection_status expansion.
@@ -31,6 +32,10 @@ export type ReadinessInput = {
   hasUsableRefreshToken: boolean;
   isStudioCalendarOwner: boolean;
   writeCalendarId: string | null;
+  // B2.4: the chosen destination. The required event scope DERIVES from it
+  // (dedicated -> calendar.app.created; existing_owned -> calendar.events.owned).
+  // NULL (not selected) or unknown => no event scope can be satisfied (fail-closed).
+  destinationMode: string | null;
 };
 
 export function deriveConnectionReadiness(input: ReadinessInput): ConnectionReadiness {
@@ -43,7 +48,9 @@ export function deriveConnectionReadiness(input: ReadinessInput): ConnectionRead
   if (!input.hasUsableRefreshToken) return "reconnect_required"; // "connected" label but no usable token
   if (!input.grantedScopes.includes(CALENDAR_DISCOVERY_SCOPE)) return "reconnect_required"; // lost the core Phase-A scope
 
-  const hasEvents = input.grantedScopes.includes(EVENT_WRITE_SCOPE);
+  // B2.4: destination-aware, EXACT set membership. Broad calendar.events no longer
+  // satisfies anything; the required scope depends on the chosen destination mode.
+  const hasEvents = hasRequiredEventScopes(input.destinationMode, input.grantedScopes);
   const isReadyTarget = input.isStudioCalendarOwner && !!input.writeCalendarId;
 
   if (hasEvents && isReadyTarget) return "outbound_scope_ready";

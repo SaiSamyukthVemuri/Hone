@@ -7,7 +7,9 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 
 const DISCOVERY_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
-const EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// B2.4: readiness is destination-aware. An existing-owned destination requires the
+// EXACT calendar.events.owned scope (broad calendar.events no longer satisfies it).
+const EVENTS_OWNED_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned";
 
 // Google Calendar — Phase A, real browser. Exercises the connection FOUNDATION
 // UI without any Google account: the studio flag gate (card hidden when OFF,
@@ -80,7 +82,7 @@ test("Google Calendar card: an event-scoped owner connection reads as ready-for-
 }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
-  await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE, EVENTS_SCOPE]);
+  await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE, EVENTS_OWNED_SCOPE], "existing_owned");
   await loginAsOwner(page, seed);
 
   await page.goto("/settings/profile");

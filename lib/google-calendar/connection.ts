@@ -18,10 +18,18 @@ export type ConnectionMetadata = {
   lastSuccessfulAuthAt: string | null;
   lastErrorCode: string | null;
   tokenExpiresAt: string | null;
+  // B2.4 dual-destination metadata (migration 0131). destinationMode drives the
+  // destination-aware required event scope; the rest are safe display/provenance
+  // facts (never tokens/PHI).
+  destinationMode: string | null;
+  selectedCalendarDisplayName: string | null;
+  appCreatedCalendarId: string | null;
+  destinationConfiguredAt: string | null;
+  destinationOwnershipValidatedAt: string | null;
 };
 
 const METADATA_COLUMNS =
-  "id, connection_status, google_account_email, write_calendar_id, granted_scopes, is_studio_calendar_owner, last_successful_auth_at, last_error_code, token_expires_at";
+  "id, connection_status, google_account_email, write_calendar_id, granted_scopes, is_studio_calendar_owner, last_successful_auth_at, last_error_code, token_expires_at, destination_mode, selected_calendar_display_name, app_created_calendar_id, destination_configured_at, destination_ownership_validated_at";
 
 function toMetadata(row: Record<string, unknown>): ConnectionMetadata {
   return {
@@ -34,6 +42,11 @@ function toMetadata(row: Record<string, unknown>): ConnectionMetadata {
     lastSuccessfulAuthAt: (row.last_successful_auth_at as string | null) ?? null,
     lastErrorCode: (row.last_error_code as string | null) ?? null,
     tokenExpiresAt: (row.token_expires_at as string | null) ?? null,
+    destinationMode: (row.destination_mode as string | null) ?? null,
+    selectedCalendarDisplayName: (row.selected_calendar_display_name as string | null) ?? null,
+    appCreatedCalendarId: (row.app_created_calendar_id as string | null) ?? null,
+    destinationConfiguredAt: (row.destination_configured_at as string | null) ?? null,
+    destinationOwnershipValidatedAt: (row.destination_ownership_validated_at as string | null) ?? null,
   };
 }
 
@@ -110,6 +123,7 @@ export async function getOwnConnectionReadiness(
     hasUsableRefreshToken: !!ciphertext,
     isStudioCalendarOwner: metadata.isStudioCalendarOwner,
     writeCalendarId: metadata.writeCalendarId,
+    destinationMode: metadata.destinationMode,
   });
   return { metadata, readiness };
 }

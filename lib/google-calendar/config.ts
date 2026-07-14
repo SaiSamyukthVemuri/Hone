@@ -61,11 +61,13 @@ export const PHASE_B_ADDITIONAL_SCOPES = [
 // The scopes actually requested for the INITIAL Phase-A connect.
 export const REQUESTED_SCOPES = PHASE_A_SCOPES;
 
-// Phase B2.2 event-scope upgrade: the SINGLE additional scope Hone needs to
-// write its own calendar events. calendar.events is the minimum — NOT broad
-// full-`calendar`, NOT calendar.readonly, NOT contacts/Gmail/Drive/profile.
-// Requested via incremental authorization (include_granted_scopes=true) so the
-// Phase-A grant is preserved. No event sync happens until a later phase.
+// SUPERSEDED by B2.4 (migration 0131). Broad `calendar.events` is no longer part
+// of the event-scope contract: readiness + the DB seam now require the EXACT
+// destination scope (calendar.app.created for a Hone-created calendar, or
+// calendar.events.owned for an existing owned calendar) — see
+// lib/google-calendar/destination-scopes.ts. This constant is retained only until
+// the B2.2 upgrade action's request path is rewired to be destination-aware
+// (B2.4 Stage 2); it grants NO readiness anywhere.
 export const EVENT_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 // The calendar-list discovery scope (Phase A) the connection must retain.
 export const CALENDAR_DISCOVERY_SCOPE = PHASE_A_SCOPES[2];

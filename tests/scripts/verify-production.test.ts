@@ -97,17 +97,15 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0130 (revoke the residual anon EXECUTE grant on the
-    // 0129 multi-area charting RPCs — least-privilege hardening), on top of 0129
-    // (atomic session-block-area write RPCs, applied to hosted prod
-    // migration-first), 0128 (session_block_areas, applied hosted), and the
-    // 0125-0127 clinical/Google-Calendar lineage. 0128 and 0129 are applied
-    // hosted; 0130 is repo-only until its separately-approved migration-first
-    // hosted apply — UNTIL then the live verifier's "Remote migration max" will
-    // (correctly) report expected 0130 vs remote 0129, the intended pending-apply
-    // signal. This assertion still fails on the next new migration, forcing a
-    // conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0130");
+    // Repo max advances to 0131 (Google Calendar B2.4 dual-destination scope
+    // contract + destination metadata), on top of 0130 (revoke residual anon
+    // EXECUTE) and the 0125-0129 Google-Calendar/clinical lineage. 0131 is
+    // additive/dormant and is repo-only until its separately-approved
+    // migration-first hosted apply — UNTIL then the live verifier's "Remote
+    // migration max" will (correctly) report expected 0131 vs the current remote,
+    // the intended pending-apply signal. This assertion still fails on the next
+    // new migration, forcing a conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0131");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
