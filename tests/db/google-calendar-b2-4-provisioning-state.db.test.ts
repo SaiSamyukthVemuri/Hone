@@ -124,6 +124,23 @@ describe("0131 amendment — calendar_connections provisioning-state columns", (
       ),
     );
   });
+
+  // The two Stage-1 provenance CHECKs had the same latent NULL-fail-open trap
+  // (`X is null or destination_mode = '...'` is NULL under a NULL mode, which a
+  // CHECK treats as satisfied). Now coalesce-hardened -> a NULL mode is rejected.
+  it("REJECTS app_created_calendar_id under a NULL destination_mode (NULL-safe provenance)", async () => {
+    await adminQuery(`update public.calendar_connections set destination_mode = null where id = $1`, [connId]);
+    await expectReject(
+      adminQuery(`update public.calendar_connections set app_created_calendar_id = 'x-null-mode' where id = $1`, [connId]),
+    );
+  });
+
+  it("REJECTS destination_ownership_validated_at under a NULL destination_mode (NULL-safe provenance)", async () => {
+    await adminQuery(`update public.calendar_connections set destination_mode = null where id = $1`, [connId]);
+    await expectReject(
+      adminQuery(`update public.calendar_connections set destination_ownership_validated_at = now() where id = $1`, [connId]),
+    );
+  });
 });
 
 describe("0131 amendment — google_oauth_states destination binding", () => {

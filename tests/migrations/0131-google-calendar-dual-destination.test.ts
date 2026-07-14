@@ -63,9 +63,9 @@ describe("0131 — destination constraints", () => {
   it("constrains destination_mode to the two known modes or NULL", () => {
     expect(SQL).toMatch(/destination_mode is null[\s\S]*?in \('dedicated_app_created', 'existing_owned'\)/);
   });
-  it("keeps provenance mode-consistent and mutually exclusive", () => {
-    expect(SQL).toMatch(/app_created_calendar_id is null[\s\S]*?destination_mode = 'dedicated_app_created'/);
-    expect(SQL).toMatch(/destination_ownership_validated_at is null[\s\S]*?destination_mode = 'existing_owned'/);
+  it("keeps provenance mode-consistent and mutually exclusive (NULL-safe / fail-closed)", () => {
+    expect(SQL).toMatch(/app_created_calendar_id is null[\s\S]*?coalesce\(destination_mode, ''\) = 'dedicated_app_created'/);
+    expect(SQL).toMatch(/destination_ownership_validated_at is null[\s\S]*?coalesce\(destination_mode, ''\) = 'existing_owned'/);
     expect(SQL).toMatch(/not \(app_created_calendar_id is not null[\s\S]*?destination_ownership_validated_at is not null\)/);
   });
   it("requires a write target once configured", () => {
@@ -118,9 +118,9 @@ describe("0131 — Stage 2 amendment: dedicated provisioning-state (additive + d
     expect(SQL).toMatch(/add column if not exists destination_provisioning_started_at timestamptz/);
     expect(SQL).toMatch(/add column if not exists destination_provisioning_ambiguous_at timestamptz/);
   });
-  it("guards provisioning-state to the dedicated mode only", () => {
+  it("guards provisioning-state to the dedicated mode only (NULL-safe / fail-closed)", () => {
     expect(SQL).toMatch(/calendar_connections_provisioning_mode_chk/);
-    expect(SQL).toMatch(/destination_provisioning_attempt_token is null[\s\S]*?destination_mode = 'dedicated_app_created'/);
+    expect(SQL).toMatch(/destination_provisioning_attempt_token is null[\s\S]*?coalesce\(destination_mode, ''\) = 'dedicated_app_created'/);
   });
   it("stores NO token/secret/PHI — the attempt token is a random NON-SENSITIVE reconciliation marker", () => {
     // Scope to the provisioning-state section only (section 4's readiness predicate

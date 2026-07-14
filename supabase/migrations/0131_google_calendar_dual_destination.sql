@@ -70,21 +70,24 @@ alter table public.calendar_connections
   check (destination_mode is null
          or destination_mode in ('dedicated_app_created', 'existing_owned'));
 
--- app-created provenance implies the dedicated mode.
+-- app-created provenance implies the dedicated mode. NULL-SAFE: a bare
+-- `destination_mode = '...'` is NULL when the mode is NULL, and a CHECK treats a
+-- NULL result as SATISFIED (fail-OPEN). coalesce(...,'') makes a NULL mode a
+-- definite FALSE so provenance-with-NULL-mode is REJECTED (fail-closed).
 alter table public.calendar_connections
   drop constraint if exists calendar_connections_app_created_provenance_chk;
 alter table public.calendar_connections
   add constraint calendar_connections_app_created_provenance_chk
   check (app_created_calendar_id is null
-         or destination_mode = 'dedicated_app_created');
+         or coalesce(destination_mode, '') = 'dedicated_app_created');
 
--- ownership validation implies the existing-owned mode.
+-- ownership validation implies the existing-owned mode (same NULL-safe fail-closed).
 alter table public.calendar_connections
   drop constraint if exists calendar_connections_owned_validation_chk;
 alter table public.calendar_connections
   add constraint calendar_connections_owned_validation_chk
   check (destination_ownership_validated_at is null
-         or destination_mode = 'existing_owned');
+         or coalesce(destination_mode, '') = 'existing_owned');
 
 -- The two provenance facts can never coexist (a destination is one mode or none).
 alter table public.calendar_connections
@@ -197,7 +200,10 @@ alter table public.calendar_connections
   check ((destination_provisioning_attempt_token is null
           and destination_provisioning_started_at is null
           and destination_provisioning_ambiguous_at is null)
-         or destination_mode = 'dedicated_app_created');
+         -- NULL-safe (coalesce): a NULL destination_mode is a definite FALSE, so
+         -- provisioning-state under a NULL/other mode is REJECTED (fail-closed),
+         -- never fail-OPEN via a NULL CHECK result.
+         or coalesce(destination_mode, '') = 'dedicated_app_created');
 
 -- ============================================================
 -- 6) Destination-BOUND OAuth state (B2.4 Stage 2). The existing single-use,
