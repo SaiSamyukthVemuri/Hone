@@ -81,7 +81,12 @@ export function getOAuthRedirectUri(): string {
 
 // Allow-listed post-callback return paths (defense against open-redirect). A
 // stored redirect_path is honored ONLY if it is an exact member of this set.
-const ALLOWED_RETURN_PATHS = new Set<string>(["/settings/profile"]);
+// /settings/integrations is the owner-facing connection surface; /settings/profile
+// is the per-practitioner surface. Any other value falls back to DEFAULT_RETURN_PATH.
+const ALLOWED_RETURN_PATHS = new Set<string>([
+  "/settings/profile",
+  "/settings/integrations",
+]);
 export const DEFAULT_RETURN_PATH = "/settings/profile";
 
 export function safeReturnPath(candidate: string | null | undefined): string {

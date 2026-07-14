@@ -26,6 +26,10 @@ type Props = {
   connection: ConnectionMetadata | null;
   readiness: ConnectionReadiness;
   isOwner: boolean;
+  // In-app page to return to after connect/disconnect/upgrade. Validated
+  // server-side against the open-redirect allowlist; defaults to the profile
+  // surface. The owner Integrations page passes "/settings/integrations".
+  returnPath?: string;
 };
 
 const STATUS_MESSAGES: Record<string, { tone: "ok" | "warn"; text: string }> = {
@@ -48,7 +52,12 @@ const READINESS_LABEL: Record<ConnectionReadiness, string> = {
   outbound_scope_ready: "Ready for future event sync",
 };
 
-export function GoogleCalendarCard({ connection, readiness, isOwner }: Props) {
+export function GoogleCalendarCard({
+  connection,
+  readiness,
+  isOwner,
+  returnPath = "/settings/profile",
+}: Props) {
   const params = useSearchParams();
   const gcal = params.get("gcal");
   const banner = gcal ? STATUS_MESSAGES[gcal] : null;
@@ -76,19 +85,20 @@ export function GoogleCalendarCard({ connection, readiness, isOwner }: Props) {
       window.location.href = r.url;
     });
   }
-  const connect = () => go(startGoogleCalendarConnectAction);
-  const grantEventAccess = () => go(startGoogleCalendarEventScopeUpgradeAction);
+  const connect = () => go(() => startGoogleCalendarConnectAction(returnPath));
+  const grantEventAccess = () =>
+    go(() => startGoogleCalendarEventScopeUpgradeAction(returnPath));
 
   function disconnect() {
     setError(null);
     startTransition(async () => {
-      const r = await disconnectGoogleCalendarAction();
+      const r = await disconnectGoogleCalendarAction(returnPath);
       if (!r.ok) {
         setError(r.error);
         return;
       }
       setConfirmDisconnect(false);
-      window.location.href = "/settings/profile";
+      window.location.href = returnPath;
     });
   }
 
@@ -116,7 +126,7 @@ export function GoogleCalendarCard({ connection, readiness, isOwner }: Props) {
         return;
       }
       setCalendars(null);
-      window.location.href = "/settings/profile";
+      window.location.href = returnPath;
     });
   }
 
@@ -128,7 +138,7 @@ export function GoogleCalendarCard({ connection, readiness, isOwner }: Props) {
         setError(r.error);
         return;
       }
-      window.location.href = "/settings/profile";
+      window.location.href = returnPath;
     });
   }
 

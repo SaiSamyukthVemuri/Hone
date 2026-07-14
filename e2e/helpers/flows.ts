@@ -44,17 +44,20 @@ export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
   await expect(page.getByText(s.clientEmail).first()).toBeVisible();
 }
 
-export async function loginAsOwner(page: Page, s: E2eSeed): Promise<void> {
+// Real magic-link login for any seeded studio member (owner or practitioner).
+export async function loginByMagicLink(page: Page, email: string): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("Agree to Terms of Service and Privacy Policy").check();
-  await page.locator("#login-email").fill(s.ownerEmail);
+  await page.locator("#login-email").fill(email);
   // Magic links are single-use: snapshot the inbox BEFORE requesting
   // so a repeat login (new context/device) waits for the fresh link.
-  const seen = await listMessageIds(s.ownerEmail);
+  const seen = await listMessageIds(email);
   await page.getByRole("button", { name: /send magic link/i }).click();
-  const link = await waitForMagicLink(s.ownerEmail, E2E_APP_ORIGIN, {
-    excludeIds: seen,
-  });
+  const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
   await page.goto(link);
   await page.waitForURL(/dashboard/, { timeout: 30_000 });
+}
+
+export async function loginAsOwner(page: Page, s: E2eSeed): Promise<void> {
+  await loginByMagicLink(page, s.ownerEmail);
 }

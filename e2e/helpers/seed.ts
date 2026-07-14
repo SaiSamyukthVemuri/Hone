@@ -131,6 +131,44 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   };
 }
 
+// Seed a NON-OWNER practitioner (role 'practitioner') for an existing studio: a
+// pending_invitation + a real local GoTrue user, so the 0081 handle_new_user
+// trigger creates the member practitioner. Used to prove owner-only surfaces deny
+// non-owners. Returns the login email.
+export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
+  const uniq = randomUUID().slice(0, 8);
+  const email = `e2e-member-${seed.runId}-${uniq}@harness.local`;
+  await sql(
+    `insert into public.pending_invitations (studio_id, email, role, display_name)
+     values ($1, $2, 'practitioner', $3)`,
+    [seed.studioId, email, `E2E Member ${uniq}`],
+  );
+  const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: E2E_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, email_confirm: true }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `local GoTrue admin createUser (member) failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  const rows = await sql<{ role: string }>(
+    `select pr.role from public.practitioners pr
+       join auth.users u on u.id = pr.user_id
+      where pr.studio_id = $1 and lower(u.email) = lower($2)`,
+    [seed.studioId, email],
+  );
+  if (rows[0]?.role !== "practitioner") {
+    throw new Error("seed failed: member invitation did not create a practitioner");
+  }
+  return { email };
+}
+
 // PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
 // email with NO pending invitation. The 0081 handle_new_user trigger
 // fires on creation, finds no invitation, and creates NOTHING (no studio,
