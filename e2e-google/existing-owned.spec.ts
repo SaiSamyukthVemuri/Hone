@@ -54,18 +54,20 @@ test("Flow B — existing owned: only events.owned requested, owner-only picker,
     expect(s).not.toContain(APP_CREATED_SCOPE);
   }
 
-  // The picker shows ONLY owner-role calendars.
+  // The picker shows ONLY owner-role calendars (scope to the card's select — the
+  // page has other unrelated <select>s).
   await page.getByRole("button", { name: /Choose a calendar you own/i }).click();
-  const options = page.locator("select option");
+  const picker = page.getByTestId("gcal-existing-setup").locator("select");
+  const options = picker.locator("option");
   await expect(options).toHaveCount(1);
   await expect(options.first()).toHaveText(/My Real Calendar/);
-  const optionText = (await page.locator("select").innerText()).toLowerCase();
+  const optionText = (await picker.innerText()).toLowerCase();
   expect(optionText).not.toContain("shared writable");
   expect(optionText).not.toContain("read-only");
   expect(optionText).not.toContain("free-busy");
 
   // Select the owned calendar → server revalidates ownership → destination ready.
-  await page.selectOption("select", "own-1");
+  await picker.selectOption("own-1");
   await page.getByRole("button", { name: /Use this calendar/i }).click();
   await expect(page.getByTestId("gcal-ready")).toBeVisible();
 

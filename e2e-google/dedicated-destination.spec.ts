@@ -95,6 +95,10 @@ test("ambiguous multi-match — provisioning fails closed (needs attention), no 
 
   await chooseDedicatedAndGrant(page);
   await page.getByRole("button", { name: /Create the Hone Appointments calendar/i }).click();
+  // The provision returns an error (no reload); wait for the card error, then the
+  // persisted needs-attention state surfaces on the next server render.
+  await expect(page.locator('p[role="alert"]')).toBeVisible();
+  await page.reload();
 
   // Two synthetic calendars share the token → the server marks the connection as
   // needing attention and adopts NEITHER (no destination stored).

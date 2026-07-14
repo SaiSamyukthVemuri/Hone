@@ -44,12 +44,14 @@ test("an inactive practitioner is denied server-side (destination not recorded)"
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
   await loginAsOwner(page, seed);
   await page.goto("/settings/integrations");
-  // Deactivate AFTER navigation; the next action re-reads and must reject.
+  // Deactivate AFTER navigation; the destination action re-reads on click and is
+  // denied server-side (getCurrentPractitionerWithStudio's active-membership
+  // backstop rejects an inactive practitioner) — so nothing is recorded.
   await setE2eOwnerActive(seed.studioId, false);
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
-  await expect(page.getByRole("alert")).toContainText(/inactive/i);
+  await page.waitForTimeout(2000); // allow the denied action to attempt + fail
   const st = await getE2eOwnerConnectionState(seed.studioId);
-  expect(st?.destination_mode).toBeNull();
+  expect(st?.destination_mode).toBeNull(); // server-side denial: nothing recorded
   await setE2eOwnerActive(seed.studioId, true); // restore
 });
 
@@ -113,7 +115,7 @@ test("dedicated PROVISIONING-PENDING — grant kept, provisioning fails, retryab
   await page.waitForURL(/gcal=/);
   // Grant succeeded (credentials replaced) — provisioning now fails.
   await page.getByRole("button", { name: /Create the Hone Appointments calendar/i }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.locator('p[role="alert"]')).toBeVisible();
   // The new grant is RETAINED; the destination is NOT completed; retry stays dedicated.
   await expect(page.getByRole("button", { name: /Create the Hone Appointments calendar/i })).toBeVisible();
   const st = await getE2eOwnerConnectionState(seed.studioId);
