@@ -356,6 +356,52 @@ export async function setStudioGoogleCalendarConnectionEnabled(
   );
 }
 
+// Toggle the OWNER practitioner's active flag — proves the inactive-practitioner
+// server-side denial in the destination E2E.
+export async function setE2eOwnerActive(studioId: string, active: boolean): Promise<void> {
+  await sql(
+    `update public.practitioners set active = $2 where studio_id = $1 and role = 'owner'`,
+    [studioId, active],
+  );
+}
+
+// Read the owner connection's destination state (for E2E assertions of what the
+// server actually stored). Returns null when no connection exists.
+export async function getE2eOwnerConnectionState(
+  studioId: string,
+): Promise<{
+  destination_mode: string | null;
+  write_calendar_id: string | null;
+  app_created_calendar_id: string | null;
+  destination_ownership_validated_at: string | null;
+  destination_provisioning_ambiguous_at: string | null;
+  granted_scopes: string[];
+} | null> {
+  const rows = await sql<{
+    destination_mode: string | null;
+    write_calendar_id: string | null;
+    app_created_calendar_id: string | null;
+    destination_ownership_validated_at: string | null;
+    destination_provisioning_ambiguous_at: string | null;
+    granted_scopes: string[];
+  }>(
+    `select destination_mode, write_calendar_id, app_created_calendar_id,
+            destination_ownership_validated_at, destination_provisioning_ambiguous_at, granted_scopes
+       from public.calendar_connections
+      where studio_id = $1 and connection_status <> 'disconnected'
+      order by created_at desc limit 1`,
+    [studioId],
+  );
+  return rows[0] ?? null;
+}
+
+// Dormancy assertions for the destination E2E: outbox + event-link counts.
+export async function getE2eCalendarSyncCounts(): Promise<{ outbox: number; links: number }> {
+  const outbox = await sql<{ n: string }>(`select count(*)::text as n from public.calendar_sync_outbox`);
+  const links = await sql<{ n: string }>(`select count(*)::text as n from public.calendar_event_links`);
+  return { outbox: Number(outbox[0]?.n ?? "0"), links: Number(links[0]?.n ?? "0") };
+}
+
 // Google Calendar — Phase B2.2. Seed a CONNECTED owner connection (+ a dummy
 // encrypted secret so readiness sees a usable token) so the e2e can exercise the
 // derived readiness rendering (Grant-event-access CTA vs ready) WITHOUT a live

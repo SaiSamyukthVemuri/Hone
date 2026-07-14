@@ -7,6 +7,7 @@ import {
   OAUTH_NONCE_COOKIE,
   OAUTH_STATE_TTL_SECONDS,
   getGoogleOAuthClient,
+  oauthCookieSecure,
   safeReturnPath,
 } from "@/lib/google-calendar/config";
 import {
@@ -173,7 +174,7 @@ export async function startGoogleCalendarConnectAction(
     name: OAUTH_NONCE_COOKIE,
     value: state.nonce,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: oauthCookieSecure(),
     sameSite: "lax",
     path: "/",
     maxAge: OAUTH_STATE_TTL_SECONDS,
@@ -277,7 +278,7 @@ export async function startGoogleCalendarEventScopeUpgradeAction(
     name: OAUTH_NONCE_COOKIE,
     value: state.nonce,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: oauthCookieSecure(),
     sameSite: "lax",
     path: "/",
     maxAge: OAUTH_STATE_TTL_SECONDS,

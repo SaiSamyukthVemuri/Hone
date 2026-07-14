@@ -1,5 +1,6 @@
 import "server-only";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { isE2eFakeGoogleEnabled } from "./e2e/fake-google-guard";
 
 // Google Calendar OAuth configuration — Phase A (connection foundation).
 //
@@ -89,6 +90,20 @@ export function getOAuthRedirectUri(): string {
   return `${getRequiredAppOrigin()}${OAUTH_CALLBACK_PATH}`;
 }
 
+// The guarded local fake-authorize route (E2E only). In production the guard is
+// fail-closed, so getAuthorizeEndpoint() always returns the REAL Google endpoint.
+export const OAUTH_FAKE_AUTHORIZE_PATH = "/api/google-calendar/e2e/authorize";
+
+// The authorization endpoint the connect/upgrade URL points at. Real Google in
+// production; the guarded local fake-authorize route ONLY in the E2E lane (so the
+// browser never navigates to accounts.google.com under test).
+export function getAuthorizeEndpoint(): string {
+  if (isE2eFakeGoogleEnabled()) {
+    return `${getRequiredAppOrigin()}${OAUTH_FAKE_AUTHORIZE_PATH}`;
+  }
+  return GOOGLE_AUTH_ENDPOINT;
+}
+
 // Allow-listed post-callback return paths (defense against open-redirect). A
 // stored redirect_path is honored ONLY if it is an exact member of this set.
 // /settings/integrations is the owner-facing connection surface; /settings/profile
@@ -114,6 +129,13 @@ export function getGoogleOAuthClient(): GoogleOAuthClient | null {
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return null;
   return { clientId, clientSecret };
+}
+
+// The httpOnly nonce cookie's `secure` flag: tied to the actual app-origin scheme
+// (https in production -> secure:true) rather than NODE_ENV, so the local E2E lane
+// (next start / NODE_ENV=production over http://localhost) can still set + send it.
+export function oauthCookieSecure(): boolean {
+  return getRequiredAppOrigin().startsWith("https://");
 }
 
 // The httpOnly nonce cookie name (double-submit binding for the callback).

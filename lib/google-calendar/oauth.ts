@@ -1,7 +1,6 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  GOOGLE_AUTH_ENDPOINT,
   GOOGLE_CALENDAR_LIST_ENDPOINT,
   GOOGLE_CALENDARS_ENDPOINT,
   GOOGLE_REVOKE_ENDPOINT,
@@ -9,9 +8,11 @@ import {
   GOOGLE_TOKENINFO_ENDPOINT,
   GOOGLE_USERINFO_ENDPOINT,
   REQUESTED_SCOPES,
+  getAuthorizeEndpoint,
   getGoogleOAuthClient,
   getOAuthRedirectUri,
 } from "./config";
+import { googleFetch } from "./google-transport";
 
 // Thin, server-only Google OAuth 2.0 + Calendar REST client (Phase A).
 // Direct `fetch`, no SDK. Never logs tokens, authorization codes, or PKCE
@@ -68,7 +69,7 @@ export function buildAuthorizationUrl(opts: {
   });
   if (opts.forceConsent) params.set("prompt", "consent");
   if (opts.loginHint) params.set("login_hint", opts.loginHint);
-  return `${GOOGLE_AUTH_ENDPOINT}?${params.toString()}`;
+  return `${getAuthorizeEndpoint()}?${params.toString()}`;
 }
 
 // --- Code exchange ---
@@ -89,7 +90,7 @@ export async function exchangeAuthorizationCode(opts: {
   const client = getGoogleOAuthClient();
   if (!client) return { ok: false, reason: "oauth_client_unavailable" };
   try {
-    const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    const res = await googleFetch(GOOGLE_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -137,7 +138,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<RefreshR
   const client = getGoogleOAuthClient();
   if (!client) return { ok: false, reason: "oauth_client_unavailable", invalidGrant: false };
   try {
-    const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    const res = await googleFetch(GOOGLE_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -188,7 +189,7 @@ export type TokenInfoResult =
 
 export async function fetchTokenInfoScopes(accessToken: string): Promise<TokenInfoResult> {
   try {
-    const res = await fetch(
+    const res = await googleFetch(
       `${GOOGLE_TOKENINFO_ENDPOINT}?access_token=${encodeURIComponent(accessToken)}`,
     );
     if (!res.ok) return { ok: false, reason: `tokeninfo_http_${res.status}` };
@@ -206,7 +207,7 @@ export type UserInfoResult =
 
 export async function fetchUserInfo(accessToken: string): Promise<UserInfoResult> {
   try {
-    const res = await fetch(GOOGLE_USERINFO_ENDPOINT, {
+    const res = await googleFetch(GOOGLE_USERINFO_ENDPOINT, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) return { ok: false, reason: `userinfo_http_${res.status}` };
@@ -231,7 +232,7 @@ export type CalendarListResult =
 
 export async function fetchCalendarList(accessToken: string): Promise<CalendarListResult> {
   try {
-    const res = await fetch(`${GOOGLE_CALENDAR_LIST_ENDPOINT}?minAccessRole=writer&maxResults=250`, {
+    const res = await googleFetch(`${GOOGLE_CALENDAR_LIST_ENDPOINT}?minAccessRole=writer&maxResults=250`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) return { ok: false, reason: `calendarlist_http_${res.status}` };
@@ -270,7 +271,7 @@ export async function createSecondaryCalendar(
   input: { summary: string; description?: string },
 ): Promise<CreateCalendarResult> {
   try {
-    const res = await fetch(GOOGLE_CALENDARS_ENDPOINT, {
+    const res = await googleFetch(GOOGLE_CALENDARS_ENDPOINT, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -311,7 +312,7 @@ export async function findCalendarsByDescriptionToken(
   }
   try {
     // Include showHidden so a freshly-created (not yet surfaced) calendar is found.
-    const res = await fetch(
+    const res = await googleFetch(
       `${GOOGLE_CALENDAR_LIST_ENDPOINT}?minAccessRole=owner&maxResults=250&showHidden=true`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
@@ -342,7 +343,7 @@ export async function deleteCalendar(
   calendarId: string,
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const res = await fetch(
+    const res = await googleFetch(
       `${GOOGLE_CALENDARS_ENDPOINT}/${encodeURIComponent(calendarId)}`,
       { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
     );
@@ -356,7 +357,7 @@ export async function deleteCalendar(
 // --- Revocation (disconnect) ---
 export async function revokeToken(token: string): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const res = await fetch(GOOGLE_REVOKE_ENDPOINT, {
+    const res = await googleFetch(GOOGLE_REVOKE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token }),

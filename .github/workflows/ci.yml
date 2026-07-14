@@ -321,3 +321,70 @@ jobs:
           name: payment-playwright-traces
           path: test-results/
           retention-days: 7
+
+  # Synthetic Google: sets the two server-only markers (HONE_E2E_FAKE_GOOGLE=1 +
+  # a per-job HONE_E2E_RUN_ID) plus a FAKE Google OAuth client, so the fake-Google
+  # activation guard passes here and NOWHERE else. No Vercel markers → the guard is
+  # fail-closed everywhere else and NO real Google request can leave this lane.
+  # Separate job (own runner) → no port collision with the other browser lanes.
+  google-browser-e2e:
+    name: google browser e2e (fake google)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the per-job fake-Google run id
+        # ONE validated run id shared by the Next server + Playwright runner +
+        # both ledger sides. Matches the fake-Google guard regex
+        # (/^[a-z0-9][a-z0-9-]{7,63}$/). Fake Google is enabled ONLY in this job.
+        run: |
+          echo "HONE_E2E_RUN_ID=run-$(openssl rand -hex 6)" >> "$GITHUB_ENV"
+          echo "HONE_E2E_FAKE_GOOGLE=1" >> "$GITHUB_ENV"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      - name: Start local Supabase stack (db + auth + mail capture)
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Synthetic Google browser E2E (dual destination, guarded fake Google)
+        run: npm run test:e2e:google
+
+      - name: Clean run-scoped fake ledger temp files
+        if: always()
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-google-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-google-*.json || true
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-playwright-traces
+          path: test-results/
+          retention-days: 7
