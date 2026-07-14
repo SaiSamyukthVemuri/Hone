@@ -58,6 +58,7 @@ describe("no secrets in logs", () => {
         writeCalendarId: "primary",
         isStudioCalendarOwner: true,
         tokenExpiresAt: null,
+        destinationMode: "existing_owned",
       }),
       loadRefreshCiphertext: async () => "enc:super-secret-refresh",
       storeRotatedToken: async () => {},
@@ -79,7 +80,7 @@ describe("no secrets in logs", () => {
       fetchImpl: (async () => mockResponse(400, JSON.stringify({ error: "invalid_grant" }))) as unknown as typeof fetch,
     });
     const store: ConnectionStore = {
-      loadConnection: async () => ({ id: "c", studioId: "s", practitionerId: "p", connectionStatus: "connected", grantedScopes: [], writeCalendarId: null, isStudioCalendarOwner: true, tokenExpiresAt: null }),
+      loadConnection: async () => ({ id: "c", studioId: "s", practitionerId: "p", connectionStatus: "connected", grantedScopes: [], writeCalendarId: null, isStudioCalendarOwner: true, tokenExpiresAt: null, destinationMode: "existing_owned" }),
       loadRefreshCiphertext: async () => "enc:super-secret-refresh",
       storeRotatedToken: async () => {},
       touchTokenExpiry: async () => {},

@@ -111,3 +111,46 @@ describe("0131 — readiness predicate is destination-aware + empty-array fail-c
     expect(SQL).toMatch(/calendar_connection_outbound_ready\(\s*p_connection_id uuid, p_studio_id uuid\)/);
   });
 });
+
+describe("0131 — Stage 2 amendment: dedicated provisioning-state (additive + dormant)", () => {
+  it("adds the three nullable provisioning-state columns to calendar_connections", () => {
+    expect(SQL).toMatch(/add column if not exists destination_provisioning_attempt_token text/);
+    expect(SQL).toMatch(/add column if not exists destination_provisioning_started_at timestamptz/);
+    expect(SQL).toMatch(/add column if not exists destination_provisioning_ambiguous_at timestamptz/);
+  });
+  it("guards provisioning-state to the dedicated mode only", () => {
+    expect(SQL).toMatch(/calendar_connections_provisioning_mode_chk/);
+    expect(SQL).toMatch(/destination_provisioning_attempt_token is null[\s\S]*?destination_mode = 'dedicated_app_created'/);
+  });
+  it("stores NO token/secret/PHI — the attempt token is a random NON-SENSITIVE reconciliation marker", () => {
+    // Scope to the provisioning-state section only (section 4's readiness predicate
+    // legitimately READS sec.encrypted_refresh_token existence — not a stored secret).
+    const provBlock = SQL.slice(
+      SQL.indexOf("5) DEDICATED-destination provisioning-state"),
+      SQL.indexOf("6) Destination-BOUND OAuth state"),
+    );
+    expect(provBlock).toMatch(/destination_provisioning_attempt_token/);
+    expect(provBlock).not.toMatch(/refresh_token|access_token|encrypted_/i);
+  });
+});
+
+describe("0131 — Stage 2 amendment: destination-bound OAuth state (additive + dormant)", () => {
+  it("adds the destination binding columns to google_oauth_states", () => {
+    expect(SQL).toMatch(/alter table public\.google_oauth_states[\s\S]*?add column if not exists destination_mode text/);
+    expect(SQL).toMatch(/add column if not exists required_event_scope text/);
+  });
+  it("constrains the bound mode to the two known modes or NULL", () => {
+    expect(SQL).toMatch(/google_oauth_states_destination_mode_chk/);
+    expect(SQL).toMatch(/destination_mode is null[\s\S]*?in \('dedicated_app_created', 'existing_owned'\)/);
+  });
+  it("binds destination mode + required scope as a matched pair (both or neither)", () => {
+    expect(SQL).toMatch(/google_oauth_states_destination_pair_chk/);
+    expect(SQL).toMatch(/\(destination_mode is null\) = \(required_event_scope is null\)/);
+  });
+  it("does NOT weaken google_oauth_states default-deny (no new browser grant/policy here)", () => {
+    // The 0122 RLS/REVOKE posture is untouched; the amendment adds columns only.
+    const stateBlock = SQL.slice(SQL.indexOf("alter table public.google_oauth_states"));
+    expect(stateBlock).not.toMatch(/grant .* to (anon|authenticated|public)/i);
+    expect(stateBlock).not.toMatch(/create policy|enable row level security/i);
+  });
+});

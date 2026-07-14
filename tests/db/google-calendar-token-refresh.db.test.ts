@@ -38,7 +38,7 @@ function pgStore(): ConnectionStore {
   return {
     async loadConnection(id, studioId) {
       const r = await adminQuery(
-        "select id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at from public.calendar_connections where id=$1 and studio_id=$2",
+        "select id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at, destination_mode from public.calendar_connections where id=$1 and studio_id=$2",
         [id, studioId],
       );
       if (r.rowCount === 0) return null;
@@ -52,6 +52,7 @@ function pgStore(): ConnectionStore {
         writeCalendarId: row.write_calendar_id,
         isStudioCalendarOwner: row.is_studio_calendar_owner === true,
         tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at).toISOString() : null,
+        destinationMode: row.destination_mode ?? null,
       };
     },
     async loadRefreshCiphertext(id, studioId) {

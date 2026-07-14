@@ -64,10 +64,13 @@ describe("B2.1 worker core is not activated", () => {
     }
   });
 
-  it("the handler enforces the calendar.events scope at execution", () => {
+  it("the handler enforces the DESTINATION event scope at execution (not broad calendar.events)", () => {
     const handler = readFileSync(join(ROOT, "lib", "google-calendar", "sync", "handler.ts"), "utf8");
-    expect(handler).toContain("https://www.googleapis.com/auth/calendar.events");
-    expect(handler).toMatch(/grantedScopes\.includes\(REQUIRED_OUTBOUND_SCOPE\)/);
+    // Destination-aware exact-scope gate; the retired broad calendar.events literal
+    // and REQUIRED_OUTBOUND_SCOPE are gone.
+    expect(handler).toMatch(/hasRequiredEventScopes\(\s*conn\.destinationMode\s*,\s*conn\.grantedScopes\s*\)/);
+    expect(handler).not.toContain("REQUIRED_OUTBOUND_SCOPE");
+    expect(handler).not.toMatch(/["']https:\/\/www\.googleapis\.com\/auth\/calendar\.events["']/);
   });
 
   it("the REST client uses fetch (no googleapis dependency)", () => {

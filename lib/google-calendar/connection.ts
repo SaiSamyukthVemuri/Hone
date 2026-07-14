@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { deriveConnectionReadiness, type ConnectionReadiness } from "./readiness";
+import type { CalendarDestinationMode } from "./destination-scopes";
 
 // calendar_connections / calendar_connection_secrets access. All writes are
 // service-role (admin client); the ciphertext table is never read by browser
@@ -26,10 +27,17 @@ export type ConnectionMetadata = {
   appCreatedCalendarId: string | null;
   destinationConfiguredAt: string | null;
   destinationOwnershipValidatedAt: string | null;
+  // B2.4 Stage 2 provisioning-state (dedicated mode only). Non-sensitive.
+  // ambiguousAt set => reconciliation found multiple token matches => needs
+  // attention (readiness derives "needs_attention"). attemptToken/startedAt are
+  // the idempotency + reconciliation inputs.
+  provisioningAttemptToken: string | null;
+  provisioningStartedAt: string | null;
+  provisioningAmbiguousAt: string | null;
 };
 
 const METADATA_COLUMNS =
-  "id, connection_status, google_account_email, write_calendar_id, granted_scopes, is_studio_calendar_owner, last_successful_auth_at, last_error_code, token_expires_at, destination_mode, selected_calendar_display_name, app_created_calendar_id, destination_configured_at, destination_ownership_validated_at";
+  "id, connection_status, google_account_email, write_calendar_id, granted_scopes, is_studio_calendar_owner, last_successful_auth_at, last_error_code, token_expires_at, destination_mode, selected_calendar_display_name, app_created_calendar_id, destination_configured_at, destination_ownership_validated_at, destination_provisioning_attempt_token, destination_provisioning_started_at, destination_provisioning_ambiguous_at";
 
 function toMetadata(row: Record<string, unknown>): ConnectionMetadata {
   return {
@@ -47,6 +55,9 @@ function toMetadata(row: Record<string, unknown>): ConnectionMetadata {
     appCreatedCalendarId: (row.app_created_calendar_id as string | null) ?? null,
     destinationConfiguredAt: (row.destination_configured_at as string | null) ?? null,
     destinationOwnershipValidatedAt: (row.destination_ownership_validated_at as string | null) ?? null,
+    provisioningAttemptToken: (row.destination_provisioning_attempt_token as string | null) ?? null,
+    provisioningStartedAt: (row.destination_provisioning_started_at as string | null) ?? null,
+    provisioningAmbiguousAt: (row.destination_provisioning_ambiguous_at as string | null) ?? null,
   };
 }
 
@@ -124,6 +135,9 @@ export async function getOwnConnectionReadiness(
     isStudioCalendarOwner: metadata.isStudioCalendarOwner,
     writeCalendarId: metadata.writeCalendarId,
     destinationMode: metadata.destinationMode,
+    appCreatedCalendarId: metadata.appCreatedCalendarId,
+    destinationOwnershipValidatedAt: metadata.destinationOwnershipValidatedAt,
+    provisioningAmbiguousAt: metadata.provisioningAmbiguousAt,
   });
   return { metadata, readiness };
 }
@@ -298,6 +312,183 @@ export async function setWriteCalendar(
     .update({ write_calendar_id: calendarId, updated_at: new Date().toISOString() })
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId);
+}
+
+// B2.4 — record the owner's chosen appointment DESTINATION mode. NO-SWITCH: once a
+// mode is set, B2.4 does not support changing to the other mode (destination
+// switching is a separate future product/data-lifecycle decision — see
+// docs/integrations/google-calendar-sync.md). A re-select of the SAME mode is an
+// idempotent no-op (recovery from a pending state stays on the same mode).
+// Choosing a mode for the first time (currently NULL) is allowed. Readiness stays
+// derived; this only records the input.
+export async function setDestinationMode(
+  studioId: string,
+  practitionerId: string,
+  mode: CalendarDestinationMode,
+): Promise<PersistResult> {
+  const admin = createAdminClient();
+  const { data: conn } = await admin
+    .from("calendar_connections")
+    .select("id, destination_mode")
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .maybeSingle();
+  if (!conn) return { ok: false, reason: "connection_not_found" };
+  const connectionId = conn.id as string;
+  const current = conn.destination_mode as string | null;
+  if (current === mode) return { ok: true, connectionId }; // idempotent no-op
+  if (current !== null) return { ok: false, reason: "destination_switching_unsupported" };
+
+  // First mode choice (NULL -> mode): start from a CLEAN destination slate. In
+  // particular clear the Phase-A default write_calendar_id so it can never
+  // masquerade as a configured destination target (the mode's config step
+  // establishes the real target). No provenance can pre-exist for a fresh mode.
+  const { error } = await admin
+    .from("calendar_connections")
+    .update({
+      destination_mode: mode,
+      write_calendar_id: null,
+      selected_calendar_display_name: null,
+      app_created_calendar_id: null,
+      destination_ownership_validated_at: null,
+      destination_configured_at: null,
+      destination_provisioning_attempt_token: null,
+      destination_provisioning_started_at: null,
+      destination_provisioning_ambiguous_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", connectionId);
+  if (error) return { ok: false, reason: "destination_mode_update_failed" };
+  return { ok: true, connectionId };
+}
+
+// B2.4 dedicated provisioning — record a NEW attempt token + start time BEFORE the
+// Google calendars.insert, so an ambiguous provider response can be reconciled by
+// EXACT token match. Guarded to the dedicated mode + only when NOT yet provisioned
+// (app_created_calendar_id null) and NOT flagged ambiguous. Returns the token to
+// embed in the created calendar's description.
+export type ProvisioningAttemptResult =
+  | { ok: true; connectionId: string; attemptToken: string }
+  | { ok: false; reason: string };
+
+export async function beginDedicatedProvisioningAttempt(
+  studioId: string,
+  practitionerId: string,
+  attemptToken: string,
+): Promise<ProvisioningAttemptResult> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  const { data: conn, error } = await admin
+    .from("calendar_connections")
+    .update({
+      destination_provisioning_attempt_token: attemptToken,
+      destination_provisioning_started_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .eq("destination_mode", "dedicated_app_created")
+    .is("app_created_calendar_id", null)
+    .is("destination_provisioning_ambiguous_at", null)
+    // CAS: only the FIRST caller mints the STABLE attempt token. A later retry
+    // (token already present) or a concurrent caller matches 0 rows and re-reads
+    // the claimed token — so every retry reconciles under ONE stable token and a
+    // concurrent double-create is detected as ambiguous (never silently adopted).
+    .is("destination_provisioning_attempt_token", null)
+    .select("id")
+    .maybeSingle();
+  if (error || !conn) return { ok: false, reason: "begin_provisioning_failed" };
+  return { ok: true, connectionId: conn.id as string, attemptToken };
+}
+
+// B2.4 dedicated_app_created — record the Hone-CREATED (or reconciled) secondary
+// calendar as the destination. Sets the idempotency anchor (app_created_calendar_id)
+// + write target + safe display name + configured timestamp, clears the ambiguity
+// marker + the mutually-exclusive owned-validation fact. Guarded to the dedicated
+// mode: a wrong-mode row matches nothing and fails closed.
+export async function setDedicatedCalendarDestination(
+  studioId: string,
+  practitionerId: string,
+  input: { calendarId: string; displayName: string },
+): Promise<PersistResult> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  const { data: conn, error } = await admin
+    .from("calendar_connections")
+    .update({
+      app_created_calendar_id: input.calendarId,
+      write_calendar_id: input.calendarId,
+      selected_calendar_display_name: input.displayName,
+      destination_ownership_validated_at: null,
+      destination_configured_at: nowIso,
+      destination_provisioning_ambiguous_at: null,
+      updated_at: nowIso,
+    })
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .eq("destination_mode", "dedicated_app_created")
+    .select("id")
+    .maybeSingle();
+  if (error || !conn) return { ok: false, reason: "dedicated_destination_update_failed" };
+  return { ok: true, connectionId: conn.id as string };
+}
+
+// B2.4 dedicated — mark the connection AMBIGUOUS (reconciliation found multiple
+// token matches). Readiness derives "needs_attention"; no calendar is auto-created
+// while this is set. Guarded to the dedicated mode + only when not yet provisioned.
+export async function markDedicatedProvisioningAmbiguous(
+  studioId: string,
+  practitionerId: string,
+): Promise<PersistResult> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  const { data: conn, error } = await admin
+    .from("calendar_connections")
+    .update({
+      destination_provisioning_ambiguous_at: nowIso,
+      last_error_code: "provisioning_ambiguous",
+      last_error_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .eq("destination_mode", "dedicated_app_created")
+    .is("app_created_calendar_id", null)
+    .select("id")
+    .maybeSingle();
+  if (error || !conn) return { ok: false, reason: "mark_ambiguous_failed" };
+  return { ok: true, connectionId: conn.id as string };
+}
+
+// B2.4 existing_owned — record a server-VALIDATED owned calendar as the destination
+// (the caller has already confirmed accessRole === "owner" against Google's own
+// calendar list for this connection). Sets the write target + safe display name +
+// ownership-validated timestamp + configured timestamp, clears the mutually-
+// exclusive app-created anchor. Guarded to the existing_owned mode.
+export async function setOwnedCalendarDestination(
+  studioId: string,
+  practitionerId: string,
+  input: { calendarId: string; displayName: string },
+): Promise<PersistResult> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  const { data: conn, error } = await admin
+    .from("calendar_connections")
+    .update({
+      write_calendar_id: input.calendarId,
+      selected_calendar_display_name: input.displayName,
+      app_created_calendar_id: null,
+      destination_ownership_validated_at: nowIso,
+      destination_configured_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("studio_id", studioId)
+    .eq("practitioner_id", practitionerId)
+    .eq("destination_mode", "existing_owned")
+    .select("id")
+    .maybeSingle();
+  if (error || !conn) return { ok: false, reason: "owned_destination_update_failed" };
+  return { ok: true, connectionId: conn.id as string };
 }
 
 // Designate the studio's single calendar owner. Clears the flag on every other

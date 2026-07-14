@@ -11,11 +11,11 @@ const DISCOVERY_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.r
 // EXACT calendar.events.owned scope (broad calendar.events no longer satisfies it).
 const EVENTS_OWNED_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned";
 
-// Google Calendar — Phase A, real browser. Exercises the connection FOUNDATION
-// UI without any Google account: the studio flag gate (card hidden when OFF,
-// shown when ON), the dormant/iCal-distinction copy, and the fail-closed connect
-// path when the integration is not provisioned (no GOOGLE_* env in the e2e
-// stack). No event sync, no availability change, no external navigation.
+// Google Calendar — Phase A + B2.4, real browser. Exercises the connection UI and
+// the owner DESTINATION chooser WITHOUT any Google account: the studio flag gate,
+// the dormant/iCal-distinction copy, the destination chooser rendering, and the
+// fail-closed OAuth paths when the integration is not provisioned (no GOOGLE_* env
+// in the e2e stack). No event sync, no availability change, no external navigation.
 
 test("Google Calendar card: flag-gated, dormant, fail-closed when unconfigured", async ({
   page,
@@ -51,33 +51,40 @@ test("Google Calendar card: flag-gated, dormant, fail-closed when unconfigured",
   });
 });
 
-// Phase B2.2 — event-scope readiness rendering + fail-closed upgrade. Uses a
-// seeded CONNECTED owner connection so the derived readiness surfaces the right
-// CTA/message WITHOUT a live Google round-trip (the e2e stack has no GOOGLE_*
-// env, so the upgrade action fails closed exactly like Phase-A connect).
-test("Google Calendar card: event-scope readiness + fail-closed upgrade + ready state", async ({
+// B2.4 — a connected owner with NO destination sees the destination chooser; the
+// dormant statement is explicit. Choosing a mode records it (a plain DB write, no
+// Google call), then the destination-scope grant fails closed (no GOOGLE_* env).
+test("Google Calendar card: connected owner sees the destination chooser + fail-closed grant", async ({
   page,
 }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
+  await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]); // connected, no destination yet
+  await loginAsOwner(page, seed);
 
-  await test.step("a connected Phase-A owner shows the dormant banner + Grant event access CTA", async () => {
-    await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]); // no event scope yet
-    await loginAsOwner(page, seed);
-    await page.goto("/settings/profile");
-    await expect(page.getByText(/Event synchronization is still disabled/i)).toBeVisible();
-    await expect(page.getByText(/Event access not granted/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: /grant calendar event access/i })).toBeVisible();
+  await page.goto("/settings/profile");
+  await expect(
+    page.getByText(/Synchronization is off\. Hone is not creating or changing appointment events\./i),
+  ).toBeVisible();
+
+  await test.step("the owner sees both destination options", async () => {
+    await expect(page.getByText(/Where should Hone add appointments\?/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create a Hone Appointments calendar/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Use an existing calendar$/i })).toBeVisible();
   });
 
-  await test.step("clicking Grant event access fails closed when unconfigured (no navigation to Google)", async () => {
-    await page.getByRole("button", { name: /grant calendar event access/i }).click();
+  await test.step("choosing dedicated advances to the permission step, which fails closed", async () => {
+    await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
+    await expect(
+      page.getByRole("button", { name: /Grant permission to create a calendar/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
     await expect(page.getByText(/not configured yet/i)).toBeVisible({ timeout: 20_000 });
     await expect(page).toHaveURL(/\/settings\/profile/);
   });
 });
 
-test("Google Calendar card: an event-scoped owner connection reads as ready-for-future-sync", async ({
+test("Google Calendar card: a fully-configured owned destination reads as ready-for-future-sync", async ({
   page,
 }) => {
   const seed = await seedE2eStudio();
@@ -86,9 +93,12 @@ test("Google Calendar card: an event-scoped owner connection reads as ready-for-
   await loginAsOwner(page, seed);
 
   await page.goto("/settings/profile");
-  await expect(page.getByText(/Ready for future event sync/i).first()).toBeVisible();
-  // Even when ready, the dormant banner remains — sync is never claimed active.
-  await expect(page.getByText(/Event synchronization is still disabled/i)).toBeVisible();
-  // No upgrade CTA when the scope is already granted.
-  await expect(page.getByRole("button", { name: /grant calendar event access/i })).toHaveCount(0);
+  await expect(page.getByTestId("gcal-ready")).toBeVisible();
+  await expect(page.getByText(/Destination ready for future event sync/i)).toBeVisible();
+  // Even when ready, the dormant statement remains — sync is never claimed active.
+  await expect(
+    page.getByText(/Synchronization is off\. Hone is not creating or changing appointment events\./i),
+  ).toBeVisible();
+  // No destination chooser once a destination is configured.
+  await expect(page.getByTestId("gcal-destination-chooser")).toHaveCount(0);
 });

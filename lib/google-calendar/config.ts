@@ -32,6 +32,11 @@ export const GOOGLE_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1
 export const GOOGLE_TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo";
 export const GOOGLE_CALENDAR_LIST_ENDPOINT =
   "https://www.googleapis.com/calendar/v3/users/me/calendarList";
+// Secondary-calendar collection (B2.4 dedicated destination): POST creates a
+// Hone-owned calendar (calendar.app.created scope); DELETE `${endpoint}/{id}`
+// removes one (used only to roll back a create whose local persist failed).
+export const GOOGLE_CALENDARS_ENDPOINT =
+  "https://www.googleapis.com/calendar/v3/calendars";
 
 // --- Scopes ---
 // PHASE A (this PR): the MINIMUM for account identity + calendar-list discovery
@@ -48,27 +53,30 @@ export const PHASE_A_SCOPES = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ] as const;
 
-// PHASE B (future — DOCUMENTED here, NOT requested now): outbound event sync
-// adds calendar.events (write Hone-owned events); inbound busy adds
-// calendar.readonly (read busy/free). These will be requested via INCREMENTAL
-// authorization (include_granted_scopes=true), so Sam's controlled connection
-// will require exactly ONE additional consent/reconnect when Phase B ships.
+// PHASE B (DOCUMENTED here, requested destination-specifically — NOT broad). B2.4
+// makes the outbound event scope DERIVE from the connection's chosen destination
+// (see lib/google-calendar/destination-scopes.ts): a Hone-created calendar needs
+// calendar.app.created; an existing owned calendar needs calendar.events.owned.
+// Broad `calendar.events` is DELIBERATELY EXCLUDED — B2.4 superseded it; it
+// satisfies the outbound contract nowhere. Inbound busy (Phase C) will add
+// calendar.readonly. All are requested via INCREMENTAL authorization
+// (include_granted_scopes=true), so a connection takes exactly ONE additional
+// consent/reconnect per new scope.
 export const PHASE_B_ADDITIONAL_SCOPES = [
-  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.app.created",
+  "https://www.googleapis.com/auth/calendar.events.owned",
   "https://www.googleapis.com/auth/calendar.readonly",
 ] as const;
 
 // The scopes actually requested for the INITIAL Phase-A connect.
 export const REQUESTED_SCOPES = PHASE_A_SCOPES;
 
-// SUPERSEDED by B2.4 (migration 0131). Broad `calendar.events` is no longer part
-// of the event-scope contract: readiness + the DB seam now require the EXACT
-// destination scope (calendar.app.created for a Hone-created calendar, or
-// calendar.events.owned for an existing owned calendar) — see
-// lib/google-calendar/destination-scopes.ts. This constant is retained only until
-// the B2.2 upgrade action's request path is rewired to be destination-aware
-// (B2.4 Stage 2); it grants NO readiness anywhere.
-export const EVENT_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// NOTE: broad `calendar.events` (the old EVENT_WRITE_SCOPE) was REMOVED in B2.4
+// Stage 2. It is no longer part of the event-scope contract and is requested /
+// accepted nowhere. The exact destination scopes live in
+// lib/google-calendar/destination-scopes.ts (calendar.app.created /
+// calendar.events.owned) and are the ONLY event scopes this integration requests.
+
 // The calendar-list discovery scope (Phase A) the connection must retain.
 export const CALENDAR_DISCOVERY_SCOPE = PHASE_A_SCOPES[2];
 

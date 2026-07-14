@@ -6,9 +6,13 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
   CALENDAR_DISCOVERY_SCOPE,
   DEFAULT_RETURN_PATH,
-  EVENT_WRITE_SCOPE,
   OAUTH_NONCE_COOKIE,
 } from "@/lib/google-calendar/config";
+import {
+  hasRequiredEventScopes,
+  normalizeGrantedScopes,
+  requiredEventScopeFor,
+} from "@/lib/google-calendar/destination-scopes";
 import {
   exchangeAuthorizationCode,
   fetchCalendarList,
@@ -23,13 +27,21 @@ import {
   persistConnectedFromCallback,
 } from "@/lib/google-calendar/connection";
 
-// Google OAuth 2.0 authorization-code CALLBACK — Phase A.
+// Google OAuth 2.0 authorization-code CALLBACK — Phase A + B2.2 + B2.4.
 //
 // Browser-called WITH the practitioner's Supabase session (the httpOnly session
 // cookie is SameSite=Lax, so it IS sent on Google's top-level redirect back).
-// It is therefore NOT allow-listed anonymous in middleware — it must resolve
-// auth.getUser(). It never logs the code, tokens, or PKCE. It fails closed to a
-// generic ?gcal=error, never leaking why.
+// It never logs the code, tokens, or PKCE. It fails closed to a generic
+// ?gcal=error, never leaking why.
+//
+// CREDENTIAL BOUNDARY (B2.4 §11). persistConnectedFromCallback is the ATOMIC
+// replacement of the stored credentials + granted scopes. Every failure BEFORE it
+// (code exchange, lost discovery scope, account mismatch, destination changed,
+// missing/partial destination scope) preserves the PREVIOUS credentials and stores
+// NOTHING. Only after the actual grant is validated do we replace credentials.
+// Destination provisioning/selection happens LATER in a separate owner action, so a
+// post-replacement provisioning/selection failure keeps the new grant and derives a
+// pending state — it never rolls back the consented credentials.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -60,8 +72,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } = await supabase.auth.getUser();
   if (!user) return redirect("/login", "error");
 
-  // Consume the single-use state (validates hash, expiry, nonce cookie, and
-  // that this is the SAME user who started the flow).
+  // Consume the single-use state (validates hash, expiry, nonce cookie, that this
+  // is the SAME user who started the flow, and — atomically — that no concurrent
+  // duplicate callback already consumed it). Also returns the B2.4 destination
+  // binding (null for a plain Phase-A connect).
   const jar = await cookies();
   const nonce = jar.get(OAUTH_NONCE_COOKIE)?.value ?? null;
   const consumed = await consumeOAuthState({ state, nonce, userId: user.id });
@@ -78,17 +92,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .maybeSingle();
   if (!prac || prac.active !== true) return redirect(consumed.redirectPath, "error");
 
-  // Exchange the code for tokens (server-side, with the PKCE verifier).
+  // Exchange the code for tokens (server-side, with the PKCE verifier). A failure
+  // here is PRE-replacement: nothing is stored, the previous credentials survive.
   const token = await exchangeAuthorizationCode({ code, codeVerifier: consumed.codeVerifier });
   if (!token.ok) return redirect(consumed.redirectPath, "error");
 
-  // Granted-scope verification. PRIMARY: the token-response `scope` field. It is
-  // authoritative for what the grant contains and costs no extra call. FALLBACK
-  // ONLY: tokeninfo, when the response omitted `scope`.
-  let grantedScopes = token.grantedScopes;
+  // ACTUAL granted-scope truth. PRIMARY: the token-response `scope` field. FALLBACK
+  // ONLY: tokeninfo, when the response omitted `scope`. Normalize to exact tokens
+  // (no substring/prefix); we persist only these normalized scopes.
+  let grantedScopes = normalizeGrantedScopes(token.grantedScopes);
   if (grantedScopes.length === 0) {
     const ti = await fetchTokenInfoScopes(token.accessToken);
-    if (ti.ok) grantedScopes = ti.scopes;
+    if (ti.ok) grantedScopes = normalizeGrantedScopes(ti.scopes);
   }
 
   // The connection must retain calendar-list discovery, or selection is
@@ -103,30 +118,52 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!info.ok) return redirect(consumed.redirectPath, "error");
 
   // ACCOUNT-SWITCH PROTECTION. If a connection already exists, the returned Google
-  // identity MUST match it. On a mismatch we STOP — never overwrite credentials or
-  // granted_scopes; the practitioner must explicitly disconnect first.
+  // identity MUST match it. On a mismatch we STOP (PRE-replacement) — never
+  // overwrite credentials or granted_scopes; the practitioner must disconnect first.
   const existing = await getOwnConnectionMetadata(consumed.studioId, consumed.practitionerId);
   const existingAccountId = await getConnectionAccountId(consumed.studioId, consumed.practitionerId);
-  const isReauth = existingAccountId !== null;
   if (existingAccountId !== null && existingAccountId !== info.sub) {
     return redirect(consumed.redirectPath, "account_mismatch");
   }
 
-  // Preserve the existing write-calendar selection on a re-auth (a scope upgrade
-  // must not reset the practitioner's chosen calendar). Discover a default only
-  // for an initial connect / when none is set.
+  // B2.4 DESTINATION-BOUND upgrade validation. ALL of these are PRE-replacement
+  // gates: on any failure the previous credentials + grant are preserved.
+  const boundMode = consumed.destinationMode;
+  if (boundMode !== null) {
+    // The destination must not have changed between start and callback.
+    if (!existing || existing.destinationMode !== boundMode) {
+      return redirect(consumed.redirectPath, "destination_changed");
+    }
+    // Re-derive the required scope from the (current) mode and compare to the bound
+    // value — a tampered single-column state value cannot pass.
+    const expected = requiredEventScopeFor(boundMode);
+    if (expected === null || expected !== consumed.requiredEventScope) {
+      return redirect(consumed.redirectPath, "error");
+    }
+    // The ACTUAL grant must contain the EXACT destination scope. A partial grant
+    // (discovery only / broad calendar.events / wrong destination scope) is a
+    // PRE-replacement failure: preserve the previous credentials, store nothing.
+    if (!hasRequiredEventScopes(boundMode, grantedScopes)) {
+      return redirect(consumed.redirectPath, "event_scope_not_granted");
+    }
+  }
+
+  // Write calendar. Preserve any existing selection. For a plain Phase-A connect
+  // (no destination binding) discover a sensible default so selection has a value;
+  // for a destination upgrade DO NOT auto-pick — the destination config step sets
+  // the real write target (and setDestinationMode cleared the Phase-A default).
   let writeCalendarId = existing?.writeCalendarId ?? null;
-  if (!writeCalendarId) {
+  if (!writeCalendarId && boundMode === null) {
     const list = await fetchCalendarList(token.accessToken);
     writeCalendarId = list.ok
       ? (list.calendars.find((c) => c.primary)?.id ?? list.calendars[0]?.id ?? "primary")
       : "primary";
   }
 
-  // Encrypt the (possibly rotated) refresh token before storage. If Google
-  // withheld one (silent re-grant), persist PRESERVES the existing encrypted
-  // token; if encryption fails we redirect error and never store plaintext — the
-  // existing token stays intact (the B2.1 fail-closed posture).
+  // Encrypt the (possibly rotated) refresh token before storage. If Google withheld
+  // one (silent re-grant), persist PRESERVES the existing encrypted token; if
+  // encryption fails we redirect error and never store plaintext — the existing
+  // token stays intact (fail-closed).
   let encryptedRefreshToken: string | null = null;
   let refreshTokenLast4: string | null = null;
   let keyVersion = 0;
@@ -138,6 +175,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     keyVersion = enc.keyVersion;
   }
 
+  // ---- ATOMIC CREDENTIAL REPLACEMENT (the boundary). ----
   const persisted = await persistConnectedFromCallback({
     studioId: consumed.studioId,
     practitionerId: consumed.practitionerId,
@@ -148,19 +186,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     writeCalendarId,
     encryptedRefreshToken,
     refreshTokenLast4,
-    // If no token this run, keyVersion stays 0 but is unused (persist preserves
-    // the existing secret row, which already carries its own version).
     encryptionKeyVersion: keyVersion || 1,
   });
   if (!persisted.ok) {
-    return redirect(consumed.redirectPath, persisted.reason === "no_refresh_token" ? "reconnect_required" : "error");
+    return redirect(
+      consumed.redirectPath,
+      persisted.reason === "no_refresh_token" ? "reconnect_required" : "error",
+    );
   }
 
-  // Non-destructive outcome banners (readiness itself is derived on the card):
-  //   - event scope granted        -> affirm readiness for future sync
-  //   - re-auth without the scope   -> the upgrade was denied/partial (Phase A intact)
-  //   - initial connect            -> connected
-  const hasEvents = grantedScopes.includes(EVENT_WRITE_SCOPE);
-  const status = hasEvents ? "event_scope_granted" : isReauth ? "event_scope_not_granted" : "connected";
+  // Non-destructive outcome banner (readiness itself is derived on the card):
+  //   - destination scope granted -> the destination config step is next
+  //   - plain connect / reconnect  -> connected
+  const status = boundMode !== null ? "event_scope_granted" : "connected";
   return redirect(consumed.redirectPath, status);
 }

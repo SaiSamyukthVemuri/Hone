@@ -51,6 +51,18 @@ export function requiredEventScopesForDestination(
   }
 }
 
+// The SINGLE exact required event scope for a destination mode, as a string (each
+// mode maps to exactly one scope). Returns null for null/unknown/malformed — the
+// caller treats null as "no destination bound / fail-closed". Used to BIND the
+// exact scope onto the OAuth state at upgrade-start and to re-derive+compare it in
+// the callback (a tampered single-column state value cannot pass).
+export function requiredEventScopeFor(
+  mode: string | null | undefined,
+): string | null {
+  const scopes = requiredEventScopesForDestination(mode);
+  return scopes && scopes.length === 1 ? scopes[0] : null;
+}
+
 // Normalize a provider granted-scope value (either a whitespace-delimited string,
 // as Google's token response returns, or an array) into a de-duplicated array of
 // exact, trimmed, non-empty scope strings. No prefix/substring transformation.

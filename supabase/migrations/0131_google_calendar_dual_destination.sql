@@ -166,3 +166,69 @@ as $$
 $$;
 revoke all on function public.calendar_connection_outbound_ready(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.calendar_connection_outbound_ready(uuid, uuid) to service_role;
+
+-- ============================================================
+-- 5) DEDICATED-destination provisioning-state (B2.4 Stage 2). Google
+--    calendars.insert has NO caller-supplied resource id and NO idempotency key,
+--    so an ambiguous provider response (Google created the calendar but the
+--    client saw a timeout/disconnect) cannot be de-duplicated by the provider.
+--    We reconcile by a RANDOM, NON-SENSITIVE attempt token: persisted BEFORE the
+--    insert and embedded in the created calendar's DESCRIPTION, so a retry finds
+--    the orphaned calendar by EXACT token match (never by display name). All
+--    columns additive + nullable + dormant; NO backfill; NO token/PHI/account id.
+-- ============================================================
+alter table public.calendar_connections
+  -- Random opaque token minted+persisted before calendars.insert; embedded in the
+  -- created calendar description for exact-match reconciliation. Non-sensitive.
+  add column if not exists destination_provisioning_attempt_token text,
+  -- When the current provisioning attempt began (a retry/ambiguity input).
+  add column if not exists destination_provisioning_started_at timestamptz,
+  -- Set when reconciliation found MULTIPLE token matches => fail closed / needs
+  -- attention. While set, no new calendar is auto-created; readiness derives
+  -- "needs attention". Cleared only when the ambiguity is resolved.
+  add column if not exists destination_provisioning_ambiguous_at timestamptz;
+
+-- Provisioning-state is meaningful ONLY for the dedicated (Hone-created) mode.
+-- Guard it so these facts can never attach to an existing_owned / unset row.
+alter table public.calendar_connections
+  drop constraint if exists calendar_connections_provisioning_mode_chk;
+alter table public.calendar_connections
+  add constraint calendar_connections_provisioning_mode_chk
+  check ((destination_provisioning_attempt_token is null
+          and destination_provisioning_started_at is null
+          and destination_provisioning_ambiguous_at is null)
+         or destination_mode = 'dedicated_app_created');
+
+-- ============================================================
+-- 6) Destination-BOUND OAuth state (B2.4 Stage 2). The existing single-use,
+--    hash-bound, PKCE + nonce state (migration 0122) is extended so a
+--    destination scope-UPGRADE binds the chosen destination + its exact
+--    server-derived required scope. The callback rejects a destination or scope
+--    that changed between start and callback (defense-in-depth over the already
+--    single-use, user/studio/practitioner/account-bound state). A plain Phase-A
+--    connect binds NEITHER column (both NULL). Additive + nullable + dormant; the
+--    state table is ephemeral (10-min TTL, single-use) so there is NO backfill.
+--    google_oauth_states remains default-deny for browser roles (0122 RLS/REVOKE
+--    unchanged); these columns hold no token, client, or appointment data.
+-- ============================================================
+alter table public.google_oauth_states
+  add column if not exists destination_mode text,
+  add column if not exists required_event_scope text;
+
+-- Bound destination mode, when present, is one of the two known modes.
+alter table public.google_oauth_states
+  drop constraint if exists google_oauth_states_destination_mode_chk;
+alter table public.google_oauth_states
+  add constraint google_oauth_states_destination_mode_chk
+  check (destination_mode is null
+         or destination_mode in ('dedicated_app_created', 'existing_owned'));
+
+-- The destination binding is a MATCHED PAIR: an upgrade binds both the mode and
+-- its exact required scope; a plain connect binds neither. (Never one without the
+-- other.) The callback additionally re-derives the scope from the mode and
+-- compares, so a tampered single-column value cannot pass.
+alter table public.google_oauth_states
+  drop constraint if exists google_oauth_states_destination_pair_chk;
+alter table public.google_oauth_states
+  add constraint google_oauth_states_destination_pair_chk
+  check ((destination_mode is null) = (required_event_scope is null));

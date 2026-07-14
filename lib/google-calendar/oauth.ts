@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   GOOGLE_AUTH_ENDPOINT,
   GOOGLE_CALENDAR_LIST_ENDPOINT,
+  GOOGLE_CALENDARS_ENDPOINT,
   GOOGLE_REVOKE_ENDPOINT,
   GOOGLE_TOKEN_ENDPOINT,
   GOOGLE_TOKENINFO_ENDPOINT,
@@ -251,6 +252,104 @@ export async function fetchCalendarList(accessToken: string): Promise<CalendarLi
     return { ok: true, calendars };
   } catch {
     return { ok: false, reason: "calendarlist_network_error" };
+  }
+}
+
+// --- Secondary-calendar provisioning (B2.4 dedicated destination) ---
+// Create a Hone-OWNED secondary calendar (requires the calendar.app.created
+// grant). `description` carries the NON-SENSITIVE provisioning-attempt marker so
+// an ambiguous provider response can be reconciled by EXACT token match. The
+// returned id becomes app_created_calendar_id (idempotency anchor) + write target.
+// Never logs the token; fails closed to a typed error. Creates NO event.
+export type CreateCalendarResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: string };
+
+export async function createSecondaryCalendar(
+  accessToken: string,
+  input: { summary: string; description?: string },
+): Promise<CreateCalendarResult> {
+  try {
+    const res = await fetch(GOOGLE_CALENDARS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        input.description
+          ? { summary: input.summary, description: input.description }
+          : { summary: input.summary },
+      ),
+    });
+    if (!res.ok) return { ok: false, reason: `calendar_create_http_${res.status}` };
+    const body = (await res.json()) as { id?: string };
+    if (typeof body.id !== "string" || body.id.length === 0) {
+      return { ok: false, reason: "calendar_create_no_id" };
+    }
+    return { ok: true, id: body.id };
+  } catch {
+    return { ok: false, reason: "calendar_create_network_error" };
+  }
+}
+
+// Reconciliation (B2.4 ambiguous-response handling). List the calendars visible to
+// this connection and return the ids whose DESCRIPTION contains the EXACT
+// provisioning-attempt token. Never matches on display name. Returns a typed error
+// on any transport failure so the caller fails closed (never assumes zero matches).
+export type ReconcileResult =
+  | { ok: true; calendarIds: string[] }
+  | { ok: false; reason: string };
+
+export async function findCalendarsByDescriptionToken(
+  accessToken: string,
+  attemptToken: string,
+): Promise<ReconcileResult> {
+  // A blank/short token must never match everything — fail closed.
+  if (!attemptToken || attemptToken.length < 16) {
+    return { ok: false, reason: "reconcile_token_invalid" };
+  }
+  try {
+    // Include showHidden so a freshly-created (not yet surfaced) calendar is found.
+    const res = await fetch(
+      `${GOOGLE_CALENDAR_LIST_ENDPOINT}?minAccessRole=owner&maxResults=250&showHidden=true`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return { ok: false, reason: `reconcile_http_${res.status}` };
+    const body = (await res.json()) as {
+      items?: Array<{ id?: string; description?: string }>;
+    };
+    const calendarIds = (body.items ?? [])
+      .filter(
+        (c) =>
+          typeof c.id === "string" &&
+          c.id.length > 0 &&
+          typeof c.description === "string" &&
+          c.description.includes(attemptToken),
+      )
+      .map((c) => c.id as string);
+    return { ok: true, calendarIds };
+  } catch {
+    return { ok: false, reason: "reconcile_network_error" };
+  }
+}
+
+// Delete a secondary calendar. Used ONLY to roll back a just-created calendar
+// whose local persist failed, so we never orphan a Hone-created calendar the DB
+// doesn't reference. 200/204 = deleted; 404/410 = already gone (also success).
+export async function deleteCalendar(
+  accessToken: string,
+  calendarId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const res = await fetch(
+      `${GOOGLE_CALENDARS_ENDPOINT}/${encodeURIComponent(calendarId)}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.ok || res.status === 404 || res.status === 410) return { ok: true };
+    return { ok: false, reason: `calendar_delete_http_${res.status}` };
+  } catch {
+    return { ok: false, reason: "calendar_delete_network_error" };
   }
 }
 

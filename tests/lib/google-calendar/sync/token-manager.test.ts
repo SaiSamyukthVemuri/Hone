@@ -22,10 +22,11 @@ function baseRow(overrides: Partial<ConnectionAuthRow> = {}): ConnectionAuthRow 
     studioId: STUDIO,
     practitionerId: "prac-1",
     connectionStatus: "connected",
-    grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
+    grantedScopes: ["https://www.googleapis.com/auth/calendar.events.owned"],
     writeCalendarId: "primary",
     isStudioCalendarOwner: true,
     tokenExpiresAt: null,
+    destinationMode: "existing_owned",
     ...overrides,
   };
 }

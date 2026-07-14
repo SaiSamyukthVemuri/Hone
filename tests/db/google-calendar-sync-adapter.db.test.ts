@@ -12,12 +12,10 @@ import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "@/lib/goo
 // reachable (the harness enforces localhost); NO real Google call is made (the op
 // is a mock; the token manager is a stub). This is the discipline B2.3 relies on.
 
-// The B2.1 handler's execution-time gate still requires broad calendar.events
-// (handler.ts REQUIRED_OUTBOUND_SCOPE — untouched here; aligning it to .owned is a
-// B2.4 item). Migration 0125's claim eligibility requires calendar.events.owned.
-// So a connection that must pass BOTH gates holds both scopes; the DB check is a
-// SUPERSET (@>) so the extra broad scope is harmless.
-const EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// B2.4: the handler's execution-time gate is now DESTINATION-AWARE (aligned to the
+// exact destination scope; broad calendar.events retired). Migration 0125's claim
+// eligibility also requires the exact destination scope. So a connection with an
+// existing_owned destination holds calendar.events.owned and passes BOTH gates.
 const OWNED_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned";
 
 afterAll(async () => {
@@ -54,7 +52,7 @@ function pgStore(): ConnectionStore {
   return {
     async loadConnection(id, studioId) {
       const r = await adminQuery(
-        "select id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at from public.calendar_connections where id=$1 and studio_id=$2",
+        "select id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, token_expires_at, destination_mode from public.calendar_connections where id=$1 and studio_id=$2",
         [id, studioId],
       );
       if (r.rowCount === 0) return null;
@@ -68,6 +66,7 @@ function pgStore(): ConnectionStore {
         writeCalendarId: row.write_calendar_id,
         isStudioCalendarOwner: row.is_studio_calendar_owner === true,
         tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at).toISOString() : null,
+        destinationMode: row.destination_mode ?? null,
       };
     },
     loadRefreshCiphertext: async () => null,
@@ -85,7 +84,7 @@ async function seedEligibleConnection(
   await adminQuery(
     // B2.4: readiness is destination-aware; an existing-owned destination pairs with calendar.events.owned.
     "insert into public.calendar_connections (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, destination_mode) values ($1,$2,$3,'connected',$4,'primary',true,'existing_owned')",
-    [connId, studio.studioId, studio.practitionerId, [EVENTS_SCOPE, OWNED_SCOPE]],
+    [connId, studio.studioId, studio.practitionerId, [OWNED_SCOPE]],
   );
   await adminQuery(
     "insert into public.calendar_connection_secrets (connection_id, studio_id, encrypted_refresh_token, encryption_key_version) values ($1,$2,'v1:1:iv:tag:ct',1)",
