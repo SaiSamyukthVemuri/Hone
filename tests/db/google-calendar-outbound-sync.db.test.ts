@@ -45,8 +45,8 @@ async function seedConnection(studio: SeededStudio): Promise<string> {
   await adminQuery(
     `insert into public.calendar_connections
        (id, studio_id, practitioner_id, connection_status,
-        is_studio_calendar_owner, write_calendar_id, granted_scopes)
-     values ($1,$2,$3,'connected',true,'primary',array[$4]::text[])`,
+        is_studio_calendar_owner, write_calendar_id, granted_scopes, destination_mode)
+     values ($1,$2,$3,'connected',true,'primary',array[$4]::text[],'existing_owned')`,
     [id, studio.studioId, studio.practitionerId, OWNED_EVENT_SCOPE],
   );
   await adminQuery(

@@ -47,9 +47,12 @@ async function seedConn(
   } = opts;
   const id = randomUUID();
   await adminQuery(
+    // B2.4: readiness is destination-aware — these B2.3-a scenarios use the
+    // existing-owned destination (calendar.events.owned). Not-ready cases still
+    // arise from missing scope / secret / flag, unchanged.
     `insert into public.calendar_connections
-       (id, studio_id, practitioner_id, connection_status, is_studio_calendar_owner, write_calendar_id, granted_scopes)
-     values ($1,$2,$3,$4,$5,$6,$7)`,
+       (id, studio_id, practitioner_id, connection_status, is_studio_calendar_owner, write_calendar_id, granted_scopes, destination_mode)
+     values ($1,$2,$3,$4,$5,$6,$7,'existing_owned')`,
     [id, studio.studioId, studio.practitionerId, status, owner, writeCalendar, scopes],
   );
   if (secret) {

@@ -83,7 +83,8 @@ async function seedEligibleConnection(
 ): Promise<string> {
   const connId = randomUUID();
   await adminQuery(
-    "insert into public.calendar_connections (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner) values ($1,$2,$3,'connected',$4,'primary',true)",
+    // B2.4: readiness is destination-aware; an existing-owned destination pairs with calendar.events.owned.
+    "insert into public.calendar_connections (id, studio_id, practitioner_id, connection_status, granted_scopes, write_calendar_id, is_studio_calendar_owner, destination_mode) values ($1,$2,$3,'connected',$4,'primary',true,'existing_owned')",
     [connId, studio.studioId, studio.practitionerId, [EVENTS_SCOPE, OWNED_SCOPE]],
   );
   await adminQuery(
