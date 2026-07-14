@@ -170,8 +170,14 @@ IDs / no sensitive studio identifiers):
   and `calendar.events.owned` (console classification: **Sensitive**). Broad `calendar.events`
   is **absent**; no restricted scopes; the three discovery scopes remain present.
 - **1** controlled test user listed (Willow not added). Production redirect confirmed exactly
-  `https://hone.care/api/google-calendar/oauth/callback`. The working discovery connection
-  implicitly confirms the OAuth Web client, redirect, Calendar API, and Testing config.
+  `https://hone.care/api/google-calendar/oauth/callback`. The existing Hone project and Web
+  OAuth client were reused (not recreated); the current console state above — Testing status,
+  the listed test user, the exact production callback, and the two scope classifications — was
+  confirmed by Sam from the live Google Cloud console **during this validation**, not inferred
+  from the pre-existing connection. Google Calendar API enablement is shown directly by the
+  successful `Hone Appointments` calendar creation in this validation; the completed incremental
+  consent is current functional proof of the OAuth Web client, the redirect URI, and the
+  Testing test-user gate.
 
 **Vercel Production (names only — values never read)**
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY`,
