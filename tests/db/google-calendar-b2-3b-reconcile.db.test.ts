@@ -85,7 +85,11 @@ async function claim(n = 25) {
 
 // A pg-backed ReconcileStore: identical queries to the production Supabase store,
 // but through the raw admin pool so the REAL trigger + repair RPCs run.
-function pgStore(): ReconcileStore {
+// The CI DB lane shares ONE Postgres across all suites with no per-test row
+// cleanup, so real INTENT-eligible studios accumulate across files. Tests scope the
+// eligible-studio lookup to the studio under test (isolation) via `studioFilter`;
+// the REAL (unfiltered) filter is asserted separately in the tenant-isolation test.
+function pgStore(studioFilter?: string): ReconcileStore {
   return {
     async listEligibleStudioIds() {
       const r = await adminQuery(
@@ -95,7 +99,8 @@ function pgStore(): ReconcileStore {
           where c.is_studio_calendar_owner and c.write_calendar_id is not null
             and s.google_calendar_outbound_sync_enabled`,
       );
-      return r.rows.map((x) => x.studio_id as string);
+      const ids = r.rows.map((x) => x.studio_id as string);
+      return studioFilter ? ids.filter((id) => id === studioFilter) : ids;
     },
     async pageConfirmedFutureAppointments(studioId, activationIso, snapshotIso, afterId, limit) {
       const r = await adminQuery(
@@ -197,8 +202,10 @@ function lockSingleSlot(): ReconcileLock {
 // (created_at <= snapshot) never races a just-inserted microsecond-precision row.
 // Every test appointment ends >= 1h out, so the activation boundary still holds.
 const NOW_AHEAD = () => Date.now() + 1000;
-const run = (over: Partial<Parameters<typeof runReconciliation>[0]> = {}) =>
-  runReconciliation({ store: pgStore(), lock: lockAlways, now: NOW_AHEAD, ...over });
+// Full run() scoped to ONE studio (via the store filter) so shared-DB accumulation
+// from other suites never contaminates aggregate counts.
+const run = (studioId: string, over: Partial<Parameters<typeof runReconciliation>[0]> = {}) =>
+  runReconciliation({ store: pgStore(studioId), lock: lockAlways, now: NOW_AHEAD, ...over });
 
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
@@ -225,14 +232,14 @@ describe("sweep recovery — intent-off window", () => {
     expect(await links(appt)).toHaveLength(0);
 
     await setFlag(a.studioId, true); // intent returns
-    const r1 = await run();
+    const r1 = await run(a.studioId);
     expect(r1.enqueued).toBe(1);
     expect(r1.byClass.missing_link_job).toBe(1);
     const o = await outbox(appt);
     expect(o.map((x) => x.op_type)).toEqual(["event.create"]);
     expect(await links(appt)).toHaveLength(1);
 
-    const r2 = await run(); // idempotent
+    const r2 = await run(a.studioId); // idempotent
     expect(r2.enqueued).toBe(0);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]);
   });
@@ -244,7 +251,7 @@ describe("sweep recovery — intent-off window", () => {
     expect(await outbox(appt)).toHaveLength(0);
 
     await adminQuery(`update public.calendar_connections set is_studio_calendar_owner=true where id=$1`, [conn]);
-    await run();
+    await run(a.studioId);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]);
   });
 
@@ -255,7 +262,7 @@ describe("sweep recovery — intent-off window", () => {
     expect(await outbox(appt)).toHaveLength(0);
 
     await adminQuery(`update public.calendar_connections set write_calendar_id='primary' where id=$1`, [conn]);
-    await run();
+    await run(a.studioId);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]);
   });
 
@@ -281,7 +288,7 @@ describe("sweep recovery — intent-off window", () => {
       (await adminQuery(`select id from public.ops_alerts where event='calendar_enqueue_skipped' and appointment_id=$1`, [appt])).rowCount,
     ).toBe(1);
 
-    await run();
+    await run(a.studioId);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]);
     expect(await links(appt)).toHaveLength(1);
   });
@@ -297,7 +304,7 @@ describe("sweep recovery — intent-off window", () => {
     expect(await outbox(appt)).toHaveLength(0); // intent off throughout
 
     await setFlag(a.studioId, true);
-    await run();
+    await run(a.studioId);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]); // single op
   });
 });
@@ -314,13 +321,13 @@ describe("sweep recovery — link-behind (Class 3)", () => {
     await adminQuery(`update public.appointments set sync_version=4 where id=$1`, [appt]);
     await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id=$1`, [appt]);
 
-    const r = await run();
+    const r = await run(a.studioId);
     expect(r.byClass.link_version_behind).toBe(1);
     const o = await outbox(appt);
     expect(o.map((x) => x.op_type)).toEqual(["event.update"]);
     expect(o[0].idempotency_key).toBe(`appointment:${appt}:event.update:5`); // bumped 4 -> 5
 
-    await run(); // pending job present -> no second bump (no version inflation)
+    await run(a.studioId); // pending job present -> no second bump (no version inflation)
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.update"]);
     expect(Number((await adminQuery(`select sync_version from public.appointments where id=$1`, [appt])).rows[0].sync_version)).toBe(5);
   });
@@ -337,13 +344,13 @@ describe("sweep recovery — orphan / surplus delete (Classes 2 & 4)", () => {
        values ($1,$2,$3,'appointment',$4,'primary','ev-orphan',3)`,
       [linkId, a.studioId, conn, randomUUID()], // hone_entity_id -> no appointment row
     );
-    const r1 = await run();
+    const r1 = await run(a.studioId);
     expect(r1.byClass.orphaned_link_delete).toBe(1);
     const dels = (await adminQuery(`select * from public.calendar_sync_outbox where op_type='event.delete' and connection_id=$1`, [conn])).rows;
     expect(dels).toHaveLength(1);
     expect(dels[0].hone_entity_id).toBeNull(); // entity-less tombstone
 
-    const r2 = await run();
+    const r2 = await run(a.studioId);
     expect(r2.enqueued).toBe(0); // guarded (delete_in_flight)
   });
 
@@ -355,7 +362,7 @@ describe("sweep recovery — orphan / surplus delete (Classes 2 & 4)", () => {
        values ($1,$2,$3,'appointment',$4,'primary',1)`,
       [randomUUID(), a.studioId, conn, randomUUID()],
     );
-    const r = await run();
+    const r = await run(a.studioId);
     expect(r.enqueued).toBe(0);
     expect((await adminQuery(`select count(*)::int n from public.calendar_sync_outbox where connection_id=$1`, [conn])).rows[0].n).toBe(0);
   });
@@ -379,7 +386,7 @@ describe("sweep recovery — orphan / surplus delete (Classes 2 & 4)", () => {
     await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id in ($1,$2)`, [resched, done]);
 
     await setFlag(a.studioId, true);
-    const r = await run();
+    const r = await run(a.studioId);
     expect(r.byClass.surplus_event_delete).toBe(1);
     expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.delete"]);
     expect(await outbox(resched)).toHaveLength(0);
@@ -395,7 +402,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const appts = [];
     for (let i = 0; i < 5; i++) appts.push(await insertAppt(a));
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(), lock: lockAlways, now: NOW_AHEAD, pageSize: 2 }); // multi-page
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 2 }); // multi-page
     for (const appt of appts) {
       expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]); // each once
     }
@@ -407,7 +414,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const a1 = await insertAppt(a);
     const a2 = await insertAppt(a);
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
     // Move a1 far into the future (mutating starts_at) — a starts_at cursor would
     // reorder it; the immutable id cursor is unaffected.
     const later = new Date(Date.now() + 500 * 3_600_000);
@@ -416,7 +423,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
       later.toISOString(),
       new Date(later.getTime() + 30 * 60_000).toISOString(),
     ]);
-    await runReconciliation({ store: pgStore(), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
     // a1 already has a create + now a trigger-made update (from the reschedule) — but
     // NO second create; a2 still exactly one create.
     expect((await outbox(a1)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
@@ -434,8 +441,8 @@ describe("no duplicate under repeat / concurrency", () => {
     await adminQuery(`delete from public.calendar_event_links where hone_entity_id=$1`, [appt]); // simulate the gap
     const lock = lockSingleSlot();
     await Promise.all([
-      runReconciliation({ store: pgStore(), lock, now: NOW_AHEAD }),
-      runReconciliation({ store: pgStore(), lock, now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, now: NOW_AHEAD }),
     ]);
     expect((await outbox(appt)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
   });
@@ -454,7 +461,7 @@ describe("existing health behaviour is NOT a sweep case", () => {
     expect(Number(before[0].attempts)).toBe(0);
 
     // The sweep sees an open job -> does NOT bump / duplicate.
-    const r = await run();
+    const r = await run(a.studioId);
     expect(r.enqueued).toBe(0);
     const after = await outbox(appt);
     expect(after).toHaveLength(1);
@@ -478,10 +485,16 @@ describe("tenant isolation + dormancy", () => {
     const apptOff = await insertAppt(off);
 
     await setFlag(on.studioId, true); // only ON becomes eligible
-    const r = await run();
-    expect(r.eligibleStudios).toBe(1);
+
+    // The REAL (unfiltered) intent filter includes ON and excludes the intent-off OFF.
+    const eligible = await pgStore().listEligibleStudioIds();
+    expect(eligible).toContain(on.studioId);
+    expect(eligible).not.toContain(off.studioId);
+
+    // Sweeping ON must never touch OFF (a different tenant).
+    await reconcileStudio(on.studioId, { store: pgStore(), lock: lockAlways }, new Date(NOW_AHEAD()).toISOString());
     expect((await outbox(apptOn)).map((x) => x.op_type)).toEqual(["event.create"]);
-    expect(await outbox(apptOff)).toHaveLength(0); // the ineligible studio is never swept
+    expect(await outbox(apptOff)).toHaveLength(0); // OFF is never swept
     // A bump for ON never advanced OFF's appointment version.
     expect(Number((await adminQuery(`select sync_version from public.appointments where id=$1`, [apptOff])).rows[0].sync_version)).toBe(1);
   });
@@ -494,7 +507,7 @@ describe("privacy — operational metadata only", () => {
     await seedConn(a, { flag: false });
     const appt = await insertAppt(a);
     await setFlag(a.studioId, true);
-    await run();
+    await run(a.studioId);
     const rows = await outbox(appt);
     expect(rows).toHaveLength(1);
     const blob = JSON.stringify(rows[0].payload);
