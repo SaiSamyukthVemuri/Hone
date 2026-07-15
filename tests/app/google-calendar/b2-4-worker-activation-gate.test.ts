@@ -17,6 +17,13 @@ const B2_4_PREREQUISITES = [
   "a successful create writes google_event_id back to the link",
   "a duplicate replay does not create a second provider event",
   "a partial create/link-write failure is recoverable",
+  // Carried by the route/heartbeat correction: with a live worker, a sufficiently fast
+  // worker could complete the operation BETWEEN the sweep's bump and its post-bump
+  // verification read. Post-bump intent verification must therefore eventually accept
+  // EITHER a matching current pending/processing operation OR proof that the matching
+  // operation already completed and advanced the link to the resulting version. Not
+  // reachable today (worker off) — an activation prerequisite, not B2.3-b transport.
+  "post-bump intent verification accepts a matching pending/processing op OR proof the op already completed and advanced the link to the resulting version",
 ];
 
 const ROOT = process.cwd();
@@ -45,7 +52,7 @@ function walk(dir: string): string[] {
 
 describe("B2.4 worker activation gate", () => {
   it("lists the exact prerequisites that must be tested before worker activation", () => {
-    expect(B2_4_PREREQUISITES).toHaveLength(5);
+    expect(B2_4_PREREQUISITES).toHaveLength(6);
     for (const p of B2_4_PREREQUISITES) expect(p.length).toBeGreaterThan(10);
   });
 

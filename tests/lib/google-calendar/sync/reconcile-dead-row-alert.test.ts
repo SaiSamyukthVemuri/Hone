@@ -12,6 +12,7 @@ vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient }));
 
 import { DEAD_ROW_EVENT, recordCalendarDeadRowAlert, sweepCalendarDeadRowAlerts } from "@/lib/google-calendar/sync/reconcile-heartbeat";
+import type { ReconcileCoordinator } from "@/lib/google-calendar/sync/reconcile";
 
 // A fake admin whose ops_alerts lookup resolves to `rows`.
 function adminReturning(rows: unknown[]) {
@@ -71,39 +72,133 @@ function pagingStore(rows: { studioId: string; deadCount: number }[]) {
   };
 }
 
-describe("sweepCalendarDeadRowAlerts — bounded + deadline-aware", () => {
-  it("pages across MORE rows than one page and covers all; not deferred when drained", async () => {
+// A single-slot dead-alert coordinator with a DURABLE cursor (persists across a test's
+// invocations). Token-aware writeCursor proves ownership atomicity.
+class FakeDeadCoordinator implements ReconcileCoordinator {
+  private heldNow = false;
+  private ownerToken: string | null = null;
+  cursor: string | null = null;
+  acquireResult: "ok" | "held" | "unavailable" = "ok";
+  readOk = true;
+  writeOk = true;
+  private seq = 0;
+  async acquire() {
+    if (this.acquireResult !== "ok") return { ok: false as const, reason: this.acquireResult };
+    if (this.heldNow) return { ok: false as const, reason: "held" as const };
+    this.heldNow = true;
+    this.ownerToken = `d-${this.seq++}`;
+    return { ok: true as const, token: this.ownerToken };
+  }
+  async release(t: string) {
+    if (this.ownerToken === t) {
+      this.heldNow = false;
+      this.ownerToken = null;
+    }
+  }
+  async renew(t: string) {
+    return this.ownerToken === t;
+  }
+  async readCursor() {
+    return this.readOk ? { ok: true as const, cursor: this.cursor } : { ok: false as const };
+  }
+  async writeCursor(t: string, c: string | null) {
+    if (!this.writeOk || this.ownerToken !== t) return false;
+    this.cursor = c;
+    return true;
+  }
+}
+
+describe("sweepCalendarDeadRowAlerts — coordinator + durable cursor + outcome model", () => {
+  it("drains all studios across pages -> completed; cursor cleared", async () => {
     createAdminClient.mockReturnValue(adminReturning([]));
-    const store = pagingStore([
-      { studioId: "s1", deadCount: 1 },
-      { studioId: "s2", deadCount: 2 },
-      { studioId: "s3", deadCount: 3 },
-    ]);
-    const r = await sweepCalendarDeadRowAlerts(store, { pageSize: 1 }); // 3 rows, 1/page
-    expect(r).toEqual({ studios: 3, alerted: 3, deferred: false });
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }, { studioId: "s2", deadCount: 2 }, { studioId: "s3", deadCount: 3 }]);
+    const coord = new FakeDeadCoordinator();
+    const r = await sweepCalendarDeadRowAlerts(store, coord, { pageSize: 1 });
+    expect(r.outcome).toBe("completed");
+    expect(r.studios).toBe(3);
+    expect(r.alerted).toBe(3);
+    expect(coord.cursor).toBeNull(); // cleared on completion
   });
 
-  it("the per-invocation studio cap defers the remainder", async () => {
+  it("studio cap -> deferred; cursor persisted at the last processed studio", async () => {
     createAdminClient.mockReturnValue(adminReturning([]));
-    const store = pagingStore([
-      { studioId: "s1", deadCount: 1 },
-      { studioId: "s2", deadCount: 2 },
-      { studioId: "s3", deadCount: 3 },
-    ]);
-    const r = await sweepCalendarDeadRowAlerts(store, { pageSize: 5, maxStudios: 2 });
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }, { studioId: "s2", deadCount: 2 }, { studioId: "s3", deadCount: 3 }]);
+    const coord = new FakeDeadCoordinator();
+    const r = await sweepCalendarDeadRowAlerts(store, coord, { pageSize: 5, maxStudios: 2 });
+    expect(r.outcome).toBe("deferred");
     expect(r.studios).toBe(2);
-    expect(r.deferred).toBe(true);
+    expect(coord.cursor).toBe("s2"); // persisted for the next invocation
   });
 
-  it("a passed deadline defers immediately", async () => {
+  it("durable cursor resumes strictly after; later studios never starve", async () => {
+    createAdminClient.mockReturnValue(adminReturning([]));
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }, { studioId: "s2", deadCount: 2 }, { studioId: "s3", deadCount: 3 }]);
+    const coord = new FakeDeadCoordinator(); // SHARED across invocations
+    const processed: string[] = [];
+    // patch the store to record what each invocation examines
+    let done = false;
+    let guard = 0;
+    while (!done && guard++ < 10) {
+      const spy = {
+        pageStudiosWithDeadOutbox: async (after: string | null, limit: number) => {
+          const page = await store.pageStudiosWithDeadOutbox(after, limit);
+          processed.push(...page.map((p) => p.studioId));
+          return page;
+        },
+      };
+      const r = await sweepCalendarDeadRowAlerts(spy, coord, { pageSize: 1, maxStudios: 1 });
+      done = r.outcome === "completed";
+    }
+    expect(processed).toEqual(["s1", "s2", "s3"]); // each once, in order, resumed after the cursor
+    expect(coord.cursor).toBeNull();
+  });
+
+  it("coordinator HELD -> skipped_held, no work", async () => {
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }]);
+    const coord = new FakeDeadCoordinator();
+    coord.acquireResult = "held";
+    const r = await sweepCalendarDeadRowAlerts(store, coord);
+    expect(r).toMatchObject({ outcome: "skipped_held", coordinatorStatus: "held", studios: 0 });
+  });
+
+  it("coordinator UNAVAILABLE -> unavailable, no sweep", async () => {
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }]);
+    const coord = new FakeDeadCoordinator();
+    coord.acquireResult = "unavailable";
+    expect((await sweepCalendarDeadRowAlerts(store, coord)).outcome).toBe("unavailable");
+  });
+
+  it("cursor READ I/O error -> unavailable (never runs from an unknown position)", async () => {
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }]);
+    const coord = new FakeDeadCoordinator();
+    coord.readOk = false;
+    expect((await sweepCalendarDeadRowAlerts(store, coord)).outcome).toBe("unavailable");
+  });
+
+  it("a store/inventory failure -> ERROR (not a completed sweep)", async () => {
+    createAdminClient.mockReturnValue(adminReturning([]));
+    const failing = { pageStudiosWithDeadOutbox: async () => { throw new Error("boom"); } };
+    const r = await sweepCalendarDeadRowAlerts(failing, new FakeDeadCoordinator());
+    expect(r.outcome).toBe("error");
+    expect(r.errorClass).toBe("Error");
+  });
+
+  it("cursor PERSIST failure -> error, cursorPersistFailed", async () => {
     createAdminClient.mockReturnValue(adminReturning([]));
     const store = pagingStore([{ studioId: "s1", deadCount: 1 }]);
-    const r = await sweepCalendarDeadRowAlerts(store, { now: () => 10, deadlineMs: 0 });
-    expect(r).toEqual({ studios: 0, alerted: 0, deferred: true });
+    const coord = new FakeDeadCoordinator();
+    coord.writeOk = false;
+    const r = await sweepCalendarDeadRowAlerts(store, coord);
+    expect(r.outcome).toBe("error");
+    expect(r.cursorPersistFailed).toBe(true);
   });
 
-  it("a store failure never throws (fail-open)", async () => {
-    const failing = { pageStudiosWithDeadOutbox: async () => { throw new Error("x"); } };
-    await expect(sweepCalendarDeadRowAlerts(failing)).resolves.toEqual({ studios: 0, alerted: 0, deferred: false });
+  it("two concurrent sweeps -> one owns the campaign, the other skipped_held; no double advance", async () => {
+    createAdminClient.mockReturnValue(adminReturning([]));
+    const store = pagingStore([{ studioId: "s1", deadCount: 1 }]);
+    const coord = new FakeDeadCoordinator();
+    const [a, b] = await Promise.all([sweepCalendarDeadRowAlerts(store, coord), sweepCalendarDeadRowAlerts(store, coord)]);
+    const outcomes = [a.outcome, b.outcome].sort();
+    expect(outcomes).toEqual(["completed", "skipped_held"]);
   });
 });

@@ -361,6 +361,20 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   it generates current intent even when a stale job is still pending, and the fence (not
   the sweep) prevents a stale dispatch once the worker exists. A worker op for a link with
   a null `google_event_id` (a placeholder) must UPSERT (create), not blindly update.
+- **Post-bump verification, worker-race form (activation prerequisite).** B2.3-b verifies a
+  bump by confirming a matching pending/processing op now exists. Once a live worker exists,
+  a sufficiently fast worker could complete the op **between** the sweep's bump and its
+  verification read. So the worker-phase must broaden post-bump verification to accept
+  **either** a matching current pending/processing op **or** proof that the op already
+  completed and advanced `calendar_event_links.last_hone_version` to the resulting version.
+  Not reachable today (worker off) — an activation prerequisite, enforced by the static
+  activation gate; no algorithm change in B2.3-b.
+- **Dead-row alert partial unique index (future migration-bearing phase).** The dead-row
+  sweep is the sole writer of `calendar_outbox_dead_rows` (verified at HEAD), so its
+  coordinator-serialized read-then-insert dedupe holds today. A future migration should add
+  a **partial unique index** `(studio_id, event) WHERE resolved_at IS NULL` scoped to this
+  event kind, so at most one unresolved alert per studio is enforced at the DB layer.
+  **NOT** added in B2.3-b (no migration).
 - **Stale-generation fencing**, the Google-call lifecycle tests, the hard-purge
   teardown routine, and — before Willow — **privacy-policy publication + scope
   justification + consent-screen verification** for the sensitive `.owned` scope.
@@ -515,36 +529,56 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   preserves its cursor BEFORE the unprocessed item, persists a continuation for the
   remainder, and reports degraded; it never runs past a lost lease or sweeps unlocked.
   This is the one place that is *not* fail-open.
-- **Route coordinator + global studio cursor (anti-starvation).** A single global
-  **coordinator** ownership-token lock serializes route invocations and owns a **durable
-  global studio cursor** (the last-attempted immutable studio id, ownership-atomic
-  writes). Eligible studios are sorted by immutable id and processed in **wrap-around**
-  order starting AFTER the cursor, so the same first studios can never be swept forever
-  while later ones starve — every eligible studio eventually gets a turn even when every
-  invocation processes only one studio before its deadline. Studios not attempted this
-  invocation are **deferred** (counted, and the run reported degraded). The coordinator
-  is fail-closed (unavailable → degraded; held → benign skip). Per-studio locks remain
-  the mutation-safety boundary.
-- **Heartbeat + dead-row alert + retention (FAIL-OPEN observability).** After each run
-  the route writes a single non-sensitive Upstash heartbeat (`gcal_reconcile:last_run`)
-  whose **outcome is truthful** — `ok` / `degraded` / `error`. It is degraded when eligible
-  work was knowingly left unrepresented because coordination bounded it: **studios deferred**
-  (deadline/batch), coordinator unavailable, a cursor read/persist failure, a continuation
-  read/write failure, a **post-bump intent-verification failure**, a per-candidate actuator
-  error, a truncated studio, or a **deferred dead-row sweep**; `error` on a top-level
-  exception. `at` is the completion time; the scheduler classifier treats a recent
-  **degraded/error** heartbeat as NOT healthy (it is not healthy just because it is recent).
-  It also sweeps a **deduped, PHI-free dead-row alert** (`calendar_outbox_dead_rows`,
-  studio-scoped, aggregate count only) for terminal dead outbox work — read from the
-  pre-aggregated `calendar_sync_queue_health` view via **bounded, deadline-aware cursor
-  pagination** (no raw multi-thousand-row scan), recurring after resolution when new dead
-  rows appear, never reopening a dead row; concurrent invocations are serialized by the
-  coordinator lock so there is no alert storm. It prunes `calendar_sync_metric_events` past
-  its retention window (the 0125
-  `delete` grant). Every heartbeat/metric/alert write is fail-open — a failure never aborts
-  the sweep or a booking. Observability failing open must not be confused with the lock +
-  continuation, which are fail-closed. The stale/degraded/error scheduler alert recorder
-  exists but is **not** wired to a schedule in B2.3-b (no cron cadence yet — that is B2.3-c).
+- **Exactly TWO coordinators, never held simultaneously by one invocation.** (1) The
+  **main reconciliation coordinator** (`gcal_reconcile:coordinator:lock` + durable cursor
+  `gcal_reconcile:studio_cursor`) serializes route invocations and owns the global studio
+  cursor; it is acquired + **released inside `runReconciliation`**. (2) The **dead-alert
+  coordinator** (`gcal_reconcile:dead_alerts:lock` + durable cursor
+  `gcal_reconcile:dead_alerts:cursor`) owns the dead-row alert campaign, acquired **after**
+  the main coordinator is released. Between them, metric pruning runs **UNLOCKED**. Each
+  coordinator's cursor holds only the last-attempted immutable studio id, is written
+  **ownership-atomically** (Lua compare-token guarded by that coordinator's lock), and is
+  **durable (no expiry)** — cleared only by an ownership-atomic clear on completion. Both
+  are fail-closed (unavailable → the campaign does not run; held → benign skip). Per-studio
+  locks remain the mutation-safety boundary. There is no third coordinator or maintenance lock.
+- **Anti-starvation (both cursors).** Eligible studios (and dead-row studios) are sorted by
+  immutable id and processed in **wrap-around** order starting AFTER the cursor, so the same
+  first studios can never be swept forever while later ones starve — every studio eventually
+  gets a turn even when every invocation processes only one before its deadline. A read I/O
+  error on a cursor is `unavailable` (do not run from an unknown position); an **absent**
+  cursor starts at the beginning (a lost record never skips to the end — convergence /
+  dedupe are idempotent).
+- **Route flow (three cases).** *Main coordinator HELD* → benign concurrency: return `202`
+  `skipped_held`, run **no** prune / **no** dead-row sweep, and write **NO** heartbeat (a
+  stale heartbeat after a crashed active run is the intended monitoring signal and must stay
+  visible — the held invocation must not refresh it). *Main coordinator UNAVAILABLE* →
+  truthful degraded response, no maintenance, **no successful heartbeat**. *Main
+  reconciliation RAN* → unlocked metric prune → dead-alert coordinator campaign → final
+  heartbeat tier → truthful response. Each notable outcome emits a PHI-free, tenant-safe,
+  best-effort operational signal (fail-open — a failed signal never changes route/lock/cursor
+  behaviour).
+- **Dead-row alert campaign.** Reads the pre-aggregated `calendar_sync_queue_health` view
+  via **durable-cursor** pagination (immutable studio_id; no raw multi-thousand-row scan),
+  resuming AFTER the persisted cursor, bounded by the studio cap + route deadline,
+  ownership-atomically persisting the cursor after each fully-processed studio and clearing
+  it on completion. Explicit outcome model: `completed` / `deferred` / `skipped_held` /
+  `unavailable` / `error`. The deduped, PHI-free `calendar_outbox_dead_rows` alert
+  (studio-scoped, aggregate count only) recurs after resolution, never reopens a dead row.
+  **Sole-writer:** the sweep is the only writer of `calendar_outbox_dead_rows` (verified), so
+  the coordinator-serialized read-then-insert dedupe is sufficient today; a **future
+  migration-bearing phase** should add a partial unique index (`(studio_id, event) WHERE
+  resolved_at IS NULL`, scoped to this event) — NOT in B2.3-b (no migration).
+- **Heartbeat tiers (truthful).** `error` is reserved for a reconciliation-run failure. A
+  successful run preserves its outcome (`ok`/`degraded`) when the dead-row campaign
+  `completed`; **any** non-completed dead-row outcome (deferred / skipped_held / unavailable
+  / error) makes a successful run **at least `degraded`** — never falsely `ok`. `at` is the
+  completion time; the scheduler classifier treats a recent degraded/error heartbeat as NOT
+  healthy. A **store/inventory failure is `error`, not a completed sweep** — fail-open (a
+  failed alert INSERT / signal never blocks bookings or reconciliation) does not mean
+  "maintenance succeeded". Metric pruning is unlocked, best-effort, fail-open, idempotent,
+  and acquires no lock. Observability failing open must not be confused with the coordinators
+  + cursors, which are fail-closed. The stale/degraded/error scheduler alert recorder exists
+  but is **not** wired to a schedule in B2.3-b (no cron cadence yet — that is B2.3-c).
 - **Route — `/api/cron/calendar-reconcile`.** Constant-time `CRON_SECRET` bearer
   (`isAuthorizedCronRequest`, 401 otherwise); no browser-supplied studio/connection/
   calendar/provider id is trusted (the eligible set is derived server-side). It is

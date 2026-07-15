@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createReconcileCoordinator, createReconcileLock, type LockRedis } from "@/lib/google-calendar/sync/reconcile-lock";
+import {
+  RECONCILE_DEAD_ALERT_CURSOR_KEY,
+  RECONCILE_DEAD_ALERT_LOCK_KEY,
+  createReconcileCoordinator,
+  createReconcileLock,
+  type LockRedis,
+} from "@/lib/google-calendar/sync/reconcile-lock";
 
 // Phase B2.3-b — the per-studio reconciliation lock + the route coordinator. The
 // critical property is FAIL-CLOSED: with no backend (or a throwing one) acquire must
@@ -110,5 +116,18 @@ describe("coordinator — global lock + durable studio cursor", () => {
     expect(clearCall[0]).toContain("del");
     // stale token (eval -> 0) cannot advance the cursor
     expect(await createReconcileCoordinator(okRedis({ eval: vi.fn(async () => 0) })).writeCursor("stale", "x")).toBe(false);
+  });
+
+  it("a SECOND coordinator can use the separate dead-alert lock + cursor namespace", async () => {
+    const redis = okRedis();
+    const dead = createReconcileCoordinator(redis, { lockKey: RECONCILE_DEAD_ALERT_LOCK_KEY, cursorKey: RECONCILE_DEAD_ALERT_CURSOR_KEY, newToken: () => "dt" });
+    expect(await dead.acquire()).toEqual({ ok: true, token: "dt" });
+    expect((redis.set as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(RECONCILE_DEAD_ALERT_LOCK_KEY);
+    await dead.writeCursor("dt", "studio-7");
+    const cursorCall = (redis.eval as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(cursorCall[1]).toEqual([RECONCILE_DEAD_ALERT_LOCK_KEY, RECONCILE_DEAD_ALERT_CURSOR_KEY]);
+    // The two namespaces are distinct — no collision with the main coordinator.
+    expect(RECONCILE_DEAD_ALERT_LOCK_KEY).not.toBe("gcal_reconcile:coordinator:lock");
+    expect(RECONCILE_DEAD_ALERT_CURSOR_KEY).not.toBe("gcal_reconcile:studio_cursor");
   });
 });

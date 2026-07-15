@@ -5,6 +5,7 @@ import {
   decideDeadRowAlert,
   decideReconcileAlert,
   deadRowAlertSafeDetails,
+  finalHeartbeatOutcome,
   reconcileAlertSafeDetails,
   reconcileHeartbeatFromRun,
   type ReconcileHeartbeat,
@@ -105,6 +106,23 @@ describe("PHI-free payloads", () => {
     const d = reconcileAlertSafeDetails(status({ status: "degraded", outcome: "degraded" }), NOW);
     expect(JSON.stringify(d)).not.toMatch(/@|client|name|email|phone|token/i);
     expect(d).toMatchObject({ status: "degraded", outcome: "degraded" });
+  });
+});
+
+describe("finalHeartbeatOutcome — §11 tiers", () => {
+  it("reconciliation error stays error regardless of the dead-row outcome", () => {
+    for (const d of ["completed", "deferred", "unavailable", "error", "skipped_held"] as const) {
+      expect(finalHeartbeatOutcome("error", d)).toBe("error");
+    }
+  });
+  it("successful run + dead-row COMPLETED preserves the reconciliation outcome", () => {
+    expect(finalHeartbeatOutcome("ok", "completed")).toBe("ok");
+    expect(finalHeartbeatOutcome("degraded", "completed")).toBe("degraded");
+  });
+  it("successful run + any non-completed dead-row outcome is at least degraded (never ok)", () => {
+    for (const d of ["deferred", "unavailable", "error", "skipped_held"] as const) {
+      expect(finalHeartbeatOutcome("ok", d)).toBe("degraded");
+    }
   });
 });
 

@@ -118,10 +118,14 @@ export function createReconcileLock(
 // turn even when every invocation hits its deadline. The per-studio locks remain
 // the mutation-safety boundary; this lock only guards the global cursor + ordering.
 // ---------------------------------------------------------------------------
+// There are EXACTLY TWO coordinators (never held simultaneously by one route
+// invocation): the MAIN reconciliation coordinator (below) and the DEAD-ALERT
+// coordinator. Each has its own lock key + its own DURABLE cursor (no expiry): the
+// last-attempted immutable studio id, only ever written under that coordinator's token.
 export const RECONCILE_COORDINATOR_LOCK_KEY = "gcal_reconcile:coordinator:lock";
-// The studio cursor is DURABLE correctness state (no expiry): the last-attempted
-// immutable studio id. It is only ever written under the coordinator token.
 export const RECONCILE_STUDIO_CURSOR_KEY = "gcal_reconcile:studio_cursor";
+export const RECONCILE_DEAD_ALERT_LOCK_KEY = "gcal_reconcile:dead_alerts:lock";
+export const RECONCILE_DEAD_ALERT_CURSOR_KEY = "gcal_reconcile:dead_alerts:cursor";
 
 // Write the cursor ONLY while we still own the coordinator lock (atomic).
 const CURSOR_WRITE_LUA =
@@ -131,12 +135,12 @@ const CURSOR_CLEAR_LUA =
 
 export function createReconcileCoordinator(
   redis: LockRedis | null,
-  opts: { ttlSeconds?: number; newToken?: () => string } = {},
+  opts: { ttlSeconds?: number; newToken?: () => string; lockKey?: string; cursorKey?: string } = {},
 ): ReconcileCoordinator {
   const ttlSeconds = Math.max(1, Math.floor(opts.ttlSeconds ?? RECONCILE_LOCK_TTL_SECONDS));
   const newToken = opts.newToken ?? (() => randomUUID());
-  const K = RECONCILE_COORDINATOR_LOCK_KEY;
-  const C = RECONCILE_STUDIO_CURSOR_KEY;
+  const K = opts.lockKey ?? RECONCILE_COORDINATOR_LOCK_KEY;
+  const C = opts.cursorKey ?? RECONCILE_STUDIO_CURSOR_KEY;
 
   return {
     async acquire() {
@@ -215,4 +219,13 @@ export function createUpstashReconcileLock(): ReconcileLock {
 
 export function createUpstashReconcileCoordinator(): ReconcileCoordinator {
   return createReconcileCoordinator(getLockRedis());
+}
+
+// The SEPARATE dead-row alert coordinator (its own lock + durable cursor namespace).
+// Fail-closed when Upstash is absent, exactly like the main coordinator.
+export function createUpstashReconcileDeadAlertCoordinator(): ReconcileCoordinator {
+  return createReconcileCoordinator(getLockRedis(), {
+    lockKey: RECONCILE_DEAD_ALERT_LOCK_KEY,
+    cursorKey: RECONCILE_DEAD_ALERT_CURSOR_KEY,
+  });
 }
