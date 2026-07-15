@@ -1,7 +1,8 @@
 import "server-only";
 import type { createAdminClient } from "@/lib/supabase/admin-server";
 import type {
-  ReconcileApptRow,
+  OpenJob,
+  OpenJobStatus,
   ReconcileApptState,
   ReconcileLinkRow,
   ReconcileObservability,
@@ -14,14 +15,12 @@ import type {
 // so every read is a query-builder chain and every actuation is an .rpc() to the
 // EXISTING repair functions. There is NO new DB function and NO migration.
 //
-// TENANT ISOLATION: every tenant read/write is scoped with .eq("studio_id", …)
-// for a studio derived SERVER-SIDE by listEligibleStudioIds(); a browser-supplied
-// id is never trusted. The two actuator RPCs are SECURITY DEFINER and derive
-// authority from the row, not the caller.
+// TENANT ISOLATION: every tenant read/write is scoped with .eq("studio_id", …) for
+// a studio derived SERVER-SIDE by listEligibleStudioIds(); a browser-supplied id is
+// never trusted. The dead-row inventory reads only aggregate studio_id + count.
 
 type Admin = ReturnType<typeof createAdminClient>;
 
-// PostgREST .in() lists are sent in the URL; keep each chunk small.
 const IN_CHUNK = 100;
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -30,13 +29,17 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+function toVersion(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === "string" && raw.trim() !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+  return null;
+}
+
 export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
   return {
     async listEligibleStudioIds(): Promise<string[]> {
-      // INTENT eligibility = studio outbound flag ON  ∩  an owner connection with a
-      // chosen write calendar. Computed as two scoped reads intersected in app code
-      // (no reliance on a PostgREST FK embed). In production the flag set is empty,
-      // so the intersection — and the whole sweep — is empty.
+      // INTENT eligibility = studio outbound flag ON ∩ an owner connection with a
+      // chosen write calendar. Two scoped reads intersected in app code.
       const [flagRes, connRes] = await Promise.all([
         admin.from("studios").select("id").eq("google_calendar_outbound_sync_enabled", true),
         admin
@@ -62,14 +65,14 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
         .select("id, sync_version")
         .eq("studio_id", studioId)
         .eq("status", "confirmed")
-        .gte("ends_at", activationIso) // not-yet-ended (activation boundary)
-        .lte("created_at", snapshotIso) // stable snapshot (enumeration boundary)
-        .order("id", { ascending: true }) // IMMUTABLE key — never the mutable starts_at
+        .gte("ends_at", activationIso)
+        .lte("created_at", snapshotIso)
+        .order("id", { ascending: true })
         .limit(limit);
       if (afterId) q = q.gt("id", afterId);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []).map((r): ReconcileApptRow => ({ id: r.id as string, syncVersion: Number(r.sync_version) }));
+      return (data ?? []).map((r) => ({ id: r.id as string, syncVersion: Number(r.sync_version) }));
     },
 
     async pageActiveAppointmentLinks(studioId, afterId, limit) {
@@ -79,7 +82,7 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
         .eq("studio_id", studioId)
         .eq("hone_entity_type", "appointment")
         .is("deleted_at", null)
-        .order("id", { ascending: true }) // IMMUTABLE link id
+        .order("id", { ascending: true })
         .limit(limit);
       if (afterId) q = q.gt("id", afterId);
       const { data, error } = await q;
@@ -118,6 +121,25 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
       return map;
     },
 
+    async getActiveLinkById(studioId, linkId) {
+      const { data, error } = await admin
+        .from("calendar_event_links")
+        .select("id, hone_entity_id, google_event_id, last_hone_version")
+        .eq("studio_id", studioId)
+        .eq("id", linkId)
+        .eq("hone_entity_type", "appointment")
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      return {
+        id: data.id as string,
+        honeEntityId: data.hone_entity_id as string,
+        googleEventId: (data.google_event_id as string | null) ?? null,
+        lastHoneVersion: Number(data.last_hone_version),
+      };
+    },
+
     async getAppointmentStates(studioId, appointmentIds) {
       const map = new Map<string, ReconcileApptState>();
       for (const ids of chunk(appointmentIds, IN_CHUNK)) {
@@ -140,21 +162,35 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
       return map;
     },
 
-    async getEntitiesWithOpenJobs(studioId, appointmentIds) {
-      const set = new Set<string>();
+    async getOpenJobsForEntities(studioId, appointmentIds) {
+      // Per-entity outbox job metadata (op class + payload sync_version + status),
+      // including terminal 'dead' rows so the classifier can distinguish an
+      // abandoned create from a terminally-dead one (§3 placeholder review).
+      const map = new Map<string, OpenJob[]>();
       for (const ids of chunk(appointmentIds, IN_CHUNK)) {
         if (ids.length === 0) continue;
         const { data, error } = await admin
           .from("calendar_sync_outbox")
-          .select("hone_entity_id")
+          .select("hone_entity_id, op_type, status, payload")
           .eq("studio_id", studioId)
           .eq("hone_entity_type", "appointment")
           .in("hone_entity_id", ids)
-          .in("status", ["pending", "processing"]);
+          .in("status", ["pending", "processing", "dead"]);
         if (error) throw error;
-        for (const r of data ?? []) if (r.hone_entity_id) set.add(r.hone_entity_id as string);
+        for (const r of data ?? []) {
+          const eid = r.hone_entity_id as string | null;
+          if (!eid) continue;
+          const payload = (r.payload as Record<string, unknown> | null) ?? {};
+          const arr = map.get(eid) ?? [];
+          arr.push({
+            opType: r.op_type as string,
+            syncVersion: toVersion(payload.sync_version),
+            status: r.status as OpenJobStatus,
+          });
+          map.set(eid, arr);
+        }
       }
-      return set;
+      return map;
     },
 
     async bumpAppointmentSyncVersion(appointmentId) {
@@ -170,16 +206,25 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
       if (error) throw error;
       return String(data);
     },
+
+    async listStudiosWithDeadOutbox() {
+      // Aggregate terminal-dead counts per studio (PHI-free: studio_id + count).
+      const { data, error } = await admin.from("calendar_sync_outbox").select("studio_id").eq("status", "dead").limit(10000);
+      if (error) throw error;
+      const counts = new Map<string, number>();
+      for (const r of data ?? []) {
+        const sid = r.studio_id as string;
+        if (sid) counts.set(sid, (counts.get(sid) ?? 0) + 1);
+      }
+      return [...counts.entries()].map(([studioId, deadCount]) => ({ studioId, deadCount }));
+    },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Metric-events retention (delete grant added by 0125 "= B2.3-b retention") +
-// a PHI-free per-studio observability sink. Both are best-effort / fail-open.
+// Metric-events retention (delete grant added by 0125) + a PHI-free per-studio
+// observability sink. Both are best-effort / fail-open.
 // ---------------------------------------------------------------------------
-
-// Bounded prune of append-only calendar_sync_metric_events older than the cutoff.
-// PostgREST DELETE has no LIMIT, so we select a bounded id page then delete it.
 export async function pruneMetricEvents(admin: Admin, cutoffIso: string, limit: number): Promise<number> {
   const { data, error } = await admin
     .from("calendar_sync_metric_events")
@@ -194,9 +239,6 @@ export async function pruneMetricEvents(admin: Admin, cutoffIso: string, limit: 
   return ids.length;
 }
 
-// Per-studio durable telemetry — records a PHI-free metric row ONLY for studios
-// where the sweep did something operationally notable. safe_details carry aggregate
-// counts only (never client identity, appointment content, Google id, or calendar id).
 export function createReconcileObservability(admin: Admin): ReconcileObservability {
   return {
     async recordStudioResult(res: StudioReconcileResult): Promise<void> {
@@ -211,13 +253,22 @@ export function createReconcileObservability(admin: Admin): ReconcileObservabili
               superseded: res.superseded,
               by_class: res.byClass,
               truncated: res.truncated,
+              outcome: res.outcome,
             },
           });
-        } else if (res.lockSkipReason === "unavailable") {
+        } else if (res.outcome === "degraded" || res.outcome === "error") {
           await admin.from("calendar_sync_metric_events").insert({
             studio_id: res.studioId,
-            metric: "reconcile_lock_unavailable",
-            safe_details: { reason: "unavailable" },
+            metric: "reconcile_degraded",
+            safe_details: {
+              outcome: res.outcome,
+              lock_skip: res.lockSkipReason ?? null,
+              continuation_read: res.continuationRead,
+              continuation_persisted: res.continuationPersisted,
+              truncated: res.truncated,
+              ownership_lost: res.ownershipLost,
+              errors: res.errors,
+            },
           });
         }
       } catch {

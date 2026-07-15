@@ -353,11 +353,19 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   coordinates, validate create-new/delete-old ordering, repoint the link only at the
   successful move boundary, fence older generations from reversing a completed move,
   repair partial move completion.
-- **Stale-generation fencing**, the Google-call lifecycle tests, the four-class
-  reconciliation **sweep** + dead-row alert + heartbeat/retention (B2.3-b), the
-  hard-purge teardown routine, and — before Willow — **privacy-policy publication +
-  scope justification + consent-screen verification** for the sensitive `.owned`
-  scope.
+- **Execution-time stale fence (worker op).** The create/update/delete worker
+  operation must, before calling Google, compare the job's `payload.sync_version` to the
+  current `appointments.sync_version` / `calendar_event_links.last_hone_version` and
+  return `ok_noop_superseded` when the job is stale (that JobResult code already exists;
+  both columns are already readable — no migration). B2.3-b deliberately relies on this:
+  it generates current intent even when a stale job is still pending, and the fence (not
+  the sweep) prevents a stale dispatch once the worker exists. A worker op for a link with
+  a null `google_event_id` (a placeholder) must UPSERT (create), not blindly update.
+- **Stale-generation fencing**, the Google-call lifecycle tests, the hard-purge
+  teardown routine, and — before Willow — **privacy-policy publication + scope
+  justification + consent-screen verification** for the sensitive `.owned` scope.
+  (The four-class reconciliation **sweep** + dead-row alert + heartbeat/retention +
+  durable continuation now ship in B2.3-b — see §3e.)
 
 ---
 
@@ -422,19 +430,52 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   - *Class 2 — orphaned link* (the appointment row is gone) → `repair_enqueue_orphan_
     link_delete` (a `reconcile_generation`-scoped, entity-less tombstone). A local
     **placeholder** link (`google_event_id` null → no remote event) is inert.
-- **Supersede-safe, no version inflation.** A candidate with any pending/processing
-  job for its entity is skipped (`work_in_flight`); every bump is **re-validated
-  immediately before** it fires (the current row is re-read for drift + no open job),
-  so repeated or interleaved sweeps produce **exactly one** effective operation per
-  appointment. `repair_bump_appointment_sync_version` increments unconditionally, so
-  it is only ever called after that fresh drift check under the per-studio lock.
-- **Stable enumeration.** Candidates are paginated by the **immutable appointment
-  UUID** (link classes by the immutable link id) under a pinned run clock that serves
-  as both `snapshot_started_at` (`created_at <=`) and `activation_started_at`
-  (`ends_at >=`) — never the mutable `starts_at` (same discipline as the §3d
-  enumerator). Rows created after the snapshot are covered organically by the trigger;
-  mid-run mutations converge via current-row re-read. Continuation state identifies
-  the class, the snapshot timestamp, and the last-seen immutable id.
+- **Stale-job model (op + version), not "any open job".** A pending/processing
+  outbox row counts as *current work* ONLY when its op class AND `payload.sync_version`
+  correspond to the CURRENT desired state (`>= appointment.sync_version`). An OLDER
+  job (a stale `sync_version`, or the wrong op for the current status) does **not**
+  block generating current intent — otherwise a booking mutated during the intent-off
+  window would look "converged" behind a stale `create:1`. There is **no execution-time
+  version fence today** (the claim RPC orders by `priority/next_attempt_at/created_at`
+  with no version compare; the handler/`record_calendar_sync_result` compare nothing —
+  verified). Generating current intent alongside a stale pending job is safe at this
+  phase because the worker is OFF (nothing dispatches). The execution-time fence — a
+  B2.4 worker operation returning `ok_noop_superseded` (already a defined JobResult
+  code) when a job's `payload.sync_version` is older than the current link/appointment
+  version — is a **B2.4 worker-operation responsibility and needs no migration**
+  (`appointments.sync_version` + `calendar_event_links.last_hone_version` already carry
+  everything the fence needs). B2.3-b only ensures the current desired intent EXISTS.
+- **Placeholder-vs-real link distinction.** A **placeholder** link (`google_event_id`
+  null → no remote event) is never treated as convergence: a confirmed appointment with
+  a placeholder link and no current job **re-drives** a create (abandoned/swallowed);
+  if its create is terminally **dead** it enters a manual-review skip surfaced by the
+  dead-row alert (no auto-loop). A **withdrawn cancellation** whose link is a placeholder
+  is **inert** — never a provider `event.delete` without provider coordinates. Only a
+  real-event link (`google_event_id` present) yields a delete/tombstone.
+- **Supersede-safe, no version inflation.** Every actuation is preceded by a **FULL
+  pre-actuation revalidation**: the current appointment + its link + its jobs are
+  re-read and the SAME classifier is re-run; the actuator fires only if the fresh
+  decision still matches. For an orphan delete the link is re-read by id (detecting a
+  rebind, a cleared `google_event_id`, a soft-delete, or an in-flight delete). Because
+  `repair_bump_appointment_sync_version` increments unconditionally, a bump is issued
+  only after that fresh check under the per-studio lock — repeated/interleaved sweeps
+  produce **exactly one** effective operation per appointment. (An orphaned, gone-appt
+  link can never be rebound: the reschedule rebind keys on
+  `rescheduled_from_appointment_id`, which is `ON DELETE SET NULL`, so a gone
+  predecessor is unreachable — verified. The app-level re-read is therefore sufficient;
+  no RPC/migration change is required.)
+- **Stable, RESUMABLE enumeration.** Candidates paginate by the **immutable appointment
+  UUID** (link classes by the immutable link id) under a pinned run clock that serves as
+  both `snapshot_started_at` (`created_at <=`) and `activation_started_at` (`ends_at
+  >=`) — never the mutable `starts_at`. A truncated run (page budget, route deadline, or
+  lost lease) persists a **durable Upstash continuation** (`gcal_reconcile:cursor:{studio}`
+  — pass/class + snapshot + activation + immutable last-seen id) so the next invocation
+  resumes AFTER that cursor; later appointments never starve behind already-converged
+  early rows. The continuation is **correctness state, FAIL-CLOSED**: a read I/O error
+  skips the studio (position unknown), a required-write failure marks it degraded (never
+  reported complete); a *lost* record restarts from the beginning under a fresh snapshot
+  (convergence is idempotent — we never skip to the end). All continuation changes happen
+  under the lock. Rows created after the snapshot are covered organically by the trigger.
 - **Initial-activation boundary (no arbitrary horizon).** On first eligibility the
   sweep creates events for every `status='confirmed'` appointment with `ends_at >=
   activation_started_at` (not-yet-ended, including in-progress) that has no converged
@@ -444,19 +485,28 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   serverless functions through the PostgREST service-role client (no held Postgres
   transaction), mutual exclusion uses an **Upstash ownership-token** lock: `SET key
   <token> NX EX` to acquire, a Lua compare-and-`DEL` to release, a compare-and-
-  `PEXPIRE` to renew between pages (TTL safely exceeds one page). A second concurrent
-  sweep for the same studio is skipped. **Lock acquisition / integrity failure is
-  fail-closed** — if Upstash is unreachable the studio is skipped, never swept
-  unlocked. This is the one place that is *not* fail-open.
-- **Heartbeat + retention (FAIL-OPEN observability).** After each run the route writes
-  a single non-sensitive Upstash heartbeat (`gcal_reconcile:last_run` — timestamps +
-  aggregate counts + a safe error class; no client identity, appointment content,
-  Google id, calendar id, or token) and prunes `calendar_sync_metric_events` past its
-  retention window (the 0125 `delete` grant). A stale/missing classifier + deduped
-  ops-alert recorder exist but are **not** wired to any schedule in B2.3-b (there is
-  no cron cadence yet — that is B2.3-c); a failed heartbeat/metric/alert write never
-  aborts the sweep or a booking. Observability failing open must not be confused with
-  the lock, which is fail-closed.
+  `PEXPIRE` to renew. Ownership is checked **before every actuator and at each pass
+  boundary** (time-based: renew once the configured fraction of the TTL has elapsed, so
+  a long op triggers a renewal), and the run is bounded by an overall **route deadline**.
+  A second concurrent sweep for the same studio is skipped. **Lock acquisition /
+  integrity failure is fail-closed** — if Upstash is unreachable, or a renewal cannot
+  confirm continued ownership, the sweep **stops mutating immediately**, persists a
+  continuation for the remainder, and reports degraded; it never runs past a lost lease
+  or sweeps unlocked. This is the one place that is *not* fail-open.
+- **Heartbeat + dead-row alert + retention (FAIL-OPEN observability).** After each run
+  the route writes a single non-sensitive Upstash heartbeat (`gcal_reconcile:last_run`)
+  whose **outcome is truthful** — `ok` / `degraded` / `error` (degraded when a studio was
+  truncated, the lock was unavailable, a continuation read/write failed, or a per-candidate
+  actuator errored; error on a top-level exception). `at` is the completion time; the
+  scheduler classifier treats a recent **degraded/error** heartbeat as NOT healthy (it is
+  not healthy just because it is recent). It also sweeps a **deduped, PHI-free dead-row
+  alert** (`calendar_outbox_dead_rows`, studio-scoped, aggregate count only) for terminal
+  dead outbox work — recurring after resolution when new dead rows appear, never reopening
+  a dead row — and prunes `calendar_sync_metric_events` past its retention window (the 0125
+  `delete` grant). Every heartbeat/metric/alert write is fail-open — a failure never aborts
+  the sweep or a booking. Observability failing open must not be confused with the lock +
+  continuation, which are fail-closed. The stale/degraded/error scheduler alert recorder
+  exists but is **not** wired to a schedule in B2.3-b (no cron cadence yet — that is B2.3-c).
 - **Route — `/api/cron/calendar-reconcile`.** Constant-time `CRON_SECRET` bearer
   (`isAuthorizedCronRequest`, 401 otherwise); no browser-supplied studio/connection/
   calendar/provider id is trusted (the eligible set is derived server-side). It is

@@ -4,122 +4,139 @@ import {
   classifyConfirmedAppointment,
   reconcileStudio,
   runReconciliation,
+  type OpenJob,
   type ReconcileApptState,
+  type ReconcileContinuation,
+  type ReconcileContinuationStore,
   type ReconcileLinkRow,
   type ReconcileLock,
   type ReconcileStore,
+  type StudioReconcileResult,
 } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b — the reconciliation sweep core. Two layers:
-//   (1) the pure classifiers (the four-class decision logic), and
-//   (2) the orchestration against a FAITHFUL in-memory store whose bump()/orphan
-//       actuators mimic the real DB trigger + repair RPCs (create/update/delete
-//       intent, link creation, idempotent orphan delete). The REAL DB behavior is
-//       proven separately in tests/db/google-calendar-b2-3b-reconcile.db.test.ts;
-//       here we prove convergence, no-duplicate on repeat, the supersede guard,
-//       revalidation, and fail-closed / lock-held handling deterministically.
+// Phase B2.3-b — the reconciliation sweep core. Layers:
+//   (1) pure classifiers with the op+version STALE-JOB model + placeholder rules;
+//   (2) orchestration against a FAITHFUL in-memory store (bump/orphan mimic the real
+//       DB trigger + repair RPCs), a durable continuation store, injected clock, and
+//       fake locks — proving convergence, stale-job generation, revalidation,
+//       resumable pagination, mid-page renewal + deadline, and the outcome model.
+
+const pending = (op: string, v: number | null): OpenJob => ({ opType: op, syncVersion: v, status: "pending" });
+const dead = (op: string, v: number | null): OpenJob => ({ opType: op, syncVersion: v, status: "dead" });
+const realLink = (over: Partial<ReconcileLinkRow> = {}): ReconcileLinkRow => ({
+  id: "l1",
+  honeEntityId: "a1",
+  googleEventId: "ev",
+  lastHoneVersion: 1,
+  ...over,
+});
+const placeholderLink = (over: Partial<ReconcileLinkRow> = {}): ReconcileLinkRow => realLink({ googleEventId: null, ...over });
 
 // ---------------------------------------------------------------------------
-// Pure classifiers.
+// Pure classifier — appointment pass (op+version stale model + placeholder).
 // ---------------------------------------------------------------------------
-describe("classifyConfirmedAppointment (appointment pass)", () => {
+describe("classifyConfirmedAppointment", () => {
   const appt = { id: "a1", syncVersion: 3 };
-  const link = (v: number): ReconcileLinkRow => ({ id: "l1", honeEntityId: "a1", googleEventId: "ev", lastHoneVersion: v });
 
-  it("no link + no job -> Class 1 bump (create)", () => {
-    expect(classifyConfirmedAppointment(appt, undefined, false)).toEqual({
-      act: "bump",
-      class: "missing_link_job",
-      appointmentId: "a1",
+  it("no link, no jobs -> Class 1 create", () => {
+    expect(classifyConfirmedAppointment(appt, undefined, [])).toEqual({ act: "bump", class: "missing_link_job", appointmentId: "a1" });
+  });
+  it("no link, a STALE pending create (older version) does NOT block -> bump", () => {
+    expect(classifyConfirmedAppointment(appt, undefined, [pending("event.create", 1)])).toMatchObject({ act: "bump" });
+  });
+  it("no link, a current-or-newer create -> skip work_in_flight", () => {
+    expect(classifyConfirmedAppointment(appt, undefined, [pending("event.create", 3)])).toEqual({ act: "skip", reason: "work_in_flight" });
+    expect(classifyConfirmedAppointment(appt, undefined, [pending("event.create", 5)])).toEqual({ act: "skip", reason: "work_in_flight" });
+  });
+  it("placeholder link, no jobs -> re-drive create (NOT converged)", () => {
+    expect(classifyConfirmedAppointment(appt, placeholderLink(), [])).toMatchObject({ act: "bump", class: "missing_link_job" });
+  });
+  it("placeholder link with a DEAD create -> manual review (no auto re-drive)", () => {
+    expect(classifyConfirmedAppointment(appt, placeholderLink(), [dead("event.create", 1)])).toEqual({
+      act: "skip",
+      reason: "dead_create_manual_review",
     });
   });
-  it("link behind + no job -> Class 3 bump (update)", () => {
-    expect(classifyConfirmedAppointment(appt, link(1), false)).toEqual({
+  it("placeholder link with a current pending create -> work_in_flight", () => {
+    expect(classifyConfirmedAppointment(appt, placeholderLink(), [pending("event.create", 3)])).toEqual({ act: "skip", reason: "work_in_flight" });
+  });
+  it("real link behind + no current job -> Class 3 update", () => {
+    expect(classifyConfirmedAppointment(appt, realLink({ lastHoneVersion: 1 }), [])).toEqual({
       act: "bump",
       class: "link_version_behind",
       appointmentId: "a1",
     });
   });
-  it("link current -> skip converged", () => {
-    expect(classifyConfirmedAppointment(appt, link(3), false)).toEqual({ act: "skip", reason: "converged" });
+  it("real link behind + STALE pending update (older) -> still bump", () => {
+    expect(classifyConfirmedAppointment(appt, realLink({ lastHoneVersion: 1 }), [pending("event.update", 2)])).toMatchObject({ act: "bump" });
   });
-  it("open job present -> skip work_in_flight (supersede-safe), even with no link", () => {
-    expect(classifyConfirmedAppointment(appt, undefined, true)).toEqual({ act: "skip", reason: "work_in_flight" });
-    expect(classifyConfirmedAppointment(appt, link(1), true)).toEqual({ act: "skip", reason: "work_in_flight" });
+  it("real link behind + current update -> work_in_flight", () => {
+    expect(classifyConfirmedAppointment(appt, realLink({ lastHoneVersion: 1 }), [pending("event.update", 3)])).toEqual({ act: "skip", reason: "work_in_flight" });
+  });
+  it("real link caught up -> converged", () => {
+    expect(classifyConfirmedAppointment(appt, realLink({ lastHoneVersion: 3 }), [])).toEqual({ act: "skip", reason: "converged" });
   });
 });
 
-describe("classifyActiveLink (link pass)", () => {
-  const link = (over: Partial<ReconcileLinkRow> = {}): ReconcileLinkRow => ({
-    id: "l1",
-    honeEntityId: "a1",
-    googleEventId: "ev",
-    lastHoneVersion: 1,
-    ...over,
-  });
+// ---------------------------------------------------------------------------
+// Pure classifier — link pass.
+// ---------------------------------------------------------------------------
+describe("classifyActiveLink", () => {
   const appt = (over: Partial<ReconcileApptState> = {}): ReconcileApptState => ({
     id: "a1",
     status: "confirmed",
-    syncVersion: 1,
+    syncVersion: 2,
     cancellationKind: null,
     ...over,
   });
 
-  it("appointment gone + real event -> Class 2 orphan delete", () => {
-    expect(classifyActiveLink(link(), undefined, false)).toEqual({
-      act: "orphan_delete",
-      class: "orphaned_link_delete",
-      linkId: "l1",
-    });
+  it("appt gone + real event -> orphan delete", () => {
+    expect(classifyActiveLink(realLink(), undefined, [])).toEqual({ act: "orphan_delete", class: "orphaned_link_delete", linkId: "l1" });
   });
-  it("appointment gone + placeholder (no google_event_id) -> skip inert (no remote event)", () => {
-    expect(classifyActiveLink(link({ googleEventId: null }), undefined, false)).toEqual({
-      act: "skip",
-      reason: "inert_placeholder",
-    });
+  it("appt gone + placeholder -> inert", () => {
+    expect(classifyActiveLink(placeholderLink(), undefined, [])).toEqual({ act: "skip", reason: "inert_placeholder" });
   });
-  it("cancelled withdrawn + no job -> Class 4 bump (delete via trigger)", () => {
-    expect(classifyActiveLink(link(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), false)).toEqual({
+  it("withdrawn cancel + real link + no current delete -> Class 4 delete", () => {
+    expect(classifyActiveLink(realLink(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), [])).toEqual({
       act: "bump",
       class: "surplus_event_delete",
       appointmentId: "a1",
     });
   });
-  it("cancelled RESCHEDULED -> skip keep_event (successor rebinds; delete suppressed)", () => {
-    expect(classifyActiveLink(link(), appt({ status: "cancelled", cancellationKind: "rescheduled" }), false)).toEqual({
+  it("withdrawn cancel + PLACEHOLDER link -> inert (no remote delete without provider coords)", () => {
+    expect(classifyActiveLink(placeholderLink(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), [])).toEqual({
       act: "skip",
-      reason: "keep_event",
+      reason: "inert_placeholder",
     });
   });
-  it("cancelled withdrawn + open job -> skip work_in_flight", () => {
-    expect(classifyActiveLink(link(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), true)).toEqual({
+  it("rescheduled cancel -> keep_event (successor rebinds)", () => {
+    expect(classifyActiveLink(realLink(), appt({ status: "cancelled", cancellationKind: "rescheduled" }), [])).toEqual({ act: "skip", reason: "keep_event" });
+  });
+  it("withdrawn cancel + current delete -> work_in_flight; STALE delete -> still bump", () => {
+    expect(classifyActiveLink(realLink(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), [pending("event.delete", 2)])).toEqual({
       act: "skip",
       reason: "work_in_flight",
     });
+    expect(classifyActiveLink(realLink(), appt({ status: "cancelled", cancellationKind: "withdrawn" }), [pending("event.delete", 1)])).toMatchObject({ act: "bump" });
   });
-  it("confirmed link -> skip (handled by appointment pass)", () => {
-    expect(classifyActiveLink(link(), appt({ status: "confirmed" }), false)).toEqual({
-      act: "skip",
-      reason: "handled_by_appointment_pass",
-    });
-  });
-  it("completed / no_show -> skip keep_event (historical block remains)", () => {
-    for (const status of ["completed", "no_show"]) {
-      expect(classifyActiveLink(link(), appt({ status }), false)).toEqual({ act: "skip", reason: "keep_event" });
+  it("confirmed -> handled by appointment pass; completed/no_show -> keep_event", () => {
+    expect(classifyActiveLink(realLink(), appt({ status: "confirmed" }), [])).toEqual({ act: "skip", reason: "handled_by_appointment_pass" });
+    for (const s of ["completed", "no_show"]) {
+      expect(classifyActiveLink(realLink(), appt({ status: s }), [])).toEqual({ act: "skip", reason: "keep_event" });
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// Faithful in-memory store + fake locks.
+// Faithful in-memory store + continuation + locks.
 // ---------------------------------------------------------------------------
 type Appt = { id: string; studioId: string; status: string; syncVersion: number; cancellationKind: string | null; endsAt: string; createdAt: string };
 type Link = { id: string; studioId: string; honeEntityId: string; googleEventId: string | null; lastHoneVersion: number; deletedAt: string | null };
-type Job = { studioId: string; honeEntityId: string | null; status: string; opType: string; googleEventId?: string | null; key: string };
+type Job = { studioId: string; honeEntityId: string | null; opType: string; syncVersion: number | null; status: "pending" | "processing" | "dead"; googleEventId?: string | null };
 
 const FUTURE = new Date(Date.UTC(2030, 0, 1)).toISOString();
 const PAST = new Date(Date.UTC(2020, 0, 1)).toISOString();
-const NOW = () => Date.UTC(2026, 6, 14, 12, 0, 0);
+const BASE = Date.UTC(2026, 6, 14, 12, 0, 0);
 
 class FakeStore implements ReconcileStore {
   studios = new Map<string, { flag: boolean; owner: boolean; writeCalendar: string | null }>();
@@ -129,55 +146,34 @@ class FakeStore implements ReconcileStore {
   bumpCalls: string[] = [];
   orphanCalls: string[] = [];
   private linkSeq = 0;
-  // Override the open-jobs read to appear empty on the first call and populated
-  // afterwards — used to prove the immediately-before-bump revalidation.
-  openJobsOverride?: (ids: string[], nth: number) => Set<string>;
-  private openJobsCalls = 0;
 
-  seedStudio(id: string, opts: { eligible?: boolean } = {}) {
-    const eligible = opts.eligible ?? true;
+  seedStudio(id: string, eligible = true) {
     this.studios.set(id, { flag: eligible, owner: eligible, writeCalendar: eligible ? "primary" : null });
   }
   seedAppt(a: Partial<Appt> & { id: string; studioId: string }) {
-    this.appts.set(a.id, {
-      status: "confirmed",
-      syncVersion: 1,
-      cancellationKind: null,
-      endsAt: FUTURE,
-      createdAt: PAST,
-      ...a,
-    });
+    this.appts.set(a.id, { status: "confirmed", syncVersion: 1, cancellationKind: null, endsAt: FUTURE, createdAt: PAST, ...a });
   }
   seedLink(l: Partial<Link> & { id: string; studioId: string; honeEntityId: string }) {
     this.links.set(l.id, { googleEventId: "ev", lastHoneVersion: 1, deletedAt: null, ...l });
   }
-  seedJob(j: Partial<Job> & { studioId: string; honeEntityId: string | null }) {
-    this.jobs.push({ status: "pending", opType: "event.create", key: `k-${this.jobs.length}`, ...j });
+  seedJob(j: Partial<Job> & { studioId: string; honeEntityId: string | null; opType: string; syncVersion: number | null }) {
+    this.jobs.push({ status: "pending", ...j });
   }
   private activeLink(studioId: string, entityId: string): Link | undefined {
-    for (const l of this.links.values()) {
-      if (l.studioId === studioId && l.honeEntityId === entityId && l.deletedAt === null) return l;
-    }
+    for (const l of this.links.values()) if (l.studioId === studioId && l.honeEntityId === entityId && l.deletedAt === null) return l;
     return undefined;
   }
-  private isEligible(studioId: string): boolean {
+  private eligible(studioId: string): boolean {
     const s = this.studios.get(studioId);
     return Boolean(s && s.flag && s.owner && s.writeCalendar);
   }
 
   async listEligibleStudioIds() {
-    return [...this.studios.keys()].filter((id) => this.isEligible(id));
+    return [...this.studios.keys()].filter((id) => this.eligible(id));
   }
   async pageConfirmedFutureAppointments(studioId: string, activationIso: string, snapshotIso: string, afterId: string | null, limit: number) {
     return [...this.appts.values()]
-      .filter(
-        (a) =>
-          a.studioId === studioId &&
-          a.status === "confirmed" &&
-          a.endsAt >= activationIso &&
-          a.createdAt <= snapshotIso &&
-          (afterId === null || a.id > afterId),
-      )
+      .filter((a) => a.studioId === studioId && a.status === "confirmed" && a.endsAt >= activationIso && a.createdAt <= snapshotIso && (afterId === null || a.id > afterId))
       .sort((x, y) => (x.id < y.id ? -1 : 1))
       .slice(0, limit)
       .map((a) => ({ id: a.id, syncVersion: a.syncVersion }));
@@ -197,6 +193,11 @@ class FakeStore implements ReconcileStore {
     }
     return m;
   }
+  async getActiveLinkById(studioId: string, linkId: string) {
+    const l = this.links.get(linkId);
+    if (!l || l.studioId !== studioId || l.deletedAt !== null) return null;
+    return { id: l.id, honeEntityId: l.honeEntityId, googleEventId: l.googleEventId, lastHoneVersion: l.lastHoneVersion };
+  }
   async getAppointmentStates(studioId: string, ids: string[]) {
     const m = new Map<string, ReconcileApptState>();
     for (const id of ids) {
@@ -205,250 +206,342 @@ class FakeStore implements ReconcileStore {
     }
     return m;
   }
-  async getEntitiesWithOpenJobs(studioId: string, ids: string[]) {
-    const nth = this.openJobsCalls++;
-    if (this.openJobsOverride) return this.openJobsOverride(ids, nth);
-    const set = new Set<string>();
+  async getOpenJobsForEntities(studioId: string, ids: string[]) {
+    const m = new Map<string, OpenJob[]>();
     for (const j of this.jobs) {
-      if (j.studioId === studioId && j.honeEntityId && ids.includes(j.honeEntityId) && (j.status === "pending" || j.status === "processing")) {
-        set.add(j.honeEntityId);
-      }
+      if (j.studioId !== studioId || !j.honeEntityId || !ids.includes(j.honeEntityId)) continue;
+      const arr = m.get(j.honeEntityId) ?? [];
+      arr.push({ opType: j.opType, syncVersion: j.syncVersion, status: j.status });
+      m.set(j.honeEntityId, arr);
     }
-    return set;
+    return m;
   }
-
-  // Faithful actuator: mimics repair_bump_appointment_sync_version + the enqueue trigger.
   async bumpAppointmentSyncVersion(apptId: string) {
     this.bumpCalls.push(apptId);
     const a = this.appts.get(apptId);
     if (!a) return null;
     a.syncVersion += 1;
-    if (this.isEligible(a.studioId)) {
+    if (this.eligible(a.studioId)) {
       if (a.status === "confirmed") {
-        let link = this.activeLink(a.studioId, apptId);
+        const link = this.activeLink(a.studioId, apptId);
         if (!link) {
-          link = { id: `L${this.linkSeq++}`, studioId: a.studioId, honeEntityId: apptId, googleEventId: null, lastHoneVersion: a.syncVersion, deletedAt: null };
-          this.links.set(link.id, link);
-          this.seedJob({ studioId: a.studioId, honeEntityId: apptId, status: "pending", opType: "event.create", key: `appointment:${apptId}:event.create:${a.syncVersion}` });
+          this.links.set(`L${this.linkSeq++}`, { id: `L${this.linkSeq}`, studioId: a.studioId, honeEntityId: apptId, googleEventId: null, lastHoneVersion: a.syncVersion, deletedAt: null });
+          this.seedJob({ studioId: a.studioId, honeEntityId: apptId, opType: "event.create", syncVersion: a.syncVersion });
         } else {
-          this.seedJob({ studioId: a.studioId, honeEntityId: apptId, status: "pending", opType: "event.update", key: `appointment:${apptId}:event.update:${a.syncVersion}` });
+          this.seedJob({ studioId: a.studioId, honeEntityId: apptId, opType: "event.update", syncVersion: a.syncVersion });
         }
       } else if (a.status === "cancelled" && a.cancellationKind !== "rescheduled") {
-        if (this.activeLink(a.studioId, apptId)) {
-          this.seedJob({ studioId: a.studioId, honeEntityId: apptId, status: "pending", opType: "event.delete", key: `appointment:${apptId}:event.delete:${a.syncVersion}` });
-        }
+        const link = this.activeLink(a.studioId, apptId);
+        if (link && link.googleEventId !== null) this.seedJob({ studioId: a.studioId, honeEntityId: apptId, opType: "event.delete", syncVersion: a.syncVersion });
       }
     }
     return a.syncVersion;
   }
-  // Faithful actuator: mimics repair_enqueue_orphan_link_delete (idempotent).
   async enqueueOrphanLinkDelete(linkId: string) {
     this.orphanCalls.push(linkId);
     const l = this.links.get(linkId);
     if (!l || l.deletedAt !== null || l.googleEventId === null) return "no_active_link";
     const inFlight = this.jobs.some((j) => j.opType === "event.delete" && (j.status === "pending" || j.status === "processing") && j.googleEventId === l.googleEventId);
     if (inFlight) return "delete_in_flight";
-    this.seedJob({ studioId: l.studioId, honeEntityId: null, status: "pending", opType: "event.delete", googleEventId: l.googleEventId, key: `orphan:${linkId}` });
-    return "uuid-generated";
+    this.seedJob({ studioId: l.studioId, honeEntityId: null, opType: "event.delete", syncVersion: null, googleEventId: l.googleEventId });
+    return "uuid";
+  }
+  async listStudiosWithDeadOutbox() {
+    const counts = new Map<string, number>();
+    for (const j of this.jobs) if (j.status === "dead") counts.set(j.studioId, (counts.get(j.studioId) ?? 0) + 1);
+    return [...counts.entries()].map(([studioId, deadCount]) => ({ studioId, deadCount }));
   }
 }
 
-const lockAlways = (): ReconcileLock => ({
-  acquire: vi.fn(async () => ({ ok: true, token: "t" }) as const),
-  release: vi.fn(async () => {}),
-  renew: vi.fn(async () => true),
-});
-const lockHeld = (): ReconcileLock => ({ acquire: async () => ({ ok: false, reason: "held" }), release: async () => {} });
-const lockUnavailable = (): ReconcileLock => ({ acquire: async () => ({ ok: false, reason: "unavailable" }), release: async () => {} });
-function lockSingleSlot(): ReconcileLock {
-  const held = new Map<string, string>();
-  let seq = 0;
-  return {
-    async acquire(studioId) {
-      if (held.has(studioId)) return { ok: false, reason: "held" };
-      const token = `tok-${seq++}`;
-      held.set(studioId, token);
-      return { ok: true, token };
-    },
-    async release(studioId, token) {
-      if (held.get(studioId) === token) held.delete(studioId);
-    },
-  };
+class FakeContinuation implements ReconcileContinuationStore {
+  map = new Map<string, ReconcileContinuation>();
+  readError = false;
+  writeError = false;
+  async read(studioId: string) {
+    if (this.readError) return { ok: false as const };
+    return { ok: true as const, value: this.map.get(studioId) ?? null };
+  }
+  async write(studioId: string, v: ReconcileContinuation) {
+    if (this.writeError) return false;
+    this.map.set(studioId, v);
+    return true;
+  }
+  async clear(studioId: string) {
+    this.map.delete(studioId);
+    return true;
+  }
 }
 
-const deps = (store: FakeStore, lock: ReconcileLock) => ({ store, lock, now: NOW });
+const lockAlways = (): ReconcileLock => ({ acquire: async () => ({ ok: true, token: "t" }), release: async () => {}, renew: async () => true });
+const lockHeld = (): ReconcileLock => ({ acquire: async () => ({ ok: false, reason: "held" }), release: async () => {} });
+const lockUnavailable = (): ReconcileLock => ({ acquire: async () => ({ ok: false, reason: "unavailable" }), release: async () => {} });
+
+function deps(store: FakeStore, over: Partial<Parameters<typeof runReconciliation>[0]> = {}) {
+  return { store, lock: lockAlways(), continuation: new FakeContinuation(), now: () => BASE, ...over };
+}
 
 // ---------------------------------------------------------------------------
-// Orchestration behavior.
+// §2 stale-open-job — an older job never blocks generating current intent.
 // ---------------------------------------------------------------------------
-describe("Class 1 — intent-off window: missing link+job converges to one create", () => {
-  it("first sweep bumps once (create); second sweep is a no-op", async () => {
+describe("§2 stale open jobs", () => {
+  it("pending create v1, appointment now v3 -> generates exactly one newer op; repeat is a no-op", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st" }); // confirmed future, NO link, NO job (post-intent-off state)
-
-    const r1 = await runReconciliation(deps(s, lockAlways()));
+    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 3 });
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: null, lastHoneVersion: 1 }); // placeholder from create v1
+    s.seedJob({ studioId: "st", honeEntityId: "a1", opType: "event.create", syncVersion: 1 }); // STALE pending create
+    const c = new FakeContinuation();
+    const r1 = await runReconciliation(deps(s, { continuation: c }));
+    expect(r1.enqueued).toBe(1); // one newer op generated
     expect(s.bumpCalls).toEqual(["a1"]);
-    expect(r1.enqueued).toBe(1);
-    expect(r1.byClass.missing_link_job).toBe(1);
-    // A link + a pending create job now exist.
-    expect([...s.links.values()].some((l) => l.honeEntityId === "a1")).toBe(true);
-    expect(s.jobs.filter((j) => j.honeEntityId === "a1" && j.opType === "event.create")).toHaveLength(1);
-
-    const r2 = await runReconciliation(deps(s, lockAlways()));
-    expect(s.bumpCalls).toEqual(["a1"]); // NOT bumped again
-    expect(r2.enqueued).toBe(0);
-  });
-});
-
-describe("Class 3 — link version behind converges to one update; repeat is a no-op", () => {
-  it("bumps to enqueue an update; the pending job blocks a second bump (no version inflation)", async () => {
-    const s = new FakeStore();
-    s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 5 });
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: "ev", lastHoneVersion: 3 });
-
-    await runReconciliation(deps(s, lockAlways()));
-    expect(s.bumpCalls).toEqual(["a1"]);
-    expect(s.jobs.filter((j) => j.opType === "event.update")).toHaveLength(1);
-
-    await runReconciliation(deps(s, lockAlways())); // open job present -> skip
-    expect(s.bumpCalls).toEqual(["a1"]);
-  });
-});
-
-describe("multi-mutation collapse: many prior changes -> exactly one op at the current version", () => {
-  it("a far-behind link produces a single bump, not one per missed version", async () => {
-    const s = new FakeStore();
-    s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 10 });
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", lastHoneVersion: 2 });
-    await runReconciliation(deps(s, lockAlways()));
-    expect(s.bumpCalls).toEqual(["a1"]);
-  });
-});
-
-describe("Class 2 — orphaned link (appointment gone)", () => {
-  it("real event -> one orphan delete; repeat is delete_in_flight (no dup)", async () => {
-    const s = new FakeStore();
-    s.seedStudio("st");
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "gone-appt", googleEventId: "ev-1" }); // no appointment row
-    const r1 = await runReconciliation(deps(s, lockAlways()));
-    expect(s.orphanCalls).toEqual(["l1"]);
-    expect(r1.byClass.orphaned_link_delete).toBe(1);
-    expect(s.jobs.filter((j) => j.opType === "event.delete")).toHaveLength(1);
-
-    const r2 = await runReconciliation(deps(s, lockAlways()));
-    expect(r2.enqueued).toBe(0); // delete_in_flight -> skip
+    const r2 = await runReconciliation(deps(s, { continuation: c }));
+    expect(r2.enqueued).toBe(0); // now a current job exists -> skip
   });
 
-  it("placeholder link (no google_event_id) -> inert, no orphan delete", async () => {
+  it("pending create v1, appointment becomes withdrawn-cancelled -> no remote op, safe no-event state", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "gone", googleEventId: null });
-    const r = await runReconciliation(deps(s, lockAlways()));
-    expect(s.orphanCalls).toEqual([]);
+    s.seedAppt({ id: "a1", studioId: "st", status: "cancelled", cancellationKind: "withdrawn", syncVersion: 2 });
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: null }); // placeholder (no event ever created)
+    s.seedJob({ studioId: "st", honeEntityId: "a1", opType: "event.create", syncVersion: 1 }); // stale create
+    const r = await runReconciliation(deps(s));
+    expect(r.enqueued).toBe(0); // placeholder cancel -> inert, no delete enqueued
+    expect(s.bumpCalls).toEqual([]);
+  });
+
+  it("processing OLDER job + newer appointment version -> generates current, does not falsely converge", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 4 });
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: "ev", lastHoneVersion: 1 });
+    s.jobs.push({ studioId: "st", honeEntityId: "a1", opType: "event.update", syncVersion: 1, status: "processing" });
+    const r = await runReconciliation(deps(s));
+    expect(r.enqueued).toBe(1);
+    expect(s.bumpCalls).toEqual(["a1"]);
+  });
+
+  it("current matching open job -> no-op", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 4 });
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: "ev", lastHoneVersion: 1 });
+    s.seedJob({ studioId: "st", honeEntityId: "a1", opType: "event.update", syncVersion: 4 });
+    const r = await runReconciliation(deps(s));
     expect(r.enqueued).toBe(0);
+    expect(s.bumpCalls).toEqual([]);
   });
 });
 
-describe("Class 4 — withdrawn cancellation with a live link converges to one delete", () => {
-  it("bumps to enqueue a delete; rescheduled/ completed are left alone", async () => {
+// ---------------------------------------------------------------------------
+// §3 placeholder semantics (orchestration).
+// ---------------------------------------------------------------------------
+describe("§3 placeholder link handling", () => {
+  it("confirmed placeholder + no job -> re-drive; +dead create -> manual review (no bump)", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st", status: "cancelled", cancellationKind: "withdrawn" });
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: "ev" });
-    // rescheduled predecessor (delete suppressed) + completed (event kept)
-    s.seedAppt({ id: "a2", studioId: "st", status: "cancelled", cancellationKind: "rescheduled" });
-    s.seedLink({ id: "l2", studioId: "st", honeEntityId: "a2", googleEventId: "ev2" });
-    s.seedAppt({ id: "a3", studioId: "st", status: "completed" });
-    s.seedLink({ id: "l3", studioId: "st", honeEntityId: "a3", googleEventId: "ev3" });
-
-    const r = await runReconciliation(deps(s, lockAlways()));
-    expect(s.bumpCalls).toEqual(["a1"]); // only the withdrawn one
-    expect(r.byClass.surplus_event_delete).toBe(1);
-    expect(s.jobs.filter((j) => j.opType === "event.delete" && j.honeEntityId === "a1")).toHaveLength(1);
+    s.seedAppt({ id: "a1", studioId: "st" });
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: null });
+    expect((await runReconciliation(deps(s))).enqueued).toBe(1); // re-drive
+    // Now with a dead create + placeholder, a fresh store:
+    const s2 = new FakeStore();
+    s2.seedStudio("st");
+    s2.seedAppt({ id: "a1", studioId: "st" });
+    s2.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", googleEventId: null });
+    s2.jobs.push({ studioId: "st", honeEntityId: "a1", opType: "event.create", syncVersion: 1, status: "dead" });
+    expect(s2.bumpCalls).toEqual([]);
+    await runReconciliation(deps(s2));
+    expect(s2.bumpCalls).toEqual([]); // dead create -> manual review, no auto re-drive
   });
 });
 
-describe("supersede / revalidation guards", () => {
-  it("a pending job present at classify time -> skip (superseded), never bumped", async () => {
+// ---------------------------------------------------------------------------
+// §4 resumable continuation.
+// ---------------------------------------------------------------------------
+describe("§4 resumable continuation", () => {
+  it("a data set larger than one page ceiling is covered exactly once across invocations", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 5 });
-    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "a1", lastHoneVersion: 3 });
-    s.seedJob({ studioId: "st", honeEntityId: "a1", status: "pending", opType: "event.update" });
-    const r = await runReconciliation(deps(s, lockAlways()));
+    for (let i = 1; i <= 5; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    const c = new FakeContinuation();
+    const cfg = { continuation: c, pageSize: 2, maxPagesPerStudioPerPass: 1 }; // ceiling = 2 per invocation
+    let guard = 0;
+    // Run until the continuation clears (studio fully drained).
+    while (c.map.size > 0 || guard === 0) {
+      await runReconciliation(deps(s, cfg));
+      if (++guard > 20) throw new Error("did not converge");
+    }
+    // Every appointment got exactly one create (no skips, no duplicates).
+    for (let i = 1; i <= 5; i++) {
+      expect(s.jobs.filter((j) => j.honeEntityId === `a${i}` && j.opType === "event.create")).toHaveLength(1);
+    }
+  });
+
+  it("continuation READ failure -> studio not swept (fail-closed, degraded)", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    s.seedAppt({ id: "a1", studioId: "st" });
+    const c = new FakeContinuation();
+    c.readError = true;
+    const r = await runReconciliation(deps(s, { continuation: c }));
+    expect(s.bumpCalls).toEqual([]); // never swept
+    expect(r.studiosContinuationFailed).toBe(1);
+    expect(r.outcome).toBe("degraded");
+  });
+
+  it("continuation WRITE failure on truncation -> degraded, not reported complete", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    for (let i = 1; i <= 3; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    const c = new FakeContinuation();
+    c.writeError = true;
+    const r = await runReconciliation(deps(s, { continuation: c, pageSize: 1, maxPagesPerStudioPerPass: 1 }));
+    expect(r.studiosCompleted).toBe(0);
+    expect(r.outcome).toBe("degraded");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §5 mid-page lock renewal + deadline (injected clock).
+// ---------------------------------------------------------------------------
+describe("§5 lock renewal + deadline", () => {
+  it("renews between pages once the interval elapses", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    for (let i = 1; i <= 4; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    let clock = BASE;
+    const renew = vi.fn(async () => true);
+    const lock: ReconcileLock = { acquire: async () => ({ ok: true, token: "t" }), release: async () => {}, renew };
+    // advance the clock 60s each time now() is read so the 40s interval always trips
+    const now = () => (clock += 60_000);
+    await reconcileStudio("st", { store: s, lock, continuation: new FakeContinuation(), now, pageSize: 1, lockRenewIntervalMs: 40_000 }, new Date(BASE).toISOString());
+    expect(renew).toHaveBeenCalled();
+  });
+
+  it("a failed renewal stops further mutation, persists a continuation, and is degraded", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    for (let i = 1; i <= 4; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    let clock = BASE;
+    const now = () => (clock += 60_000); // always past the renew interval
+    const lock: ReconcileLock = { acquire: async () => ({ ok: true, token: "t" }), release: async () => {}, renew: async () => false };
+    const c = new FakeContinuation();
+    const res = await reconcileStudio("st", { store: s, lock, continuation: c, now, pageSize: 1, lockRenewIntervalMs: 40_000 }, new Date(BASE).toISOString());
+    expect(res.ownershipLost).toBe(true);
+    expect(res.outcome).toBe("degraded");
+    expect(c.map.has("st")).toBe(true); // continuation persisted for the remainder
+    // It stopped early — not all 4 appointments were bumped.
+    expect(s.bumpCalls.length).toBeLessThan(4);
+  });
+
+  it("a deadline reached mid-run truncates + persists a continuation", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    for (let i = 1; i <= 5; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    const c = new FakeContinuation();
+    const res = await reconcileStudio(
+      "st",
+      { store: s, lock: lockAlways(), continuation: c, now: () => BASE, deadlineMs: BASE - 1 /* already past */ },
+      new Date(BASE).toISOString(),
+    );
+    expect(res.truncated).toBe(true);
+    expect(res.deadlineHit).toBe(true);
+    expect(s.bumpCalls).toEqual([]); // nothing actuated after the deadline
+    expect(c.map.has("st")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §6 full pre-actuation revalidation.
+// ---------------------------------------------------------------------------
+describe("§6 pre-actuation revalidation", () => {
+  it("a current job appearing between classification and actuation cancels the bump", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    s.seedAppt({ id: "a1", studioId: "st", syncVersion: 2 });
+    // Wrap getOpenJobsForEntities: empty at classify (1st call), populated at revalidation.
+    const real = s.getOpenJobsForEntities.bind(s);
+    let calls = 0;
+    s.getOpenJobsForEntities = async (studioId, ids) => {
+      calls++;
+      if (calls >= 2) return new Map([["a1", [pending("event.create", 2)]]]);
+      return real(studioId, ids);
+    };
+    const r = await runReconciliation(deps(s));
     expect(s.bumpCalls).toEqual([]);
     expect(r.superseded).toBeGreaterThanOrEqual(1);
   });
 
-  it("revalidation: a job appearing AFTER classification cancels the bump", async () => {
+  it("orphan delete is cancelled when the link was rebound to a live appointment", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st" }); // Class 1 candidate
-    // Appear empty during the page classification (nth 0), populated during the
-    // immediately-before-bump revalidation (nth >= 1).
-    s.openJobsOverride = (_ids, nth) => (nth === 0 ? new Set() : new Set(["a1"]));
-    const r = await runReconciliation(deps(s, lockAlways()));
-    expect(s.bumpCalls).toEqual([]); // revalidation saw the job -> no bump
-    expect(r.superseded).toBeGreaterThanOrEqual(1);
+    s.seedLink({ id: "l1", studioId: "st", honeEntityId: "gone", googleEventId: "ev" }); // orphan at classify
+    // Between classify and actuate, the link is rebound to a LIVE appointment.
+    const realById = s.getActiveLinkById.bind(s);
+    s.getActiveLinkById = async (studioId, linkId) => {
+      s.seedAppt({ id: "gone", studioId: "st" }); // the entity now resolves to a live appt
+      return realById(studioId, linkId);
+    };
+    await runReconciliation(deps(s));
+    // Revalidation re-classified the rebound link as non-orphan, so the delete RPC
+    // was NEVER invoked.
+    expect(s.orphanCalls).toEqual([]);
+    expect(s.jobs.filter((j) => j.opType === "event.delete")).toHaveLength(0);
   });
 });
 
-describe("lock behavior (fail-closed)", () => {
-  it("lock HELD -> studio skipped, no reads/bumps", async () => {
+// ---------------------------------------------------------------------------
+// §7 outcome model + lock behavior + dormancy.
+// ---------------------------------------------------------------------------
+describe("§7 outcome + lock", () => {
+  it("clean full run -> ok", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
     s.seedAppt({ id: "a1", studioId: "st" });
-    const r = await runReconciliation(deps(s, lockHeld()));
+    expect((await runReconciliation(deps(s))).outcome).toBe("ok");
+  });
+
+  it("lock HELD -> skipped (benign), run stays ok; UNAVAILABLE -> degraded", async () => {
+    const s = new FakeStore();
+    s.seedStudio("st");
+    s.seedAppt({ id: "a1", studioId: "st" });
+    const held = await runReconciliation(deps(s, { lock: lockHeld() }));
+    expect(held.studiosSkippedHeld).toBe(1);
+    expect(held.outcome).toBe("ok");
     expect(s.bumpCalls).toEqual([]);
-    expect(r.studiosSkippedHeld).toBe(1);
-    expect(r.studiosSwept).toBe(0);
+    const unavail = await runReconciliation(deps(s, { lock: lockUnavailable() }));
+    expect(unavail.studiosSkippedUnavailable).toBe(1);
+    expect(unavail.outcome).toBe("degraded");
   });
 
-  it("lock UNAVAILABLE -> studio skipped (never swept unlocked)", async () => {
+  it("truncated studio -> degraded run outcome", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st" });
-    const r = await runReconciliation(deps(s, lockUnavailable()));
-    expect(s.bumpCalls).toEqual([]);
-    expect(r.studiosSkippedUnavailable).toBe(1);
+    for (let i = 1; i <= 3; i++) s.seedAppt({ id: `a${i}`, studioId: "st" });
+    const r = await runReconciliation(deps(s, { pageSize: 1, maxPagesPerStudioPerPass: 1 }));
+    expect(r.studiosTruncated).toBe(1);
+    expect(r.outcome).toBe("degraded");
   });
 
-  it("concurrent sweeps under a single-slot lock: exactly one bump (no duplicate)", async () => {
+  it("intent-off studio is never eligible / swept", async () => {
     const s = new FakeStore();
-    s.seedStudio("st");
-    s.seedAppt({ id: "a1", studioId: "st" });
-    const lock = lockSingleSlot();
-    await Promise.all([runReconciliation(deps(s, lock)), runReconciliation(deps(s, lock))]);
-    // Either the second run was locked out, or it ran after the first converged
-    // the appointment — either way, exactly one create bump.
-    expect(s.bumpCalls).toEqual(["a1"]);
-  });
-});
-
-describe("dormancy: ineligible studios are never swept", () => {
-  it("an intent-OFF studio yields no eligible studios and no work", async () => {
-    const s = new FakeStore();
-    s.seedStudio("st", { eligible: false });
+    s.seedStudio("st", false);
     s.seedAppt({ id: "a1", studioId: "st" });
     const acquire = vi.fn(async () => ({ ok: true, token: "t" }) as const);
-    const r = await runReconciliation(deps(s, { acquire, release: async () => {}, renew: async () => true }));
+    const r = await runReconciliation(deps(s, { lock: { acquire, release: async () => {}, renew: async () => true } }));
     expect(r.eligibleStudios).toBe(0);
-    expect(acquire).not.toHaveBeenCalled(); // never even attempts a lock
-    expect(s.bumpCalls).toEqual([]);
+    expect(acquire).not.toHaveBeenCalled();
   });
 });
 
 describe("reconcileStudio result shape", () => {
-  it("reports locked + cursors + aggregate counts", async () => {
+  it("reports locked + cursor + outcome", async () => {
     const s = new FakeStore();
     s.seedStudio("st");
     s.seedAppt({ id: "a1", studioId: "st" });
-    const res = await reconcileStudio("st", deps(s, lockAlways()), new Date(NOW()).toISOString());
+    const res: StudioReconcileResult = await reconcileStudio("st", deps(s), new Date(BASE).toISOString());
     expect(res.locked).toBe(true);
     expect(res.enqueued).toBe(1);
     expect(res.appointmentCursor).toBe("a1");
+    expect(res.outcome).toBe("ok");
   });
 });

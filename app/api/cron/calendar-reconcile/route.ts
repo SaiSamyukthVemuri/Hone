@@ -9,34 +9,35 @@ import {
   pruneMetricEvents,
 } from "@/lib/google-calendar/sync/reconcile-store";
 import { createUpstashReconcileLock } from "@/lib/google-calendar/sync/reconcile-lock";
-import { reconcileHeartbeatFromRun, recordReconcileRun } from "@/lib/google-calendar/sync/reconcile-heartbeat";
+import { createUpstashReconcileContinuationStore } from "@/lib/google-calendar/sync/reconcile-continuation";
+import {
+  reconcileHeartbeatFromRun,
+  recordReconcileRun,
+  sweepCalendarDeadRowAlerts,
+} from "@/lib/google-calendar/sync/reconcile-heartbeat";
 
 // Google Calendar — Phase B2.3-b: the reconciliation-sweep route.
 //
-// AUTH: constant-time Bearer CRON_SECRET (isAuthorizedCronRequest); unauthenticated
-// requests get 401. No browser-supplied studio / connection / destination /
-// calendar / provider identifier is ever trusted — the eligible studio set is
-// derived SERVER-SIDE by the store.
+// AUTH: constant-time Bearer CRON_SECRET (isAuthorizedCronRequest); 401 otherwise.
+// No browser-supplied studio/connection/destination/calendar/provider id is trusted
+// — the eligible studio set is derived SERVER-SIDE.
 //
-// NOT gated on calendar_sync_control.worker_enabled. worker_enabled is the
-// authoritative CLAIM/DISPATCH gate and must NOT be repurposed as the reconcile
-// gate: reconciliation is enqueue-side (it generates intent), the worker is
-// claim-side (it dispatches). This route stays DORMANT in production because
-//   (1) it is NOT registered in vercel.json (no schedule),
-//   (2) every production studio's outbound flag is OFF, so the INTENT gate makes
-//       the eligible set empty and the sweep enqueues nothing,
-//   (3) invocation requires CRON_SECRET, and
-//   (4) the global worker is OFF, so even intentionally-queued work cannot dispatch.
-// This separation lets a future controlled activation enable outbound intent for
-// ONE studio, run bounded reconciliation, inspect the queue, and only LATER
-// authorize the dispatch worker — without a second production flag.
+// NOT gated on calendar_sync_control.worker_enabled (that is the authoritative
+// CLAIM/DISPATCH gate; reconciliation is enqueue-side). Dormant in production: NOT
+// cron-registered, every studio outbound flag OFF (intent gate yields nothing),
+// CRON_SECRET required, worker OFF. It NEVER calls Google, enables the worker, or
+// changes a flag.
 //
-// The route NEVER calls Google, NEVER enables the worker, and NEVER changes any
-// studio sync flag. It only orchestrates the existing DB repair primitives, prunes
-// append-only telemetry, and records a non-sensitive heartbeat.
+// The run is BOUNDED by a wall-clock deadline; unfinished studios persist a durable
+// continuation (Upstash) and resume on the next invocation. Mutation safety is
+// fail-closed on the per-studio lock + continuation; the heartbeat / metric prune /
+// dead-row alert are fail-open.
 
 const METRIC_RETENTION_DAYS = 30;
 const METRIC_PRUNE_LIMIT = 1000;
+// Leave headroom under the platform function timeout; the lock TTL (120s) exceeds
+// this so the lease never expires mid-route, and renewal covers longer studios.
+const ROUTE_BUDGET_MS = 50_000;
 
 export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
@@ -47,10 +48,17 @@ export async function GET(req: Request) {
   try {
     const admin = createAdminClient();
     const store = createSupabaseReconcileStore(admin);
-    const lock = createUpstashReconcileLock(); // fail-CLOSED when Upstash is absent
+    const lock = createUpstashReconcileLock(); // fail-CLOSED when Upstash absent
+    const continuation = createUpstashReconcileContinuationStore(); // fail-CLOSED when Upstash absent
     const observability = createReconcileObservability(admin);
 
-    const run = await runReconciliation({ store, lock, observability });
+    const run = await runReconciliation({
+      store,
+      lock,
+      continuation,
+      observability,
+      deadlineMs: startedAt + ROUTE_BUDGET_MS,
+    });
 
     // Bounded retention prune of append-only metric events (best-effort).
     let metricsPruned = 0;
@@ -61,19 +69,31 @@ export async function GET(req: Request) {
       // Retention is maintenance — a prune failure must not fail the run.
     }
 
-    const durationMs = Date.now() - startedAt;
-    // Heartbeat (fail-open, non-sensitive aggregate scalars only).
+    // Dead-row operational alert sweep (fail-open; only fires for real dead rows).
+    const deadRows = await sweepCalendarDeadRowAlerts(store, startedAt);
+
+    const completedAt = Date.now();
+    // Heartbeat (fail-open). `at` = completion time; startedAt retained separately.
     await recordReconcileRun(
-      reconcileHeartbeatFromRun(run, { at: new Date(startedAt).toISOString(), durationMs, outcome: "ok" }),
+      reconcileHeartbeatFromRun(run, {
+        at: new Date(completedAt).toISOString(),
+        startedAt: new Date(startedAt).toISOString(),
+        durationMs: completedAt - startedAt,
+      }),
     );
 
+    // A degraded/error run is reported truthfully (HTTP still 200 — the route ran).
     return NextResponse.json({
-      ok: true,
-      duration_ms: durationMs,
+      ok: run.outcome === "ok",
+      outcome: run.outcome,
+      duration_ms: completedAt - startedAt,
       eligible_studios: run.eligibleStudios,
       studios_swept: run.studiosSwept,
+      studios_completed: run.studiosCompleted,
+      studios_truncated: run.studiosTruncated,
       studios_skipped_held: run.studiosSkippedHeld,
       studios_skipped_unavailable: run.studiosSkippedUnavailable,
+      studios_continuation_failed: run.studiosContinuationFailed,
       candidates: run.candidates,
       enqueued: run.enqueued,
       skipped: run.skipped,
@@ -81,6 +101,7 @@ export async function GET(req: Request) {
       errors: run.errors,
       by_class: run.byClass,
       metrics_pruned: metricsPruned,
+      dead_row_alerts: deadRows,
     });
   } catch (err) {
     await recordOpsAlert({
@@ -90,10 +111,10 @@ export async function GET(req: Request) {
       route: "/api/cron/calendar-reconcile",
       safeDetails: { duration_ms: Date.now() - startedAt },
     });
-    // Best-effort error heartbeat so a repeatedly-failing sweep is observable.
     try {
       await recordReconcileRun({
-        at: new Date(startedAt).toISOString(),
+        at: new Date(Date.now()).toISOString(),
+        startedAt: new Date(startedAt).toISOString(),
         outcome: "error",
         durationMs: Date.now() - startedAt,
         errorClass: err instanceof Error ? err.name : "unknown",

@@ -2,25 +2,32 @@ import { describe, expect, it } from "vitest";
 import {
   RECONCILE_STALE_AFTER_MINUTES,
   computeReconcileStatus,
+  decideDeadRowAlert,
   decideReconcileAlert,
+  deadRowAlertSafeDetails,
   reconcileAlertSafeDetails,
   reconcileHeartbeatFromRun,
   type ReconcileHeartbeat,
+  type ReconcileSchedulerStatus,
 } from "@/lib/google-calendar/sync/reconcile-heartbeat";
 import type { ReconcileRunResult } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b — heartbeat classifier + alert decider + PHI-free payloads.
-// Observability is FAIL-OPEN; these pure cores are deterministic (nowMs injected).
+// Phase B2.3-b — heartbeat outcome model + alert deciders + dead-row alert. Pure
+// cores are deterministic (nowMs injected). Observability is fail-open.
 
 const NOW = Date.UTC(2026, 6, 14, 12, 0, 0);
 
 function run(over: Partial<ReconcileRunResult> = {}): ReconcileRunResult {
   return {
     runStartedAtIso: new Date(NOW).toISOString(),
+    outcome: "ok",
     eligibleStudios: 0,
     studiosSwept: 0,
+    studiosCompleted: 0,
+    studiosTruncated: 0,
     studiosSkippedHeld: 0,
     studiosSkippedUnavailable: 0,
+    studiosContinuationFailed: 0,
     candidates: 0,
     enqueued: 0,
     skipped: 0,
@@ -32,71 +39,80 @@ function run(over: Partial<ReconcileRunResult> = {}): ReconcileRunResult {
   };
 }
 
-describe("computeReconcileStatus", () => {
+const status = (over: Partial<ReconcileSchedulerStatus>): ReconcileSchedulerStatus => ({
+  status: "healthy",
+  lastRunAt: new Date(NOW).toISOString(),
+  outcome: "ok",
+  ageMinutes: 1,
+  staleAfterMinutes: RECONCILE_STALE_AFTER_MINUTES,
+  ...over,
+});
+
+describe("computeReconcileStatus — recency AND outcome", () => {
   it("no heartbeat -> missing", () => {
     expect(computeReconcileStatus(null, NOW).status).toBe("missing");
-    expect(computeReconcileStatus({ at: "not-a-date", outcome: "ok" }, NOW).status).toBe("missing");
   });
-  it("recent -> healthy", () => {
+  it("recent + ok -> healthy", () => {
     const hb: ReconcileHeartbeat = { at: new Date(NOW - 60_000).toISOString(), outcome: "ok" };
-    const s = computeReconcileStatus(hb, NOW);
-    expect(s.status).toBe("healthy");
-    expect(s.ageMinutes).toBe(1);
+    expect(computeReconcileStatus(hb, NOW).status).toBe("healthy");
   });
-  it("older than the stale threshold -> stale", () => {
-    const hb: ReconcileHeartbeat = {
-      at: new Date(NOW - (RECONCILE_STALE_AFTER_MINUTES + 5) * 60_000).toISOString(),
-      outcome: "ok",
-    };
+  it("recent + degraded -> degraded (NOT healthy just because recent)", () => {
+    const hb: ReconcileHeartbeat = { at: new Date(NOW - 60_000).toISOString(), outcome: "degraded" };
+    expect(computeReconcileStatus(hb, NOW).status).toBe("degraded");
+  });
+  it("recent + error -> error", () => {
+    const hb: ReconcileHeartbeat = { at: new Date(NOW - 60_000).toISOString(), outcome: "error" };
+    expect(computeReconcileStatus(hb, NOW).status).toBe("error");
+  });
+  it("old -> stale regardless of outcome", () => {
+    const hb: ReconcileHeartbeat = { at: new Date(NOW - (RECONCILE_STALE_AFTER_MINUTES + 5) * 60_000).toISOString(), outcome: "ok" };
     expect(computeReconcileStatus(hb, NOW).status).toBe("stale");
   });
 });
 
 describe("decideReconcileAlert", () => {
-  const stale = { status: "stale" as const, lastRunAt: "x", ageMinutes: 9999, staleAfterMinutes: 1 };
-  const missing = { status: "missing" as const, lastRunAt: null, ageMinutes: null, staleAfterMinutes: 1 };
-  const healthy = { status: "healthy" as const, lastRunAt: "x", ageMinutes: 1, staleAfterMinutes: 1 };
-
-  it("healthy -> no alert", () => {
-    expect(decideReconcileAlert(healthy, false)).toEqual({ shouldAlert: false, reason: "healthy" });
+  it("healthy -> none", () => {
+    expect(decideReconcileAlert(status({ status: "healthy" }), false)).toEqual({ shouldAlert: false, reason: "healthy" });
   });
-  it("missing + no dupe -> critical", () => {
-    expect(decideReconcileAlert(missing, false)).toEqual({
-      shouldAlert: true,
-      event: "calendar_reconcile_missing",
-      severity: "critical",
-    });
+  it("error/missing -> critical; degraded/stale -> warning", () => {
+    expect(decideReconcileAlert(status({ status: "error", outcome: "error" }), false)).toMatchObject({ severity: "critical", event: "calendar_reconcile_error" });
+    expect(decideReconcileAlert(status({ status: "missing", outcome: null }), false)).toMatchObject({ severity: "critical", event: "calendar_reconcile_missing" });
+    expect(decideReconcileAlert(status({ status: "degraded", outcome: "degraded" }), false)).toMatchObject({ severity: "warning", event: "calendar_reconcile_degraded" });
+    expect(decideReconcileAlert(status({ status: "stale" }), false)).toMatchObject({ severity: "warning", event: "calendar_reconcile_stale" });
   });
-  it("stale + no dupe -> warning", () => {
-    expect(decideReconcileAlert(stale, false)).toEqual({
-      shouldAlert: true,
-      event: "calendar_reconcile_stale",
-      severity: "warning",
-    });
-  });
-  it("unhealthy but an unresolved alert exists -> deduped", () => {
-    expect(decideReconcileAlert(stale, true)).toEqual({ shouldAlert: false, reason: "deduped" });
-    expect(decideReconcileAlert(missing, true)).toEqual({ shouldAlert: false, reason: "deduped" });
+  it("unresolved existing alert -> deduped", () => {
+    expect(decideReconcileAlert(status({ status: "degraded", outcome: "degraded" }), true)).toEqual({ shouldAlert: false, reason: "deduped" });
   });
 });
 
 describe("PHI-free payloads", () => {
-  it("reconcileHeartbeatFromRun carries only aggregate scalars", () => {
-    const hb = reconcileHeartbeatFromRun(
-      run({ eligibleStudios: 2, enqueued: 3, superseded: 1, studiosSkippedUnavailable: 1 }),
-      { at: new Date(NOW).toISOString(), durationMs: 42, outcome: "ok" },
-    );
-    expect(hb).toMatchObject({ outcome: "ok", eligibleStudios: 2, enqueued: 3, superseded: 1, studiosSkippedUnavailable: 1 });
-    const blob = JSON.stringify(hb);
-    expect(blob).not.toMatch(/@|client|name|email|phone|token|calendar_id|google_event/i);
+  it("heartbeat carries only aggregate scalars + outcome", () => {
+    const hb = reconcileHeartbeatFromRun(run({ outcome: "degraded", enqueued: 3, studiosTruncated: 1 }), {
+      at: new Date(NOW).toISOString(),
+      startedAt: new Date(NOW - 5000).toISOString(),
+      durationMs: 5000,
+    });
+    expect(hb).toMatchObject({ outcome: "degraded", enqueued: 3, studiosTruncated: 1 });
+    expect(JSON.stringify(hb)).not.toMatch(/@|client|name|email|phone|token|google_event|calendar_id/i);
   });
-
-  it("reconcileAlertSafeDetails carries only status + timing scalars", () => {
-    const d = reconcileAlertSafeDetails(
-      { status: "stale", lastRunAt: new Date(NOW).toISOString(), ageMinutes: 100, staleAfterMinutes: 1 },
-      NOW,
-    );
-    expect(Object.keys(d).sort()).toEqual(["age_minutes", "checked_at", "last_run_at", "stale_after_minutes", "status"]);
+  it("alert safe details are scalars only", () => {
+    const d = reconcileAlertSafeDetails(status({ status: "degraded", outcome: "degraded" }), NOW);
     expect(JSON.stringify(d)).not.toMatch(/@|client|name|email|phone|token/i);
+    expect(d).toMatchObject({ status: "degraded", outcome: "degraded" });
+  });
+});
+
+describe("§8 dead-row alert deciders", () => {
+  it("no dead rows -> no alert", () => {
+    expect(decideDeadRowAlert(0, false)).toEqual({ shouldAlert: false });
+  });
+  it("dead rows + no unresolved -> alert; + unresolved -> deduped", () => {
+    expect(decideDeadRowAlert(3, false)).toEqual({ shouldAlert: true });
+    expect(decideDeadRowAlert(3, true)).toEqual({ shouldAlert: false });
+  });
+  it("safe details carry only studio_id + count + timestamp", () => {
+    const d = deadRowAlertSafeDetails("studio-1", 4, NOW);
+    expect(Object.keys(d).sort()).toEqual(["checked_at", "dead_count", "studio_id"]);
+    expect(JSON.stringify(d)).not.toMatch(/@|client|name|email|phone|token|google_event/i);
   });
 });

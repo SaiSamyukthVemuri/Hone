@@ -4,6 +4,8 @@ import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/
 import {
   reconcileStudio,
   runReconciliation,
+  type ReconcileContinuation,
+  type ReconcileContinuationStore,
   type ReconcileLock,
   type ReconcileStore,
 } from "@/lib/google-calendar/sync/reconcile";
@@ -160,17 +162,38 @@ function pgStore(studioFilter?: string): ReconcileStore {
         });
       return m;
     },
-    async getEntitiesWithOpenJobs(studioId, ids) {
-      const s = new Set<string>();
-      if (!ids.length) return s;
+    async getActiveLinkById(studioId, linkId) {
       const r = await adminQuery(
-        `select distinct hone_entity_id from public.calendar_sync_outbox
-          where studio_id=$1 and hone_entity_type='appointment' and status in ('pending','processing')
+        `select id, hone_entity_id, google_event_id, last_hone_version from public.calendar_event_links
+          where studio_id=$1 and id=$2 and hone_entity_type='appointment' and deleted_at is null`,
+        [studioId, linkId],
+      );
+      if (r.rowCount === 0) return null;
+      const x = r.rows[0];
+      return {
+        id: x.id as string,
+        honeEntityId: x.hone_entity_id as string,
+        googleEventId: (x.google_event_id as string | null) ?? null,
+        lastHoneVersion: Number(x.last_hone_version),
+      };
+    },
+    async getOpenJobsForEntities(studioId, ids) {
+      const m = new Map<string, { opType: string; syncVersion: number | null; status: "pending" | "processing" | "dead" }[]>();
+      if (!ids.length) return m;
+      const r = await adminQuery(
+        `select hone_entity_id, op_type, status, (payload->>'sync_version') as sv from public.calendar_sync_outbox
+          where studio_id=$1 and hone_entity_type='appointment' and status in ('pending','processing','dead')
             and hone_entity_id = any($2::uuid[])`,
         [studioId, ids],
       );
-      for (const x of r.rows) if (x.hone_entity_id) s.add(x.hone_entity_id as string);
-      return s;
+      for (const x of r.rows) {
+        const eid = x.hone_entity_id as string | null;
+        if (!eid) continue;
+        const arr = m.get(eid) ?? [];
+        arr.push({ opType: x.op_type as string, syncVersion: x.sv == null ? null : Number(x.sv), status: x.status as "pending" | "processing" | "dead" });
+        m.set(eid, arr);
+      }
+      return m;
     },
     async bumpAppointmentSyncVersion(apptId) {
       const r = (await adminQuery(`select public.repair_bump_appointment_sync_version($1) as v`, [apptId])).rows[0];
@@ -178,6 +201,32 @@ function pgStore(studioFilter?: string): ReconcileStore {
     },
     async enqueueOrphanLinkDelete(linkId) {
       return String((await adminQuery(`select public.repair_enqueue_orphan_link_delete($1) as r`, [linkId])).rows[0].r);
+    },
+    async listStudiosWithDeadOutbox() {
+      const r = await adminQuery(
+        `select studio_id, count(*)::int as n from public.calendar_sync_outbox where status='dead' group by studio_id`,
+      );
+      return r.rows.map((x) => ({ studioId: x.studio_id as string, deadCount: Number(x.n) }));
+    },
+  };
+}
+
+// In-memory continuation store for the DB suite (the durable Upstash impl is unit-
+// tested separately). A single instance persists across a test's invocations so the
+// §4 resume behaviour can be exercised against the real DB.
+function memContinuation(): ReconcileContinuationStore {
+  const map = new Map<string, ReconcileContinuation>();
+  return {
+    async read(studioId) {
+      return { ok: true as const, value: map.get(studioId) ?? null };
+    },
+    async write(studioId, v) {
+      map.set(studioId, v);
+      return true;
+    },
+    async clear(studioId) {
+      map.delete(studioId);
+      return true;
     },
   };
 }
@@ -205,7 +254,7 @@ const NOW_AHEAD = () => Date.now() + 1000;
 // Full run() scoped to ONE studio (via the store filter) so shared-DB accumulation
 // from other suites never contaminates aggregate counts.
 const run = (studioId: string, over: Partial<Parameters<typeof runReconciliation>[0]> = {}) =>
-  runReconciliation({ store: pgStore(studioId), lock: lockAlways, now: NOW_AHEAD, ...over });
+  runReconciliation({ store: pgStore(studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, ...over });
 
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
@@ -402,7 +451,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const appts = [];
     for (let i = 0; i < 5; i++) appts.push(await insertAppt(a));
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 2 }); // multi-page
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 2 }); // multi-page
     for (const appt of appts) {
       expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]); // each once
     }
@@ -414,7 +463,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const a1 = await insertAppt(a);
     const a2 = await insertAppt(a);
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
     // Move a1 far into the future (mutating starts_at) — a starts_at cursor would
     // reorder it; the immutable id cursor is unaffected.
     const later = new Date(Date.now() + 500 * 3_600_000);
@@ -423,7 +472,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
       later.toISOString(),
       new Date(later.getTime() + 30 * 60_000).toISOString(),
     ]);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
     // a1 already has a create + now a trigger-made update (from the reschedule) — but
     // NO second create; a2 still exactly one create.
     expect((await outbox(a1)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
@@ -441,8 +490,8 @@ describe("no duplicate under repeat / concurrency", () => {
     await adminQuery(`delete from public.calendar_event_links where hone_entity_id=$1`, [appt]); // simulate the gap
     const lock = lockSingleSlot();
     await Promise.all([
-      runReconciliation({ store: pgStore(a.studioId), lock, now: NOW_AHEAD }),
-      runReconciliation({ store: pgStore(a.studioId), lock, now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, continuation: memContinuation(), now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, continuation: memContinuation(), now: NOW_AHEAD }),
     ]);
     expect((await outbox(appt)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
   });
@@ -492,7 +541,7 @@ describe("tenant isolation + dormancy", () => {
     expect(eligible).not.toContain(off.studioId);
 
     // Sweeping ON must never touch OFF (a different tenant).
-    await reconcileStudio(on.studioId, { store: pgStore(), lock: lockAlways }, new Date(NOW_AHEAD()).toISOString());
+    await reconcileStudio(on.studioId, { store: pgStore(), lock: lockAlways, continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
     expect((await outbox(apptOn)).map((x) => x.op_type)).toEqual(["event.create"]);
     expect(await outbox(apptOff)).toHaveLength(0); // OFF is never swept
     // A bump for ON never advanced OFF's appointment version.
@@ -523,9 +572,164 @@ describe("reconcileStudio result", () => {
     await seedConn(a, { flag: false });
     const appt = await insertAppt(a);
     await setFlag(a.studioId, true);
-    const res = await reconcileStudio(a.studioId, { store: pgStore(), lock: lockAlways }, new Date(NOW_AHEAD()).toISOString());
+    const res = await reconcileStudio(a.studioId, { store: pgStore(), lock: lockAlways, continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
     expect(res.locked).toBe(true);
     expect(res.enqueued).toBe(1);
     expect(res.appointmentCursor).toBe(appt);
+  });
+});
+
+// =========================================================================
+describe("§2 stale open jobs (op + version model)", () => {
+  it("a stale pending create + a newer appointment version -> one newer op; repeat no-op", async () => {
+    const a = await seedStudio("stale1");
+    await seedConn(a);
+    const appt = await insertAppt(a); // create:1 + placeholder link (google_event_id null)
+    await adminQuery(`update public.appointments set sync_version=3 where id=$1`, [appt]); // trigger enqueues update:3
+    await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id=$1 and op_type='event.update'`, [appt]); // drop it -> stale create:1 only
+    expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]);
+
+    const r1 = await run(a.studioId);
+    expect(r1.enqueued).toBe(1); // the stale create did NOT count as convergence
+    expect((await outbox(appt)).some((x) => x.op_type === "event.update")).toBe(true);
+    const r2 = await run(a.studioId);
+    expect(r2.enqueued).toBe(0); // now a current job exists
+  });
+
+  it("a stale pending create + a now-withdrawn-cancelled appointment -> sweep adds no remote op", async () => {
+    const a = await seedStudio("stale2");
+    await seedConn(a);
+    const appt = await insertAppt(a);
+    await adminQuery(`update public.appointments set status='cancelled', cancellation_kind='withdrawn' where id=$1`, [appt]);
+    await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id=$1 and op_type='event.delete'`, [appt]); // leave only the stale create
+    const before = (await outbox(appt)).length;
+    const r = await run(a.studioId);
+    expect(r.enqueued).toBe(0); // placeholder cancel -> inert
+    expect((await outbox(appt)).length).toBe(before); // sweep added nothing
+  });
+});
+
+// =========================================================================
+describe("§3 placeholder-link semantics", () => {
+  it("confirmed placeholder + no job -> re-drive", async () => {
+    const a = await seedStudio("phc1");
+    await seedConn(a);
+    const appt = await insertAppt(a); // create:1 + placeholder link
+    await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id=$1`, [appt]); // placeholder + no job
+    const r = await run(a.studioId);
+    expect(r.enqueued).toBe(1);
+  });
+
+  it("confirmed placeholder + DEAD create -> manual review (no bump)", async () => {
+    const a = await seedStudio("phc2");
+    await seedConn(a);
+    const appt = await insertAppt(a);
+    await adminQuery(`update public.calendar_sync_outbox set status='dead' where hone_entity_id=$1`, [appt]);
+    const r = await run(a.studioId);
+    expect(r.enqueued).toBe(0);
+    expect((await outbox(appt)).filter((x) => x.status !== "dead")).toHaveLength(0); // no new op
+  });
+
+  it("cancelled placeholder link -> inert (no remote delete without provider coords)", async () => {
+    const a = await seedStudio("phc3");
+    await seedConn(a);
+    const appt = await insertAppt(a);
+    await setFlag(a.studioId, false);
+    await adminQuery(`update public.appointments set status='cancelled', cancellation_kind='withdrawn' where id=$1`, [appt]);
+    await adminQuery(`delete from public.calendar_sync_outbox where hone_entity_id=$1`, [appt]); // placeholder link, no job
+    await setFlag(a.studioId, true);
+    const r = await run(a.studioId);
+    expect(r.enqueued).toBe(0);
+    expect(await outbox(appt)).toHaveLength(0); // NO delete enqueued
+  });
+});
+
+// =========================================================================
+describe("§4 resumable continuation across invocations", () => {
+  it("a data set larger than one invocation's ceiling is covered exactly once", async () => {
+    const a = await seedStudio("resume1");
+    await seedConn(a, { flag: false });
+    const appts: string[] = [];
+    for (let i = 0; i < 5; i++) appts.push(await insertAppt(a));
+    await setFlag(a.studioId, true);
+    const cont = memContinuation(); // SHARED across invocations
+    let done = false;
+    let guard = 0;
+    while (!done && guard++ < 25) {
+      await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: cont, now: NOW_AHEAD, pageSize: 2, maxPagesPerStudioPerPass: 1 });
+      const c = await cont.read(a.studioId);
+      done = c.ok && c.value === null; // studio drained -> continuation cleared
+    }
+    expect(done).toBe(true);
+    for (const appt of appts) {
+      expect((await outbox(appt)).filter((x) => x.op_type === "event.create")).toHaveLength(1); // each once
+    }
+  });
+});
+
+// =========================================================================
+describe("§5 route deadline", () => {
+  it("a passed deadline truncates + persists a continuation + actuates nothing", async () => {
+    const a = await seedStudio("deadline1");
+    await seedConn(a, { flag: false });
+    const appt = await insertAppt(a);
+    await setFlag(a.studioId, true);
+    const cont = memContinuation();
+    const res = await reconcileStudio(
+      a.studioId,
+      { store: pgStore(a.studioId), lock: lockAlways, continuation: cont, deadlineMs: Date.now() - 1000 },
+      new Date(NOW_AHEAD()).toISOString(),
+    );
+    expect(res.truncated).toBe(true);
+    expect(res.deadlineHit).toBe(true);
+    expect(await outbox(appt)).toHaveLength(0); // nothing actuated
+    const c = await cont.read(a.studioId);
+    expect(c.ok && c.value).toBeTruthy(); // continuation persisted for the next invocation
+  });
+});
+
+// =========================================================================
+describe("§6 pre-actuation revalidation against the real DB", () => {
+  it("a concurrent cancellation between classification and actuation cancels the create", async () => {
+    const a = await seedStudio("reval1");
+    await seedConn(a, { flag: false });
+    const appt = await insertAppt(a); // no link/job (intent off)
+    await setFlag(a.studioId, true);
+
+    // Wrap the store so the FIRST getAppointmentStates read (which happens during
+    // pre-actuation revalidation) first cancels the appointment.
+    const base = pgStore(a.studioId);
+    let fired = false;
+    const wrapped: ReconcileStore = {
+      ...base,
+      async getAppointmentStates(studioId, ids) {
+        if (!fired) {
+          fired = true;
+          await adminQuery(`update public.appointments set status='cancelled', cancellation_kind='withdrawn' where id=$1`, [appt]);
+        }
+        return base.getAppointmentStates(studioId, ids);
+      },
+    };
+    await runReconciliation({ store: wrapped, lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD });
+    // Revalidation saw the cancellation -> no create was generated.
+    expect(await outbox(appt)).toHaveLength(0);
+    expect((await adminQuery(`select status from public.appointments where id=$1`, [appt])).rows[0].status).toBe("cancelled");
+  });
+});
+
+// =========================================================================
+describe("§8 dead-row inventory", () => {
+  it("listStudiosWithDeadOutbox counts terminal dead rows per studio", async () => {
+    const a = await seedStudio("dead1");
+    const conn = await seedConn(a);
+    for (let i = 0; i < 2; i++) {
+      await adminQuery(
+        `insert into public.calendar_sync_outbox (studio_id, connection_id, op_type, hone_entity_type, hone_entity_id, idempotency_key, status)
+         values ($1,$2,'event.create','appointment',$3,$4,'dead')`,
+        [a.studioId, conn, randomUUID(), `dead-${randomUUID()}`],
+      );
+    }
+    const rows = await pgStore().listStudiosWithDeadOutbox();
+    expect(rows.find((r) => r.studioId === a.studioId)?.deadCount).toBe(2);
   });
 });

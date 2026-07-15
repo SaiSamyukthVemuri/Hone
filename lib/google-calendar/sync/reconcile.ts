@@ -2,50 +2,43 @@ import "server-only";
 
 // Google Calendar — Phase B2.3-b: the transport-neutral reconciliation SWEEP core.
 //
-// This module is the single orchestration seam the reconcile cron route calls. It
-// depends on NO Next.js/Vercel/Supabase/host type — only on an injected
-// `ReconcileStore` (data access), a `ReconcileLock` (cross-process per-studio
-// mutual exclusion), and a `now()` clock. That lets the SAME logic run against the
-// real service-role Supabase client (production route) AND against a raw-pg store
-// in the DB integration tests (so the REAL enqueue trigger + repair RPCs execute).
+// The single orchestration seam the reconcile cron route calls. Depends on NO
+// Next.js/Vercel/Supabase/host type — only on an injected `ReconcileStore` (data
+// access), a `ReconcileLock` (cross-process per-studio mutual exclusion), a
+// `ReconcileContinuationStore` (durable, resumable pagination position), and a
+// `now()` clock. The SAME logic runs against the real service-role Supabase client
+// (production route) AND against a raw-pg store in the DB integration tests.
 //
-// WHAT THE SWEEP IS (and is not):
-//   * It is a bounded DRIFT DETECTOR + ORCHESTRATOR over the EXISTING DB repair
-//     primitives. It builds NO enqueue path, NO idempotency key, NO outbox/link
-//     bookkeeping of its own, and NEVER calls Google. All identity/dedupe/
-//     supersede/state-machine semantics remain the enqueue trigger's + outbox's.
-//   * The ordinary appointment-intent generator remains the DB trigger
-//     (`enqueue_calendar_outbound`). The sweep recovers ONLY the gaps the trigger
-//     could not cover: mutations made while product INTENT was unavailable
-//     (studio flag off / no owner / no write calendar / a swallowed never-raise
-//     enqueue), plus initial activation of a studio's not-yet-ended confirmed
-//     appointments.
+// WHAT THE SWEEP IS: a bounded DRIFT DETECTOR + ORCHESTRATOR over the EXISTING DB
+// repair primitives. It builds NO enqueue path, NO idempotency key, NO outbox/link
+// bookkeeping of its own, and NEVER calls Google. It recovers the gaps the enqueue
+// trigger could not cover (mutations made while product INTENT was unavailable, or
+// a swallowed never-raise enqueue) + first activation, within intent-eligible
+// studios only.
 //
-// INTENT vs HEALTH (why the sweep is safe in production):
-//   * The sweep only actuates within INTENT-ELIGIBLE studios (outbound flag ON +
-//     an owner connection + a chosen write calendar) — the same gate the trigger
-//     applies. Bumping an appointment in an intent-OFF studio would inflate
-//     `sync_version` with NO enqueue (the trigger early-returns), so the sweep
-//     never touches such studios. Every production studio is intent-OFF today, so
-//     the sweep finds zero eligible studios and does zero work.
-//   * Connection HEALTH (connected / scope / token) is the CLAIM gate, not an
-//     enqueue gate. The sweep — like the trigger — is health-agnostic: work made
-//     during a health outage already accumulates as pending/parked jobs and drains
-//     when health returns. The sweep does NOT reconcile health-outage windows and
-//     must never duplicate that already-pending work.
+// CORRECTNESS POSTURE (the two independent guarantees):
+//   * MUTATION SAFETY is FAIL-CLOSED — the per-studio lock and the durable
+//     continuation are correctness state. If either is unavailable the studio is
+//     NOT swept (never swept unlocked, never past a lost lease, never with an
+//     unknown position); the studio is reported degraded, never falsely complete.
+//   * OBSERVABILITY (heartbeat / metrics / dead-row alert) is FAIL-OPEN — a failed
+//     write never aborts the sweep or a booking.
+//
+// STALE-JOB MODEL: a pending/processing outbox row is "current work" ONLY when its
+// op class and sync_version correspond to the CURRENT desired state. An OLDER job
+// (stale sync_version, or wrong op for the current state) does NOT block generating
+// current intent. Generating current intent alongside a stale pending job is safe
+// at this phase because the worker is OFF (nothing dispatches); the EXECUTION-TIME
+// stale fence (a worker operation returning `ok_noop_superseded` for a payload
+// sync_version older than the current link/appointment state — see job-result.ts)
+// is a B2.4 worker-operation responsibility. B2.3-b's job is only to ensure the
+// current desired intent EXISTS.
 
 // ---------------------------------------------------------------------------
 // Data shapes (minimal, operational-only — never client content / PHI).
 // ---------------------------------------------------------------------------
+export type ReconcileApptRow = { id: string; syncVersion: number };
 
-// A confirmed, not-yet-ended appointment considered for create/update.
-export type ReconcileApptRow = {
-  id: string;
-  syncVersion: number;
-};
-
-// The current state of any appointment referenced by an active link (for the
-// link pass): status drives delete-vs-keep.
 export type ReconcileApptState = {
   id: string;
   status: string; // 'confirmed' | 'cancelled' | 'completed' | 'no_show'
@@ -53,46 +46,47 @@ export type ReconcileApptState = {
   cancellationKind: string | null; // 'rescheduled' | 'withdrawn' | null
 };
 
-// An active (deleted_at is null) appointment→event link.
 export type ReconcileLinkRow = {
   id: string;
   honeEntityId: string;
-  googleEventId: string | null; // null = local placeholder (no real Google event yet)
+  googleEventId: string | null; // null = local PLACEHOLDER (no real Google event yet)
   lastHoneVersion: number;
 };
 
-// The four documented reconciliation classes (matches google-calendar-sync.md §3c).
-export type ReconcileClass =
-  | "missing_link_job" // Class 1: confirmed appt, no active link + no current job -> create
-  | "link_version_behind" // Class 3: link.last_hone_version < appt.sync_version, no current job -> update
-  | "orphaned_link_delete" // Class 2: active link whose appointment is cancelled/gone -> delete
-  | "surplus_event_delete"; // Class 4: active link + real event where desired state is none -> delete
+// Per-entity open/terminal outbox job metadata. `syncVersion` is read from
+// payload->>'sync_version' (present on every appointment-keyed create/update/delete
+// job; null for entity-less tombstones, which never key an appointment entity).
+export type OpenJobStatus = "pending" | "processing" | "dead";
+export type OpenJob = { opType: string; syncVersion: number | null; status: OpenJobStatus };
 
-// The action decided for a single candidate (pure — no I/O).
+// The four documented reconciliation classes (google-calendar-sync.md §3c/§3e).
+export type ReconcileClass =
+  | "missing_link_job" // confirmed appt, no active/real link + no current job -> create
+  | "link_version_behind" // real link behind the current appt version, no current job -> update
+  | "orphaned_link_delete" // active real-event link whose appointment is gone -> tombstone delete
+  | "surplus_event_delete"; // withdrawn cancellation w/ a live real-event link -> delete
+
+export type ReconcileSkipReason =
+  | "converged"
+  | "work_in_flight" // a current-or-newer matching job already exists (supersede-safe)
+  | "keep_event" // completed/no_show/rescheduled -> event remains / handled elsewhere
+  | "handled_by_appointment_pass" // confirmed link handled by the create/update pass
+  | "inert_placeholder" // placeholder link (no real event) needs no remote op
+  | "dead_create_manual_review" // placeholder whose create is terminally dead -> operator/dead-row alert
+  | "decision_stale" // pre-actuation revalidation showed the decision no longer holds
+  | "vanished"; // the appointment disappeared before actuation
+
 export type ReconcileDecision =
   | { act: "bump"; class: ReconcileClass; appointmentId: string }
   | { act: "orphan_delete"; class: ReconcileClass; linkId: string }
   | { act: "skip"; reason: ReconcileSkipReason };
 
-export type ReconcileSkipReason =
-  | "converged" // link is current; nothing to do
-  | "work_in_flight" // a pending/processing job already exists for this entity (supersede-safe)
-  | "keep_event" // completed/no_show/rescheduled -> the event should remain / is handled elsewhere
-  | "handled_by_appointment_pass" // confirmed link handled by the create/update pass
-  | "inert_placeholder"; // orphaned local placeholder link with no real Google event -> nothing to reconcile
-
 // ---------------------------------------------------------------------------
-// Store seam (data access). Every method is studio-scoped where it mutates or
-// reads tenant rows; the route derives the eligible studio set SERVER-SIDE and
-// never trusts a browser-supplied id.
+// Store seam (data access). Studio-scoped; the route derives the eligible set
+// server-side and never trusts a browser-supplied id.
 // ---------------------------------------------------------------------------
 export type ReconcileStore = {
-  // INTENT-eligible studios only (outbound flag ON + owner conn + write calendar).
   listEligibleStudioIds(): Promise<string[]>;
-
-  // Appointment pass source: confirmed appointments that have NOT ended
-  // (ends_at >= activation) created no later than the pinned snapshot, paginated
-  // by the IMMUTABLE appointment id (never the mutable starts_at).
   pageConfirmedFutureAppointments(
     studioId: string,
     activationStartedAtIso: string,
@@ -100,46 +94,53 @@ export type ReconcileStore = {
     afterId: string | null,
     limit: number,
   ): Promise<ReconcileApptRow[]>;
-
-  // Link pass source: active appointment links, paginated by the immutable link id.
-  pageActiveAppointmentLinks(
-    studioId: string,
-    afterId: string | null,
-    limit: number,
-  ): Promise<ReconcileLinkRow[]>;
-
-  // Batched lookups for a page (studio-scoped).
+  pageActiveAppointmentLinks(studioId: string, afterId: string | null, limit: number): Promise<ReconcileLinkRow[]>;
   getActiveLinksForEntities(studioId: string, appointmentIds: string[]): Promise<Map<string, ReconcileLinkRow>>;
+  getActiveLinkById(studioId: string, linkId: string): Promise<ReconcileLinkRow | null>; // orphan revalidation
   getAppointmentStates(studioId: string, appointmentIds: string[]): Promise<Map<string, ReconcileApptState>>;
-  // Entities with a pending OR processing outbox row (the supersede / in-flight guard).
-  getEntitiesWithOpenJobs(studioId: string, appointmentIds: string[]): Promise<Set<string>>;
-
+  // Per-entity open+dead job metadata (op class + sync_version) — the supersede model.
+  getOpenJobsForEntities(studioId: string, appointmentIds: string[]): Promise<Map<string, OpenJob[]>>;
   // Actuators — the EXISTING repair RPCs. The sweep adds no new enqueue logic.
   bumpAppointmentSyncVersion(appointmentId: string): Promise<number | null>;
-  enqueueOrphanLinkDelete(linkId: string): Promise<string>; // 'no_active_link'|'delete_in_flight'|'suppressed'|<uuid>
+  enqueueOrphanLinkDelete(linkId: string): Promise<string>;
+  // Terminal dead-row inventory (for the dead-row operational alert).
+  listStudiosWithDeadOutbox(): Promise<{ studioId: string; deadCount: number }[]>;
 };
 
 // ---------------------------------------------------------------------------
-// Lock seam — a REAL cross-process, per-studio ownership-token lock (Upstash
-// SET NX + token-compare release in production). Lock acquisition/integrity
-// failure is FAIL-CLOSED: the studio is skipped, never swept unlocked.
+// Lock seam — a REAL cross-process, per-studio ownership-token lock (Upstash SET
+// NX + Lua compare-token release/renew). FAIL-CLOSED.
 // ---------------------------------------------------------------------------
-export type LockAcquire =
-  | { ok: true; token: string }
-  | { ok: false; reason: "held" | "unavailable" }; // held = another sweep owns it; unavailable = backend down/misconfigured
+export type LockAcquire = { ok: true; token: string } | { ok: false; reason: "held" | "unavailable" };
 
 export type ReconcileLock = {
   acquire(studioId: string): Promise<LockAcquire>;
   release(studioId: string, token: string): Promise<void>;
-  // Extend the lease mid-run (called between pages). Returns false when the lock
-  // is no longer owned or cannot be extended -> the caller stops paging that
-  // studio (fail-closed) rather than run past an expired lease. Optional: a lock
-  // whose TTL safely exceeds a full studio run may omit it.
+  // Extend the lease. Returns false when ownership is lost / cannot be confirmed ->
+  // the caller stops mutating (fail-closed). Required for correct long runs.
   renew?(studioId: string, token: string): Promise<boolean>;
 };
 
-// Best-effort observability sink (fail-open — a failed write NEVER aborts the
-// sweep or a booking). Kept separate from the lock, which is fail-closed.
+// ---------------------------------------------------------------------------
+// Continuation seam — durable, resumable pagination position (correctness state).
+// read() returning {ok:false} = an I/O error (fail-closed: do not sweep). A null
+// value = no continuation (start a fresh pass under a new snapshot). Losing the
+// record can never report the studio complete — the next run restarts from the
+// beginning (convergence is idempotent), never skips to the end.
+// ---------------------------------------------------------------------------
+export type ReconcilePass = "appointments" | "links";
+export type ReconcileContinuation = {
+  snapshotStartedAtIso: string; // pinned when the studio run began (created_at <= this)
+  activationStartedAtIso: string; // pinned activation boundary (ends_at >= this)
+  pass: ReconcilePass;
+  cursor: string | null; // immutable last-seen id within the pass
+};
+export type ReconcileContinuationStore = {
+  read(studioId: string): Promise<{ ok: true; value: ReconcileContinuation | null } | { ok: false }>;
+  write(studioId: string, value: ReconcileContinuation): Promise<boolean>;
+  clear(studioId: string): Promise<boolean>;
+};
+
 export type ReconcileObservability = {
   recordStudioResult?(result: StudioReconcileResult): Promise<void> | void;
 };
@@ -147,37 +148,53 @@ export type ReconcileObservability = {
 export type ReconcileDeps = {
   store: ReconcileStore;
   lock: ReconcileLock;
+  continuation: ReconcileContinuationStore;
   observability?: ReconcileObservability;
   now?: () => number;
   pageSize?: number; // clamped [1, 500]; default 200
-  maxPagesPerStudioPerPass?: number; // deadline backstop; default 50
+  maxPagesPerStudioPerPass?: number; // per-invocation page budget; default 50
+  deadlineMs?: number; // absolute epoch ms; stop starting work at/after it (default: no deadline)
+  lockRenewIntervalMs?: number; // renew when this much has elapsed since the last renew (default 40s)
 };
 
 // ---------------------------------------------------------------------------
-// Result shapes — aggregate, non-sensitive counts ONLY. No client identity,
-// appointment content, Google id, token or calendar id ever appears here.
+// Result shapes — aggregate, non-sensitive counts ONLY.
 // ---------------------------------------------------------------------------
+export type StudioOutcome = "ok" | "degraded" | "error" | "skipped_held";
+
 export type StudioReconcileResult = {
   studioId: string;
-  locked: boolean; // true when the sweep held the per-studio lock and ran
+  locked: boolean;
   lockSkipReason?: "held" | "unavailable";
-  candidates: number; // appointments + links examined
-  enqueued: number; // repair actuations that produced work (create/update/delete intent)
-  skipped: number; // converged / kept / inert
-  superseded: number; // skipped because a pending/processing job already exists
-  byClass: Record<ReconcileClass, number>; // enqueued counts per class
+  continuationRead: boolean; // false when the continuation read failed (fail-closed skip)
+  continuationPersisted: boolean; // false when a REQUIRED continuation write failed
+  candidates: number;
+  enqueued: number;
+  skipped: number;
+  superseded: number;
+  byClass: Record<ReconcileClass, number>;
   errors: number; // per-candidate actuator errors (swallowed; studio continues)
-  appointmentCursor: string | null; // last immutable appointment id examined
-  linkCursor: string | null; // last immutable link id examined
-  truncated: boolean; // a pass hit the page bound before draining
+  errored: boolean; // an unhandled error aborted the studio
+  truncated: boolean; // work remains; a continuation was persisted
+  deadlineHit: boolean;
+  ownershipLost: boolean;
+  appointmentCursor: string | null;
+  linkCursor: string | null;
+  outcome: StudioOutcome;
 };
 
+export type RunOutcome = "ok" | "degraded" | "error";
+
 export type ReconcileRunResult = {
-  runStartedAtIso: string; // pinned; serves as BOTH snapshot_started_at and activation_started_at
+  runStartedAtIso: string;
+  outcome: RunOutcome;
   eligibleStudios: number;
-  studiosSwept: number; // held the lock and ran
+  studiosSwept: number; // acquired the lock and read a continuation
+  studiosCompleted: number; // fully drained this invocation (continuation cleared)
+  studiosTruncated: number; // continuation persisted for a later invocation
   studiosSkippedHeld: number;
   studiosSkippedUnavailable: number;
+  studiosContinuationFailed: number; // read or required-write failed (fail-closed)
   candidates: number;
   enqueued: number;
   skipped: number;
@@ -194,213 +211,376 @@ function emptyByClass(): Record<ReconcileClass, number> {
 // ---------------------------------------------------------------------------
 // Pure classifiers (no I/O — the testable core of the decision logic).
 // ---------------------------------------------------------------------------
+const CREATE_UPDATE_OPS = ["event.create", "event.update"];
+const DELETE_OPS = ["event.delete"];
 
-// Appointment pass: a confirmed, not-yet-ended appointment. `link` is its active
-// link (or undefined) and `hasOpenJob` is whether a pending/processing outbox row
-// already exists for the entity. Completed/no_show/cancelled never reach here (the
-// query only yields confirmed rows); the delete decision lives in the link pass.
+// A pending/processing job is "current or newer" only if its op class matches AND
+// its payload sync_version is >= the appointment's current version.
+function hasCurrentOrNewerJob(jobs: OpenJob[], ops: string[], atLeastVersion: number): boolean {
+  return jobs.some(
+    (j) =>
+      (j.status === "pending" || j.status === "processing") &&
+      ops.includes(j.opType) &&
+      j.syncVersion !== null &&
+      j.syncVersion >= atLeastVersion,
+  );
+}
+function hasDeadJob(jobs: OpenJob[], ops: string[]): boolean {
+  return jobs.some((j) => j.status === "dead" && ops.includes(j.opType));
+}
+
+// Appointment pass: a confirmed, not-yet-ended appointment with its active link (or
+// undefined) and its open/dead job metadata.
 export function classifyConfirmedAppointment(
   appt: ReconcileApptRow,
   link: ReconcileLinkRow | undefined,
-  hasOpenJob: boolean,
+  jobs: OpenJob[],
 ): ReconcileDecision {
-  // A pending/processing job means current effective work already exists — never
-  // bump on top of it (that is the supersede / no-duplicate guard).
-  if (hasOpenJob) return { act: "skip", reason: "work_in_flight" };
+  // Current-or-newer create/update already queued -> never generate a duplicate.
+  if (hasCurrentOrNewerJob(jobs, CREATE_UPDATE_OPS, appt.syncVersion)) {
+    return { act: "skip", reason: "work_in_flight" };
+  }
   if (!link) {
-    // Class 1: no active link and no job — the create was never generated (intent
-    // was unavailable at booking time, or the enqueue was swallowed).
+    // Class 1: no link, no current job -> the create was never generated.
     return { act: "bump", class: "missing_link_job", appointmentId: appt.id };
   }
+  if (link.googleEventId === null) {
+    // PLACEHOLDER link: no real Google event exists. NOT convergence.
+    if (hasDeadJob(jobs, CREATE_UPDATE_OPS)) {
+      // The create is terminally dead — do not auto-loop; surface via the dead-row
+      // alert (§8) for operator/manual review.
+      return { act: "skip", reason: "dead_create_manual_review" };
+    }
+    // Swallowed/abandoned create (no live and no dead job) -> re-drive it.
+    return { act: "bump", class: "missing_link_job", appointmentId: appt.id };
+  }
+  // Real provider link.
   if (link.lastHoneVersion < appt.syncVersion) {
-    // Class 3: the link's synced version trails the appointment and there is no
-    // current job to advance it -> re-drive an update via a genuine bump.
     return { act: "bump", class: "link_version_behind", appointmentId: appt.id };
   }
   return { act: "skip", reason: "converged" };
 }
 
 // Link pass: an active appointment link. `appt` is the CURRENT state of its
-// appointment (undefined => the appointment row was hard-deleted). Drives the
-// two delete classes; confirmed links are left to the appointment pass.
+// appointment (undefined => the appointment row was hard-deleted).
 export function classifyActiveLink(
   link: ReconcileLinkRow,
   appt: ReconcileApptState | undefined,
-  hasOpenJob: boolean,
+  jobs: OpenJob[],
 ): ReconcileDecision {
   if (!appt) {
-    // Class 2/4: the appointment is gone. A real Google event must be tombstoned;
-    // a local placeholder (no google_event_id) has no remote event -> inert.
+    // Appointment gone. Only a REAL provider event can be tombstoned; a placeholder
+    // has no remote event -> inert (a future local lifecycle may soft-delete it).
     if (link.googleEventId === null) return { act: "skip", reason: "inert_placeholder" };
     return { act: "orphan_delete", class: "orphaned_link_delete", linkId: link.id };
   }
   if (appt.status === "cancelled") {
-    // A rescheduled predecessor intentionally suppresses its own delete (the
-    // successor rebinds the link) — never reconcile it to a delete.
-    if (appt.cancellationKind === "rescheduled") return { act: "skip", reason: "keep_event" };
-    if (hasOpenJob) return { act: "skip", reason: "work_in_flight" };
-    // Class 4/2a: a withdrawn cancellation whose delete was never generated. The
-    // appointment row still exists, so a genuine bump re-drives the (appointment-
-    // keyed) event.delete through the trigger — matching the ordinary cancel path.
+    if (appt.cancellationKind === "rescheduled") return { act: "skip", reason: "keep_event" }; // successor rebinds
+    if (link.googleEventId === null) return { act: "skip", reason: "inert_placeholder" }; // no remote event to delete
+    if (hasCurrentOrNewerJob(jobs, DELETE_OPS, appt.syncVersion)) return { act: "skip", reason: "work_in_flight" };
     return { act: "bump", class: "surplus_event_delete", appointmentId: appt.id };
   }
-  // confirmed -> handled by the appointment pass; completed/no_show -> the event
-  // remains as a truthful historical block.
-  return {
-    act: "skip",
-    reason: appt.status === "confirmed" ? "handled_by_appointment_pass" : "keep_event",
-  };
+  // confirmed -> the appointment pass owns it; completed/no_show -> the event stays.
+  return { act: "skip", reason: appt.status === "confirmed" ? "handled_by_appointment_pass" : "keep_event" };
+}
+
+// ---------------------------------------------------------------------------
+// Lock guard — time-based ownership maintenance (renew when due; stop once lost).
+// ---------------------------------------------------------------------------
+const DEFAULT_RENEW_INTERVAL_MS = 40_000; // TTL is 120s; renew when >40s has elapsed
+function renewIntervalMs(deps: ReconcileDeps): number {
+  return Math.max(1_000, Math.floor(deps.lockRenewIntervalMs ?? DEFAULT_RENEW_INTERVAL_MS));
+}
+
+class LockGuard {
+  private lastRenewMs: number;
+  lost = false;
+  constructor(
+    private readonly lock: ReconcileLock,
+    private readonly studioId: string,
+    private readonly token: string,
+    private readonly now: () => number,
+    private readonly intervalMs: number,
+  ) {
+    this.lastRenewMs = now();
+  }
+  // Confirm continued ownership, renewing when the interval has elapsed. Returns
+  // false the moment ownership is lost or cannot be confirmed (fail-closed).
+  async ensureOwned(): Promise<boolean> {
+    if (this.lost) return false;
+    const t = this.now();
+    if (t - this.lastRenewMs < this.intervalMs) return true; // not due
+    if (!this.lock.renew) {
+      this.lastRenewMs = t; // TTL-only lock: nothing to renew, treat as owned
+      return true;
+    }
+    let ok = false;
+    try {
+      ok = await this.lock.renew(this.studioId, this.token);
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      this.lost = true;
+      return false;
+    }
+    this.lastRenewMs = t;
+    return true;
+  }
+  // Force an ownership check regardless of the timer (pass boundary).
+  async ensureOwnedNow(): Promise<boolean> {
+    this.lastRenewMs = 0;
+    return this.ensureOwned();
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Orchestration.
 // ---------------------------------------------------------------------------
-
 function clampPageSize(n: number | undefined): number {
   return Math.min(500, Math.max(1, Math.floor(n ?? 200)));
 }
 
-// Reconcile ONE studio under its per-studio lock. Fail-closed on the lock: if the
-// lock is held by another sweep, or the lock backend is unavailable, the studio is
-// SKIPPED (never swept unlocked). Per-candidate actuator errors are swallowed so
-// one bad row never aborts the studio; they are counted for observability.
-export async function reconcileStudio(
-  studioId: string,
-  deps: ReconcileDeps,
-  runStartedAtIso: string,
-): Promise<StudioReconcileResult> {
-  const pageSize = clampPageSize(deps.pageSize);
-  const maxPages = Math.max(1, Math.floor(deps.maxPagesPerStudioPerPass ?? 50));
-  const res: StudioReconcileResult = {
+function initResult(studioId: string): StudioReconcileResult {
+  return {
     studioId,
     locked: false,
+    continuationRead: true,
+    continuationPersisted: true,
     candidates: 0,
     enqueued: 0,
     skipped: 0,
     superseded: 0,
     byClass: emptyByClass(),
     errors: 0,
+    errored: false,
+    truncated: false,
+    deadlineHit: false,
+    ownershipLost: false,
     appointmentCursor: null,
     linkCursor: null,
-    truncated: false,
+    outcome: "ok",
   };
+}
+
+function computeStudioOutcome(res: StudioReconcileResult): StudioOutcome {
+  if (res.errored) return "error";
+  if (res.lockSkipReason === "held") return "skipped_held"; // benign concurrency
+  if (res.lockSkipReason === "unavailable") return "degraded"; // lock backend down (fail-closed)
+  if (!res.continuationRead) return "degraded"; // could not read position (fail-closed)
+  if (res.errors > 0 || res.truncated || res.ownershipLost || !res.continuationPersisted) return "degraded";
+  return "ok";
+}
+
+function isValidContinuation(v: unknown): v is ReconcileContinuation {
+  if (!v || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c.snapshotStartedAtIso === "string" &&
+    typeof c.activationStartedAtIso === "string" &&
+    (c.pass === "appointments" || c.pass === "links") &&
+    (c.cursor === null || typeof c.cursor === "string")
+  );
+}
+
+type PassStopReason = "deadline" | "ownership" | "page_budget";
+type PassResult = { drained: boolean; cursor: string | null; stopped: PassStopReason | null };
+
+// Reconcile ONE studio: acquire the lock, read/resume the durable continuation,
+// process bounded work under the lease + deadline, and persist/clear the
+// continuation. FAIL-CLOSED on the lock and the continuation.
+export async function reconcileStudio(
+  studioId: string,
+  deps: ReconcileDeps,
+  runStartedAtIso: string,
+): Promise<StudioReconcileResult> {
+  const res = initResult(studioId);
+  const now = deps.now ?? Date.now;
+  const deadlineMs = deps.deadlineMs ?? Number.POSITIVE_INFINITY;
 
   const lock = await deps.lock.acquire(studioId);
   if (!lock.ok) {
-    res.lockSkipReason = lock.reason; // 'held' or 'unavailable' (fail-closed)
+    res.lockSkipReason = lock.reason;
+    res.outcome = computeStudioOutcome(res);
     await recordStudio(deps, res);
     return res;
   }
   res.locked = true;
 
-  // Between-page lease extension. Fail-closed: a renewal that cannot confirm
-  // continued ownership stops further paging for this studio.
-  const renew = async (): Promise<boolean> => {
-    if (!deps.lock.renew) return true; // TTL alone covers the run
-    try {
-      return await deps.lock.renew(studioId, lock.token);
-    } catch {
-      return false; // treat a renewal error as lost ownership (fail-closed)
-    }
-  };
-
   try {
-    await runAppointmentPass(studioId, deps, runStartedAtIso, pageSize, maxPages, renew, res);
-    await runLinkPass(studioId, deps, pageSize, maxPages, renew, res);
+    const cont = await deps.continuation.read(studioId);
+    if (!cont.ok) {
+      // Cannot determine our position -> fail-closed, do not sweep.
+      res.continuationRead = false;
+    } else {
+      const ctx: ReconcileContinuation =
+        cont.value && isValidContinuation(cont.value)
+          ? cont.value
+          : {
+              snapshotStartedAtIso: runStartedAtIso,
+              activationStartedAtIso: runStartedAtIso,
+              pass: "appointments",
+              cursor: null,
+            };
+      const guard = new LockGuard(deps.lock, studioId, lock.token, now, renewIntervalMs(deps));
+      const passes = await processStudioPasses(studioId, deps, ctx, guard, deadlineMs, now, res);
+      if (passes.done) {
+        // Best-effort clear: a failed clear is benign (next run resumes past the end,
+        // drains an empty page, advances, and clears again).
+        await deps.continuation.clear(studioId);
+      } else {
+        // REQUIRED write: a failed write leaves the studio degraded (never reported
+        // complete); the next run restarts from the beginning (idempotent).
+        res.continuationPersisted = await deps.continuation.write(studioId, passes.continuation);
+      }
+    }
+  } catch {
+    res.errored = true;
   } finally {
-    // Release with the ownership token (compare-token-delete). Best-effort: a
-    // failed release simply lets the TTL expire the lock.
     await deps.lock.release(studioId, lock.token);
   }
 
+  res.outcome = computeStudioOutcome(res);
   await recordStudio(deps, res);
   return res;
 }
 
-async function runAppointmentPass(
+// Drive the appointment pass then the link pass from the resume point, stopping on
+// deadline / lost ownership / page budget with a continuation for the remainder.
+async function processStudioPasses(
   studioId: string,
   deps: ReconcileDeps,
-  runStartedAtIso: string,
-  pageSize: number,
-  maxPages: number,
-  renew: () => Promise<boolean>,
+  ctx: ReconcileContinuation,
+  guard: LockGuard,
+  deadlineMs: number,
+  now: () => number,
   res: StudioReconcileResult,
-): Promise<void> {
-  let after: string | null = null;
-  for (let page = 0; page < maxPages; page++) {
-    const rows = await deps.store.pageConfirmedFutureAppointments(
-      studioId,
-      runStartedAtIso, // activation_started_at (ends_at >= this)
-      runStartedAtIso, // snapshot_started_at (created_at <= this)
-      after,
-      pageSize,
-    );
-    if (rows.length === 0) return;
-    const ids = rows.map((r) => r.id);
-    const links = await deps.store.getActiveLinksForEntities(studioId, ids);
-    const openJobs = await deps.store.getEntitiesWithOpenJobs(studioId, ids);
+): Promise<{ done: true } | { done: false; continuation: ReconcileContinuation }> {
+  let pass: ReconcilePass = ctx.pass;
+  let cursor = ctx.cursor;
 
-    for (const appt of rows) {
-      res.candidates++;
-      res.appointmentCursor = appt.id;
-      const decision = classifyConfirmedAppointment(appt, links.get(appt.id), openJobs.has(appt.id));
-      await applyDecision(studioId, deps, decision, res);
-    }
-    after = rows[rows.length - 1].id;
-    if (rows.length < pageSize) return;
-    if (page === maxPages - 1) {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const pr = await runPass(studioId, deps, pass, ctx, cursor, guard, deadlineMs, now, res);
+    if (pr.stopped) {
       res.truncated = true;
-      return;
+      if (pr.stopped === "deadline" || pr.stopped === "page_budget") res.deadlineHit = pr.stopped === "deadline";
+      if (pr.stopped === "ownership") res.ownershipLost = true;
+      return {
+        done: false,
+        continuation: {
+          snapshotStartedAtIso: ctx.snapshotStartedAtIso,
+          activationStartedAtIso: ctx.activationStartedAtIso,
+          pass,
+          cursor: pr.cursor,
+        },
+      };
     }
-    if (!(await renew())) {
-      res.truncated = true; // lost the lease -> stop paging (fail-closed)
-      return;
+    // Pass drained.
+    if (pass === "appointments") {
+      // Verify ownership before switching passes.
+      if (!(await guard.ensureOwnedNow())) {
+        res.truncated = true;
+        res.ownershipLost = true;
+        return {
+          done: false,
+          continuation: {
+            snapshotStartedAtIso: ctx.snapshotStartedAtIso,
+            activationStartedAtIso: ctx.activationStartedAtIso,
+            pass: "links",
+            cursor: null,
+          },
+        };
+      }
+      pass = "links";
+      cursor = null;
+      continue;
     }
+    return { done: true }; // both passes drained
   }
 }
 
-async function runLinkPass(
+async function runPass(
   studioId: string,
   deps: ReconcileDeps,
-  pageSize: number,
-  maxPages: number,
-  renew: () => Promise<boolean>,
+  pass: ReconcilePass,
+  ctx: ReconcileContinuation,
+  startCursor: string | null,
+  guard: LockGuard,
+  deadlineMs: number,
+  now: () => number,
   res: StudioReconcileResult,
-): Promise<void> {
-  let after: string | null = null;
-  for (let page = 0; page < maxPages; page++) {
-    const links = await deps.store.pageActiveAppointmentLinks(studioId, after, pageSize);
-    if (links.length === 0) return;
-    const entityIds = links.map((l) => l.honeEntityId);
-    const appts = await deps.store.getAppointmentStates(studioId, entityIds);
-    const openJobs = await deps.store.getEntitiesWithOpenJobs(studioId, entityIds);
+): Promise<PassResult> {
+  const pageSize = clampPageSize(deps.pageSize);
+  const maxPages = Math.max(1, Math.floor(deps.maxPagesPerStudioPerPass ?? 50));
+  let after = startCursor;
 
-    for (const link of links) {
+  for (let page = 0; page < maxPages; page++) {
+    if (now() >= deadlineMs) return { drained: false, cursor: after, stopped: "deadline" };
+    if (!(await guard.ensureOwned())) return { drained: false, cursor: after, stopped: "ownership" };
+
+    const items: Array<ReconcileApptRow | ReconcileLinkRow> =
+      pass === "appointments"
+        ? await deps.store.pageConfirmedFutureAppointments(
+            studioId,
+            ctx.activationStartedAtIso,
+            ctx.snapshotStartedAtIso,
+            after,
+            pageSize,
+          )
+        : await deps.store.pageActiveAppointmentLinks(studioId, after, pageSize);
+
+    if (items.length === 0) return { drained: true, cursor: after, stopped: null };
+
+    // Batch the classification inputs for the page (cheap; the actuation is what
+    // costs, and it is deadline/ownership-gated per item below).
+    const entityIds =
+      pass === "appointments"
+        ? (items as ReconcileApptRow[]).map((a) => a.id)
+        : (items as ReconcileLinkRow[]).map((l) => l.honeEntityId);
+    const [links, appts, jobs] =
+      pass === "appointments"
+        ? await Promise.all([
+            deps.store.getActiveLinksForEntities(studioId, entityIds),
+            Promise.resolve(new Map<string, ReconcileApptState>()),
+            deps.store.getOpenJobsForEntities(studioId, entityIds),
+          ])
+        : await Promise.all([
+            Promise.resolve(new Map<string, ReconcileLinkRow>()),
+            deps.store.getAppointmentStates(studioId, entityIds),
+            deps.store.getOpenJobsForEntities(studioId, entityIds),
+          ]);
+
+    for (const item of items) {
+      // Deadline + ownership are re-checked before EVERY actuator (per item).
+      if (now() >= deadlineMs) return { drained: false, cursor: after, stopped: "deadline" };
+      if (!(await guard.ensureOwned())) return { drained: false, cursor: after, stopped: "ownership" };
+
       res.candidates++;
-      res.linkCursor = link.id;
-      const appt = appts.get(link.honeEntityId);
-      const decision = classifyActiveLink(link, appt, appt ? openJobs.has(appt.id) : false);
+      let decision: ReconcileDecision;
+      if (pass === "appointments") {
+        const appt = item as ReconcileApptRow;
+        res.appointmentCursor = appt.id;
+        decision = classifyConfirmedAppointment(appt, links.get(appt.id), jobs.get(appt.id) ?? []);
+      } else {
+        const link = item as ReconcileLinkRow;
+        res.linkCursor = link.id;
+        const appt = appts.get(link.honeEntityId);
+        decision = classifyActiveLink(link, appt, jobs.get(link.honeEntityId) ?? []);
+      }
       await applyDecision(studioId, deps, decision, res);
+      after = item.id; // advance the cursor only AFTER the item is fully processed
     }
-    after = links[links.length - 1].id;
-    if (links.length < pageSize) return;
-    if (page === maxPages - 1) {
-      res.truncated = true;
-      return;
-    }
-    if (!(await renew())) {
-      res.truncated = true; // lost the lease -> stop paging (fail-closed)
-      return;
-    }
+
+    if (items.length < pageSize) return { drained: true, cursor: after, stopped: null };
   }
+  // Hit the per-invocation page budget with more rows remaining.
+  return { drained: false, cursor: after, stopped: "page_budget" };
 }
 
-// Execute a decision. Before every BUMP we REVALIDATE the candidate against the
-// current row (§7): a concurrent booking mutation may have created a job or
-// changed the status since the page was read. `repair_bump_appointment_sync_version`
-// increments UNCONDITIONALLY, so a bump is only ever issued after a fresh
-// drift + no-open-job re-check — this is what prevents gratuitous version inflation
-// from duplicate/interleaved sweeps.
+// Execute a decision. Every actuation is preceded by a FULL pre-actuation
+// revalidation (re-read the current state and re-classify); the actuator fires only
+// if the fresh decision still matches the original action.
 async function applyDecision(
   studioId: string,
   deps: ReconcileDeps,
@@ -414,27 +594,26 @@ async function applyDecision(
   }
 
   try {
-    if (decision.act === "bump") {
-      const stillDrifted = await revalidateBump(studioId, deps, decision);
-      if (!stillDrifted) {
-        res.skipped++;
-        res.superseded++;
-        return;
-      }
-      const newVersion = await deps.store.bumpAppointmentSyncVersion(decision.appointmentId);
+    const fresh = await revalidate(studioId, deps, decision);
+    if (fresh.act !== decision.act) {
+      // The world changed between classification and actuation.
+      res.skipped++;
+      res.superseded++;
+      return;
+    }
+    if (fresh.act === "bump") {
+      const newVersion = await deps.store.bumpAppointmentSyncVersion(fresh.appointmentId);
       if (newVersion === null) {
-        // The appointment vanished between revalidation and bump — nothing enqueued.
-        res.skipped++;
+        res.skipped++; // vanished between revalidation and bump
         return;
       }
       res.enqueued++;
-      res.byClass[decision.class]++;
+      res.byClass[fresh.class]++;
       return;
     }
-
-    // orphan_delete: the RPC is itself idempotent (guards delete_in_flight +
-    // full-unique suppressed). Only a genuinely new outbox row counts as enqueued.
-    const outcome = await deps.store.enqueueOrphanLinkDelete(decision.linkId);
+    // orphan_delete — the RPC re-reads the link + guards delete_in_flight + full-
+    // unique suppressed. Only a genuinely new outbox row counts as enqueued.
+    const outcome = await deps.store.enqueueOrphanLinkDelete(fresh.linkId);
     if (outcome === "delete_in_flight" || outcome === "suppressed") {
       res.skipped++;
       if (outcome === "delete_in_flight") res.superseded++;
@@ -445,38 +624,54 @@ async function applyDecision(
       return;
     }
     res.enqueued++;
-    res.byClass[decision.class]++;
+    res.byClass[fresh.class]++;
   } catch {
-    // A single actuator failure never aborts the studio sweep.
-    res.errors++;
+    res.errors++; // one bad row never aborts the studio sweep
   }
 }
 
-// Fresh re-check immediately before a bump: is the appointment STILL a drift
-// candidate (confirmed→still needs create/update, or cancelled→still needs
-// delete) with NO open job? Returns false to cancel the bump.
-async function revalidateBump(
+// FULL pre-actuation revalidation: re-read enough CURRENT state and RE-CLASSIFY, so
+// the actuator only fires if the original decision still holds. For orphan delete
+// this re-reads the link by id (detecting a rebind, a cleared google_event_id, a
+// soft-delete, or an in-flight delete). For a bump it re-reads the appointment +
+// its link + its jobs and re-runs the same classifier.
+async function revalidate(
   studioId: string,
   deps: ReconcileDeps,
-  decision: { class: ReconcileClass; appointmentId: string },
-): Promise<boolean> {
-  const [states, openJobs] = await Promise.all([
-    deps.store.getAppointmentStates(studioId, [decision.appointmentId]),
-    deps.store.getEntitiesWithOpenJobs(studioId, [decision.appointmentId]),
-  ]);
-  const appt = states.get(decision.appointmentId);
-  if (!appt) return false; // vanished
-  if (openJobs.has(decision.appointmentId)) return false; // a job appeared -> supersede-safe skip
-
-  if (decision.class === "surplus_event_delete") {
-    // Delete drift: must still be a non-rescheduled cancellation.
-    return appt.status === "cancelled" && appt.cancellationKind !== "rescheduled";
+  decision: ReconcileDecision,
+): Promise<ReconcileDecision> {
+  if (decision.act === "orphan_delete") {
+    const link = await deps.store.getActiveLinkById(studioId, decision.linkId);
+    if (!link) return { act: "skip", reason: "decision_stale" };
+    const [appts, jobs] = await Promise.all([
+      deps.store.getAppointmentStates(studioId, [link.honeEntityId]),
+      deps.store.getOpenJobsForEntities(studioId, [link.honeEntityId]),
+    ]);
+    // Re-classifying from the link side detects a rebind (the entity now resolves to
+    // a live appointment -> classifyActiveLink no longer returns orphan_delete).
+    return classifyActiveLink(link, appts.get(link.honeEntityId), jobs.get(link.honeEntityId) ?? []);
   }
-  // Create/update drift (missing_link_job / link_version_behind): must still be
-  // confirmed. (Re-fetching the link to re-confirm "behind" is unnecessary: if a
-  // concurrent update advanced the link, it also created a job, which the open-job
-  // check above already caught.)
-  return appt.status === "confirmed";
+
+  if (decision.act !== "bump") return { act: "skip", reason: "decision_stale" }; // never called with skip
+  // bump: re-read the appointment, its active link, and its jobs.
+  const id = decision.appointmentId;
+  const [states, links, jobs] = await Promise.all([
+    deps.store.getAppointmentStates(studioId, [id]),
+    deps.store.getActiveLinksForEntities(studioId, [id]),
+    deps.store.getOpenJobsForEntities(studioId, [id]),
+  ]);
+  const appt = states.get(id);
+  if (!appt) return { act: "skip", reason: "vanished" };
+  const link = links.get(id);
+  const entityJobs = jobs.get(id) ?? [];
+  if (appt.status === "confirmed") {
+    return classifyConfirmedAppointment({ id, syncVersion: appt.syncVersion }, link, entityJobs);
+  }
+  if (appt.status === "cancelled") {
+    if (!link) return { act: "skip", reason: "keep_event" }; // nothing to delete
+    return classifyActiveLink(link, appt, entityJobs);
+  }
+  return { act: "skip", reason: "keep_event" }; // completed / no_show
 }
 
 async function recordStudio(deps: ReconcileDeps, res: StudioReconcileResult): Promise<void> {
@@ -487,20 +682,27 @@ async function recordStudio(deps: ReconcileDeps, res: StudioReconcileResult): Pr
   }
 }
 
-// Run the full sweep across every INTENT-eligible studio. Pins ONE run clock used
-// as both the enumeration snapshot boundary (created_at <=) and the activation
-// boundary (ends_at >=). Each studio is independently locked; a studio the sweep
-// cannot lock is skipped (fail-closed) and reported, never swept unlocked.
+function computeRunOutcome(results: StudioReconcileResult[]): RunOutcome {
+  if (results.some((r) => r.outcome === "error")) return "error";
+  if (results.some((r) => r.outcome === "degraded")) return "degraded";
+  return "ok";
+}
+
+// Run the full sweep across every INTENT-eligible studio under one pinned run clock.
 export async function runReconciliation(deps: ReconcileDeps): Promise<ReconcileRunResult> {
   const now = deps.now ?? Date.now;
   const runStartedAtIso = new Date(now()).toISOString();
 
   const result: ReconcileRunResult = {
     runStartedAtIso,
+    outcome: "ok",
     eligibleStudios: 0,
     studiosSwept: 0,
+    studiosCompleted: 0,
+    studiosTruncated: 0,
     studiosSkippedHeld: 0,
     studiosSkippedUnavailable: 0,
+    studiosContinuationFailed: 0,
     candidates: 0,
     enqueued: 0,
     skipped: 0,
@@ -514,11 +716,23 @@ export async function runReconciliation(deps: ReconcileDeps): Promise<ReconcileR
   result.eligibleStudios = studioIds.length;
 
   for (const studioId of studioIds) {
+    // Stop starting new studios once the deadline has passed (their continuation, if
+    // any, is untouched — the next invocation resumes them).
+    if (deps.deadlineMs !== undefined && now() >= deps.deadlineMs) break;
+
     const r = await reconcileStudio(studioId, deps, runStartedAtIso);
     result.results.push(r);
-    if (r.locked) result.studiosSwept++;
-    else if (r.lockSkipReason === "held") result.studiosSkippedHeld++;
+
+    if (r.lockSkipReason === "held") result.studiosSkippedHeld++;
     else if (r.lockSkipReason === "unavailable") result.studiosSkippedUnavailable++;
+    else if (!r.continuationRead || !r.continuationPersisted) result.studiosContinuationFailed++;
+
+    if (r.locked && r.continuationRead) {
+      result.studiosSwept++;
+      if (r.truncated) result.studiosTruncated++;
+      else if (!r.errored) result.studiosCompleted++;
+    }
+
     result.candidates += r.candidates;
     result.enqueued += r.enqueued;
     result.skipped += r.skipped;
@@ -527,5 +741,6 @@ export async function runReconciliation(deps: ReconcileDeps): Promise<ReconcileR
     for (const k of Object.keys(result.byClass) as ReconcileClass[]) result.byClass[k] += r.byClass[k];
   }
 
+  result.outcome = computeRunOutcome(result.results);
   return result;
 }
