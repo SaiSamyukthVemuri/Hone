@@ -59,6 +59,24 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
       return [...eligible];
     },
 
+    async isStudioIntentEligible(studioId): Promise<boolean> {
+      // Same INTENT gate as the enqueue trigger, for ONE studio: flag ON + an owner
+      // connection with a chosen write calendar. Re-checked immediately before a bump.
+      const [flagRes, connRes] = await Promise.all([
+        admin.from("studios").select("id").eq("id", studioId).eq("google_calendar_outbound_sync_enabled", true).maybeSingle(),
+        admin
+          .from("calendar_connections")
+          .select("id")
+          .eq("studio_id", studioId)
+          .eq("is_studio_calendar_owner", true)
+          .not("write_calendar_id", "is", null)
+          .limit(1),
+      ]);
+      if (flagRes.error) throw flagRes.error;
+      if (connRes.error) throw connRes.error;
+      return Boolean(flagRes.data) && Boolean(connRes.data && connRes.data.length > 0);
+    },
+
     async pageConfirmedFutureAppointments(studioId, activationIso, snapshotIso, afterId, limit) {
       let q = admin
         .from("appointments")
@@ -207,16 +225,19 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
       return String(data);
     },
 
-    async listStudiosWithDeadOutbox() {
-      // Aggregate terminal-dead counts per studio (PHI-free: studio_id + count).
-      const { data, error } = await admin.from("calendar_sync_outbox").select("studio_id").eq("status", "dead").limit(10000);
+    async pageStudiosWithDeadOutbox(afterStudioId, limit) {
+      // Bounded, cursor-paginated read from the pre-aggregated queue-health view
+      // (per-studio `dead` count) — NOT a raw 10k-row scan. PHI-free: studio_id + count.
+      let q = admin
+        .from("calendar_sync_queue_health")
+        .select("studio_id, dead")
+        .gt("dead", 0)
+        .order("studio_id", { ascending: true })
+        .limit(Math.max(1, Math.floor(limit)));
+      if (afterStudioId) q = q.gt("studio_id", afterStudioId);
+      const { data, error } = await q;
       if (error) throw error;
-      const counts = new Map<string, number>();
-      for (const r of data ?? []) {
-        const sid = r.studio_id as string;
-        if (sid) counts.set(sid, (counts.get(sid) ?? 0) + 1);
-      }
-      return [...counts.entries()].map(([studioId, deadCount]) => ({ studioId, deadCount }));
+      return (data ?? []).map((r) => ({ studioId: r.studio_id as string, deadCount: Number(r.dead) }));
     },
   };
 }

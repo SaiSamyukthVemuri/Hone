@@ -445,25 +445,37 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   version — is a **B2.4 worker-operation responsibility and needs no migration**
   (`appointments.sync_version` + `calendar_event_links.last_hone_version` already carry
   everything the fence needs). B2.3-b only ensures the current desired intent EXISTS.
-- **Placeholder-vs-real link distinction.** A **placeholder** link (`google_event_id`
-  null → no remote event) is never treated as convergence: a confirmed appointment with
-  a placeholder link and no current job **re-drives** a create (abandoned/swallowed);
-  if its create is terminally **dead** it enters a manual-review skip surfaced by the
-  dead-row alert (no auto-loop). A **withdrawn cancellation** whose link is a placeholder
-  is **inert** — never a provider `event.delete` without provider coordinates. Only a
-  real-event link (`google_event_id` present) yields a delete/tombstone.
+- **Placeholder-vs-real link distinction (upsert contract).** A **placeholder** link
+  (`google_event_id` null → no remote event) is never treated as convergence: a
+  confirmed appointment with a placeholder link and no current job re-drives a
+  **current upsert intent**. Because an active link already exists, the deployed
+  enqueue trigger emits **`event.update`** (NOT `event.create`); no real provider
+  update can occur (there is no provider event id), so the future B2.4 worker op must
+  treat `event.update` + a placeholder link as **create-and-bind**, and must fence any
+  stale earlier create first. If the placeholder's create is terminally **dead** it
+  enters a manual-review skip surfaced by the dead-row alert (no auto-loop). A
+  **withdrawn cancellation** whose link is a placeholder is **inert** — never a provider
+  `event.delete` without provider coordinates. Only a real-event link
+  (`google_event_id` present) yields a delete/tombstone. Worker/cron activation is
+  forbidden until both the stale-create fence and the create-and-bind behaviour are
+  implemented + tested (see the B2.4 input list; enforced by a static activation gate).
 - **Supersede-safe, no version inflation.** Every actuation is preceded by a **FULL
   pre-actuation revalidation**: the current appointment + its link + its jobs are
   re-read and the SAME classifier is re-run; the actuator fires only if the fresh
   decision still matches. For an orphan delete the link is re-read by id (detecting a
   rebind, a cleared `google_event_id`, a soft-delete, or an in-flight delete). Because
   `repair_bump_appointment_sync_version` increments unconditionally, a bump is issued
-  only after that fresh check under the per-studio lock — repeated/interleaved sweeps
-  produce **exactly one** effective operation per appointment. (An orphaned, gone-appt
-  link can never be rebound: the reschedule rebind keys on
-  `rescheduled_from_appointment_id`, which is `ON DELETE SET NULL`, so a gone
-  predecessor is unreachable — verified. The app-level re-read is therefore sufficient;
-  no RPC/migration change is required.)
+  only after that fresh check + an **intent-eligibility re-check** (do not mutate while
+  the studio flag/owner/write target has gone unavailable) + a **forced ownership-token
+  check immediately before the RPC**. And a returned version does not prove intent: the
+  bump is **VERIFIED** — the entity's jobs are re-read to confirm a current matching
+  pending/processing op now exists at the new version. If not (a swallowed trigger
+  enqueue / lost intent) it is counted `intentVerifyFailed` (degraded), NOT enqueued and
+  NOT converged, so the next run retries. Repeated/interleaved sweeps produce **exactly
+  one** effective operation per appointment. (An orphaned, gone-appt link can never be
+  rebound: the reschedule rebind keys on `rescheduled_from_appointment_id`, which is
+  `ON DELETE SET NULL`, so a gone predecessor is unreachable — verified. The app-level
+  re-read is therefore sufficient; no RPC/migration change is required.)
 - **Stable, RESUMABLE enumeration.** Candidates paginate by the **immutable appointment
   UUID** (link classes by the immutable link id) under a pinned run clock that serves as
   both `snapshot_started_at` (`created_at <=`) and `activation_started_at` (`ends_at
@@ -474,8 +486,15 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   early rows. The continuation is **correctness state, FAIL-CLOSED**: a read I/O error
   skips the studio (position unknown), a required-write failure marks it degraded (never
   reported complete); a *lost* record restarts from the beginning under a fresh snapshot
-  (convergence is idempotent — we never skip to the end). All continuation changes happen
-  under the lock. Rows created after the snapshot are covered organically by the trigger.
+  (convergence is idempotent — we never skip to the end). Its write/clear are
+  **ownership-atomic** — Lua compare-token scripts that mutate the continuation ONLY
+  while the caller still owns the per-studio lock key, so a stale owner (whose lease was
+  re-acquired by a newer sweep) can neither overwrite nor clear the newer owner's record.
+  It is stored **durably with NO arbitrary expiry** (schema-versioned; removed only by an
+  explicit ownership-atomic clear) — a short TTL could expire between scheduled
+  invocations and silently restart a large studio, so it is not used. A studio is counted
+  *completed* only when its continuation was cleared (or proven absent) while still owned.
+  Rows created after the snapshot are covered organically by the trigger.
 - **Initial-activation boundary (no arbitrary horizon).** On first eligibility the
   sweep creates events for every `status='confirmed'` appointment with `ends_at >=
   activation_started_at` (not-yet-ended, including in-progress) that has no converged
@@ -488,21 +507,40 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   `PEXPIRE` to renew. Ownership is checked **before every actuator and at each pass
   boundary** (time-based: renew once the configured fraction of the TTL has elapsed, so
   a long op triggers a renewal), and the run is bounded by an overall **route deadline**.
-  A second concurrent sweep for the same studio is skipped. **Lock acquisition /
-  integrity failure is fail-closed** — if Upstash is unreachable, or a renewal cannot
-  confirm continued ownership, the sweep **stops mutating immediately**, persists a
-  continuation for the remainder, and reports degraded; it never runs past a lost lease
-  or sweeps unlocked. This is the one place that is *not* fail-open.
+  The ownership check before every actuator is a **forced** renew (not just between
+  pages); the route deadline is kept materially below the TTL but is NOT a substitute for
+  that final check. A second concurrent sweep for the same studio is skipped. **Lock
+  acquisition / integrity failure is fail-closed** — if Upstash is unreachable, or a
+  renewal cannot confirm continued ownership, the sweep **stops mutating immediately**,
+  preserves its cursor BEFORE the unprocessed item, persists a continuation for the
+  remainder, and reports degraded; it never runs past a lost lease or sweeps unlocked.
+  This is the one place that is *not* fail-open.
+- **Route coordinator + global studio cursor (anti-starvation).** A single global
+  **coordinator** ownership-token lock serializes route invocations and owns a **durable
+  global studio cursor** (the last-attempted immutable studio id, ownership-atomic
+  writes). Eligible studios are sorted by immutable id and processed in **wrap-around**
+  order starting AFTER the cursor, so the same first studios can never be swept forever
+  while later ones starve — every eligible studio eventually gets a turn even when every
+  invocation processes only one studio before its deadline. Studios not attempted this
+  invocation are **deferred** (counted, and the run reported degraded). The coordinator
+  is fail-closed (unavailable → degraded; held → benign skip). Per-studio locks remain
+  the mutation-safety boundary.
 - **Heartbeat + dead-row alert + retention (FAIL-OPEN observability).** After each run
   the route writes a single non-sensitive Upstash heartbeat (`gcal_reconcile:last_run`)
-  whose **outcome is truthful** — `ok` / `degraded` / `error` (degraded when a studio was
-  truncated, the lock was unavailable, a continuation read/write failed, or a per-candidate
-  actuator errored; error on a top-level exception). `at` is the completion time; the
-  scheduler classifier treats a recent **degraded/error** heartbeat as NOT healthy (it is
-  not healthy just because it is recent). It also sweeps a **deduped, PHI-free dead-row
-  alert** (`calendar_outbox_dead_rows`, studio-scoped, aggregate count only) for terminal
-  dead outbox work — recurring after resolution when new dead rows appear, never reopening
-  a dead row — and prunes `calendar_sync_metric_events` past its retention window (the 0125
+  whose **outcome is truthful** — `ok` / `degraded` / `error`. It is degraded when eligible
+  work was knowingly left unrepresented because coordination bounded it: **studios deferred**
+  (deadline/batch), coordinator unavailable, a cursor read/persist failure, a continuation
+  read/write failure, a **post-bump intent-verification failure**, a per-candidate actuator
+  error, a truncated studio, or a **deferred dead-row sweep**; `error` on a top-level
+  exception. `at` is the completion time; the scheduler classifier treats a recent
+  **degraded/error** heartbeat as NOT healthy (it is not healthy just because it is recent).
+  It also sweeps a **deduped, PHI-free dead-row alert** (`calendar_outbox_dead_rows`,
+  studio-scoped, aggregate count only) for terminal dead outbox work — read from the
+  pre-aggregated `calendar_sync_queue_health` view via **bounded, deadline-aware cursor
+  pagination** (no raw multi-thousand-row scan), recurring after resolution when new dead
+  rows appear, never reopening a dead row; concurrent invocations are serialized by the
+  coordinator lock so there is no alert storm. It prunes `calendar_sync_metric_events` past
+  its retention window (the 0125
   `delete` grant). Every heartbeat/metric/alert write is fail-open — a failure never aborts
   the sweep or a booking. Observability failing open must not be confused with the lock +
   continuation, which are fail-closed. The stale/degraded/error scheduler alert recorder

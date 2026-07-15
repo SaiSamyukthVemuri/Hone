@@ -6,6 +6,7 @@ import {
   runReconciliation,
   type ReconcileContinuation,
   type ReconcileContinuationStore,
+  type ReconcileCoordinator,
   type ReconcileLock,
   type ReconcileStore,
 } from "@/lib/google-calendar/sync/reconcile";
@@ -195,6 +196,16 @@ function pgStore(studioFilter?: string): ReconcileStore {
       }
       return m;
     },
+    async isStudioIntentEligible(studioId) {
+      const r = await adminQuery(
+        `select 1 from public.calendar_connections c
+           join public.studios s on s.id = c.studio_id
+          where c.studio_id=$1 and c.is_studio_calendar_owner and c.write_calendar_id is not null
+            and s.google_calendar_outbound_sync_enabled limit 1`,
+        [studioId],
+      );
+      return (r.rowCount ?? 0) > 0;
+    },
     async bumpAppointmentSyncVersion(apptId) {
       const r = (await adminQuery(`select public.repair_bump_appointment_sync_version($1) as v`, [apptId])).rows[0];
       return r.v === null || r.v === undefined ? null : Number(r.v);
@@ -202,11 +213,27 @@ function pgStore(studioFilter?: string): ReconcileStore {
     async enqueueOrphanLinkDelete(linkId) {
       return String((await adminQuery(`select public.repair_enqueue_orphan_link_delete($1) as r`, [linkId])).rows[0].r);
     },
-    async listStudiosWithDeadOutbox() {
+    async pageStudiosWithDeadOutbox(afterStudioId, limit) {
       const r = await adminQuery(
-        `select studio_id, count(*)::int as n from public.calendar_sync_outbox where status='dead' group by studio_id`,
+        `select studio_id, dead from public.calendar_sync_queue_health
+          where dead > 0 and ($1::uuid is null or studio_id > $1)
+          order by studio_id asc limit $2`,
+        [afterStudioId, limit],
       );
-      return r.rows.map((x) => ({ studioId: x.studio_id as string, deadCount: Number(x.n) }));
+      return r.rows.map((x) => ({ studioId: x.studio_id as string, deadCount: Number(x.dead) }));
+    },
+  };
+}
+
+// Scope eligibility to a SET of the test's studios (isolation from cross-suite
+// accumulation) — used by the multi-studio anti-starvation test.
+function pgStoreForStudios(ids: string[]): ReconcileStore {
+  const base = pgStore();
+  return {
+    ...base,
+    async listEligibleStudioIds() {
+      const all = await base.listEligibleStudioIds();
+      return all.filter((id) => ids.includes(id));
     },
   };
 }
@@ -220,12 +247,46 @@ function memContinuation(): ReconcileContinuationStore {
     async read(studioId) {
       return { ok: true as const, value: map.get(studioId) ?? null };
     },
-    async write(studioId, v) {
+    async write(studioId, _token, v) {
       map.set(studioId, v);
       return true;
     },
-    async clear(studioId) {
+    async clear(studioId, _token) {
       map.delete(studioId);
+      return true;
+    },
+  };
+}
+
+// In-process coordinator for the DB suite (the durable Upstash impl is unit-tested).
+// A single instance persists the studio cursor across a test's invocations.
+function memCoordinator(): ReconcileCoordinator {
+  let held = false;
+  let token: string | null = null;
+  let cursor: string | null = null;
+  let seq = 0;
+  return {
+    async acquire() {
+      if (held) return { ok: false as const, reason: "held" as const };
+      held = true;
+      token = `c-${seq++}`;
+      return { ok: true as const, token };
+    },
+    async release(t) {
+      if (token === t) {
+        held = false;
+        token = null;
+      }
+    },
+    async renew(t) {
+      return token === t;
+    },
+    async readCursor() {
+      return { ok: true as const, cursor };
+    },
+    async writeCursor(t, c) {
+      if (token !== t) return false;
+      cursor = c;
       return true;
     },
   };
@@ -254,7 +315,7 @@ const NOW_AHEAD = () => Date.now() + 1000;
 // Full run() scoped to ONE studio (via the store filter) so shared-DB accumulation
 // from other suites never contaminates aggregate counts.
 const run = (studioId: string, over: Partial<Parameters<typeof runReconciliation>[0]> = {}) =>
-  runReconciliation({ store: pgStore(studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, ...over });
+  runReconciliation({ store: pgStore(studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, ...over });
 
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
@@ -451,7 +512,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const appts = [];
     for (let i = 0; i < 5; i++) appts.push(await insertAppt(a));
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 2 }); // multi-page
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, pageSize: 2 }); // multi-page
     for (const appt of appts) {
       expect((await outbox(appt)).map((x) => x.op_type)).toEqual(["event.create"]); // each once
     }
@@ -463,7 +524,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const a1 = await insertAppt(a);
     const a2 = await insertAppt(a);
     await setFlag(a.studioId, true);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
     // Move a1 far into the future (mutating starts_at) — a starts_at cursor would
     // reorder it; the immutable id cursor is unaffected.
     const later = new Date(Date.now() + 500 * 3_600_000);
@@ -472,7 +533,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
       later.toISOString(),
       new Date(later.getTime() + 30 * 60_000).toISOString(),
     ]);
-    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
+    await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
     // a1 already has a create + now a trigger-made update (from the reschedule) — but
     // NO second create; a2 still exactly one create.
     expect((await outbox(a1)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
@@ -490,8 +551,8 @@ describe("no duplicate under repeat / concurrency", () => {
     await adminQuery(`delete from public.calendar_event_links where hone_entity_id=$1`, [appt]); // simulate the gap
     const lock = lockSingleSlot();
     await Promise.all([
-      runReconciliation({ store: pgStore(a.studioId), lock, continuation: memContinuation(), now: NOW_AHEAD }),
-      runReconciliation({ store: pgStore(a.studioId), lock, continuation: memContinuation(), now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD }),
+      runReconciliation({ store: pgStore(a.studioId), lock, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD }),
     ]);
     expect((await outbox(appt)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
   });
@@ -541,7 +602,7 @@ describe("tenant isolation + dormancy", () => {
     expect(eligible).not.toContain(off.studioId);
 
     // Sweeping ON must never touch OFF (a different tenant).
-    await reconcileStudio(on.studioId, { store: pgStore(), lock: lockAlways, continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
+    await reconcileStudio(on.studioId, { store: pgStore(), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
     expect((await outbox(apptOn)).map((x) => x.op_type)).toEqual(["event.create"]);
     expect(await outbox(apptOff)).toHaveLength(0); // OFF is never swept
     // A bump for ON never advanced OFF's appointment version.
@@ -572,7 +633,7 @@ describe("reconcileStudio result", () => {
     await seedConn(a, { flag: false });
     const appt = await insertAppt(a);
     await setFlag(a.studioId, true);
-    const res = await reconcileStudio(a.studioId, { store: pgStore(), lock: lockAlways, continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
+    const res = await reconcileStudio(a.studioId, { store: pgStore(), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation() }, new Date(NOW_AHEAD()).toISOString());
     expect(res.locked).toBe(true);
     expect(res.enqueued).toBe(1);
     expect(res.appointmentCursor).toBe(appt);
@@ -656,7 +717,7 @@ describe("§4 resumable continuation across invocations", () => {
     let done = false;
     let guard = 0;
     while (!done && guard++ < 25) {
-      await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, continuation: cont, now: NOW_AHEAD, pageSize: 2, maxPagesPerStudioPerPass: 1 });
+      await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: cont, now: NOW_AHEAD, pageSize: 2, maxPagesPerStudioPerPass: 1 });
       const c = await cont.read(a.studioId);
       done = c.ok && c.value === null; // studio drained -> continuation cleared
     }
@@ -677,7 +738,7 @@ describe("§5 route deadline", () => {
     const cont = memContinuation();
     const res = await reconcileStudio(
       a.studioId,
-      { store: pgStore(a.studioId), lock: lockAlways, continuation: cont, deadlineMs: Date.now() - 1000 },
+      { store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: cont, deadlineMs: Date.now() - 1000 },
       new Date(NOW_AHEAD()).toISOString(),
     );
     expect(res.truncated).toBe(true);
@@ -710,7 +771,7 @@ describe("§6 pre-actuation revalidation against the real DB", () => {
         return base.getAppointmentStates(studioId, ids);
       },
     };
-    await runReconciliation({ store: wrapped, lock: lockAlways, continuation: memContinuation(), now: NOW_AHEAD });
+    await runReconciliation({ store: wrapped, lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD });
     // Revalidation saw the cancellation -> no create was generated.
     expect(await outbox(appt)).toHaveLength(0);
     expect((await adminQuery(`select status from public.appointments where id=$1`, [appt])).rows[0].status).toBe("cancelled");
@@ -718,8 +779,101 @@ describe("§6 pre-actuation revalidation against the real DB", () => {
 });
 
 // =========================================================================
+describe("§6 post-bump intent verification + pre-mutation recheck (real DB)", () => {
+  it("a swallowed trigger enqueue after a bump -> intentVerifyFailed, not enqueued, degraded", async () => {
+    const a = await seedStudio("verify1");
+    await seedConn(a, { flag: false });
+    const appt = await insertAppt(a); // intent off -> no link/job (Class 1 candidate)
+    await setFlag(a.studioId, true);
+    // Sabotage the outbox insert so the trigger's never-raise guard swallows the
+    // enqueue: the bump increments sync_version but produces NO outbox row.
+    const fname = `_t_fail_${randomUUID().slice(0, 8)}`;
+    const tname = `${fname}_trg`;
+    await adminQuery(`create function public.${fname}() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$`);
+    await adminQuery(`create trigger ${tname} before insert on public.calendar_sync_outbox for each row execute function public.${fname}()`);
+    try {
+      const r = await run(a.studioId);
+      expect(r.enqueued).toBe(0);
+      expect(r.intentVerifyFailed).toBe(1); // bump returned but no durable current op was proven
+      expect(r.outcome).toBe("degraded");
+    } finally {
+      await adminQuery(`drop trigger if exists ${tname} on public.calendar_sync_outbox`);
+      await adminQuery(`drop function if exists public.${fname}()`);
+    }
+    expect(await outbox(appt)).toHaveLength(0);
+    // The drift persists (not converged) -> the next (unsabotaged) run converges it.
+    const r2 = await run(a.studioId);
+    expect(r2.enqueued).toBe(1);
+  });
+
+  it("intent turned off before the mutation -> intent_lost, no bump, degraded", async () => {
+    const a = await seedStudio("verify2");
+    await seedConn(a, { flag: false });
+    const appt = await insertAppt(a);
+    await setFlag(a.studioId, true);
+    // A store wrapper that drops the studio flag right before the intent re-check.
+    const base = pgStore(a.studioId);
+    let fired = false;
+    const wrapped: ReconcileStore = {
+      ...base,
+      async isStudioIntentEligible(studioId) {
+        if (!fired) {
+          fired = true;
+          await setFlag(a.studioId, false);
+        }
+        return base.isStudioIntentEligible(studioId);
+      },
+    };
+    const res = await reconcileStudio(
+      a.studioId,
+      { store: wrapped, lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation() },
+      new Date(NOW_AHEAD()).toISOString(),
+    );
+    expect(res.intentLost).toBe(true);
+    expect(res.outcome).toBe("degraded");
+    expect(await outbox(appt)).toHaveLength(0); // never bumped
+  });
+});
+
+// =========================================================================
+describe("§2 cross-studio anti-starvation (global cursor)", () => {
+  it("processes each eligible studio over successive invocations without restarting at the first", async () => {
+    const studios: SeededStudio[] = [];
+    const appts: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const st = await seedStudio(`starve${i}`);
+      await seedConn(st, { flag: false });
+      appts.push(await insertAppt(st));
+      await setFlag(st.studioId, true);
+      studios.push(st);
+    }
+    const ids = studios.map((s) => s.studioId);
+    const coord = memCoordinator();
+    const cont = memContinuation();
+    // studioBatchLimit 1 -> one studio attempted per invocation.
+    for (let i = 0; i < 3; i++) {
+      const r = await runReconciliation({
+        store: pgStoreForStudios(ids),
+        lock: lockAlways,
+        coordinator: coord,
+        continuation: cont,
+        now: NOW_AHEAD,
+        studioBatchLimit: 1,
+      });
+      expect(r.studiosAttempted).toBe(1);
+      expect(r.studiosDeferred).toBe(2);
+      expect(r.outcome).toBe("degraded"); // deferred work reported truthfully
+    }
+    // Every studio's appointment got exactly one create across the three invocations.
+    for (const appt of appts) {
+      expect((await outbox(appt)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
+    }
+  });
+});
+
+// =========================================================================
 describe("§8 dead-row inventory", () => {
-  it("listStudiosWithDeadOutbox counts terminal dead rows per studio", async () => {
+  it("pageStudiosWithDeadOutbox reads the queue-health view (dead>0)", async () => {
     const a = await seedStudio("dead1");
     const conn = await seedConn(a);
     for (let i = 0; i < 2; i++) {
@@ -729,7 +883,8 @@ describe("§8 dead-row inventory", () => {
         [a.studioId, conn, randomUUID(), `dead-${randomUUID()}`],
       );
     }
-    const rows = await pgStore().listStudiosWithDeadOutbox();
+    // The view aggregates dead per studio; page it (this studio's rows are the only ones — beforeEach cleared).
+    const rows = await pgStore().pageStudiosWithDeadOutbox(null, 100);
     expect(rows.find((r) => r.studioId === a.studioId)?.deadCount).toBe(2);
   });
 });

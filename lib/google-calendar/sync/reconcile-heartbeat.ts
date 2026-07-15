@@ -40,12 +40,18 @@ export type ReconcileHeartbeat = {
   outcome: ReconcileOutcome;
   durationMs?: number;
   eligibleStudios?: number;
-  studiosSwept?: number;
+  studiosAttempted?: number;
   studiosCompleted?: number;
   studiosTruncated?: number;
+  studiosDeferred?: number; // eligible studios not attempted this invocation
   studiosSkippedHeld?: number;
   studiosSkippedUnavailable?: number;
   studiosContinuationFailed?: number;
+  coordinatorSkipped?: "held" | "unavailable" | null;
+  cursorReadFailed?: boolean;
+  cursorPersistFailed?: boolean;
+  intentVerifyFailed?: number;
+  deadRowDeferred?: boolean;
   candidates?: number;
   enqueued?: number;
   skipped?: number;
@@ -61,23 +67,30 @@ function getRedis(): Redis | null {
   return url && token ? new Redis({ url, token }) : null;
 }
 
-// Build a PHI-free heartbeat from a run result. `at` = completion time. Pure.
+// Build a PHI-free heartbeat from a run result. `at` = completion time. Pure. The
+// `outcome` passed in may already be downgraded (e.g. dead-row work deferred).
 export function reconcileHeartbeatFromRun(
   run: ReconcileRunResult,
-  opts: { at: string; startedAt?: string; durationMs?: number; errorClass?: string },
+  opts: { at: string; startedAt?: string; durationMs?: number; errorClass?: string; outcome?: ReconcileOutcome; deadRowDeferred?: boolean },
 ): ReconcileHeartbeat {
   return {
     at: opts.at,
     startedAt: opts.startedAt,
-    outcome: run.outcome,
+    outcome: opts.outcome ?? run.outcome,
     durationMs: opts.durationMs,
     eligibleStudios: run.eligibleStudios,
-    studiosSwept: run.studiosSwept,
+    studiosAttempted: run.studiosAttempted,
     studiosCompleted: run.studiosCompleted,
     studiosTruncated: run.studiosTruncated,
+    studiosDeferred: run.studiosDeferred,
     studiosSkippedHeld: run.studiosSkippedHeld,
     studiosSkippedUnavailable: run.studiosSkippedUnavailable,
     studiosContinuationFailed: run.studiosContinuationFailed,
+    coordinatorSkipped: run.coordinatorSkipped,
+    cursorReadFailed: run.cursorReadFailed,
+    cursorPersistFailed: run.cursorPersistFailed,
+    intentVerifyFailed: run.intentVerifyFailed,
+    deadRowDeferred: opts.deadRowDeferred,
     candidates: run.candidates,
     enqueued: run.enqueued,
     skipped: run.skipped,
@@ -253,22 +266,49 @@ export async function recordCalendarDeadRowAlert(
   }
 }
 
-// Sweep dead-row alerts across every studio with terminal dead rows. Fail-open.
+// Sweep dead-row alerts, BOUNDED + deadline-aware (§7). Reads the pre-aggregated
+// queue-health view via cursor pagination (immutable studio_id) — no raw 10k-row
+// scan. Stops at the route deadline or the per-invocation studio cap, reporting
+// `deferred` so the run can be marked degraded. Concurrent invocations are already
+// serialized by the route coordinator lock, so no duplicate alert storm. Fail-open.
 export async function sweepCalendarDeadRowAlerts(
-  store: { listStudiosWithDeadOutbox(): Promise<{ studioId: string; deadCount: number }[]> },
-  nowMs: number = Date.now(),
-): Promise<{ studios: number; alerted: number }> {
+  store: { pageStudiosWithDeadOutbox(afterStudioId: string | null, limit: number): Promise<{ studioId: string; deadCount: number }[]> },
+  opts: { now?: () => number; deadlineMs?: number; pageSize?: number; maxStudios?: number } = {},
+): Promise<{ studios: number; alerted: number; deferred: boolean }> {
+  const now = opts.now ?? Date.now;
+  const deadlineMs = opts.deadlineMs ?? Number.POSITIVE_INFINITY;
+  const pageSize = Math.max(1, Math.floor(opts.pageSize ?? 100));
+  const maxStudios = Math.max(1, Math.floor(opts.maxStudios ?? 500));
   let studios = 0;
   let alerted = 0;
+  let deferred = false;
+  let after: string | null = null;
   try {
-    const rows = await store.listStudiosWithDeadOutbox();
-    studios = rows.length;
-    for (const r of rows) {
-      const res = await recordCalendarDeadRowAlert(r.studioId, r.deadCount, nowMs);
-      if (res.alerted) alerted++;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (now() >= deadlineMs || studios >= maxStudios) {
+        deferred = true;
+        break;
+      }
+      const page = await store.pageStudiosWithDeadOutbox(after, pageSize);
+      if (page.length === 0) break; // fully drained
+      let broke = false;
+      for (const r of page) {
+        if (now() >= deadlineMs || studios >= maxStudios) {
+          deferred = true;
+          broke = true;
+          break;
+        }
+        const res = await recordCalendarDeadRowAlert(r.studioId, r.deadCount, now());
+        if (res.alerted) alerted++;
+        studios++;
+        after = r.studioId;
+      }
+      if (broke) break;
+      if (page.length < pageSize) break; // no more rows
     }
   } catch {
-    // fail-open
+    // fail-open (business ops never blocked by dead-row alerting)
   }
-  return { studios, alerted };
+  return { studios, alerted, deferred };
 }

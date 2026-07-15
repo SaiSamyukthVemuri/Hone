@@ -19,9 +19,11 @@ function makeAdmin(select: SelectResponses = {}) {
       return {
         select() {
           const b: Record<string, unknown> = {};
-          for (const m of ["eq", "gte", "lte", "lt", "is", "in", "not", "order", "limit"]) b[m] = () => b;
+          for (const m of ["eq", "gt", "gte", "lte", "lt", "is", "in", "not", "order", "limit"]) b[m] = () => b;
           (b as { then: unknown }).then = (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
             Promise.resolve(select[table] ?? { data: [] }).then(res, rej);
+          (b as { maybeSingle: unknown }).maybeSingle = () =>
+            Promise.resolve({ data: ((select[table]?.data ?? []) as unknown[])[0] ?? null, error: select[table]?.error ?? null });
           return b;
         },
         insert(row: Record<string, unknown>) {
@@ -84,14 +86,26 @@ describe("getOpenJobsForEntities — op class + payload sync_version + status", 
   });
 });
 
-describe("listStudiosWithDeadOutbox — aggregate dead counts", () => {
-  it("counts dead rows per studio", async () => {
-    const { admin } = makeAdmin({ calendar_sync_outbox: { data: [{ studio_id: "s1" }, { studio_id: "s1" }, { studio_id: "s2" }] } });
+describe("isStudioIntentEligible — flag ∩ owner+write, one studio", () => {
+  it("true only when the flag row AND an owner+write connection both exist", async () => {
+    const eligible = createSupabaseReconcileStore(
+      asAdmin(makeAdmin({ studios: { data: [{ id: "s1" }] }, calendar_connections: { data: [{ id: "c1" }] } }).admin),
+    );
+    expect(await eligible.isStudioIntentEligible("s1")).toBe(true);
+    const noFlag = createSupabaseReconcileStore(asAdmin(makeAdmin({ studios: { data: [] }, calendar_connections: { data: [{ id: "c1" }] } }).admin));
+    expect(await noFlag.isStudioIntentEligible("s1")).toBe(false);
+    const noConn = createSupabaseReconcileStore(asAdmin(makeAdmin({ studios: { data: [{ id: "s1" }] }, calendar_connections: { data: [] } }).admin));
+    expect(await noConn.isStudioIntentEligible("s1")).toBe(false);
+  });
+});
+
+describe("pageStudiosWithDeadOutbox — bounded queue-health page", () => {
+  it("reads the pre-aggregated view (dead>0) and maps studio_id + dead", async () => {
+    const { admin } = makeAdmin({ calendar_sync_queue_health: { data: [{ studio_id: "s1", dead: 2 }, { studio_id: "s2", dead: 5 }] } });
     const store = createSupabaseReconcileStore(asAdmin(admin));
-    const rows = await store.listStudiosWithDeadOutbox();
-    expect(rows.sort((a, b) => a.studioId.localeCompare(b.studioId))).toEqual([
+    expect(await store.pageStudiosWithDeadOutbox(null, 100)).toEqual([
       { studioId: "s1", deadCount: 2 },
-      { studioId: "s2", deadCount: 1 },
+      { studioId: "s2", deadCount: 5 },
     ]);
   });
 });
@@ -116,16 +130,19 @@ describe("observability sink — records only notable studios, PHI-free", () => 
       locked: true,
       continuationRead: true,
       continuationPersisted: true,
+      continuationCleared: true,
       candidates: 0,
       enqueued: 0,
       skipped: 0,
       superseded: 0,
+      intentVerifyFailed: 0,
       byClass: { missing_link_job: 0, link_version_behind: 0, orphaned_link_delete: 0, surplus_event_delete: 0 },
       errors: 0,
       errored: false,
       truncated: false,
       deadlineHit: false,
       ownershipLost: false,
+      intentLost: false,
       appointmentCursor: null,
       linkCursor: null,
       outcome: "ok",

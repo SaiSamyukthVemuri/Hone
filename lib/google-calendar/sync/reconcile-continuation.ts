@@ -1,48 +1,57 @@
 import "server-only";
 import { Redis } from "@upstash/redis";
+import { reconcileLockKey } from "./reconcile-lock";
 import type { ReconcileContinuation, ReconcileContinuationStore } from "./reconcile";
 
 // Google Calendar — Phase B2.3-b: durable, resumable pagination continuation for
 // the reconciliation sweep, backed by the deployed Upstash. A truncated run (page
 // budget, route deadline, or lost lease) persists WHERE it stopped so the next
-// invocation resumes AFTER that immutable cursor — later appointments never starve
-// behind already-converged early rows.
+// invocation resumes AFTER that immutable cursor — later appointments never starve.
 //
-// CORRECTNESS STATE, FAIL-CLOSED:
-//   * read() returning { ok:false } is an I/O error -> the caller must NOT sweep the
-//     studio (it cannot know its position). It is NOT the same as an absent record.
-//   * read() returning { ok:true, value:null } means "no continuation" -> start a
-//     fresh pass under a new snapshot.
-//   * A lost record can NEVER cause a studio to be reported complete: a missing
-//     value restarts from the beginning under a fresh snapshot, and convergence is
-//     idempotent, so re-scanning already-converged rows is safe (they classify as
-//     converged/in-flight and are skipped). We never skip to the end.
-//   * All writes happen UNDER the per-studio lock, so two sweeps cannot race the
-//     continuation.
+// OWNERSHIP-ATOMIC (§3). Continuation write/clear are NOT plain SET/DEL. Each is a
+// Lua script that verifies the per-studio LOCK key still holds the caller's exact
+// ownership token and mutates the continuation ONLY while ownership matches. So a
+// stale owner (whose lease expired and was re-acquired by a newer sweep) can neither
+// overwrite nor clear the newer owner's continuation. The token is passed in.
 //
-// The record holds ONLY non-sensitive position state: the pinned snapshot +
-// activation timestamps, the pass/class, and the immutable last-seen id. No client
-// identity, appointment content, Google id, or token.
+// DURABLE, NO ARBITRARY EXPIRY. The continuation is CORRECTNESS state: it is written
+// WITHOUT a TTL and removed only by an explicit ownership-atomic clear on completion.
+// (A short TTL would let the record expire BETWEEN normal scheduled invocations and
+// silently restart a large studio from the beginning — starvation.) A `schemaVersion`
+// guards forward-compatibility; a mismatched/corrupt record reads as absent (safe —
+// restarting under a fresh snapshot never false-completes, convergence is idempotent).
+//
+// FAIL-CLOSED read: { ok:false } is an I/O error (the caller must NOT sweep — position
+// unknown); { ok:true, value:null } means "no continuation" (start fresh).
+//
+// The record holds ONLY non-sensitive position state (snapshot + activation + pass +
+// immutable id). No client identity, appointment content, Google id, or token.
 
-const KEY_PREFIX = "gcal_reconcile:cursor:";
-// Long enough to survive between bounded invocations of a large studio; a genuinely
-// abandoned continuation expires and the studio restarts fresh (safe).
-const TTL_SECONDS = 60 * 60 * 6; // 6h
+const CONT_PREFIX = "gcal_reconcile:cursor:";
+const SCHEMA_VERSION = 1;
 
-function key(studioId: string): string {
-  return `${KEY_PREFIX}${studioId}`;
+function contKey(studioId: string): string {
+  return `${CONT_PREFIX}${studioId}`;
 }
 
-// Minimal redis seam (mockable in tests).
+// KEYS[1] = per-studio lock key, KEYS[2] = continuation key, ARGV[1] = token,
+// ARGV[2] = value. Write with NO expiry (durable). Clear returns owned regardless of
+// key presence (a DEL of an absent key is still "cleared while owned").
+const WRITE_LUA =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('set', KEYS[2], ARGV[2]); return 1 else return 0 end";
+const CLEAR_LUA =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('del', KEYS[2]); return 1 else return 0 end";
+
+// Minimal redis seam (mockable). `get` for the read; `eval` for the atomic mutations.
 export type ContinuationRedis = {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown, opts: { ex: number }): Promise<unknown>;
-  del(key: string): Promise<unknown>;
+  eval(script: string, keys: string[], args: (string | number)[]): Promise<unknown>;
 };
 
 function isValid(v: unknown): v is ReconcileContinuation {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
+  if (c.schemaVersion !== undefined && c.schemaVersion !== SCHEMA_VERSION) return false; // schema drift -> absent
   return (
     typeof c.snapshotStartedAtIso === "string" &&
     typeof c.activationStartedAtIso === "string" &&
@@ -54,37 +63,35 @@ function isValid(v: unknown): v is ReconcileContinuation {
 export function createReconcileContinuationStore(redis: ContinuationRedis | null): ReconcileContinuationStore {
   return {
     async read(studioId: string) {
-      // No backend -> cannot determine position -> FAIL-CLOSED (do not sweep).
-      if (!redis) return { ok: false as const };
+      if (!redis) return { ok: false as const }; // no backend -> position unknown -> fail-closed
       try {
-        const raw = await redis.get(key(studioId));
+        const raw = await redis.get(contKey(studioId));
         if (raw == null) return { ok: true as const, value: null };
         const parsed = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
-        // A corrupt/legacy record is treated as absent (start fresh) — safe, not
-        // fail-closed, because restarting under a new snapshot never false-completes.
         return { ok: true as const, value: isValid(parsed) ? parsed : null };
       } catch {
-        return { ok: false as const }; // I/O error -> fail-closed
+        return { ok: false as const };
       }
     },
 
-    async write(studioId: string, value: ReconcileContinuation) {
+    async write(studioId: string, ownerToken: string, value: ReconcileContinuation) {
       if (!redis) return false;
       try {
-        await redis.set(key(studioId), value, { ex: TTL_SECONDS });
-        return true;
+        const payload = JSON.stringify({ ...value, schemaVersion: SCHEMA_VERSION });
+        const r = await redis.eval(WRITE_LUA, [reconcileLockKey(studioId), contKey(studioId)], [ownerToken, payload]);
+        return r === 1 || r === "1"; // written while still owned
       } catch {
-        return false; // persist failed -> caller marks the studio degraded (not complete)
+        return false;
       }
     },
 
-    async clear(studioId: string) {
+    async clear(studioId: string, ownerToken: string) {
       if (!redis) return false;
       try {
-        await redis.del(key(studioId));
-        return true;
+        const r = await redis.eval(CLEAR_LUA, [reconcileLockKey(studioId), contKey(studioId)], [ownerToken]);
+        return r === 1 || r === "1"; // cleared/absent while still owned
       } catch {
-        return false; // benign: a stale record resumes past the end, drains, clears again
+        return false;
       }
     },
   };
@@ -97,14 +104,13 @@ function getContinuationRedis(): ContinuationRedis | null {
   const client = new Redis({ url, token });
   return {
     get: (k) => client.get(k),
-    set: (k, v, o) => client.set(k, v, o),
-    del: (k) => client.del(k),
+    eval: (script, keys, args) => client.eval(script, keys, args),
   };
 }
 
-// Production factory. When Upstash is absent, read() is fail-closed (every studio
-// is skipped), so the reconcile route does no work rather than sweep from an
-// unknown position.
+// Production factory. When Upstash is absent, read() is fail-closed (every studio is
+// skipped), so the reconcile route does no work rather than sweep from an unknown
+// position.
 export function createUpstashReconcileContinuationStore(): ReconcileContinuationStore {
   return createReconcileContinuationStore(getContinuationRedis());
 }

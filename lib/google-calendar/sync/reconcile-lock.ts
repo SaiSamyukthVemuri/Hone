@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
-import type { LockAcquire, ReconcileLock } from "./reconcile";
+import type { LockAcquire, ReconcileCoordinator, ReconcileLock } from "./reconcile";
 
 // Google Calendar — Phase B2.3-b: a REAL cross-process, per-studio reconciliation
 // lock backed by the Upstash Redis that already powers public rate limiting and
@@ -35,8 +35,11 @@ import type { LockAcquire, ReconcileLock } from "./reconcile";
 // random token. No client identity, appointment content, Google id, or secret is
 // ever stored.
 
-// Only the two commands the lock needs — keeps the seam tiny + trivially mockable.
+// The redis commands the lock + coordinator + continuation need — a tiny seam,
+// trivially mockable. `get` supports the coordinator cursor read + the continuation
+// read; `eval` runs the ownership-token Lua scripts (release/renew/atomic write).
 export type LockRedis = {
+  get(key: string): Promise<unknown>;
   set(key: string, value: string, opts: { nx: true; ex: number }): Promise<unknown>;
   eval(script: string, keys: string[], args: (string | number)[]): Promise<unknown>;
 };
@@ -47,9 +50,13 @@ export const RECONCILE_LOCK_TTL_SECONDS = 120;
 
 const KEY_PREFIX = "gcal_reconcile:lock:";
 
-function lockKey(studioId: string): string {
+// Exported so the continuation store can reference the EXACT per-studio lock key in
+// its atomic ownership-guarded write/clear (the Lua script checks this key's token).
+export function reconcileLockKey(studioId: string): string {
   return `${KEY_PREFIX}${studioId}`;
 }
+// Back-compat local alias.
+const lockKey = reconcileLockKey;
 
 // Release: delete the key ONLY if it still holds our token.
 const RELEASE_LUA =
@@ -103,12 +110,97 @@ export function createReconcileLock(
   };
 }
 
+// ---------------------------------------------------------------------------
+// §2 — the ROUTE COORDINATOR: a single global ownership-token lock + a durable
+// global studio cursor. It serializes route invocations (so two invocations can
+// never race the studio cursor) and remembers which studio was last attempted, so
+// the sweep resumes AFTER it next time and every eligible studio eventually gets a
+// turn even when every invocation hits its deadline. The per-studio locks remain
+// the mutation-safety boundary; this lock only guards the global cursor + ordering.
+// ---------------------------------------------------------------------------
+export const RECONCILE_COORDINATOR_LOCK_KEY = "gcal_reconcile:coordinator:lock";
+// The studio cursor is DURABLE correctness state (no expiry): the last-attempted
+// immutable studio id. It is only ever written under the coordinator token.
+export const RECONCILE_STUDIO_CURSOR_KEY = "gcal_reconcile:studio_cursor";
+
+// Write the cursor ONLY while we still own the coordinator lock (atomic).
+const CURSOR_WRITE_LUA =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('set', KEYS[2], ARGV[2]); return 1 else return 0 end";
+const CURSOR_CLEAR_LUA =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('del', KEYS[2]); return 1 else return 0 end";
+
+export function createReconcileCoordinator(
+  redis: LockRedis | null,
+  opts: { ttlSeconds?: number; newToken?: () => string } = {},
+): ReconcileCoordinator {
+  const ttlSeconds = Math.max(1, Math.floor(opts.ttlSeconds ?? RECONCILE_LOCK_TTL_SECONDS));
+  const newToken = opts.newToken ?? (() => randomUUID());
+  const K = RECONCILE_COORDINATOR_LOCK_KEY;
+  const C = RECONCILE_STUDIO_CURSOR_KEY;
+
+  return {
+    async acquire() {
+      if (!redis) return { ok: false as const, reason: "unavailable" as const };
+      const token = newToken();
+      try {
+        const r = await redis.set(K, token, { nx: true, ex: ttlSeconds });
+        if (r === "OK") return { ok: true as const, token };
+        return { ok: false as const, reason: "held" as const };
+      } catch {
+        return { ok: false as const, reason: "unavailable" as const };
+      }
+    },
+    async release(token: string) {
+      if (!redis) return;
+      try {
+        await redis.eval(RELEASE_LUA, [K], [token]);
+      } catch {
+        // Best-effort; the TTL expires the lease.
+      }
+    },
+    async renew(token: string) {
+      if (!redis) return false;
+      try {
+        const r = await redis.eval(RENEW_LUA, [K], [token, ttlSeconds * 1000]);
+        return r === 1 || r === "1";
+      } catch {
+        return false;
+      }
+    },
+    async readCursor() {
+      // Plain read — the coordinator lock was just acquired.
+      if (!redis) return { ok: false as const };
+      try {
+        const raw = await redis.get(C);
+        return { ok: true as const, cursor: raw == null ? null : String(raw) };
+      } catch {
+        return { ok: false as const };
+      }
+    },
+    async writeCursor(token: string, cursor: string | null) {
+      // Token-guarded: advance/clear the cursor ONLY while we still own the lock.
+      if (!redis) return false;
+      try {
+        if (cursor === null) {
+          const r = await redis.eval(CURSOR_CLEAR_LUA, [K, C], [token]);
+          return r === 1 || r === "1";
+        }
+        const r = await redis.eval(CURSOR_WRITE_LUA, [K, C], [token, cursor]);
+        return r === 1 || r === "1";
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
 function getLockRedis(): LockRedis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
   const client = new Redis({ url, token });
   return {
+    get: (key) => client.get(key),
     set: (key, value, o) => client.set(key, value, o),
     eval: (script, keys, args) => client.eval(script, keys, args),
   };
@@ -119,4 +211,8 @@ function getLockRedis(): LockRedis | null {
 // is skipped — the reconcile route then reports "unavailable" and does no work.
 export function createUpstashReconcileLock(): ReconcileLock {
   return createReconcileLock(getLockRedis());
+}
+
+export function createUpstashReconcileCoordinator(): ReconcileCoordinator {
+  return createReconcileCoordinator(getLockRedis());
 }
