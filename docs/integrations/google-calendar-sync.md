@@ -3,25 +3,33 @@
 Canonical design for Hone's Google Calendar integration across all phases.
 **Deployed today (all dormant): Phase A (connection & OAuth foundation), the Phase
 B1 outbound-sync schema/queue foundation (0124), the B2.3-a enqueue+claim activation
-boundary (0125), and the B2.4 dual-destination scope contract (0131).** Everything
-that actually *moves an event* — the drain worker calling Google, inbound busy,
-two-way edits — is design intent, not shipped. When this doc and the code disagree,
-the code + the migration ledger win.
+boundary (0125), the B2.4 dual-destination scope contract (0131), and the B2.3-b
+reconciliation sweep + heartbeat + dead-row alerting + authenticated
+`/api/cron/calendar-reconcile` route (PR #426, migration-free).** Everything that
+actually *moves a Google event* — the drain worker calling Google's event API,
+inbound busy, two-way edits — is design intent, **not shipped**; that outbound
+event-execution work is **B2.3-c** (§3f). When this doc and the code disagree, the
+code + the migration ledger win.
 
 - **Status:** Phase A (migrations 0121/0122), **Phase B1** outbound-sync schema
   (0124, PR #407), **Phase B2.3-a** enqueue + claim activation boundary (0125), and
   **Phase B2.4** dual outbound destination + destination-derived event scope (0131)
   are **all APPLIED to production and DORMANT** (**hosted migration max = 0131**;
   B2.4 = PR #424 merged + deployed + operator-validated dormant 2026-07-14, see the
-  owner-connection operator checklist §6). B2.4 deliberately **precedes** B2.3-b /
-  B2.3-c and finalizes the outbound destination + scope semantics those phases
-  consume. Granting a destination permission or creating the empty Hone-owned
-  calendar still enables **no** synchronization.
-  **Phase B2.3-b** (reconciliation sweep + heartbeat + authenticated route) is
-  **authored in-repo (this PR), DORMANT, and adds NO migration** (hosted max stays
-  **0131**): the `/api/cron/calendar-reconcile` route exists but is **not**
-  cron-registered, actuates only within intent-eligible studios (of which production
-  has none), never calls Google, and never enables the worker or any flag — see §3e.
+  owner-connection operator checklist §6). **Phase-name note:** the sequence is
+  non-numeric on purpose — **B2.4 landed before B2.3-b/B2.3-c** to finalize the
+  destination + destination-derived scope semantics those phases consume; **B2.4 is,
+  and remains, the completed dual-destination scope phase** (not a future-worker
+  label). Granting a destination permission or creating the empty Hone-owned calendar
+  still enables **no** synchronization.
+  **Phase B2.3-b** (reconciliation sweep + heartbeat + dead-row alerting + the
+  authenticated `/api/cron/calendar-reconcile` route) is **MERGED (PR #426, merge
+  commit `f664f0f`), deployed, and DORMANT — migration-free** (hosted max stays
+  **0131**): the route is deployed + **CRON_SECRET-protected** but **not**
+  cron-registered (unscheduled), actuates only within intent-eligible studios (of
+  which production has none), never calls Google, and never enables the worker or any
+  flag — see §3e. **Next: B2.3-c** — the outbound Google event-execution layer
+  (create/update/delete) + worker-drain route + controlled Sam-only activation (§3f).
   All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
   is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
   worker, no enqueue path (0125 adds triggers but they no-op while every studio's
@@ -589,9 +597,12 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   worker is OFF (queued work cannot dispatch). This separation permits a later
   controlled activation: enable intent for one studio, run bounded reconciliation,
   inspect the queue, and only then authorize the worker (B2.3-c) — with no new flag.
-- **Deferred to B2.3-c:** registering a cron for the sweep, the worker-drain route
-  (`/api/cron/calendar-sync`) + its cron, wiring the stale-run heartbeat alert to a
-  schedule, and any live Google event transport (B2.4 worker behaviour).
+- **Deferred to B2.3-c:** the outbound Google event-execution layer
+  (create/update/delete + the fixed minimal serializer), the worker-drain route
+  (`/api/cron/calendar-sync`), registering the reconciliation + worker-drain crons,
+  wiring the stale-run heartbeat alert to a schedule, and controlled Sam-only
+  activation. **B2.3-c is the worker phase (§3f)** — NOT "B2.4 worker" (B2.4 is the
+  completed destination phase).
 
 ### The two owner-selectable destinations (the final outbound destination boundary)
 
@@ -714,6 +725,208 @@ vars are unchanged and never `NEXT_PUBLIC_*`: `GOOGLE_OAUTH_CLIENT_ID`,
 `GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION`. See the operator checklist
 (`docs/integrations/google-calendar-owner-connection-operator-checklist.md`) for the
 Google Cloud console setup of the two destination scopes.
+
+---
+
+## 3f. B2.3-c — outbound Google event execution and controlled activation (NEXT — design intent, NOT built)
+
+> **Phase-name binding.** **B2.4** is, and remains, the completed **dual-destination +
+> destination-derived scope** phase. **B2.3-c** is the future **outbound worker** phase.
+> Do **not** call the future worker "B2.4 worker". The register sequence is non-numeric
+> because B2.4 landed before B2.3-b/B2.3-c to finalize destination + scope semantics.
+> B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant; B2.3-c is next.
+
+**Objective.** Safely **execute** the already-durable Hone outbound *intent* — by
+creating, updating, and deleting the approved **minimal** Google events — and prove the
+full lifecycle on **Sam's controlled dedicated destination** before any Willow
+enablement. **B2.3-c is outbound only.** It does **not** include: inbound Google busy,
+Google→Hone edits, two-way sync, destination-mode switching, Willow activation,
+Google-originated appointment creation, shared/non-owned calendar support, broad
+`calendar.events`, or deleting a Hone-created Google calendar on disconnect.
+
+### B2.3-c implementation sequence (separately reviewable sub-PRs)
+
+**B2.3-c1 — Google event operations, DORMANT.** Implement the real event-operation
+layer with **no** route, cron, or runtime activation: the fixed minimal serializer;
+`event.create` / `event.update` / `event.delete` operations; execution-time tenant +
+destination revalidation; the execution-time stale-version fence; placeholder-link
+**create-and-bind**; provider idempotency + duplicate-replay safety; link persistence
+only **after** provider confirmation; retry + terminal result mapping; partial-success
+recovery; **fake-Google** transport tests (no real Google call in validation); no worker
+activation. **Approved v1 payload (exact):** `summary` = constant `"Hone appointment"`;
+`start` = appointment `starts_at`; `end` = appointment `ends_at`; `visibility` =
+`private`; `transparency` = `opaque`; **no** location, description, attendees, client
+identity, or health/treatment/payment/internal-token data.
+
+**B2.3-c2 — worker-drain route, deployed DORMANT.** Wire the existing
+claim→handle→record adapters into a bounded authenticated drain route
+`/api/cron/calendar-sync`: `CRON_SECRET` auth; bounded batch + route deadline; claim via
+`claim_calendar_sync_op`; execute through the approved operations map; record via
+`record_calendar_sync_result`; aggregate PHI-free response; operational heartbeat +
+alerting; no browser-supplied tenant/provider ids; **no cron registration yet**;
+`worker_enabled` remains false; all studio sync flags remain false; no hosted outbox
+work; **no real Google call during dormant-deployment validation**.
+
+**B2.3-c3 — scheduler + observability readiness.** Prepare scheduled execution while
+still preventing Google dispatch, in this **safe order**: (1) register the
+reconciliation schedule first; (2) keep every studio outbound flag OFF; (3) keep
+`worker_enabled` false; (4) observe reconciliation heartbeat + dead-alert coordinator +
+maintenance behaviour; (5) register/validate the worker-drain schedule only after the
+route is independently reviewed; (6) keep `worker_enabled` false so claim returns no
+work and mutates nothing; (7) prove scheduled **no-op** behaviour before enabling any
+studio. **Cron registration does NOT enable synchronization** — the data gate (studio
+outbound flag) and worker gate (`worker_enabled`) remain authoritative.
+
+**B2.3-c4 — Sam-only controlled activation.** Prove the full outbound lifecycle on Sam's
+controlled dedicated **"Hone Appointments"** calendar, in this **exact order**:
+1. Read-only production baseline: migration max, worker state, flags, outbox count, link
+   count, scope counts, destination readiness.
+2. Confirm the controlled destination: `dedicated_app_created`, owner-bound, not
+   ambiguous, exact `calendar.app.created` scope granted, write calendar configured.
+3. Keep Willow unconnected.
+4. Enable outbound **intent** only for Sam's controlled studio.
+5. Keep `worker_enabled` false.
+6. Run bounded reconciliation manually.
+7. Inspect: exactly the expected outbox intent; a placeholder event link; no unexpected
+   tenants; no PHI in payload; **no provider event yet**.
+8. Enable worker execution only under a **separately approved, time-boxed** gate.
+9. Process **one** controlled appointment operation.
+10. Immediately verify: exactly one Google event; created in "Hone Appointments"; approved
+    minimal payload only; provider event id bound to the correct link; source version
+    recorded; outbox result `done`; no duplicate event; no cross-studio impact.
+11. Disable worker execution after the controlled operation unless the approval explicitly
+    authorizes continued testing.
+12. Separately test, **one at a time** (not an uncontrolled batch): create; time update;
+    duration update; withdrawn cancellation/delete; duplicate replay; transient retry;
+    stale-operation suppression; reconnect-required behaviour; placeholder-update
+    create-and-bind; partial create/link-write recovery.
+13. End with worker + controlled-studio flags disabled unless a later approval authorizes a soak.
+
+**B2.3-c5 — controlled soak + rollout decision.** Decide whether outbound may remain
+enabled for the controlled studio. **Required evidence:** no duplicate events; no stale
+dispatch; no cross-tenant access; no retry storms; no dead rows without an alert;
+reconciliation heartbeat healthy; worker heartbeat healthy; queue drains; reconnect
+behaviour truthful; no PHI leakage; update/delete lifecycle proven; provider rate limits
+handled; operational rollback tested. **Completing the controlled soak does NOT authorize
+Willow.**
+
+### Worker activation prerequisites (before `/api/cron/calendar-sync` executes real ops)
+
+Enforced by the static activation gate (`tests/app/google-calendar/b2-4-worker-activation-gate.test.ts`).
+Do **not** mark complete without direct code + test evidence — **all remain unproven today (worker unbuilt):**
+1. A stale earlier operation returns `ok_noop_superseded`.
+2. `event.update` against a placeholder link (null `google_event_id`) performs provider create-and-bind.
+3. A successful create persists `google_event_id` to the link.
+4. A duplicate replay cannot create a second provider event.
+5. A partial Google-create / local-link-write failure is recoverable.
+6. Post-bump verification accepts **either** a matching current pending/processing operation **or** proof the operation already completed + advanced `last_hone_version`.
+7. Destination + required scope are revalidated at execution time.
+8. Broad `calendar.events` is accepted **nowhere**.
+9. The job connection + link are studio-bound.
+10. A provider success is never recorded before local link persistence succeeds (or enters an explicit recoverable state).
+11. No event content exceeds the v1 privacy allow-list.
+12. No production route imports a live operations map before these tests exist.
+
+### Create / update / delete semantics (expected provider behaviour)
+
+- **Create** — used when there is no real provider event; retry-safe; must not produce
+  duplicate provider events after ambiguous responses; binds provider coordinates only
+  after confirmed create/reconciliation; a placeholder `event.update` is treated as
+  create-and-bind.
+- **Update** — requires a real provider event id **unless** using the explicit placeholder
+  upsert rule; compares the job source version to current Hone/link state; stale work
+  returns `ok_noop_superseded`; a provider `404` enters an **explicit recovery path**, not
+  a blind success.
+- **Delete** — requires a real provider event coordinate; missing/already-deleted provider
+  events may be treated as converged **only under an explicit documented rule**;
+  placeholder links produce **no** provider delete; a rescheduled predecessor stays
+  delete-suppressed when the link was rebound to the successor.
+
+> **Mandatory pre-implementation checkpoint:** the final `404` / ambiguous-response policy
+> is **unresolved** and must be decided from code discovery + the live Google API contract
+> before B2.3-c1 implementation — do not invent it here.
+
+### Provider idempotency + partial-failure requirements (decide + test in B2.3-c1)
+
+The worker implementation must decide and test, **verified against the official Google
+Calendar API contract at implementation time** (do not assume an unsupported capability):
+whether Google event ids are caller-controlled for Hone's chosen insert path; whether a
+deterministic provider id is safe/valid; whether an extended property (or another
+non-sensitive correlation value) is required; how ambiguous create responses are
+reconciled; how duplicate creates are detected; how provider-success + local-persistence-
+failure is recovered; how local success is fenced against stale result recording; how a
+retry distinguishes create / update / already-converged states.
+
+### Execution-time stale fence (worker)
+
+Before **any** Google call, compare the claimed job's source version + desired operation
+against the current: appointment status; appointment `sync_version`; active link; link
+`last_hone_version`; provider-event presence; destination + connection; current studio
+outbound intent; current scope/readiness. Examples that must yield **no Google call**:
+stale `v1` create while a `v3` upsert exists; stale update after cancellation; stale delete
+after reschedule rebind; a duplicate already-applied version; a destination mismatch (fail
+closed); a disconnected / reconnect-required connection. Use `ok_noop_superseded` where
+appropriate.
+
+### Runtime controls + rollback
+
+Distinct controls (never conflate them): **studio outbound flag** = product intent;
+**connection health** = execution eligibility; **global `worker_enabled`** = claim/dispatch
+gate; **cron registration** = external invocation schedule; **`CRON_SECRET`** = route
+authentication. **Rollback order:** (1) disable `worker_enabled`; (2) disable the controlled
+studio outbound flag when new intent must stop; (3) leave existing queue/link state intact
+for diagnosis; (4) do **not** delete the Google calendar; (5) do **not** erase provider
+coordinates; (6) do **not** reconnect/rotate credentials during incident response without
+separate approval; (7) preserve dead rows + operational evidence. **Disabling the worker is
+not the same as disabling product intent.**
+
+### Migration decision checkpoint (start of B2.3-c)
+
+**Default: NO migration** unless direct implementation evidence requires one. Possible
+migration-bearing follow-ups: the partial unique index for unresolved
+`calendar_outbox_dead_rows` (`(studio_id, event) WHERE resolved_at IS NULL`); new provider
+idempotency/recovery state that cannot fit the existing schema; a transactional
+link/result-persistence RPC; generation/move fencing not already safely represented; other
+correctness constraints. Any migration must be the **next repo migration number at
+implementation time** (do **not** pre-assign `0132` — another migration may land first),
+**proposed before application, independently approved migration-first, and NOT applied
+inside the implementation PR without approval**.
+
+### Dedicated vs existing-owned rollout
+
+- **Dedicated app-created** is the controlled default path for Sam: one empty "Hone
+  Appointments" calendar, `calendar.app.created` grant, no events, no ambiguity — the
+  **first** worker-validation target.
+- **Existing-owned** validation is **separate** and NOT required to prove the dedicated
+  path: it needs owner-access revalidation, the exact `calendar.events.owned` grant,
+  cross-boundary error behaviour (404 vs 403), owner-only calendar selection, and
+  independent operator approval. **Do not test existing-owned during the first dedicated
+  activation.**
+
+### Google publication + Willow gate (destination-aware)
+
+No destination is "verification-free": dedicated app-created is the verification-**light**
+default *from a scope perspective*; existing-owned uses a **sensitive** scope. **OAuth
+Testing mode is not suitable for a production Willow rollout.** Google app publication,
+consent-screen truthfulness, and any required verification must be completed **before**
+external-client activation, with the exact requirements verified against the **live Google
+console + current Google policies at rollout time**. **Willow remains unconnected until
+separate approval after controlled proof.** Willow activation requires: the worker
+lifecycle proven on Sam; production monitoring proven; rollback proven; the Google
+publication/verification decision complete; privacy + consent copy approved; Willow-
+specific owner setup; and **separate explicit authorization**.
+
+### When B2.3-c is complete
+
+B2.3-c is complete **only** when: real create/update/delete operations exist; all
+activation prerequisites pass; the worker-drain route exists + is authenticated; route +
+operations are independently reviewed; reconciliation + worker scheduling are proven safe;
+the Sam-only dedicated lifecycle is proven; stale operations do not dispatch; duplicate
+replays do not duplicate events; placeholder create-and-bind works; link state reflects
+provider truth; retry + terminal states are observable; rollback is proven; and the
+controlled-soak decision is recorded. **B2.3-c completion still does NOT mean** inbound
+busy, two-way edits, existing-owned, Willow authorization, Google verification, or
+full-customer calendar integration are complete.
 
 ---
 
@@ -873,28 +1086,31 @@ payloads and makes no Google call; it only re-drives intent through the trigger.
 
 ---
 
-## 7. Later phases (design intent, NOT implemented)
+## 7. Phase register — status + later phases
 
-- **Phase B — Hone → Google (outbound).** Split into schema-first + behavior:
-  - **B1 (DEPLOYED — migration 0124 applied + PR #407 merged 2026-07-12, dormant).**
-    The `calendar_event_links` mapping + durable `calendar_sync_outbox` + the
-    service-role-only claim/result queue RPCs, with no runtime wiring. See §3b for
-    the full data model, four-state queue, idempotency contract, lease/backoff
-    constants, and the orphan reaper. **No behavior ships in B1** — the schema is
-    live but inert (0 rows, no worker, no enqueue, nothing reads it).
-  - **B2 (design intent, NOT built): behavior.** Enqueue at the DB commit point
-    (inside the cancel/complete/no_show/reschedule RPCs + the 0030 mirror trigger
-    for creates/blocks) via a fixed allow-listed serializer (§6); a drain worker
-    (`/api/cron/calendar-sync`, riding the external 15-min scheduler) that claims
-    via `claim_calendar_sync_op`, calls Google, and reports via
-    `record_calendar_sync_result` with an exponential-backoff curve; reschedule
-    handled as a linked delete(old) + create(new). Adds the `sync_generation`
-    epoch (deferred from B1) so a disconnect→reconnect invalidates in-flight ops.
-    Booking never blocks on a Google call. Requires ONE reconnect for Sam via
-    incremental auth to add the **destination-derived** event scope
-    (`calendar.app.created` for a dedicated Hone calendar, `calendar.events.owned` for
-    an existing owned calendar — broad `calendar.events` is retired; see §3d). Phase A
-    withheld any event scope.
+**Completed, deployed dormant** (hosted migration max **0131**):
+- **Phase A** — connection & OAuth foundation (0121/0122, PR #404).
+- **B1** — queue + event-link schema (0124, PR #407): `calendar_event_links` + durable
+  `calendar_sync_outbox` + service-role claim/result RPCs; inert (0 rows).
+- **B2.1** — transport-neutral worker **core** + adapters (`lib/google-calendar/sync/handler.ts`,
+  `adapters.ts`), where already shipped — DI-seamed, wired to nothing, no live operations map.
+- **B2.3-a** — intent-gated enqueue + claim activation boundary (0125, PR #412).
+- **B2.4** — dual-destination + destination-derived scope contract (0131, PR #424).
+- **B2.3-b** — reconciliation sweep + heartbeat + dead-row alerting + authenticated
+  `/api/cron/calendar-reconcile` route (**PR #426, merge `f664f0f`, migration-free**);
+  deployed + CRON_SECRET-protected, **not scheduled**; see §3e.
+
+**Next — B2.3-c: outbound Google event execution + controlled activation (§3f).** The real
+`event.create`/`update`/`delete` operations, the fixed minimal serializer, the worker-drain
+route `/api/cron/calendar-sync`, the reconciliation + worker cron registrations, and
+controlled Sam-only dedicated-destination activation. **Google event transport itself is
+still unbuilt** — this is where it lands. Requires ONE reconnect for Sam via incremental
+auth to add the **destination-derived** event scope (`calendar.app.created` for a dedicated
+Hone calendar, `calendar.events.owned` for an existing owned calendar — broad
+`calendar.events` is **retired**; see §3d). See §3f for the full sub-phase register,
+activation prerequisites, semantics, and rollout gates.
+
+**Later:**
 - **Phase C — Google → Hone busy:** `external_calendar_busy_events` (per-
   practitioner, separate from the GiST-excluded shadow), merged into
   `getAvailableSlots`; initial + incremental sync with `singleEvents=true` to
@@ -930,18 +1146,31 @@ current. This is a Phase C concern, not Phase A.
 
 ## 8. Rollout & Willow gates
 
+**Milestones to date (all dormant):** connection foundation proven on Sam (Phase A
+connection created once, least-privilege, no event scope); the **dual-destination
+dedicated path proven** on Sam (one empty "Hone Appointments" calendar,
+`calendar.app.created` grant, zero events, not ambiguous); **B2.3-b deployed dormant**
+(reconciliation route live + CRON_SECRET-protected + unscheduled). **The next controlled
+subject remains Sam** (B2.3-c dedicated-destination outbound lifecycle, §3f). **Willow
+remains OFF.** Outbound completion (B2.3-c) implies **no** inbound busy and **no** two-way
+edits — those are separate later phases (§7).
+
 1. Apply 0121 + 0122 (additive, dormant). Deploy code. Keep
    `google_calendar_connection_enabled` **OFF**. Do not create a production
-   connection.
+   connection. **(Done — dormant.)**
 2. Separate approval → enable the connection flag for **Sam's controlled studio
    only**, connect Sam's controlled Google account, validate the foundation
    (state single-use, secret unreadable by a peer, no token in logs), then
-   disable.
-3. Each later phase repeats the Sam-only, flag-gated, validate-then-disable
-   pattern before any broader enablement.
+   disable. **(Done — Sam connected, dedicated destination validated, dormant.)**
+3. Each later phase repeats the Sam-only, flag-gated, **validate-then-disable**
+   pattern (or an explicit soak approval) before any broader enablement. B2.3-c
+   sub-phases (§3f) each carry their own read-only baseline → intent-only →
+   time-boxed worker gate → verify → disable ordering.
 4. **Willow remains OFF** through every phase until each is proven on Sam's studio
-   AND separately approved. Two-way sync is never enabled for Willow without
-   separate approval.
+   AND separately approved — and, for outbound, until the Google publication /
+   verification decision is complete and privacy + consent copy is approved (§3f). Two-way
+   sync is never enabled for Willow without separate approval. **Willow launch is not
+   approved.**
 
 ---
 
