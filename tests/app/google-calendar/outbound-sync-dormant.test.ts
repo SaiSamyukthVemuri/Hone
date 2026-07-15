@@ -67,12 +67,20 @@ describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no application (app/) route or action references the outbound-sync surface", () => {
+  it("no application (app/) route references the raw outbound-sync surface (reconcile route imports modules only)", () => {
+    // B2.3-b's reconcile SWEEP route is the ONE app route allowed to import the
+    // (server-only, intent-gated) reconcile modules under google-calendar/sync. It
+    // must STILL never reference the raw tables/RPCs directly — those stay behind
+    // the store/repair seam.
+    const RECONCILE_ROUTE = join("app", "api", "cron", "calendar-reconcile", "route.ts");
     const offenders: string[] = [];
     for (const rel of walk("app")) {
       const src = readFileSync(join(ROOT, rel), "utf8");
-      for (const sym of [...NEW_SYMBOLS, "google-calendar/sync"]) {
+      for (const sym of NEW_SYMBOLS) {
         if (src.includes(sym)) offenders.push(`${rel} → ${sym}`);
+      }
+      if (rel !== RECONCILE_ROUTE && src.includes("google-calendar/sync")) {
+        offenders.push(`${rel} → google-calendar/sync`);
       }
     }
     expect(offenders).toEqual([]);
