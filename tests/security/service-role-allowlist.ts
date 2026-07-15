@@ -200,6 +200,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/cron/calendar-reconcile/route.ts",
+    purpose: "Google Calendar Phase B2.3-b reconciliation sweep (session-less; dormant — no cron registration).",
+    why: "Runs with no user session; authorized by the CRON_SECRET bearer (isAuthorizedCronRequest). Never trusts a browser-supplied id — the eligible studio set is derived server-side and every reconcile read/actuation is studio-scoped; it only orchestrates the existing repair RPCs + prunes PHI-free telemetry, never enabling the worker or any flag.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/stripe/webhook/route.ts",
     purpose: "Stripe webhook handler.",
     why: "No user session; authenticated by Stripe signature verification (constructEvent). Rows are resolved by the verified event's ids.",
@@ -354,6 +360,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
     scopeGuard: "CRON_SECRET",
+  },
+  {
+    path: "lib/google-calendar/sync/reconcile-heartbeat.ts",
+    purpose: "Google Calendar Phase B2.3-b reconcile-sweep heartbeat health alert (session-less; NOT wired to a cron in this phase).",
+    why: "Reads ONLY the non-tenant ops_alerts table filtered by event for dedupe (no studio/client data) and records a PHI-free stale/missing alert via recordOpsAlert; fail-open, write-mostly, no cross-studio read.",
+    scopeGuard: '.is("resolved_at", null)',
   },
   {
     path: "lib/intake/queries.ts",

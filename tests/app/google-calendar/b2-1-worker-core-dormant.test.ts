@@ -4,9 +4,15 @@ import { join } from "node:path";
 
 // Google Calendar — Phase B2.1: static proof the worker core is DORMANT.
 // The transport-neutral core + REST client + token lifecycle exist under
-// lib/google-calendar/sync, but nothing activates them: no app route/action
-// imports the worker, no cron schedule is registered, and the modules are
-// server-only. (Enqueue is B2.3; event operations + a live cron are B2.4/B2.5.)
+// lib/google-calendar/sync, but nothing activates the DRAIN WORKER: no app route
+// imports handler/adapters, no cron schedule is registered, and the modules are
+// server-only. (Event operations + a live cron are B2.4/B2.5.)
+//
+// B2.3-b adds the reconciliation SWEEP route (app/api/cron/calendar-reconcile) +
+// its server-only reconcile modules. That route is enqueue-side (it orchestrates
+// the existing repair RPCs) and is itself dormant: it is NOT cron-registered, and
+// the claim-side drain worker (handler/adapters) remains unwired until B2.3-c.
+// These invariants are updated below to permit exactly that new surface.
 
 const ROOT = process.cwd();
 
@@ -33,12 +39,18 @@ function walk(dir: string): string[] {
 }
 
 describe("B2.1 worker core is not activated", () => {
-  it("no app/ route or action imports the sync worker", () => {
-    const offenders = walk("app").filter((f) => readFileSync(join(ROOT, f), "utf8").includes("google-calendar/sync"));
+  it("no app/ route or action imports the DRAIN WORKER (handler/adapters)", () => {
+    // The reconcile SWEEP route may import the reconcile modules; the claim-side
+    // drain worker (sync/handler, sync/adapters, the worker loop) stays unwired.
+    const workerImports = ["sync/handler", "sync/adapters", "runCalendarSyncCronBatch", "runCalendarSyncWorkerLoop"];
+    const offenders = walk("app").filter((f) => {
+      const src = readFileSync(join(ROOT, f), "utf8");
+      return workerImports.some((w) => src.includes(w));
+    });
     expect(offenders).toEqual([]);
   });
 
-  it("no cron schedule references calendar-sync (no production cron in this PR)", () => {
+  it("no cron schedule references calendar-sync OR calendar-reconcile (nothing cron-registered)", () => {
     for (const cfg of ["vercel.json", "vercel.ts"]) {
       let text = "";
       try {
@@ -48,12 +60,17 @@ describe("B2.1 worker core is not activated", () => {
       }
       expect(text.includes("calendar-sync")).toBe(false);
       expect(text.includes("calendar_sync")).toBe(false);
+      expect(text.includes("calendar-reconcile")).toBe(false); // sweep route stays dormant (no schedule)
     }
   });
 
-  it("no app/api/cron route exists for calendar sync", () => {
+  it("the calendar-sync DRAIN route is absent; the only calendar cron route is the reconcile sweep", () => {
     const cronRoutes = walk(join("app", "api", "cron")).filter((f) => /calendar/i.test(f));
-    expect(cronRoutes).toEqual([]);
+    // The worker-drain route (/api/cron/calendar-sync) is B2.3-c — still absent.
+    expect(cronRoutes.some((f) => /calendar-sync/.test(f))).toBe(false);
+    // The reconcile SWEEP route is the single allowed B2.3-b calendar cron route.
+    expect(cronRoutes.length).toBe(1);
+    expect(cronRoutes.every((f) => /calendar-reconcile/.test(f))).toBe(true);
   });
 
   it("every sync module is server-only", () => {

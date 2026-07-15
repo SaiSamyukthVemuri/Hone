@@ -7,15 +7,25 @@ Cloud or Vercel change is performed by this PR** — this is a manual checklist 
 later, deliberate enablement. Do **not** enable any `google_calendar_*` sync flag,
 the worker, or connect a real account as part of this checklist.
 
-Phase **B2.4 — dual destination** (migration 0131, authored in-repo, **UNAPPLIED**,
-dormant) adds two owner-selectable appointment destinations whose OAuth event scope
-the **server derives from the chosen destination** — the browser only picks a
-destination, never a scope. This checklist now lists **both** destination scopes so
-the Google Cloud OAuth client + consent screen are provisioned once for either
-choice. **Granting a destination permission (or letting Hone create the empty
-"Hone Appointments" calendar) still enables NO synchronization** — the worker and all
-four `google_calendar_*` flags stay OFF and Willow stays unconnected. Design detail:
+Phase **B2.4 — dual destination** (migration 0131, **APPLIED to production +
+dormant**, PR #424 merged + operator-validated 2026-07-14 — see §6) adds two
+owner-selectable appointment destinations whose OAuth event scope the **server
+derives from the chosen destination** — the browser only picks a destination, never
+a scope. This checklist lists **both** destination scopes so the Google Cloud OAuth
+client + consent screen are provisioned once for either choice. **Granting a
+destination permission (or letting Hone create the empty "Hone Appointments"
+calendar) still enables NO synchronization** — the worker and all four
+`google_calendar_*` flags stay OFF and Willow stays unconnected. Design detail:
 `docs/integrations/google-calendar-sync.md` §3d.
+
+Phase **B2.3-b — reconciliation sweep + heartbeat + route** (authored in-repo,
+**dormant, NO migration** — hosted max stays 0131) adds the enqueue-side recovery
+net (`/api/cron/calendar-reconcile`, `CRON_SECRET`-guarded) that converges
+appointments mutated while outbound intent was unavailable. It is **not**
+cron-registered, actuates only within intent-eligible studios (production has none),
+never calls Google, and never enables the worker or a flag. **No operator action is
+required for B2.3-b** — no Google Cloud, Vercel, or flag change. Design detail:
+`docs/integrations/google-calendar-sync.md` §3e.
 
 ## 1. Google Cloud OAuth client (one-time)
 

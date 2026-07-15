@@ -1,23 +1,27 @@
 # Google Calendar Two-Way Sync — Architecture
 
-Canonical design for Hone's Google Calendar integration across all phases. **Two
-things are deployed today: Phase A (connection & OAuth foundation) and the Phase B1
-dormant outbound-sync schema/queue foundation.** Everything that actually *moves an
-event* — the enqueue path, the drain worker, inbound busy, two-way edits — is design
-intent, not shipped. When this doc and the code disagree, the code + the migration
-ledger win.
+Canonical design for Hone's Google Calendar integration across all phases.
+**Deployed today (all dormant): Phase A (connection & OAuth foundation), the Phase
+B1 outbound-sync schema/queue foundation (0124), the B2.3-a enqueue+claim activation
+boundary (0125), and the B2.4 dual-destination scope contract (0131).** Everything
+that actually *moves an event* — the drain worker calling Google, inbound busy,
+two-way edits — is design intent, not shipped. When this doc and the code disagree,
+the code + the migration ledger win.
 
-- **Status:** Phase A implemented (migrations 0121/0122) and **Phase B1 outbound-sync
-  schema deployed (migration 0124, PR #407 merged 2026-07-12)** — both **dormant**.
-  **Phase B2.3-a (migration 0125 — outbound enqueue + claim activation boundary) is
-  authored in-repo and DORMANT, but NOT yet applied to production** (repo max 0125,
-  hosted max 0124; pending a separately-approved migration-first apply — see §3c).
-  **Phase B2.4 (dual outbound destination + destination-derived event scope,
-  migration 0131) is likewise authored in-repo and DORMANT, UNAPPLIED** (additive +
-  nullable; see §3d). It deliberately **precedes** B2.3-b/B2.3-c and finalizes the
-  outbound destination + scope semantics those phases consume. Granting a
-  destination permission or creating the empty Hone-owned calendar still enables
-  **no** synchronization.
+- **Status:** Phase A (migrations 0121/0122), **Phase B1** outbound-sync schema
+  (0124, PR #407), **Phase B2.3-a** enqueue + claim activation boundary (0125), and
+  **Phase B2.4** dual outbound destination + destination-derived event scope (0131)
+  are **all APPLIED to production and DORMANT** (**hosted migration max = 0131**;
+  B2.4 = PR #424 merged + deployed + operator-validated dormant 2026-07-14, see the
+  owner-connection operator checklist §6). B2.4 deliberately **precedes** B2.3-b /
+  B2.3-c and finalizes the outbound destination + scope semantics those phases
+  consume. Granting a destination permission or creating the empty Hone-owned
+  calendar still enables **no** synchronization.
+  **Phase B2.3-b** (reconciliation sweep + heartbeat + authenticated route) is
+  **authored in-repo (this PR), DORMANT, and adds NO migration** (hosted max stays
+  **0131**): the `/api/cron/calendar-reconcile` route exists but is **not**
+  cron-registered, actuates only within intent-eligible studios (of which production
+  has none), never calls Google, and never enables the worker or any flag — see §3e.
   All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
   is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
   worker, no enqueue path (0125 adds triggers but they no-op while every studio's
@@ -232,8 +236,8 @@ intact; the hard-purge teardown routine itself lands in B2.4.
 
 Migration **0125** wires the DB-side outbound-sync foundation the future drain
 worker will consume. It is **additive + DORMANT** and ships with **no production
-caller** (the `/api/cron/calendar-sync` route + its cron registration are B2.3-b /
-B2.3-c). No Google call, no event scope requested, no re-consent, no studio flag
+caller** (the worker-drain `/api/cron/calendar-sync` route + its cron registration
+are **B2.3-c**). No Google call, no event scope requested, no re-consent, no studio flag
 enabled, and the global worker control defaults OFF. Behavioural proof:
 `tests/db/google-calendar-b2-3a-enqueue-claim.db.test.ts`; static proof:
 `tests/migrations/0125-…test.ts`.
@@ -255,7 +259,7 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   **claim** boundary. While OFF/absent (fail-safe), `claim_calendar_sync_op`
   returns zero rows and performs zero queue mutations (no reap-to-dead, no attempt
   increment, no lease). It is a runtime (data) control, distinct from the
-  deployment-time env default and the external cron schedule (B2.3-b).
+  deployment-time env default and the worker-drain cron schedule (B2.3-c).
 - **Health-aware expired-lease reaper — single-health-read invariant.** Inside
   `claim_calendar_sync_op`, connection health is evaluated **exactly once per stale
   processing row** (a `stale` CTE that locks the rows `FOR UPDATE OF … SKIP LOCKED`
@@ -330,9 +334,10 @@ enabled, and the global worker control defaults OFF. Behavioural proof:
   transition-into-`confirmed` rows (matrix rows 3/8) + tests exist so a future
   un-cancel feature reuses this contract rather than deriving a second calendar
   rule.
-- **No production caller before B2.3-b/B2.3-c.** All monitoring + reconciliation
-  paths must be deployed and tested before the first caller of
-  `claim_calendar_sync_op` is registered.
+- **No production CLAIM caller before B2.3-c.** The B2.3-b reconciliation sweep +
+  heartbeat + route ship first (enqueue-side, §3e); the first caller of
+  `claim_calendar_sync_op` (the worker-drain route + its cron) is B2.3-c and must not
+  be registered until the sweep + monitoring are deployed and observed.
 
 ### B2.4 input list (owed by the next phase, NOT built in B2.3-a)
 
@@ -362,7 +367,8 @@ Migration **0131** (`0131_google_calendar_dual_destination.sql`) makes the outbo
 event-write **scope contract destination-aware** and records **where** Hone will
 (later) place appointment events. It is **additive + nullable + DORMANT** and, per
 its own header, sequences on top of Phase A (0121/0122) / B1 (0124) / B2.3-a (0125):
-prod migration max was 0130, this is 0131, and it is **UNAPPLIED** to production.
+prod migration max was 0130, this is 0131, and it is **APPLIED to production and
+DORMANT** (PR #424 merged + operator-validated 2026-07-14; hosted migration max = 0131).
 No Google API call, no event scope granted, no re-consent, no studio flag enabled,
 the global worker control stays OFF, and no enqueue / outbox row / event-link /
 appointment mutation / backfill occurs. Behavioural + shape proofs live under
@@ -377,6 +383,93 @@ eligibility** contract, and B2.4 is precisely the change that redefines the
 destination + required-scope semantics those two phases rely on. Landing B2.4 first
 means B2.3-b / B2.3-c are built against the final contract rather than a
 soon-to-change one.
+
+---
+
+## 3e. Reconciliation sweep + heartbeat + route (Phase B2.3-b)
+
+B2.3-b ships the enqueue-side recovery net + its observability. It **adds no
+migration** (hosted max stays **0131**), builds **no** new enqueue/queue engine, and
+**never calls Google, enables the worker, or changes a flag**. It is a bounded
+**drift detector + orchestrator** over the EXISTING repair primitives
+(`repair_bump_appointment_sync_version`, `repair_enqueue_orphan_link_delete`), the
+intent-gated enqueue trigger, and the `calendar_sync_outbox` state machine.
+Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit proof:
+`tests/lib/google-calendar/sync/reconcile*.test.ts`.
+
+- **The gap it closes — the ineligibility (intent-off) window.** The enqueue trigger
+  only records outbound intent while the INTENT gate holds (studio outbound flag ON +
+  owner connection + `write_calendar_id`). Appointments mutated while intent is
+  **unavailable** (flag off, no owner, no write target) — or when the trigger's
+  never-raise guard **swallowed** an enqueue — leave **no** outbox/link row. When
+  eligibility returns there may be no pending work to drain. The sweep discovers and
+  converges those appointments. It does **not** reconcile connection-**health**
+  outages: those already accumulate pending/parked work (the trigger is health-blind)
+  that the claim gate drains on recovery, so the sweep must never duplicate it.
+- **Intent-eligible studios only.** The sweep actuates only within studios that pass
+  the same INTENT gate; bumping an intent-off studio would inflate `sync_version`
+  with no enqueue. Production has zero intent-eligible studios, so the sweep is inert.
+- **Four classes → existing actuators.**
+  - *Class 1 — missing link+job* (confirmed, not-yet-ended appointment, no active link
+    + no current job) → `repair_bump_appointment_sync_version` → the trigger creates
+    the link + an `event.create`.
+  - *Class 3 — link version behind* (`last_hone_version < sync_version`, no current
+    job) → bump → an `event.update`.
+  - *Class 4 — surplus event* (a withdrawn cancellation whose still-present appointment
+    has a live link, no current job) → bump → an `event.delete` (the ordinary cancel
+    path). A `cancellation_kind='rescheduled'` predecessor is left alone (the successor
+    rebinds the link); completed/no_show keep their historical event.
+  - *Class 2 — orphaned link* (the appointment row is gone) → `repair_enqueue_orphan_
+    link_delete` (a `reconcile_generation`-scoped, entity-less tombstone). A local
+    **placeholder** link (`google_event_id` null → no remote event) is inert.
+- **Supersede-safe, no version inflation.** A candidate with any pending/processing
+  job for its entity is skipped (`work_in_flight`); every bump is **re-validated
+  immediately before** it fires (the current row is re-read for drift + no open job),
+  so repeated or interleaved sweeps produce **exactly one** effective operation per
+  appointment. `repair_bump_appointment_sync_version` increments unconditionally, so
+  it is only ever called after that fresh drift check under the per-studio lock.
+- **Stable enumeration.** Candidates are paginated by the **immutable appointment
+  UUID** (link classes by the immutable link id) under a pinned run clock that serves
+  as both `snapshot_started_at` (`created_at <=`) and `activation_started_at`
+  (`ends_at >=`) — never the mutable `starts_at` (same discipline as the §3d
+  enumerator). Rows created after the snapshot are covered organically by the trigger;
+  mid-run mutations converge via current-row re-read. Continuation state identifies
+  the class, the snapshot timestamp, and the last-seen immutable id.
+- **Initial-activation boundary (no arbitrary horizon).** On first eligibility the
+  sweep creates events for every `status='confirmed'` appointment with `ends_at >=
+  activation_started_at` (not-yet-ended, including in-progress) that has no converged
+  link — ended/cancelled/completed/no_show and already-converged rows are excluded.
+  Large future sets are bounded by pages + cursors, never silently dropped.
+- **Real per-studio distributed lock (FAIL-CLOSED).** Because the route runs on
+  serverless functions through the PostgREST service-role client (no held Postgres
+  transaction), mutual exclusion uses an **Upstash ownership-token** lock: `SET key
+  <token> NX EX` to acquire, a Lua compare-and-`DEL` to release, a compare-and-
+  `PEXPIRE` to renew between pages (TTL safely exceeds one page). A second concurrent
+  sweep for the same studio is skipped. **Lock acquisition / integrity failure is
+  fail-closed** — if Upstash is unreachable the studio is skipped, never swept
+  unlocked. This is the one place that is *not* fail-open.
+- **Heartbeat + retention (FAIL-OPEN observability).** After each run the route writes
+  a single non-sensitive Upstash heartbeat (`gcal_reconcile:last_run` — timestamps +
+  aggregate counts + a safe error class; no client identity, appointment content,
+  Google id, calendar id, or token) and prunes `calendar_sync_metric_events` past its
+  retention window (the 0125 `delete` grant). A stale/missing classifier + deduped
+  ops-alert recorder exist but are **not** wired to any schedule in B2.3-b (there is
+  no cron cadence yet — that is B2.3-c); a failed heartbeat/metric/alert write never
+  aborts the sweep or a booking. Observability failing open must not be confused with
+  the lock, which is fail-closed.
+- **Route — `/api/cron/calendar-reconcile`.** Constant-time `CRON_SECRET` bearer
+  (`isAuthorizedCronRequest`, 401 otherwise); no browser-supplied studio/connection/
+  calendar/provider id is trusted (the eligible set is derived server-side). It is
+  **NOT** gated on `calendar_sync_control.worker_enabled` — that remains the
+  authoritative CLAIM/DISPATCH gate and is not repurposed. The route stays dormant in
+  production because it is not cron-registered, every studio's outbound flag is OFF
+  (so the intent gate yields nothing), invocation requires `CRON_SECRET`, and the
+  worker is OFF (queued work cannot dispatch). This separation permits a later
+  controlled activation: enable intent for one studio, run bounded reconciliation,
+  inspect the queue, and only then authorize the worker (B2.3-c) — with no new flag.
+- **Deferred to B2.3-c:** registering a cron for the sweep, the worker-drain route
+  (`/api/cron/calendar-sync`) + its cron, wiring the stale-run heartbeat alert to a
+  schedule, and any live Google event transport (B2.4 worker behaviour).
 
 ### The two owner-selectable destinations (the final outbound destination boundary)
 
@@ -623,22 +716,38 @@ explicitly unsupported near-term.
 
 ## 6. Privacy defaults (reserved for later phases)
 
-When outbound sync ships, event content is a **pure function over an allow-list**:
-default titles `"Hone appointment"` / `"Blocked time"`, `visibility=private`,
-`location = studios.address` (already public), start/end = the human
-`[starts_at, ends_at)` (never the buffered `blocked_ends_at`). A studio-controlled
-`google_event_include_client_name` (default OFF, explicit PHI warning) may add a
-first name only. **Never sent:** last name/email/phone, service/modality, notes/
-reason, any clinical/session/chart/snapshot data, payment/price/buffer, intake/
-consent, internal ids/tokens. No PHI in any log or ops alert. This preserves the
-PHI-free posture of the existing iCal feed.
+When outbound sync ships, the future Google event is a **pure function over a
+minimal v1 allow-list** (approved 2026-07-14):
 
-**B1 stance:** `calendar_sync_outbox.payload` exists (jsonb, default `'{}'`) but is
-written by nothing in B1. The migration documents that the payload is operational
-metadata only, produced by a **fixed, allow-listed serializer over typed params**
-— never a free-form spread of an entity row. That serializer, and the enforcement
-that the queue never carries the "never sent" fields above, is **B2's
-responsibility**; B1 only reserves the column and records the contract.
+| Field | Value |
+|---|---|
+| `summary` | the constant `"Hone appointment"` (no client, service, or reason) |
+| `start.dateTime` | `starts_at` (server-derived local time zone / RFC3339 offset) |
+| `end.dateTime` | `ends_at` — the human end, **never** the buffered `blocked_ends_at` |
+| `visibility` | `private` |
+| `transparency` | `opaque` |
+
+**Excluded from v1 (never sent):** client first/last name, email, phone; **studio
+address / event `location`** (a home-based or private studio location may not be
+appropriate to export); `description`; attendees; appointment reason; service /
+modality; treatment area / body-map; consultation / skin-hair / practitioner notes;
+observation chips; treatment settings; intake / consent data; contraindications;
+photos; payment / Stripe / price; internal ids; appointment tokens; provider ids;
+audit / operational metadata. No PHI in any log, metric, heartbeat, or ops alert.
+This is *stricter* than the existing iCal feed (which carries the studio address).
+Any later expansion requires a separate **privacy + resynchronization** decision;
+because identity is `sync_version` (not a content hash), an allow-list change does
+not invalidate idempotency keys — it must be propagated via a controlled
+generation/`sync_version` bump, never a destructive full resync.
+
+**Stance through B2.3-b:** `calendar_sync_outbox.payload` carries **operational
+metadata only** (`schema_version`, `sync_version`, op, and — for orphan tombstones —
+`google_event_id`/`google_calendar_id`/`reason`); it is written only by the DB
+enqueue trigger + repair RPCs from typed values, never a free-form spread of an
+entity row (a DB test asserts no client identity in the queue). The **event
+serializer** that maps the allow-list above into a Google payload is **B2.4 worker
+territory and is NOT built in B2.3-b** — the reconciliation sweep produces no
+payloads and makes no Google call; it only re-drives intent through the trigger.
 
 ---
 
@@ -660,7 +769,10 @@ responsibility**; B1 only reserves the column and records the contract.
     handled as a linked delete(old) + create(new). Adds the `sync_generation`
     epoch (deferred from B1) so a disconnect→reconnect invalidates in-flight ops.
     Booking never blocks on a Google call. Requires ONE reconnect for Sam via
-    incremental auth to add `calendar.events` (Phase A withheld the event scope).
+    incremental auth to add the **destination-derived** event scope
+    (`calendar.app.created` for a dedicated Hone calendar, `calendar.events.owned` for
+    an existing owned calendar — broad `calendar.events` is retired; see §3d). Phase A
+    withheld any event scope.
 - **Phase C — Google → Hone busy:** `external_calendar_busy_events` (per-
   practitioner, separate from the GiST-excluded shadow), merged into
   `getAvailableSlots`; initial + incremental sync with `singleEvents=true` to
