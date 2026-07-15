@@ -31,14 +31,31 @@ code + the migration ledger win.
   flag — see §3e. **Next: B2.3-c** — the outbound Google event-execution layer
   (create/update/delete) + worker-drain route + controlled Sam-only activation (§3f).
   All Google flags default **OFF** (only Sam's `google_calendar_connection_enabled`
-  is ON, on his controlled studio; all sync flags OFF). **No event sync runs:** no
-  worker, no enqueue path (0125 adds triggers but they no-op while every studio's
-  outbound flag is OFF), no trigger enqueues, no Google event has been created or
-  modified, no Google API call has occurred, and no event scope has been requested.
-- **Production exercised:** the Phase A OAuth connection was exercised once on **Sam's
-  controlled studio** (one connection exists). **Phase B1 outbox/event-link behavior
-  has NOT been production-exercised** — `calendar_event_links` and `calendar_sync_outbox`
-  are empty (0 rows).
+  is ON, on his controlled studio; all sync flags OFF). **No appointment-event sync
+  runs**, but keep three distinct facts un-collapsed:
+  - *Enqueue infrastructure is deployed but inactive.* B2.3-a (0125) deployed the
+    outbound **enqueue path + DB triggers**; in production they **no-op / produce no
+    work** because every studio's outbound flag is OFF and there is **no
+    intent-eligible studio**. `calendar_sync_outbox` + `calendar_event_links` stay
+    **empty (0 rows)**.
+  - *Provisioning API was used; appointment-event CRUD was not.* **B2.4 exercised
+    OAuth and Calendar provisioning to create the empty dedicated "Hone Appointments"
+    calendar** on Sam's controlled studio; the exact **`calendar.app.created`** scope
+    is currently **granted** on that connection (grants app.created=1 / events.owned=0
+    / broad `calendar.events`=0). **No Google appointment-event create, update or
+    delete operation has occurred**; no appointment event exists.
+  - *No worker; reconciliation calls no Google.* No drain worker exists and no flag
+    turns one on; the B2.3-b reconciliation route never calls Google.
+- **Production exercised (per phase, precisely):**
+  - **Phase A OAuth connection** — production-exercised once on **Sam's controlled
+    studio** (one connection exists; least-privilege connect-time scopes).
+  - **B2.4 dedicated-destination provisioning** — production-exercised **once** on
+    Sam's controlled studio (OAuth + provisioning created the empty "Hone
+    Appointments" calendar; `calendar.app.created` granted; **zero events**).
+  - **B1 / B2.3-a / B2.3-b outbox, reconciliation, and event lifecycle** — **NOT
+    production-exercised.** `calendar_event_links` + `calendar_sync_outbox` are empty
+    (0 rows); no appointment event exists. B2.3-b returning `401` to an unauthenticated
+    probe is an auth check, **not** a production exercise of the sweep.
 - **Willow:** not connected; all Google flags OFF. Willow is never used for initial
   integration testing (see §Rollout). No sync feature is approved for Willow.
 
@@ -245,8 +262,11 @@ intact; the hard-purge teardown routine itself lands in B2.4.
 Migration **0125** wires the DB-side outbound-sync foundation the future drain
 worker will consume. It is **additive + DORMANT** and ships with **no production
 caller** (the worker-drain `/api/cron/calendar-sync` route + its cron registration
-are **B2.3-c**). No Google call, no event scope requested, no re-consent, no studio flag
-enabled, and the global worker control defaults OFF. Behavioural proof:
+are **B2.3-c**). Migration 0125 is DB-only — **it** makes no Google call and, by
+itself, requests no event scope (the destination-derived scope is requested separately
+by **B2.4** — see §3d, where `calendar.app.created` is already granted on Sam's
+controlled connection); no re-consent, no studio flag enabled, and the global worker
+control defaults OFF. Behavioural proof:
 `tests/db/google-calendar-b2-3a-enqueue-claim.db.test.ts`; static proof:
 `tests/migrations/0125-…test.ts`.
 
@@ -399,10 +419,19 @@ event-write **scope contract destination-aware** and records **where** Hone will
 its own header, sequences on top of Phase A (0121/0122) / B1 (0124) / B2.3-a (0125):
 prod migration max was 0130, this is 0131, and it is **APPLIED to production and
 DORMANT** (PR #424 merged + operator-validated 2026-07-14; hosted migration max = 0131).
-No Google API call, no event scope granted, no re-consent, no studio flag enabled,
-the global worker control stays OFF, and no enqueue / outbox row / event-link /
-appointment mutation / backfill occurs. Behavioural + shape proofs live under
-`tests/db` / `tests/migrations` for 0131.
+Distinguish the migration from the phase's controlled validation:
+- **Migration 0131 itself** is DB-only — it makes no Google call, mutates no
+  appointment, and writes no enqueue / outbox / event-link / backfill row.
+- **The B2.4 phase was operator-validated on Sam's controlled studio, which DID use
+  Google:** OAuth + Calendar provisioning created the empty dedicated **"Hone
+  Appointments"** calendar and the exact **`calendar.app.created`** scope is now
+  **granted** on that connection. **No Google appointment-event create, update or
+  delete operation has occurred** — broad `calendar.events` remains absent
+  (grants app.created=1 / events.owned=0 / broad=0), no re-consent, no studio flag
+  enabled, the global worker control stays OFF, `calendar_sync_outbox` +
+  `calendar_event_links` stay empty, and Willow stays unconnected.
+
+Behavioural + shape proofs live under `tests/db` / `tests/migrations` for 0131.
 
 ### Ordering — why B2.4 precedes B2.3-b and B2.3-c
 
@@ -784,23 +813,53 @@ controlled dedicated **"Hone Appointments"** calendar, in this **exact order**:
 2. Confirm the controlled destination: `dedicated_app_created`, owner-bound, not
    ambiguous, exact `calendar.app.created` scope granted, write calendar configured.
 3. Keep Willow unconnected.
-4. Enable outbound **intent** only for Sam's controlled studio.
-5. Keep `worker_enabled` false.
-6. Run bounded reconciliation manually.
-7. Inspect: exactly the expected outbox intent; a placeholder event link; no unexpected
-   tenants; no PHI in payload; **no provider event yet**.
-8. Enable worker execution only under a **separately approved, time-boxed** gate.
-9. Process **one** controlled appointment operation.
-10. Immediately verify: exactly one Google event; created in "Hone Appointments"; approved
+4. **Initial-activation candidate-set gate (MANDATORY — before enabling any flag).** The
+   deployed reconciliation boundary sweeps **every** appointment that is `status =
+   confirmed` **and** `ends_at >= activation_started_at` **and** not already converged —
+   not a caller-chosen appointment. So, with **intent still OFF**, perform a **read-only**
+   enumeration of that exact candidate set:
+   1. Enumerate every appointment that would qualify under the deployed
+      initial-activation boundary for Sam's controlled studio.
+   2. Record only **safe operational identifiers and counts** (no PHI — no client name,
+      email, phone, or notes).
+   3. Confirm the candidate set contains **exactly** the one explicitly approved
+      controlled appointment for this first live worker test.
+   4. Confirm **no** unrelated future or in-progress appointment would be queued.
+   5. Confirm there is **no** existing pending, processing, dead, or otherwise
+      conflicting calendar work for the studio.
+   6. Confirm the target appointment is **synthetic** or otherwise explicitly approved
+      for this controlled test.
+
+   **If the candidate set contains more than the approved appointment: STOP.** Do **not**
+   enable the studio flag; do **not** delete, cancel, or alter unrelated appointments
+   merely to manufacture a clean test. Instead use a **separately approved clean
+   controlled studio**, or return for a targeting/isolation design. Batch size 1 does
+   **not** guarantee the intended appointment when multiple claimable rows exist — the
+   claim RPC selects by **queue ordering**, not by a caller-supplied appointment id.
+5. Enable outbound **intent** only for Sam's controlled studio (only after the gate above
+   passes).
+6. Keep `worker_enabled` false.
+7. Run bounded reconciliation manually.
+8. Inspect (fail-closed proof, worker still OFF): exactly the expected outbox intent; a
+   placeholder event link; no unexpected tenants; no PHI in payload; **no provider event
+   yet**. Then prove the **single-operation** invariant before enabling the worker:
+   **exactly one** claimable operation exists; it belongs to the **approved** appointment;
+   **exactly one** corresponding placeholder link exists; **no other** appointment was
+   enqueued; and the future worker's **bounded claim cannot select a different
+   operation**.
+9. Enable worker execution only under a **separately approved, time-boxed** gate.
+10. Process **one** controlled appointment operation.
+11. Immediately verify: exactly one Google event; created in "Hone Appointments"; approved
     minimal payload only; provider event id bound to the correct link; source version
     recorded; outbox result `done`; no duplicate event; no cross-studio impact.
-11. Disable worker execution after the controlled operation unless the approval explicitly
+12. Disable worker execution after the controlled operation unless the approval explicitly
     authorizes continued testing.
-12. Separately test, **one at a time** (not an uncontrolled batch): create; time update;
-    duration update; withdrawn cancellation/delete; duplicate replay; transient retry;
-    stale-operation suppression; reconnect-required behaviour; placeholder-update
-    create-and-bind; partial create/link-write recovery.
-13. End with worker + controlled-studio flags disabled unless a later approval authorizes a soak.
+13. Separately test, **one approved operation at a time** (not an uncontrolled batch),
+    **inspecting the queue between tests** so only one claimable operation is ever
+    present: create; time update; duration update; withdrawn cancellation/delete;
+    duplicate replay; transient retry; stale-operation suppression; reconnect-required
+    behaviour; placeholder-update create-and-bind; partial create/link-write recovery.
+14. End with worker + controlled-studio flags disabled unless a later approval authorizes a soak.
 
 **B2.3-c5 — controlled soak + rollout decision.** Decide whether outbound may remain
 enabled for the controlled studio. **Required evidence:** no duplicate events; no stale
