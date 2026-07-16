@@ -4,9 +4,22 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0131** (`0131_google_calendar_dual_destination.sql`).
-- **Applied status:** local repo max == remote (linked project) max == **0131**. Every
-  migration `0001`–`0131` is applied in production. The recent tail (0117 … 0131) was applied
+- **Hosted (production) migration max = 0132** (`0132_google_calendar_event_link_transitions.sql`).
+- **`0132` (Google Calendar B2.3-c1 event-link transitions) was hosted-applied migration-first on
+  2026-07-16** (SHA-256 `0516776e08b3a52fc6d9e5a54ed601b153e4401d2ef718c18cc7eb834b791abd`; the only
+  pending migration; dry-run confirmed only 0132; `supabase db push --linked`, no reset/repair/raw SQL).
+  Additive + dormant: one transactional service-role-only `calendar_event_link_transition` RPC
+  (bind_confirmed / update_confirmed / mark_deleted / rotate_for_recreate; bind/update reject a
+  missing/empty ETag), plus `CREATE OR REPLACE` of `enqueue_calendar_outbound` (placeholder
+  `last_hone_version=0` + reschedule rebind reset), `enqueue_calendar_outbound_on_delete`
+  (placeholder-aware delete), and `repair_enqueue_orphan_link_delete` (placeholder-aware). It changed
+  **no** existing 0124/0125/0131 file, added no column, and mutated no row. **Read-only post-apply
+  verify PASSED:** hosted max 0132, RPC present + SECURITY DEFINER + service-role-only EXECUTE (anon
+  denied) + closed action set + outbox never transitioned, all sync flags OFF, worker off,
+  `calendar_sync_outbox`/`calendar_event_links` 0 rows, 0 real Google events, appointments/connections/
+  credentials unmodified, 0 unresolved calendar ops-alerts. At the pre-merge validation point PR #428
+  remained unmerged; on merge the c1 event-operation code is deployed dormant (no route/cron/worker).
+- **Applied status:** every migration `0001`–`0132` is applied in production. The recent tail (0117 … 0132) was applied
   **migration-first** (the migration applied to production + verified *before* the code merge).
   0116 was the one **code-first** apply — *after* PR #395's hash-only code merged + deployed —
   because it destructively dropped a column the deployed code wrote. **The 0125 → 0131 tail is a
@@ -18,11 +31,11 @@
 - **Google Calendar B2.3-b (PR #426, merge `f664f0f`, deployed 2026-07-15) added NO migration** —
   the reconciliation sweep + heartbeat + `/api/cron/calendar-reconcile` route are code-only and
   orchestrate the **existing** 0124/0125 repair primitives, so the hosted max **stays 0131**.
-- **Total migrations in repo: 131** (`0001` … `0131`).
+- **Total migrations in repo: 132** (`0001` … `0132`).
 - The repo-max is enforced as a test tripwire: the per-migration shape tests
   `tests/migrations/0131-google-calendar-dual-destination.test.ts` (and the 0125–0130 shape
   tests) assert the repo contents, and `tests/scripts/verify-production.test.ts` pins the
-  **derived** expected max (no hardcoded literal) — it currently derives **0131**. When a new
+  **derived** expected max (no hardcoded literal) — it currently derives **0132**. When a new
   migration lands, the derived pin moves to the new number automatically.
 
 > **Scope of this v1 ledger.** The recent tail (0089–0131) is enumerated below with a
@@ -85,7 +98,7 @@ existing 0124/0125 repair RPCs + queue-health view). Deployed 2026-07-15 (merge 
 worker + all sync flags OFF; no Google call; production dormant.
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
-`docs/13`/`docs/14`; all are applied — production max is now 0131.)
+`docs/13`/`docs/14`; all are applied — production max is now 0132.)
 
 ---
 
@@ -114,5 +127,5 @@ worker + all sync flags OFF; no Google call; production dormant.
 Earlier docs (e.g. `docs/09`, `docs/14`) contain "0096 not yet applied", "0095 NOT yet
 applied", "0093/0094 must not be applied until approved" language written **before** those
 migrations were applied. **All of 0093, 0094, 0095, 0096, 0107 are applied** (production max is
-now **0131**). Trust this ledger + `supabase migration list --linked`, not the
+now **0132**). Trust this ledger + `supabase migration list --linked`, not the
 historical per-PR prose.

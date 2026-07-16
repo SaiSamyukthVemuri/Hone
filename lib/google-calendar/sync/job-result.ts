@@ -6,7 +6,7 @@ import "server-only";
 // claim_calendar_sync_op RPC (migration 0124). handleCalendarSyncJob consumes a
 // ClaimedJob and returns a JobResult — a CLOSED, machine-readable union. The
 // reason code is a stable enum (never free text) so B2.3 reconciliation queries
-// and the B2.4 health UI can key off structured state.
+// and the B2.3-c worker/health surfaces can key off structured state.
 //
 // Nothing here calls Google or touches appointments/outbox; it defines the
 // vocabulary the later phases consume, plus the mapping from a result to the
@@ -140,7 +140,7 @@ export function resultToRpcParams(
   // terminal result as a retry at the MAX backoff carrying the terminal code, so
   // a still-recoverable-after-reconnect connection is not permanently killed by a
   // transient blip; a genuinely dead row reaches the cap and the RPC deads it.
-  // (B2.4 refines terminal handling; the mapping is defined here.)
+  // (B2.3-c refines terminal handling; the mapping is defined here.)
   return {
     ok: false,
     errorCode: clampCode(result.errorCode ?? result.code),

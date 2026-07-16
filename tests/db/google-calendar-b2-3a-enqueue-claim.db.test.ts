@@ -164,7 +164,9 @@ describe("enqueue transition matrix (product intent ON)", () => {
     const l = await links(appt);
     expect(l).toHaveLength(1);
     expect(l[0].google_event_id).toBeNull();
-    expect(Number(l[0].last_hone_version)).toBe(1);
+    // Migration 0132 (B2.3-c1 §6): a placeholder link starts at last_hone_version=0
+    // — it never claims the appointment version was applied before Google confirms.
+    expect(Number(l[0].last_hone_version)).toBe(0);
     const o = await outbox(appt);
     expect(o).toHaveLength(1);
     expect(o[0].op_type).toBe("event.create");
@@ -232,18 +234,22 @@ describe("enqueue transition matrix (product intent ON)", () => {
     expect(o[2].idempotency_key).toBe(`appointment:${appt}:event.update:3`);
   });
 
-  it("reschedule successor WITH predecessor link -> rebinds link + sets last_hone_version to the SUCCESSOR version", async () => {
+  it("reschedule successor WITH predecessor link -> rebinds link + resets last_hone_version to pending/0, preserving provider coordinates", async () => {
     const a = await seedStudio("mx8");
     await seedConn(a);
-    const pred = await insertAppt(a); // link created (last_hone_version 1)
-    // Simulate prior syncs so the predecessor's version is HIGHER than the fresh successor's.
-    await adminQuery(`update public.calendar_event_links set last_hone_version=5, google_event_id='ev-pred' where hone_entity_id=$1`, [pred]);
+    const pred = await insertAppt(a); // link created (last_hone_version 0)
+    // Simulate prior syncs so the predecessor's version is non-zero and bound.
+    await adminQuery(`update public.calendar_event_links set last_hone_version=5, google_event_id='ev-pred', sync_status='synced' where hone_entity_id=$1`, [pred]);
     const succ = await insertAppt(a, { rescheduled_from: pred });
     // Predecessor's active link is rebound to the successor.
     expect(await links(pred)).toHaveLength(0);
     const sl = await links(succ);
     expect(sl).toHaveLength(1);
-    expect(Number(sl[0].last_hone_version)).toBe(1); // successor's version, NOT the predecessor's 5
+    // 0132 (B2.3-c1 §6): the rebind RESETS the applied-version proof to pending/0 —
+    // it must not claim the successor's timing was applied before Google is updated —
+    // while PRESERVING the provider identity/coordinates.
+    expect(Number(sl[0].last_hone_version)).toBe(0);
+    expect(sl[0].sync_status).toBe("pending");
     expect(sl[0].google_event_id).toBe("ev-pred"); // carried forward
     const o = await outbox(succ);
     expect(o).toHaveLength(1);

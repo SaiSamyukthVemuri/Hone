@@ -209,7 +209,7 @@ function hasDeadJob(jobs: OpenJob[], ops: string[]): boolean {
 // Appointment pass. NOTE (§5): a bump for a PLACEHOLDER link re-drives a CURRENT
 // UPSERT intent; the deployed trigger emits `event.update` (an active link exists),
 // NOT `event.create`. No real provider update can happen (no google_event_id) — the
-// future B2.4 worker op must treat `event.update` + a placeholder link as
+// future B2.3-c worker op must treat `event.update` + a placeholder link as
 // create-and-bind. `missing_link_job` is the internal drift class, not the wire op.
 export function classifyConfirmedAppointment(appt: ReconcileApptRow, link: ReconcileLinkRow | undefined, jobs: OpenJob[]): ReconcileDecision {
   if (hasCurrentOrNewerJob(jobs, CREATE_UPDATE_OPS, appt.syncVersion)) return { act: "skip", reason: "work_in_flight" };

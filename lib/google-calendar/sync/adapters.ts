@@ -6,8 +6,8 @@ import { isDead, isDone, isRetry, resultToRpcParams, type ClaimedJob, type JobRe
 //   claim -> handleCalendarSyncJob -> record result.
 // They contain no Google logic (that lives in the injected `handle`) and no
 // route/host coupling. They are DEFINED here but NOT ACTIVATED: there is no
-// app/api route and no cron schedule in this PR. B2.3/B2.4 wire them to the real
-// claim/record RPCs + the real handler; the pilot cron route (Bearer CRON_SECRET,
+// app/api route and no cron schedule in this PR. The B2.3-c worker route wires
+// them to the real claim/record RPCs + the real handler; the pilot cron route (Bearer CRON_SECRET,
 // time-boxed) and the future continuous worker both reuse these functions.
 //
 // ENVIRONMENT PIN: these are exercised only against a LOCAL disposable Supabase

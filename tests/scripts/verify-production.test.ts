@@ -97,15 +97,16 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0131 (Google Calendar B2.4 dual-destination scope
-    // contract + destination metadata), on top of 0130 (revoke residual anon
-    // EXECUTE) and the 0125-0129 Google-Calendar/clinical lineage. 0131 is
+    // Repo max advances to 0132 (Google Calendar B2.3-c1 event-link transitions:
+    // the transactional link-transition RPC + corrected placeholder version
+    // semantics + placeholder-aware cleanup), on top of 0131 (B2.4 dual-destination
+    // scope contract) and the 0125-0130 Google-Calendar/clinical lineage. 0132 is
     // additive/dormant and is repo-only until its separately-approved
     // migration-first hosted apply — UNTIL then the live verifier's "Remote
-    // migration max" will (correctly) report expected 0131 vs the current remote,
-    // the intended pending-apply signal. This assertion still fails on the next
-    // new migration, forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0131");
+    // migration max" will (correctly) report expected 0132 vs the current remote
+    // (0131), the intended pending-apply signal. This assertion still fails on the
+    // next new migration, forcing a conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0132");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
