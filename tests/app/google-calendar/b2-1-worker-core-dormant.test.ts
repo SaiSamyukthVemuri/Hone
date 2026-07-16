@@ -6,7 +6,7 @@ import { join } from "node:path";
 // The transport-neutral core + REST client + token lifecycle exist under
 // lib/google-calendar/sync, but nothing activates the DRAIN WORKER: no app route
 // imports handler/adapters, no cron schedule is registered, and the modules are
-// server-only. (Event operations + a live cron are B2.4/B2.5.)
+// server-only. (Event operations are B2.3-c1 — dormant; a live cron is B2.3-c2.)
 //
 // B2.3-b adds the reconciliation SWEEP route (app/api/cron/calendar-reconcile) +
 // its server-only reconcile modules. That route is enqueue-side (it orchestrates
