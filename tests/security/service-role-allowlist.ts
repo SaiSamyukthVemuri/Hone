@@ -212,6 +212,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "lib/google-calendar/sync/worker-runtime.ts",
+    purpose: "Google Calendar Phase B2.3-c2 worker-drain runtime — the server-only seam behind /api/cron/calendar-sync (dormant; route unscheduled, worker OFF).",
+    why: "The admin client is built only after handleWorkerRoute authenticates the CRON_SECRET bearer (isAuthorizedCronRequest, before any admin client). It drives ONLY the service-role-only claim_calendar_sync_op / record_calendar_sync_result RPCs (the claim RPC self-gates on worker_enabled and re-derives every tenant id from the row — the route supplies NO caller-selected studio/connection/provider id) plus a studio-scoped google_calendar_outbound_sync_enabled read; the handler re-validates tenant + destination before any op.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/stripe/webhook/route.ts",
     purpose: "Stripe webhook handler.",
     why: "No user session; authenticated by Stripe signature verification (constructEvent). Rows are resolved by the verified event's ids.",

@@ -2,19 +2,24 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-// Phase B2.3-c — the WORKER ACTIVATION GATE.
+// Phase B2.3-c — the WORKER ACTIVATION GATE (updated for c2).
 //
-// B2.3-c1 ships the real event-operation layer (serializer, deterministic
-// identity, stale fence, create/update/delete operations, transactional link
-// transitions) as a DORMANT operations map. This gate proves the map is present
-// but UNWIRED: no app route imports or invokes it, /api/cron/calendar-sync does
-// not exist, no calendar worker cron is registered, and no code activates the
-// worker or a studio flag. Each former string prerequisite is now backed by a
-// DIRECT behavioural test (asserted to exist below).
+// c1 shipped the real event-operation layer as a DORMANT operations map and proved
+// NO application route imported it. c2 changes the allowed state EXACTLY ONCE: the
+// single authenticated worker-drain route /api/cron/calendar-sync now wires the
+// deployed claim -> handle -> record architecture to the c1 operations map through
+// ONE approved server-only seam (lib/google-calendar/sync/worker-runtime.ts). This
+// gate proves the route is present-but-UNSCHEDULED and dormant: no other route or
+// browser path imports the map, no cron is registered, no code enables the worker
+// or a studio flag, the route takes no caller-selected target, and every c2
+// behaviour is backed by a DIRECT test.
 
 const ROOT = process.cwd();
-// The ONE approved dormant operations module (present-but-unwired).
 const APPROVED_OPS_MODULE = join("lib", "google-calendar", "sync", "operations.ts");
+// The ONE server-only seam allowed to wire the live operations map.
+const APPROVED_SEAM = join("lib", "google-calendar", "sync", "worker-runtime.ts");
+// The ONE application route allowed to wire that seam.
+const APPROVED_ROUTE = join("app", "api", "cron", "calendar-sync", "route.ts");
 
 function walk(dir: string): string[] {
   const abs = join(ROOT, dir);
@@ -37,67 +42,114 @@ function walk(dir: string): string[] {
   }
   return out;
 }
+const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+const nonTest = (rel: string) => !/\.(test|spec)\.(ts|tsx)$/.test(rel);
 
-describe("B2.3-c worker activation gate", () => {
-  it("the ONLY module wiring a live operations map is the approved dormant ops module", () => {
+describe("B2.3-c worker activation gate (c2)", () => {
+  it("the ONLY module defining a live operations map literal is the approved dormant ops module", () => {
     const offenders: string[] = [];
     for (const rel of [...walk("app"), ...walk("lib")]) {
-      if (/\.(test|spec)\.(ts|tsx)$/.test(rel)) continue;
-      const src = readFileSync(join(ROOT, rel), "utf8");
-      if (/["']event\.(create|update|delete)["']\s*:\s*(async|\()/.test(src)) offenders.push(rel);
+      if (!nonTest(rel)) continue;
+      if (/["']event\.(create|update|delete)["']\s*:\s*(async|\()/.test(read(rel))) offenders.push(rel);
     }
-    // Exactly the approved dormant module — nothing else may carry an ops map.
     expect(offenders).toEqual([APPROVED_OPS_MODULE]);
   });
 
-  it("NO app route imports or invokes the dormant operations map", () => {
-    const appImporters: string[] = [];
-    for (const rel of walk("app")) {
-      if (/\.(test|spec)\.(ts|tsx)$/.test(rel)) continue;
-      const src = readFileSync(join(ROOT, rel), "utf8");
-      if (/sync\/operations|createCalendarSyncOperations/.test(src)) appImporters.push(rel);
+  it("the ONLY module wiring createCalendarSyncOperations is the approved server-only seam", () => {
+    const wirers: string[] = [];
+    for (const rel of [...walk("app"), ...walk("lib")]) {
+      if (!nonTest(rel) || rel === APPROVED_OPS_MODULE) continue;
+      if (/createCalendarSyncOperations\s*\(/.test(read(rel))) wirers.push(rel);
     }
-    expect(appImporters).toEqual([]);
+    expect(wirers).toEqual([APPROVED_SEAM]);
   });
 
-  it("the worker-drain route (/api/cron/calendar-sync) does NOT exist yet", () => {
-    expect(existsSync(join(ROOT, "app", "api", "cron", "calendar-sync", "route.ts"))).toBe(false);
-    expect(walk(join("app", "api", "cron")).filter((f) => /calendar-sync/.test(f))).toEqual([]);
+  it("the ONLY app route referencing the seam or the ops map is /api/cron/calendar-sync", () => {
+    const importers: string[] = [];
+    for (const rel of walk("app")) {
+      if (!nonTest(rel)) continue;
+      if (/sync\/worker-runtime|sync\/operations|createCalendarSyncOperations/.test(read(rel))) importers.push(rel);
+    }
+    expect(importers).toEqual([APPROVED_ROUTE]);
   });
 
-  it("no calendar worker cron is registered", () => {
-    const vercel = readFileSync(join(ROOT, "vercel.json"), "utf8");
+  it("no browser/client path imports the seam or the operations map", () => {
+    const offenders: string[] = [];
+    for (const rel of [...walk("app"), ...walk("lib")]) {
+      if (!nonTest(rel)) continue;
+      const src = read(rel);
+      const isClient = /^\s*["']use client["']/m.test(src);
+      if (isClient && /sync\/worker-runtime|sync\/operations|createCalendarSyncOperations/.test(src)) offenders.push(rel);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the seam is server-only and wires claim -> handle -> record + the Upstash refresh coordinator + the mandatory invalidator", () => {
+    const seam = read(APPROVED_SEAM);
+    expect(seam).toMatch(/^import "server-only";/m);
+    expect(seam).toMatch(/isAuthorizedCronRequest/); // auth is enforced in the seam
+    expect(seam).toMatch(/claim_calendar_sync_op/); // claim
+    expect(seam).toMatch(/handleCalendarSyncJob/); // handle
+    expect(seam).toMatch(/record_calendar_sync_result/); // record
+    expect(seam).toMatch(/createCalendarSyncOperations/); // c1 operations map
+    expect(seam).toMatch(/createUpstashRefreshCoordinator/); // cross-process refresh mutex
+    expect(seam).toMatch(/invalidateAccessToken/); // mandatory 401 invalidator
+    expect(seam).toMatch(/processAccessTokenCache/); // shared cache seam
+  });
+
+  it("the production route/runtime does NOT use pg / in-process / a fake provider", () => {
+    for (const rel of [APPROVED_SEAM, APPROVED_ROUTE]) {
+      const src = read(rel);
+      expect(src).not.toMatch(/inProcessOnlyCoordinator/);
+      expect(src).not.toMatch(/createPgRefreshCoordinator/);
+      expect(src).not.toMatch(/from ["']pg["']/);
+      expect(src).not.toMatch(/fetchImpl\s*:/); // production REST client uses the real fetch
+    }
+  });
+
+  it("the route is Node-runtime, force-dynamic, and accepts NO caller-selected tenant/provider target", () => {
+    const route = read(APPROVED_ROUTE);
+    expect(route).toMatch(/export const runtime = "nodejs"/);
+    expect(route).toMatch(/export const dynamic = "force-dynamic"/);
+    // The route delegates to the seam and reads no studio/connection/id/batch param.
+    expect(route).not.toMatch(/searchParams\.get|studio_id|connection_id|batch_size|appointment_id|event_id|link_id|calendar_id/);
+  });
+
+  it("no calendar worker cron is registered in vercel.json", () => {
+    const vercel = read("vercel.json");
     expect(vercel).not.toMatch(/calendar-sync/);
     expect(vercel).not.toMatch(/calendar-reconcile/);
   });
 
-  it("no production module activates the worker or a studio sync flag", () => {
+  it("no production module enables the worker or a studio sync flag", () => {
     const offenders: string[] = [];
     for (const rel of [...walk("app"), ...walk("lib")]) {
-      if (/\.(test|spec)\.(ts|tsx)$/.test(rel)) continue;
-      const src = readFileSync(join(ROOT, rel), "utf8");
+      if (!nonTest(rel)) continue;
+      const src = read(rel);
       if (/worker_enabled\s*[:=]\s*true/.test(src)) offenders.push(rel);
       if (/google_calendar_(outbound_sync|inbound_busy|two_way_updates)_enabled\s*[:=]\s*true/.test(src)) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
   });
 
-  it("each activation prerequisite is backed by a DIRECT behavioural test (not 'inherits coverage')", () => {
+  it("each c2 activation prerequisite is backed by a DIRECT behavioural test (not 'inherits coverage')", () => {
     const required = [
-      "tests/lib/google-calendar/sync/event-id.test.ts", // deterministic id + marker
-      "tests/lib/google-calendar/sync/serializer.test.ts", // v1 allow-list + no PHI
-      "tests/lib/google-calendar/sync/stale-fence.test.ts", // stale/completion-proof fence
-      "tests/lib/google-calendar/sync/operations.test.ts", // MOCKED-operation unit: create-and-bind, replay, rotate, delete, conflict, response-validation, store-error, 401
-      "tests/lib/google-calendar/sync/operations-transport.test.ts", // ACTUAL REST transport composition (fake fetch): URL/sendUpdates/If-Match/marker/409/412
-      "tests/db/google-calendar-c1-link-transition.db.test.ts", // transactional RPC fences + rotation + enqueue semantics
+      "tests/lib/google-calendar/sync/upstash-refresh-coordinator.test.ts", // fail-closed Upstash mutex, ownership-safe release, TTL, privacy
+      "tests/lib/google-calendar/sync/worker-runtime.test.ts", // bounded drain accounting + shared-cache composition + Upstash default
+      "tests/lib/google-calendar/sync/worker-heartbeat.test.ts", // fail-open PHI-free heartbeat
+      "tests/app/google-calendar/calendar-sync-route.test.ts", // auth, targeting, no-work, sabotage, PHI-free response
+      "tests/db/google-calendar-c2-worker-route.db.test.ts", // §23 concurrency + §24 claim->handle->record + §25 worker-off
     ];
     for (const f of required) expect(existsSync(join(ROOT, f))).toBe(true);
   });
 
-  it("the design doc records the placeholder=event.update create-and-bind contract", () => {
-    const doc = readFileSync(join(ROOT, "docs", "integrations", "google-calendar-sync.md"), "utf8");
+  it("the design doc records the placeholder=event.update create-and-bind contract and the c2 route amendment", () => {
+    const doc = read(join("docs", "integrations", "google-calendar-sync.md"));
     expect(doc).toMatch(/event\.update/);
     expect(doc).toMatch(/create-and-bind/i);
     expect(doc).not.toMatch(/re-drive.{0,40}create/i);
+    // The c2 amendment: Upstash refresh coordinator, dormant, unscheduled.
+    expect(doc).toMatch(/B2\.3-c2/);
+    expect(doc).toMatch(/Upstash/);
   });
 });

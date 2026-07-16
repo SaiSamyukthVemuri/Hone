@@ -67,19 +67,22 @@ describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no application (app/) route references the raw outbound-sync surface (reconcile route imports modules only)", () => {
-    // B2.3-b's reconcile SWEEP route is the ONE app route allowed to import the
-    // (server-only, intent-gated) reconcile modules under google-calendar/sync. It
-    // must STILL never reference the raw tables/RPCs directly — those stay behind
-    // the store/repair seam.
-    const RECONCILE_ROUTE = join("app", "api", "cron", "calendar-reconcile", "route.ts");
+  it("no application (app/) route references the raw outbound-sync surface (reconcile + worker routes import the seam only)", () => {
+    // Exactly TWO app routes may import the (server-only) google-calendar/sync
+    // modules: B2.3-b's reconcile SWEEP route and B2.3-c2's worker-DRAIN route.
+    // NEITHER may reference the raw tables/RPCs directly — those stay behind the
+    // store / worker-runtime seam.
+    const SEAM_ROUTES = [
+      join("app", "api", "cron", "calendar-reconcile", "route.ts"),
+      join("app", "api", "cron", "calendar-sync", "route.ts"),
+    ];
     const offenders: string[] = [];
     for (const rel of walk("app")) {
       const src = readFileSync(join(ROOT, rel), "utf8");
       for (const sym of NEW_SYMBOLS) {
         if (src.includes(sym)) offenders.push(`${rel} → ${sym}`);
       }
-      if (rel !== RECONCILE_ROUTE && src.includes("google-calendar/sync")) {
+      if (!SEAM_ROUTES.includes(rel) && src.includes("google-calendar/sync")) {
         offenders.push(`${rel} → google-calendar/sync`);
       }
     }
