@@ -4,8 +4,20 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0131** (`0131_google_calendar_dual_destination.sql`).
-- **Applied status:** local repo max == remote (linked project) max == **0131**. Every
+- **Hosted (production) migration max = 0131** (`0131_google_calendar_dual_destination.sql`).
+- **PENDING (authored, NOT hosted-applied): `0132_google_calendar_event_link_transitions.sql`**
+  (Google Calendar **B2.3-c1**) exists on the **unmerged** `feat/gcal-b2-3-c1-event-operations`
+  branch → **repo max = 0132, hosted max = 0131**. It is additive + dormant: one transactional
+  service-role-only `calendar_event_link_transition` RPC (bind_confirmed / update_confirmed /
+  mark_deleted / rotate_for_recreate), plus `CREATE OR REPLACE` of `enqueue_calendar_outbound`
+  (placeholder `last_hone_version=0` + reschedule rebind reset), `enqueue_calendar_outbound_on_delete`
+  (placeholder-aware delete), and `repair_enqueue_orphan_link_delete` (placeholder-aware). It changes
+  **no** existing 0124/0125/0131 file, adds no column, mutates no row (all calendar tables empty),
+  and leaves `record_/claim_` and the outbox `processing→done/pending/dead` authority unchanged.
+  **Its migration-first hosted apply requires separate authorization** (see the c1 migration-apply
+  packet in the PR). Until then the live verifier's "Remote migration max" reports expected 0132 vs
+  hosted 0131 — the intended pending-apply signal.
+- **Applied status:** every migration `0001`–`0131` is applied in production; **0132 is repo-only**. Every
   migration `0001`–`0131` is applied in production. The recent tail (0117 … 0131) was applied
   **migration-first** (the migration applied to production + verified *before* the code merge).
   0116 was the one **code-first** apply — *after* PR #395's hash-only code merged + deployed —

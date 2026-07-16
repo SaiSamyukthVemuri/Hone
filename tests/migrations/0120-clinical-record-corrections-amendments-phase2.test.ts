@@ -27,7 +27,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // 0126-0129 clinical lineage, and the 0125 Google-Calendar activation
     // boundary. 0131 is additive/dormant and is repo-only until its separately-
     // approved migration-first hosted apply. Bump this tripwire consciously.
-    expect(maxNum).toBe(131);
+    expect(maxNum).toBe(132); // 0132 = Google Calendar B2.3-c1 link transitions (authored, not hosted-applied)
     expect(FILE).toMatch(/^0120_/);
   });
 });

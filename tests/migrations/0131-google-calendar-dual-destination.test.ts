@@ -20,10 +20,12 @@ describe("0131 — repo migration-max tripwire", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0131");
+    expect(nums[nums.length - 1]).toBe("0132"); // 0132 = Google Calendar B2.3-c1 (authored, repo-only until hosted-applied)
     expect(files.some((f) => f.startsWith("0130_"))).toBe(true);
     // Nothing 0132+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(3[2-9]|[4-9]\d)_/.test(f))).toEqual([]);
+    expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
+    // Nothing 0133+ yet. Bump this tripwire consciously when adding migrations.
+    expect(files.filter((f) => /^01(3[3-9]|[4-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

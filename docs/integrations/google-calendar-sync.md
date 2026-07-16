@@ -765,6 +765,30 @@ Google Cloud console setup of the two destination scopes.
 > because B2.4 landed before B2.3-b/B2.3-c to finalize destination + scope semantics.
 > B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant; B2.3-c is next.
 
+> **B2.3-c1 implementation status — AUTHORED IN A PR, DORMANT, NOT YET DEPLOYED.**
+> The event-operation layer below is **implemented** (`lib/google-calendar/sync/`:
+> `event-id.ts`, `serializer.ts`, `stale-fence.ts`, `link-transition-store.ts`,
+> `operations.ts`) plus **migration `0132`** (the transactional
+> `calendar_event_link_transition` RPC + corrected placeholder version semantics +
+> placeholder-aware cleanup). It is **dormant**: the operations map is imported only by
+> server-only worker modules, **no app route wires it**, `/api/cron/calendar-sync` does
+> not exist, no calendar cron is registered, and `worker_enabled` + all studio flags stay
+> **OFF**. **Migration `0132` is authored but NOT hosted-applied** (repo max `0132`, hosted
+> max `0131` — the intended pending-apply signal); its migration-first hosted apply and the
+> PR merge require separate authorization. **Two approved register amendments** are in
+> force: (1) a **machine-only private correlation marker** `extendedProperties.private`
+> `{hone:"1", hlk:base32hex(SHA-256(link.id))}` (non-PHI, one-way) that proves Hone's own
+> lifecycle and detects a foreign event on the derived id; (2) **GET-verified
+> placeholder-delete orphan recovery** (replacing the blanket "placeholder delete is
+> inert" rule — a placeholder delete now GETs the derived id and verifies the marker
+> before any provider delete, never a blind DELETE). **Provider identity** is the exact
+> 57-char `"hone1"` + full 52-char lowercase base32hex SHA-256 of `studio_id + ":" +
+> link.id` (no truncation); a fresh lifecycle comes only from a fresh link row
+> (`rotate_for_recreate`). A cancelled Google event is **never** bound as `synced`. The
+> outbox stays under the existing claim → handle → `record_calendar_sync_result` authority
+> (the link-transition RPC persists link state only, never the outbox). **B2.3-c2** (the
+> authenticated worker-drain route) remains the next sub-phase.
+
 **Objective.** Safely **execute** the already-durable Hone outbound *intent* — by
 creating, updating, and deleting the approved **minimal** Google events — and prove the
 full lifecycle on **Sam's controlled dedicated destination** before any Willow

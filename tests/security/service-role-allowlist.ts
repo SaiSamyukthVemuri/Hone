@@ -56,6 +56,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id", studioId)',
   },
   {
+    path: "lib/google-calendar/sync/link-transition-store.ts",
+    purpose: "Google Calendar Phase B2.3-c1 worker link store — service-role reads of calendar_event_links/appointments + the transactional calendar_event_link_transition RPC (dormant; not activated, no route).",
+    why: "Link/appointment reads are studio-scoped and the transition RPC itself re-validates studio/connection/entity binding + the claim token in one transaction; it never transitions the outbox (record_calendar_sync_result stays the sole outbox authority).",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "app/(app)/calendar/postcare-auto-send.ts",
     purpose: "Fail-soft postcare auto-send helper (migration 0110), called from the completion actions after the caller's studio is already resolved.",
     why: "Service-role read/claim/record for the postcare send-state columns; the studioId is passed in by the authenticated completion action and EVERY query is scoped to it.",

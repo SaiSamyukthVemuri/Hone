@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildEventMarker, deriveEventId } from "@/lib/google-calendar/sync/event-id";
 import type { GoogleError } from "@/lib/google-calendar/sync/errors";
-import type { EventSuccess, GoogleFailure, GoogleRestClient } from "@/lib/google-calendar/sync/google-rest-client";
+import type { DeleteSuccess, EventSuccess, GoogleFailure, GoogleRestClient } from "@/lib/google-calendar/sync/google-rest-client";
 import type { SyncOperationContext } from "@/lib/google-calendar/sync/handler";
 import type { ClaimedJob, JobResult } from "@/lib/google-calendar/sync/job-result";
 import type { AppointmentState, LinkRow, OpsLinkStore, TransitionArgs, TransitionResult } from "@/lib/google-calendar/sync/link-transition-store";
@@ -43,6 +43,7 @@ const pcf = () => err("precondition_failed", 412, "google_http_412");
 const scope403 = () => err("insufficient_scope", 403, "google_insufficient_scope");
 const rate429 = () => err("rate_limited", 429, "google_http_429", 30);
 const netTimeout = () => err("transient", null, "network_timeout");
+const delOk = (): DeleteSuccess => ({ ok: true, status: 204 });
 const eventWithMarker = (linkId: string, extra: Record<string, unknown> = {}) => ({ id: deriveEventId(STUDIO, linkId), status: "confirmed", extendedProperties: { private: buildEventMarker(linkId) }, ...extra });
 
 function rest(over: Partial<GoogleRestClient> = {}): GoogleRestClient {
@@ -51,7 +52,7 @@ function rest(over: Partial<GoogleRestClient> = {}): GoogleRestClient {
     getEvent: vi.fn(async () => notFound()),
     insertEvent: vi.fn(async () => evOk(eventWithMarker(LINK_ID))),
     patchEvent: vi.fn(async () => evOk(eventWithMarker(LINK_ID))),
-    deleteEvent: vi.fn(async () => ({ ok: true, status: 204 })),
+    deleteEvent: vi.fn(async () => delOk()),
     ...over,
   };
 }
@@ -69,7 +70,7 @@ function store(opts: StoreOpts = {}) {
     loadActiveLinkByEntity: vi.fn(async () => opts.link ?? null),
     loadLinkById: vi.fn(async (id: string) => links.get(id) ?? null),
     loadAppointmentState: vi.fn(async () => opts.appt ?? null),
-    transition: vi.fn(async (a: TransitionArgs) => {
+    transition: vi.fn(async (a: TransitionArgs): Promise<TransitionResult> => {
       calls.push(a);
       if (opts.transitionResult) return opts.transitionResult(a);
       if (a.action === "rotate_for_recreate") {
@@ -259,7 +260,7 @@ describe("delete + GET-verified placeholder orphan recovery", () => {
   });
 
   it("placeholder: GET live + matching marker -> DELETE -> converged", async () => {
-    const r = rest({ getEvent: vi.fn(async () => evOk(eventWithMarker(LINK_ID))), deleteEvent: vi.fn(async () => ({ ok: true, status: 204 })) });
+    const r = rest({ getEvent: vi.fn(async () => evOk(eventWithMarker(LINK_ID))), deleteEvent: vi.fn(async () => delOk()) });
     const { store: st } = store({ link: link(), appt: appt({ status: "cancelled" }) });
     const res = await run("event.delete", { rest: r, store: st }, ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
     expect(res).toEqual({ code: "ok_noop_tombstone_deleted" });
