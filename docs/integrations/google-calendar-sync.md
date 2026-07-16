@@ -829,7 +829,15 @@ alerting; no browser-supplied tenant/provider ids; **no cron registration yet**;
 `worker_enabled` remains false; all studio sync flags remain false; no hosted outbox
 work; **no real Google call during dormant-deployment validation**.
 
-> **B2.3-c2 implemented (this PR — authored, NOT deployed, NOT scheduled, NOT merged until exact-head review).**
+> **B2.3-c2 implemented + reviewed (PR #429).** At the final pre-merge review point PR #429
+> was open and CI-green at the reviewed implementation head `f9ce6db` (0 unresolved threads).
+> **When the final documentation-only descendant merges, B2.3-c2 becomes deployed dormant**;
+> it remains **unscheduled** (c3 owns schedule registration), the worker stays off, every
+> studio sync flag stays off, and migration max remains `0132`. As of this pre-merge
+> checkpoint **no real Google appointment-event operation has occurred**. Operational
+> completion remains contingent on merge-commit CI, the production deployment, and the
+> separately-recorded authorized no-work validation (NOT asserted here). c4 owns Sam-only
+> controlled activation.
 > The route lives at `app/api/cron/calendar-sync/route.ts` (Node runtime, `force-dynamic`,
 > `Cache-Control: no-store`) and delegates to the one server-only seam
 > `lib/google-calendar/sync/worker-runtime.ts`, which is the FIRST and ONLY application

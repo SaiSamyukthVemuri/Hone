@@ -238,9 +238,11 @@ IDs / no sensitive studio identifiers):
 
 ## 7. B2.3-c2 worker-drain route — authored, dormant, UNSCHEDULED (open PR)
 
-The authenticated worker-drain route `/api/cron/calendar-sync` is **authored in an open, unmerged
-PR** and does not change any operator setup step in this phase. It stays **inert** until a later,
-separately-authorized phase enables it:
+The authenticated worker-drain route `/api/cron/calendar-sync` was **reviewed + CI-green at PR #429
+head `f9ce6db`** and **becomes deployed dormant when the documentation-only descendant merges**; it
+changes no operator setup step in this phase and stays **inert** until a later, separately-authorized
+phase enables it (operational completion — merge-commit CI, production deploy, and the authorized
+no-work validation — is recorded in the PR closeout, not asserted here):
 
 - It is **NOT registered in `vercel.json`** — nothing invokes it on a schedule (**c3**, not c2,
   owns scheduling).
