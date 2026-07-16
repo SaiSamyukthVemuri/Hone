@@ -34,10 +34,14 @@ async function seedConn(): Promise<string> {
   return id;
 }
 
+let slotSeq = 0;
 async function insertAppt(status = "confirmed", rescheduledFrom: string | null = null): Promise<string> {
   const id = randomUUID();
-  const start = new Date(Date.now() + 3_600_000).toISOString();
-  const end = new Date(Date.now() + 5_400_000).toISOString();
+  // Unique, non-overlapping slots per appointment (the studio has a GiST
+  // double-booking exclusion; overlapping fixed slots would collide).
+  const base = Date.now() + 86_400_000 + slotSeq++ * 3_600_000;
+  const start = new Date(base).toISOString();
+  const end = new Date(base + 1_800_000).toISOString();
   await adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, starts_at, ends_at, duration_minutes, status, rescheduled_from_appointment_id)
