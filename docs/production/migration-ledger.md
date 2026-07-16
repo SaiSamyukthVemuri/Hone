@@ -4,22 +4,28 @@
 `supabase migration list --linked`; regenerate the max from
 `ls supabase/migrations/ | tail -1`.
 
-- **Production migration max = 0124** (`0124_google_calendar_outbound_sync_foundation.sql`).
-- **Applied status:** local repo max == remote (linked project) max == **0124**. Every
-  migration `0001`–`0124` is applied in production. The recent tail (0117/0118/0119/0120/0121/
-  0122/0123/0124) was applied **migration-first** (the migration applied to production +
-  verified *before* the code merge). 0116 was the one **code-first** apply — *after* PR #395's
-  hash-only code merged + deployed — because it destructively dropped a column the deployed
-  code wrote. **0124 (Google Calendar Phase B1, PR #407) is additive + dormant** and was applied
-  migration-first on 2026-07-12, then merged; the schema is live but inert (0 rows, no worker,
-  no enqueue path, all Google sync flags OFF).
-- **Total migrations in repo: 124** (`0001` … `0124`).
-- The repo-max is enforced as a test tripwire: `tests/migrations/0120-…test.ts` and the
-  `tests/migrations/0124-…test.ts` shape test assert the repo max, and
-  `tests/scripts/verify-production.test.ts` pins the derived expected max. When a
-  new migration lands, those pins move to the new number.
+- **Production migration max = 0131** (`0131_google_calendar_dual_destination.sql`).
+- **Applied status:** local repo max == remote (linked project) max == **0131**. Every
+  migration `0001`–`0131` is applied in production. The recent tail (0117 … 0131) was applied
+  **migration-first** (the migration applied to production + verified *before* the code merge).
+  0116 was the one **code-first** apply — *after* PR #395's hash-only code merged + deployed —
+  because it destructively dropped a column the deployed code wrote. **The 0125 → 0131 tail is a
+  mix of Google Calendar and non-calendar migrations, all applied migration-first:** 0125
+  (Google Calendar B2.3-a enqueue activation boundary, PR #412 — dormant), 0126/0127 (Willow
+  client clinical notes + RLS fix — live), 0128/0129 (Willow session-block areas: multi-area +
+  atomic laterality writes), 0130 (revoke anon EXECUTE on a calendar-charting RPC — hardening),
+  0131 (Google Calendar B2.4 dual-destination + destination-derived scope, PR #424 — dormant).
+- **Google Calendar B2.3-b (PR #426, merge `f664f0f`, deployed 2026-07-15) added NO migration** —
+  the reconciliation sweep + heartbeat + `/api/cron/calendar-reconcile` route are code-only and
+  orchestrate the **existing** 0124/0125 repair primitives, so the hosted max **stays 0131**.
+- **Total migrations in repo: 131** (`0001` … `0131`).
+- The repo-max is enforced as a test tripwire: the per-migration shape tests
+  `tests/migrations/0131-google-calendar-dual-destination.test.ts` (and the 0125–0130 shape
+  tests) assert the repo contents, and `tests/scripts/verify-production.test.ts` pins the
+  **derived** expected max (no hardcoded literal) — it currently derives **0131**. When a new
+  migration lands, the derived pin moves to the new number automatically.
 
-> **Scope of this v1 ledger.** The recent tail (0089–0124) is enumerated below with a
+> **Scope of this v1 ledger.** The recent tail (0089–0131) is enumerated below with a
 > one-line purpose and applied status. Full per-migration narrative for **0001–0088** lives
 > in `docs/09_DATABASE_AND_RLS.md` (migration table + per-range notes) and the per-PR entries
 > in `docs/13_BACKLOG_AND_DECISIONS.md` / `docs/14_AI_HANDOFF.md`. A fully generated
@@ -27,7 +33,7 @@
 
 ---
 
-## Recent tail (0089 → 0124)
+## Recent tail (0089 → 0131)
 
 | # | Filename | Purpose | Applied |
 |---|---|---|---|
@@ -64,9 +70,22 @@
 | **0122** | `0122_google_oauth_state.sql` | **Google Calendar — Phase A (OAuth state).** `google_oauth_states` single-use OAuth binding: state stored **hash-only**, session nonce **hash-only** (raw nonce is an httpOnly cookie), PKCE verifier **encrypted**, 10-min TTL, `consumed_at` CAS (single-use), same-studio composite FK; **default-deny** (RLS + REVOKE, service-role only). Additive + **dormant**. Applied **migration-first** 2026-07-11 (alongside 0121). **PR #404 MERGED + deployed** (merge `1bfdf7b`). Post-exercise: exactly one state consumed on Sam's studio, none reusable. | ✅ applied + merged (dormant) |
 | **0123** | `0123_soft_delete_session_area.sql` | **Willow P1-B — remove an incorrectly-recorded treatment area.** An atomic aggregate soft-delete `SECURITY DEFINER` RPC `soft_delete_session_area(p_session_id, p_block_id, p_reason)` that, in **one transaction**, soft-deletes the block + its block-scoped electrolysis passes + block-scoped `treatment_images` and writes a `session_audit` `area_removed` event; **NO hard delete** (existing per-row soft-delete RLS untouched). `search_path` pinned (`pg_catalog, pg_temp`); EXECUTE **authenticated-only** (anon/public revoked); studio derived from the row via `is_studio_member` + active practitioner from `auth.uid()`; **rejects finalized/void**; requires a ≥10-char reason. Additive (one function). Applied **migration-first** 2026-07-11. **PR #406 MERGED + deployed** (merge `306a473`). The RPC was **NOT** called against real data (0 `area_removed` events) — production data unchanged. | ✅ applied + merged |
 | **0124** | `0124_google_calendar_outbound_sync_foundation.sql` | **Google Calendar — Phase B1: dormant outbound-sync schema & queue foundation.** Adds `calendar_event_links` (polymorphic Hone-entity → Google-event mapping; **no** FK to appointments/blocks; same-studio composite FK to `calendar_connections(id, studio_id)` **ON DELETE RESTRICT**; active-entity + active-google-event partial uniques; member-SELECT + **no** browser writes) and `calendar_sync_outbox` (durable at-least-once queue; **four-state** `status` pending/processing/done/dead; deterministic idempotency key under a FULL unique index; `priority` 0..1000; bidirectional claim-metadata CHECK; entity CHECK; **default-deny** — RLS on + REVOKE ALL from browser roles + no policy + service-role only), plus two `SECURITY DEFINER`, service-role-only RPCs `claim_calendar_sync_op` (`FOR UPDATE SKIP LOCKED`, batch 1..25, fixed 5-min lease, stale-at-max → dead reaper) and `record_calendar_sync_result` (token/terminal-state validation, backoff bounded 5..21600s, exhaustion → dead, 500-char error cap). **Additive + DORMANT — no runtime behavior:** no enqueue path, no drain worker, no trigger enqueues, no outbound-sync UI, no Google API call, no event scope requested; `calendar_event_links` + `calendar_sync_outbox` are empty (0 rows); all Google sync flags OFF; Willow not connected. Applied **migration-first** 2026-07-12 (dry-run showed ONLY 0124; post-apply read-only verify confirmed unchanged data + flags, empty tables, RPC service-role-only EXECUTE, 0 triggers on the new tables). **PR #407 MERGED + deployed** (merge `bcccce4`; Vercel prod deploy `wPWQYZgee9QjgFS6QLGEngGrM6Jx` success). **NOT production-exercised.** | ✅ applied + merged (dormant) |
+| **0125** | `0125_google_calendar_outbound_enqueue_activation_boundary.sql` | **Google Calendar — Phase B2.3-a: intent-gated enqueue + claim boundary.** Adds the durable-**intent** enqueue path over the 0124 outbox — the DB trigger records outbound intent only while the INTENT gate holds (studio outbound flag + owner connection + `write_calendar_id`), plus the repair primitives (`repair_bump`, `repair_enqueue_orphan_link_delete`) and the `calendar_sync_queue_health` view the later reconciliation sweep orchestrates. Claim-time HEALTH gate distinct from the enqueue-time INTENT gate; global worker control **default OFF**. **Additive + DORMANT** (no worker drains it; no intent-eligible studio in production; no Google call). Applied **migration-first** 2026-07-13. **PR #412 MERGED + deployed.** **NOT production-exercised.** | ✅ applied + merged (dormant) |
+| **0126** | `0126_client_clinical_notes.sql` | **Willow — dedicated consultation + skin/hair analysis clinical notes.** Append-only `client_clinical_notes` (studio-scoped, author-attributed). Applied **migration-first** 2026-07-13. **PR (Willow clinical notes) MERGED + DEPLOYED LIVE for all studios (no flag).** | ✅ applied + merged (live) |
+| **0127** | `0127_fix_client_clinical_notes_author_insert_policy.sql` | **Willow clinical notes — RLS defense-in-depth fix.** Tightens the `client_clinical_notes` author INSERT policy (author must be the caller's own active practitioner). Policy-only hardening; no schema/data change. Applied **migration-first** 2026-07-13. **MERGED + deployed.** | ✅ applied + merged (live) |
+| **0128** | `0128_session_block_areas.sql` | **Willow — multi-area per block.** Session-block treatment-area model enabling multiple recorded areas per block. Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
+| **0129** | `0129_atomic_session_block_area_writes.sql` | **Willow — atomic session-block area writes (laterality).** Makes multi-area + laterality writes atomic (one-transaction, no partial commit). Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
+| **0130** | `0130_revoke_anon_calendar_charting_rpc_execute.sql` | **Hardening — revoke anon EXECUTE on a calendar-charting RPC.** Grant-only tightening (removes an `anon` EXECUTE path); no schema/data change; hardens (does not weaken). Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
+| **0131** | `0131_google_calendar_dual_destination.sql` | **Google Calendar — Phase B2.4: dual-destination + destination-derived scope.** Replaces the broad `calendar.events` model with a destination contract — **dedicated** (`calendar.app.created`, an app-created "Hone Appointments" calendar) vs **existing-owned** (`calendar.events.owned`) — with NULL-safe CHECKs on the connection destination columns. **Additive + DORMANT.** Applied **migration-first** 2026-07-14. **PR #424 MERGED + deployed** (merge `8a25df6`; Vercel prod deploy `h9b58cLZtJ4w3MMrY5WU959w5tDB` success). **Production-exercised once on Sam's controlled studio:** one empty "Hone Appointments" destination calendar created (grants app.created=1 / events.owned=0 / broad=0; **zero events**); all sync flags OFF; Willow not connected. | ✅ applied + merged (dormant) |
+
+**Google Calendar B2.3-b (PR #426) added no migration.** The reconciliation sweep + heartbeat +
+dead-row alerting + `/api/cron/calendar-reconcile` route are code-only (they orchestrate the
+existing 0124/0125 repair RPCs + queue-health view). Deployed 2026-07-15 (merge `f664f0f`);
+**hosted migration max stays 0131**; the route is CRON_SECRET-protected but **not cron-registered**;
+worker + all sync flags OFF; no Google call; production dormant.
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
-`docs/13`/`docs/14`; all are applied — production max is now 0124.)
+`docs/13`/`docs/14`; all are applied — production max is now 0131.)
 
 ---
 
@@ -95,5 +114,5 @@
 Earlier docs (e.g. `docs/09`, `docs/14`) contain "0096 not yet applied", "0095 NOT yet
 applied", "0093/0094 must not be applied until approved" language written **before** those
 migrations were applied. **All of 0093, 0094, 0095, 0096, 0107 are applied** (production max is
-now **0124**). Trust this ledger + `supabase migration list --linked`, not the
+now **0131**). Trust this ledger + `supabase migration list --linked`, not the
 historical per-PR prose.

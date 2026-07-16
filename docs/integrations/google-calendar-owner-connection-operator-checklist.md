@@ -18,14 +18,16 @@ calendar) still enables NO synchronization** — the worker and all four
 `google_calendar_*` flags stay OFF and Willow stays unconnected. Design detail:
 `docs/integrations/google-calendar-sync.md` §3d.
 
-Phase **B2.3-b — reconciliation sweep + heartbeat + route** (authored in-repo,
-**dormant, NO migration** — hosted max stays 0131) adds the enqueue-side recovery
-net (`/api/cron/calendar-reconcile`, `CRON_SECRET`-guarded) that converges
-appointments mutated while outbound intent was unavailable. It is **not**
-cron-registered, actuates only within intent-eligible studios (production has none),
-never calls Google, and never enables the worker or a flag. **No operator action is
-required for B2.3-b** — no Google Cloud, Vercel, or flag change. Design detail:
-`docs/integrations/google-calendar-sync.md` §3e.
+Phase **B2.3-b — reconciliation sweep + heartbeat + route** (PR #426 **MERGED +
+deployed 2026-07-15**, merge `f664f0f`; **dormant, NO migration** — hosted max stays
+0131) adds the enqueue-side recovery net (`/api/cron/calendar-reconcile`,
+`CRON_SECRET`-guarded) that converges appointments mutated while outbound intent was
+unavailable. It is **not** cron-registered, actuates only within intent-eligible
+studios (production has none), never calls Google, and never enables the worker or a
+flag. **No operator action is required for B2.3-b** — no Google Cloud, Vercel, or
+flag change. The outbound event execution + controlled activation is the **next**
+phase, **B2.3-c** (design intent, not built). Design detail:
+`docs/integrations/google-calendar-sync.md` §3e (reconciliation) + §3f (B2.3-c).
 
 ## 1. Google Cloud OAuth client (one-time)
 
