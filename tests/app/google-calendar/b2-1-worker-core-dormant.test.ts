@@ -64,13 +64,14 @@ describe("B2.1 worker core is not activated", () => {
     }
   });
 
-  it("the calendar-sync DRAIN route is absent; the only calendar cron route is the reconcile sweep", () => {
+  it("the two calendar cron ROUTES (reconcile sweep + B2.3-c2 worker drain) exist as files; neither is cron-registered", () => {
     const cronRoutes = walk(join("app", "api", "cron")).filter((f) => /calendar/i.test(f));
-    // The worker-drain route (/api/cron/calendar-sync) is B2.3-c — still absent.
-    expect(cronRoutes.some((f) => /calendar-sync/.test(f))).toBe(false);
-    // The reconcile SWEEP route is the single allowed B2.3-b calendar cron route.
-    expect(cronRoutes.length).toBe(1);
-    expect(cronRoutes.every((f) => /calendar-reconcile/.test(f))).toBe(true);
+    // B2.3-c2 adds the worker-DRAIN route (/api/cron/calendar-sync); it is present
+    // but UNSCHEDULED (the no-cron-registration invariant is asserted above).
+    expect(cronRoutes.some((f) => /calendar-sync/.test(f))).toBe(true);
+    // B2.3-b's reconcile SWEEP route remains present.
+    expect(cronRoutes.some((f) => /calendar-reconcile/.test(f))).toBe(true);
+    expect(cronRoutes.length).toBe(2);
   });
 
   it("every sync module is server-only", () => {

@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { storeRotatedRefreshToken } from "../connection";
-import type { ConnectionAuthRow, ConnectionStore } from "./token-manager";
+import { RefreshSecretReadError, type ConnectionAuthRow, type ConnectionStore } from "./token-manager";
 
 // Google Calendar — Phase B2.1: the production ConnectionStore, backed by the
 // service-role admin client. Every read/write is re-derived by (connectionId,
@@ -39,12 +39,24 @@ export function createAdminConnectionStore(): ConnectionStore {
       return toAuthRow(data);
     },
     async loadRefreshCiphertext(connectionId, studioId) {
-      const { data } = await admin
-        .from("calendar_connection_secrets")
-        .select("encrypted_refresh_token")
-        .eq("connection_id", connectionId)
-        .eq("studio_id", studioId)
-        .maybeSingle();
+      // Distinguish a genuinely-absent secret (data null, no error -> return null)
+      // from a FAILED/uncertain read (query error or thrown transport error ->
+      // throw RefreshSecretReadError). Silently coercing an error to null would let
+      // the token manager mistake a transient DB blip for a missing token and force
+      // reconnect_required. NO raw error/SQL/id/ciphertext is ever surfaced.
+      let data: { encrypted_refresh_token?: unknown } | null;
+      let error: unknown;
+      try {
+        ({ data, error } = await admin
+          .from("calendar_connection_secrets")
+          .select("encrypted_refresh_token")
+          .eq("connection_id", connectionId)
+          .eq("studio_id", studioId)
+          .maybeSingle());
+      } catch {
+        throw new RefreshSecretReadError();
+      }
+      if (error) throw new RefreshSecretReadError();
       return (data?.encrypted_refresh_token as string | null) ?? null;
     },
     async storeRotatedToken(args) {

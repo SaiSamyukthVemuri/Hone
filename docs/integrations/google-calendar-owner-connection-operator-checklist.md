@@ -235,3 +235,34 @@ IDs / no sensitive studio identifiers):
 - `https://hone.care`, `/privacy`, and `/terms` are publicly reachable (HTTP 200). Google Cloud
   homepage/privacy-policy URLs, domain-ownership verification, and app publication/verification
   were **not** pursued in this controlled Testing-mode validation.
+
+## 7. B2.3-c2 worker-drain route — authored, dormant, UNSCHEDULED (open PR)
+
+The authenticated worker-drain route `/api/cron/calendar-sync` was **reviewed + CI-green at PR #429
+head `f9ce6db`** and **becomes deployed dormant when the documentation-only descendant merges**; it
+changes no operator setup step in this phase and stays **inert** until a later, separately-authorized
+phase enables it (operational completion — merge-commit CI, production deploy, and the authorized
+no-work validation — is recorded in the PR closeout, not asserted here):
+
+- It is **NOT registered in `vercel.json`** — nothing invokes it on a schedule (**c3**, not c2,
+  owns scheduling).
+- It is gated by the SAME dormancy controls above: `worker_enabled` **OFF** → the claim RPC returns
+  zero rows and mutates nothing; every studio outbound flag **OFF** → the handler holds any job.
+- It calls **no Google API** while dormant and adds **no migration** (repo max stays `0132`), **no
+  `pg`**, and **no new environment variable** (its cross-process token-refresh mutex reuses the
+  existing `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`, fail-closed).
+
+**Post-merge no-work validation (run only after the PR merges — do NOT run in the implementation
+session).** With `CRON_SECRET` set and Upstash present:
+
+1. Read-only baseline: hosted migration max `0132`; `worker_enabled` false; outbound/inbound/two-way
+   flags false; `calendar_sync_outbox` = 0; `calendar_event_links` = 0; scope counts unchanged
+   (`calendar.app.created` = 1, `calendar.events.owned` = 0, broad `calendar.events` = 0); Willow
+   unconnected.
+2. Unauthenticated `GET /api/cron/calendar-sync` → **401**, no state change.
+3. Authorized `GET` (Bearer `CRON_SECRET`, never printed): expect `{ ok: true, no_work: true,
+   claimed: 0 }` → zero claimed, zero Google call, zero outbox/link mutation, only the
+   `gcal_worker:last_run` heartbeat written.
+4. Re-verify the baseline is unchanged; confirm no real Google event exists.
+5. Rollback (if needed) = a focused code PR removing the route. **No DB rollback** (no migration)
+   and **no schedule removal** (no cron registered).

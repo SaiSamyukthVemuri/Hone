@@ -829,6 +829,66 @@ alerting; no browser-supplied tenant/provider ids; **no cron registration yet**;
 `worker_enabled` remains false; all studio sync flags remain false; no hosted outbox
 work; **no real Google call during dormant-deployment validation**.
 
+> **B2.3-c2 implemented + reviewed (PR #429).** At the final pre-merge review point PR #429
+> was open and CI-green at the reviewed implementation head `f9ce6db` (0 unresolved threads).
+> **When the final documentation-only descendant merges, B2.3-c2 becomes deployed dormant**;
+> it remains **unscheduled** (c3 owns schedule registration), the worker stays off, every
+> studio sync flag stays off, and migration max remains `0132`. As of this pre-merge
+> checkpoint **no real Google appointment-event operation has occurred**. Operational
+> completion remains contingent on merge-commit CI, the production deployment, and the
+> separately-recorded authorized no-work validation (NOT asserted here). c4 owns Sam-only
+> controlled activation.
+> The route lives at `app/api/cron/calendar-sync/route.ts` (Node runtime, `force-dynamic`,
+> `Cache-Control: no-store`) and delegates to the one server-only seam
+> `lib/google-calendar/sync/worker-runtime.ts`, which is the FIRST and ONLY application
+> path allowed to import the c1 operations map. Fixed, non-caller-controlled bounds:
+> batch size 5, at most 3 batches (≤ 15 claimed). The **50s value is the job-ADMISSION
+> window** (`WORKER_JOB_ADMISSION_WINDOW_MS`) — it only gates STARTING new work / claiming a
+> new batch, NOT the total invocation duration. The platform ceiling is pinned as a literal
+> `export const maxDuration = 180` in the route (Next/Vercel static detection; **never via
+> `vercel.json`**), guaranteeing ≥ 120s of completion headroom for the last in-flight job
+> after the admission window closes (`180000 − 50000 = 130000 ms ≥ 120000`; asserted by
+> constant + test). It authenticates first (`isAuthorizedCronRequest`, before any admin
+> client or claim), rejects any caller-supplied query parameter with a PHI-free 400, then
+> drains `claim_calendar_sync_op` → `handleCalendarSyncJob` (c1 operations map) →
+> `record_calendar_sync_result`, distinguishing the **handler** JobResult from the
+> **durable** record-RPC status (`done`/`pending`/`dead`/`already_*`/`not_*`/`stale_token`)
+> and never touching the outbox itself. A worker-specific fail-open heartbeat
+> (`gcal_worker:last_run`, distinct from the reconciliation heartbeat) and bounded
+> fail-open ops alerts carry only PHI-free aggregates.
+>
+> **Refresh-secret read failures are preserved (not forced reconnect).** The production
+> connection store's `loadRefreshCiphertext` now DISTINGUISHES a genuinely-absent secret
+> (query succeeds, no row → `null` → the existing `no_refresh_token` reconnect path) from a
+> FAILED/uncertain read (a Supabase `error` or a thrown transport error → a safe typed
+> `RefreshSecretReadError`). The token manager maps that to a **transient**
+> (`refresh_secret_read_error` → worker `retry_transient`) and NEVER calls
+> `markReconnectRequired` or touches the stored refresh token, so a transient DB blip can no
+> longer force a connection into `reconnect_required`. The Upstash refresh lock still
+> releases normally in `finally`. No raw Supabase/SQL detail, connection id, ciphertext, or
+> token is ever surfaced.
+>
+> **Architecture amendment — the token-refresh coordinator.** The original design called
+> for `createPgRefreshCoordinator` (a `pg_advisory_xact_lock`), but the deployed serverless
+> route holds no pooled raw-Postgres connection: `pg` is a dev-only dependency deliberately
+> kept out of the application bundle, there is no production Postgres connection-string
+> secret, and none may be added in this phase. c2 therefore implements a NEW **Upstash**-
+> backed implementation of the existing `RefreshCoordinator` interface
+> (`createUpstashRefreshCoordinator`, key `gcal_refresh:lock:<connectionId>`, random
+> ownership token, atomic `SET … NX EX`, ownership-safe compare-and-delete release, fixed
+> 120s TTL) using ONLY the existing `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`.
+> It **fails closed** (a held/unavailable/thrown lock throws a safe typed error the token
+> manager maps to the bounded `refresh_lock_error` transient — an uncoordinated refresh
+> never runs). This is a **narrow per-connection token-lifecycle mutex, not a third worker
+> coordinator**: the only two Google Calendar orchestration coordinators remain
+> reconciliation and dead-row alerting, and worker concurrency is owned entirely by the
+> claim RPC + `FOR UPDATE SKIP LOCKED` + claim tokens + lease expiry + the reaper. The token
+> manager and the c1 operations-map invalidator share ONE process access-token cache. **No
+> `pg`, no new environment variable, no migration, no new infrastructure was added.** The
+> route is unscheduled, `worker_enabled` stays false, every studio sync flag stays false,
+> and an authorized invocation while dormant claims zero rows, calls Google zero times, and
+> mutates nothing.
+
 **B2.3-c3 — scheduler + observability readiness.** Prepare scheduled execution while
 still preventing Google dispatch, in this **safe order**: (1) register the
 reconciliation schedule first; (2) keep every studio outbound flag OFF; (3) keep
