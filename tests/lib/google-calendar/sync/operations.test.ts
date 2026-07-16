@@ -95,8 +95,8 @@ function store(opts: StoreOpts = {}) {
   return { store: s, calls };
 }
 
-function run(opType: ClaimedJob["opType"], deps: OperationDeps, c: SyncOperationContext): Promise<JobResult> {
-  return createCalendarSyncOperations(deps)[opType]!(c);
+function run(opType: ClaimedJob["opType"], deps: { rest: GoogleRestClient; store: OpsLinkStore; invalidateAccessToken?: (c: string) => void }, c: SyncOperationContext): Promise<JobResult> {
+  return createCalendarSyncOperations({ invalidateAccessToken: () => {}, ...deps })[opType]!(c);
 }
 
 describe("create / placeholder create-and-bind", () => {
@@ -383,6 +383,145 @@ describe("DB read failure (§8) and 401 invalidation (§9)", () => {
     const { store: st } = store({ link: link(), appt: appt() });
     const res = await run("event.create", { rest: r, store: st, invalidateAccessToken: invalidate }, ctx());
     expect(res.code).toBe("retry_transient");
+    expect(invalidate).toHaveBeenCalledWith(CONN);
+  });
+});
+
+describe("update 2xx verification (§2)", () => {
+  const realLink = () => link({ googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old", lastHoneVersion: 2 });
+  const upd = () => ctx({ opType: "event.update" });
+
+  it("mismatched id / mismatched marker on PATCH 2xx -> terminal_conflict, update_confirmed NEVER called", async () => {
+    for (const bad of [evMarker(LINK_ID, { id: "wrong" }), evMarker("other", { id: deriveEventId(STUDIO, LINK_ID) })]) {
+      const r = rest({ patchEvent: vi.fn(async () => evOk(bad, "e")) });
+      const { store: st, calls } = store({ link: realLink(), appt: appt() });
+      expect((await run("event.update", { rest: r, store: st }, upd())).code).toBe("terminal_conflict");
+      expect(calls.some((c) => c.action === "update_confirmed")).toBe(false);
+    }
+  });
+
+  it("cancelled PATCH 2xx -> rotate (never update_confirmed)", async () => {
+    const r = rest({ patchEvent: vi.fn(async () => evOk(evMarker(LINK_ID, { status: "cancelled" }), "e")), insertEvent: vi.fn(async () => evOk(evMarker("fresh-link"))) });
+    const { store: st, calls } = store({ link: realLink(), appt: appt() });
+    await run("event.update", { rest: r, store: st }, upd());
+    expect(calls.some((c) => c.action === "rotate_for_recreate")).toBe(true);
+    expect(calls.some((c) => c.action === "update_confirmed")).toBe(false);
+  });
+
+  it("missing id / missing marker / missing etag / malformed on PATCH 2xx -> GET reconcile; NEVER persist from the unverified response", async () => {
+    const pairs: Array<[Record<string, unknown>, string | null]> = [
+      [{ status: "confirmed", extendedProperties: { private: buildEventMarker(LINK_ID) } }, "e"], // missing id
+      [evMarker(LINK_ID, { extendedProperties: {} }), "e"], // missing marker
+      [evMarker(LINK_ID), null], // missing etag
+      [{}, "e"], // malformed
+    ];
+    for (const [bad, etag] of pairs) {
+      const r = rest({ patchEvent: vi.fn(async () => evOk(bad, etag)), getEvent: vi.fn(async () => evOk(evMarker(LINK_ID), "e-get")) });
+      const { store: st, calls } = store({ link: realLink(), appt: appt() });
+      expect((await run("event.update", { rest: r, store: st }, upd())).code).toBe("ok");
+      expect(r.getEvent).toHaveBeenCalledTimes(1); // reconciled
+      const uc = calls.find((c) => c.action === "update_confirmed");
+      expect(uc?.googleEtag).toBe("e-get"); // persisted the GET etag, NEVER the old stored etag
+    }
+  });
+
+  it("PATCH needs_get -> GET still unverified -> retry_transient (no persist)", async () => {
+    const r = rest({ patchEvent: vi.fn(async () => evOk(evMarker(LINK_ID), null)), getEvent: vi.fn(async () => evOk({ id: deriveEventId(STUDIO, LINK_ID), status: "confirmed", extendedProperties: {} }, "e")) });
+    const { store: st, calls } = store({ link: realLink(), appt: appt() });
+    expect((await run("event.update", { rest: r, store: st }, upd())).code).toBe("retry_transient");
+    expect(calls.some((c) => c.action === "update_confirmed")).toBe(false);
+  });
+});
+
+describe("fresh-ETag required on recovery paths (§3)", () => {
+  const realLink = () => link({ googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old" });
+  const noEtag = (linkId: string, extra: Record<string, unknown> = {}) => evOk(evMarker(linkId, extra), ""); // GET with empty ETag
+
+  it("412 PATCH + GET without ETag -> no second PATCH (retry_transient)", async () => {
+    const r = rest({ patchEvent: vi.fn(async () => pcf()), getEvent: vi.fn(async () => noEtag(LINK_ID)) });
+    const { store: st } = store({ link: realLink(), appt: appt() });
+    expect((await run("event.update", { rest: r, store: st }, ctx({ opType: "event.update" }))).code).toBe("retry_transient");
+    expect((r.patchEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("412 DELETE + GET without ETag -> no second DELETE (retry_transient)", async () => {
+    const r = rest({ deleteEvent: vi.fn(async () => pcf()), getEvent: vi.fn(async () => noEtag(LINK_ID)) });
+    const { store: st } = store({ link: realLink(), appt: appt({ status: "cancelled" }) });
+    expect((await run("event.delete", { rest: r, store: st }, ctx({ opType: "event.delete", payload: { sync_version: 3 } }))).code).toBe("retry_transient");
+    expect((r.deleteEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("placeholder GET without ETag -> no DELETE (retry_transient)", async () => {
+    const r = rest({ getEvent: vi.fn(async () => noEtag(LINK_ID)) });
+    const { store: st } = store({ link: link(), appt: appt({ status: "cancelled" }) });
+    expect((await run("event.delete", { rest: r, store: st }, ctx({ opType: "event.delete", payload: { sync_version: 3 } }))).code).toBe("retry_transient");
+    expect(r.deleteEvent).not.toHaveBeenCalled();
+  });
+
+  it("adopt GET without ETag -> no PATCH (retry_transient)", async () => {
+    const r = rest({ insertEvent: vi.fn(async () => conflict()), getEvent: vi.fn(async () => noEtag(LINK_ID)) });
+    const { store: st } = store({ link: link(), appt: appt() });
+    expect((await run("event.create", { rest: r, store: st }, ctx())).code).toBe("retry_transient");
+    expect(r.patchEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("re-fence DELETE follow-up (§4) — state changes between GET and the 2nd DELETE", () => {
+  const realLink = () => link({ googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old" });
+  const del = () => ctx({ opType: "event.delete", payload: { sync_version: 3 } });
+
+  function delete412Setup(refenceLink: LinkRow | null, refenceAppt: AppointmentState | null) {
+    const r = rest({ deleteEvent: vi.fn(async () => pcf()), getEvent: vi.fn(async () => evOk(evMarker(LINK_ID), "e-get")) });
+    const { store: st } = store({ link: realLink(), appt: appt({ status: "cancelled" }) });
+    // first fence load proceeds (cancelled appt + real link); re-fence load returns the changed state.
+    (st.loadActiveLinkByEntity as ReturnType<typeof vi.fn>).mockResolvedValueOnce(realLink()).mockResolvedValue(refenceLink);
+    (st.loadAppointmentState as ReturnType<typeof vi.fn>).mockResolvedValueOnce(appt({ status: "cancelled" })).mockResolvedValue(refenceAppt);
+    return { r, st };
+  }
+
+  it("appointment re-confirmed at a newer version -> no 2nd DELETE (superseded)", async () => {
+    const { r, st } = delete412Setup(realLink(), appt({ status: "confirmed", syncVersion: 9 }));
+    const res = await run("event.delete", { rest: r, store: st }, del());
+    expect(res.code).toBe("ok_noop_superseded");
+    expect((r.deleteEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("reschedule rebind (active link now null for this entity) -> no 2nd DELETE", async () => {
+    const { r, st } = delete412Setup(null, appt({ status: "cancelled" }));
+    const res = await run("event.delete", { rest: r, store: st }, del());
+    expect(res.code).toBe("ok_noop_no_active_link");
+    expect((r.deleteEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("active link changed (different link id) -> no 2nd DELETE", async () => {
+    const { r, st } = delete412Setup(link({ id: "other-link", googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old" }), appt({ status: "cancelled" }));
+    const res = await run("event.delete", { rest: r, store: st }, del());
+    expect(res.code).toBe("ok_noop_superseded");
+    expect((r.deleteEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("destination calendar changed -> no 2nd DELETE (retry_ineligible)", async () => {
+    const { r, st } = delete412Setup(link({ googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old", googleCalendarId: "OTHER-CAL" }), appt({ status: "cancelled" }));
+    const res = await run("event.delete", { rest: r, store: st }, del());
+    expect(res.code).toBe("retry_ineligible");
+    expect((r.deleteEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+});
+
+describe("permanent 4xx (§6) and 401 invalidation-once (§7)", () => {
+  it("permanent_error (400/405) from a provider call -> terminal_conflict", async () => {
+    const r = rest({ insertEvent: vi.fn(async () => err("permanent_error", 400, "google_http_400")) });
+    const { store: st } = store({ link: link(), appt: appt() });
+    expect((await run("event.create", { rest: r, store: st }, ctx())).code).toBe("terminal_conflict");
+  });
+
+  it("401 invalidates the per-connection token EXACTLY once, returns retry_transient", async () => {
+    const invalidate = vi.fn();
+    const r = rest({ insertEvent: vi.fn(async () => auth401()) });
+    const { store: st } = store({ link: link(), appt: appt() });
+    const res = await run("event.create", { rest: r, store: st, invalidateAccessToken: invalidate }, ctx());
+    expect(res.code).toBe("retry_transient");
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith(CONN);
   });
 });

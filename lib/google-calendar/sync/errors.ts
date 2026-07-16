@@ -20,7 +20,8 @@ export type GoogleErrorKind =
   | "not_found" // 404/410 (calendar or event) — B2.3-c decides rotate-or-noop
   | "conflict" // 409 — B2.3-c does GET + marker match / rotate
   | "precondition_failed" // 412 — etag mismatch; refetch + reapply (B2.3-c)
-  | "transient" // 5xx / network / timeout / malformed body
+  | "permanent_error" // unrecoverable request error (400 invalid, 405 method, etc.) — terminal
+  | "transient" // 5xx / 408 / network / timeout / malformed body
   | "config_error"; // calendar/connection not found, oauth client unavailable
 
 export type GoogleError = {
@@ -138,11 +139,19 @@ export function classifyGoogleResponse(input: {
   if (status === 429) {
     return { kind: "rate_limited", status, code: "google_http_429", retryAfterSeconds };
   }
+  if (status === 408) {
+    // Request Timeout is transient — retry with backoff.
+    return { kind: "transient", status, code: "google_http_408", retryAfterSeconds };
+  }
   if (status >= 500) {
     return { kind: "transient", status, code: `google_http_${status}`, retryAfterSeconds };
   }
-  // Any other 4xx (400/405/…) is a transient/unknown — retry with backoff rather
-  // than silently drop; never surface the body.
+  if (status >= 400) {
+    // Any other 4xx (400 invalid request, 405 method, 411/413/415/422, …) is an
+    // UNRECOVERABLE request error — retrying the identical request cannot help.
+    return { kind: "permanent_error", status, code: `google_http_${status}`, retryAfterSeconds: null };
+  }
+  // 1xx/3xx or anything unexpected: treat as transient (safe default; never surface the body).
   return { kind: "transient", status, code: `google_http_${status}`, retryAfterSeconds };
 }
 
@@ -167,8 +176,11 @@ export function classifyRefreshResponse(input: {
       return { kind: "invalid_grant", status: 400, code: "invalid_grant", retryAfterSeconds: null };
     }
   }
-  // Everything else on refresh (429/5xx/network) is transient.
-  return classifyGoogleResponse(input);
+  // Everything else on refresh (400 non-invalid_grant / 429 / 5xx / network) is
+  // transient — a refresh is always safe to retry a bounded number of times, so a
+  // permanent_error from the shared classifier is downgraded to transient here.
+  const e = classifyGoogleResponse(input);
+  return e.kind === "permanent_error" ? { ...e, kind: "transient" } : e;
 }
 
 // Classify a THROWN transport error (AbortError = timeout; anything else =

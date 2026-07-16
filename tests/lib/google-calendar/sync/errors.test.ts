@@ -19,10 +19,19 @@ describe("classifyGoogleResponse — full matrix", () => {
     [429, { error: {} }, "rate_limited"],
     [500, { error: {} }, "transient"],
     [503, { error: {} }, "transient"],
-    [400, { error: {} }, "transient"],
+    [408, { error: {} }, "transient"], // Request Timeout is retryable
+    [400, { error: {} }, "permanent_error"], // invalid request — unrecoverable
+    [405, { error: {} }, "permanent_error"], // unsupported method — unrecoverable
+    [422, { error: {} }, "permanent_error"], // other 4xx -> permanent
   ];
   it.each(cases)("status %i -> kind %s", (status, body, kind) => {
     expect(classifyGoogleResponse({ status, parsedBody: body }).kind).toBe(kind);
+  });
+
+  it("permanent 4xx (400/405) never retries indefinitely (permanent_error, retryAfter null)", () => {
+    const c = classifyGoogleResponse({ status: 400, parsedBody: { error: {} } });
+    expect(c.kind).toBe("permanent_error");
+    expect(c.retryAfterSeconds).toBeNull();
   });
 
   it("403 rateLimitExceeded -> rate_limited; insufficientPermissions -> insufficient_scope", () => {

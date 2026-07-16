@@ -197,6 +197,12 @@ begin
       return jsonb_build_object('status','rejected','code','bound_older_version','link_id', v_link.id);
     end if;
     if p_google_event_id is null then return jsonb_build_object('status','rejected','code','missing_provider_id'); end if;
+    -- ETag invariant: synced state may never be persisted without a confirmed,
+    -- non-empty provider ETag (application-contract backstop; the worker verifies
+    -- the ETag before calling this, so reaching here indicates a regression).
+    if p_google_etag is null or length(p_google_etag) = 0 then
+      return jsonb_build_object('status','rejected','code','missing_provider_etag');
+    end if;
     begin
       update public.calendar_event_links
          set google_event_id = p_google_event_id, google_ical_uid = p_google_ical_uid, google_etag = p_google_etag,
@@ -214,8 +220,11 @@ begin
   if p_google_event_id is null or v_link.google_event_id <> p_google_event_id then
     return jsonb_build_object('status','rejected','code','provider_id_mismatch');
   end if;
+  if p_google_etag is null or length(p_google_etag) = 0 then
+    return jsonb_build_object('status','rejected','code','missing_provider_etag');
+  end if;
   update public.calendar_event_links
-     set google_etag = coalesce(p_google_etag, v_link.google_etag),
+     set google_etag = p_google_etag,
          google_ical_uid = coalesce(p_google_ical_uid, v_link.google_ical_uid),
          sync_status = 'synced', last_hone_version = p_expected_source_version,
          last_sync_direction = 'hone_to_google', last_synced_at = now(), last_error_code = null, updated_at = now()

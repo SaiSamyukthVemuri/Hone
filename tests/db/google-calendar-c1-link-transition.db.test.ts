@@ -182,8 +182,33 @@ describe("calendar_event_link_transition RPC", () => {
     const [linkB] = await links(apptB);
     const tok = randomUUID();
     const ob = await procOutbox("event.create", apptB, 1, tok);
-    const r = await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: linkB.id, entityId: apptB, expectedSourceVersion: 1, googleEventId: "dup" });
+    const r = await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: linkB.id, entityId: apptB, expectedSourceVersion: 1, googleEventId: "dup", googleEtag: "e" });
     expect(r.code).toBe("foreign_event_conflict");
+  });
+
+  it("neither bind nor update can persist synced state without a non-empty provider ETag (§5)", async () => {
+    // bind_confirmed with a null/empty etag -> missing_provider_etag, link stays a placeholder.
+    const appt = await insertAppt("confirmed");
+    const [link] = await links(appt);
+    const tok = randomUUID();
+    const ob = await procOutbox("event.create", appt, 1, tok);
+    for (const etag of [null, ""]) {
+      const r = await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 1, googleEventId: "hone1x", googleEtag: etag });
+      expect(r.code).toBe("missing_provider_etag");
+    }
+    const still = (await adminQuery(`select google_event_id, sync_status from public.calendar_event_links where id=$1`, [link.id])).rows[0];
+    expect(still.google_event_id).toBeNull();
+    expect(still.sync_status).toBe("pending");
+
+    // update_confirmed with a null/empty etag -> missing_provider_etag, prior etag unchanged.
+    const appt2 = await insertAppt("confirmed");
+    const [link2] = await links(appt2);
+    await adminQuery(`update public.calendar_event_links set google_event_id='hone1e', google_etag='keep', sync_status='synced', last_hone_version=1 where id=$1`, [link2.id]);
+    await adminQuery(`update public.appointments set sync_version=2 where id=$1`, [appt2]);
+    const tok2 = randomUUID();
+    const ob2 = await procOutbox("event.update", appt2, 2, tok2);
+    expect((await transition({ action: "update_confirmed", outboxId: ob2, claimToken: tok2, linkId: link2.id, entityId: appt2, expectedSourceVersion: 2, googleEventId: "hone1e", googleEtag: "" })).code).toBe("missing_provider_etag");
+    expect((await adminQuery(`select google_etag from public.calendar_event_links where id=$1`, [link2.id])).rows[0].google_etag).toBe("keep");
   });
 
   it("mark_deleted soft-deletes, retains coordinates, and is idempotent", async () => {

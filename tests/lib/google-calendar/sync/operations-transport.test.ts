@@ -74,7 +74,7 @@ describe("REST transport composition", () => {
     const f = fakeFetch((req) => (req.method === "POST" ? { status: 200, body: marker(LINK_ID) } : { status: 404 }));
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
     const st = store(link());
-    const res = await createCalendarSyncOperations({ rest, store: st.store })["event.create"]!(ctx());
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: st.store })["event.create"]!(ctx());
     expect(res).toEqual({ code: "ok" });
     const post = f.calls.find((c) => c.method === "POST")!;
     expect(post.url).toContain(`/calendars/${CAL}/events`);
@@ -88,14 +88,14 @@ describe("REST transport composition", () => {
     const l = link({ googleEventId: EVENT_ID, googleEtag: "e-old", lastHoneVersion: 2 });
     const f = fakeFetch((req) => (req.method === "PATCH" ? { status: 200, body: marker(LINK_ID) } : { status: 404 }));
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
-    await createCalendarSyncOperations({ rest, store: store(l).store })["event.update"]!(ctx({ opType: "event.update" }));
+    await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: store(l).store })["event.update"]!(ctx({ opType: "event.update" }));
     const patch = f.calls.find((c) => c.method === "PATCH")!;
     expect(patch.headers["if-match"]).toBe("e-old");
     expect(patch.url).toContain("sendUpdates=none");
 
     const f2 = fakeFetch((req) => (req.method === "DELETE" ? { status: 204 } : { status: 404 }));
     const rest2 = createGoogleRestClient({ fetchImpl: f2.impl as never });
-    await createCalendarSyncOperations({ rest: rest2, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
+    await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest: rest2, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
     const del = f2.calls.find((c) => c.method === "DELETE")!;
     expect(del.headers["if-match"]).toBe("e-old");
     expect(del.url).toContain("sendUpdates=none");
@@ -110,7 +110,7 @@ describe("REST transport composition", () => {
       return { status: 404 };
     });
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
-    const res = await createCalendarSyncOperations({ rest, store: store(link()).store })["event.create"]!(ctx());
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: store(link()).store })["event.create"]!(ctx());
     expect(res).toEqual({ code: "ok" });
     expect(f.calls.some((c) => c.method === "GET")).toBe(true); // reconciled via GET
     expect(posts).toBe(1); // never blind-re-inserted
@@ -125,7 +125,7 @@ describe("REST transport composition", () => {
       return { status: 404 };
     });
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
-    const res = await createCalendarSyncOperations({ rest, store: store(l).store })["event.update"]!(ctx({ opType: "event.update" }));
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: store(l).store })["event.update"]!(ctx({ opType: "event.update" }));
     expect(res.code).toBe("terminal_conflict");
     expect(patches).toBe(1); // never reapplied over a foreign event
   });
@@ -139,7 +139,7 @@ describe("REST transport composition", () => {
       return { status: 404 };
     });
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
-    const res = await createCalendarSyncOperations({ rest, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
     expect(res.code).toBe("terminal_conflict");
     expect(deletes).toBe(1); // GET-verified before a second delete; foreign -> no delete
   });
@@ -151,12 +151,36 @@ describe("REST transport composition", () => {
     const l = link({ googleEventId: EVENT_ID, googleEtag: "e" });
     const f = fakeFetch(() => ({ status: 410, body: { error: { errors: [{ reason: "deleted" }] } } }));
     const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
-    const res = await createCalendarSyncOperations({ rest, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: store(l).store })["event.delete"]!(ctx({ opType: "event.delete", payload: { sync_version: 3 } }));
     expect(res.code).toBe("ok_noop_tombstone_deleted");
     const joined = logs.join("\n");
     expect(joined).not.toContain("AT-SECRET");
     expect(joined.toLowerCase()).not.toContain("bearer ");
     spy.mockRestore();
     errSpy.mockRestore();
+  });
+  it("update PATCH 2xx missing marker -> GET reconciliation over the real client -> update_confirmed with the GET ETag", async () => {
+    const l = link({ googleEventId: EVENT_ID, googleEtag: "e-old", lastHoneVersion: 2 });
+    const f = fakeFetch((req) => {
+      if (req.method === "PATCH") return { status: 200, body: { id: EVENT_ID, status: "confirmed", etag: "e-srv" } }; // no marker -> needs_get
+      if (req.method === "GET") return { status: 200, body: marker(LINK_ID, { etag: "e-get" }) };
+      return { status: 404 };
+    });
+    const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
+    const st = store(l);
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: st.store })["event.update"]!(ctx({ opType: "event.update" }));
+    expect(res).toEqual({ code: "ok" });
+    expect(f.calls.some((c) => c.method === "GET")).toBe(true);
+    expect(st.calls.find((c) => c.action === "update_confirmed")?.googleEtag).toBe("e-get");
+  });
+
+  it("update PATCH 2xx mismatched id -> terminal_conflict (never persisted)", async () => {
+    const l = link({ googleEventId: EVENT_ID, googleEtag: "e-old", lastHoneVersion: 2 });
+    const f = fakeFetch((req) => (req.method === "PATCH" ? { status: 200, body: { id: "WRONG", status: "confirmed", etag: "e" } } : { status: 404 }));
+    const rest = createGoogleRestClient({ fetchImpl: f.impl as never });
+    const st = store(l);
+    const res = await createCalendarSyncOperations({ invalidateAccessToken: () => {}, rest, store: st.store })["event.update"]!(ctx({ opType: "event.update" }));
+    expect(res.code).toBe("terminal_conflict");
+    expect(st.calls.some((c) => c.action === "update_confirmed")).toBe(false);
   });
 });
