@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/materialize-recurring-breaks",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/calendar-reconcile",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/calendar-sync",
+      "schedule": "30 9 * * *"
     }
   ]
 }

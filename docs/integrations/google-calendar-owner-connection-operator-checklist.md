@@ -244,8 +244,14 @@ changes no operator setup step in this phase and stays **inert** until a later, 
 phase enables it (operational completion — merge-commit CI, production deploy, and the authorized
 no-work validation — is recorded in the PR closeout, not asserted here):
 
-- It is **NOT registered in `vercel.json`** — nothing invokes it on a schedule (**c3**, not c2,
-  owns scheduling).
+- **Scheduling (B2.3-c3, separate PR):** c3 registers both calendar cron routes in `vercel.json`
+  as **DAILY** crons — `/api/cron/calendar-reconcile` `0 9 * * *` and `/api/cron/calendar-sync`
+  `30 9 * * *` (staggered after the 08:00 `materialize-recurring-breaks` cron; daily because the
+  Vercel plan caps cron at once/day). Registration stays **DORMANT**: `worker_enabled=false` and
+  every studio flag OFF mean the scheduled worker claims zero rows and the reconciliation sweep
+  finds zero eligible studios. The **first scheduled `/api/cron/calendar-sync` run is the accepted
+  platform-originated B2.3-c2 no-work validation** (Vercel Cron supplies the production
+  `CRON_SECRET` automatically — no manual secret handling).
 - It is gated by the SAME dormancy controls above: `worker_enabled` **OFF** → the claim RPC returns
   zero rows and mutates nothing; every studio outbound flag **OFF** → the handler holds any job.
 - It calls **no Google API** while dormant and adds **no migration** (repo max stays `0132`), **no
