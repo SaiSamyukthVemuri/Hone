@@ -779,10 +779,19 @@ Google-originated appointment creation, shared/non-owned calendar support, broad
 layer with **no** route, cron, or runtime activation: the fixed minimal serializer;
 `event.create` / `event.update` / `event.delete` operations; execution-time tenant +
 destination revalidation; the execution-time stale-version fence; placeholder-link
-**create-and-bind**; provider idempotency + duplicate-replay safety; link persistence
-only **after** provider confirmation; retry + terminal result mapping; partial-success
-recovery; **fake-Google** transport tests (no real Google call in validation); no worker
-activation. **Approved v1 payload (exact):** `summary` = constant `"Hone appointment"`;
+**create-and-bind**; provider idempotency + duplicate-replay safety; **the existing
+enqueue/repair machinery creates or preserves a local placeholder link
+(`google_event_id` null — a placeholder does not claim a Google event exists) *before*
+provider execution, while provider coordinates (`google_event_id` and any returned iCal
+UID / ETag) and provider-applied link state (`sync_status`, `last_hone_version`, …) are
+persisted *only after* confirmed provider success or an explicitly defined
+ambiguous-response reconciliation** — provider-applied state must not falsely advance
+before the provider result and local persistence are safely committed, and provider
+success is never recorded while provider-coordinate persistence is missing except
+through an explicit recoverable partial-success state (B2.3-c1 builds the operation
+behavior; it does **not** replace or delay the already-shipped placeholder lifecycle);
+retry + terminal result mapping; partial-success recovery; **fake-Google** transport
+tests (no real Google call in validation); no worker activation. **Approved v1 payload (exact):** `summary` = constant `"Hone appointment"`;
 `start` = appointment `starts_at`; `end` = appointment `ends_at`; `visibility` =
 `private`; `transparency` = `opaque`; **no** location, description, attendees, client
 identity, or health/treatment/payment/internal-token data.
