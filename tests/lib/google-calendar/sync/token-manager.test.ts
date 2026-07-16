@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createAccessTokenCache } from "@/lib/google-calendar/sync/access-token-cache";
 import {
   createTokenManager,
+  RefreshSecretReadError,
   type ConnectionAuthRow,
   type ConnectionStore,
   type TokenCrypto,
 } from "@/lib/google-calendar/sync/token-manager";
+import { createRefreshCoordinator, type RefreshLockRedis } from "@/lib/google-calendar/sync/upstash-refresh-coordinator";
 import type { GoogleFailure, GoogleRestClient, RefreshTokenSuccess } from "@/lib/google-calendar/sync/google-rest-client";
 
 type RefreshFn = (rt: string) => Promise<RefreshTokenSuccess | GoogleFailure>;
@@ -207,5 +209,100 @@ describe("single-flight + cache", () => {
     clock += 1000;
     await tm.ensureAccessToken(CONN, STUDIO);
     expect(calls.length).toBe(2); // never cacheable under skew
+  });
+});
+
+describe("refresh-secret read failure is preserved (not forced reconnect)", () => {
+  // A store whose loadRefreshCiphertext behaviour is fully controllable; the other
+  // methods are spies so we can assert what a secret-read failure does NOT trigger.
+  function secretStore(loadImpl: () => Promise<string | null>) {
+    const markReconnectRequired = vi.fn(async () => {});
+    const storeRotatedToken = vi.fn(async () => {});
+    const store: ConnectionStore = {
+      loadConnection: async (id, s) => (id === CONN && s === STUDIO ? baseRow() : null),
+      loadRefreshCiphertext: vi.fn(loadImpl),
+      storeRotatedToken,
+      touchTokenExpiry: vi.fn(async () => {}),
+      markReconnectRequired,
+    };
+    return { store, markReconnectRequired, storeRotatedToken };
+  }
+
+  it("1. genuinely-absent secret (no query error) -> markReconnectRequired + no_refresh_token", async () => {
+    const { store, markReconnectRequired } = secretStore(async () => null);
+    const { client } = makeClient([ok("x")]);
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.kind).toBe("reconnect_required");
+      expect(r.code).toBe("no_refresh_token");
+    }
+    expect(markReconnectRequired).toHaveBeenCalledWith(CONN, STUDIO, "no_refresh_token");
+  });
+
+  it("2. secret READ ERROR (RefreshSecretReadError) -> transient, NO reconnect, token untouched, safe code only", async () => {
+    const { store, markReconnectRequired, storeRotatedToken } = secretStore(async () => {
+      throw new RefreshSecretReadError();
+    });
+    const { client, calls } = makeClient([ok("x")]);
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.kind).toBe("transient");
+      expect(r.code).toBe("refresh_secret_read_error"); // safe code, no raw detail
+    }
+    expect(markReconnectRequired).not.toHaveBeenCalled(); // never forced reconnect
+    expect(storeRotatedToken).not.toHaveBeenCalled(); // stored token untouched
+    expect(calls.length).toBe(0); // never attempted a Google refresh
+  });
+
+  it("3. secret read THROW behaves identically (transient, no reconnect)", async () => {
+    // At the token-manager boundary a returned Supabase error and a thrown transport
+    // error both surface as RefreshSecretReadError (the store maps both) -> same path.
+    const { store, markReconnectRequired } = secretStore(() => Promise.reject(new RefreshSecretReadError()));
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client: makeClient([ok("x")]).client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok === false && r.kind).toBe("transient");
+    expect(markReconnectRequired).not.toHaveBeenCalled();
+  });
+
+  it("4. successful secret read still refreshes normally", async () => {
+    const { store } = secretStore(async () => "enc:rt1");
+    const { client, calls } = makeClient([ok("at-ok", 3600)]);
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.accessToken).toBe("at-ok");
+    expect(calls.length).toBe(1);
+  });
+
+  it("5. the Upstash refresh lock is still RELEASED after a secret-read failure", async () => {
+    // A fake redis modelling SET NX EX + compare-and-delete release, so we can prove
+    // the lock is released even when the protected callback ends in a transient.
+    const kv = new Map<string, string>();
+    const evals: string[] = [];
+    const redis: RefreshLockRedis = {
+      async set(key, value) {
+        if (kv.has(key)) return null;
+        kv.set(key, value);
+        return "OK";
+      },
+      async eval(_s, keys, args) {
+        evals.push("release");
+        if (kv.get(keys[0]) === String(args[0])) kv.delete(keys[0]);
+        return 1;
+      },
+    };
+    const coordinator = createRefreshCoordinator(redis);
+    const { store } = secretStore(async () => {
+      throw new RefreshSecretReadError();
+    });
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client: makeClient([ok("x")]).client, cache: createAccessTokenCache(), coordinator });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok === false && r.kind).toBe("transient");
+    expect(evals).toContain("release"); // lock released in finally
+    expect(kv.size).toBe(0); // no lock left held
   });
 });

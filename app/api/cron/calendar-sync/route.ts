@@ -22,6 +22,13 @@ import { handleWorkerRoute } from "@/lib/google-calendar/sync/worker-runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Platform function ceiling (a literal so Next.js/Vercel can statically detect it;
+// NOT set via vercel.json). The seam's job-ADMISSION window (WORKER_JOB_ADMISSION_
+// WINDOW_MS = 50s) only gates STARTING new work; this 180s ceiling guarantees at
+// least 120s of completion headroom for the last in-flight job after the admission
+// window closes (180000 - 50000 = 130000 ms >= 120000). Keep in sync with
+// WORKER_PLATFORM_MAX_DURATION_SECONDS.
+export const maxDuration = 180;
 
 export async function GET(req: Request) {
   const { status, body } = await handleWorkerRoute(req);

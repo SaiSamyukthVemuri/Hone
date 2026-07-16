@@ -37,11 +37,28 @@ export type ConnectionAuthRow = {
   destinationMode: string | null;
 };
 
+// A safe typed error for a FAILED/uncertain refresh-secret read (a Supabase query
+// error or a thrown transport error while reading calendar_connection_secrets). It
+// is DISTINCT from a genuinely-absent secret (which loadRefreshCiphertext returns
+// as null). The token manager maps it to a transient retry — NEVER to
+// reconnect_required — so a transient DB blip can't force a re-auth or touch the
+// stored refresh token. Carries NO raw Supabase/SQL detail, connection id,
+// ciphertext, or secret.
+export class RefreshSecretReadError extends Error {
+  constructor() {
+    super("refresh secret read failed");
+    this.name = "RefreshSecretReadError";
+  }
+}
+
 // DB access, injected so the worker core is testable against a local disposable
 // Supabase (pg) without the Supabase JS admin client. Production wiring uses the
 // admin-client store (connection-store.ts).
 export interface ConnectionStore {
   loadConnection(connectionId: string, studioId: string): Promise<ConnectionAuthRow | null>;
+  // Returns the ciphertext when present, null when the query SUCCEEDS with no
+  // secret row, and THROWS RefreshSecretReadError when the read fails/is uncertain
+  // (never conflate a read failure with a genuinely-absent token).
   loadRefreshCiphertext(connectionId: string, studioId: string): Promise<string | null>;
   storeRotatedToken(args: {
     connectionId: string;
@@ -114,7 +131,19 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
       return { ok: false, kind: "reconnect_required", code: `connection_${conn.connectionStatus}` };
     }
 
-    const cipher = await deps.store.loadRefreshCiphertext(connectionId, studioId);
+    let cipher: string | null;
+    try {
+      cipher = await deps.store.loadRefreshCiphertext(connectionId, studioId);
+    } catch (e) {
+      if (e instanceof RefreshSecretReadError) {
+        // A transient/uncertain secrets-read failure is NOT a missing token: do
+        // NOT mark reconnect_required, do NOT clear/overwrite the stored refresh
+        // token. Report a transient so the worker result becomes retry_transient.
+        // (The refresh coordinator's finally still releases the lock normally.)
+        return { ok: false, kind: "transient", code: "refresh_secret_read_error" };
+      }
+      throw e;
+    }
     if (!cipher) {
       await deps.store.markReconnectRequired(connectionId, studioId, "no_refresh_token");
       deps.cache.clear(connectionId);

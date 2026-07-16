@@ -7,6 +7,9 @@ import {
   WORKER_BATCH_SIZE,
   WORKER_MAX_BATCHES,
   WORKER_MAX_CLAIMED,
+  WORKER_JOB_ADMISSION_WINDOW_MS,
+  WORKER_PLATFORM_MAX_DURATION_SECONDS,
+  WORKER_MIN_COMPLETION_HEADROOM_MS,
   type RecordPort,
   type WorkerRoutePorts,
 } from "@/lib/google-calendar/sync/worker-runtime";
@@ -376,5 +379,42 @@ describe("createProductionWorkerRuntime — composition (§12/§22)", () => {
   it("toClaimedJob rejects a malformed claim row", () => {
     expect(() => toClaimedJob({ id: "i" })).toThrow(ClaimShapeError);
     expect(() => toClaimedJob({ id: "i", studio_id: "s", connection_id: "c", op_type: "bogus", claim_token: "t" })).toThrow(ClaimShapeError);
+  });
+});
+
+describe("route duration ceiling + job-admission window (§3)", () => {
+  it("the completion-headroom invariant holds: maxDuration*1000 - admission window >= 120s", () => {
+    expect(WORKER_PLATFORM_MAX_DURATION_SECONDS * 1000 - WORKER_JOB_ADMISSION_WINDOW_MS).toBeGreaterThanOrEqual(
+      WORKER_MIN_COMPLETION_HEADROOM_MS,
+    );
+    expect(WORKER_MIN_COMPLETION_HEADROOM_MS).toBe(120_000);
+  });
+
+  it("the admission window (50s) and platform ceiling (180s) are fixed constants", () => {
+    expect(WORKER_JOB_ADMISSION_WINDOW_MS).toBe(50_000);
+    expect(WORKER_PLATFORM_MAX_DURATION_SECONDS).toBe(180);
+  });
+
+  it("the route pins a LITERAL maxDuration equal to the platform ceiling (Vercel/Next static detection)", async () => {
+    const mod = await import("@/app/api/cron/calendar-sync/route");
+    expect(mod.maxDuration).toBe(180);
+    expect(mod.maxDuration).toBe(WORKER_PLATFORM_MAX_DURATION_SECONDS);
+  });
+
+  it("no job begins and no new batch is claimed after the admission window (not caller-controllable)", async () => {
+    let t = 0;
+    const deadlineMs = WORKER_JOB_ADMISSION_WINDOW_MS; // the admission deadline
+    const jobs = [job("1"), job("2")];
+    const claim = vi.fn(async () => jobs);
+    const handle = vi.fn(async () => ({ code: "ok" as const }));
+    const record = vi.fn<RecordPort>(async () => {
+      t = deadlineMs; // the first record closes the admission window
+      return "done";
+    });
+    const r = await drainCalendarSyncQueue({ claim, handle, record }, { startedAt: 0, deadlineMs, now: () => t });
+    expect(r.handled).toBe(1); // job 2 never begins after the window
+    expect(r.unstarted_claimed).toBe(1); // left to lease/reaper recovery
+    expect(r.timed_out).toBe(true);
+    expect(claim).toHaveBeenCalledTimes(1); // no new batch claimed after the window
   });
 });

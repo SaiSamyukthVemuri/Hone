@@ -834,15 +834,31 @@ work; **no real Google call during dormant-deployment validation**.
 > `Cache-Control: no-store`) and delegates to the one server-only seam
 > `lib/google-calendar/sync/worker-runtime.ts`, which is the FIRST and ONLY application
 > path allowed to import the c1 operations map. Fixed, non-caller-controlled bounds:
-> batch size 5, at most 3 batches (≤ 15 claimed), 50s route budget below the platform
-> timeout. It authenticates first (`isAuthorizedCronRequest`, before any admin client or
-> claim), rejects any caller-supplied query parameter with a PHI-free 400, then drains
-> `claim_calendar_sync_op` → `handleCalendarSyncJob` (c1 operations map) →
+> batch size 5, at most 3 batches (≤ 15 claimed). The **50s value is the job-ADMISSION
+> window** (`WORKER_JOB_ADMISSION_WINDOW_MS`) — it only gates STARTING new work / claiming a
+> new batch, NOT the total invocation duration. The platform ceiling is pinned as a literal
+> `export const maxDuration = 180` in the route (Next/Vercel static detection; **never via
+> `vercel.json`**), guaranteeing ≥ 120s of completion headroom for the last in-flight job
+> after the admission window closes (`180000 − 50000 = 130000 ms ≥ 120000`; asserted by
+> constant + test). It authenticates first (`isAuthorizedCronRequest`, before any admin
+> client or claim), rejects any caller-supplied query parameter with a PHI-free 400, then
+> drains `claim_calendar_sync_op` → `handleCalendarSyncJob` (c1 operations map) →
 > `record_calendar_sync_result`, distinguishing the **handler** JobResult from the
 > **durable** record-RPC status (`done`/`pending`/`dead`/`already_*`/`not_*`/`stale_token`)
 > and never touching the outbox itself. A worker-specific fail-open heartbeat
 > (`gcal_worker:last_run`, distinct from the reconciliation heartbeat) and bounded
 > fail-open ops alerts carry only PHI-free aggregates.
+>
+> **Refresh-secret read failures are preserved (not forced reconnect).** The production
+> connection store's `loadRefreshCiphertext` now DISTINGUISHES a genuinely-absent secret
+> (query succeeds, no row → `null` → the existing `no_refresh_token` reconnect path) from a
+> FAILED/uncertain read (a Supabase `error` or a thrown transport error → a safe typed
+> `RefreshSecretReadError`). The token manager maps that to a **transient**
+> (`refresh_secret_read_error` → worker `retry_transient`) and NEVER calls
+> `markReconnectRequired` or touches the stored refresh token, so a transient DB blip can no
+> longer force a connection into `reconnect_required`. The Upstash refresh lock still
+> releases normally in `finally`. No raw Supabase/SQL detail, connection id, ciphertext, or
+> token is ever surfaced.
 >
 > **Architecture amendment — the token-refresh coordinator.** The original design called
 > for `createPgRefreshCoordinator` (a `pg_advisory_xact_lock`), but the deployed serverless

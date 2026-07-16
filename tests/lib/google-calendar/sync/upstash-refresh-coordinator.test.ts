@@ -7,7 +7,7 @@ import {
   RefreshLockUnavailableError,
   type RefreshLockRedis,
 } from "@/lib/google-calendar/sync/upstash-refresh-coordinator";
-import { WORKER_ROUTE_BUDGET_MS } from "@/lib/google-calendar/sync/worker-runtime";
+import { WORKER_JOB_ADMISSION_WINDOW_MS } from "@/lib/google-calendar/sync/worker-runtime";
 
 // Google Calendar — Phase B2.3-c2: the Upstash per-connection token-refresh mutex.
 // Addendum §6 — the ten required direct tests. No real Redis, no real Google.
@@ -186,7 +186,7 @@ describe("upstash refresh coordinator", () => {
     // runExclusive has no TTL parameter — the caller cannot influence it.
     await coord.runExclusive("conn-1", async () => 0);
     expect(setCalls[0].opts.ex).toBe(GCAL_REFRESH_LOCK_TTL_SECONDS);
-    expect(GCAL_REFRESH_LOCK_TTL_SECONDS * 1000).toBeGreaterThan(WORKER_ROUTE_BUDGET_MS);
+    expect(GCAL_REFRESH_LOCK_TTL_SECONDS * 1000).toBeGreaterThan(WORKER_JOB_ADMISSION_WINDOW_MS);
   });
 
   it("9. privacy: only the random ownership token is stored; no access/refresh token is placed in Redis", async () => {

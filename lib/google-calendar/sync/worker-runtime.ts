@@ -56,9 +56,19 @@ import { recordWorkerRun, type WorkerHeartbeat } from "./worker-heartbeat";
 export const WORKER_BATCH_SIZE = 5; // per claim RPC call (<= the RPC's own [1,25] clamp)
 export const WORKER_MAX_BATCHES = 3; // route claims at most this many batches
 export const WORKER_MAX_CLAIMED = WORKER_BATCH_SIZE * WORKER_MAX_BATCHES; // 15
-// Materially below the platform function timeout; leaves headroom after the last
-// started job for record + heartbeat + response.
-export const WORKER_ROUTE_BUDGET_MS = 50_000;
+// The job-ADMISSION window (NOT the total invocation duration). The drain stops
+// STARTING new jobs and stops claiming a new batch at/after this point; an
+// already-started job then runs to completion within the platform ceiling below.
+export const WORKER_JOB_ADMISSION_WINDOW_MS = 50_000;
+// The platform function ceiling. A literal `export const maxDuration` is pinned in
+// the route (app/api/cron/calendar-sync/route.ts) for Next.js/Vercel static
+// detection; this constant lets tests assert the two agree and that the
+// completion-headroom invariant below holds. NOT set via vercel.json.
+export const WORKER_PLATFORM_MAX_DURATION_SECONDS = 180;
+// The MINIMUM guaranteed completion headroom for the last in-flight job after the
+// admission window closes: WORKER_PLATFORM_MAX_DURATION_SECONDS*1000 -
+// WORKER_JOB_ADMISSION_WINDOW_MS must be >= this (>= 120s).
+export const WORKER_MIN_COMPLETION_HEADROOM_MS = 120_000;
 
 // ---------------------------------------------------------------------------
 // Claim row validation (§9). A malformed claim row aborts the run safely; nothing
@@ -554,7 +564,7 @@ export async function handleWorkerRoute(
 
   const now = opts.now ?? Date.now;
   const startedAt = now();
-  const deadlineMs = startedAt + (opts.budgetMs ?? WORKER_ROUTE_BUDGET_MS);
+  const deadlineMs = startedAt + (opts.budgetMs ?? WORKER_JOB_ADMISSION_WINDOW_MS);
   const recordHeartbeat = opts.observers?.recordHeartbeat ?? recordWorkerRun;
   const emitAlert = opts.observers?.emitAlert ?? defaultEmitAlert;
 

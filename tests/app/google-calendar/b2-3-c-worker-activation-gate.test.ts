@@ -115,6 +115,13 @@ describe("B2.3-c worker activation gate (c2)", () => {
     expect(route).not.toMatch(/searchParams\.get|studio_id|connection_id|batch_size|appointment_id|event_id|link_id|calendar_id/);
   });
 
+  it("the platform ceiling is pinned as a LITERAL maxDuration in the route, NOT via vercel.json", () => {
+    const route = read(APPROVED_ROUTE);
+    expect(route).toMatch(/export const maxDuration = 180/); // literal integer for Next/Vercel static detection
+    const vercel = read("vercel.json");
+    expect(vercel).not.toMatch(/maxDuration/); // never configured through vercel.json
+  });
+
   it("no calendar worker cron is registered in vercel.json", () => {
     const vercel = read("vercel.json");
     expect(vercel).not.toMatch(/calendar-sync/);
