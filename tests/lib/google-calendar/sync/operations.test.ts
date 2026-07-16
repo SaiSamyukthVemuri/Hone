@@ -525,3 +525,23 @@ describe("permanent 4xx (§6) and 401 invalidation-once (§7)", () => {
     expect(invalidate).toHaveBeenCalledWith(CONN);
   });
 });
+
+describe("operation calendar alignment (§3/§4-8)", () => {
+  it("current write calendar differs from the link calendar -> retry_ineligible, zero provider calls", async () => {
+    const r = rest();
+    const { store: st } = store({ link: link(), appt: appt() });
+    const c: SyncOperationContext = { job: job(), accessToken: "at", connection: { writeCalendarId: "OTHER-CAL" } as never };
+    const res = await run("event.create", { rest: r, store: st }, c);
+    expect(res).toEqual({ code: "retry_ineligible", errorCode: "calendar_alignment" });
+    expect(r.insertEvent).not.toHaveBeenCalled();
+    expect(r.getEvent).not.toHaveBeenCalled();
+  });
+
+  it("null/empty current write calendar -> retry_ineligible, zero provider calls", async () => {
+    const r = rest();
+    const { store: st } = store({ link: link(), appt: appt() });
+    const c: SyncOperationContext = { job: job(), accessToken: "at", connection: { writeCalendarId: null } as never };
+    expect((await run("event.create", { rest: r, store: st }, c))).toEqual({ code: "retry_ineligible", errorCode: "calendar_alignment" });
+    expect(r.insertEvent).not.toHaveBeenCalled();
+  });
+});

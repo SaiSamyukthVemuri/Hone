@@ -146,9 +146,11 @@ function checkAlignment(ctx: SyncOperationContext, link: LinkRow): JobResult | n
   ) {
     return { code: "terminal_conflict", errorCode: "link_job_mismatch" };
   }
+  // Calendar alignment: a missing/empty current write calendar, or one that differs
+  // from the link's calendar, must NOT dispatch. Only an exact non-empty match proceeds.
   const writeCal = ctx.connection.writeCalendarId;
-  if (writeCal && link.googleCalendarId !== writeCal) {
-    return { code: "retry_ineligible", errorCode: "calendar_transition" };
+  if (!writeCal || writeCal.length === 0 || link.googleCalendarId !== writeCal) {
+    return { code: "retry_ineligible", errorCode: "calendar_alignment" };
   }
   return null;
 }
@@ -477,7 +479,7 @@ async function refenceForDelete(ctx: SyncOperationContext, deps: OperationDeps, 
     if (!link) return { stop: { code: "terminal_conflict", errorCode: "orphan_link_not_owned" } };
     if (link.deletedAt) return { stop: { code: "ok_noop_tombstone_deleted" } };
     const wc = ctx.connection.writeCalendarId;
-    if (wc && link.googleCalendarId !== wc) return { stop: { code: "retry_ineligible", errorCode: "calendar_transition" } };
+    if (!wc || wc.length === 0 || link.googleCalendarId !== wc) return { stop: { code: "retry_ineligible", errorCode: "calendar_alignment" } };
   }
   if (link.id !== prior.id) return { stop: { code: "ok_noop_superseded", errorCode: "link_moved" } };
   if (mode === "real" && link.googleEventId !== prior.googleEventId) return { stop: { code: "ok_noop_superseded", errorCode: "provider_moved" } };

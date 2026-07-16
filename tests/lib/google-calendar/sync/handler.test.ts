@@ -166,3 +166,83 @@ describe("operation dispatch", () => {
     expect(r).toEqual({ code: "retry_ineligible", errorCode: "operation_not_implemented" });
   });
 });
+
+describe("execution-time revalidation: pre-token + post-token authoritative gate (§2/§4)", () => {
+  type EnsureImpl = () => Promise<{ ok: true; accessToken: string; connection: ConnectionAuthRow }>;
+  function setup(opts: { preConn?: ConnectionAuthRow; tokenConn?: ConnectionAuthRow; outbound?: () => Promise<boolean> }) {
+    const opSpy = vi.fn(async (): Promise<JobResult> => ({ code: "ok" }));
+    const captured: ConnectionAuthRow[] = [];
+    const op = vi.fn(async (ctx: { connection: ConnectionAuthRow }): Promise<JobResult> => { captured.push(ctx.connection); return opSpy(); });
+    const pre = opts.preConn ?? conn();
+    const tok = opts.tokenConn ?? conn();
+    const ensure = vi.fn<EnsureImpl>(async () => ({ ok: true, accessToken: "at", connection: tok }));
+    const d = deps({
+      store: { loadConnection: async () => pre } as unknown as HandlerDeps["store"],
+      tokenManager: { ensureAccessToken: ensure as unknown as EnsureFn },
+      isStudioOutboundEnabled: opts.outbound ?? (async () => true),
+      operations: { "event.create": op },
+    });
+    return { d, opSpy, ensure, captured };
+  }
+
+  it("1. initial connection has no writeCalendarId -> no token work, operation not called, retry_ineligible", async () => {
+    const { d, opSpy, ensure } = setup({ preConn: conn({ writeCalendarId: null }) });
+    const r = await handleCalendarSyncJob(job(), d);
+    expect(r).toEqual({ code: "retry_ineligible", errorCode: "missing_write_calendar" });
+    expect(ensure).not.toHaveBeenCalled();
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("2. token.connection has no writeCalendarId -> operation not called, retry_ineligible", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ writeCalendarId: "" }) });
+    expect((await handleCalendarSyncJob(job(), d))).toEqual({ code: "retry_ineligible", errorCode: "missing_write_calendar" });
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("3. scope present initially but missing from token.connection -> operation not called, terminal_insufficient_scope", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ grantedScopes: ["openid"] }) });
+    expect((await handleCalendarSyncJob(job(), d)).code).toBe("terminal_insufficient_scope");
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("4. token.connection reconnect_required -> operation not called, terminal_reconnect_required", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ connectionStatus: "reconnect_required" }) });
+    expect((await handleCalendarSyncJob(job(), d)).code).toBe("terminal_reconnect_required");
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("5. token.connection disconnected -> operation not called, retry_ineligible", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ connectionStatus: "disconnected" }) });
+    expect((await handleCalendarSyncJob(job(), d))).toEqual({ code: "retry_ineligible", errorCode: "connection_not_eligible" });
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("6. token.connection no longer studio owner -> operation not called, retry_ineligible", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ isStudioCalendarOwner: false }) });
+    expect((await handleCalendarSyncJob(job(), d))).toEqual({ code: "retry_ineligible", errorCode: "connection_not_eligible" });
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+
+  it("7. outbound flag true before token, false after -> operation not called, retry_ineligible", async () => {
+    const outbound = vi.fn<() => Promise<boolean>>().mockResolvedValueOnce(true).mockResolvedValue(false);
+    const { d, opSpy } = setup({ outbound });
+    expect((await handleCalendarSyncJob(job(), d))).toEqual({ code: "retry_ineligible", errorCode: "outbound_flag_off" });
+    expect(opSpy).not.toHaveBeenCalled();
+    expect(outbound).toHaveBeenCalledTimes(2); // read pre-token AND immediately before dispatch
+  });
+
+  it("9. valid token.connection -> the operation receives token.connection, NOT the stale pre-token connection", async () => {
+    const { d, captured } = setup({ preConn: conn({ writeCalendarId: "OLD-CAL" }), tokenConn: conn({ writeCalendarId: "NEW-CAL" }) });
+    const r = await handleCalendarSyncJob(job(), d);
+    expect(r).toEqual({ code: "ok" });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].writeCalendarId).toBe("NEW-CAL"); // the authoritative token.connection
+    expect(captured[0].writeCalendarId).not.toBe("OLD-CAL");
+  });
+
+  it("10. broad calendar.events alone on token.connection remains rejected -> terminal_insufficient_scope", async () => {
+    const { d, opSpy } = setup({ tokenConn: conn({ destinationMode: "existing_owned", grantedScopes: [EVENTS_BROAD] }) });
+    expect((await handleCalendarSyncJob(job(), d)).code).toBe("terminal_insufficient_scope");
+    expect(opSpy).not.toHaveBeenCalled();
+  });
+});
