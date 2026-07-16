@@ -491,9 +491,9 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   with no version compare; the handler/`record_calendar_sync_result` compare nothing —
   verified). Generating current intent alongside a stale pending job is safe at this
   phase because the worker is OFF (nothing dispatches). The execution-time fence — a
-  B2.4 worker operation returning `ok_noop_superseded` (already a defined JobResult
+  B2.3-c worker operation returning `ok_noop_superseded` (already a defined JobResult
   code) when a job's `payload.sync_version` is older than the current link/appointment
-  version — is a **B2.4 worker-operation responsibility and needs no migration**
+  version — is a **B2.3-c worker-operation responsibility and needs no migration**
   (`appointments.sync_version` + `calendar_event_links.last_hone_version` already carry
   everything the fence needs). B2.3-b only ensures the current desired intent EXISTS.
 - **Placeholder-vs-real link distinction (upsert contract).** A **placeholder** link
@@ -501,7 +501,7 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   confirmed appointment with a placeholder link and no current job re-drives a
   **current upsert intent**. Because an active link already exists, the deployed
   enqueue trigger emits **`event.update`** (NOT `event.create`); no real provider
-  update can occur (there is no provider event id), so the future B2.4 worker op must
+  update can occur (there is no provider event id), so the future B2.3-c worker op must
   treat `event.update` + a placeholder link as **create-and-bind**, and must fence any
   stale earlier create first. If the placeholder's create is terminally **dead** it
   enters a manual-review skip surfaced by the dead-row alert (no auto-loop). A
@@ -819,8 +819,19 @@ outbound flag) and worker gate (`worker_enabled`) remain authoritative.
 controlled dedicated **"Hone Appointments"** calendar, in this **exact order**:
 1. Read-only production baseline: migration max, worker state, flags, outbox count, link
    count, scope counts, destination readiness.
-2. Confirm the controlled destination: `dedicated_app_created`, owner-bound, not
-   ambiguous, exact `calendar.app.created` scope granted, write calendar configured.
+2. **Confirm the controlled destination + reconnect preflight (conditional — not an
+   assumed step).** Confirm `dedicated_app_created`, owner-bound, not ambiguous, exact
+   `calendar.app.created` scope granted, write calendar configured. **Re-read connection
+   health and the exact destination-derived grants immediately before activation.** For
+   Sam's dedicated path, **no new consent or reconnect is required** while the connection
+   remains `connected`, the encrypted refresh token remains usable, and the
+   `calendar.app.created` grant is present — **do not reconnect merely because B2.3-c
+   begins.** Reconnect is required **only if** the connection is `reconnect_required`, the
+   dedicated grant is missing or unusable, or a **separately approved** `existing_owned`
+   validation needs `calendar.events.owned`. A **Testing-mode token expiry** may
+   legitimately produce `reconnect_required` — treat it as a **preflight condition, not an
+   assumed step**. **Existing-owned incremental consent remains separate and is NOT part of
+   the first dedicated activation.**
 3. Keep Willow unconnected.
 4. **Initial-activation candidate-set gate (MANDATORY — before enabling any flag).** The
    deployed reconciliation boundary sweeps **every** appointment that is `status =
@@ -1073,7 +1084,18 @@ session:
   rest (encrypt-before-store, fail if encryption fails), token in logs (hard rule:
   never log code/state/tokens/verifier).
 
-### Incremental authorization strategy
+### Incremental authorization strategy — historical pre-B2.4 strategy (SUPERSEDED; retained for decision provenance)
+
+> **⚠️ HISTORICAL — pre-B2.4, superseded by B2.4 (§3d). Do not read the paragraphs
+> below as the current plan.** The **active** outbound authorization contract is:
+> `dedicated_app_created` → **`calendar.app.created`**; `existing_owned` →
+> **`calendar.events.owned`**; broad **`calendar.events` is accepted nowhere**;
+> **B2.3-c is the worker/event-execution phase** (not "B2.4 worker" or "B2.5"); and
+> **Sam's dedicated path already holds its required `calendar.app.created` grant** (empty
+> "Hone Appointments" calendar already provisioned — see §3d). The text below (including
+> its `calendar.events.owned`-single-scope, broad-`calendar.events`-fallback, "expected
+> migration 0126", "B2.5", "open B2.4 validation", and "Sam requires a future reconnect"
+> language) is **obsolete** and kept only for decision history.
 
 Phase A requests the **minimum** scopes: `openid`, `userinfo.email`, and
 `calendar.calendarlist.readonly` (the narrowest official scope that makes calendar
@@ -1148,8 +1170,8 @@ metadata only** (`schema_version`, `sync_version`, op, and — for orphan tombst
 `google_event_id`/`google_calendar_id`/`reason`); it is written only by the DB
 enqueue trigger + repair RPCs from typed values, never a free-form spread of an
 entity row (a DB test asserts no client identity in the queue). The **event
-serializer** that maps the allow-list above into a Google payload is **B2.4 worker
-territory and is NOT built in B2.3-b** — the reconciliation sweep produces no
+serializer** that maps the allow-list above into a Google payload belongs to
+**B2.3-c1 and is NOT built in B2.3-b** — the reconciliation sweep produces no
 payloads and makes no Google call; it only re-drives intent through the trigger.
 
 ---
@@ -1172,11 +1194,16 @@ payloads and makes no Google call; it only re-drives intent through the trigger.
 `event.create`/`update`/`delete` operations, the fixed minimal serializer, the worker-drain
 route `/api/cron/calendar-sync`, the reconciliation + worker cron registrations, and
 controlled Sam-only dedicated-destination activation. **Google event transport itself is
-still unbuilt** — this is where it lands. Requires ONE reconnect for Sam via incremental
-auth to add the **destination-derived** event scope (`calendar.app.created` for a dedicated
-Hone calendar, `calendar.events.owned` for an existing owned calendar — broad
-`calendar.events` is **retired**; see §3d). See §3f for the full sub-phase register,
-activation prerequisites, semantics, and rollout gates.
+still unbuilt** — this is where it lands. **For Sam's dedicated path, no new consent or
+reconnect is required** while the connection remains `connected`, the encrypted refresh
+token remains usable, and the exact `calendar.app.created` grant remains present (all
+recorded today — the empty "Hone Appointments" calendar is already provisioned).
+**Reconnect is required only if** the connection enters `reconnect_required`, the required
+dedicated grant is missing or unusable, or a **separately approved** `existing_owned`
+validation requests `calendar.events.owned` (broad `calendar.events` is **retired**;
+`dedicated_app_created` → `calendar.app.created`, `existing_owned` →
+`calendar.events.owned`; see §3d). See §3f for the full sub-phase register, the reconnect
+preflight rule, activation prerequisites, semantics, and rollout gates.
 
 **Later:**
 - **Phase C — Google → Hone busy:** `external_calendar_busy_events` (per-
