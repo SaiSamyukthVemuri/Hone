@@ -29,7 +29,7 @@ export type GoogleRestClientOptions = {
   now?: () => number;
 };
 
-// A Google Calendar event payload is produced by the (B2.4) privacy serializer;
+// A Google Calendar event payload is produced by the (B2.3-c1) privacy serializer;
 // here it is an opaque JSON object the client transmits verbatim.
 export type GoogleEventPayload = Record<string, unknown>;
 export type GoogleEventResource = Record<string, unknown> & {
@@ -116,6 +116,13 @@ export function createGoogleRestClient(opts: GoogleRestClientOptions = {}): Goog
     return eventId ? `${base}/${encodeURIComponent(eventId)}` : base;
   }
 
+  // Every WRITE (insert/patch/delete) suppresses guest notifications: Hone's
+  // appointment mirror is private and attendee-free, so sendUpdates=none
+  // guarantees no client-facing email/SMS is ever triggered by the worker.
+  function writeUrl(calendarId: string, eventId?: string): string {
+    return `${eventsUrl(calendarId, eventId)}?sendUpdates=none`;
+  }
+
   function extractEvent(raw: RawResponse): GoogleEventResource {
     return raw.parsedBody && typeof raw.parsedBody === "object"
       ? (raw.parsedBody as GoogleEventResource)
@@ -165,23 +172,25 @@ export function createGoogleRestClient(opts: GoogleRestClientOptions = {}): Goog
       return sendEvent("GET", eventsUrl(calendarId, eventId), accessToken, undefined, undefined);
     },
     async insertEvent({ accessToken, calendarId, event }): Promise<EventSuccess | GoogleFailure> {
-      return sendEvent("POST", eventsUrl(calendarId), accessToken, event, undefined);
+      // The caller-supplied deterministic event id travels in the insert body
+      // (`event.id`); sendUpdates=none suppresses guest notifications.
+      return sendEvent("POST", writeUrl(calendarId), accessToken, event, undefined);
     },
     async patchEvent({ accessToken, calendarId, eventId, event, etag }): Promise<EventSuccess | GoogleFailure> {
-      return sendEvent("PATCH", eventsUrl(calendarId, eventId), accessToken, event, etag ?? undefined);
+      return sendEvent("PATCH", writeUrl(calendarId, eventId), accessToken, event, etag ?? undefined);
     },
     async deleteEvent({ accessToken, calendarId, eventId, etag }): Promise<DeleteSuccess | GoogleFailure> {
       let raw: RawResponse;
       try {
-        raw = await request(eventsUrl(calendarId, eventId), {
+        raw = await request(writeUrl(calendarId, eventId), {
           method: "DELETE",
           headers: authHeaders(accessToken, etag ?? undefined),
         });
       } catch (err) {
         return { ok: false, error: classifyThrown(err) };
       }
-      // Google returns 204 on delete, 404/410 when already gone (B2.4 treats 404
-      // as success; here we surface the classification and let the handler decide).
+      // Google returns 204 on delete, 404/410 when already gone (B2.3-c treats
+      // 404/410 as converged; here we surface the classification and let the handler decide).
       const error = classifyGoogleResponse({ ...raw, now: now() });
       if (error.kind === "success") return { ok: true, status: raw.status };
       return { ok: false, error };

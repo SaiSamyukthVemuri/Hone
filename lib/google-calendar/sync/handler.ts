@@ -9,10 +9,10 @@ import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "./token-m
 // route, dedicated worker) calls. It depends on NO Next.js/Vercel/cron/host type
 // and on NO feature flag being enabled. It performs the execution-time
 // eligibility gate + token acquisition, then delegates the actual Google event
-// operation to an INJECTED operations map. In B2.1 no real operations are wired
-// (event create/update/delete are B2.4); tests inject mock operations to exercise
-// the full JobResult mapping. The core NEVER creates/updates/deletes a Google
-// event itself.
+// operation to an INJECTED operations map. B2.3-c1 supplies the real event
+// create/update/delete operations (dormant — wired to no route); tests also
+// inject mock operations to exercise the full JobResult mapping. The core NEVER
+// creates/updates/deletes a Google event itself.
 
 // B2.4: the required outbound event scope is DESTINATION-AWARE (derived from the
 // connection's destination_mode via hasRequiredEventScopes) — calendar.app.created
@@ -27,8 +27,9 @@ export type SyncOperationContext = {
   connection: ConnectionAuthRow;
 };
 
-// The per-op-type dispatch table. B2.4 supplies real convergent handlers; B2.1
-// wires none. A handler returns a JobResult (never throws for a Google outcome).
+// The per-op-type dispatch table. B2.3-c1 supplies real convergent handlers; the
+// core wires none by default. A handler returns a JobResult (never throws for a
+// Google outcome).
 export type SyncOperations = Partial<Record<ClaimedJob["opType"], (ctx: SyncOperationContext) => Promise<JobResult>>>;
 
 export type HandlerDeps = {
@@ -76,8 +77,8 @@ export async function handleCalendarSyncJob(job: ClaimedJob, deps: HandlerDeps):
     return { code: "retry_transient", errorCode: token.code, retryAfterSeconds: token.retryAfterSeconds };
   }
 
-  // 4. Dispatch the actual Google operation (B2.4). B2.1 wires no operations, so
-  //    this path is only reachable in tests via an injected mock.
+  // 4. Dispatch the actual Google operation (B2.3-c1 operations map). The core
+  //    wires no operations by default, so in production this path is dormant.
   const op = deps.operations[job.opType];
   if (!op) {
     // No handler for this op in this build: hold the job (do not dead it) so a

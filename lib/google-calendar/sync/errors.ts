@@ -6,9 +6,10 @@ import "server-only";
 // GoogleErrorKind. The kinds map deterministically to JobResultCodes in the
 // handler. NO token, event body, client name, or clinical detail ever enters a
 // GoogleError — only the HTTP status, a short safe code, and (for rate limits)
-// a parsed Retry-After. The 409/404 CONVERGENCE behavior (GET-and-un-tombstone,
-// 404-on-update-create) is B2.4; this module only classifies and marks WHERE
-// those sub-cases attach (see `GoogleErrorKind` "conflict"/"not_found").
+// a parsed Retry-After. The 409/404/410 CONVERGENCE behavior (GET-and-verify,
+// rotate-on-missing) lives in the B2.3-c1 operations layer; this module only
+// classifies and marks WHERE those sub-cases attach (see `GoogleErrorKind`
+// "conflict"/"not_found").
 
 export type GoogleErrorKind =
   | "success" // 2xx
@@ -16,9 +17,9 @@ export type GoogleErrorKind =
   | "invalid_grant" // refresh 400 invalid_grant — reconnect_required
   | "insufficient_scope" // 403 with insufficientPermissions / scope reason
   | "rate_limited" // 403 rateLimitExceeded / userRateLimitExceeded, or 429
-  | "not_found" // 404 (calendar or event) — B2.4 decides create-or-noop
-  | "conflict" // 409 — B2.4 does GET + un-tombstone / honeLink match
-  | "precondition_failed" // 412 — etag mismatch; refetch + converge (B2.4)
+  | "not_found" // 404/410 (calendar or event) — B2.3-c decides rotate-or-noop
+  | "conflict" // 409 — B2.3-c does GET + marker match / rotate
+  | "precondition_failed" // 412 — etag mismatch; refetch + reapply (B2.3-c)
   | "transient" // 5xx / network / timeout / malformed body
   | "config_error"; // calendar/connection not found, oauth client unavailable
 
@@ -122,6 +123,11 @@ export function classifyGoogleResponse(input: {
   }
   if (status === 404) {
     return { kind: "not_found", status, code: "google_http_404", retryAfterSeconds: null };
+  }
+  if (status === 410) {
+    // Gone (deleted / already-removed). For our purposes a 410 is "the event is
+    // not there" — the same disposition as 404 (delete converges, update rotates).
+    return { kind: "not_found", status, code: "google_http_410", retryAfterSeconds: null };
   }
   if (status === 409) {
     return { kind: "conflict", status, code: "google_http_409", retryAfterSeconds: null };
