@@ -4,24 +4,41 @@ import type { GoogleError } from "./errors";
 import type { GoogleEventResource, GoogleRestClient } from "./google-rest-client";
 import type { SyncOperationContext, SyncOperations } from "./handler";
 import type { JobResult } from "./job-result";
-import type { AppointmentState, LinkRow, OpsLinkStore, TransitionResult } from "./link-transition-store";
+import {
+  OpsStoreError,
+  type AppointmentState,
+  type LinkRow,
+  type OpsLinkStore,
+  type TransitionResult,
+} from "./link-transition-store";
 import { buildAppointmentEventPayload } from "./serializer";
 import { evaluateStaleFence, jobSyncVersion } from "./stale-fence";
 
 // Google Calendar — Phase B2.3-c1: the real event operations (create / update /
-// delete) plus provider reconciliation. DORMANT: this module is imported only by
-// server-only worker modules; no app route wires it, and the worker/flags are OFF.
+// delete) plus provider reconciliation. DORMANT: imported only by server-only
+// worker modules; no app route wires it and the worker/flags are OFF.
 //
-// Every operation persists LINK state exclusively through the transactional
-// calendar_event_link_transition RPC (via the injected store) and NEVER
-// transitions the outbox row — the existing claim -> handle ->
-// record_calendar_sync_result adapter is the sole outbox authority. A cancelled
-// Google event is NEVER bound as synced; a fresh provider lifecycle always comes
-// from a fresh link row (rotate_for_recreate → new link id → new deterministic id).
+// Invariants enforced here:
+//  * Every LINK write goes through the transactional calendar_event_link_transition
+//    RPC (which itself re-binds the claimed outbox row + fences the appointment
+//    version); the outbox row stays under claim -> handle ->
+//    record_calendar_sync_result. This layer never transitions the outbox.
+//  * Before EVERY provider call — and again before every FOLLOW-UP provider call
+//    on a recovery path — the operation re-reads the appointment + link, re-runs
+//    the stale fence, and re-checks job/link/connection/calendar alignment.
+//  * A 2xx provider body is never trusted for persistence until its id, status,
+//    private marker and ETag are validated (or reconciled via GET).
+//  * A DB read failure is retry_transient, never a success no-op.
+//  * A cancelled Google event is never bound as `synced`; a fresh lifecycle only
+//    comes from a fresh link row (rotate_for_recreate).
 
 export type OperationDeps = {
   rest: GoogleRestClient;
   store: OpsLinkStore;
+  // Invalidate the per-connection cached access token (called on a Google 401 so
+  // the next attempt refreshes rather than reusing the rejected token). Optional
+  // in c1 (the worker wiring that owns the cache is B2.3-c2); never logs a token.
+  invalidateAccessToken?: (connectionId: string) => void | Promise<void>;
 };
 
 function extractPrivate(event: GoogleEventResource): Record<string, unknown> | null {
@@ -30,21 +47,29 @@ function extractPrivate(event: GoogleEventResource): Record<string, unknown> | n
   const priv = (ext as Record<string, unknown>).private;
   return priv && typeof priv === "object" ? (priv as Record<string, unknown>) : null;
 }
-
 function icalUidOf(event: GoogleEventResource): string | null {
   const v = (event as Record<string, unknown>).iCalUID;
   return typeof v === "string" ? v : null;
 }
+function isNetwork(err: GoogleError): boolean {
+  return err.kind === "transient" && (err.code === "network_timeout" || err.code === "network_error");
+}
 
-// Map a GoogleError the operation does not special-case to a JobResult.
-function mapGoogleErrorDefault(err: GoogleError): JobResult {
+// Map a Google error the caller does not special-case. A 401 invalidates the
+// cached access token first so the next attempt refreshes.
+async function handleGoogleError(ctx: SyncOperationContext, deps: OperationDeps, err: GoogleError): Promise<JobResult> {
   switch (err.kind) {
+    case "token_expired":
+      try {
+        await deps.invalidateAccessToken?.(ctx.job.connectionId);
+      } catch {
+        /* invalidation is best-effort; never surfaces a token */
+      }
+      return { code: "retry_transient", errorCode: err.code };
     case "insufficient_scope":
       return { code: "terminal_insufficient_scope", errorCode: err.code };
     case "rate_limited":
       return { code: "retry_rate_limited", errorCode: err.code, retryAfterSeconds: err.retryAfterSeconds ?? undefined };
-    case "token_expired":
-      return { code: "retry_transient", errorCode: err.code };
     case "config_error":
       return { code: "retry_ineligible", errorCode: err.code };
     default:
@@ -52,35 +77,114 @@ function mapGoogleErrorDefault(err: GoogleError): JobResult {
   }
 }
 
-// Map a link-transition rejection to a JobResult. A lost claim / stale version is
-// a benign no-op (a newer op owns the row); a foreign-id or already-bound-other is
-// a hard conflict.
+// Map a link-transition rejection. ONLY genuine supersession / lost-claim states
+// become a success no-op; tenant/link/binding/integrity mismatches are terminal
+// conflicts; an infra error is retryable.
 function mapTransitionReject(t: TransitionResult): JobResult {
   switch (t.code) {
+    // Integrity conflicts — never a success.
+    case "moved_link_conflict":
     case "foreign_event_conflict":
     case "already_bound_other":
+    case "link_mismatch":
+    case "outbox_studio_mismatch":
+    case "outbox_connection_mismatch":
+    case "outbox_entity_mismatch":
+    case "outbox_link_mismatch":
+    case "action_op_mismatch":
+    case "version_arg_missing":
+    case "version_arg_mismatch":
+    case "missing_provider_id":
+    case "link_is_placeholder":
+    case "provider_id_mismatch":
+    case "entity_unsupported":
       return { code: "terminal_conflict", errorCode: t.code };
+    // Genuine supersession / lost claim — a truthful terminal-success no-op.
     case "stale_token":
     case "outbox_not_processing":
     case "stale_version":
     case "link_deleted":
-    case "link_mismatch":
     case "superseded":
+    case "appointment_superseded":
+    case "appointment_gone":
+    case "appointment_not_confirmed":
       return { code: "ok_noop_superseded", errorCode: t.code };
     case "link_not_found":
       return { code: "ok_noop_no_active_link", errorCode: t.code };
+    // Temporary destination/connection transition.
+    case "connection_not_ready":
+      return { code: "retry_ineligible", errorCode: t.code };
+    // Infra / RPC error.
+    case "rpc_error":
+      return { code: "retry_transient", errorCode: t.code };
     default:
       return { code: "retry_transient", errorCode: `transition_${t.code}` };
   }
 }
 
-function isNetwork(err: GoogleError): boolean {
-  return err.kind === "transient" && (err.code === "network_timeout" || err.code === "network_error");
+// Job/link/connection/calendar alignment (§5). An identity mismatch is a terminal
+// integrity conflict; a calendar mismatch is a temporary destination transition.
+function checkAlignment(ctx: SyncOperationContext, link: LinkRow): JobResult | null {
+  if (
+    link.studioId !== ctx.job.studioId ||
+    link.connectionId !== ctx.job.connectionId ||
+    link.honeEntityType !== ctx.job.honeEntityType ||
+    link.honeEntityId !== ctx.job.honeEntityId
+  ) {
+    return { code: "terminal_conflict", errorCode: "link_job_mismatch" };
+  }
+  const writeCal = ctx.connection.writeCalendarId;
+  if (writeCal && link.googleCalendarId !== writeCal) {
+    return { code: "retry_ineligible", errorCode: "calendar_transition" };
+  }
+  return null;
 }
 
-// Bind a confirmed provider event onto the link (transactional). `ok` on success;
-// the adapter then records the outbox row `done`.
-async function bindConfirmed(
+type FenceOutcome =
+  | { stop: JobResult }
+  | { ok: true; appointment: AppointmentState; link: LinkRow; mode: "create" | "update" | "delete" };
+
+// Reload the appointment + active link, re-run the stale fence, and re-check
+// alignment. The single re-fence used before every (follow-up) provider call.
+async function refence(ctx: SyncOperationContext, deps: OperationDeps): Promise<FenceOutcome> {
+  const entityId = ctx.job.honeEntityId;
+  const entityType = ctx.job.honeEntityType;
+  const appointment = entityId ? await deps.store.loadAppointmentState(entityId, ctx.job.studioId) : null;
+  const link = entityType && entityId ? await deps.store.loadActiveLinkByEntity(ctx.job.studioId, entityType, entityId) : null;
+  const fence = evaluateStaleFence({ job: ctx.job, appointment, link });
+  if (fence.kind === "noop") return { stop: { code: fence.code } };
+  if (fence.kind === "conflict") return { stop: { code: "terminal_conflict", errorCode: "entity_link_mismatch" } };
+  if (!link || !appointment) return { stop: { code: "ok_noop_no_active_link" } };
+  const align = checkAlignment(ctx, link);
+  if (align) return { stop: align };
+  return { ok: true, appointment, link, mode: fence.mode };
+}
+
+function payloadFor(appointment: AppointmentState, linkId: string): { ok: true; payload: Record<string, unknown> } | { stop: JobResult } {
+  const ser = buildAppointmentEventPayload({
+    startsAt: appointment.startsAt,
+    endsAt: appointment.endsAt,
+    studioTimezone: appointment.studioTimezone,
+    linkId,
+  });
+  if (!ser.ok) return { stop: { code: "terminal_conflict", errorCode: `serialize_${ser.reason}` } };
+  return { ok: true, payload: ser.payload };
+}
+
+// Validate a 2xx provider event before ANY persistence (§7).
+type RespVerdict = "ok" | "cancelled_ours" | "conflict" | "needs_get";
+function validateEventResponse(event: GoogleEventResource, etag: string | null, expectedId: string, linkId: string): RespVerdict {
+  if (!event || typeof event !== "object" || typeof event.id !== "string") return "needs_get";
+  if (event.id !== expectedId) return "conflict";
+  const marker = verifyEventMarker(extractPrivate(event), linkId);
+  if (event.status === "cancelled") return marker === "match" ? "cancelled_ours" : "conflict";
+  if (marker === "mismatch") return "conflict";
+  if (marker === "absent") return "needs_get";
+  if (typeof etag !== "string" || etag.length === 0) return "needs_get";
+  return "ok";
+}
+
+async function bindConfirmedRpc(
   ctx: SyncOperationContext,
   deps: OperationDeps,
   link: LinkRow,
@@ -103,74 +207,90 @@ async function bindConfirmed(
     googleEtag: etag,
   });
   if (t.status === "ok") return { code: "ok" };
+  // The link is already bound to the SAME id at an older version: reload + update.
+  if (t.code === "bound_older_version") return realUpdateFlow(ctx, deps);
   return mapTransitionReject(t);
 }
 
-// GET the deterministic id and reconcile. Returns a JobResult, or null when the
-// event is definitively absent (404/410) and the caller may safely insert.
+// Validate a 2xx response then bind (or reconcile via GET / rotate).
+async function bindFromResponse(
+  ctx: SyncOperationContext,
+  deps: OperationDeps,
+  link: LinkRow,
+  expectedId: string,
+  event: GoogleEventResource,
+  etag: string | null,
+): Promise<JobResult> {
+  const v = validateEventResponse(event, etag, expectedId, link.id);
+  if (v === "ok") return bindConfirmedRpc(ctx, deps, link, expectedId, event, etag);
+  if (v === "cancelled_ours") return rotateAndCreate(ctx, deps, link);
+  if (v === "conflict") return { code: "terminal_conflict", errorCode: "response_invalid" };
+  // needs_get — reconcile by GET before trusting anything.
+  const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: expectedId });
+  if (got.ok) {
+    const v2 = validateEventResponse(got.event, got.etag, expectedId, link.id);
+    if (v2 === "ok") return bindConfirmedRpc(ctx, deps, link, expectedId, got.event, got.etag);
+    if (v2 === "cancelled_ours") return rotateAndCreate(ctx, deps, link);
+    if (v2 === "conflict") return { code: "terminal_conflict", errorCode: "get_invalid" };
+    return { code: "retry_transient", errorCode: "get_unverified" };
+  }
+  if (got.error.kind === "not_found") return { code: "retry_transient", errorCode: "post_success_absent" };
+  return handleGoogleError(ctx, deps, got.error);
+}
+
+// Insert a fresh event for the current active link, then validate + bind.
+async function insertFlow(ctx: SyncOperationContext, deps: OperationDeps): Promise<JobResult> {
+  const f = await refence(ctx, deps); // re-fence immediately before INSERT (§6)
+  if ("stop" in f) return f.stop;
+  if (f.mode === "update") return realUpdate(ctx, deps, f.appointment, f.link);
+  if (f.mode !== "create") return { code: "ok_noop_superseded" };
+  const eventId = deriveEventId(f.link.studioId, f.link.id);
+  const pay = payloadFor(f.appointment, f.link.id);
+  if ("stop" in pay) return pay.stop;
+  const res = await deps.rest.insertEvent({ accessToken: ctx.accessToken, calendarId: f.link.googleCalendarId, event: { id: eventId, ...pay.payload } });
+  if (res.ok) return bindFromResponse(ctx, deps, f.link, eventId, res.event, res.etag);
+  const err = res.error;
+  if (err.kind === "conflict") return reconcileByGet(ctx, deps, f.link, f.appointment, eventId); // 409 duplicate
+  if (isNetwork(err)) return reconcileByGet(ctx, deps, f.link, f.appointment, eventId); // ambiguous
+  return handleGoogleError(ctx, deps, err);
+}
+
+// GET the derived id and reconcile (409 / ambiguous / retry). Adoption of a live
+// matching event goes through a PATCH-then-bind (adoptViaPatch), never bind-as-found.
 async function reconcileByGet(
   ctx: SyncOperationContext,
   deps: OperationDeps,
   link: LinkRow,
   appointment: AppointmentState,
   eventId: string,
-): Promise<JobResult | null> {
+): Promise<JobResult> {
   const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId });
   if (got.ok) {
-    const verdict = verifyEventMarker(extractPrivate(got.event), link.id);
-    if (verdict !== "match") return { code: "terminal_conflict", errorCode: "foreign_event" };
-    if (got.event.status === "cancelled") return rotateAndCreate(ctx, deps, link, appointment);
-    return bindConfirmed(ctx, deps, link, eventId, got.event, got.etag);
+    const marker = verifyEventMarker(extractPrivate(got.event), link.id);
+    if (marker !== "match") return { code: "terminal_conflict", errorCode: "foreign_event" };
+    if (got.event.status === "cancelled") return rotateAndCreate(ctx, deps, link);
+    return adoptViaPatch(ctx, deps, link, eventId, got.etag);
   }
-  if (got.error.kind === "not_found") return null; // safe to insert
-  return mapGoogleErrorDefault(got.error);
+  if (got.error.kind === "not_found") return { code: "retry_transient", errorCode: "conflict_then_absent" };
+  return handleGoogleError(ctx, deps, got.error);
 }
 
-async function doInsert(
-  ctx: SyncOperationContext,
-  deps: OperationDeps,
-  link: LinkRow,
-  appointment: AppointmentState,
-  eventId: string,
-): Promise<JobResult> {
-  const ser = buildAppointmentEventPayload({
-    startsAt: appointment.startsAt,
-    endsAt: appointment.endsAt,
-    studioTimezone: appointment.studioTimezone,
-    linkId: link.id,
-  });
-  if (!ser.ok) return { code: "terminal_conflict", errorCode: `serialize_${ser.reason}` };
-  const res = await deps.rest.insertEvent({
-    accessToken: ctx.accessToken,
-    calendarId: link.googleCalendarId,
-    event: { id: eventId, ...ser.payload },
-  });
-  if (res.ok) return bindConfirmed(ctx, deps, link, eventId, res.event, res.etag);
-
-  const err = res.error;
-  if (err.kind === "conflict") {
-    // 409 duplicate — GET the id and adopt/rotate/conflict. A 409-then-404 is a
-    // contradictory provider state: bounded retry (do NOT blind-insert again).
-    const rec = await reconcileByGet(ctx, deps, link, appointment, eventId);
-    return rec ?? { code: "retry_transient", errorCode: "conflict_then_absent" };
-  }
-  if (isNetwork(err)) {
-    // Ambiguous — the insert may have created the event. GET-first before any
-    // further insert; if absent, a bounded retry.
-    const rec = await reconcileByGet(ctx, deps, link, appointment, eventId);
-    return rec ?? { code: "retry_transient", errorCode: err.code };
-  }
-  return mapGoogleErrorDefault(err);
+// Adopt an existing matching provider event by PATCHing the CURRENT v1 payload
+// (never bind as-found), then bind at the job version (addendum §2).
+async function adoptViaPatch(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow, eventId: string, getEtag: string | null): Promise<JobResult> {
+  const f = await refence(ctx, deps);
+  if ("stop" in f) return f.stop;
+  if (f.link.id !== link.id) return dispatchMode(ctx, deps, f); // state moved (rotation) — re-dispatch
+  const pay = payloadFor(f.appointment, f.link.id);
+  if ("stop" in pay) return pay.stop;
+  const res = await deps.rest.patchEvent({ accessToken: ctx.accessToken, calendarId: f.link.googleCalendarId, eventId, event: pay.payload, etag: getEtag });
+  if (res.ok) return bindFromResponse(ctx, deps, f.link, eventId, res.event, res.etag);
+  if (res.error.kind === "precondition_failed") return patch412(ctx, deps, f.link, eventId, /*bind*/ true);
+  if (res.error.kind === "not_found") return insertFlow(ctx, deps); // vanished between GET and PATCH
+  return handleGoogleError(ctx, deps, res.error);
 }
 
-// Rotate to a fresh placeholder link (a new provider lifecycle) then create under
-// the fresh deterministic id.
-async function rotateAndCreate(
-  ctx: SyncOperationContext,
-  deps: OperationDeps,
-  link: LinkRow,
-  appointment: AppointmentState,
-): Promise<JobResult> {
+async function rotateAndCreate(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow): Promise<JobResult> {
   const t = await deps.store.transition({
     action: "rotate_for_recreate",
     outboxId: ctx.job.id,
@@ -180,93 +300,76 @@ async function rotateAndCreate(
     connectionId: link.connectionId,
     honeEntityType: link.honeEntityType,
     honeEntityId: link.honeEntityId,
+    expectedSourceVersion: jobSyncVersion(ctx.job),
   });
-  if (t.status !== "ok" || !t.linkId) {
-    return mapTransitionReject(t);
-  }
+  if (t.status !== "ok" || !t.linkId) return mapTransitionReject(t);
+  // Reload the replacement, re-fence, and create on it (§6 after rotation).
   const fresh = await deps.store.loadLinkById(t.linkId);
   if (!fresh) return { code: "retry_transient", errorCode: "rotate_reload_missing" };
-  return doInsert(ctx, deps, fresh, appointment, deriveEventId(fresh.studioId, fresh.id));
+  return insertFlow(ctx, deps);
 }
 
-// Create-and-bind (placeholder event.update) OR create (event.create). On a retry
-// (attempts > 1) a prior attempt may have created the event; GET-first for
-// idempotency before any insert.
-async function createAndBind(
-  ctx: SyncOperationContext,
-  deps: OperationDeps,
-  link: LinkRow,
-  appointment: AppointmentState,
-): Promise<JobResult> {
-  const eventId = deriveEventId(link.studioId, link.id);
-  if (ctx.job.attempts > 1) {
-    const rec = await reconcileByGet(ctx, deps, link, appointment, eventId);
-    if (rec) return rec; // resolved (bind/rotate/conflict/retry); null => safe to insert
-  }
-  return doInsert(ctx, deps, link, appointment, eventId);
-}
-
-// Real update against a bound link. 404/410 or a cancelled remote rotates to a
-// fresh lifecycle; a stale etag (412) re-GETs and reapplies.
-async function realUpdate(
-  ctx: SyncOperationContext,
-  deps: OperationDeps,
-  link: LinkRow,
-  appointment: AppointmentState,
-): Promise<JobResult> {
+// Real update against a bound link (patch If-Match). 404/410/cancelled -> rotate;
+// 412 -> re-GET + marker verify + re-fence + reapply.
+async function realUpdate(ctx: SyncOperationContext, deps: OperationDeps, appointment: AppointmentState, link: LinkRow): Promise<JobResult> {
   const providerId = link.googleEventId as string;
-  const ser = buildAppointmentEventPayload({
-    startsAt: appointment.startsAt,
-    endsAt: appointment.endsAt,
-    studioTimezone: appointment.studioTimezone,
-    linkId: link.id,
-  });
-  if (!ser.ok) return { code: "terminal_conflict", errorCode: `serialize_${ser.reason}` };
-
-  const res = await deps.rest.patchEvent({
-    accessToken: ctx.accessToken,
-    calendarId: link.googleCalendarId,
-    eventId: providerId,
-    event: ser.payload,
-    etag: link.googleEtag,
-  });
+  const pay = payloadFor(appointment, link.id);
+  if ("stop" in pay) return pay.stop;
+  const res = await deps.rest.patchEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId, event: pay.payload, etag: link.googleEtag });
   if (res.ok) {
-    if (res.event.status === "cancelled") return rotateAndCreate(ctx, deps, link, appointment);
+    if (res.event.status === "cancelled") return rotateAndCreate(ctx, deps, link);
     return updateConfirmed(ctx, deps, link, providerId, res.event, res.etag);
   }
   const err = res.error;
-  if (err.kind === "not_found") return rotateAndCreate(ctx, deps, link, appointment); // 404/410 -> recreate
-  if (err.kind === "precondition_failed") {
-    // Stale etag: re-GET, re-evaluate, reapply once with the fresh etag.
-    const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId });
-    if (got.ok) {
-      if (got.event.status === "cancelled") return rotateAndCreate(ctx, deps, link, appointment);
-      const res2 = await deps.rest.patchEvent({
-        accessToken: ctx.accessToken,
-        calendarId: link.googleCalendarId,
-        eventId: providerId,
-        event: ser.payload,
-        etag: got.etag,
-      });
-      if (res2.ok) return updateConfirmed(ctx, deps, link, providerId, res2.event, res2.etag);
-      if (res2.error.kind === "not_found") return rotateAndCreate(ctx, deps, link, appointment);
-      return { code: "retry_transient", errorCode: "retry_after_412" };
-    }
-    if (got.error.kind === "not_found") return rotateAndCreate(ctx, deps, link, appointment);
-    return mapGoogleErrorDefault(got.error);
-  }
+  if (err.kind === "not_found") return rotateAndCreate(ctx, deps, link);
+  if (err.kind === "precondition_failed") return patch412(ctx, deps, link, providerId, /*bind*/ false);
   if (err.kind === "conflict") return { code: "terminal_conflict", errorCode: "update_conflict" };
-  return mapGoogleErrorDefault(err);
+  return handleGoogleError(ctx, deps, err);
 }
 
-async function updateConfirmed(
-  ctx: SyncOperationContext,
-  deps: OperationDeps,
-  link: LinkRow,
-  providerId: string,
-  event: GoogleEventResource,
-  etag: string | null,
-): Promise<JobResult> {
+// Re-dispatch to the correct flow after a re-fence (create/update).
+async function realUpdateFlow(ctx: SyncOperationContext, deps: OperationDeps): Promise<JobResult> {
+  const f = await refence(ctx, deps);
+  if ("stop" in f) return f.stop;
+  return dispatchMode(ctx, deps, f);
+}
+async function dispatchMode(ctx: SyncOperationContext, deps: OperationDeps, f: Extract<FenceOutcome, { ok: true }>): Promise<JobResult> {
+  if (f.mode === "create") return insertFlow(ctx, deps);
+  if (f.mode === "update") return realUpdate(ctx, deps, f.appointment, f.link);
+  return { code: "ok_noop_superseded" };
+}
+
+// 412 recovery for PATCH: GET, verify OUR marker, re-fence, reapply with the fresh
+// etag. `bind` = true when the follow-up should PATCH-then-bind (adopt/create-and-
+// bind); false for a plain real update.
+async function patch412(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow, eventId: string, bind: boolean): Promise<JobResult> {
+  const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId });
+  if (!got.ok) {
+    if (got.error.kind === "not_found") return rotateAndCreate(ctx, deps, link);
+    return handleGoogleError(ctx, deps, got.error);
+  }
+  const marker = verifyEventMarker(extractPrivate(got.event), link.id);
+  if (marker !== "match") return { code: "terminal_conflict", errorCode: "foreign_on_412_patch" };
+  if (got.event.status === "cancelled") return rotateAndCreate(ctx, deps, link);
+  const f = await refence(ctx, deps); // reload Hone state before reapplying
+  if ("stop" in f) return f.stop;
+  if (f.link.id !== link.id) return dispatchMode(ctx, deps, f);
+  const pay = payloadFor(f.appointment, f.link.id);
+  if ("stop" in pay) return pay.stop;
+  const res2 = await deps.rest.patchEvent({ accessToken: ctx.accessToken, calendarId: f.link.googleCalendarId, eventId, event: pay.payload, etag: got.etag });
+  if (res2.ok) {
+    if (res2.event.status === "cancelled") return rotateAndCreate(ctx, deps, f.link);
+    return bind ? bindFromResponse(ctx, deps, f.link, eventId, res2.event, res2.etag) : updateConfirmed(ctx, deps, f.link, eventId, res2.event, res2.etag);
+  }
+  if (res2.error.kind === "not_found") return rotateAndCreate(ctx, deps, f.link);
+  return handleGoogleError(ctx, deps, res2.error);
+}
+
+async function updateConfirmed(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow, providerId: string, event: GoogleEventResource, etag: string | null): Promise<JobResult> {
+  // Validate the response before persisting (§7).
+  const v = validateEventResponse(event, etag, providerId, link.id);
+  if (v === "conflict") return { code: "terminal_conflict", errorCode: "update_response_invalid" };
+  if (v === "cancelled_ours") return rotateAndCreate(ctx, deps, link);
   const t = await deps.store.transition({
     action: "update_confirmed",
     outboxId: ctx.job.id,
@@ -279,7 +382,7 @@ async function updateConfirmed(
     expectedSourceVersion: jobSyncVersion(ctx.job),
     googleEventId: providerId,
     googleIcalUid: icalUidOf(event),
-    googleEtag: etag,
+    googleEtag: v === "needs_get" ? link.googleEtag : etag,
   });
   if (t.status === "ok") return { code: "ok" };
   return mapTransitionReject(t);
@@ -298,102 +401,97 @@ async function finalizeDelete(ctx: SyncOperationContext, deps: OperationDeps, li
   });
   if (t.status === "ok") return { code: "ok_noop_tombstone_deleted" };
   if (t.code === "stale_token" || t.code === "outbox_not_processing") return { code: "ok_noop_superseded", errorCode: t.code };
-  return { code: "retry_transient", errorCode: `mark_deleted_${t.code}` };
+  return mapTransitionReject(t);
 }
 
 async function realDelete(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow): Promise<JobResult> {
   const providerId = link.googleEventId as string;
-  const res = await deps.rest.deleteEvent({
-    accessToken: ctx.accessToken,
-    calendarId: link.googleCalendarId,
-    eventId: providerId,
-    etag: link.googleEtag,
-  });
+  const res = await deps.rest.deleteEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId, etag: link.googleEtag });
   if (res.ok) return finalizeDelete(ctx, deps, link);
   const err = res.error;
-  if (err.kind === "not_found") return finalizeDelete(ctx, deps, link); // 404/410 converged
-  if (err.kind === "precondition_failed") {
-    const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId });
-    if (got.ok) {
-      if (got.event.status === "cancelled") return finalizeDelete(ctx, deps, link);
-      const res2 = await deps.rest.deleteEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId, etag: got.etag });
-      if (res2.ok || res2.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
-      return { code: "retry_transient", errorCode: "delete_after_412" };
-    }
-    if (got.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
-    return mapGoogleErrorDefault(got.error);
-  }
-  return mapGoogleErrorDefault(err);
+  if (err.kind === "not_found") return finalizeDelete(ctx, deps, link);
+  if (err.kind === "precondition_failed") return delete412(ctx, deps, link, providerId);
+  return handleGoogleError(ctx, deps, err);
 }
 
-// GET-verified placeholder orphan delete: NEVER a blind DELETE against a derived
-// id. Verify ownership via the marker before any provider delete.
+// 412 recovery for DELETE: GET, verify OUR marker before any delete, then re-delete.
+async function delete412(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow, providerId: string): Promise<JobResult> {
+  const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId });
+  if (!got.ok) {
+    if (got.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
+    return handleGoogleError(ctx, deps, got.error);
+  }
+  const marker = verifyEventMarker(extractPrivate(got.event), link.id);
+  if (marker !== "match") return { code: "terminal_conflict", errorCode: "foreign_on_412_delete" };
+  if (got.event.status === "cancelled") return finalizeDelete(ctx, deps, link);
+  const res2 = await deps.rest.deleteEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId: providerId, etag: got.etag });
+  if (res2.ok || res2.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
+  return handleGoogleError(ctx, deps, res2.error);
+}
+
+// GET-verified placeholder orphan delete — NEVER a blind DELETE against a derived id.
 async function placeholderDelete(ctx: SyncOperationContext, deps: OperationDeps, link: LinkRow): Promise<JobResult> {
   const eventId = deriveEventId(link.studioId, link.id);
   const got = await deps.rest.getEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId });
   if (got.ok) {
-    const verdict = verifyEventMarker(extractPrivate(got.event), link.id);
-    if (verdict !== "match") return { code: "terminal_conflict", errorCode: "placeholder_foreign" };
-    if (got.event.status === "cancelled") return finalizeDelete(ctx, deps, link); // ours, already gone
+    const marker = verifyEventMarker(extractPrivate(got.event), link.id);
+    if (marker !== "match") return { code: "terminal_conflict", errorCode: "placeholder_foreign" };
+    if (got.event.status === "cancelled") return finalizeDelete(ctx, deps, link);
     const res = await deps.rest.deleteEvent({ accessToken: ctx.accessToken, calendarId: link.googleCalendarId, eventId, etag: got.etag });
     if (res.ok || res.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
-    return mapGoogleErrorDefault(res.error);
+    return handleGoogleError(ctx, deps, res.error);
   }
-  if (got.error.kind === "not_found") return finalizeDelete(ctx, deps, link); // never created -> converged
-  return mapGoogleErrorDefault(got.error);
+  if (got.error.kind === "not_found") return finalizeDelete(ctx, deps, link);
+  return handleGoogleError(ctx, deps, got.error);
 }
 
-async function loadSnapshot(ctx: SyncOperationContext, deps: OperationDeps) {
-  const entityType = ctx.job.honeEntityType;
-  const entityId = ctx.job.honeEntityId;
-  const appointment = entityId ? await deps.store.loadAppointmentState(entityId, ctx.job.studioId) : null;
-  const link =
-    entityType && entityId ? await deps.store.loadActiveLinkByEntity(ctx.job.studioId, entityType, entityId) : null;
-  return { appointment, link };
-}
-
-// event.create AND placeholder event.update share the upsert contract: the fence
-// resolves to create-and-bind (placeholder) or a real update.
+// event.create AND placeholder event.update share the upsert contract.
 async function handleUpsert(ctx: SyncOperationContext, deps: OperationDeps): Promise<JobResult> {
-  if (ctx.job.honeEntityType === "timed_block") {
-    return { code: "retry_ineligible", errorCode: "operation_not_implemented" };
+  if (ctx.job.honeEntityType === "timed_block") return { code: "retry_ineligible", errorCode: "operation_not_implemented" };
+  try {
+    const f = await refence(ctx, deps);
+    if ("stop" in f) return f.stop;
+    return await dispatchMode(ctx, deps, f);
+  } catch (e) {
+    if (e instanceof OpsStoreError) return { code: "retry_transient", errorCode: "db_read_failed" };
+    throw e;
   }
-  const { appointment, link } = await loadSnapshot(ctx, deps);
-  const fence = evaluateStaleFence({ job: ctx.job, appointment, link });
-  if (fence.kind === "noop") return { code: fence.code };
-  if (fence.kind === "conflict") return { code: "terminal_conflict", errorCode: "entity_link_mismatch" };
-  if (!link || !appointment) return { code: "ok_noop_no_active_link" };
-  if (fence.mode === "create") return createAndBind(ctx, deps, link, appointment);
-  if (fence.mode === "update") return realUpdate(ctx, deps, link, appointment);
-  return { code: "ok_noop_superseded" };
 }
 
 async function handleDelete(ctx: SyncOperationContext, deps: OperationDeps): Promise<JobResult> {
-  if (ctx.job.honeEntityType === "timed_block") {
-    return { code: "retry_ineligible", errorCode: "operation_not_implemented" };
-  }
-  const payload = ctx.job.payload ?? {};
-  const linkIdFromPayload = typeof payload["hone_link_id"] === "string" ? (payload["hone_link_id"] as string) : null;
+  if (ctx.job.honeEntityType === "timed_block") return { code: "retry_ineligible", errorCode: "operation_not_implemented" };
+  try {
+    const payload = ctx.job.payload ?? {};
+    const linkIdFromPayload = typeof payload["hone_link_id"] === "string" ? (payload["hone_link_id"] as string) : null;
 
-  // Entity-carrying delete (appointment cancel or hard-delete).
-  if (ctx.job.honeEntityId && ctx.job.honeEntityType) {
-    let link = await deps.store.loadActiveLinkByEntity(ctx.job.studioId, ctx.job.honeEntityType, ctx.job.honeEntityId);
-    if (!link && linkIdFromPayload) link = await deps.store.loadLinkById(linkIdFromPayload);
-    const appointment = await deps.store.loadAppointmentState(ctx.job.honeEntityId, ctx.job.studioId);
-    const fence = evaluateStaleFence({ job: ctx.job, appointment, link });
-    if (fence.kind === "noop") return { code: fence.code };
-    if (fence.kind === "conflict") return { code: "terminal_conflict", errorCode: "delete_entity_mismatch" };
-    if (!link) return { code: "ok_noop_no_active_link" };
+    // Entity-carrying delete (appointment cancel or hard-delete).
+    if (ctx.job.honeEntityId && ctx.job.honeEntityType) {
+      let link = await deps.store.loadActiveLinkByEntity(ctx.job.studioId, ctx.job.honeEntityType, ctx.job.honeEntityId);
+      if (!link && linkIdFromPayload) link = await deps.store.loadLinkForJob(linkIdFromPayload, ctx.job.studioId, ctx.job.connectionId);
+      const appointment = await deps.store.loadAppointmentState(ctx.job.honeEntityId, ctx.job.studioId);
+      const fence = evaluateStaleFence({ job: ctx.job, appointment, link });
+      if (fence.kind === "noop") return { code: fence.code };
+      if (fence.kind === "conflict") return { code: "terminal_conflict", errorCode: "delete_entity_mismatch" };
+      if (!link) return { code: "ok_noop_no_active_link" };
+      const align = checkAlignment(ctx, link);
+      if (align) return align;
+      if (link.deletedAt) return { code: "ok_noop_tombstone_deleted" };
+      return await (link.googleEventId ? realDelete(ctx, deps, link) : placeholderDelete(ctx, deps, link));
+    }
+
+    // Entity-less orphan/tombstone delete — SCOPED to the job's studio + connection.
+    if (!linkIdFromPayload) return { code: "ok_noop_no_active_link" };
+    const link = await deps.store.loadLinkForJob(linkIdFromPayload, ctx.job.studioId, ctx.job.connectionId);
+    if (!link) return { code: "terminal_conflict", errorCode: "orphan_link_not_owned" };
+    if (link.connectionId !== ctx.job.connectionId || link.studioId !== ctx.job.studioId) {
+      return { code: "terminal_conflict", errorCode: "orphan_link_mismatch" };
+    }
     if (link.deletedAt) return { code: "ok_noop_tombstone_deleted" };
-    return link.googleEventId ? realDelete(ctx, deps, link) : placeholderDelete(ctx, deps, link);
+    return await (link.googleEventId ? realDelete(ctx, deps, link) : placeholderDelete(ctx, deps, link));
+  } catch (e) {
+    if (e instanceof OpsStoreError) return { code: "retry_transient", errorCode: "db_read_failed" };
+    throw e;
   }
-
-  // Entity-less orphan/tombstone delete (repair_enqueue_orphan_link_delete).
-  if (!linkIdFromPayload) return { code: "ok_noop_no_active_link" };
-  const link = await deps.store.loadLinkById(linkIdFromPayload);
-  if (!link) return { code: "ok_noop_no_active_link" };
-  if (link.deletedAt) return { code: "ok_noop_tombstone_deleted" };
-  return link.googleEventId ? realDelete(ctx, deps, link) : placeholderDelete(ctx, deps, link);
 }
 
 // The approved dormant operations map. Imported only by server-only worker

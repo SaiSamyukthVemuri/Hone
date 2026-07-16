@@ -56,6 +56,17 @@ export type TransitionArgs = {
 
 export type TransitionResult = { status: "ok" | "rejected"; code: string; linkId?: string };
 
+// A store read that FAILED (I/O / query error) — distinct from a genuine absent
+// row (null). The operation layer maps this to `retry_transient` and NEVER to a
+// success no-op, so an uncertain DB read can never mark a job done or skip a
+// Google mutation as converged.
+export class OpsStoreError extends Error {
+  constructor(op: string) {
+    super(`ops store read failed: ${op}`);
+    this.name = "OpsStoreError";
+  }
+}
+
 export interface OpsLinkStore {
   loadActiveLinkByEntity(
     studioId: string,
@@ -63,6 +74,9 @@ export interface OpsLinkStore {
     honeEntityId: string,
   ): Promise<LinkRow | null>;
   loadLinkById(linkId: string): Promise<LinkRow | null>;
+  // Fail-closed scoped load for an entity-less job: returns the link ONLY when it
+  // belongs to the job's studio + connection; otherwise null (foreign/absent).
+  loadLinkForJob(linkId: string, studioId: string, connectionId: string): Promise<LinkRow | null>;
   loadAppointmentState(appointmentId: string, studioId: string): Promise<AppointmentState | null>;
   transition(args: TransitionArgs): Promise<TransitionResult>;
 }
@@ -99,8 +113,8 @@ export function createAdminOpsLinkStore(): OpsLinkStore {
         .eq("hone_entity_id", honeEntityId)
         .is("deleted_at", null)
         .maybeSingle();
-      if (error || !data) return null;
-      return toLinkRow(data);
+      if (error) throw new OpsStoreError("loadActiveLinkByEntity");
+      return data ? toLinkRow(data) : null;
     },
     async loadLinkById(linkId) {
       const { data, error } = await admin
@@ -108,8 +122,19 @@ export function createAdminOpsLinkStore(): OpsLinkStore {
         .select(LINK_COLUMNS)
         .eq("id", linkId)
         .maybeSingle();
-      if (error || !data) return null;
-      return toLinkRow(data);
+      if (error) throw new OpsStoreError("loadLinkById");
+      return data ? toLinkRow(data) : null;
+    },
+    async loadLinkForJob(linkId, studioId, connectionId) {
+      const { data, error } = await admin
+        .from("calendar_event_links")
+        .select(LINK_COLUMNS)
+        .eq("id", linkId)
+        .eq("studio_id", studioId)
+        .eq("connection_id", connectionId)
+        .maybeSingle();
+      if (error) throw new OpsStoreError("loadLinkForJob");
+      return data ? toLinkRow(data) : null;
     },
     async loadAppointmentState(appointmentId, studioId) {
       const { data, error } = await admin
@@ -118,7 +143,8 @@ export function createAdminOpsLinkStore(): OpsLinkStore {
         .eq("id", appointmentId)
         .eq("studio_id", studioId)
         .maybeSingle();
-      if (error || !data) return null;
+      if (error) throw new OpsStoreError("loadAppointmentState");
+      if (!data) return null;
       const studios = (data as Record<string, unknown>).studios as { timezone?: string } | null;
       return {
         id: data.id as string,

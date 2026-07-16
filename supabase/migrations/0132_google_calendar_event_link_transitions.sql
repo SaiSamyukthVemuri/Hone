@@ -43,40 +43,83 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_ob    public.calendar_sync_outbox%rowtype;
-  v_link  public.calendar_event_links%rowtype;
-  v_repl  public.calendar_event_links%rowtype;
-  v_conn  public.calendar_connections%rowtype;
-  v_appt  public.appointments%rowtype;
-  v_new   uuid;
+  v_ob      public.calendar_sync_outbox%rowtype;
+  v_link    public.calendar_event_links%rowtype;
+  v_repl    public.calendar_event_links%rowtype;
+  v_conn    public.calendar_connections%rowtype;
+  v_appt    public.appointments%rowtype;
+  v_new     uuid;
+  v_pv      bigint;   -- the claimed outbox payload sync_version
 begin
   if p_action not in ('bind_confirmed','update_confirmed','mark_deleted','rotate_for_recreate') then
     return jsonb_build_object('status','rejected','code','unknown_action');
   end if;
 
-  -- (A) Fence the claimed outbox row: must exist, be `processing`, and carry the
-  --     exact claim token. This rejects a stale worker whose lease was reclaimed.
+  -- (A) Fence the claimed outbox row: exists, processing, exact claim token.
   select * into v_ob from public.calendar_sync_outbox where id = p_outbox_id for update;
-  if not found then
-    return jsonb_build_object('status','rejected','code','outbox_not_found');
-  end if;
-  if v_ob.status <> 'processing' then
-    return jsonb_build_object('status','rejected','code','outbox_not_processing');
-  end if;
+  if not found then return jsonb_build_object('status','rejected','code','outbox_not_found'); end if;
+  if v_ob.status <> 'processing' then return jsonb_build_object('status','rejected','code','outbox_not_processing'); end if;
   if v_ob.claim_token is null or v_ob.claim_token <> p_claim_token then
     return jsonb_build_object('status','rejected','code','stale_token');
   end if;
 
+  -- (B) Bind the transition to the claimed row's studio + connection.
+  if v_ob.studio_id <> p_studio_id then return jsonb_build_object('status','rejected','code','outbox_studio_mismatch'); end if;
+  if v_ob.connection_id <> p_connection_id then return jsonb_build_object('status','rejected','code','outbox_connection_mismatch'); end if;
+
+  -- (C) Action must be compatible with the claimed op_type.
+  if p_action in ('bind_confirmed','rotate_for_recreate') and v_ob.op_type not in ('event.create','event.update') then
+    return jsonb_build_object('status','rejected','code','action_op_mismatch');
+  end if;
+  if p_action = 'update_confirmed' and v_ob.op_type <> 'event.update' then
+    return jsonb_build_object('status','rejected','code','action_op_mismatch');
+  end if;
+  if p_action = 'mark_deleted' and v_ob.op_type <> 'event.delete' then
+    return jsonb_build_object('status','rejected','code','action_op_mismatch');
+  end if;
+
+  -- (D) Entity binding: an entity-carrying row must match the passed entity; an
+  --     entity-less row (orphan delete) must carry payload.hone_link_id = p_link_id.
+  if v_ob.hone_entity_id is not null then
+    if v_ob.hone_entity_type is distinct from p_hone_entity_type or v_ob.hone_entity_id <> p_hone_entity_id then
+      return jsonb_build_object('status','rejected','code','outbox_entity_mismatch');
+    end if;
+  else
+    if coalesce(v_ob.payload->>'hone_link_id','') <> p_link_id::text then
+      return jsonb_build_object('status','rejected','code','outbox_link_mismatch');
+    end if;
+  end if;
+
+  -- (E) Source-version arg fence + (F) atomic appointment fence (bind/update/rotate).
+  if p_action in ('bind_confirmed','update_confirmed','rotate_for_recreate') then
+    v_pv := nullif(v_ob.payload->>'sync_version','')::bigint;
+    if p_expected_source_version is null or p_expected_source_version <= 0 then
+      return jsonb_build_object('status','rejected','code','version_arg_missing');
+    end if;
+    if v_pv is null or p_expected_source_version <> v_pv then
+      return jsonb_build_object('status','rejected','code','version_arg_mismatch');
+    end if;
+    -- Lock the appointment and require it is still confirmed AT this exact version
+    -- (rejects a version that advanced after the operation's pre-provider read).
+    if v_ob.hone_entity_id is not null then
+      select * into v_appt from public.appointments
+       where id = p_hone_entity_id and studio_id = p_studio_id for update;
+      if not found then return jsonb_build_object('status','rejected','code','appointment_gone'); end if;
+      if v_appt.status <> 'confirmed' then return jsonb_build_object('status','rejected','code','appointment_not_confirmed'); end if;
+      if v_appt.sync_version <> p_expected_source_version then
+        return jsonb_build_object('status','rejected','code','appointment_superseded');
+      end if;
+    end if;
+  end if;
+
   -- ==========================================================================
-  -- rotate_for_recreate — retire the current link and mint a fresh active
-  -- placeholder (a NEW provider lifecycle / a NEW deterministic event id). The
-  -- outbox row is left in `processing`; the worker continues create-and-bind on
-  -- the returned replacement link id.
+  -- rotate_for_recreate — retire the current link, mint ONE fresh placeholder.
   -- ==========================================================================
   if p_action = 'rotate_for_recreate' then
-    -- Idempotency: if a valid active replacement placeholder already exists for
-    -- this entity (crash-after-rotation resume), return it rather than minting a
-    -- second one. A REAL active replacement owned by a newer op supersedes us.
+    if p_hone_entity_type <> 'appointment' then
+      return jsonb_build_object('status','rejected','code','entity_unsupported');
+    end if;
+    -- Idempotency / crash-after-rotation resume: a valid active replacement wins.
     select * into v_repl from public.calendar_event_links
      where studio_id = p_studio_id and hone_entity_type = p_hone_entity_type
        and hone_entity_id = p_hone_entity_id and deleted_at is null
@@ -88,144 +131,94 @@ begin
       return jsonb_build_object('status','ok','code','rotated_existing','link_id', v_repl.id);
     end if;
 
-    -- Lock the current link. It may be the active real/placeholder link, or (on
-    -- resume) already retired.
     select * into v_link from public.calendar_event_links where id = p_link_id for update;
-    if not found then
-      return jsonb_build_object('status','rejected','code','link_not_found');
-    end if;
-    if v_link.studio_id <> p_studio_id
-       or v_link.connection_id <> p_connection_id
-       or v_link.hone_entity_type <> p_hone_entity_type
-       or v_link.hone_entity_id <> p_hone_entity_id then
+    if not found then return jsonb_build_object('status','rejected','code','link_not_found'); end if;
+    if v_link.studio_id <> p_studio_id or v_link.connection_id <> p_connection_id
+       or v_link.hone_entity_type is distinct from p_hone_entity_type or v_link.hone_entity_id <> p_hone_entity_id then
       return jsonb_build_object('status','rejected','code','link_mismatch');
     end if;
 
-    -- The appointment must still exist and remain confirmed (rotation recreates
-    -- a live event). hone_entity_type is 'appointment' in c1.
-    if p_hone_entity_type <> 'appointment' then
-      return jsonb_build_object('status','rejected','code','entity_unsupported');
-    end if;
-    select * into v_appt from public.appointments where id = p_hone_entity_id;
-    if not found then
-      return jsonb_build_object('status','rejected','code','appointment_gone');
-    end if;
-    if v_appt.status <> 'confirmed' then
-      return jsonb_build_object('status','rejected','code','appointment_not_confirmed');
-    end if;
-
-    -- The replacement inherits the CURRENT write calendar id from the connection.
-    select * into v_conn from public.calendar_connections
-     where id = p_connection_id and studio_id = p_studio_id;
+    select * into v_conn from public.calendar_connections where id = p_connection_id and studio_id = p_studio_id;
     if not found or v_conn.write_calendar_id is null then
       return jsonb_build_object('status','rejected','code','connection_not_ready');
     end if;
 
-    -- Retire the old link (frees the active-entity partial-unique slot), then
-    -- insert the fresh placeholder. Order matters: soft-delete BEFORE insert.
     if v_link.deleted_at is null then
-      update public.calendar_event_links
-         set deleted_at = now(), sync_status = 'deleted', updated_at = now()
-       where id = v_link.id;
+      update public.calendar_event_links set deleted_at = now(), sync_status = 'deleted', updated_at = now() where id = v_link.id;
     end if;
-
     insert into public.calendar_event_links
       (studio_id, connection_id, hone_entity_type, hone_entity_id,
-       google_calendar_id, google_event_id, google_ical_uid, google_etag,
-       last_hone_version, sync_status, source_system)
+       google_calendar_id, google_event_id, google_ical_uid, google_etag, last_hone_version, sync_status, source_system)
     values (p_studio_id, p_connection_id, p_hone_entity_type, p_hone_entity_id,
-            v_conn.write_calendar_id, null, null, null,
-            0, 'pending', 'hone')
+            v_conn.write_calendar_id, null, null, null, 0, 'pending', 'hone')
     returning id into v_new;
-
     return jsonb_build_object('status','ok','code','rotated','link_id', v_new);
   end if;
 
   -- ==========================================================================
-  -- The remaining actions operate on a specified link row.
+  -- Actions on a specified link row.
   -- ==========================================================================
   select * into v_link from public.calendar_event_links where id = p_link_id for update;
-  if not found then
-    return jsonb_build_object('status','rejected','code','link_not_found');
-  end if;
+  if not found then return jsonb_build_object('status','rejected','code','link_not_found'); end if;
 
   if p_action = 'mark_deleted' then
-    -- Idempotent: already-retired link is a converged no-op.
-    if v_link.studio_id <> p_studio_id or v_link.connection_id <> p_connection_id then
+    -- FULL identity: studio + connection + entity type + entity id.
+    if v_link.studio_id <> p_studio_id or v_link.connection_id <> p_connection_id
+       or v_link.hone_entity_type is distinct from p_hone_entity_type or v_link.hone_entity_id <> p_hone_entity_id then
       return jsonb_build_object('status','rejected','code','link_mismatch');
     end if;
     if v_link.deleted_at is not null then
       return jsonb_build_object('status','ok','code','already_deleted','link_id', v_link.id);
     end if;
-    update public.calendar_event_links
-       set deleted_at = now(), sync_status = 'deleted', updated_at = now()
-     where id = v_link.id;   -- retains google_event_id / google_ical_uid / google_etag history
+    update public.calendar_event_links set deleted_at = now(), sync_status = 'deleted', updated_at = now() where id = v_link.id;
     return jsonb_build_object('status','ok','code','deleted','link_id', v_link.id);
   end if;
 
-  -- bind_confirmed / update_confirmed share identity + version fencing.
-  if v_link.deleted_at is not null then
-    return jsonb_build_object('status','rejected','code','link_deleted');
-  end if;
-  if v_link.studio_id <> p_studio_id
-     or v_link.connection_id <> p_connection_id
-     or v_link.hone_entity_type <> p_hone_entity_type
-     or v_link.hone_entity_id <> p_hone_entity_id then
+  -- bind_confirmed / update_confirmed: identity + not-deleted + version CAS.
+  if v_link.deleted_at is not null then return jsonb_build_object('status','rejected','code','link_deleted'); end if;
+  if v_link.studio_id <> p_studio_id or v_link.connection_id <> p_connection_id
+     or v_link.hone_entity_type is distinct from p_hone_entity_type or v_link.hone_entity_id <> p_hone_entity_id then
     return jsonb_build_object('status','rejected','code','link_mismatch');
   end if;
-  -- Version CAS: a stale worker (older applied version) may not clobber a link a
-  -- newer op already advanced.
-  if p_expected_source_version is not null
-     and v_link.last_hone_version > p_expected_source_version then
+  if v_link.last_hone_version > p_expected_source_version then
     return jsonb_build_object('status','rejected','code','stale_version');
   end if;
 
   if p_action = 'bind_confirmed' then
     if v_link.google_event_id is not null then
-      -- Already bound. Idempotent iff the bound id matches; else a conflict.
-      if v_link.google_event_id = p_google_event_id then
+      if v_link.google_event_id <> p_google_event_id then
+        -- The link now maps a DIFFERENT provider event: an integrity conflict.
+        return jsonb_build_object('status','rejected','code','moved_link_conflict');
+      end if;
+      if v_link.last_hone_version >= p_expected_source_version then
         return jsonb_build_object('status','ok','code','already_bound','link_id', v_link.id);
       end if;
-      return jsonb_build_object('status','rejected','code','already_bound_other');
+      -- Same id bound at an OLDER version: the current job must reload + update.
+      return jsonb_build_object('status','rejected','code','bound_older_version','link_id', v_link.id);
     end if;
-    if p_google_event_id is null then
-      return jsonb_build_object('status','rejected','code','missing_provider_id');
-    end if;
+    if p_google_event_id is null then return jsonb_build_object('status','rejected','code','missing_provider_id'); end if;
     begin
       update public.calendar_event_links
-         set google_event_id    = p_google_event_id,
-             google_ical_uid    = p_google_ical_uid,
-             google_etag        = p_google_etag,
-             sync_status        = 'synced',
-             last_hone_version  = coalesce(p_expected_source_version, v_link.last_hone_version),
-             last_sync_direction= 'hone_to_google',
-             last_synced_at     = now(),
-             last_error_code    = null,
-             updated_at         = now()
+         set google_event_id = p_google_event_id, google_ical_uid = p_google_ical_uid, google_etag = p_google_etag,
+             sync_status = 'synced', last_hone_version = p_expected_source_version,
+             last_sync_direction = 'hone_to_google', last_synced_at = now(), last_error_code = null, updated_at = now()
        where id = v_link.id;
     exception when unique_violation then
-      -- The provider event id is already actively mapped to a DIFFERENT link.
       return jsonb_build_object('status','rejected','code','foreign_event_conflict');
     end;
     return jsonb_build_object('status','ok','code','bound','link_id', v_link.id);
   end if;
 
   -- update_confirmed: an already-bound real link whose provider id matches.
-  if v_link.google_event_id is null then
-    return jsonb_build_object('status','rejected','code','link_is_placeholder');
-  end if;
+  if v_link.google_event_id is null then return jsonb_build_object('status','rejected','code','link_is_placeholder'); end if;
   if p_google_event_id is null or v_link.google_event_id <> p_google_event_id then
     return jsonb_build_object('status','rejected','code','provider_id_mismatch');
   end if;
   update public.calendar_event_links
-     set google_etag        = coalesce(p_google_etag, v_link.google_etag),
-         google_ical_uid    = coalesce(p_google_ical_uid, v_link.google_ical_uid),
-         sync_status        = 'synced',
-         last_hone_version  = coalesce(p_expected_source_version, v_link.last_hone_version),
-         last_sync_direction= 'hone_to_google',
-         last_synced_at     = now(),
-         last_error_code    = null,
-         updated_at         = now()
+     set google_etag = coalesce(p_google_etag, v_link.google_etag),
+         google_ical_uid = coalesce(p_google_ical_uid, v_link.google_ical_uid),
+         sync_status = 'synced', last_hone_version = p_expected_source_version,
+         last_sync_direction = 'hone_to_google', last_synced_at = now(), last_error_code = null, updated_at = now()
    where id = v_link.id;
   return jsonb_build_object('status','ok','code','updated','link_id', v_link.id);
 end $$;

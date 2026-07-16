@@ -74,17 +74,22 @@ async function procOutbox(opType: string, entityId: string | null, syncVersion: 
 }
 
 type Trans = { status: string; code: string; link_id?: string };
-async function transition(args: {
+type TransArgs = {
   action: string; outboxId: string; claimToken: string; linkId: string; entityId: string;
+  studioId?: string; connectionId?: string;
   expectedSourceVersion?: number | null; googleEventId?: string | null; googleEtag?: string | null; googleIcalUid?: string | null;
-}): Promise<Trans> {
+};
+// Low-level call that allows overriding every fenced arg (studio/connection/version).
+async function rpcRaw(args: TransArgs): Promise<Trans> {
   const r = await adminQuery(
     `select public.calendar_event_link_transition($1,$2,$3,$4,$5,$6,'appointment',$7,$8,$9,$10,$11) as r`,
-    [args.action, args.outboxId, args.claimToken, args.linkId, studio.studioId, connId, args.entityId,
+    [args.action, args.outboxId, args.claimToken, args.linkId, args.studioId ?? studio.studioId, args.connectionId ?? connId, args.entityId,
       args.expectedSourceVersion ?? null, args.googleEventId ?? null, args.googleIcalUid ?? null, args.googleEtag ?? null],
   );
   return r.rows[0].r as Trans;
 }
+// The common well-formed call (studio/connection default to the seeded pair).
+const transition = (args: TransArgs) => rpcRaw(args);
 
 beforeAll(async () => {
   studio = await seedStudio("c1-link-transition");
@@ -161,6 +166,8 @@ describe("calendar_event_link_transition RPC", () => {
   it("version CAS rejects a stale bind (link already advanced)", async () => {
     const appt = await insertAppt("confirmed");
     const [link] = await links(appt);
+    // Appointment at the job version (2); the LINK advanced past it (5).
+    await adminQuery(`update public.appointments set sync_version=2 where id=$1`, [appt]);
     await adminQuery(`update public.calendar_event_links set last_hone_version=5 where id=$1`, [link.id]);
     const tok = randomUUID();
     const ob = await procOutbox("event.create", appt, 2, tok);
@@ -197,9 +204,10 @@ describe("calendar_event_link_transition RPC", () => {
     const appt = await insertAppt("confirmed");
     const [link] = await links(appt);
     await adminQuery(`update public.calendar_event_links set google_event_id='hone1old', sync_status='synced', last_hone_version=3 where id=$1`, [link.id]);
+    await adminQuery(`update public.appointments set sync_version=4 where id=$1`, [appt]);
     const tok = randomUUID();
     const ob = await procOutbox("event.update", appt, 4, tok);
-    const r = await transition({ action: "rotate_for_recreate", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt });
+    const r = await transition({ action: "rotate_for_recreate", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 4 });
     expect(r.status).toBe("ok");
     const fresh = r.link_id as string;
     expect(fresh).not.toBe(link.id);
@@ -214,9 +222,65 @@ describe("calendar_event_link_transition RPC", () => {
     expect(old.deleted_at).not.toBeNull();
     expect((await adminQuery(`select status from public.calendar_sync_outbox where id=$1`, [ob])).rows[0].status).toBe("processing");
     // Idempotent resume: a second rotate returns the SAME replacement, never a 2nd active link.
-    const r2 = await transition({ action: "rotate_for_recreate", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt });
+    const r2 = await transition({ action: "rotate_for_recreate", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 4 });
     expect(r2.link_id).toBe(fresh);
     expect((await adminQuery(`select count(*)::int c from public.calendar_event_links where hone_entity_id=$1 and deleted_at is null`, [appt])).rows[0].c).toBe(1);
+  });
+
+  it("binds the transition to the claimed outbox row: rejects mismatched studio / connection / entity / action / entity-less link / version", async () => {
+    const appt = await insertAppt("confirmed");
+    const [link] = await links(appt);
+    const tok = randomUUID();
+    const ob = await procOutbox("event.create", appt, 1, tok);
+    const base: Omit<TransArgs, "action"> = { outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 1, googleEventId: "x" };
+    // studio mismatch (pass a foreign studio id via the raw RPC)
+    expect((await rpcRaw({ ...base, action: "bind_confirmed", studioId: randomUUID() })).code).toBe("outbox_studio_mismatch");
+    expect((await rpcRaw({ ...base, action: "bind_confirmed", connectionId: randomUUID() })).code).toBe("outbox_connection_mismatch");
+    // action incompatible with a create/update outbox
+    expect((await transition({ ...base, action: "mark_deleted" })).code).toBe("action_op_mismatch");
+    // entity mismatch
+    expect((await transition({ ...base, action: "bind_confirmed", entityId: randomUUID() })).code).toBe("outbox_entity_mismatch");
+    // version arg missing / mismatched
+    expect((await rpcRaw({ ...base, action: "bind_confirmed", expectedSourceVersion: null })).code).toBe("version_arg_missing");
+    expect((await transition({ ...base, action: "bind_confirmed", expectedSourceVersion: 9 })).code).toBe("version_arg_mismatch");
+  });
+
+  it("entity-less delete row: rejects a payload.hone_link_id that does not equal p_link_id", async () => {
+    const appt = await insertAppt("confirmed");
+    const [link] = await links(appt);
+    // an entity-less orphan delete outbox row keyed by a DIFFERENT link id
+    const other = randomUUID();
+    const id = randomUUID();
+    await adminQuery(
+      `insert into public.calendar_sync_outbox (id, studio_id, connection_id, op_type, hone_entity_type, hone_entity_id, payload, idempotency_key, status, claim_token, claimed_at, lease_expires_at, priority, attempts)
+       values ($1,$2,$3,'event.delete',null,null,$4,$5,'processing',$6,now(),now()+interval '5 minutes',100,1)`,
+      [id, studio.studioId, connId, JSON.stringify({ schema_version: 1, reason: "orphan_link_delete_placeholder", hone_link_id: other }), `test:${id}`, id],
+    );
+    const r = await transition({ action: "mark_deleted", outboxId: id, claimToken: id, linkId: link.id, entityId: appt });
+    expect(r.code).toBe("outbox_link_mismatch");
+  });
+
+  it("appointment version fence: a version that advanced after the pre-provider read is superseded", async () => {
+    const appt = await insertAppt("confirmed");
+    const [link] = await links(appt);
+    const tok = randomUUID();
+    const ob = await procOutbox("event.create", appt, 1, tok);
+    // The appointment advances to v2 AFTER the job (v1) was claimed.
+    await adminQuery(`update public.appointments set sync_version=2 where id=$1`, [appt]);
+    expect((await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 1, googleEventId: "x" })).code).toBe("appointment_superseded");
+    // And a gone appointment is superseded (gone), not silently bound.
+    await adminQuery(`delete from public.appointments where id=$1`, [appt]);
+    expect((await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 1, googleEventId: "x" })).code).toBe("appointment_gone");
+  });
+
+  it("bind of a link already bound to a DIFFERENT provider id -> moved_link_conflict (not a success)", async () => {
+    const appt = await insertAppt("confirmed");
+    const [link] = await links(appt);
+    await adminQuery(`update public.calendar_event_links set google_event_id='hone1already', sync_status='synced', last_hone_version=1 where id=$1`, [link.id]);
+    const tok = randomUUID();
+    const ob = await procOutbox("event.create", appt, 1, tok);
+    const r = await transition({ action: "bind_confirmed", outboxId: ob, claimToken: tok, linkId: link.id, entityId: appt, expectedSourceVersion: 1, googleEventId: "hone1different" });
+    expect(r.code).toBe("moved_link_conflict");
   });
 
   it("is EXECUTE-revoked from anon and authenticated (service-role only)", async () => {

@@ -87,8 +87,9 @@ describe("B2.3-c worker activation gate", () => {
       "tests/lib/google-calendar/sync/event-id.test.ts", // deterministic id + marker
       "tests/lib/google-calendar/sync/serializer.test.ts", // v1 allow-list + no PHI
       "tests/lib/google-calendar/sync/stale-fence.test.ts", // stale/completion-proof fence
-      "tests/lib/google-calendar/sync/operations.test.ts", // create-and-bind, replay, rotate, delete, conflict
-      "tests/db/google-calendar-c1-link-transition.db.test.ts", // transactional RPC + rotation + enqueue semantics
+      "tests/lib/google-calendar/sync/operations.test.ts", // MOCKED-operation unit: create-and-bind, replay, rotate, delete, conflict, response-validation, store-error, 401
+      "tests/lib/google-calendar/sync/operations-transport.test.ts", // ACTUAL REST transport composition (fake fetch): URL/sendUpdates/If-Match/marker/409/412
+      "tests/db/google-calendar-c1-link-transition.db.test.ts", // transactional RPC fences + rotation + enqueue semantics
     ];
     for (const f of required) expect(existsSync(join(ROOT, f))).toBe(true);
   });
