@@ -50,18 +50,22 @@ describe("B2.1 worker core is not activated", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no cron schedule references calendar-sync OR calendar-reconcile (nothing cron-registered)", () => {
-    for (const cfg of ["vercel.json", "vercel.ts"]) {
-      let text = "";
-      try {
-        text = readFileSync(join(ROOT, cfg), "utf8");
-      } catch {
-        continue;
-      }
-      expect(text.includes("calendar-sync")).toBe(false);
-      expect(text.includes("calendar_sync")).toBe(false);
-      expect(text.includes("calendar-reconcile")).toBe(false); // sweep route stays dormant (no schedule)
+  it("c3: the calendar crons are registered as DAILY schedules; the worker stays gated by worker_enabled, not by scheduling", () => {
+    // B2.3-c3 registers /api/cron/calendar-reconcile + /api/cron/calendar-sync as
+    // once-per-day vercel.json crons (the plan caps cron at daily). Registration is
+    // DORMANT: worker_enabled=false makes the claim RPC return zero rows + mutate
+    // nothing, and every studio sync flag is false. Dormancy is NOT "unscheduled".
+    const vercel = JSON.parse(readFileSync(join(ROOT, "vercel.json"), "utf8")) as {
+      crons?: { path: string; schedule: string }[];
+    };
+    const byPath = new Map((vercel.crons ?? []).map((c) => [c.path, c.schedule]));
+    expect(byPath.get("/api/cron/calendar-sync")).toBe("30 9 * * *");
+    expect(byPath.get("/api/cron/calendar-reconcile")).toBe("0 9 * * *");
+    // Neither is sub-daily (the plan rejects `*/N`); the daily materialize-breaks cron is preserved.
+    for (const p of ["/api/cron/calendar-sync", "/api/cron/calendar-reconcile"]) {
+      expect(byPath.get(p)).not.toMatch(/\*\//);
     }
+    expect(byPath.get("/api/cron/materialize-recurring-breaks")).toBe("0 8 * * *");
   });
 
   it("the two calendar cron ROUTES (reconcile sweep + B2.3-c2 worker drain) exist as files; neither is cron-registered", () => {

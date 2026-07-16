@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  CALENDAR_RECONCILE_CRON_SCHEDULE,
+  CALENDAR_SYNC_CRON_SCHEDULE,
+} from "@/lib/cron/calendar-cron-schedule";
 
-// Phase B2.3-c — the WORKER ACTIVATION GATE (updated for c2).
+// Phase B2.3-c — the WORKER ACTIVATION GATE (updated for c2, then c3).
 //
 // c1 shipped the real event-operation layer as a DORMANT operations map and proved
-// NO application route imported it. c2 changes the allowed state EXACTLY ONCE: the
-// single authenticated worker-drain route /api/cron/calendar-sync now wires the
-// deployed claim -> handle -> record architecture to the c1 operations map through
-// ONE approved server-only seam (lib/google-calendar/sync/worker-runtime.ts). This
-// gate proves the route is present-but-UNSCHEDULED and dormant: no other route or
-// browser path imports the map, no cron is registered, no code enables the worker
-// or a studio flag, the route takes no caller-selected target, and every c2
-// behaviour is backed by a DIRECT test.
+// NO application route imported it. c2 wires the single authenticated worker-drain
+// route /api/cron/calendar-sync to the c1 operations map through ONE approved
+// server-only seam (lib/google-calendar/sync/worker-runtime.ts). c3 REGISTERS the
+// two calendar cron routes as DAILY schedules in vercel.json — but dormancy is now
+// enforced by worker_enabled=false + the studio intent flags (the claim RPC returns
+// zero rows and mutates nothing), NOT by being unscheduled. This gate proves: no
+// other route or browser path imports the map, the calendar crons are registered at
+// the canonical daily cadence (no sub-daily, plan cap) with the existing
+// materialize-breaks cron preserved, no code enables the worker or a studio flag,
+// the route takes no caller-selected target, and every behaviour is backed by a
+// DIRECT test.
 
 const ROOT = process.cwd();
 const APPROVED_OPS_MODULE = join("lib", "google-calendar", "sync", "operations.ts");
@@ -122,10 +129,33 @@ describe("B2.3-c worker activation gate (c2)", () => {
     expect(vercel).not.toMatch(/maxDuration/); // never configured through vercel.json
   });
 
-  it("no calendar worker cron is registered in vercel.json", () => {
-    const vercel = read("vercel.json");
-    expect(vercel).not.toMatch(/calendar-sync/);
-    expect(vercel).not.toMatch(/calendar-reconcile/);
+  it("c3: the calendar cron routes are registered as DAILY schedules; dormancy is via worker_enabled/flags, not scheduling", () => {
+    const vercel = JSON.parse(read("vercel.json")) as { crons?: { path: string; schedule: string }[] };
+    const byPath = new Map((vercel.crons ?? []).map((c) => [c.path, c.schedule]));
+    // Both calendar crons registered at the canonical daily cadence...
+    expect(byPath.get("/api/cron/calendar-sync")).toBe(CALENDAR_SYNC_CRON_SCHEDULE);
+    expect(byPath.get("/api/cron/calendar-reconcile")).toBe(CALENDAR_RECONCILE_CRON_SCHEDULE);
+    // ...never sub-daily (the plan rejects `*/N`)...
+    expect(CALENDAR_SYNC_CRON_SCHEDULE).not.toMatch(/\*\//);
+    expect(CALENDAR_RECONCILE_CRON_SCHEDULE).not.toMatch(/\*\//);
+    // ...the existing daily materialize-breaks cron is preserved, no duplicate paths.
+    expect(byPath.get("/api/cron/materialize-recurring-breaks")).toBe("0 8 * * *");
+    const paths = (vercel.crons ?? []).map((c) => c.path);
+    expect(paths.length).toBe(new Set(paths).size);
+  });
+
+  it("c3: both calendar cron routes exist and are gated by isAuthorizedCronRequest (fail-closed auth)", () => {
+    const worker = read(APPROVED_ROUTE); // delegates to the seam (which calls isAuthorizedCronRequest)
+    const seam = read(APPROVED_SEAM);
+    const reconcile = read(join("app", "api", "cron", "calendar-reconcile", "route.ts"));
+    expect(existsSync(join(ROOT, "app", "api", "cron", "calendar-sync", "route.ts"))).toBe(true);
+    expect(existsSync(join(ROOT, "app", "api", "cron", "calendar-reconcile", "route.ts"))).toBe(true);
+    // worker auth is enforced in the seam; reconcile enforces it directly.
+    expect(worker).toMatch(/handleWorkerRoute/);
+    expect(seam).toMatch(/isAuthorizedCronRequest/);
+    expect(reconcile).toMatch(/isAuthorizedCronRequest/);
+    // the worker route still pins maxDuration=180 (unchanged by c3).
+    expect(worker).toMatch(/export const maxDuration = 180/);
   });
 
   it("no production module enables the worker or a studio sync flag", () => {

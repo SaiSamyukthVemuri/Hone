@@ -899,6 +899,27 @@ work and mutates nothing; (7) prove scheduled **no-op** behaviour before enablin
 studio. **Cron registration does NOT enable synchronization** — the data gate (studio
 outbound flag) and worker gate (`worker_enabled`) remain authoritative.
 
+> **B2.3-c3 implemented (this PR — authored, held for exact-head review; DORMANT).** Both
+> Google Calendar cron routes are now registered in `vercel.json` as **daily** schedules,
+> staggered after the 08:00 `materialize-recurring-breaks` cron, reconciliation before the
+> worker: `/api/cron/calendar-reconcile` at **`0 9 * * *`** and `/api/cron/calendar-sync` at
+> **`30 9 * * *`** (single source of truth: `lib/cron/calendar-cron-schedule.ts`, pinned by
+> `tests/app/cron-config.test.ts` + the activation gate). **Why daily:** the production Vercel
+> plan caps cron cadence at **once per day** — a sub-daily `*/N` cron is rejected at deploy
+> (the same reason the appointment-reminder route runs on an external every-15-min scheduler;
+> see docs/08 + docs/10). Daily is sufficient for the dormant no-work proof; a higher cadence
+> for real draining is a later (activation-time) decision. **Dormancy is now enforced by
+> `worker_enabled=false` + the studio intent flags, NOT by being unscheduled:** when these
+> crons fire, the claim RPC returns zero rows and mutates nothing, and the reconciliation
+> sweep finds zero intent-eligible studios. No migration (max stays `0132`); no worker/flag
+> is enabled; no queue row is seeded; the existing `materialize-recurring-breaks` cron is
+> preserved exactly. **The first Vercel-scheduled `/api/cron/calendar-sync` run is the
+> accepted platform-originated replacement for the B2.3-c2 manual no-work validation** (Vercel
+> Cron auto-supplies the production `CRON_SECRET` in the Authorization bearer — solving the
+> sensitive-secret delivery that blocked manual validation), expected to return HTTP 200
+> `no_work:true` with all counters zero and write only the `gcal_worker:last_run` heartbeat.
+> **c4, not c3, owns Sam-only controlled activation.**
+
 **B2.3-c4 — Sam-only controlled activation.** Prove the full outbound lifecycle on Sam's
 controlled dedicated **"Hone Appointments"** calendar, in this **exact order**:
 1. Read-only production baseline: migration max, worker state, flags, outbox count, link

@@ -6,6 +6,10 @@ import {
   MATERIALIZE_RECURRING_BREAKS_CRON_SCHEDULE,
   windowCoversAllOffsets,
 } from "@/lib/cron/reminder-schedule";
+import {
+  CALENDAR_RECONCILE_CRON_SCHEDULE,
+  CALENDAR_SYNC_CRON_SCHEDULE,
+} from "@/lib/cron/calendar-cron-schedule";
 
 // PR #258: cron configuration + reminder-route reliability pins. vercel.json
 // must schedule every ACTIVE cron route (the empty `{ "crons": [] }` was the
@@ -51,6 +55,34 @@ describe("vercel.json cron config (fixes the reported empty-crons bug)", () => {
 
   it("crons is non-empty (no longer the empty `[]` that left every route unscheduled)", () => {
     expect(crons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // B2.3-c3: the two Google Calendar cron routes are now registered as DAILY crons
+  // (the plan caps cron at once/day), staggered after the 08:00 materialize-breaks
+  // cron, reconciliation BEFORE the worker. Registration is DORMANT — worker_enabled
+  // stays false so the claim RPC returns zero rows and mutates nothing.
+  it("schedules the daily calendar-reconcile cron at the canonical (daily) cadence", () => {
+    expect(byPath.get("/api/cron/calendar-reconcile")).toBe(CALENDAR_RECONCILE_CRON_SCHEDULE);
+    expect(CALENDAR_RECONCILE_CRON_SCHEDULE).toMatch(/^\d+ \d+ \* \* \*$/); // once-per-day (plan-supported)
+  });
+
+  it("schedules the daily calendar-sync worker-drain cron at the canonical (daily) cadence, AFTER reconciliation", () => {
+    expect(byPath.get("/api/cron/calendar-sync")).toBe(CALENDAR_SYNC_CRON_SCHEDULE);
+    expect(CALENDAR_SYNC_CRON_SCHEDULE).toMatch(/^\d+ \d+ \* \* \*$/); // once-per-day (plan-supported)
+    // Reconciliation fires before the worker on the same daily hour (B2.3-c3 §6 order).
+    const rMin = Number(CALENDAR_RECONCILE_CRON_SCHEDULE.split(" ")[0]);
+    const wMin = Number(CALENDAR_SYNC_CRON_SCHEDULE.split(" ")[0]);
+    expect(wMin).toBeGreaterThan(rMin);
+  });
+
+  it("registers no sub-daily calendar cron (the plan rejects `*/N` at deploy) and no duplicate paths", () => {
+    for (const c of crons) {
+      if (/calendar-(sync|reconcile)/.test(c.path)) {
+        expect(c.schedule).not.toMatch(/\*\//); // never a sub-daily cadence
+      }
+    }
+    const paths = crons.map((c) => c.path);
+    expect(paths.length).toBe(new Set(paths).size); // no duplicate cron paths
   });
 });
 
