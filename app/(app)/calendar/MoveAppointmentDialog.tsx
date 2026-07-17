@@ -64,7 +64,14 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [selected, setSelected] = useState<MoveSlot | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [loadingSlots, startLoad] = useTransition();
-  const [submitting, startSubmit] = useTransition();
+  // The critical mutation lock is EXPLICIT — a synchronous useState + a one-shot ref
+  // — NOT useTransition. useTransition's pending flag is deferred, which left a window
+  // where the footer had not yet repainted the disabled "Moving…" state (the reported
+  // "button vanishes ~1s then returns" + invisibly-clickable submit). setSubmitting(true)
+  // + submittingRef establish the visible loading state, the disabled controls, and
+  // duplicate-submit protection on the SAME tick as the first tap.
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Custom-time mode (owner only). `canUseCustomTime` is authoritative from the server.
   const [mode, setMode] = useState<Mode>("available_slot");
@@ -114,6 +121,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   useEffect(() => {
     if (!open) return;
     openerRef.current = (document.activeElement as HTMLElement) ?? null;
+    submittingRef.current = false;
+    setSubmitting(false);
     setDate(currentLocalDate);
     setSelected(null);
     setMoveError(null);
@@ -140,7 +149,13 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       }
       if (e.key === "Tab" && panelRef.current) {
         const nodes = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
-        if (nodes.length === 0) return;
+        if (nodes.length === 0) {
+          // Everything is disabled (e.g. mid-submit): keep focus inside the dialog
+          // instead of letting Tab escape to content behind the modal.
+          e.preventDefault();
+          panelRef.current.focus();
+          return;
+        }
         const first = nodes[0];
         const last = nodes[nodes.length - 1];
         if (e.shiftKey && document.activeElement === first) {
@@ -163,6 +178,16 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     return () => {
       openerRef.current?.focus?.();
     };
+  }, [open]);
+
+  // Fully clear the submit lock once closed. The success path intentionally leaves
+  // `submitting` set while the dialog closes (so no enabled button flashes before it
+  // disappears); this resets it AFTER close — while the dialog renders null — so a
+  // later reopen never paints a stale "Moving appointment…" frame.
+  useEffect(() => {
+    if (open) return;
+    submittingRef.current = false;
+    setSubmitting(false);
   }, [open]);
 
   const onPickDate = (d: string) => {
@@ -200,7 +225,9 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       : DATE_RE.test(date) && TIME_RE.test(customTime) && ackOverride;
 
   const confirmMove = () => {
-    if (submitting || !canConfirm) return;
+    // Synchronous one-shot guard: a duplicate tap can NEVER start a second request,
+    // even before React commits the disabled state.
+    if (submittingRef.current || !canConfirm) return;
     let localTime: string;
     let ack = false;
     if (mode === "available_slot") {
@@ -212,34 +239,53 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       ack = true;
     }
     const submitMode = mode;
+    // Establish the lock SYNCHRONOUSLY, before any async work: this tick renders the
+    // disabled "Moving appointment…" state and blocks a second submit.
+    submittingRef.current = true;
+    setSubmitting(true);
     setMoveError(null);
-    startSubmit(async () => {
-      const res = await moveAppointmentAction({
-        appointmentId: appointment.id,
-        expectedStartsAt: appointment.startsAt,
-        expectedEndsAt: appointment.endsAt,
-        localDate: date,
-        localTime,
-        mode: submitMode,
-        outsideAvailabilityConfirmed: ack,
-      });
+    // Keep focus inside the dialog when the just-tapped button becomes disabled.
+    panelRef.current?.focus();
+    void (async () => {
+      // The try wraps ONLY the network mutation — never onMoved(). A throwing success
+      // callback (e.g. router.refresh) must not convert a COMMITTED move into a false
+      // failure + a stale-time retry.
+      let res: Awaited<ReturnType<typeof moveAppointmentAction>>;
+      try {
+        res = await moveAppointmentAction({
+          appointmentId: appointment.id,
+          expectedStartsAt: appointment.startsAt,
+          expectedEndsAt: appointment.endsAt,
+          localDate: date,
+          localTime,
+          mode: submitMode,
+          outsideAvailabilityConfirmed: ack,
+        });
+      } catch {
+        submittingRef.current = false;
+        setSubmitting(false);
+        setMoveError("We couldn't move the appointment. Please try again.");
+        return;
+      }
       if (res.ok) {
+        // Success: the parent closes the dialog (it renders null). Leave the lock set;
+        // no further state update runs on this path.
         onMoved(res);
         return;
       }
-      if (res.code === "conflict") {
-        setMoveError(res.error);
-        if (submitMode === "available_slot") {
-          setSelected(null);
-          load(date); // refresh the times; the appointment did NOT move
-        }
-        // custom mode stays selected; the error marks the entered time invalid.
-        return;
-      }
-      // stale / no_change / generic — keep the dialog open, show safe copy.
+      // Any failure keeps the dialog OPEN: restore the enabled button for one deliberate
+      // retry, preserving the entered date/time + acknowledgement.
+      submittingRef.current = false;
+      setSubmitting(false);
       setMoveError(res.error);
-      if (res.code === "stale" && submitMode === "available_slot") load(date);
-    });
+      if (res.code === "conflict" && submitMode === "available_slot") {
+        setSelected(null);
+        load(date); // the offered slot is gone; refresh the times (no move happened)
+      } else if (res.code === "stale" && submitMode === "available_slot") {
+        load(date);
+      }
+      // custom mode keeps its entered time + acknowledgement; the error marks it invalid.
+    })();
   };
 
   if (!open) return null;
@@ -262,16 +308,19 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       />
       <div
         ref={panelRef}
-        className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl dark:bg-neutral-950 sm:max-h-[85vh] sm:w-[540px] sm:rounded-2xl"
+        tabIndex={-1}
+        className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl outline-none dark:bg-neutral-950 sm:max-h-[85vh] sm:w-[540px] sm:rounded-2xl"
       >
-        {/* Sticky header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950">
+        {/* Header — a normal shrink-0 flex child (never position:sticky), so it is
+            always painted; only the middle body scrolls. */}
+        <div className="flex shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 className="font-serif text-lg font-semibold">Move appointment</h2>
           <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} aria-label="Close" className="min-h-[44px] min-w-[44px] rounded-lg px-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900">✕</button>
         </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">
+        {/* Scrollable body — the ONLY scroll region. min-h-0 lets it shrink so the
+            header + footer keep their height and stay painted. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {/* Current appointment */}
           <section className="rounded-xl bg-neutral-50 p-4 text-sm dark:bg-neutral-900">
             <div className="font-medium">{appointment.clientName ?? "Client"} · {appointment.serviceName ?? "Appointment"}</div>
@@ -404,10 +453,16 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           )}
         </div>
 
-        {/* Sticky footer (safe-area padded on mobile) */}
-        <div className="sticky bottom-0 z-10 flex items-center justify-end gap-3 border-t border-neutral-200 bg-white px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950 sm:pb-4">
+        {/* Footer — a normal shrink-0 flex child (never position:sticky), opaque with a
+            top border + safe-area bottom padding. Because it is a flex sibling of the
+            scroll body (not sticky inside an overflow-clipped container) it stays
+            continuously painted on iOS Safari before, during and after submission. */}
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-neutral-200 bg-white px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950 sm:pb-4">
           <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className="min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900">Keep current time</button>
-          <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} className="min-h-[44px] rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+          <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} aria-busy={submitting} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+            {submitting && (
+              <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-neutral-900/40 dark:border-t-neutral-900" />
+            )}
             {submitting ? "Moving appointment…" : "Move appointment"}
           </button>
         </div>
