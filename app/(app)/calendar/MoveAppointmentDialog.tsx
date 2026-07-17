@@ -149,7 +149,13 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       }
       if (e.key === "Tab" && panelRef.current) {
         const nodes = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
-        if (nodes.length === 0) return;
+        if (nodes.length === 0) {
+          // Everything is disabled (e.g. mid-submit): keep focus inside the dialog
+          // instead of letting Tab escape to content behind the modal.
+          e.preventDefault();
+          panelRef.current.focus();
+          return;
+        }
         const first = nodes[0];
         const last = nodes[nodes.length - 1];
         if (e.shiftKey && document.activeElement === first) {
@@ -172,6 +178,16 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     return () => {
       openerRef.current?.focus?.();
     };
+  }, [open]);
+
+  // Fully clear the submit lock once closed. The success path intentionally leaves
+  // `submitting` set while the dialog closes (so no enabled button flashes before it
+  // disappears); this resets it AFTER close — while the dialog renders null — so a
+  // later reopen never paints a stale "Moving appointment…" frame.
+  useEffect(() => {
+    if (open) return;
+    submittingRef.current = false;
+    setSubmitting(false);
   }, [open]);
 
   const onPickDate = (d: string) => {
@@ -231,8 +247,12 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     // Keep focus inside the dialog when the just-tapped button becomes disabled.
     panelRef.current?.focus();
     void (async () => {
+      // The try wraps ONLY the network mutation — never onMoved(). A throwing success
+      // callback (e.g. router.refresh) must not convert a COMMITTED move into a false
+      // failure + a stale-time retry.
+      let res: Awaited<ReturnType<typeof moveAppointmentAction>>;
       try {
-        const res = await moveAppointmentAction({
+        res = await moveAppointmentAction({
           appointmentId: appointment.id,
           expectedStartsAt: appointment.startsAt,
           expectedEndsAt: appointment.endsAt,
@@ -241,29 +261,30 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           mode: submitMode,
           outsideAvailabilityConfirmed: ack,
         });
-        if (res.ok) {
-          // Success: the parent closes the dialog (it renders null). Leave the lock
-          // set; no further state update runs on this path.
-          onMoved(res);
-          return;
-        }
-        // Any failure keeps the dialog OPEN: restore the enabled button for one
-        // deliberate retry, preserving the entered date/time + acknowledgement.
-        submittingRef.current = false;
-        setSubmitting(false);
-        setMoveError(res.error);
-        if (res.code === "conflict" && submitMode === "available_slot") {
-          setSelected(null);
-          load(date); // the offered slot is gone; refresh the times (no move happened)
-        } else if (res.code === "stale" && submitMode === "available_slot") {
-          load(date);
-        }
-        // custom mode keeps its entered time + acknowledgement; the error marks it invalid.
       } catch {
         submittingRef.current = false;
         setSubmitting(false);
         setMoveError("We couldn't move the appointment. Please try again.");
+        return;
       }
+      if (res.ok) {
+        // Success: the parent closes the dialog (it renders null). Leave the lock set;
+        // no further state update runs on this path.
+        onMoved(res);
+        return;
+      }
+      // Any failure keeps the dialog OPEN: restore the enabled button for one deliberate
+      // retry, preserving the entered date/time + acknowledgement.
+      submittingRef.current = false;
+      setSubmitting(false);
+      setMoveError(res.error);
+      if (res.code === "conflict" && submitMode === "available_slot") {
+        setSelected(null);
+        load(date); // the offered slot is gone; refresh the times (no move happened)
+      } else if (res.code === "stale" && submitMode === "available_slot") {
+        load(date);
+      }
+      // custom mode keeps its entered time + acknowledgement; the error marks it invalid.
     })();
   };
 
