@@ -161,3 +161,60 @@ describe("move feature: no Google Calendar / Stripe entanglement", () => {
     }
   });
 });
+
+// ---- Custom-time follow-up: owner-only override + closed mode contract ----
+describe("move: closed mode contract + owner-only custom time", () => {
+  const c = code(ACTIONS);
+  it("mode is a CLOSED set (available_slot | custom_time) and an unknown mode is rejected", () => {
+    expect(c).toMatch(/"available_slot"\s*\|\s*"custom_time"/);
+    // Rejects anything that is not one of the two modes.
+    expect(c).toMatch(/mode !== "available_slot" && mode !== "custom_time"/);
+  });
+  it("custom_time is authorized on the LIVE server-resolved owner role (not the browser)", () => {
+    expect(c).toMatch(/mode === "custom_time"/);
+    expect(c).toMatch(/practitioner\.role !== "owner"/);
+    // never trusts a browser-supplied role/isOwner/allow flag
+    expect(c).not.toMatch(/input\.(isOwner|role|canUseCustomTime|allowOutsideAvailability|studioId|practitionerId)/);
+  });
+  it("custom_time requires the explicit override acknowledgement", () => {
+    expect(c).toMatch(/outsideAvailabilityConfirmed/);
+    expect(c).toMatch(/Confirm that you want to override regular availability/);
+  });
+  it("available_slot re-verifies the target against a server-recomputed slot list (by instant)", () => {
+    expect(c).toMatch(/mode === "available_slot"/);
+    expect(c).toMatch(/getAvailableSlots\(/);
+    // membership is checked by comparing UTC instants, not just a formatted label
+    expect(c).toMatch(/getTime\(\) ===\s*\n?\s*targetMs|=== targetMs/);
+  });
+  it("canUseCustomTime is derived ONLY from the server role", () => {
+    expect(c).toMatch(/canUseCustomTime\s*=\s*practitioner\.role === "owner"/);
+  });
+  it("still ONE dialog, ONE action, ONE RPC — no second mutation path", () => {
+    // Exactly one rpc call site to the move RPC.
+    expect((code(ACTIONS).match(/rpc\(\s*["']practitioner_move_appointment["']/g) ?? []).length).toBe(1);
+    // The dialog mutates only through the two exported actions.
+    const dialog = read(DIALOG);
+    expect(dialog).toMatch(/moveAppointmentAction/);
+    expect(dialog).toMatch(/loadMoveSlotsAction/);
+    expect(dialog).not.toMatch(/admin-server|createAdminClient|service_role/);
+  });
+  it("custom-time UI gates the button on acknowledgement + a valid time (owner-only render)", () => {
+    const dialog = read(DIALOG);
+    expect(dialog).toMatch(/canUseCustomTime &&/); // custom option renders only when server says owner
+    expect(dialog).toMatch(/I understand this time overrides regular availability/);
+    expect(dialog).toMatch(/ackOverride/);
+  });
+});
+
+// ---- PR #433 cancellation-email actor code + tests remain present (§26) ----
+describe("move follow-up leaves the PR #433 cancellation-email actor work intact", () => {
+  it("cancellation-email actor code is still present", () => {
+    const tpl = read("lib/email/templates/appointment.ts");
+    expect(tpl).toMatch(/cancellationActorSummary/);
+    expect(tpl).toMatch(/CancellationActorRole/);
+    expect(tpl).toMatch(/Studio owner/);
+  });
+  it("cancellation-email actor tests are still present", () => {
+    expect(existsSync(path.join(ROOT, "tests/lib/email/cancellation-actor.test.ts"))).toBe(true);
+  });
+});
