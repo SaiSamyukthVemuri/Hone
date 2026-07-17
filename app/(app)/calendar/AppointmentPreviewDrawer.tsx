@@ -6,15 +6,21 @@ import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { timeRangeLabel, weekdayLabel, monthDayLabel } from "./calendar-format";
+import { MoveAppointmentButton } from "./MoveAppointmentButton";
 
 // In-context appointment PREVIEW (desktop PR C-lite). Opened from an appointment
 // card on the desktop week grid so a practitioner can inspect a booking WITHOUT
 // navigating away — the on-grid equivalent of clicking a Google/Apple Calendar
-// event. It is strictly READ-ONLY: it shows only safe summary fields the
-// calendar page already loaded (client name, service, date/time, status), plus
-// an "Open full details" deep link to the unchanged /calendar/[id] route. It
-// runs no new query and exposes no editing or lifecycle actions — those all
-// stay on the detail route.
+// event. It shows only safe summary fields the calendar page already loaded
+// (client name, service, date/time, status), plus an "Open full details" deep
+// link to the unchanged /calendar/[id] route. It runs NO new query of its own.
+//
+// The ONE deliberate action here is Move appointment (confirmed + future only):
+// it mounts the SHARED MoveAppointmentButton → MoveAppointmentDialog, which owns
+// its own server-side-authorized actions. The drawer adds no mutation logic and
+// still issues no query; every other edit/lifecycle action stays on the detail
+// route. Moving from here is the desktop in-grid equivalent of drag-to-reschedule
+// and uses the exact same shared workflow as the detail page.
 
 type Props = {
   appointment: AppointmentWithPractitionerColor | null;
@@ -77,6 +83,12 @@ export function AppointmentPreviewDrawer({
           ? "No-show"
           : "Upcoming";
 
+  // Move is offered only for a confirmed, still-future appointment — the same
+  // gate the detail page uses. A confirmed-but-started ("done") booking is not
+  // movable, so the entry is hidden rather than opening a dialog that rejects.
+  const canMove =
+    a.status === "confirmed" && new Date(a.starts_at).getTime() > Date.now();
+
   return (
     <div
       role="dialog"
@@ -132,8 +144,27 @@ export function AppointmentPreviewDrawer({
           </div>
         </dl>
 
-        {/* The full editor + every appointment action live on the unchanged
-            detail route — never duplicated here. */}
+        {/* Move appointment — the single shared workflow, gated to confirmed +
+            future. On success the drawer closes and the calendar refreshes. */}
+        {canMove && (
+          <MoveAppointmentButton
+            appointment={{
+              id: a.id,
+              startsAt: a.starts_at,
+              endsAt: a.ends_at,
+              durationMinutes: a.duration_minutes,
+              clientName: a.client?.name ?? null,
+              serviceName: a.service?.name ?? null,
+            }}
+            studioTimezone={studioTimezone}
+            timeFormat={timeFormat}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            onMoved={onClose}
+          />
+        )}
+
+        {/* The full editor + every other appointment action live on the
+            unchanged detail route — never duplicated here. */}
         <Link
           href={`/calendar/${a.id}${returnTo}`}
           className="mt-1 inline-flex items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"

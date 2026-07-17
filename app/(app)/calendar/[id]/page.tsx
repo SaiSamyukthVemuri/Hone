@@ -11,6 +11,8 @@ import { getLatestIntakeForClient } from "@/lib/intake/queries";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { referralSourceLabel } from "@/lib/booking/referral-source";
+import { resolveTimeFormat } from "@/lib/booking/tz";
+import { MoveAppointmentButton } from "../MoveAppointmentButton";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   buildLastSessionSummary,
@@ -597,7 +599,37 @@ export default async function AppointmentDetailPage({
         // started/past confirmed appointments the lifecycle outcome
         // section above (Mark complete / Mark no-show) is the only
         // legitimate path.
-        <PractitionerCancelForm appointmentId={id} />
+        //
+        // Move appointment shares that exact gate (confirmed + future). It is
+        // the ONE shared responsive workflow — the same MoveAppointmentButton /
+        // dialog / server actions used by the desktop preview drawer. A move
+        // UPDATES this same appointment row (same id, same client/service/
+        // payment/clinical links); it never cancels + rebooks.
+        <>
+          <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Reschedule
+            </h2>
+            <p className="text-xs text-neutral-500">
+              Move this appointment to a new time. Same appointment and details —
+              only the time changes, and the client is notified.
+            </p>
+            <MoveAppointmentButton
+              appointment={{
+                id,
+                startsAt: data.starts_at,
+                endsAt: data.ends_at,
+                durationMinutes: data.duration_minutes,
+                clientName: data.client?.name ?? null,
+                serviceName: data.service?.name ?? null,
+                practitionerName: data.practitioner?.display_name ?? null,
+              }}
+              studioTimezone={studio.timezone}
+              timeFormat={resolveTimeFormat(studio)}
+            />
+          </section>
+          <PractitionerCancelForm appointmentId={id} />
+        </>
       ) : null}
 
       {/* PR #145. Manual cancellation/no-show fee preview. Rendered
