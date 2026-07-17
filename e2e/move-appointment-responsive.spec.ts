@@ -29,6 +29,10 @@ test.describe.configure({ mode: "serial" });
 
 const SLOT = /^\d{1,2}:\d{2} (AM|PM)$/; // same 12h label the booking flow matches
 
+// getAppointmentsForClient runs raw `pg`, which returns timestamptz as a Date
+// object — so compare the INSTANT (epoch ms), never the Date reference.
+const instant = (v: string | Date): number => new Date(v).getTime();
+
 let seed: E2eSeed;
 let clientId: string;
 let apptId: string;
@@ -93,7 +97,9 @@ async function moveOnce(
   const moved = after.find((a) => a.id === apptId)!;
   expect(moved, `${label}: same appointment id preserved`).toBeTruthy();
   expect(moved.status, `${label}: still confirmed`).toBe("confirmed");
-  expect(moved.starts_at, `${label}: start time changed`).not.toBe(prev.starts_at);
+  expect(instant(moved.starts_at), `${label}: start time changed`).not.toBe(
+    instant(prev.starts_at),
+  );
 }
 
 async function ctxPage(
@@ -164,7 +170,7 @@ test("move appointment: shared responsive workflow preserves the same record", a
     // Nothing moved.
     const after = await getAppointmentsForClient(seed.studioId, clientId);
     expect(after).toHaveLength(before.length);
-    expect(after.find((a) => a.id === apptId)!.starts_at).toBe(prevStart);
+    expect(instant(after.find((a) => a.id === apptId)!.starts_at)).toBe(instant(prevStart));
     await ctx.close();
   });
 });
