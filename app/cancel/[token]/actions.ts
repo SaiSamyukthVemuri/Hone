@@ -290,7 +290,7 @@ export async function publicCancelAppointmentAction(
   const { data: apptRaw } = await admin
     .from("appointments")
     .select(
-      "studio_id, client_id, practitioner_id, starts_at, service:services(name), studio:studios(*), client:clients(name)",
+      "studio_id, client_id, practitioner_id, starts_at, duration_minutes, service:services(name), studio:studios(*), client:clients(name)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -304,6 +304,7 @@ export async function publicCancelAppointmentAction(
     // helper requires it.
     practitioner_id: string | null;
     starts_at: string;
+    duration_minutes: number;
     service: { name: string } | { name: string }[] | null;
     studio: import("@/lib/types/database").Studio | import("@/lib/types/database").Studio[] | null;
     client: { name: string } | { name: string }[] | null;
@@ -395,10 +396,17 @@ export async function publicCancelAppointmentAction(
         await sendCancellationEmail({
           to: owner.email,
           recipientName: owner.display_name?.trim() || owner.email,
+          // Actor + client are one and the same here: a public token
+          // cancellation is ALWAYS performed by the appointment's own
+          // client. Both names are the server-resolved client record
+          // (apptClient.name) — never anything from the request body.
+          clientName: apptClient?.name ?? null,
+          actorName: apptClient?.name ?? null,
+          actorRole: "client",
           studio: apptStudio,
           serviceName: apptService?.name ?? "Appointment",
+          durationMinutes: apptRow.duration_minutes,
           startsAt: new Date(apptRow.starts_at),
-          cancelledBy: "client",
           // The owner notification continues to receive the same
           // free-form reason string it always has. PR #144 sends the
           // human label (e.g. "Schedule changed") when the client

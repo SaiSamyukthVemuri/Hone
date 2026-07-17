@@ -263,13 +263,63 @@ Open in Hone: ${p.appointmentUrl}
   return { subject, html, text };
 }
 
+// Who performed the cancellation. Server-derived from the authoritative
+// cancellation path (never a browser-supplied value); see the derivation at each
+// call site (public token cancel = the appointment's client; practitioner cancel =
+// the authenticated practitioner/owner; an automated cancel = the system).
+export type CancellationActorRole = "client" | "practitioner" | "owner" | "system";
+
+// Human-readable role label for the practitioner-facing email. "owner" reads as
+// "Studio owner" so the recipient never sees an internal enum value.
+export function cancellationActorRoleLabel(role: CancellationActorRole): string {
+  switch (role) {
+    case "client":
+      return "Client";
+    case "practitioner":
+      return "Practitioner";
+    case "owner":
+      return "Studio owner";
+    case "system":
+      return "System";
+  }
+}
+
+// "Cancelled by" value for the email. With a display name → "<name> — <Role>";
+// with no usable name → just the role label (safe fallback per the spec, e.g.
+// "Cancelled by: Client"). No IDs/tokens/emails are ever placed here.
+export function cancellationActorSummary(
+  actorName: string | null | undefined,
+  role: CancellationActorRole,
+): string {
+  const label = cancellationActorRoleLabel(role);
+  const name = actorName?.trim();
+  return name ? `${name} — ${label}` : label;
+}
+
+// Month + day only (e.g. "July 21"), studio-timezone aware, for the subject line.
+function monthDayLabel(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "long",
+    day: "numeric",
+  }).format(d);
+}
+
 type CancellationEmail = {
   recipientName: string;
+  // The appointment's client, shown on the practitioner-facing email so the
+  // recipient sees WHOSE appointment was cancelled independently of who cancelled.
+  clientName: string | null;
   studioName: string;
   serviceName: string;
+  durationMinutes: number;
   startsAt: Date;
   timezone: string;
-  cancelledBy: "client" | "practitioner" | "owner";
+  // Who cancelled — server-derived. actorName is the display name (or null for the
+  // role-only fallback); actorRole drives the label + the client-facing "by the
+  // studio" wording.
+  actorName: string | null;
+  actorRole: CancellationActorRole;
   reason: string | null;
   isClient: boolean; // recipient is the client
   rebookUrl?: string;
@@ -289,17 +339,10 @@ export function buildCancellationEmail(p: CancellationEmail): {
   // identity does not affect the format because both the client and
   // the studio side benefit from the same disambiguation.
   const timeStr = localTimeString12h(p.startsAt, p.timezone);
-  const subject = p.isClient
-    ? `Appointment cancelled: ${p.serviceName} at ${p.studioName}`
-    : `Appointment cancelled: ${p.recipientName === p.studioName ? "" : `${p.recipientName}, `}${p.serviceName} on ${dayStr}`;
-  const safeName = escapeHtml(p.recipientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
-  const lead = p.isClient
-    ? `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.cancelledBy !== "client" ? " by the studio" : ""}.`
-    : `${safeService} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} was cancelled by the ${p.cancelledBy}.`;
 
-  const html = `<!doctype html>
+  const htmlShell = (bodyRowsHtml: string, ctaHtml: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /></head>
 <body style="margin:0; padding:0; background:#FAFAF7; color:#0A0A0A;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7; padding:40px 20px;">
@@ -309,31 +352,80 @@ export function buildCancellationEmail(p: CancellationEmail): {
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:24px; letter-spacing:-0.02em; line-height:1.2;">
           Appointment cancelled.
         </td></tr>
-        <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">${safeName},</td></tr>
-        <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
-          ${lead}
-          ${p.reason ? `<br/><br/>Reason: ${escapeHtml(p.reason)}` : ""}
-        </td></tr>
-        ${
-          p.isClient && p.rebookUrl
-            ? `<tr><td style="padding-bottom:32px;">
-                <a href="${p.rebookUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
-                  Book another appointment
-                </a>
-              </td></tr>`
-            : ""
-        }
+        ${bodyRowsHtml}
+        ${ctaHtml}
       </table>
     </td></tr>
   </table>
 </body></html>`;
 
-  const text = `${p.recipientName},
+  if (p.isClient) {
+    // ---- Client-facing email. Behaviour unchanged: the client never sees which
+    // internal actor cancelled, only "your appointment ... was cancelled [by the
+    // studio]". ----
+    const safeName = escapeHtml(p.recipientName);
+    const lead = `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.`;
+    const bodyRowsHtml = `<tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">${safeName},</td></tr>
+        <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${lead}
+          ${p.reason ? `<br/><br/>Reason: ${escapeHtml(p.reason)}` : ""}
+        </td></tr>`;
+    const ctaHtml = p.rebookUrl
+      ? `<tr><td style="padding-bottom:32px;">
+                <a href="${p.rebookUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
+                  Book another appointment
+                </a>
+              </td></tr>`
+      : "";
+    const text = `${p.recipientName},
 
-${p.isClient ? `Your ${p.serviceName} appointment at ${p.studioName} on ${dayStr} at ${timeStr} has been cancelled${p.cancelledBy !== "client" ? " by the studio" : ""}.` : `${p.serviceName} on ${dayStr} at ${timeStr} was cancelled by the ${p.cancelledBy}.`}
+Your ${p.serviceName} appointment at ${p.studioName} on ${dayStr} at ${timeStr} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.
 ${p.reason ? `\nReason: ${p.reason}` : ""}
-${p.isClient && p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
+${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
+`;
+    return {
+      subject: `Appointment cancelled: ${p.serviceName} at ${p.studioName}`,
+      html: htmlShell(bodyRowsHtml, ctaHtml),
+      text,
+    };
+  }
+
+  // ---- Practitioner-facing email. The recipient (studio/owner) must see, at a
+  // glance, WHO cancelled, WHOSE appointment, WHEN, WHAT, and WHY. ----
+  const cancelledBy = cancellationActorSummary(p.actorName, p.actorRole);
+  const actorName = p.actorName?.trim() || null;
+  const monthDay = monthDayLabel(p.startsAt, p.timezone);
+  // Clearer subject, e.g. "Appointment cancelled by Chloe Vemuri LE: 90 minute
+  // session on July 21"; with no name, name-free but still says who by role.
+  const subject = actorName
+    ? `Appointment cancelled by ${actorName}: ${p.serviceName} on ${monthDay}`
+    : `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()}: ${p.serviceName} on ${monthDay}`;
+
+  // Ordered, labelled rows. Every value is a display field (name/label/time/
+  // service/duration/reason label) — never an id, token, raw audit JSON, or note.
+  const rows: Array<[string, string]> = [];
+  if (p.clientName && p.clientName.trim()) rows.push(["Client", p.clientName.trim()]);
+  rows.push(["Cancelled by", cancelledBy]);
+  rows.push(["Original time", `${dayStr} at ${timeStr}`]);
+  rows.push(["Service", `${p.serviceName} (${p.durationMinutes} min)`]);
+  rows.push(["Reason", p.reason && p.reason.trim() ? p.reason.trim() : "—"]);
+
+  const rowsHtml = rows
+    .map(
+      ([label, value]) =>
+        `<tr><td style="padding:4px 0; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;"><span style="color:#6B6B6B;">${escapeHtml(label)}:</span> <strong>${escapeHtml(value)}</strong></td></tr>`,
+    )
+    .join("\n        ");
+  const bodyRowsHtml = `<tr><td style="padding-bottom:8px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        ${rowsHtml}
+          </table>
+        </td></tr>`;
+
+  const text = `Appointment cancelled
+
+${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
 `;
 
-  return { subject, html, text };
+  return { subject, html: htmlShell(bodyRowsHtml, ""), text };
 }
