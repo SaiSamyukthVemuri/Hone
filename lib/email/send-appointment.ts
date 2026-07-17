@@ -4,6 +4,7 @@ import {
   buildClientConfirmationEmail,
   buildPractitionerNotificationEmail,
   buildCancellationEmail,
+  type CancellationActorRole,
 } from "@/lib/email/templates/appointment";
 import {
   build24hReminderEmail,
@@ -446,10 +447,15 @@ export async function sendBookingNotificationToPractitioner(params: {
 export async function sendCancellationEmail(params: {
   to: string;
   recipientName: string;
+  clientName: string | null;
   studio: Studio;
   serviceName: string;
+  durationMinutes: number;
   startsAt: Date;
-  cancelledBy: "client" | "practitioner" | "owner";
+  // Server-derived actor (never browser-supplied). actorName is the display name
+  // (null → the safe role-only fallback); actorRole drives the label.
+  actorName: string | null;
+  actorRole: CancellationActorRole;
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
@@ -457,11 +463,14 @@ export async function sendCancellationEmail(params: {
   if (!params.to) return;
   const { subject, html, text } = buildCancellationEmail({
     recipientName: params.recipientName,
+    clientName: params.clientName,
     studioName: params.studio.name,
     serviceName: params.serviceName,
+    durationMinutes: params.durationMinutes,
     startsAt: params.startsAt,
     timezone: params.studio.timezone,
-    cancelledBy: params.cancelledBy,
+    actorName: params.actorName,
+    actorRole: params.actorRole,
     reason: params.reason,
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,

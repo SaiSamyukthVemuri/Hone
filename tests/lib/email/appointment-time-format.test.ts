@@ -98,11 +98,14 @@ describe("cancellation email renders the start time with AM/PM", () => {
   it("html includes '11:00 AM' (single time, not a range)", () => {
     const out = buildCancellationEmail({
       recipientName: "Sarah Wong",
+      clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
       serviceName: "60-minute electrolysis",
+      durationMinutes: 60,
       startsAt: STARTS_AT,
       timezone: TZ,
-      cancelledBy: "client",
+      actorName: null,
+      actorRole: "client",
       reason: null,
       isClient: true,
     });

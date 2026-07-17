@@ -368,7 +368,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
   const supabase = await createClient();
   const { data: appt } = await supabase
     .from("appointments")
-    .select("client_id, starts_at, service_id")
+    .select("client_id, starts_at, duration_minutes, service_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -391,10 +391,17 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
         await sendCancellationEmail({
           to: client.email,
           recipientName: client.name,
+          clientName: client.name,
           studio,
           serviceName: service?.name ?? "your appointment",
+          durationMinutes: appt.duration_minutes,
           startsAt: new Date(appt.starts_at),
-          cancelledBy: practitioner.role === "owner" ? "owner" : "practitioner",
+          // Server-derived actor: the AUTHENTICATED practitioner who ran
+          // the cancel (getCurrentPractitionerWithStudio), with a safe
+          // email fallback when the display name is blank. Role comes from
+          // the live practitioner row, never a browser-supplied value.
+          actorName: practitioner.display_name?.trim() || practitioner.email,
+          actorRole: practitioner.role === "owner" ? "owner" : "practitioner",
           reason,
           isClient: true,
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
