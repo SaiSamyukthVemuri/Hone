@@ -89,6 +89,33 @@ in-grid preview drawer. There is no separate mobile/desktop mutation path.
 - **Boundary** — the move touches no Google Calendar sync control and no Stripe state. It is
   additive: migration 0133 adds only the one RPC.
 
+### Two modes (available times + owner custom-time override)
+
+Move has a **closed mode contract** (`mode: "available_slot" | "custom_time"`); an unknown
+mode is rejected. Both modes go through the SAME `moveAppointmentAction` + the SAME 0133 RPC
+— no second mutation path, no migration change.
+
+- **Available times (default, every authorized practitioner).** The dialog shows generated
+  slots. On submit the server **recomputes** the offered slots (same studio / duration /
+  own-reservation exclusion) and requires the submitted time to match a current slot **by
+  start instant** — browser state is not proof, so a crafted request for a time that was
+  never offered is refused (`"That time is no longer available…"`) before the RPC is called.
+- **Custom time (owner-only override).** `loadMoveSlotsAction` returns
+  `canUseCustomTime = true` **only** when the live server-resolved `practitioner.role ===
+  "owner"`; the UI renders the custom option solely from that flag, and the action
+  re-authorizes on submit. The owner enters a studio-local time (native `<input type=time>`,
+  15-min step) that **may be outside published operating hours**, and must tick
+  *"I understand this time overrides regular availability."* (`outsideAvailabilityConfirmed`).
+  A non-owner request is rejected (`"Only the studio owner can move appointments outside
+  regular availability."`); a missing acknowledgement is rejected too.
+
+Custom time overrides **only** the studio's published availability. It does **not** bypass any
+concrete reservation: the RPC has no operating-hours gate, so an out-of-hours move still
+succeeds only when no confirmed appointment, buffer, timed block, recurring-break occurrence,
+or full-day blockout conflicts — otherwise the GiST `23P01` rolls it back and the appointment
+stays put. Owner role, studio, and practitioner are always resolved server-side; `role` /
+`isOwner` / `studioId` / duration / end-time are never accepted as browser authority.
+
 ## Public booking exclusion of blocks
 
 The slot-list computation in `fetchPublicAvailableSlotsAction` walks the studio's open window for the requested date and excludes:
