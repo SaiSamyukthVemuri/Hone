@@ -22,12 +22,12 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0131 (Google Calendar B2.4 dual-destination scope contract +
-    // destination metadata), on top of 0130 (revoke residual anon EXECUTE),
-    // 0126-0129 clinical lineage, and the 0125 Google-Calendar activation
-    // boundary. 0131 is additive/dormant and is repo-only until its separately-
-    // approved migration-first hosted apply. Bump this tripwire consciously.
-    expect(maxNum).toBe(132); // 0132 = Google Calendar B2.3-c1 link transitions (authored, not hosted-applied)
+    // Advanced to 0133 (practitioner Move appointment — the atomic same-record
+    // `practitioner_move_appointment` RPC), on top of 0132 (Google Calendar
+    // B2.3-c1 event-link transitions) and 0131 (B2.4 dual-destination scope).
+    // 0133 is additive (one RPC, no column/data change). Bump this tripwire
+    // consciously when a new migration lands.
+    expect(maxNum).toBe(133); // 0133 = practitioner Move appointment atomic RPC
     expect(FILE).toMatch(/^0120_/);
   });
 });

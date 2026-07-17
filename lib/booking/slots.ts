@@ -76,6 +76,20 @@ type OverrideRow = {
 type ReservationRow = {
   starts_at: string;
   ends_at: string;
+  source_kind?: string;
+  source_id?: string;
+};
+
+// One optional, SERVER-CONTROLLED reservation exclusion. Used only by the
+// authenticated practitioner move-slot path so an appointment being moved does not
+// count its OWN shadow reservation as a conflict against its new candidate times.
+// Public booking / public reschedule never pass this (see the move-slot server
+// action, which derives the appointment id server-side). Every OTHER reservation —
+// other appointments, timed blocks, recurring-break occurrences, full-day blockouts
+// — remains a conflict.
+export type ReservationExclusion = {
+  sourceKind: "appointment";
+  sourceId: string;
 };
 
 type BlockoutRow = {
@@ -103,6 +117,7 @@ export async function getAvailableSlots(
   studio: StudioRow,
   dateStr: string,
   serviceDurationMinutes?: number,
+  excludeReservation?: ReservationExclusion,
 ): Promise<Slot[]> {
   const tz = studio.timezone;
   const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
@@ -164,7 +179,7 @@ export async function getAvailableSlots(
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
   const { data: reservations } = await supabase
     .from("studio_calendar_reservations")
-    .select("starts_at, ends_at")
+    .select("starts_at, ends_at, source_kind, source_id")
     .eq("studio_id", studio.id)
     .lt("starts_at", windowEndUtc.toISOString())
     .gt("ends_at", windowStartUtc.toISOString());
@@ -178,10 +193,21 @@ export async function getAvailableSlots(
   // We MUST NOT widen these intervals again on the JS side. Doing
   // so would double-count the buffer (the bug from the first
   // migration 0029 attempt).
-  const conflicts = ((reservations ?? []) as ReservationRow[]).map((r) => ({
-    start: new Date(r.starts_at).getTime(),
-    end: new Date(r.ends_at).getTime(),
-  }));
+  const conflicts = ((reservations ?? []) as ReservationRow[])
+    // Exclude ONLY the exact own-reservation of the appointment being moved (the
+    // (source_kind, source_id) pair is unique). Every other reservation stays a conflict.
+    .filter(
+      (r) =>
+        !(
+          excludeReservation !== undefined &&
+          r.source_kind === excludeReservation.sourceKind &&
+          r.source_id === excludeReservation.sourceId
+        ),
+    )
+    .map((r) => ({
+      start: new Date(r.starts_at).getTime(),
+      end: new Date(r.ends_at).getTime(),
+    }));
 
   const openMin = localMinutesSinceMidnight(openTime);
   const closeMin = localMinutesSinceMidnight(closeTime);

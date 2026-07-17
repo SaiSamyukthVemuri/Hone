@@ -24,10 +24,10 @@ describe("0126 — file + repo-max tripwire", () => {
   });
 
   it("is present; the repo-max tripwire now lives in the 0131 test", () => {
-    // The absolute repo-max pin lives in the 0131 test (Google Calendar B2.4);
-    // nothing above 0131 may exist yet.
+    // The absolute repo-max pin lives in the 0131 test (now 0133 = practitioner
+    // Move appointment); nothing above 0133 may exist yet.
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(3[3-9]|[4-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(3[4-9]|[4-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 });

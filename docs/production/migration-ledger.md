@@ -31,11 +31,13 @@
 - **Google Calendar B2.3-b (PR #426, merge `f664f0f`, deployed 2026-07-15) added NO migration** —
   the reconciliation sweep + heartbeat + `/api/cron/calendar-reconcile` route are code-only and
   orchestrate the **existing** 0124/0125 repair primitives, so the hosted max **stays 0131**.
-- **Total migrations in repo: 132** (`0001` … `0132`).
+- **Total migrations in repo: 133** (`0001` … `0133`). **`0133` (practitioner Move
+  appointment — the atomic `practitioner_move_appointment` RPC) is repo-added; its
+  migration-first hosted apply lands during this rollout** (until then hosted max stays 0132).
 - The repo-max is enforced as a test tripwire: the per-migration shape tests
   `tests/migrations/0131-google-calendar-dual-destination.test.ts` (and the 0125–0130 shape
   tests) assert the repo contents, and `tests/scripts/verify-production.test.ts` pins the
-  **derived** expected max (no hardcoded literal) — it currently derives **0132**. When a new
+  **derived** expected max (no hardcoded literal) — it currently derives **0133**. When a new
   migration lands, the derived pin moves to the new number automatically.
 
 > **Scope of this v1 ledger.** The recent tail (0089–0131) is enumerated below with a
@@ -46,7 +48,7 @@
 
 ---
 
-## Recent tail (0089 → 0131)
+## Recent tail (0089 → 0133)
 
 | # | Filename | Purpose | Applied |
 |---|---|---|---|
@@ -90,6 +92,8 @@
 | **0129** | `0129_atomic_session_block_area_writes.sql` | **Willow — atomic session-block area writes (laterality).** Makes multi-area + laterality writes atomic (one-transaction, no partial commit). Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
 | **0130** | `0130_revoke_anon_calendar_charting_rpc_execute.sql` | **Hardening — revoke anon EXECUTE on a calendar-charting RPC.** Grant-only tightening (removes an `anon` EXECUTE path); no schema/data change; hardens (does not weaken). Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
 | **0131** | `0131_google_calendar_dual_destination.sql` | **Google Calendar — Phase B2.4: dual-destination + destination-derived scope.** Replaces the broad `calendar.events` model with a destination contract — **dedicated** (`calendar.app.created`, an app-created "Hone Appointments" calendar) vs **existing-owned** (`calendar.events.owned`) — with NULL-safe CHECKs on the connection destination columns. **Additive + DORMANT.** Applied **migration-first** 2026-07-14. **PR #424 MERGED + deployed** (merge `8a25df6`; Vercel prod deploy `h9b58cLZtJ4w3MMrY5WU959w5tDB` success). **Production-exercised once on Sam's controlled studio:** one empty "Hone Appointments" destination calendar created (grants app.created=1 / events.owned=0 / broad=0; **zero events**); all sync flags OFF; Willow not connected. | ✅ applied + merged (dormant) |
+| **0132** | `0132_google_calendar_event_link_transitions.sql` | **Google Calendar — Phase B2.3-c1: event-link transitions.** One transactional service-role-only `calendar_event_link_transition` RPC + placeholder-aware `enqueue_calendar_outbound` refresh. **Additive + DORMANT.** Applied **migration-first** 2026-07-16 (details in the header bullets above). | ✅ applied + merged (dormant) |
+| **0133** | `0133_practitioner_move_appointment.sql` | **Practitioner Move appointment — atomic same-record move.** One SECURITY DEFINER RPC `practitioner_move_appointment` (hardened `search_path`, `service_role`-only EXECUTE, active-practitioner check, `FOR UPDATE` lock, `confirmed + future` gate, **optimistic concurrency** on expected `starts_at`/`ends_at`, duration preserved, one-row `UPDATE`, `moved` audit event; does **not** catch `23P01` so a booking conflict rolls the move back). **Additive** — one function, no column/data change, no trigger/Google/Stripe touch. Drives the shared responsive Move workflow (mobile bottom sheet / tablet+desktop modal). | 🕒 repo-added; migration-first hosted apply pending (this rollout) |
 
 **Google Calendar B2.3-b (PR #426) added no migration.** The reconciliation sweep + heartbeat +
 dead-row alerting + `/api/cron/calendar-reconcile` route are code-only (they orchestrate the
