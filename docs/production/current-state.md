@@ -68,7 +68,7 @@ Read the columns precisely — **designed ≠ deployed ≠ enabled ≠ productio
 | **B2.4 — dual-destination + destination-derived scope** (0131, PR #424) | yes | yes | destination validated on Sam (dedicated app-created, dormant) | **yes** — one empty "Hone Appointments" calendar created; grants app.created=1/events.owned=0/broad=0 | no |
 | **B2.3-b — reconciliation sweep + heartbeat + route** (PR #426, no migration) | yes | yes | no — route unscheduled; no intent-eligible studio | no — no outbox/link produced in production | no |
 | **B2.3-c2 — authenticated worker-drain route** (#429, merge `05ae9b8`, no migration) | yes | **merged + deployed dormant** | no — worker OFF | no — dormant, no Google call (no-work validation via the first c3 scheduled run) | no |
-| **B2.3-c3 — cron schedule registration** (open PR, no migration) | yes | **authored, unmerged — registers DAILY calendar crons, DORMANT** | no — worker OFF; claim RPC returns 0 rows | no — dormant | no |
+| **B2.3-c3 — cron schedule registration** (#430, merge `4e4fe5b`, no migration) | yes | **merged + deployed dormant** — registers DAILY calendar crons; registration did NOT activate sync (Vercel prod `4PTuoeHChfKXiVkTK5CmREeqAhbF`) | no — worker OFF; claim RPC returns 0 rows | no — dormant; no real Google appointment-event operation | no |
 | **B2.3-c4/c5 — Sam-only activation / soak** | yes (design) | **no — not built** | no | no | no |
 | Inbound busy / two-way edits | yes (design) | **no — not built** | no | no | no |
 
