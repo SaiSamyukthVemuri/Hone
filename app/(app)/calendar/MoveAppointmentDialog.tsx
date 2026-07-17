@@ -197,7 +197,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const canConfirm =
     mode === "available_slot"
       ? !!selected && !loadingSlots
-      : TIME_RE.test(customTime) && ackOverride;
+      : DATE_RE.test(date) && TIME_RE.test(customTime) && ackOverride;
 
   const confirmMove = () => {
     if (submitting || !canConfirm) return;
@@ -207,7 +207,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       if (!selected) return;
       localTime = localTimeString(new Date(selected.start), tz); // 24h HH:MM in the studio tz
     } else {
-      if (!TIME_RE.test(customTime) || !ackOverride) return;
+      if (!DATE_RE.test(date) || !TIME_RE.test(customTime) || !ackOverride) return;
       localTime = customTime;
       ack = true;
     }
