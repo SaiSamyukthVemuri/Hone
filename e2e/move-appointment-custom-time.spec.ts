@@ -31,6 +31,14 @@ async function expectNoPageOverflow(page: Page, label: string) {
 
 const instant = (v: string | Date): number => new Date(v).getTime();
 
+// FUTURE dates derived from the real clock (not hardcoded years) so the spec never
+// becomes a time bomb: a fixed future date turns into a PAST date once it passes, and
+// the server rejects past custom times. Far enough out to stay clearly future + distinct.
+const futureYmd = (offsetDays: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(Date.now() + offsetDays * 86_400_000),
+  );
+
 async function ownerCtx(browser: Browser, viewport: { width: number; height: number }, touch: boolean) {
   const ctx = await browser.newContext({ viewport, hasTouch: touch, ...(touch ? { deviceScaleFactor: 2 } : {}) });
   const page = await ctx.newPage();
@@ -99,13 +107,13 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
 
   await test.step("mobile: owner moves to an OUTSIDE-HOURS custom time (05:00, before the 06:00 open)", async () => {
     const { ctx, page } = await ownerCtx(browser, { width: 390, height: 844 }, true);
-    await customMove(page, "mobile", "2027-06-15", "05:00");
+    await customMove(page, "mobile", futureYmd(400), "05:00");
     await ctx.close();
   });
 
   await test.step("tablet: owner moves to a late outside-hours custom time (23:00)", async () => {
     const { ctx, page } = await ownerCtx(browser, { width: 820, height: 1180 }, true);
-    await customMove(page, "tablet", "2027-06-16", "23:00");
+    await customMove(page, "tablet", futureYmd(401), "23:00");
     // Landscape: the shared dialog still fits + footer reachable.
     const dialog = await openCustom(page);
     await page.setViewportSize({ width: 1180, height: 820 });
@@ -124,7 +132,7 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     const before = await getAppointmentsForClient(seed.studioId, clientId);
     const prev = before.find((a) => a.id === apptId)!;
     const d2 = await openCustom(page);
-    await d2.locator('input[type="date"]').fill("2027-06-17");
+    await d2.locator(String.raw`input[type="date"]`).fill(futureYmd(402));
     await d2.locator('input[type="time"]').fill("04:00");
     const ack = d2.getByRole("checkbox");
     await ack.focus();

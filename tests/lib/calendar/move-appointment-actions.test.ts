@@ -8,7 +8,11 @@ import { utcInstantFromLocal } from "@/lib/booking/tz";
 // never a real database.
 
 const TZ = "America/Toronto";
-const DAY = "2027-06-15"; // always future relative to the test clock
+// Derive a FUTURE date from the real clock — NOT a hardcoded year. A fixed future date
+// silently becomes PAST once it passes, and moveAppointmentAction rejects past targets
+// before the mocked RPC, which would turn this suite into a time bomb.
+const DAY = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
+  .format(new Date(Date.now() + 120 * 86_400_000));
 const localISO = (hhmm: string) => utcInstantFromLocal(DAY, hhmm, TZ).toISOString();
 
 type St = {
