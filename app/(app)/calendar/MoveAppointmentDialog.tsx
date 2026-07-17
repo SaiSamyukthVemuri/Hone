@@ -88,7 +88,9 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Focus trap + Escape (idle only). Focus returns to the opener on close.
+  // Focus trap + Escape (idle only). This effect re-runs whenever `submitting`
+  // flips, so its cleanup must NOT move focus (that would yank focus out of the
+  // dialog mid-submit); focus return lives in its own open-scoped effect below.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -112,20 +114,32 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       }
     }
     document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, submitting, onClose]);
+
+  // Return focus to the opener ONLY when the dialog actually closes/unmounts —
+  // keyed on `open` alone so a mid-flight `submitting` change never steals focus.
+  useEffect(() => {
+    if (!open) return;
     return () => {
-      document.removeEventListener("keydown", onKey);
       openerRef.current?.focus?.();
     };
-  }, [open, submitting, onClose]);
+  }, [open]);
 
   const onPickDate = (d: string) => {
     setDate(d);
     setMoveError(null);
+    // Clear the time selection SYNCHRONOUSLY: a slot chosen on the previous date
+    // is never valid for the new date, and leaving it set would let a fast confirm
+    // (before the async reload resolves) submit that stale time against the new
+    // date — a time never offered, possibly outside open hours. The reloaded list
+    // then drives a fresh pick.
+    setSelected(null);
     load(d);
   };
 
   const confirmMove = () => {
-    if (!selected || submitting) return;
+    if (!selected || submitting || loadingSlots) return;
     setMoveError(null);
     const localTime = localTimeString(new Date(selected.start), tz); // 24h HH:MM in the studio tz
     startSubmit(async () => {
@@ -248,7 +262,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
         {/* Sticky footer (safe-area padded on mobile) */}
         <div className="sticky bottom-0 z-10 flex items-center justify-end gap-3 border-t border-neutral-200 bg-white px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950 sm:pb-4">
           <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className="min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900">Keep current time</button>
-          <button type="button" onClick={confirmMove} disabled={!selected || submitting} className="min-h-[44px] rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+          <button type="button" onClick={confirmMove} disabled={!selected || submitting || loadingSlots} className="min-h-[44px] rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
             {submitting ? "Moving appointment…" : "Move appointment"}
           </button>
         </div>
