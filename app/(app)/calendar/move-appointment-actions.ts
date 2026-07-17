@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, filterFutureSlots } from "@/lib/booking/slots";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
 
@@ -24,7 +24,25 @@ function isValidInstant(s: unknown): s is string {
 }
 
 export type MoveSlot = { start: string; end: string; label: string };
-export type LoadMoveSlotsResult = { ok: true; slots: MoveSlot[] } | { ok: false; error: string };
+export type LoadMoveSlotsResult =
+  | { ok: true; slots: MoveSlot[]; canUseCustomTime: boolean }
+  | { ok: false; error: string };
+
+// The StudioRow the slot generator needs — always built from the SERVER-resolved
+// studio, never from anything the browser sent.
+function studioRow(studio: {
+  id: string;
+  timezone: string;
+  default_appointment_duration_minutes: number;
+  buffer_minutes: number;
+}) {
+  return {
+    id: studio.id,
+    timezone: studio.timezone,
+    default_appointment_duration_minutes: studio.default_appointment_duration_minutes,
+    buffer_minutes: studio.buffer_minutes,
+  };
+}
 
 export async function loadMoveSlotsAction(input: {
   appointmentId: string;
@@ -36,8 +54,12 @@ export async function loadMoveSlotsAction(input: {
     return { ok: false, error: "Invalid request." };
   }
 
-  // Resolve the studio server-side (this also asserts an active practitioner membership).
-  const { studio } = await getCurrentPractitionerWithStudio();
+  // Resolve the practitioner + studio server-side (also asserts an active membership).
+  // canUseCustomTime is derived ONLY from the live server-resolved role; the browser
+  // never supplies isOwner/role/studioId. The UI may use this flag solely to decide
+  // whether to SHOW the custom-time option — the server action re-authorizes on submit.
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const canUseCustomTime = practitioner.role === "owner";
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
   const admin = createAdminClient();
 
@@ -54,12 +76,7 @@ export async function loadMoveSlotsAction(input: {
 
   const slots = await getAvailableSlots(
     admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes: studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
+    studioRow(studio),
     localDate,
     appt.duration_minutes, // use the appointment's EXISTING duration
     { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
@@ -68,6 +85,7 @@ export async function loadMoveSlotsAction(input: {
   return {
     ok: true,
     slots: filterFutureSlots(slots).map((s) => ({ start: s.start, end: s.end, label: s.startLabel })),
+    canUseCustomTime,
   };
 }
 
@@ -82,15 +100,33 @@ export type MoveAppointmentResult =
     }
   | { ok: false; error: string; code?: "conflict" | "stale" | "no_change" };
 
+// Move mode is a CLOSED contract. "available_slot" is the default: the target
+// must be one of the currently generated available slots (verified server-side —
+// browser state is not proof). "custom_time" is an OWNER-ONLY override that may be
+// outside published operating hours but still cannot bypass any real reservation.
+export type MoveMode = "available_slot" | "custom_time";
+
 export async function moveAppointmentAction(input: {
   appointmentId: string;
   expectedStartsAt: string;
   expectedEndsAt: string;
   localDate: string;
   localTime: string;
+  mode: MoveMode;
+  outsideAvailabilityConfirmed: boolean;
 }): Promise<MoveAppointmentResult> {
   const appointmentId = typeof input?.appointmentId === "string" ? input.appointmentId : "";
   const { expectedStartsAt, expectedEndsAt, localDate, localTime } = input ?? {};
+  const mode = input?.mode;
+  // NEVER accept role/isOwner/canUseCustomTime/allowOutsideAvailability/studioId/
+  // practitionerId/duration/endTime as browser authority — none are read here.
+  // outsideAvailabilityConfirmed is a user ACKNOWLEDGEMENT only; the owner ROLE is
+  // re-checked server-side below.
+  const outsideAvailabilityConfirmed = input?.outsideAvailabilityConfirmed === true;
+  // Strictly reject an unknown mode (closed set).
+  if (mode !== "available_slot" && mode !== "custom_time") {
+    return { ok: false, error: "Invalid request." };
+  }
   if (
     !UUID_RE.test(appointmentId) ||
     !isValidInstant(expectedStartsAt) ||
@@ -107,13 +143,25 @@ export async function moveAppointmentAction(input: {
 
   const { data: appt } = await admin
     .from("appointments")
-    .select("id, status, starts_at, client_id")
+    .select("id, status, starts_at, client_id, duration_minutes")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (!appt) return { ok: false, error: "Appointment not found." };
   if (appt.status !== "confirmed" || new Date(appt.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: "This appointment can no longer be moved." };
+  }
+
+  // §9: custom-time mode is an OWNER-ONLY override, authorized on the LIVE
+  // server-resolved role, and requires the explicit override acknowledgement.
+  // These gates run BEFORE any mutation.
+  if (mode === "custom_time") {
+    if (practitioner.role !== "owner") {
+      return { ok: false, error: "Only the studio owner can move appointments outside regular availability." };
+    }
+    if (!outsideAvailabilityConfirmed) {
+      return { ok: false, error: "Confirm that you want to override regular availability." };
+    }
   }
 
   // §7.6: resolve + validate the required app origin BEFORE the mutation, so a bad
@@ -130,6 +178,36 @@ export async function moveAppointmentAction(input: {
   const newStart = utcInstantFromLocal(localDate, localTime, studio.timezone);
   if (Number.isNaN(newStart.getTime()) || newStart.getTime() <= Date.now()) {
     return { ok: false, error: "Choose a valid future time." };
+  }
+
+  // §8: available-slot mode MUST match a currently-offered generated slot. The
+  // slot list is recomputed server-side (same studio/duration/own-exclusion as
+  // loadMoveSlotsAction) and matched by START INSTANT — a crafted request that was
+  // never offered cannot reach the RPC. Custom mode intentionally skips this so the
+  // owner can pick a studio-local time outside published operating hours.
+  if (mode === "available_slot") {
+    const offered = filterFutureSlots(
+      await getAvailableSlots(
+        admin,
+        studioRow(studio),
+        localDate,
+        appt.duration_minutes,
+        { sourceKind: "appointment", sourceId: appointmentId },
+      ),
+    );
+    // Match by START INSTANT. Each offered slot is re-derived the SAME way the
+    // client submits (slot -> studio-local HH:MM -> UTC), so a legitimately-offered
+    // slot whose raw reservation-end anchor carries seconds is not falsely rejected,
+    // while an arbitrary crafted time that maps to no offered slot is refused.
+    const targetMs = newStart.getTime();
+    const isOffered = offered.some(
+      (s) =>
+        utcInstantFromLocal(localDate, localTimeString(new Date(s.start), studio.timezone), studio.timezone).getTime() ===
+        targetMs,
+    );
+    if (!isOffered) {
+      return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
+    }
   }
 
   const { data: rows, error } = await admin.rpc("practitioner_move_appointment", {
