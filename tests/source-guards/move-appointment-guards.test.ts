@@ -218,3 +218,30 @@ describe("move follow-up leaves the PR #433 cancellation-email actor work intact
     expect(existsSync(path.join(ROOT, "tests/lib/email/cancellation-actor.test.ts"))).toBe(true);
   });
 });
+
+// ---- Mobile submit-visibility hotfix: stable flex-shell footer + synchronous lock ----
+describe("move dialog: footer stays painted + submit locks synchronously", () => {
+  const raw = read(DIALOG);
+  it("the action footer is NOT position:sticky (flex-shell, not sticky-in-overflow)", () => {
+    // The iOS Safari repaint bug came from sticky header/footer inside an overflow
+    // container. Neither may reappear.
+    expect(raw).not.toMatch(/sticky\s+bottom-0/);
+    expect(raw).not.toMatch(/sticky\s+top-0/);
+  });
+  it("header + footer are shrink-0 flex children; body is the only scroll region (min-h-0)", () => {
+    expect(raw).toMatch(/flex shrink-0[^"]*items-center justify-end/); // footer
+    expect(raw).toMatch(/min-h-0 flex-1 overflow-y-auto/); // body
+  });
+  it("submission lock is an EXPLICIT useState + one-shot ref, set synchronously (not only useTransition)", () => {
+    expect(raw).toMatch(/const \[submitting, setSubmitting\] = useState\(false\)/);
+    expect(raw).toMatch(/submittingRef = useRef\(false\)/);
+    // The critical submit does NOT run through startSubmit/useTransition.
+    expect(raw).not.toMatch(/startSubmit\(/);
+    // Synchronous guard + lock at the top of confirm.
+    expect(raw).toMatch(/if \(submittingRef\.current \|\| !canConfirm\) return/);
+    expect(raw).toMatch(/submittingRef\.current = true;\s*\n\s*setSubmitting\(true\)/);
+  });
+  it("the submit button exposes aria-busy while submitting", () => {
+    expect(raw).toMatch(/aria-busy=\{submitting\}/);
+  });
+});
