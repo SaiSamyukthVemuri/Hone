@@ -222,6 +222,33 @@ describe("successful move preserves the same record + every relationship", () =>
     expect(new Date(after[0].starts_at).toISOString()).toBe(new Date(newStart).toISOString()); // 14: interval updated
     expect(new Date(after[0].ends_at).getTime()).toBe(new Date(newStart).getTime() + 60 * 60000); // 14 (buffer 0)
   });
+
+  // Custom-time (owner override) rides the SAME RPC. The RPC enforces NO operating-
+  // hours gate — that gate lives only in the studio's generated slot list, which
+  // custom mode intentionally bypasses. So a move to an arbitrary out-of-window
+  // instant SUCCEEDS as long as no concrete reservation conflicts; the real guard is
+  // the DB exclusion constraints, not the published hours. (§24.1 + §24.11)
+  it("custom-time: an out-of-window instant with no conflict moves successfully, keeping the same reservation source id", async () => {
+    const a = await insertAppt({ startsAt: nextSlot().start });
+    const before = await reservationRows(a.id);
+    const beforeResId = before[0].id;
+    // A deep-night instant far from any reservation. The RPC never consults hours.
+    const night = new Date(new Date(a.startsAt).getTime() + 3 * 24 * 3600 * 1000);
+    night.setUTCHours(3, 0, 0, 0);
+    const newStart = night.toISOString();
+
+    const r = await move({ apptId: a.id, expStart: a.startsAt, expEnd: a.endsAt, newStart });
+    expect(r.result).toBe("moved");
+    expect(r.appointment_id).toBe(a.id);
+    const after = await apptRow(a.id);
+    expect(new Date(after.starts_at).toISOString()).toBe(new Date(newStart).toISOString());
+    // Exactly one 'moved' audit row + the SAME reservation source id (source_id == appt id).
+    expect((await auditRows(a.id)).filter((x: { action: string }) => x.action === "moved")).toHaveLength(1);
+    const resAfter = await reservationRows(a.id);
+    expect(resAfter).toHaveLength(1);
+    expect(resAfter[0].id).toBe(beforeResId);
+    expect(resAfter[0].source_id).toBe(a.id);
+  });
 });
 
 describe("conflict rolls back completely (23P01 not caught) — no change, no audit", () => {
