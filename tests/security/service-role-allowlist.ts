@@ -32,6 +32,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/calendar/move-appointment-actions.ts",
+    purpose: "Practitioner Move appointment — authorized available-slot lookup + the atomic same-record move (0133 RPC).",
+    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and scope every read/RPC to studio.id + practitioner.id; the browser never supplies a studio_id/practitioner_id. The move goes only through practitioner_move_appointment (service_role-only), and the slot lookup only excludes the appointment's OWN server-derived reservation.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/api/google-calendar/oauth/callback/route.ts",
     purpose: "Google Calendar Phase A OAuth callback (authenticated, browser-called with the session).",
     why: "After auth.getUser() + single-use state consumption, the practitioner is re-checked and the connection persisted scoped to the state-bound studio/practitioner/user; every admin query filters those ids.",
