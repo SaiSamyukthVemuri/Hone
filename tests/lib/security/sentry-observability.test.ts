@@ -78,14 +78,15 @@ describe("CSP is left intact for the tunnel (no ingest host)", () => {
   });
 });
 
-describe("middleware + robots fence the Sentry routes", () => {
-  it("allowlists the tunnel and the example routes for anonymous requests", () => {
+describe("middleware allowlists the production tunnel", () => {
+  it("keeps /monitoring reachable for anonymous requests (client error reporting)", () => {
     expect(MIDDLEWARE).toMatch(/pathname === "\/monitoring"/);
-    expect(MIDDLEWARE).toMatch(/pathname === "\/sentry-example-page"/);
-    expect(MIDDLEWARE).toMatch(/pathname === "\/api\/sentry-example-api"/);
   });
-  it("disallows the example page from indexing", () => {
-    expect(ROBOTS).toMatch(/\/sentry-example-page/);
+  it("no longer references the removed example routes", () => {
+    // The temporary Sentry example page + API route are removed before merge;
+    // their allowlist/robots fences must go with them.
+    expect(MIDDLEWARE).not.toMatch(/sentry-example/);
+    expect(ROBOTS).not.toMatch(/sentry-example/);
   });
 });
 

@@ -64,12 +64,6 @@ export async function updateSession(request: NextRequest) {
     // would silently drop all client-side error reporting. It carries only
     // scrubbed telemetry, never app data.
     pathname === "/monitoring" ||
-    // Sentry setup test page + its faulty API route. Temporary — used to
-    // validate the integration on a PREVIEW deploy and slated for removal
-    // before merge. Public so the test runs without an authenticated session;
-    // also disallowed in robots.ts so it is never indexed while it exists.
-    pathname === "/sentry-example-page" ||
-    pathname === "/api/sentry-example-api" ||
     // Metadata image routes (Next file conventions: opengraph-image, icon,
     // apple-icon). Social scrapers and browsers fetch these while logged out;
     // they are generated, public, branded images with no sensitive data, so
