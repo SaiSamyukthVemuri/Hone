@@ -41,6 +41,23 @@ export async function updateSession(request: NextRequest) {
     pathname === "/demo" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // Public marketing category / feature / resource pages (the flagship
+    // marketing site). Anonymous visitors and search-engine crawlers must reach
+    // these without a /login bounce. Feature routes are listed by exact match
+    // (only the three shipped features) rather than a /features/* prefix so no
+    // unbuilt route is allowlisted; resources use a prefix to cover the hub and
+    // its articles, all of which are public content.
+    pathname === "/electrolysis-software" ||
+    pathname === "/features/treatment-memory" ||
+    pathname === "/features/booking-calendar" ||
+    pathname === "/features/charting-records" ||
+    pathname === "/resources" ||
+    pathname.startsWith("/resources/") ||
+    // Generated crawler files (Next file conventions). Googlebot fetches these
+    // while logged out; without this they would redirect to /login and break
+    // indexing.
+    pathname === "/sitemap.xml" ||
+    pathname === "/robots.txt" ||
     // Metadata image routes (Next file conventions: opengraph-image, icon,
     // apple-icon). Social scrapers and browsers fetch these while logged out;
     // they are generated, public, branded images with no sensitive data, so
