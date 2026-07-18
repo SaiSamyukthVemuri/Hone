@@ -63,6 +63,132 @@ body {
   }
 }
 
+/* ============================================================================
+ * MARKETING DESIGN SYSTEM (flagship rebuild — feat/marketing-site-…)
+ * ----------------------------------------------------------------------------
+ * Additive and namespaced. These tokens/utilities are consumed ONLY by the
+ * marketing surface (pages wrapped in `.marketing-surface`); nothing here
+ * changes the authenticated app's existing rendering. Design thesis: quiet
+ * precision. Palette + contrast are recorded in docs/marketing/design-plan.md.
+ *
+ * Typography is a tuned system stack (no runtime and no build-time Google
+ * Fonts for the marketing site) — see FONTS.md. The app's pre-existing
+ * Fraunces/Inter are intentionally left untouched (out of scope: no
+ * authenticated-product change).
+ * ========================================================================== */
+@theme {
+  /* Palette (WCAG-checked in the design plan) */
+  --color-paper: #f7f4ee;
+  --color-warm: #eee9e0;
+  --color-ink: #17211f;
+  --color-muted: #61706b;
+  --color-mineral: #1e6b62;
+  --color-mineral-deep: #10453f; /* hover/active for the accent */
+  --color-wash: #d8eae6;
+  --color-band: #10231f;
+  --color-hairline: rgba(23, 33, 31, 0.1);
+  --color-hairline-strong: rgba(23, 33, 31, 0.16);
+  --color-onband-muted: #9fb3ad; /* muted text on the dark band */
+
+  /* Marketing typography — tuned system stacks, zero network */
+  --font-marketing-display: "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, ui-serif, serif;
+  --font-marketing-text: ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --mk-radius-frame: 12px;
+  --mk-radius-control: 8px;
+  --mk-shadow-frame: 0 1px 2px rgba(16, 35, 31, 0.05),
+    0 18px 40px -20px rgba(16, 35, 31, 0.22);
+}
+
+/* The marketing surface: applied on the wrapper of each marketing page. */
+.marketing-surface {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-marketing-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.marketing-surface ::selection {
+  background: var(--color-wash);
+  color: var(--color-ink);
+}
+
+/* Marketing reveal: opacity + a small translate, staggered via --mk-delay.
+ * Distinct from the app's [data-reveal] so the two never interfere. Reduced
+ * motion renders the final state immediately (no transition, no offset). */
+[data-mreveal] {
+  transition:
+    opacity 520ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: var(--mk-delay, 0ms);
+}
+[data-mreveal="0"] {
+  opacity: 0;
+  transform: translateY(8px);
+}
+[data-mreveal="1"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Signature hero: the treatment-memory assembly. Each fact settles in once,
+ * then an SVG "memory thread" draws to connect them. Transform/opacity + SVG
+ * stroke only; the frame box is reserved so there is zero CLS. */
+[data-assemble] {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.marketing-assemble-run [data-assemble] {
+  animation: mk-assemble-in 460ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  animation-delay: var(--mk-assemble-delay, 0ms);
+}
+@keyframes mk-assemble-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+[data-thread] {
+  stroke-dasharray: var(--mk-thread-len, 240);
+  stroke-dashoffset: var(--mk-thread-len, 240);
+}
+.marketing-assemble-run [data-thread] {
+  animation: mk-thread-draw 900ms ease-out forwards;
+  animation-delay: var(--mk-thread-delay, 900ms);
+}
+@keyframes mk-thread-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mreveal] {
+    transition: none;
+  }
+  [data-mreveal="0"],
+  [data-mreveal="1"] {
+    opacity: 1;
+    transform: none;
+  }
+  /* Signature animation collapses to its final composed state. */
+  [data-assemble],
+  .marketing-assemble-run [data-assemble] {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  [data-thread],
+  .marketing-assemble-run [data-thread] {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}
+
 /* Proof-strip ticker (PR #247): a contained, edge-faded marquee of trust
  * signals under the hero. The track holds the proof items twice and
  * translates by -50% for a seamless loop. overflow:hidden keeps it from
