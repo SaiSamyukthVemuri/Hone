@@ -148,7 +148,7 @@ export function Subtitle({
   className = "",
 }: {
   children: ReactNode;
-  as?: "h3" | "h4";
+  as?: "h2" | "h3" | "h4";
   className?: string;
 }) {
   const Tag = as;
@@ -215,7 +215,7 @@ export function Chip({ children }: { children: ReactNode }) {
   );
 }
 
-type CTAVariant = "primary" | "secondary";
+type CTAVariant = "primary" | "secondary" | "outline";
 
 /**
  * Primary/secondary walkthrough or nav CTA. Renders a Link. `event` is a
@@ -243,9 +243,11 @@ export function CTAButton({
   const variantClass =
     variant === "primary"
       ? "bg-mineral text-paper hover:bg-[color:var(--color-mineral-deep)] focus-visible:ring-offset-[color:var(--color-paper)]"
-      : onBand
-        ? "text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:ring-offset-[color:var(--color-band)]"
-        : "text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] hover:decoration-[color:var(--color-ink)] focus-visible:ring-offset-[color:var(--color-paper)]";
+      : variant === "outline"
+        ? "border border-[color:var(--color-hairline-strong)] bg-transparent text-ink hover:bg-warm focus-visible:ring-offset-[color:var(--color-paper)]"
+        : onBand
+          ? "text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:ring-offset-[color:var(--color-band)]"
+          : "text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] hover:decoration-[color:var(--color-ink)] focus-visible:ring-offset-[color:var(--color-paper)]";
   return (
     <Link
       href={href}
