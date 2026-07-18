@@ -10,15 +10,13 @@ import {
   Eyebrow,
   Display,
   Title,
-  Subtitle,
   Lede,
-  Hairline,
   CTAButton,
 } from "../_components/marketing/primitives";
 import { Reveal } from "../_components/marketing/Reveal";
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../_components/marketing/visuals/TreatmentMemoryPanel";
-import { WalkthroughCTA, RelatedLinks } from "../_components/marketing/sections";
+import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -102,43 +100,22 @@ export default function ElectrolysisSoftwarePage() {
 
         {/* What specialist software manages */}
         <Section tone="warm">
-          <Container>
-            <Reveal>
-              <Eyebrow>What it manages</Eyebrow>
-              <Title className="mt-4 max-w-2xl">
-                Everything an electrolysis practice runs on.
-              </Title>
-              <Lede className="mt-5 max-w-2xl">
-                Generic scheduling tools stop at the appointment. Specialist software has to
-                carry the treatment detail too, and connect it to the next visit.
-              </Lede>
-            </Reveal>
-            <div className="mt-10">
-              <Hairline strong />
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3">
-                {MANAGES.map((m, i) => (
-                  <Reveal
-                    as="div"
-                    key={m.title}
-                    delay={(i % 3) * 60}
-                    className="border-b border-[color:var(--color-hairline)] py-6 sm:pr-8"
-                  >
-                    <Subtitle as="h3" className="text-[1.125rem]">
-                      {m.title}
-                    </Subtitle>
-                    <p className="mt-2 text-[0.9375rem] leading-[1.6] text-muted">{m.body}</p>
-                    {m.href ? (
-                      <Link
-                        href={m.href}
-                        className="mt-3 inline-block text-[0.875rem] font-medium text-mineral underline underline-offset-4"
-                      >
-                        {m.link} →
-                      </Link>
-                    ) : null}
-                  </Reveal>
-                ))}
-              </div>
-            </div>
+          <Container size="wide">
+            <Eyebrow>What it manages</Eyebrow>
+            <Title className="mt-4 max-w-2xl">
+              Everything an electrolysis practice runs on.
+            </Title>
+            <Lede className="mt-5 max-w-2xl">
+              Generic scheduling tools stop at the appointment. Specialist software has to
+              carry the treatment detail too, and connect it to the next visit.
+            </Lede>
+            <FeatureMatrix
+              items={MANAGES.map((m) => ({
+                title: m.title,
+                body: m.body,
+                link: m.href && m.link ? { href: m.href, label: m.link } : undefined,
+              }))}
+            />
           </Container>
         </Section>
 

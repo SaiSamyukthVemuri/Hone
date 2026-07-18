@@ -12,12 +12,11 @@ import {
   Title,
   Subtitle,
   Lede,
-  Hairline,
   Chip,
   CTAButton,
 } from "./_components/marketing/primitives";
 import { Reveal } from "./_components/marketing/Reveal";
-import { WorkflowGrid } from "./_components/marketing/sections";
+import { WorkflowGrid, FeatureMatrix } from "./_components/marketing/sections";
 import { JsonLd } from "./_components/marketing/JsonLd";
 import { organizationLd, webSiteLd, softwareApplicationLd } from "@/lib/marketing/jsonld";
 import { TreatmentMemoryPanel } from "./_components/marketing/visuals/TreatmentMemoryPanel";
@@ -199,36 +198,17 @@ export default function HomePage() {
 
         {/* Capability groups */}
         <Section tone="paper">
-          <Container>
-            <Reveal>
-              <Eyebrow>What Hone covers</Eyebrow>
-              <Title className="mt-4 max-w-2xl">
-                Everything a treatment room runs on, in one place.
-              </Title>
-            </Reveal>
-            <div className="mt-10">
-              <Hairline strong />
-              <dl className="grid sm:grid-cols-2 lg:grid-cols-3">
-                {CAPABILITY_GROUPS.map((group, i) => (
-                  <Reveal
-                    as="div"
-                    key={group.label}
-                    delay={(i % 3) * 60}
-                    className="border-b border-[color:var(--color-hairline)] py-6 sm:[&:nth-last-child(-n+1)]:border-b-0 sm:pr-8"
-                  >
-                    <dt className="text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-mineral">
-                      {group.outcome}
-                    </dt>
-                    <dd
-                      className="mt-2 text-[1.0625rem] text-ink"
-                      style={{ fontFamily: "var(--font-marketing-display)" }}
-                    >
-                      {group.label}
-                    </dd>
-                  </Reveal>
-                ))}
-              </dl>
-            </div>
+          <Container size="wide">
+            <Eyebrow>What Hone covers</Eyebrow>
+            <Title className="mt-4 max-w-2xl">
+              Everything a treatment room runs on, in one place.
+            </Title>
+            <FeatureMatrix
+              items={CAPABILITY_GROUPS.map((group) => ({
+                eyebrow: group.outcome,
+                title: group.label,
+              }))}
+            />
             <p className="mt-8 text-[0.9375rem] text-muted">
               {POSITIONING.corePromise}{" "}
               <Link href="/electrolysis-software" className="font-medium text-mineral underline underline-offset-4">

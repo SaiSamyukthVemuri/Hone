@@ -61,21 +61,44 @@ describe("section density / no reserved blank space", () => {
 
 describe("desktop grids", () => {
   it("sections export the feature matrix + workflow grid", () => {
-    expect(SECTIONS).toMatch(/export function FeatureGrid/);
+    expect(SECTIONS).toMatch(/export function FeatureMatrix/);
     expect(SECTIONS).toMatch(/export function WorkflowGrid/);
     // Feature matrix uses column dividers + a title min-height for aligned rows.
     expect(SECTIONS).toMatch(/border-l/);
     expect(SECTIONS).toMatch(/min-h-\[/);
   });
-  it("feature pages use the shared FeatureGrid; homepage uses WorkflowGrid", () => {
+
+  it("the shared matrix supports optional eyebrow, body and link (aligned at bottom)", () => {
+    expect(SECTIONS).toMatch(/eyebrow\?:/);
+    expect(SECTIONS).toMatch(/body\?:/);
+    expect(SECTIONS).toMatch(/link\?:/);
+    // Optional link renders and pins to the bottom of the cell.
+    expect(SECTIONS).toMatch(/it\.link/);
+    expect(SECTIONS).toMatch(/mt-auto/);
+  });
+
+  it("every capability grid uses the shared FeatureMatrix", () => {
     for (const f of [
       "app/features/treatment-memory/page.tsx",
       "app/features/booking-calendar/page.tsx",
       "app/features/charting-records/page.tsx",
+      "app/page.tsx", // homepage "What Hone covers"
+      "app/electrolysis-software/page.tsx", // pillar "What it manages"
     ]) {
-      expect(read(f)).toMatch(/<FeatureGrid items=/);
+      expect(read(f), `${f}: uses FeatureMatrix`).toMatch(/<FeatureMatrix\b/);
+      expect(read(f), `${f}: no legacy FeatureGrid`).not.toMatch(/FeatureGrid/);
     }
     expect(read("app/page.tsx")).toMatch(/<WorkflowGrid steps=/);
+  });
+
+  it("the pillar matrix preserves its capability links + accessible names", () => {
+    const pillar = read("app/electrolysis-software/page.tsx");
+    // The matrix is fed from MANAGES with title/body/link mapped from href+link.
+    expect(pillar).toMatch(/link:\s*m\.href && m\.link \? \{ href: m\.href, label: m\.link \}/);
+    // The linked feature routes are still referenced in MANAGES.
+    expect(pillar).toMatch(/\/features\/treatment-memory/);
+    expect(pillar).toMatch(/\/features\/booking-calendar/);
+    expect(pillar).toMatch(/\/features\/charting-records/);
   });
 });
 
