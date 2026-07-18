@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { track } from "@vercel/analytics";
 import { submitDemoRequest, type DemoPayload } from "@/app/actions/demo";
+import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 
 type Status =
   | { kind: "idle" }
@@ -43,8 +45,15 @@ export function DemoForm() {
   const [values, setValues] = useState<DemoPayload>(EMPTY);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
+  // Fire "form started" at most once, on first interaction. Event NAME only —
+  // never any field value (no name/email/studio/free text sent to analytics).
+  const startedRef = useRef(false);
 
   function update<K extends keyof DemoPayload>(key: K, value: DemoPayload[K]) {
+    if (!startedRef.current) {
+      startedRef.current = true;
+      track(ANALYTICS_EVENTS.walkthroughFormStarted);
+    }
     setValues((v) => ({ ...v, [key]: value }));
   }
 
@@ -59,6 +68,8 @@ export function DemoForm() {
         setStatus({ kind: "error", message: result.error });
         return;
       }
+      // Success — event name only, no submitted values.
+      track(ANALYTICS_EVENTS.walkthroughFormSubmitted);
       setStatus({ kind: "fading" });
       window.setTimeout(() => setStatus({ kind: "done" }), 220);
     });
@@ -66,10 +77,13 @@ export function DemoForm() {
 
   if (status.kind === "done") {
     return (
-      <p className="text-[18px] leading-[1.55] text-[#0A0A0A] md:text-[21px]">
-        Thanks. We will be in touch within one business day to book your
-        walkthrough.
-      </p>
+      <div className="text-[1.0625rem] leading-[1.6] text-ink">
+        <p className="font-medium">{WALKTHROUGH.successMessage}</p>
+        <p className="mt-3 text-[0.9375rem] text-muted">
+          There is no automatic booking — a real person will email you to find a time that
+          works. You can reply to that email with anything else we should know.
+        </p>
+      </div>
     );
   }
 
@@ -79,19 +93,11 @@ export function DemoForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      style={{
-        opacity: fading ? 0 : 1,
-        transition: "opacity 200ms ease-out",
-      }}
+      style={{ opacity: fading ? 0 : 1, transition: "opacity 200ms ease-out" }}
       noValidate
-      className="flex flex-col gap-10"
+      className="flex flex-col gap-7"
     >
-      <UnderlineField
-        label="Your name"
-        autoComplete="name"
-        value={values.name}
-        onChange={(v) => update("name", v)}
-      />
+      <UnderlineField label="Your name" autoComplete="name" value={values.name} onChange={(v) => update("name", v)} />
       <UnderlineField
         label="Email"
         type="email"
@@ -119,14 +125,11 @@ export function DemoForm() {
         onChange={(v) => update("practice_type", v as DemoPayload["practice_type"])}
         options={PRACTICE_OPTIONS}
       />
-
       <RadioGroup
         label="Practitioners in the studio"
         name="practitioner_count"
         value={values.practitioner_count}
-        onChange={(v) =>
-          update("practitioner_count", v as DemoPayload["practitioner_count"])
-        }
+        onChange={(v) => update("practitioner_count", v as DemoPayload["practitioner_count"])}
         options={COUNT_OPTIONS}
       />
 
@@ -136,24 +139,24 @@ export function DemoForm() {
         value={values.current_tool}
         onChange={(v) => update("current_tool", v)}
       />
-
       <UnderlineTextarea
         label="Anything we should know before the walkthrough?"
         value={values.notes}
         onChange={(v) => update("notes", v)}
       />
 
-      <div className="flex items-baseline gap-6">
+      <div className="mt-1 flex flex-wrap items-center gap-4">
         <button
           type="submit"
           disabled={submitting || fading}
-          className="text-[14px] font-medium uppercase text-[#0A0A0A] transition-opacity hover:opacity-60 disabled:opacity-40"
-          style={{ letterSpacing: "0.2em" }}
+          className="inline-flex min-h-[44px] items-center justify-center rounded-[8px] bg-mineral px-5 text-[0.9375rem] font-semibold text-paper transition-colors hover:bg-[color:var(--color-mineral-deep)] disabled:opacity-50"
         >
-          {submitting ? "Sending" : "Book the walkthrough"}
+          {submitting ? WALKTHROUGH.submitPendingLabel : WALKTHROUGH.submitLabel}
         </button>
         {status.kind === "error" && (
-          <p className="text-[13px] text-[#6B6B6B]">{status.message}</p>
+          <p role="alert" className="text-[0.8125rem] text-muted">
+            {status.message}
+          </p>
         )}
       </div>
     </form>
@@ -178,11 +181,8 @@ function UnderlineField({
   inputMode?: "text" | "tel" | "email" | "numeric";
 }) {
   return (
-    <label className="flex flex-col gap-3">
-      <span
-        className="text-[12px] font-medium uppercase"
-        style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
-      >
+    <label className="flex flex-col gap-2">
+      <span className="text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-muted">
         {label}
       </span>
       <input
@@ -192,8 +192,8 @@ function UnderlineField({
         placeholder={placeholder}
         autoComplete={autoComplete}
         inputMode={inputMode}
-        className="bg-transparent pb-3 text-[18px] leading-none text-[#0A0A0A] outline-none placeholder:text-[#6B6B6B]"
-        style={{ borderBottom: "1px solid #0A0A0A" }}
+        className="bg-transparent pb-2 text-[1rem] leading-none text-ink outline-none placeholder:text-muted focus:border-[color:var(--color-mineral)]"
+        style={{ borderBottom: "1px solid var(--color-hairline-strong)" }}
       />
     </label>
   );
@@ -209,19 +209,16 @@ function UnderlineTextarea({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="flex flex-col gap-3">
-      <span
-        className="text-[12px] font-medium uppercase"
-        style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
-      >
+    <label className="flex flex-col gap-2">
+      <span className="text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-muted">
         {label}
       </span>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
-        className="resize-none bg-transparent pb-3 text-[18px] leading-[1.45] text-[#0A0A0A] outline-none placeholder:text-[#6B6B6B]"
-        style={{ borderBottom: "1px solid #0A0A0A" }}
+        className="resize-none bg-transparent pb-2 text-[1rem] leading-[1.45] text-ink outline-none placeholder:text-muted focus:border-[color:var(--color-mineral)]"
+        style={{ borderBottom: "1px solid var(--color-hairline-strong)" }}
       />
     </label>
   );
@@ -241,14 +238,11 @@ function RadioGroup({
   options: ReadonlyArray<{ value: string; label: string }>;
 }) {
   return (
-    <fieldset className="flex flex-col gap-3">
-      <legend
-        className="text-[12px] font-medium uppercase"
-        style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
-      >
+    <fieldset className="flex flex-col gap-2">
+      <legend className="text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-muted">
         {label}
       </legend>
-      <div className="flex flex-wrap gap-x-8 gap-y-3 pt-1">
+      <div className="flex flex-wrap gap-x-6 gap-y-3 pt-1">
         {options.map((opt) => {
           const selected = value === opt.value;
           const id = `${name}-${opt.value}`;
@@ -256,7 +250,7 @@ function RadioGroup({
             <label
               key={opt.value}
               htmlFor={id}
-              className="flex cursor-pointer items-center gap-3 text-[16px]"
+              className="flex min-h-[44px] cursor-pointer items-center gap-2.5 text-[0.9375rem] text-ink"
             >
               <input
                 id={id}
@@ -273,8 +267,9 @@ function RadioGroup({
                   display: "inline-block",
                   width: 14,
                   height: 14,
-                  border: "1px solid #0A0A0A",
-                  backgroundColor: selected ? "#0A0A0A" : "transparent",
+                  borderRadius: 999,
+                  border: `1px solid ${selected ? "var(--color-mineral)" : "var(--color-hairline-strong)"}`,
+                  backgroundColor: selected ? "var(--color-mineral)" : "transparent",
                 }}
               />
               {opt.label}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { MK_FONT_DISPLAY } from "./tokens";
+import { MarketingAnalytics } from "./MarketingAnalytics";
 
 // Marketing design-system primitives (server components). These encapsulate the
 // type scale, spacing rhythm, and the single mineral-teal accent so pages stay
@@ -27,7 +28,10 @@ export function MarketingSurface({
   className?: string;
 }) {
   return (
-    <div className={`marketing-surface min-h-screen ${className}`}>{children}</div>
+    <div className={`marketing-surface min-h-screen ${className}`}>
+      {children}
+      <MarketingAnalytics />
+    </div>
   );
 }
 
