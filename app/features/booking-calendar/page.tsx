@@ -30,7 +30,7 @@ export const metadata: Metadata = marketingMetadata("/features/booking-calendar"
 const CAPABILITIES: { title: string; body: string }[] = [
   {
     title: "A booking page clients can use 24/7",
-    body: "Give clients their own page to browse your services, see real open times, and book online — with built-in protection against double-booking.",
+    body: "Give clients their own page to browse your services, see real open times, and book online, with built-in protection against double-booking.",
   },
   {
     title: "Services and availability you control",
@@ -46,7 +46,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Move an appointment in one step",
-    body: "Move a booking to a new time and it stays the same appointment — same client, notes, and history — still protected from double-booking.",
+    body: "Move a booking to a new time and it stays the same appointment, same client, notes, and history, still protected from double-booking.",
   },
   {
     title: "Automatic email reminders",
@@ -66,7 +66,7 @@ export default function BookingCalendarPage() {
         ]}
       />
       <main className="overflow-x-hidden">
-        <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
+        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Booking and calendar</Eyebrow>
             <Display className="mt-4">
@@ -74,7 +74,7 @@ export default function BookingCalendarPage() {
             </Display>
             <Lede className="mt-6 max-w-xl">
               Give clients a booking page with real open times and double-booking protection,
-              and run your day on a calendar built for how an electrolysis practice works — not
+              and run your day on a calendar built for how an electrolysis practice works, not
               a generic scheduler.
             </Lede>
             <div className="mt-8">
@@ -123,7 +123,7 @@ export default function BookingCalendarPage() {
               <Lede className="mt-5">
                 In Hone, a booking isn&apos;t a dead end on a calendar. It carries into intake,
                 charting, and treatment memory, so the schedule and the treatment record stay
-                connected — and a returning client&apos;s history is already there when they
+                connected, and a returning client&apos;s history is already there when they
                 book again.
               </Lede>
             </Reveal>
@@ -153,7 +153,7 @@ export default function BookingCalendarPage() {
 
         <WalkthroughCTA
           title="See the booking flow end to end."
-          body="We'll walk through your booking page, calendar, and reminders on a real workflow — and reply within one business day."
+          body="We'll walk through your booking page, calendar, and reminders on a real workflow, and reply within one business day."
         />
       </main>
       <SiteFooter />

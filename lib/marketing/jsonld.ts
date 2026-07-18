@@ -1,7 +1,7 @@
 // Pure JSON-LD builders (no React) so structured data is unit-testable and can
 // never drift from the visible content it is derived from. Rendered by the
 // <JsonLd> component. No aggregateRating, no review, no fabricated data
-// (addendum §7). Visible prices must equal the offer prices — both come from the
+// (addendum §7). Visible prices must equal the offer prices, both come from the
 // same PRICING_PLANS source of truth.
 
 import { CANONICAL_HOST, CONTACT_EMAIL, CURRENCY, PRICING_PLANS } from "./content";
@@ -54,7 +54,7 @@ export function softwareApplicationLd() {
     operatingSystem: "Web",
     url: CANONICAL_HOST,
     description:
-      "Electrolysis practice software that remembers every treatment — booking, intake, consent, charting, treatment memory, photos, records, and follow-up.",
+      "Electrolysis practice software that remembers every treatment, booking, intake, consent, charting, treatment memory, photos, records, and follow-up.",
     offers: {
       "@type": "OfferCatalog",
       name: "Hone plans",
@@ -94,7 +94,7 @@ export function articleLd(a: ResourceArticle) {
   };
 }
 
-/** FAQPage — must be built from the SAME questions shown visibly on the page. */
+/** FAQPage, must be built from the SAME questions shown visibly on the page. */
 export function faqPageLd(faq: { q: string; a: string }[]) {
   return {
     "@context": "https://schema.org",

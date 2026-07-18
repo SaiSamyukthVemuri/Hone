@@ -1,59 +1,30 @@
 # Fonts — Hone marketing site
 
-**Scope:** the public marketing surface (pages wrapped in `.marketing-surface`:
-homepage, pillar, feature, resource, pricing, demo). The authenticated app's
-typography is separate and unchanged (see the note at the bottom).
+**Scope:** the public marketing surface (pages wrapped in `.marketing-surface`).
 
-## Decision: tuned system font stack (no web-font files shipped)
+## Decision: reuse the app's Fraunces + Inter
 
-The marketing site ships **no font files** and makes **no runtime or build-time
-Google Fonts network request** (prompt §11). Display and text are rendered from
-a tuned system stack defined in `app/globals.css`:
+The marketing site uses the **same fonts as the product** — **Fraunces** for
+display and **Inter** for text — via the shared CSS variables the root layout
+already exposes (`--font-fraunces`, `--font-inter`), defined in `app/globals.css`:
 
-| Role | CSS variable | Stack |
+| Role | CSS variable | Value |
 |---|---|---|
-| Display (headings) | `--font-marketing-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif` |
-| Text / UI | `--font-marketing-text` | `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` |
+| Display (headings, wordmark) | `--font-marketing-display` | `var(--font-fraunces), Georgia, "Times New Roman", ui-serif, serif` |
+| Text / UI | `--font-marketing-text` | `var(--font-inter), ui-sans-serif, system-ui, -apple-system, …, sans-serif` |
 
-- **Display** resolves to a warm, high-optical-contrast old-style serif where
-  available (Iowan Old Style / Palatino on Apple platforms), falling back to
-  Georgia, then the platform `ui-serif`. This gives the "quiet precision"
-  editorial feel without shipping bytes.
-- **Text** resolves to the native platform grotesk (San Francisco / Segoe UI /
-  Roboto), which is highly legible at ≥16px and renders instantly.
+### Why
 
-### Why a system stack (and not vendored web fonts)
+- **Consistency + preference.** The product owner preferred the established
+  Fraunces + Inter look over a system-serif stack. Reusing them makes the
+  marketing site and the app feel like one product.
+- **No extra cost.** Fraunces + Inter are already loaded once by the root layout
+  (`app/layout.tsx`, `next/font/google`, self-hosted at build). The marketing
+  site adds **no new font request** — it points at the already-loaded families
+  through the CSS variables, with system-font fallbacks.
 
-§11's preferred pairing is **Newsreader (display) + Geist (text)** — both
-open-licensed (SIL OFL). We chose the tuned system stack instead because:
-
-1. **Licensing integrity.** Verified, correctly-subset WOFF2 files for those
-   families could not be obtained and license-verified within this build
-   environment, and §11 forbids shipping unlicensed files. A system stack has
-   no licensing exposure.
-2. **No network dependency.** Zero runtime and zero build-time font requests,
-   satisfying §11 directly.
-3. **Performance & CLS.** No font download, no swap/FOUT, no layout shift from
-   late-loading webfonts — fonts paint on first frame. Distinctiveness is
-   carried by layout, color, and the signature product visual, per the design
-   plan, rather than by an exotic typeface.
-
-This is the explicitly-permitted §11 fallback ("If licensing or quality cannot
-be verified, use a tuned system stack.").
-
-### If web fonts are adopted later
-
-To move to Newsreader + Geist without a Google Fonts network dependency:
-- Add self-hosted **WOFF2 subsets** under `app/fonts/` (or the licensed `geist`
-  npm package for the text face), wire them with **`next/font/local`**, and
-  record the exact files + SIL OFL license text and source URLs here.
-- Keep `--font-marketing-display` / `--font-marketing-text` as the swap points
-  so no component markup changes.
-
-## Note: the authenticated app's fonts are unchanged
-
-The root layout (`app/layout.tsx`) loads **Fraunces + Inter via
-`next/font/google`** for the authenticated product. That is a pre-existing
-dependency and is intentionally **not** modified by this marketing work
-(delivery rule §30: no authenticated-product change). Migrating the app off
-Google Fonts, if desired, is a separate, separately-authorized change.
+Note: an earlier iteration shipped a tuned system-serif stack to avoid any
+Google-Fonts dependency; it was replaced with the app's Fraunces/Inter per the
+product owner's direction. If a fully self-hosted, no-Google-Fonts pipeline is
+required later, swap the two `--font-marketing-*` values to `next/font/local`
+faces and record the files + SIL OFL licenses here — no component markup changes.

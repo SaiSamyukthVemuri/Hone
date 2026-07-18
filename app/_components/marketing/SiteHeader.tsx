@@ -30,11 +30,24 @@ export function SiteHeader() {
 
           <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
             <details className="group relative">
-              <summary className="flex cursor-pointer list-none items-center gap-1 text-[0.9375rem] font-medium text-ink marker:hidden">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[0.9375rem] font-medium text-ink marker:hidden">
                 Product
-                <span aria-hidden="true" className="text-muted transition-transform group-open:rotate-180">
-                  ⌄
-                </span>
+                <svg
+                  aria-hidden="true"
+                  width="11"
+                  height="7"
+                  viewBox="0 0 11 7"
+                  fill="none"
+                  className="text-muted transition-transform group-open:rotate-180"
+                >
+                  <path
+                    d="M1 1.5 5.5 5.5 10 1.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </summary>
               <div className="absolute left-0 top-full z-50 mt-3 w-64 rounded-[10px] border border-[color:var(--color-hairline)] bg-white p-2 shadow-[var(--mk-shadow-frame)]">
                 {PRODUCT_MENU.map((item) => (

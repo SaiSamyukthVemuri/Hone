@@ -11,8 +11,8 @@
 // JSON-LD, and tests. That consistency is a correctness requirement, not a
 // nicety:
 //   - The primary CTA describes ONE real workflow everywhere (marketing
-//     addendum §3). `/demo` is a lead-capture form — the founder replies to
-//     schedule; the visitor never selects a real appointment time — so the
+//     addendum §3). `/demo` is a lead-capture form, the founder replies to
+//     schedule; the visitor never selects a real appointment time, so the
 //     truthful verb is "Request", never "Book". See `DEMO_FLOW` below.
 //   - SaaS currency is CAD everywhere: prices, FAQ, metadata, JSON-LD, tests
 //     (prompt §15). This is a product-owner decision, independent of the
@@ -37,7 +37,7 @@ export const CANONICAL_HOST = "https://hone.care" as const;
 export const CONTACT_EMAIL = "hello@hone.care" as const;
 
 // ---------------------------------------------------------------------------
-// Positioning (prompt §5) — the fixed hero and category language.
+// Positioning (prompt §5), the fixed hero and category language.
 // ---------------------------------------------------------------------------
 export const POSITIONING = {
   category: "Electrolysis practice software",
@@ -52,16 +52,16 @@ export const POSITIONING = {
     "Run booking, intake, consent, treatment records, photos, client follow-up, and next-visit preparation in one calm workflow built for electrologists.",
   differentiationLine:
     "Your calendar remembers the appointment. Hone helps you remember the treatment.",
-  // Kept in supporting copy, metadata, and footer — but never duplicated as
+  // Kept in supporting copy, metadata, and footer, but never duplicated as
   // both the eyebrow and the H1 (prompt §5).
   keepPhrase: "Treatment memory for electrologists",
-  // Proof line — every clause is evidence-backed in the truth register (§23).
+  // Proof line, every clause is evidence-backed in the truth register (§23).
   proofLine:
     "Built around real electrolysis workflows · Founder-led setup · Free standard client import · Cancel anytime",
 } as const;
 
 // ---------------------------------------------------------------------------
-// Primary conversion — the founder-led walkthrough (prompt §5, §19; addendum §3)
+// Primary conversion, the founder-led walkthrough (prompt §5, §19; addendum §3)
 // ---------------------------------------------------------------------------
 //
 // `/demo` is a LEAD-CAPTURE form: it inserts a `demo_requests` row and the
@@ -74,18 +74,18 @@ export const DEMO_FLOW = "lead_capture" as const;
 
 export const WALKTHROUGH = {
   href: "/demo",
-  // Header/nav (tight space) — still "Request", never "Book".
+  // Header/nav (tight space), still "Request", never "Book".
   primaryLabelShort: "Request a walkthrough",
   // Hero, pricing, section CTAs.
   primaryLabel: "Request a 15-minute walkthrough",
   secondaryLabel: "See how Hone works",
-  // Demo page — heading, submit control, and success state all describe the
+  // Demo page, heading, submit control, and success state all describe the
   // same lead-capture reality (founder replies to schedule).
   demoHeading: "Request a 15-minute Hone walkthrough.",
   submitLabel: "Request my walkthrough",
   submitPendingLabel: "Sending…",
   successMessage:
-    "Thanks — we'll be in touch within one business day to set up your walkthrough.",
+    "Thanks, we'll be in touch within one business day to set up your walkthrough.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -95,14 +95,14 @@ export const WALKTHROUGH = {
 // Currency is CAD everywhere. No Stripe Products/Prices are created. No caps,
 // quotas, SMS overages, automatic seat billing, annual gimmicks, or fake
 // scarcity. Core treatment memory / charting / intake / consent / records are
-// NOT crippled to build tiers — tiers differ only by who the plan is for and
+// NOT crippled to build tiers, tiers differ only by who the plan is for and
 // how many practitioners it covers.
 //
 // STUDIO DECISION: published at CAD $99/month for up to three practitioners.
 // Rationale (recorded in the truth register): multi-practitioner studios are
-// LIVE_FOR_ALL_ONBOARDED — each practitioner charts under their own name and is
+// LIVE_FOR_ALL_ONBOARDED, each practitioner charts under their own name and is
 // colour-coded on the shared calendar, and owners invite/manage/remove
-// practitioners — and this works for three (and more) practitioners today. The
+// practitioners, and this works for three (and more) practitioners today. The
 // "up to three" seat boundary is a packaging promise honoured during guided
 // onboarding; there is no automatic seat billing. (Note for feature copy: the
 // public booking page attributes bookings studio-wide and availability is a
@@ -155,16 +155,16 @@ export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
   },
 ] as const;
 
-// Assurances — each is evidence-backed in the truth register (§23). No setup
+// Assurances, each is evidence-backed in the truth register (§23). No setup
 // fee / no contract / cancel anytime / free standard import / founder-led setup.
 export const PRICING_ASSURANCES: ReadonlyArray<string> = [
   "Founder-led setup",
   "Free standard client import",
   "No setup fee",
-  "No contract — cancel anytime",
+  "No contract, cancel anytime",
 ] as const;
 
-// Payment qualifier — used wherever payments are mentioned. Never imply
+// Payment qualifier, used wherever payments are mentioned. Never imply
 // self-service live-payment activation (§3 payment rule).
 export const PAYMENT_QUALIFIER = "Payments are enabled during guided onboarding." as const;
 
@@ -173,7 +173,7 @@ export const REPLACES_STATEMENT =
   "Hone can replace a separate booking calendar, intake tool, treatment-notes system, and client portal for practices that fit Hone's current workflow." as const;
 
 // ---------------------------------------------------------------------------
-// Public capability groups (prompt §7) — broad, outcome-led, truthful labels.
+// Public capability groups (prompt §7), broad, outcome-led, truthful labels.
 // ---------------------------------------------------------------------------
 export const CAPABILITY_GROUPS: ReadonlyArray<{ label: string; outcome: string }> = [
   { label: "Booking and schedule", outcome: "Get booked" },
@@ -186,7 +186,7 @@ export const CAPABILITY_GROUPS: ReadonlyArray<{ label: string; outcome: string }
 
 // ---------------------------------------------------------------------------
 // Navigation + footer (prompt §9). Every href points at a route shipped in this
-// release — NO dead Phase-2 links.
+// release, NO dead Phase-2 links.
 // ---------------------------------------------------------------------------
 export type NavLink = { href: string; label: string };
 
@@ -198,9 +198,10 @@ export const PRODUCT_MENU: ReadonlyArray<NavLink> = [
   { href: "/features/charting-records", label: "Charting and records" },
 ] as const;
 
+// "Product" is a dropdown (PRODUCT_MENU) that already lists Treatment memory, so
+// it is not repeated as a top-level item.
 export const PRIMARY_NAV: ReadonlyArray<NavLink> = [
   { href: "/electrolysis-software", label: "Product" },
-  { href: "/features/treatment-memory", label: "Treatment memory" },
   { href: "/pricing", label: "Pricing" },
   { href: "/resources", label: "Resources" },
   { href: "/login", label: "Sign in" },
@@ -270,14 +271,14 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/",
     title: "Electrolysis Practice Software That Remembers Every Treatment | Hone",
     description:
-      "Hone is electrolysis practice software that remembers every treatment — booking, intake, consent, charting, photos, records, and next-visit prep in one calm workflow built for electrologists.",
+      "Hone is electrolysis practice software that remembers every treatment, booking, intake, consent, charting, photos, records, and next-visit prep in one calm workflow built for electrologists.",
     indexable: true,
   },
   {
     path: "/electrolysis-software",
     title: "Electrolysis Software for Booking, Charting & Client Records | Hone",
     description:
-      "Electrolysis practice software for booking, intake and consent, treatment charting, client records, and returning-client treatment memory — built for electrologists, not generic salon tools.",
+      "Electrolysis practice software for booking, intake and consent, treatment charting, client records, and returning-client treatment memory, built for electrologists, not generic salon tools.",
     indexable: true,
   },
   {
@@ -291,7 +292,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/treatment-memory",
     title: "Treatment Memory Software for Electrologists | Hone",
     description:
-      "Before a returning client sits down, Hone shows the last treatment's areas, settings, probe lot, and how the client responded — assembled automatically from what you already charted.",
+      "Before a returning client sits down, Hone shows the last treatment's areas, settings, probe lot, and how the client responded, assembled automatically from what you already charted.",
     indexable: true,
   },
   {
@@ -305,7 +306,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/charting-records",
     title: "Electrolysis Charting and Treatment Records | Hone",
     description:
-      "Chart electrolysis and laser sessions at the point of care — machine settings, probe lot, treatment areas, and observations — and keep clean, print-ready procedure records.",
+      "Chart electrolysis and laser sessions at the point of care, machine settings, probe lot, treatment areas, and observations, and keep clean, print-ready procedure records.",
     indexable: true,
   },
   {
@@ -319,7 +320,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/resources",
     title: "Electrolysis Practice Resources & Record-Keeping Guides | Hone",
     description:
-      "Practical guides for running an electrolysis practice — treatment record-keeping and moving from paper records — from the team building Hone.",
+      "Practical guides for running an electrolysis practice, treatment record-keeping and moving from paper records, from the team building Hone.",
     indexable: true,
   },
   {
@@ -346,7 +347,7 @@ export const SITEMAP_PATHS: ReadonlyArray<string> = MARKETING_PAGES.filter(
 ).map((p) => p.path);
 
 // ---------------------------------------------------------------------------
-// Privacy-safe analytics events (prompt §24). Names only — the firing is wired
+// Privacy-safe analytics events (prompt §24). Names only, the firing is wired
 // in the demo/analytics stage. Payloads must NEVER include name, email, studio,
 // free text, tokenized URL, or any client/practitioner data.
 // ---------------------------------------------------------------------------

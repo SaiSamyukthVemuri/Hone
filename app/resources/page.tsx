@@ -42,7 +42,7 @@ export default function ResourcesPage() {
               Practical guides for running an electrolysis practice.
             </Display>
             <Lede className="mt-6 max-w-2xl">
-              Operational guides from {RESOURCE_AUTHOR} — the people building Hone — on keeping
+              Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping
               good treatment records and moving a practice off paper. Practical, not
               promotional.
             </Lede>
@@ -78,7 +78,7 @@ export default function ResourcesPage() {
 
         <WalkthroughCTA
           title="Prefer to see it in the product?"
-          body="We'll walk through how Hone handles booking, charting, treatment memory, and records on your real workflow — and reply within one business day."
+          body="We'll walk through how Hone handles booking, charting, treatment memory, and records on your real workflow, and reply within one business day."
         />
       </main>
       <SiteFooter />

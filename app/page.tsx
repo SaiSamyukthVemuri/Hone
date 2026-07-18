@@ -29,9 +29,9 @@ import {
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
-// Public marketing homepage — flagship rebuild. Category: electrolysis practice
+// Public marketing homepage, flagship rebuild. Category: electrolysis practice
 // software. Differentiator: treatment memory. One primary conversion: the
-// founder-led walkthrough (a lead-capture request — hence "Request", not
+// founder-led walkthrough (a lead-capture request, hence "Request", not
 // "Book"). Every product surface is a coded, anonymized illustrative preview.
 // Copy is grounded in docs/marketing/product-truth-register.md; nothing markets
 // a not-public-ready capability (no Google Calendar, no unbuilt features).
@@ -41,7 +41,7 @@ export const metadata: Metadata = marketingMetadata("/");
 const WORKFLOW_STEPS: { n: string; title: string; body: string }[] = [
   { n: "01", title: "Get booked", body: "Clients book real open times on your own page, with double-booking protection." },
   { n: "02", title: "Collect intake and consent", body: "Send a secure health intake and your own consent forms before the visit." },
-  { n: "03", title: "Prepare before the visit", body: "Open a client to a Before Today briefing — last treatment, settings, and how they responded." },
+  { n: "03", title: "Prepare before the visit", body: "Open a client to a Before Today briefing, last treatment, settings, and how they responded." },
   { n: "04", title: "Chart the treatment", body: "Record areas, machine settings, probe lot, and observations at the point of care." },
   { n: "05", title: "Follow up professionally", body: "Send studio-branded postcare and keep private treatment photos and records." },
   { n: "06", title: "Remember it next time", body: "Cautions and the plan you leave resurface automatically at the next appointment." },
@@ -49,7 +49,7 @@ const WORKFLOW_STEPS: { n: string; title: string; body: string }[] = [
 
 const TRUST_POINTS: { title: string; body: string }[] = [
   { title: "Studio data stays isolated", body: "Each studio's records are separated with database row-level security." },
-  { title: "Private treatment photos", body: "Stored in a private bucket, shown only to your studio through short-lived signed links — never public URLs." },
+  { title: "Private treatment photos", body: "Stored in a private bucket, shown only to your studio through short-lived signed links, never public URLs." },
   { title: "No advertising use of health records", body: "Client health information is never used for advertising." },
   { title: "No AI training on your records", body: "Hone does not train AI models on practitioner or client records." },
   { title: "Payments handled by Stripe", body: "Card details go straight to Stripe; Hone never stores full card numbers. Payments are enabled during guided onboarding." },
@@ -62,7 +62,7 @@ export default function HomePage() {
       <SiteHeader />
       <main className="overflow-x-hidden">
         {/* Hero */}
-        <Container className="grid items-center gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-24 lg:pt-20">
+        <Container className="grid items-start gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-24 lg:pt-20">
           <div>
             <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
             <Display className="mt-4">{POSITIONING.heroH1}</Display>
@@ -93,7 +93,7 @@ export default function HomePage() {
           </Reveal>
         </Container>
 
-        {/* Narrative contrast — the one dark band */}
+        {/* Narrative contrast, the one dark band */}
         <Section tone="band">
           <Container>
             <Reveal>
@@ -103,7 +103,7 @@ export default function HomePage() {
               </Title>
               <Lede onBand className="mt-5 max-w-2xl">
                 A calendar tells you who is coming. When a returning client sits down, the
-                details that shape the treatment live somewhere else — or nowhere. Hone
+                details that shape the treatment live somewhere else, or nowhere. Hone
                 carries them from one appointment into the next.
               </Lede>
             </Reveal>
@@ -147,7 +147,7 @@ export default function HomePage() {
               <Eyebrow>How Hone works</Eyebrow>
               <Title className="mt-4 max-w-2xl">One calm workflow, start to finish.</Title>
               <Lede className="mt-5 max-w-2xl">
-                From the booking page to the next visit, each step feeds the one after it —
+                From the booking page to the next visit, each step feeds the one after it,
                 so nothing is re-entered and nothing is lost.
               </Lede>
             </Reveal>
@@ -174,7 +174,7 @@ export default function HomePage() {
               <Title className="mt-4">The part other tools forget.</Title>
               <Lede className="mt-5">
                 Before a returning client sits down, Hone assembles a briefing from what you
-                already charted — the last treatment&apos;s areas and settings, the probe lot, how
+                already charted, the last treatment&apos;s areas and settings, the probe lot, how
                 the client responded, and the plan you left for today.
               </Lede>
               <ul className="mt-6 space-y-3">
@@ -338,7 +338,7 @@ export default function HomePage() {
               </Title>
               <Lede onBand className="mx-auto mt-5 max-w-xl">
                 Bring one real treatment workflow. We&apos;ll walk through how Hone handles
-                the appointment, charting, treatment memory, and records — and reply within
+                the appointment, charting, treatment memory, and records, and reply within
                 one business day.
               </Lede>
               <div className="mt-8 flex justify-center">

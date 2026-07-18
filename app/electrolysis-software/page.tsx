@@ -43,13 +43,13 @@ const MANAGES: { title: string; body: string; href?: string; link?: string }[] =
   },
   {
     title: "Treatment charting",
-    body: "Point-of-care charting for electrolysis and laser — mode, energy, machine frequency, structured probe and lot, minutes, and observations.",
+    body: "Point-of-care charting for electrolysis and laser, mode, energy, machine frequency, structured probe and lot, minutes, and observations.",
     href: "/features/charting-records",
     link: "Charting and records",
   },
   {
     title: "Treatment memory",
-    body: "The details that shape a returning client's session — last settings, probe lot, how they responded, and the plan you left — surfaced before they sit down.",
+    body: "The details that shape a returning client's session, last settings, probe lot, how they responded, and the plan you left, surfaced before they sit down.",
     href: "/features/treatment-memory",
     link: "Treatment memory",
   },
@@ -75,15 +75,15 @@ export default function ElectrolysisSoftwarePage() {
       />
       <main className="overflow-x-hidden">
         {/* Hero */}
-        <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
+        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Electrolysis practice software</Eyebrow>
             <Display className="mt-4">
               Software built for an electrolysis practice, not a generic salon.
             </Display>
             <Lede className="mt-6 max-w-xl">
-              Hone runs the whole electrolysis workflow — booking, intake, consent, charting,
-              treatment memory, photos, records, and follow-up — in one calm place, with the
+              Hone runs the whole electrolysis workflow, booking, intake, consent, charting,
+              treatment memory, photos, records, and follow-up, in one calm place, with the
               detail electrologists actually record.
             </Lede>
             <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -110,7 +110,7 @@ export default function ElectrolysisSoftwarePage() {
               </Title>
               <Lede className="mt-5 max-w-2xl">
                 Generic scheduling tools stop at the appointment. Specialist software has to
-                carry the treatment detail too — and connect it to the next visit.
+                carry the treatment detail too, and connect it to the next visit.
               </Lede>
             </Reveal>
             <div className="mt-10">
@@ -150,8 +150,8 @@ export default function ElectrolysisSoftwarePage() {
               <Title className="mt-4">Built around returning-client memory.</Title>
               <Lede className="mt-5">
                 Electrolysis is a course of treatment, not a one-off. What made the difference
-                last time — the settings that worked, the probe lot, how the skin reacted, the
-                plan you left — is exactly what a generic booking tool throws away.
+                last time, the settings that worked, the probe lot, how the skin reacted, the
+                plan you left, is exactly what a generic booking tool throws away.
               </Lede>
               <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
                 Hone keeps that record structured and puts it in front of you before the next
@@ -206,7 +206,7 @@ export default function ElectrolysisSoftwarePage() {
 
         <WalkthroughCTA
           title="See Hone on your own workflow."
-          body="Bring one real treatment workflow. We'll walk through booking, charting, treatment memory, and records — and reply within one business day."
+          body="Bring one real treatment workflow. We'll walk through booking, charting, treatment memory, and records, and reply within one business day."
         />
       </main>
       <SiteFooter />

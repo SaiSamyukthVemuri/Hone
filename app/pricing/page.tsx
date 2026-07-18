@@ -30,7 +30,7 @@ import {
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
-// Pricing page — CAD, three plans, no artificial feature restrictions, no
+// Pricing page, CAD, three plans, no artificial feature restrictions, no
 // caps/quotas, no unsupported annual, no self-service checkout, no Google
 // Calendar or multi-location claims. Core features are identical across plans;
 // tiers differ only by who they're for and how many practitioners they cover.
@@ -38,12 +38,12 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 
 export const metadata: Metadata = marketingMetadata("/pricing");
 
-// Every plan includes the full workflow — plans are NOT feature-gated.
+// Every plan includes the full workflow, plans are NOT feature-gated.
 const INCLUDED: string[] = [
   "Online booking page, calendar, services, and availability",
   "Client health intake and your own consent forms",
   "Treatment charting for electrolysis and laser",
-  "Treatment memory — the Before Today briefing on every returning client",
+  "Treatment memory, the Before Today briefing on every returning client",
   "Private treatment photos and procedure records",
   "Client follow-up, postcare, and the client portal",
   "Full data export, any time",
@@ -60,11 +60,11 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What's included on each plan?",
-    a: "Every plan includes the full Hone workflow — booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ by who they're for and how many practitioners they cover, not by locking features behind a higher tier.",
+    a: "Every plan includes the full Hone workflow, booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ by who they're for and how many practitioners they cover, not by locking features behind a higher tier.",
   },
   {
     q: "Can I bring my existing client history into Hone?",
-    a: "Yes. Standard client import is free and part of guided onboarding — we help bring history over from paper cards, spreadsheets, or another tool.",
+    a: "Yes. Standard client import is free and part of guided onboarding, we help bring history over from paper cards, spreadsheets, or another tool.",
   },
   {
     q: "How do payments work?",
@@ -122,7 +122,7 @@ function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
         </p>
       ) : null}
 
-      <div className="mt-6">
+      <div className="mt-auto pt-6">
         <CTAButton
           href={WALKTHROUGH.href}
           variant={featured ? "primary" : "outline"}
@@ -162,16 +162,14 @@ export default function PricingPage() {
 
         {/* Plans */}
         <Container className="pb-8 pt-8">
-          <div className="grid gap-5 md:grid-cols-3">
-            {PRICING_PLANS.map((plan, i) => (
-              <Reveal as="div" key={plan.id} delay={i * 70}>
-                <PlanCard plan={plan} />
-              </Reveal>
+          <div className="grid items-stretch gap-5 md:grid-cols-3">
+            {PRICING_PLANS.map((plan) => (
+              <PlanCard key={plan.id} plan={plan} />
             ))}
           </div>
           <p className="mt-5 text-[0.8125rem] text-muted">
             Prices in Canadian dollars (CAD). Setup and payment activation happen during a
-            guided onboarding — there is no self-service checkout.
+            guided onboarding, there is no self-service checkout.
           </p>
         </Container>
 

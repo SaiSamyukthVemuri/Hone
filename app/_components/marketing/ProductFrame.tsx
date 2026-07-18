@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 // Product-visual chrome for the coded mockups (§12). Every product composition
 // is wrapped so it carries the depth token and a VISIBLE, screen-reader-available
 // disclosure that the preview is illustrative (addendum §8). No real client data
-// ever renders inside these — only anonymized demo data.
+// ever renders inside these, only anonymized demo data.
 
 /**
- * ProductFrame — the elevated card that holds a product composition, with the
+ * ProductFrame, the elevated card that holds a product composition, with the
  * illustrative-preview disclosure as a real <figcaption>.
  */
 export function ProductFrame({
@@ -36,7 +36,7 @@ export function ProductFrame({
 }
 
 /**
- * BrowserFrame — a ProductFrame with a top chrome bar (window dots + a static
+ * BrowserFrame, a ProductFrame with a top chrome bar (window dots + a static
  * context label such as a route). The label is decorative context, not a real
  * URL bar; keep it truthful and generic.
  */
@@ -71,7 +71,7 @@ export function BrowserFrame({
 }
 
 /**
- * ProductAnnotation — a small mineral note pointing at part of a composition.
+ * ProductAnnotation, a small mineral note pointing at part of a composition.
  * Purely descriptive marketing annotation.
  */
 export function ProductAnnotation({ children }: { children: ReactNode }) {

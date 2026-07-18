@@ -15,17 +15,17 @@ import { DemoForm } from "../_components/DemoForm";
 import { WALKTHROUGH } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
-// /demo — a LEAD-CAPTURE request. The visitor never selects a real appointment
+// /demo, a LEAD-CAPTURE request. The visitor never selects a real appointment
 // time; the founder replies within one business day to schedule. Every label
 // therefore says "Request", not "Book" (addendum §3). The success state explains
 // the real manual follow-up. Analytics events (form started/submitted) carry no
-// PII — see DemoForm + MarketingAnalytics.
+// PII, see DemoForm + MarketingAnalytics.
 
 export const metadata: Metadata = marketingMetadata("/demo");
 
 const WHAT_HAPPENS: { step: string; body: string }[] = [
   { step: "1", body: "Tell us a little about your practice using the form." },
-  { step: "2", body: "We reply by email within one business day to set up a time — there is no automatic booking." },
+  { step: "2", body: "We reply by email within one business day to set up a time, there is no automatic booking." },
   { step: "3", body: "On a short call we walk through your workflow in the real app: booking, charting, treatment memory, and records." },
   { step: "4", body: "We decide together whether Hone fits your practice. If it doesn't, we'll say so." },
 ];
@@ -46,7 +46,7 @@ export default function DemoPage() {
             <Eyebrow>Walkthrough</Eyebrow>
             <Display className="mt-4">{WALKTHROUGH.demoHeading}</Display>
             <Lede className="mt-6 max-w-xl">
-              A short, founder-led walkthrough of the real app — no slides, no recorded demo.
+              A short, founder-led walkthrough of the real app, no slides, no recorded demo.
               Bring one or two of your typical client scenarios so we can walk through them
               together.
             </Lede>
