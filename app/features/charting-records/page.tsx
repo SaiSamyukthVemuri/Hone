@@ -15,7 +15,7 @@ import {
 import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { SessionRecordPreview } from "../../_components/marketing/visuals/SessionRecordPreview";
-import { WalkthroughCTA, RelatedLinks, FeatureGrid } from "../../_components/marketing/sections";
+import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -90,7 +90,7 @@ export default function ChartingRecordsPage() {
           <Container size="wide">
             <Eyebrow>What it captures</Eyebrow>
             <Title className="mt-4 max-w-2xl">The detail an electrolysis record needs.</Title>
-            <FeatureGrid items={CAPABILITIES} />
+            <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
 

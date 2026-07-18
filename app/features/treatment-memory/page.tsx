@@ -15,7 +15,7 @@ import {
 import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../../_components/marketing/visuals/TreatmentMemoryPanel";
-import { WalkthroughCTA, RelatedLinks, FeatureGrid } from "../../_components/marketing/sections";
+import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -92,7 +92,7 @@ export default function TreatmentMemoryPage() {
             <Title className="mt-4 max-w-2xl">
               Your charting, brought forward when it matters.
             </Title>
-            <FeatureGrid items={CAPABILITIES} />
+            <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
 

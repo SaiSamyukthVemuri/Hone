@@ -42,18 +42,40 @@ const featureCell =
   "lg:[&:nth-child(3n+1)]:pl-0 lg:[&:nth-child(3n)]:pr-0 " +
   "lg:[&:not(:nth-child(3n+1))]:border-l lg:[&:not(:nth-child(3n+1))]:border-[color:var(--color-hairline)]";
 
-export function FeatureGrid({ items }: { items: { title: string; body: string }[] }) {
+export type MatrixItem = {
+  eyebrow?: string;
+  title: string;
+  body?: string;
+  link?: { href: string; label: string };
+};
+
+export function FeatureMatrix({ items }: { items: MatrixItem[] }) {
   return (
     <div className="mt-8 border-t border-[color:var(--color-hairline-strong)]">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((it) => (
           <div key={it.title} className={featureCell}>
-            <Subtitle as="h3" className="lg:min-h-[3.4rem]">
+            {it.eyebrow ? (
+              <p className="mb-2 text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-mineral">
+                {it.eyebrow}
+              </p>
+            ) : null}
+            <Subtitle as="h3" className={it.body ? "lg:min-h-[3.4rem]" : ""}>
               {it.title}
             </Subtitle>
-            <p className="mt-2 max-w-[42ch] text-[1.0625rem] leading-[1.55] text-muted">
-              {it.body}
-            </p>
+            {it.body ? (
+              <p className="mt-2 max-w-[42ch] text-[1.0625rem] leading-[1.55] text-muted">
+                {it.body}
+              </p>
+            ) : null}
+            {it.link ? (
+              <Link
+                href={it.link.href}
+                className="mt-auto inline-block pt-4 text-[0.875rem] font-medium text-mineral underline underline-offset-4"
+              >
+                {it.link.label} →
+              </Link>
+            ) : null}
           </div>
         ))}
       </div>
