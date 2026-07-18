@@ -75,6 +75,7 @@ import { getStripe } from "@/lib/stripe/server";
 import { accountToStatusSnapshot } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { getPostHogClient } from "@/lib/posthog-server";
 import {
   handlePaymentIntentSucceeded,
   handlePaymentIntentPaymentFailed,
@@ -349,6 +350,16 @@ async function handleStripeEvent(
         throw new Error(
           `sync_studio_account_status failed: ${syncErr.message}`,
         );
+      }
+
+      if (snapshot.chargesEnabled) {
+        const posthog = getPostHogClient();
+        posthog.capture({
+          distinctId: `studio:${ctx.studioId}`,
+          event: "stripe_account_connected",
+          properties: { studio_id: ctx.studioId, livemode: ctx.livemode },
+        });
+        await posthog.flush();
       }
 
       return {
@@ -684,6 +695,14 @@ async function handleSetupIntentSucceeded(
       `client_payment_methods_insert_failed:${insertErr.code}:${insertErr.message}`,
     );
   }
+
+  const posthog = getPostHogClient();
+  posthog.capture({
+    distinctId: `studio:${metaStudioId}`,
+    event: "card_on_file_saved",
+    properties: { studio_id: metaStudioId, livemode: ctx.livemode },
+  });
+  await posthog.flush();
 
   return {
     eventType: event.type,

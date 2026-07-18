@@ -59,6 +59,26 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "16mb",
     },
   },
+  // PostHog reverse proxy. Routes /ingest/* to the PostHog ingestion endpoint so
+  // browser-side analytics calls stay on the same origin (avoids ad-blockers) and
+  // the CSP connect-src 'self' entry covers all PostHog traffic without changes.
+  async rewrites() {
+    return [
+      {
+        source: "/ingest/static/:path*",
+        destination: "https://us-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ingest/array/:path*",
+        destination: "https://us-assets.i.posthog.com/array/:path*",
+      },
+      {
+        source: "/ingest/:path*",
+        destination: "https://us.i.posthog.com/:path*",
+      },
+    ];
+  },
+  skipTrailingSlashRedirect: true,
   async headers() {
     return [
       // Global block. Order: this MUST come first so the token-route
