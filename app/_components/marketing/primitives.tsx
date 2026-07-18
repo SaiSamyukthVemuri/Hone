@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { MK_FONT_DISPLAY } from "./tokens";
 import { MarketingAnalytics } from "./MarketingAnalytics";
+import { newsreader } from "./fonts";
 
 // Marketing design-system primitives (server components). These encapsulate the
 // type scale, spacing rhythm, and the single mineral-teal accent so pages stay
@@ -14,12 +15,9 @@ const displayStyle = (
 ): CSSProperties => ({
   fontFamily: MK_FONT_DISPLAY,
   fontSize: clamp,
-  fontWeight: 700, // Fraunces Bold — matches the established look and gives sturdier glyphs
-  lineHeight: 1.08,
-  letterSpacing: "-0.01em",
-  // Turn off ligatures so the "f" never joins its neighbours (e.g. the "ft"
-  // ligature that read as odd); render standard, separate letterforms.
-  fontFeatureSettings: '"liga" 0, "dlig" 0, "calt" 0',
+  fontWeight: 500, // Newsreader Medium — refined, not heavy/all-bold
+  lineHeight: 1.1,
+  letterSpacing: "-0.005em",
   ...extra,
 });
 
@@ -32,7 +30,7 @@ export function MarketingSurface({
   className?: string;
 }) {
   return (
-    <div className={`marketing-surface min-h-screen ${className}`}>
+    <div className={`marketing-surface min-h-screen ${newsreader.variable} ${className}`}>
       {children}
       <MarketingAnalytics />
     </div>
