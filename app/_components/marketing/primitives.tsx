@@ -47,13 +47,11 @@ export function Container({
   className?: string;
   size?: "default" | "prose" | "wide";
 }) {
-  const max =
-    size === "prose" ? "max-w-[46rem]" : size === "wide" ? "max-w-[75rem]" : "max-w-[70rem]";
-  return (
-    <div className={`mx-auto w-full ${max} px-5 sm:px-6 lg:px-8 ${className}`}>
-      {children}
-    </div>
-  );
+  // One coherent fluid shell for header/hero/sections/footer (`default` +
+  // `wide`); a narrower reading shell for long-form articles (`prose`). Widths
+  // are defined in app/globals.css so every route shares the same edges.
+  const shell = size === "prose" ? "mk-shell-reading" : "mk-shell";
+  return <div className={`${shell} ${className}`}>{children}</div>;
 }
 
 type Tone = "paper" | "warm" | "band";
@@ -79,7 +77,7 @@ export function Section({
   return (
     <section
       id={id}
-      className={`${toneClass} py-[clamp(4rem,8vw,8rem)] ${className}`}
+      className={`${toneClass} py-[clamp(4.5rem,6vw,7rem)] ${className}`}
       data-tone={tone}
     >
       {children}
@@ -119,7 +117,10 @@ export function Display({
   return (
     <h1
       className={`text-balance ${className}`}
-      style={displayStyle("clamp(2.5rem, 1.55rem + 4.2vw, 4.25rem)", { lineHeight: 1.05 })}
+      style={displayStyle("clamp(2.75rem, 1.7rem + 3.9vw, 4.5rem)", {
+        lineHeight: 1.02,
+        letterSpacing: "-0.03em",
+      })}
     >
       {children}
     </h1>
@@ -140,7 +141,10 @@ export function Title({
   return (
     <Tag
       className={`text-balance ${className}`}
-      style={displayStyle("clamp(2rem, 1.4rem + 2.6vw, 3rem)")}
+      style={displayStyle("clamp(1.875rem, 1.35rem + 2vw, 2.75rem)", {
+        lineHeight: 1.06,
+        letterSpacing: "-0.025em",
+      })}
     >
       {children}
     </Tag>
@@ -160,8 +164,11 @@ export function Subtitle({
   const Tag = as;
   return (
     <Tag
-      className={className}
-      style={displayStyle("clamp(1.375rem, 1.15rem + 1vw, 1.75rem)", { lineHeight: 1.2 })}
+      className={`text-balance ${className}`}
+      style={displayStyle("clamp(1.1875rem, 1.02rem + 0.6vw, 1.375rem)", {
+        lineHeight: 1.22,
+        letterSpacing: "-0.015em",
+      })}
     >
       {children}
     </Tag>
@@ -180,7 +187,7 @@ export function Lede({
 }) {
   return (
     <p
-      className={`text-[1.0625rem] sm:text-[1.125rem] leading-[1.6] ${
+      className={`text-pretty text-[1.0625rem] leading-[1.55] sm:text-[1.125rem] ${
         onBand ? "text-[color:var(--color-onband-muted)]" : "text-muted"
       } ${className}`}
     >

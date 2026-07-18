@@ -9,15 +9,13 @@ import {
   Eyebrow,
   Display,
   Title,
-  Subtitle,
   Lede,
-  Hairline,
   CTAButton,
 } from "../../_components/marketing/primitives";
 import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { CalendarPreview } from "../../_components/marketing/visuals/CalendarPreview";
-import { WalkthroughCTA, RelatedLinks } from "../../_components/marketing/sections";
+import { WalkthroughCTA, RelatedLinks, FeatureGrid } from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -89,29 +87,10 @@ export default function BookingCalendarPage() {
         </Container>
 
         <Section tone="warm">
-          <Container>
-            <Reveal>
-              <Eyebrow>What it does</Eyebrow>
-              <Title className="mt-4 max-w-2xl">From first booking to the next visit.</Title>
-            </Reveal>
-            <div className="mt-10">
-              <Hairline strong />
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3">
-                {CAPABILITIES.map((c, i) => (
-                  <Reveal
-                    as="div"
-                    key={c.title}
-                    delay={(i % 3) * 60}
-                    className="border-b border-[color:var(--color-hairline)] py-6 sm:pr-8"
-                  >
-                    <Subtitle as="h2" className="text-[1.125rem]">
-                      {c.title}
-                    </Subtitle>
-                    <p className="mt-2 text-[0.9375rem] leading-[1.6] text-muted">{c.body}</p>
-                  </Reveal>
-                ))}
-              </div>
-            </div>
+          <Container size="wide">
+            <Eyebrow>What it does</Eyebrow>
+            <Title className="mt-4 max-w-2xl">From first booking to the next visit.</Title>
+            <FeatureGrid items={CAPABILITIES} />
           </Container>
         </Section>
 

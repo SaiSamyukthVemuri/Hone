@@ -17,6 +17,7 @@ import {
   CTAButton,
 } from "./_components/marketing/primitives";
 import { Reveal } from "./_components/marketing/Reveal";
+import { WorkflowGrid } from "./_components/marketing/sections";
 import { JsonLd } from "./_components/marketing/JsonLd";
 import { organizationLd, webSiteLd, softwareApplicationLd } from "@/lib/marketing/jsonld";
 import { TreatmentMemoryPanel } from "./_components/marketing/visuals/TreatmentMemoryPanel";
@@ -142,27 +143,18 @@ export default function HomePage() {
 
         {/* Workflow progression */}
         <Section id="how-hone-works" tone="paper">
-          <Container>
-            <Reveal>
-              <Eyebrow>How Hone works</Eyebrow>
-              <Title className="mt-4 max-w-2xl">One calm workflow, start to finish.</Title>
-              <Lede className="mt-5 max-w-2xl">
+          <Container size="wide">
+            <div className="lg:flex lg:items-end lg:justify-between lg:gap-16">
+              <div className="lg:max-w-xl">
+                <Eyebrow>How Hone works</Eyebrow>
+                <Title className="mt-4">One calm workflow, start to finish.</Title>
+              </div>
+              <Lede className="mt-5 max-w-xl lg:mt-0 lg:max-w-sm lg:pb-1 lg:text-right">
                 From the booking page to the next visit, each step feeds the one after it,
                 so nothing is re-entered and nothing is lost.
               </Lede>
-            </Reveal>
-            <div className="mt-12 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
-              {WORKFLOW_STEPS.map((step, i) => (
-                <Reveal as="div" key={step.n} delay={i * 60}>
-                  <div className="flex items-baseline gap-3">
-                    <span className="text-[0.8125rem] font-semibold text-mineral">{step.n}</span>
-                    <Subtitle as="h3">{step.title}</Subtitle>
-                  </div>
-                  <Hairline className="my-3" />
-                  <p className="text-[0.9375rem] leading-[1.6] text-muted">{step.body}</p>
-                </Reveal>
-              ))}
             </div>
+            <WorkflowGrid steps={WORKFLOW_STEPS} />
           </Container>
         </Section>
 
