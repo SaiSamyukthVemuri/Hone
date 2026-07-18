@@ -42,7 +42,7 @@ export default function DemoPage() {
       />
       <main className="overflow-x-hidden">
         <Container className="grid gap-12 pb-20 pt-8 lg:grid-cols-[1fr_1fr] lg:gap-16 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Walkthrough</Eyebrow>
             <Display className="mt-4">{WALKTHROUGH.demoHeading}</Display>
             <Lede className="mt-6 max-w-xl">

@@ -76,7 +76,7 @@ export default function ElectrolysisSoftwarePage() {
       <main className="overflow-x-hidden">
         {/* Hero */}
         <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Electrolysis practice software</Eyebrow>
             <Display className="mt-4">
               Software built for an electrolysis practice, not a generic salon.

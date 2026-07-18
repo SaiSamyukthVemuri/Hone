@@ -148,7 +148,7 @@ export default function PricingPage() {
       />
       <main className="overflow-x-hidden">
         <Container className="pb-4 pt-8 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Pricing</Eyebrow>
             <Display className="mt-4 max-w-3xl">
               Straightforward pricing, in Canadian dollars.

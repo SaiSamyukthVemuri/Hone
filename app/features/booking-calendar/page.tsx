@@ -67,7 +67,7 @@ export default function BookingCalendarPage() {
       />
       <main className="overflow-x-hidden">
         <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Booking and calendar</Eyebrow>
             <Display className="mt-4">
               Online booking and a calendar for the treatment room.

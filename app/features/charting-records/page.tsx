@@ -67,7 +67,7 @@ export default function ChartingRecordsPage() {
       />
       <main className="overflow-x-hidden">
         <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Charting and records</Eyebrow>
             <Display className="mt-4">
               Chart the treatment while it&apos;s fresh, keep clean records.

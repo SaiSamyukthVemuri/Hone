@@ -36,7 +36,7 @@ export default function ResourcesPage() {
       />
       <main className="overflow-x-hidden">
         <Container className="pb-8 pt-8 lg:pt-10">
-          <Reveal>
+          <Reveal immediate>
             <Eyebrow>Resources</Eyebrow>
             <Display className="mt-4 max-w-3xl">
               Practical guides for running an electrolysis practice.

@@ -12,6 +12,7 @@ export function Reveal({
   as = "div",
   className = "",
   delay = 0,
+  immediate = false,
   id,
   style,
 }: {
@@ -20,13 +21,20 @@ export function Reveal({
   className?: string;
   /** Stagger in ms. */
   delay?: number;
+  /**
+   * Render visible from the first paint (server-rendered), skipping the
+   * intersection-gated fade. Use for above-the-fold hero content so the H1
+   * paints immediately — never gate LCP or primary content behind hydration.
+   */
+  immediate?: boolean;
   id?: string;
   style?: CSSProperties;
 }) {
   const ref = useRef<HTMLElement | null>(null);
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(immediate);
 
   useEffect(() => {
+    if (immediate) return;
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -43,7 +51,7 @@ export function Reveal({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, []);
+  }, [immediate]);
 
   const Tag = as as ElementType;
   return (

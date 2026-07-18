@@ -86,7 +86,7 @@ export default function MovingFromPaperArticlePage() {
       <main className="overflow-x-hidden">
         <article>
           <Container size="prose" className="pb-6 pt-6 lg:pt-8">
-            <Reveal>
+            <Reveal immediate>
               <Eyebrow>Guide</Eyebrow>
               <Display className="mt-4">{article.title}</Display>
               <ArticleByline article={article} />
