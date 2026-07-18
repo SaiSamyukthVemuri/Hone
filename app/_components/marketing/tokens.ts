@@ -6,7 +6,7 @@ export const MK = {
   paper: "#F7F4EE",
   warm: "#EEE9E0",
   ink: "#17211F",
-  muted: "#61706B",
+  muted: "#556661",
   mineral: "#1E6B62",
   mineralDeep: "#10453F",
   wash: "#D8EAE6",

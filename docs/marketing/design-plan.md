@@ -16,7 +16,7 @@ with the standard sRGB relative-luminance formula.
 | Paper | `#F7F4EE` | Primary background (light-first, warm) |
 | Warm surface | `#EEE9E0` | Alternating section band / cards on paper |
 | Ink | `#17211F` | Primary text, headings |
-| Muted ink | `#61706B` | Secondary text, labels, captions |
+| Muted ink | `#556661` | Secondary text, labels, captions |
 | Mineral teal | `#1E6B62` | The single ownable clinical-calm accent (links, primary CTA, active) |
 | Accent wash | `#D8EAE6` | Soft teal tint for memory panels / chips |
 | Dark band | `#10231F` | The one dark comparison band (inverted section) |
@@ -26,7 +26,7 @@ with the standard sRGB relative-luminance formula.
 | Foreground / background | Ratio | Verdict |
 |---|---|---|
 | Ink `#17211F` on Paper `#F7F4EE` | **≈15.0:1** | AAA — body + headings |
-| Muted ink `#61706B` on Paper | **≈4.7:1** | AA for normal text (use for secondary/labels; body stays Ink) |
+| Muted ink `#556661` on Paper / Warm / Wash | **≈5.5 / 5.0 / 4.9:1** | AA for normal text on every marketing surface (darkened from #61706B, which failed AA on the warm/wash tints) |
 | Mineral teal `#1E6B62` on Paper (links) | **≈5.7:1** | AA normal text |
 | White `#FFFFFF` on Mineral teal (primary CTA) | **≈6.3:1** | AA normal text |
 | Paper `#F7F4EE` on Dark band `#10231F` | **≈14.9:1** | AAA — inverted section text |
