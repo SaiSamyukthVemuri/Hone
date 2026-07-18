@@ -17,6 +17,6 @@ export const MK = {
 } as const;
 
 export const MK_FONT_DISPLAY =
-  'var(--font-newsreader), Georgia, "Times New Roman", ui-serif, serif';
+  'var(--font-marketing-sans), ui-sans-serif, system-ui, -apple-system, sans-serif';
 export const MK_FONT_TEXT =
   'var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';

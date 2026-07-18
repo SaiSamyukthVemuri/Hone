@@ -2,29 +2,22 @@
 
 **Scope:** the public marketing surface (pages wrapped in `.marketing-surface`).
 
-## Decision: reuse the app's Fraunces + Inter
+## Decision: clean sans-serif (Inter) throughout
 
-The marketing site uses the **same fonts as the product** — **Fraunces** for
-display and **Inter** for text — via the shared CSS variables the root layout
-already exposes (`--font-fraunces`, `--font-inter`), defined in `app/globals.css`:
+Per the product owner's direction, the marketing site uses **Inter for both
+headings and body** — a clean, modern sans-serif with no serif letterforms.
 
-| Role | CSS variable | Value |
-|---|---|---|
-| Display (headings, wordmark) | `--font-marketing-display` | `var(--font-fraunces), Georgia, "Times New Roman", ui-serif, serif` |
-| Text / UI | `--font-marketing-text` | `var(--font-inter), ui-sans-serif, system-ui, -apple-system, …, sans-serif` |
+- The face is loaded in `app/_components/marketing/fonts.ts` (`next/font/google`,
+  Inter weights 400/500/600/700) and exposed as `--font-marketing-sans`, scoped
+  to the marketing surface via `.variable` on `MarketingSurface` — so the
+  authenticated app's own font loading is untouched.
+- `--font-marketing-display` and `--font-marketing-text` (in `app/globals.css`)
+  both resolve to `var(--font-marketing-sans)`, with a system sans fallback.
+- Headings render at Inter **Semibold (600)** with tight tracking.
 
-### Why
+### History (why not a serif)
 
-- **Consistency + preference.** The product owner preferred the established
-  Fraunces + Inter look over a system-serif stack. Reusing them makes the
-  marketing site and the app feel like one product.
-- **No extra cost.** Fraunces + Inter are already loaded once by the root layout
-  (`app/layout.tsx`, `next/font/google`, self-hosted at build). The marketing
-  site adds **no new font request** — it points at the already-loaded families
-  through the CSS variables, with system-font fallbacks.
-
-Note: an earlier iteration shipped a tuned system-serif stack to avoid any
-Google-Fonts dependency; it was replaced with the app's Fraunces/Inter per the
-product owner's direction. If a fully self-hosted, no-Google-Fonts pipeline is
-required later, swap the two `--font-marketing-*` values to `next/font/local`
-faces and record the files + SIL OFL licenses here — no component markup changes.
+Earlier iterations tried a tuned system serif, then Fraunces, then Newsreader for
+display. The serif options were rejected (Fraunces's lowercase "f" has an inherent
+descending tail; the serif look wasn't wanted), so the site moved to a clean
+sans-serif. Body was always Inter.
