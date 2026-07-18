@@ -14,8 +14,12 @@ const displayStyle = (
 ): CSSProperties => ({
   fontFamily: MK_FONT_DISPLAY,
   fontSize: clamp,
+  fontWeight: 700, // Fraunces Bold — matches the established look and gives sturdier glyphs
   lineHeight: 1.08,
   letterSpacing: "-0.01em",
+  // Turn off ligatures so the "f" never joins its neighbours (e.g. the "ft"
+  // ligature that read as odd); render standard, separate letterforms.
+  fontFeatureSettings: '"liga" 0, "dlig" 0, "calt" 0',
   ...extra,
 });
 
