@@ -36,6 +36,9 @@ export default function robots(): MetadataRoute.Robots {
           "/login",
           "/no-access",
           "/auth/",
+          // Sentry integration test page (temporary; removed before merge).
+          // Belt-and-suspenders noindex for the window it exists.
+          "/sentry-example-page",
         ],
       },
     ],

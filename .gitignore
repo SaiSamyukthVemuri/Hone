@@ -33,3 +33,6 @@ Hone_Pilot_Control_Sheet.xlsx
 # Playwright (PR #227)
 /test-results/
 /playwright-report/
+
+# Sentry Config File
+.env.sentry-build-plugin
