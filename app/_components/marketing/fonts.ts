@@ -1,13 +1,13 @@
-import { Newsreader } from "next/font/google";
+import { Inter } from "next/font/google";
 
-// Marketing display face: Newsreader — a warm, editorial serif with conventional
-// letterforms (a normal lowercase "f", unlike Fraunces's descending "f"). Scoped
-// to the marketing surface via `.variable` on the MarketingSurface wrapper, so
-// it never affects the authenticated app. Body text stays Inter.
-export const newsreader = Newsreader({
+// Marketing uses a clean sans-serif throughout (product-owner choice): Inter for
+// both headings and body — no serif letterforms. Loaded here with the heading
+// weights (600) the app's base Inter doesn't include, and scoped to the marketing
+// surface via `.variable` on the MarketingSurface wrapper so the authenticated
+// app is untouched.
+export const marketingSans = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
-  variable: "--font-newsreader",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-marketing-sans",
   display: "swap",
 });

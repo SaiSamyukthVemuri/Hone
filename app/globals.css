@@ -89,10 +89,10 @@ body {
   --color-hairline-strong: rgba(23, 33, 31, 0.16);
   --color-onband-muted: #9fb3ad; /* muted text on the dark band */
 
-  /* Marketing typography — Newsreader (display, conventional serif) + Inter (text) */
-  --font-marketing-display: var(--font-newsreader), Georgia, "Times New Roman",
-    ui-serif, serif;
-  --font-marketing-text: var(--font-inter), ui-sans-serif, system-ui,
+  /* Marketing typography — clean sans-serif throughout (Inter, headings + body) */
+  --font-marketing-display: var(--font-marketing-sans), ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-marketing-text: var(--font-marketing-sans), ui-sans-serif, system-ui,
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 

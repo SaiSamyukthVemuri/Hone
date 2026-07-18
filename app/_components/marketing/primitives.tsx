@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { MK_FONT_DISPLAY } from "./tokens";
 import { MarketingAnalytics } from "./MarketingAnalytics";
-import { newsreader } from "./fonts";
+import { marketingSans } from "./fonts";
 
 // Marketing design-system primitives (server components). These encapsulate the
 // type scale, spacing rhythm, and the single mineral-teal accent so pages stay
@@ -15,9 +15,9 @@ const displayStyle = (
 ): CSSProperties => ({
   fontFamily: MK_FONT_DISPLAY,
   fontSize: clamp,
-  fontWeight: 500, // Newsreader Medium — refined, not heavy/all-bold
+  fontWeight: 600, // Inter Semibold — clean modern heading weight
   lineHeight: 1.1,
-  letterSpacing: "-0.005em",
+  letterSpacing: "-0.02em",
   ...extra,
 });
 
@@ -30,7 +30,7 @@ export function MarketingSurface({
   className?: string;
 }) {
   return (
-    <div className={`marketing-surface min-h-screen ${newsreader.variable} ${className}`}>
+    <div className={`marketing-surface min-h-screen ${marketingSans.variable} ${className}`}>
       {children}
       <MarketingAnalytics />
     </div>
