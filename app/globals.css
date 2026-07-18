@@ -103,6 +103,20 @@ body {
     0 18px 40px -20px rgba(16, 35, 31, 0.22);
 }
 
+/* Shared desktop width shells. One coherent edge for the header, hero, sections
+ * and footer; the reading shell narrows long-form articles. Fluid so the central
+ * canvas is used intentionally: ~1100px @1280, ~1240px @1440, ~1375px @1600,
+ * capped at 1400px on very wide screens — never tablet-width content in huge
+ * gutters. */
+.mk-shell {
+  width: min(100% - clamp(3rem, 14vw, 15rem), 87.5rem);
+  margin-inline: auto;
+}
+.mk-shell-reading {
+  width: min(100% - 2.5rem, 47.5rem);
+  margin-inline: auto;
+}
+
 /* The marketing surface: applied on the wrapper of each marketing page. */
 .marketing-surface {
   background: var(--color-paper);

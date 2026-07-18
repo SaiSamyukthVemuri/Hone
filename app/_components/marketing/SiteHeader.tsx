@@ -1,18 +1,14 @@
 import Link from "next/link";
-import {
-  PRIMARY_NAV,
-  PRODUCT_MENU,
-  WALKTHROUGH,
-  ANALYTICS_EVENTS,
-} from "@/lib/marketing/content";
+import { PRIMARY_NAV, WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { Container } from "./primitives";
 import { MobileNav } from "./MobileNav";
+import { ProductMenu } from "./ProductMenu";
 import { MK_FONT_DISPLAY } from "./tokens";
 
 // Marketing site header. Solid paper background + hairline (no glass/blur).
-// Desktop shows the Product menu as a native <details> disclosure (keyboard
-// accessible, no client JS), the remaining nav links, and the walkthrough CTA.
-// Below lg, the accessible MobileNav dialog takes over.
+// Desktop shows the Product dropdown (anchored to its trigger, closes on
+// select/route/outside/Escape), the remaining nav links, and the walkthrough
+// CTA. Below lg, the accessible MobileNav dialog takes over.
 export function SiteHeader() {
   const rest = PRIMARY_NAV.filter((i) => i.label !== "Product");
 
@@ -29,38 +25,7 @@ export function SiteHeader() {
           </Link>
 
           <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
-            <details className="group relative">
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[0.9375rem] font-medium text-ink marker:hidden">
-                Product
-                <svg
-                  aria-hidden="true"
-                  width="11"
-                  height="7"
-                  viewBox="0 0 11 7"
-                  fill="none"
-                  className="text-muted transition-transform group-open:rotate-180"
-                >
-                  <path
-                    d="M1 1.5 5.5 5.5 10 1.5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </summary>
-              <div className="absolute left-0 top-full z-50 mt-3 w-64 rounded-[10px] border border-[color:var(--color-hairline)] bg-white p-2 shadow-[var(--mk-shadow-frame)]">
-                {PRODUCT_MENU.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="block rounded-[6px] px-3 py-2 text-[0.9375rem] text-ink hover:bg-warm"
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            </details>
+            <ProductMenu />
 
             {rest.map((item) => (
               <Link
