@@ -86,7 +86,6 @@ export default function Page() {
               "This error is raised on the frontend of the example page.",
             );
           }}
-          disabled={!isConnected}
         >
           <span>Throw Sample Error</span>
         </button>
