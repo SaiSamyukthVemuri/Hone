@@ -1,8 +1,8 @@
 import { ProductFrame } from "../ProductFrame";
 
 // Coded, static session/procedure-record preview (anonymized demo data) for the
-// charting/records feature page. Represents the real charting surface — machine
-// settings, structured probe + lot, minutes, tolerance — nothing invented.
+// charting/records feature page. Represents the real charting surface, machine
+// settings, structured probe + lot, minutes, tolerance, nothing invented.
 
 const ROWS: { label: string; value: string }[] = [
   { label: "Area", value: "Upper lip · midline" },

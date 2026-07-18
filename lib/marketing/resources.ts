@@ -1,4 +1,4 @@
-// Resource-article metadata — the single source of truth for authorship, dates,
+// Resource-article metadata, the single source of truth for authorship, dates,
 // and the operational-information disclaimer (addendum §5). Consumed by the
 // resource pages, the sitemap (truthful lastModified), and Article JSON-LD.
 //
@@ -52,4 +52,4 @@ export function getResourceArticle(slug: string): ResourceArticle | undefined {
 // Shown on every resource article. Operational information, not medical/legal
 // advice; requirements vary by jurisdiction.
 export const RESOURCE_DISCLAIMER =
-  "This guide is operational information from the team building Hone — not medical or legal advice. Record-keeping and public-health requirements vary by jurisdiction, so always confirm what applies to your practice with your local regulatory or public-health authority." as const;
+  "This guide is operational information from the team building Hone, not medical or legal advice. Record-keeping and public-health requirements vary by jurisdiction, so always confirm what applies to your practice with your local regulatory or public-health authority." as const;

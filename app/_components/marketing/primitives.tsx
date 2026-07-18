@@ -19,7 +19,7 @@ const displayStyle = (
   ...extra,
 });
 
-/** Page wrapper — applies the marketing surface (font + paper background). */
+/** Page wrapper, applies the marketing surface (font + paper background). */
 export function MarketingSurface({
   children,
   className = "",
@@ -224,7 +224,7 @@ type CTAVariant = "primary" | "secondary" | "outline";
 /**
  * Primary/secondary walkthrough or nav CTA. Renders a Link. `event` is a
  * privacy-safe analytics event name (from lib/marketing/content ANALYTICS_EVENTS)
- * attached as data-event for the analytics layer wired in a later stage — no
+ * attached as data-event for the analytics layer wired in a later stage, no
  * PII is ever attached here.
  */
 export function CTAButton({

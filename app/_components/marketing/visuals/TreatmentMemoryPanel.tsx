@@ -1,13 +1,8 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import { ProductFrame } from "../ProductFrame";
 
 // The signature product visual: a coded "Before today" briefing (the real
-// LIVE_FOR_ALL_ONBOARDED capability), assembled once on mount — each fact
-// settles in, then an SVG "memory thread" draws to connect them. All data is
-// anonymized demo data. Reduced motion collapses to the final composed state
-// via globals.css. The frame box is reserved, so there is zero layout shift.
+// LIVE_FOR_ALL_ONBOARDED capability), rendered statically with a clean vertical
+// rail connecting each recorded fact. All data is anonymized demo data.
 
 type Row = {
   label: string;
@@ -25,14 +20,8 @@ const ROWS: Row[] = [
 ];
 
 export function TreatmentMemoryPanel() {
-  const [run, setRun] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setRun(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
   return (
-    <ProductFrame className={run ? "marketing-assemble-run" : undefined}>
+    <ProductFrame>
       <div className="px-5 pb-5 pt-4 sm:px-6 sm:pb-6">
         <div className="flex items-baseline justify-between">
           <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-mineral">
@@ -41,41 +30,22 @@ export function TreatmentMemoryPanel() {
           <p className="text-[0.8125rem] text-muted">Maya R. · returning</p>
         </div>
 
-        <div className="relative mt-4 pl-6">
-          {/* Memory thread down the left rail. */}
-          <svg
-            className="pointer-events-none absolute left-[7px] top-2 h-[calc(100%-1rem)] w-3"
-            viewBox="0 0 8 300"
-            preserveAspectRatio="none"
+        <div className="relative mt-4 pl-7">
+          {/* Clean vertical rail connecting the recorded facts. */}
+          <span
             aria-hidden="true"
-          >
-            <line
-              data-thread
-              x1="4"
-              y1="0"
-              x2="4"
-              y2="300"
-              stroke="var(--color-mineral)"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              style={{ ["--mk-thread-len" as string]: "300" }}
-            />
-          </svg>
-
+            className="absolute left-[9px] top-2 bottom-2 w-px"
+            style={{ backgroundColor: "var(--color-mineral)", opacity: 0.35 }}
+          />
           <ul className="space-y-3.5">
-            {ROWS.map((row, i) => (
-              <li
-                key={row.label}
-                data-assemble
-                style={{ ["--mk-assemble-delay" as string]: `${140 + i * 130}ms` }}
-                className="relative"
-              >
+            {ROWS.map((row) => (
+              <li key={row.label} className="relative">
                 <span
                   aria-hidden="true"
-                  className="absolute -left-6 top-1.5 h-2 w-2 rounded-full"
+                  className="absolute left-[-1.375rem] top-[6px] h-2 w-2 rounded-full"
                   style={{
                     background: row.emphasis ? "var(--color-mineral)" : "var(--color-wash)",
-                    outline: "2px solid white",
+                    boxShadow: "0 0 0 2px white",
                   }}
                 />
                 <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted">

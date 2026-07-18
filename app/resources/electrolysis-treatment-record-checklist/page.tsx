@@ -52,7 +52,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
   },
   {
     h: "3. Machine settings",
-    intro: "The technical detail that lets you reproduce — or deliberately adjust — what you did.",
+    intro: "The technical detail that lets you reproduce, or deliberately adjust, what you did.",
     items: [
       "Mode: thermolysis, blend, or galvanic",
       "Modality and energy level",
@@ -80,7 +80,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
   },
   {
     h: "6. Client response",
-    intro: "How the skin and the client tolerated the session — the record that protects continuity and safety.",
+    intro: "How the skin and the client tolerated the session, the record that protects continuity and safety.",
     items: [
       "Tolerance for each area",
       "Any skin or client reaction, and whether it settled",
@@ -155,7 +155,7 @@ export default function ChecklistArticlePage() {
                 Keeping it consistent
               </Subtitle>
               <p className="mt-2 text-[0.9375rem] leading-[1.7] text-muted">
-                The hardest part of record-keeping isn&apos;t knowing what to capture — it&apos;s
+                The hardest part of record-keeping isn&apos;t knowing what to capture, it&apos;s
                 capturing it the same way every time, at the point of care. Structured charting
                 helps: when settings, probe lot, areas, and response are their own fields rather
                 than a free-text note, the record stays legible and the detail carries forward.
@@ -198,7 +198,7 @@ export default function ChecklistArticlePage() {
 
         <WalkthroughCTA
           title="See structured charting in Hone."
-          body="We'll walk through charting a session so every item here is captured cleanly — and reply within one business day."
+          body="We'll walk through charting a session so every item here is captured cleanly, and reply within one business day."
         />
       </main>
       <SiteFooter />

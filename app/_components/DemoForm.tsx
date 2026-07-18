@@ -45,7 +45,7 @@ export function DemoForm() {
   const [values, setValues] = useState<DemoPayload>(EMPTY);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
-  // Fire "form started" at most once, on first interaction. Event NAME only —
+  // Fire "form started" at most once, on first interaction. Event NAME only,
   // never any field value (no name/email/studio/free text sent to analytics).
   const startedRef = useRef(false);
 
@@ -68,7 +68,7 @@ export function DemoForm() {
         setStatus({ kind: "error", message: result.error });
         return;
       }
-      // Success — event name only, no submitted values.
+      // Success, event name only, no submitted values.
       track(ANALYTICS_EVENTS.walkthroughFormSubmitted);
       setStatus({ kind: "fading" });
       window.setTimeout(() => setStatus({ kind: "done" }), 220);
@@ -80,7 +80,7 @@ export function DemoForm() {
       <div className="text-[1.0625rem] leading-[1.6] text-ink">
         <p className="font-medium">{WALKTHROUGH.successMessage}</p>
         <p className="mt-3 text-[0.9375rem] text-muted">
-          There is no automatic booking — a real person will email you to find a time that
+          There is no automatic booking, a real person will email you to find a time that
           works. You can reply to that email with anything else we should know.
         </p>
       </div>

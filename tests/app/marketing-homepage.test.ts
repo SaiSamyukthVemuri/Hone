@@ -124,15 +124,17 @@ describe("CTA truthfulness: request, never book", () => {
   });
 });
 
-describe("motion is reduced-motion safe + no horizontal overflow", () => {
+describe("static rendering + no horizontal overflow", () => {
   it("main clips horizontal overflow", () => {
     expect(PAGE).toMatch(/overflow-x-hidden/);
   });
-  it("the reveal + signature animation collapse under prefers-reduced-motion", () => {
-    expect(CSS).toMatch(/prefers-reduced-motion: reduce/);
-    expect(CSS).toMatch(/\[data-mreveal="0"\]/);
-    expect(CSS).toMatch(/\[data-assemble\]/);
-    expect(CSS).toMatch(/\[data-thread\]/);
+  it("renders content statically visible (no opacity-gated reveal that can stick)", () => {
+    // The fragile intersection-observer reveal + SVG-thread assembly were removed
+    // (they could leave sections stuck invisible / the line distorted). No content
+    // is hidden behind opacity:0 waiting on JS.
+    expect(CSS).not.toMatch(/\[data-mreveal="0"\][^{]*\{[^}]*opacity:\s*0/);
+    expect(CSS).not.toMatch(/\[data-assemble\]/);
+    expect(CSS).not.toMatch(/\[data-thread\]/);
   });
 });
 

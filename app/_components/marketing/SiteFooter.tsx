@@ -3,7 +3,7 @@ import { FOOTER_GROUPS, POSITIONING } from "@/lib/marketing/content";
 import { Container, Hairline } from "./primitives";
 import { MK_FONT_DISPLAY } from "./tokens";
 
-// Marketing footer — brand + the treatment-memory positioning line + grouped
+// Marketing footer, brand + the treatment-memory positioning line + grouped
 // links to every shipped public page (§9). No dead Phase-2 links.
 export function SiteFooter() {
   const year = 2026; // static; no build-time date fabrication.

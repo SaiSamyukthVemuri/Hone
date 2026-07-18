@@ -12,7 +12,7 @@ import { MK_FONT_DISPLAY } from "./tokens";
 
 // Accessible mobile navigation: a "Menu" trigger opening a full-viewport dialog
 // with the same routes as desktop (Product group + the rest) and the walkthrough
-// CTA. While CLOSED the dialog is `inert` — removed from the tab order and the
+// CTA. While CLOSED the dialog is `inert`, removed from the tab order and the
 // accessibility tree (so its links are not tabbable and no aria-modal is exposed)
 // while still keeping the opacity fade. On open, focus moves into the dialog and
 // Tab is trapped; Escape or a link click closes it and restores focus to the

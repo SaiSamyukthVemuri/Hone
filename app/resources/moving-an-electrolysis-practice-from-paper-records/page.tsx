@@ -34,27 +34,27 @@ const STEPS: { h: string; body: string[] }[] = [
   {
     h: "1. Decide what to bring over",
     body: [
-      "You rarely need to migrate everything. Start with active clients — the people you expect to see again — and the treatment history that changes how you treat them next time.",
+      "You rarely need to migrate everything. Start with active clients, the people you expect to see again, and the treatment history that changes how you treat them next time.",
       "For inactive clients, it is often enough to keep the paper file for your retention period rather than re-key it.",
     ],
   },
   {
     h: "2. Get the data into a consistent shape",
     body: [
-      "Digital tools need consistency. Put the history you are bringing over into a simple, consistent structure — a spreadsheet with one row per client (or per past session) and clear columns — before you import anything.",
+      "Digital tools need consistency. Put the history you are bringing over into a simple, consistent structure, a spreadsheet with one row per client (or per past session) and clear columns, before you import anything.",
       "Even a rough, consistent spreadsheet is far easier to work with than a stack of cards in different handwriting.",
     ],
   },
   {
     h: "3. Keep imported history separate from new charting",
     body: [
-      "Imported history is a snapshot of what happened elsewhere; it is not the same as a session you charted live. Keeping the two clearly separated — and labelled — protects the integrity of your new records and avoids confusion about what was actually recorded at the time.",
+      "Imported history is a snapshot of what happened elsewhere; it is not the same as a session you charted live. Keeping the two clearly separated, and labelled, protects the integrity of your new records and avoids confusion about what was actually recorded at the time.",
     ],
   },
   {
     h: "4. Start charting new sessions digitally from day one",
     body: [
-      "The value of moving off paper comes from what you record going forward. From your first digital appointment, chart the full session — settings, probe lot, areas, response, and a plan for next time — at the point of care.",
+      "The value of moving off paper comes from what you record going forward. From your first digital appointment, chart the full session, settings, probe lot, areas, response, and a plan for next time, at the point of care.",
       "Within a few visits, the digital record becomes the one you actually reach for.",
     ],
   },
@@ -93,7 +93,7 @@ export default function MovingFromPaperArticlePage() {
               <p className="mt-8 text-[1.0625rem] leading-[1.7] text-ink">
                 Paper treatment cards work right up until they don&apos;t: a card is hard to
                 read, hard to search, and only in one place at a time. Moving to digital records
-                is mostly about continuity — keeping the history you have while making the
+                is mostly about continuity, keeping the history you have while making the
                 records you take from now on cleaner and easier to use. Here is a practical way
                 to do it without losing anything.
               </p>
@@ -121,7 +121,7 @@ export default function MovingFromPaperArticlePage() {
               <p className="mt-3 text-[0.9375rem] leading-[1.7] text-muted">
                 Hone is built for exactly this transition. During guided onboarding, standard
                 client import brings your history over from a spreadsheet, paper cards, or
-                another tool — and it appears in each client&apos;s{" "}
+                another tool, and it appears in each client&apos;s{" "}
                 <Link
                   href="/features/treatment-memory"
                   className="font-medium text-mineral underline underline-offset-4"
@@ -161,7 +161,7 @@ export default function MovingFromPaperArticlePage() {
 
         <WalkthroughCTA
           title="Thinking about moving off paper?"
-          body="We'll walk through import and how new charting works, on your real records — and reply within one business day."
+          body="We'll walk through import and how new charting works, on your real records, and reply within one business day."
         />
       </main>
       <SiteFooter />

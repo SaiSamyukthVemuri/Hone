@@ -1,6 +1,6 @@
 // TS mirror of the marketing palette + font stacks. The canonical source for
 // CSS is the `@theme` block in app/globals.css; this mirror exists for the
-// places that need a JavaScript value — inline SVG fills in the product visuals,
+// places that need a JavaScript value, inline SVG fills in the product visuals,
 // the Open Graph image, and any computed style. Keep the two in sync.
 export const MK = {
   paper: "#F7F4EE",
@@ -17,6 +17,6 @@ export const MK = {
 } as const;
 
 export const MK_FONT_DISPLAY =
-  '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif';
+  'var(--font-fraunces), Georgia, "Times New Roman", ui-serif, serif';
 export const MK_FONT_TEXT =
-  'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  'var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
