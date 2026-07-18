@@ -17,6 +17,8 @@ import {
   ArticleCorrections,
 } from "../../_components/marketing/article";
 import { WalkthroughCTA, RelatedLinks } from "../../_components/marketing/sections";
+import { JsonLd, Breadcrumbs } from "../../_components/marketing/JsonLd";
+import { articleLd } from "@/lib/marketing/jsonld";
 import { getResourceArticle } from "@/lib/marketing/resources";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -105,9 +107,16 @@ export default function ChecklistArticlePage() {
   return (
     <MarketingSurface>
       <SiteHeader />
+      <Breadcrumbs
+        items={[
+          { name: "Home", path: "/" },
+          { name: "Resources", path: "/resources" },
+          { name: "Treatment record checklist", path: article.slug },
+        ]}
+      />
       <main className="overflow-x-hidden">
         <article>
-          <Container size="prose" className="pb-6 pt-14 lg:pt-20">
+          <Container size="prose" className="pb-6 pt-6 lg:pt-8">
             <Reveal>
               <Eyebrow>Guide</Eyebrow>
               <Display className="mt-4">{article.title}</Display>
@@ -194,6 +203,7 @@ export default function ChecklistArticlePage() {
       </main>
       <SiteFooter />
       <SafeAnalytics />
+      <JsonLd data={articleLd(article)} />
     </MarketingSurface>
   );
 }

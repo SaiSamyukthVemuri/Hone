@@ -12,6 +12,7 @@ import {
   Lede,
 } from "../_components/marketing/primitives";
 import { Reveal } from "../_components/marketing/Reveal";
+import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { WalkthroughCTA } from "../_components/marketing/sections";
 import { RESOURCE_ARTICLES, RESOURCE_AUTHOR } from "@/lib/marketing/resources";
 import { ANALYTICS_EVENTS } from "@/lib/marketing/content";
@@ -27,8 +28,14 @@ export default function ResourcesPage() {
   return (
     <MarketingSurface>
       <SiteHeader />
+      <Breadcrumbs
+        items={[
+          { name: "Home", path: "/" },
+          { name: "Resources", path: "/resources" },
+        ]}
+      />
       <main className="overflow-x-hidden">
-        <Container className="pb-8 pt-14 lg:pt-20">
+        <Container className="pb-8 pt-8 lg:pt-10">
           <Reveal>
             <Eyebrow>Resources</Eyebrow>
             <Display className="mt-4 max-w-3xl">

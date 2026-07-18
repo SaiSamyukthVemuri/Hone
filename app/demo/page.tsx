@@ -10,6 +10,7 @@ import {
   Lede,
 } from "../_components/marketing/primitives";
 import { Reveal } from "../_components/marketing/Reveal";
+import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { DemoForm } from "../_components/DemoForm";
 import { WALKTHROUGH } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
@@ -33,8 +34,14 @@ export default function DemoPage() {
   return (
     <MarketingSurface>
       <SiteHeader />
+      <Breadcrumbs
+        items={[
+          { name: "Home", path: "/" },
+          { name: "Walkthrough", path: "/demo" },
+        ]}
+      />
       <main className="overflow-x-hidden">
-        <Container className="grid gap-12 pb-20 pt-14 lg:grid-cols-[1fr_1fr] lg:gap-16 lg:pt-20">
+        <Container className="grid gap-12 pb-20 pt-8 lg:grid-cols-[1fr_1fr] lg:gap-16 lg:pt-10">
           <Reveal>
             <Eyebrow>Walkthrough</Eyebrow>
             <Display className="mt-4">{WALKTHROUGH.demoHeading}</Display>

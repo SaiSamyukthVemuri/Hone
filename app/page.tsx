@@ -17,6 +17,8 @@ import {
   CTAButton,
 } from "./_components/marketing/primitives";
 import { Reveal } from "./_components/marketing/Reveal";
+import { JsonLd } from "./_components/marketing/JsonLd";
+import { organizationLd, webSiteLd, softwareApplicationLd } from "@/lib/marketing/jsonld";
 import { TreatmentMemoryPanel } from "./_components/marketing/visuals/TreatmentMemoryPanel";
 import {
   POSITIONING,
@@ -350,6 +352,9 @@ export default function HomePage() {
       </main>
       <SiteFooter />
       <SafeAnalytics />
+      <JsonLd data={organizationLd()} />
+      <JsonLd data={webSiteLd()} />
+      <JsonLd data={softwareApplicationLd()} />
     </MarketingSurface>
   );
 }

@@ -16,6 +16,7 @@ import {
   CTAButton,
 } from "../_components/marketing/primitives";
 import { Reveal } from "../_components/marketing/Reveal";
+import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../_components/marketing/visuals/TreatmentMemoryPanel";
 import { WalkthroughCTA, RelatedLinks } from "../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
@@ -66,9 +67,15 @@ export default function ElectrolysisSoftwarePage() {
   return (
     <MarketingSurface>
       <SiteHeader />
+      <Breadcrumbs
+        items={[
+          { name: "Home", path: "/" },
+          { name: "Electrolysis software", path: "/electrolysis-software" },
+        ]}
+      />
       <main className="overflow-x-hidden">
         {/* Hero */}
-        <Container className="grid items-center gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-20">
+        <Container className="grid items-center gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal>
             <Eyebrow>Electrolysis practice software</Eyebrow>
             <Display className="mt-4">

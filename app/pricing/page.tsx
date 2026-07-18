@@ -17,6 +17,8 @@ import {
   CTAButton,
 } from "../_components/marketing/primitives";
 import { Reveal } from "../_components/marketing/Reveal";
+import { JsonLd, Breadcrumbs } from "../_components/marketing/JsonLd";
+import { faqPageLd } from "@/lib/marketing/jsonld";
 import {
   PRICING_PLANS,
   PRICING_ASSURANCES,
@@ -138,8 +140,14 @@ export default function PricingPage() {
   return (
     <MarketingSurface>
       <SiteHeader />
+      <Breadcrumbs
+        items={[
+          { name: "Home", path: "/" },
+          { name: "Pricing", path: "/pricing" },
+        ]}
+      />
       <main className="overflow-x-hidden">
-        <Container className="pb-4 pt-14 lg:pt-20">
+        <Container className="pb-4 pt-8 lg:pt-10">
           <Reveal>
             <Eyebrow>Pricing</Eyebrow>
             <Display className="mt-4 max-w-3xl">
@@ -256,6 +264,7 @@ export default function PricingPage() {
       </main>
       <SiteFooter />
       <SafeAnalytics />
+      <JsonLd data={faqPageLd(FAQ)} />
     </MarketingSurface>
   );
 }
