@@ -102,6 +102,24 @@ describe("desktop grids", () => {
   });
 });
 
+describe("workflow editorial split", () => {
+  it("homepage renders the workflow as an editorial split (intro column + steps)", () => {
+    const page = read("app/page.tsx");
+    expect(page).toMatch(/lg:grid-cols-\[minmax\(17rem/);
+    expect(page).toMatch(/<WorkflowGrid steps=/);
+  });
+  it("WorkflowGrid is a 2-column numbered sequence, not a 3-col matrix", () => {
+    const start = SECTIONS.indexOf("export function WorkflowGrid");
+    const wf = SECTIONS.slice(start, SECTIONS.indexOf("export function", start + 1));
+    expect(wf).toMatch(/sm:grid-cols-2/);
+    expect(wf).not.toMatch(/lg:grid-cols-3/);
+    // Prominent teal step number + a hairline divider, no animated connector.
+    expect(wf).toMatch(/text-mineral/);
+    expect(wf).toMatch(/Hairline/);
+    expect(wf).not.toMatch(/svg|stroke|IntersectionObserver/i);
+  });
+});
+
 describe("Product dropdown behavior", () => {
   it("closes on route change, outside click, Escape, and selection; returns focus", () => {
     expect(PRODUCT_MENU).toMatch(/usePathname/); // route change

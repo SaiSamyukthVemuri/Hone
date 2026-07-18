@@ -83,24 +83,30 @@ export function FeatureMatrix({ items }: { items: MatrixItem[] }) {
   );
 }
 
-/** Numbered workflow grid (3x2). Aligned numbers, dividers, and bodies. */
+/** Numbered workflow steps (2 columns x 3 rows) for the editorial split. A
+ *  prominent teal step number, a strong title, a hairline, then the description.
+ *  Titles share a min-height so dividers and descriptions align across each row.
+ *  Reads as an ordered process (01 -> 06), not a feature matrix. */
 export function WorkflowGrid({
   steps,
 }: {
   steps: { n: string; title: string; body: string }[];
 }) {
   return (
-    <div className="mt-10 grid grid-cols-1 gap-x-[clamp(2.5rem,4vw,4.5rem)] gap-y-10 sm:grid-cols-2 lg:mt-12 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-x-[clamp(2.5rem,4vw,4.5rem)] gap-y-[clamp(1.875rem,3vw,3rem)] sm:grid-cols-2">
       {steps.map((s) => (
         <div key={s.n} className="flex flex-col">
-          <div className="flex items-baseline gap-3">
-            <span className="text-[0.9375rem] font-semibold text-mineral">{s.n}</span>
-            <Subtitle as="h3" className="text-[1.0625rem] lg:min-h-[2.5rem] lg:text-[1.125rem]">
-              {s.title}
-            </Subtitle>
-          </div>
+          <span className="text-[1rem] font-semibold tabular-nums tracking-[0.02em] text-mineral">
+            {s.n}
+          </span>
+          <h3
+            className="mt-2 text-[1.375rem] font-semibold leading-[1.15] tracking-[-0.02em] text-ink lg:min-h-[3.2rem]"
+            style={{ fontFamily: "var(--font-marketing-sans)" }}
+          >
+            {s.title}
+          </h3>
           <Hairline className="my-3.5" />
-          <p className="text-[1.0625rem] leading-[1.55] text-muted">{s.body}</p>
+          <p className="text-[1.0625rem] leading-[1.5] text-muted">{s.body}</p>
         </div>
       ))}
     </div>

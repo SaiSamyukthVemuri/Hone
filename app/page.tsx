@@ -140,20 +140,20 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* Workflow progression */}
+        {/* Workflow progression — editorial split: left header, right numbered steps */}
         <Section id="how-hone-works" tone="paper">
           <Container size="wide">
-            <div className="lg:flex lg:items-end lg:justify-between lg:gap-16">
-              <div className="lg:max-w-xl">
+            <div className="grid gap-10 lg:grid-cols-[minmax(17rem,0.72fr)_minmax(0,1.28fr)] lg:items-start lg:gap-[clamp(4rem,6vw,6.5rem)]">
+              <div>
                 <Eyebrow>How Hone works</Eyebrow>
-                <Title className="mt-4">One calm workflow, start to finish.</Title>
+                <Title className="mt-5">One calm workflow, start to finish.</Title>
+                <Lede className="mt-6 max-w-[28rem]">
+                  From the booking page to the next visit, each step feeds the one after it,
+                  so nothing is re-entered and nothing is lost.
+                </Lede>
               </div>
-              <Lede className="mt-5 max-w-xl lg:mt-0 lg:max-w-sm lg:pb-1 lg:text-right">
-                From the booking page to the next visit, each step feeds the one after it,
-                so nothing is re-entered and nothing is lost.
-              </Lede>
+              <WorkflowGrid steps={WORKFLOW_STEPS} />
             </div>
-            <WorkflowGrid steps={WORKFLOW_STEPS} />
           </Container>
         </Section>
 
