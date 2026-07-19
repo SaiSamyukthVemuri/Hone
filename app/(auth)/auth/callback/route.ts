@@ -12,9 +12,11 @@ export async function GET(request: Request) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error && data.user) {
       const posthog = getPostHogClient();
+      // Identify by the opaque auth user id only. Do NOT attach email (or any
+      // other PII) to the PostHog person profile — clinical-data posture. The
+      // (app)-layout PostHogIdentify separately attaches the non-PII `role`.
       posthog.identify({
         distinctId: data.user.id,
-        properties: { email: data.user.email },
       });
       posthog.capture({
         distinctId: data.user.id,
