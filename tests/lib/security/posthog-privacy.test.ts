@@ -30,6 +30,13 @@ describe("PostHog privacy config", () => {
     expect(POSTHOG).not.toMatch(/autocapture:\s*\{[^}]*mask_all_text/s);
   });
 
+  it("drops human-readable PII element attributes from autocapture", () => {
+    expect(POSTHOG).toMatch(/element_attribute_ignorelist/);
+    for (const attr of ["aria-label", "title", "alt", "placeholder"]) {
+      expect(POSTHOG, `${attr} not in ignorelist`).toContain(`"${attr}"`);
+    }
+  });
+
   it("NEVER enables autocapture without text masking (the core invariant)", () => {
     const autocaptureEnabled =
       /autocapture:\s*true/.test(POSTHOG) ||

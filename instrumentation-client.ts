@@ -80,14 +80,20 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   //     feeds the autocapture serializer (maskAllText), which is separate from
   //     session-replay masking (session_recording.*). PostHog also never
   //     captures the value of text/search/email/tel/url/number/password inputs,
-  //     so typed names/notes aren't sent. CAVEAT: element ATTRIBUTES
-  //     (aria-label, title, alt, placeholder) are NOT covered by mask_all_text
-  //     — add autocapture.element_attribute_ignorelist if those hold PII.
+  //     so typed names/notes aren't sent. Element ATTRIBUTES that can carry
+  //     human-readable PII (aria-label, title, alt, placeholder) are dropped
+  //     via autocapture.element_attribute_ignorelist below — mask_all_text only
+  //     covers textContent. Structural attrs (id/class/data-*) are kept so
+  //     events remain useful for analytics.
   //   * Exception capture OFF — Sentry owns error tracking and scrubs PII;
   //     PostHog's exception capture is un-scrubbed, so don't double-send raw
   //     error messages/stack traces here.
   disable_session_recording: true,
-  autocapture: true,
+  autocapture: {
+    // Drop attributes that commonly hold human-readable PII; keep structural
+    // ones (id/class/data-*) for element identification.
+    element_attribute_ignorelist: ["aria-label", "title", "alt", "placeholder"],
+  },
   mask_all_text: true,
   capture_exceptions: false,
 
