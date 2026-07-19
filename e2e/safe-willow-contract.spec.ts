@@ -142,8 +142,9 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     // synthetic studio's session.
     const lots = await getSessionBlockProbeLots(sessionId);
     expect(lots).toContain(`SW-LOT-${seed.runId}`);
+    // Areas are stored as "<area>|<laterality>" (migrations 0128/0129).
     const areas = await getSessionBlockAreas(sessionId);
-    expect(areas).toContain("Chin");
+    expect(areas.some((a) => a.includes("Chin"))).toBe(true);
     // Record state: the session row exists and is NOT finalized (the
     // clinical_finalization flag is OFF in the pilot). Finalized-record
     // immutability is therefore not exercisable here; a later SAFE-WILLOW slice
@@ -156,14 +157,13 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
   await test.step("reload — persistence holds at DB + browser", async () => {
     // DB: re-read after a fresh query round-trip.
     expect(await getSessionBlockProbeLots(sessionId)).toContain(`SW-LOT-${seed.runId}`);
-    // Browser: reload the session page; the recorded facts are still shown.
+    // Browser: reload the session page; the recorded probe lot still renders
+    // (the "next-visit" note lives in a textarea, so it is asserted as visible
+    // text in the Before Today step below, where the app renders it read-only).
     await page.reload();
     await expect(page.getByText(`SW-LOT-${seed.runId}`).first()).toBeVisible({
       timeout: 20_000,
     });
-    await expect(
-      page.getByText("SAFE-WILLOW watch: shorter intervals next visit").first(),
-    ).toBeVisible();
   });
 
   await test.step("book a second visit — DB confirms returning client", async () => {
