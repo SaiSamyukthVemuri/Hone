@@ -1441,3 +1441,12 @@ and `P1_RECONCILIATION_REPORT_2026-07-18.md` (same directory); capability axes:
   calendar-reconcile + calendar-sync deployed dormant behind `worker_enabled=false`). The
   HNE-JOB-001 gap narrows to: no canonical registry/health model and no scheduled reminder
   dispatch attestation.
+- **Wave 1 test foundation — in progress (does NOT close a P1):** SAFE-SYNTH synthetic Studio
+  A/B/C fixtures + cross-tenant isolation + cleanup **merged** (PR #452, `409021b`), *partially
+  delivered* (Studio C failure injection still inert vocabulary). SAFE-WILLOW **treatment-memory
+  activation slice merged** (PR #454, `c58b785`) — the activation loop is now continuously tested
+  (DB + browser, synthetic tenant, never Willow). SAFE-WILLOW remains partially delivered
+  (appointment-lifecycle/portal, communications, payments, photos/records, clinical finalization,
+  practitioner/provider gates still to come). **Chloe human validation stays separate from this
+  automated evidence.** No P1 aggregate classification changed; **Gate A still does not pass**;
+  no external studio onboarded.
