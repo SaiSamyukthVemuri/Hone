@@ -1417,8 +1417,9 @@ above. Strategic decisions are untouched. Full evidence: `P1_MASTER_REGISTER_202
 and `P1_RECONCILIATION_REPORT_2026-07-18.md` (same directory); capability axes:
 `CAPABILITY_MANIFEST.json`.
 
-- **Phase 0 exact-head reconciliation: DONE** (this annex + register). 34 source P1s → 5
-  DEPLOYED / 3 FIXED IN CODE (analytics, PR #450 draft) / 16 PARTIALLY FIXED / 10 OPEN.
+- **Phase 0 exact-head reconciliation: DONE** (this annex + register). 34 source P1s → **3
+  PRODUCTION VERIFIED (analytics trio, PR #450 merged `32b6eef` + real-browser verified) / 5
+  DEPLOYED / 16 PARTIALLY FIXED / 10 OPEN** (0 FIXED IN CODE).
 - **Closed since the 2026-07-10 audit** (evidence-verified): HNE-SEC-001 (migration 0115),
   HNE-SEC-002 (0116), HNE-REC-002 (0118), P1-13 (chips contract). HNE-REC-001 enforcement is
   deployed via 0119/0120 but **flag-OFF** (protects nothing yet; enablement needs separate

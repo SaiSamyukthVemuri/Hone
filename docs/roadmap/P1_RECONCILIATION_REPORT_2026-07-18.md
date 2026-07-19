@@ -1,6 +1,13 @@
 # P1 Reconciliation Report — 2026-07-18
 
-**Exact production head:** `0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3` (merge of PR #449)
+**Reconciliation baseline (exact head):** `0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3` (merge of
+PR #449). Every finding below is classified as-of this baseline **except the analytics trio**,
+which subsequently progressed on descendant commits and is tracked to its current production
+state: **P1-ANALYTICS-01/-02/-03 were merged at `32b6eef` (PR #450, a descendant of the baseline)
+and PRODUCTION VERIFIED (session 3)**. So this document is an exact-head reconciliation *plus* the
+post-baseline production progression of the analytics group — the register's `last_verified_commit`
+column names the exact commit each row was verified at (`32b6eef` for the analytics rows, the
+baseline for the rest).
 **Hosted migration parity:** repo max = hosted max = **0133** (verified via linked CLI)
 **Hosted flags at reconciliation:** `calendar_sync_control.worker_enabled=false`; 1 calendar
 connection (`my-studio-9d37c5` only — **Willow excluded**); 3 studios total; Vercel prod deploy
@@ -145,7 +152,11 @@ gating SDK init by surface would remove even that config fetch.
 - **Proposed PR:** None required for the contract. Optional follow-ups: a docs-only PR recording the production verification, and a dedicated printable/exportable chart view if a formal chart-print artifact becomes a requirement.
 
 
-## FIXED IN CODE (0 + 3 analytics)
+## PRODUCTION VERIFIED (3)
+
+P1-ANALYTICS-01, P1-ANALYTICS-02, P1/P2-ANALYTICS-03 — see the analytics summary above
+(merged `32b6eef`, deployed `8iDB4Je`, real-browser verified session 3). No findings remain in
+FIXED IN CODE.
 
 
 ## PARTIALLY FIXED (16)
