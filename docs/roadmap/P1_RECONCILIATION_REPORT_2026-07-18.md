@@ -97,10 +97,29 @@ gating SDK init by surface would remove even that config fetch.
 | HNE-PAY-001 ↔ HNE-PAY-002 | production proof vs per-studio canonical capability | independent; PAY-002 blocks broad PAY-001 |
 | P1-ANALYTICS-01/02 | one boundary fix (PR #450) | siblings, single containment |
 
+## Wave 1 progress (test foundation; does NOT close any P1)
+
+- **SAFE-SYNTH foundation — MERGED** (PR #452, merge `409021b`). Synthetic Studio A/B/C tenant
+  shells on the local-only DB/RLS harness + cross-tenant isolation + proven cleanup.
+  **Partially delivered:** Studio C failure injection is inert vocabulary only; richer
+  per-domain seeding is future scope.
+- **SAFE-WILLOW slice 1 (treatment-memory activation loop) — MERGED** (PR #454, merge
+  `c58b785`). The activation loop (book → intake/consent → chart chips+narrative → save → reload
+  → persistence → second visit → Before Today shows prior memory) is now **continuously tested**
+  at the DB and browser layers, on a synthetic studio (never Willow). **Chloe human validation
+  remains separate from this automated evidence** — the automated contract does not substitute
+  for product-owner sign-off (P1-13 stays DEPLOYED, not PRODUCTION VERIFIED).
+- **SAFE-WILLOW remains partially delivered.** Remaining dependency-ordered slices: appointment
+  lifecycle + portal → communications → payments → photos/records → clinical finalization →
+  practitioner access + provider gates.
+- **These merges are test infrastructure only** — no P1 aggregate classification changed; **Gate
+  A still does not pass**; no external studio is onboarded.
+
 ## First implementation slices (dependency order, after PR #450)
 
 1. **Wave 1 foundations** — SAFE-WILLOW behavioral contract + Studio A/B/C synthetic fixtures
-   (blocks every tenant/provider closure claim).
+   (blocks every tenant/provider closure claim). **[SAFE-SYNTH + activation slice merged; other
+   SAFE-WILLOW slices in progress.]**
 2. **HNE-STO-001** — read-only hosted Storage posture verifier + fail-closed gate (small,
    independent, high leverage).
 3. **P1-02** — server-enforced versioned legal acceptance (independent of booking identity).

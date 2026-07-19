@@ -22,7 +22,7 @@
     "charting_treatment_memory": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,
       "exercised": true, "approved": true, "generally_available": true,
-      "notes": "Core product; charting capability is GA + Willow-exercised. Multi-area+laterality live (0128/0129). Chart-note chip contract (P1-13) reconciled as DEPLOYED (persist/read-back/narrative/history/export/finalization all satisfied in shipped code+tests) — NOT claimed Chloe-validated; a Chloe human-validation script is the remaining step to PRODUCTION VERIFIED."
+      "notes": "Core product; charting capability is GA + Willow-exercised. Multi-area+laterality live (0128/0129). Chart-note chip contract (P1-13) reconciled as DEPLOYED (persist/read-back/narrative/history/export/finalization all satisfied in shipped code+tests) — NOT claimed Chloe-validated; a Chloe human-validation script is the remaining step to PRODUCTION VERIFIED. The treatment-memory ACTIVATION LOOP is now continuously tested end-to-end (SAFE-WILLOW slice 1, PR #454, DB + browser, synthetic tenant) — automated evidence only; does not substitute for Chloe sign-off."
     },
     "clinical_finalization_amendments": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": false,
