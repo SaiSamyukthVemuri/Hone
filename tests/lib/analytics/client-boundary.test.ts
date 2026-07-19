@@ -1,222 +1,257 @@
 import { describe, expect, it } from "vitest";
+import { MARKETING_PAGES } from "@/lib/marketing/content";
 import {
   AUTOCAPTURE_URL_ALLOWLIST,
-  guardOutgoingEvent,
-  isAutocaptureAllowedPath,
-  sanitizeTokenPaths,
-  sanitizeUrl,
+  guardBrowserEvent,
+  isMarketingPath,
+  sanitizeMarketingUrl,
 } from "@/lib/analytics/client-boundary";
 
-// Behavioral tests for the client analytics privacy boundary
-// (P1-ANALYTICS-01 / P1-ANALYTICS-02). These exercise the actual functions the
-// PostHog config runs (url_allowlist regexes + the before_send guard), with
-// synthetic events shaped like real serialized autocapture payloads — not
-// source-string scans. All tokens and names below are synthetic.
+// Behavioral tests for the fail-closed browser-event boundary
+// (P1-ANALYTICS-01/-02). Real event-shaped payloads (as PostHog serializes
+// them) are run through the actual `before_send` guard — not source-string
+// scans. All UUIDs/tokens/names below are synthetic.
 
 const HOST = "https://hone.care";
+const U1 = "11111111-1111-4111-8111-111111111111";
+const U2 = "22222222-2222-4222-8222-222222222222";
 
-const MARKETING_PATHS = [
-  "/",
-  "/pricing",
-  "/electrolysis-software",
-  "/features/treatment-memory",
-  "/features/booking-calendar",
-  "/features/charting-records",
-  "/resources",
-  "/resources/electrolysis-treatment-record-checklist",
-  "/demo",
-  "/privacy",
-  "/terms",
-];
+const MARKETING_ROUTES = MARKETING_PAGES.map((p) => p.path);
 
-const TOKEN_ROUTE_URLS = [
-  "/cancel/tok_SYNTH_cancel_1",
-  "/reschedule/tok_SYNTH_res_1",
-  "/manage/tok_SYNTH_manage_1",
-  "/intake/tok_SYNTH_intake_1",
-  "/portal/verify/tok_SYNTH_portal_1",
-  "/calendar-feed/tok_SYNTH_feed_1.ics",
-];
-
-const AUTHENTICATED_APP_PATHS = [
-  "/dashboard",
-  "/clients",
-  "/clients/abc-123",
-  "/clients/abc-123/sessions/def-456",
-  "/calendar",
-  "/calendar/upcoming",
-  "/records",
-  "/settings/booking",
-  "/notifications",
-  "/admin",
-  "/getting-started",
-];
-
-const OTHER_EXCLUDED_PATHS = [
-  "/login",
-  "/book/willow-electrolysis", // public booking collects client identity
-  "/portal",
-  "/portal/login",
-  "/no-access",
-];
-
-describe("autocapture surface allowlist (explicit allow, default deny)", () => {
-  it("allows exactly the public marketing surfaces", () => {
-    for (const p of MARKETING_PATHS) {
-      expect(isAutocaptureAllowedPath(p), `${p} should be allowed`).toBe(true);
-    }
-  });
-
-  it("denies every token-bearing route", () => {
-    for (const p of TOKEN_ROUTE_URLS) {
-      expect(isAutocaptureAllowedPath(p), `${p} must be denied`).toBe(false);
-    }
-  });
-
-  it("denies every authenticated app route", () => {
-    for (const p of AUTHENTICATED_APP_PATHS) {
-      expect(isAutocaptureAllowedPath(p), `${p} must be denied`).toBe(false);
-    }
-  });
-
-  it("denies login, public booking, and portal", () => {
-    for (const p of OTHER_EXCLUDED_PATHS) {
-      expect(isAutocaptureAllowedPath(p), `${p} must be denied`).toBe(false);
-    }
-  });
-
-  it("SDK url_allowlist regexes match marketing URLs and nothing sensitive", () => {
-    const matches = (url: string) =>
-      AUTOCAPTURE_URL_ALLOWLIST.some((re) => re.test(url));
-    for (const p of MARKETING_PATHS) {
-      expect(matches(`${HOST}${p}`), `${p} should match`).toBe(true);
-    }
-    for (const p of [
-      ...TOKEN_ROUTE_URLS,
-      ...AUTHENTICATED_APP_PATHS,
-      ...OTHER_EXCLUDED_PATHS,
-    ]) {
-      expect(matches(`${HOST}${p}`), `${p} must NOT match`).toBe(false);
-    }
-    // Query strings / fragments on allowed pages still match.
-    expect(matches(`${HOST}/pricing?utm_source=x#plans`)).toBe(true);
-  });
-});
-
-describe("token sanitization (P1-ANALYTICS-01)", () => {
-  it("redacts token segments in full URLs and bare paths", () => {
-    expect(sanitizeUrl(`${HOST}/cancel/tok_SYNTH_abc`)).toBe(
-      `${HOST}/cancel/[token]`,
-    );
-    expect(sanitizeTokenPaths("/manage/tok_SYNTH_xyz")).toBe(
-      "/manage/[token]",
-    );
-    expect(
-      sanitizeTokenPaths(`click ${HOST}/reschedule/tok_A and /intake/tok_B now`),
-    ).toBe(`click ${HOST}/reschedule/[token] and /intake/[token] now`);
-  });
-
-  it("preserves non-token content", () => {
-    expect(sanitizeTokenPaths(`${HOST}/pricing`)).toBe(`${HOST}/pricing`);
-    expect(sanitizeTokenPaths("plain text")).toBe("plain text");
-  });
-});
-
-function autocaptureEvent(url: string, elements: Record<string, unknown>[]) {
-  return {
-    event: "$autocapture",
-    properties: {
-      $current_url: url,
-      $event_type: "click",
-      $elements: elements,
-      $elements_chain: elements
-        .map((e) => `a:attr__href="${String(e.attr__href ?? "")}"`)
-        .join(";"),
-    },
-  };
+function ev(
+  name: string,
+  url: string | null,
+  extraProps: Record<string, unknown> = {},
+) {
+  const properties: Record<string, unknown> = { ...extraProps };
+  if (url !== null) properties.$current_url = url;
+  return { event: name, properties };
 }
 
-describe("before_send guard (guarantee layer)", () => {
-  it("drops autocapture events from token-bearing routes entirely", () => {
-    for (const p of TOKEN_ROUTE_URLS) {
-      const ev = autocaptureEvent(`${HOST}${p}`, [
-        { tag_name: "a", attr__href: "/cancel/tok_SYNTH_leak" },
-      ]);
-      expect(guardOutgoingEvent(ev), `${p} event must be dropped`).toBeNull();
-    }
-  });
+const TOKEN_ROUTE_URLS = [
+  `${HOST}/cancel/tok_SYNTH_cancel`,
+  `${HOST}/reschedule/tok_SYNTH_res`,
+  `${HOST}/manage/tok_SYNTH_manage`,
+  `${HOST}/intake/tok_SYNTH_intake`,
+  `${HOST}/portal/verify/tok_SYNTH_portal`,
+  `${HOST}/calendar-feed/tok_SYNTH_feed.ics`,
+];
 
-  it("drops autocapture events from authenticated app routes entirely", () => {
-    // Program test #4: a calendar appointment whose accessible attributes
-    // contain a synthetic client name can never reach the payload — the whole
-    // event is dropped because /calendar is not an allowed surface.
-    const ev = autocaptureEvent(`${HOST}/calendar`, [
-      {
-        tag_name: "button",
-        "attr__aria-label": "Edit appointment for Synthia Testcase",
-      },
-    ]);
-    expect(guardOutgoingEvent(ev)).toBeNull();
-  });
+const AUTHENTICATED_URLS = [
+  `${HOST}/dashboard`,
+  `${HOST}/clients`,
+  `${HOST}/clients/${U1}`,
+  `${HOST}/clients/${U1}/sessions/${U2}`,
+  `${HOST}/clients/${U1}/images`,
+  `${HOST}/records`,
+  `${HOST}/calendar`,
+  `${HOST}/settings/booking`,
+  `${HOST}/notifications`,
+  `${HOST}/admin/studios`,
+];
 
-  it("drops rageclick/dead-click variants outside the allowlist too", () => {
-    for (const name of ["$rageclick", "$dead_click"]) {
-      expect(
-        guardOutgoingEvent({
-          event: name,
-          properties: { $current_url: `${HOST}/dashboard` },
-        }),
-      ).toBeNull();
-    }
+describe("marketing surface derivation", () => {
+  it("MARKETING_ROUTES equals the 12 canonical marketing pages", () => {
+    expect(MARKETING_ROUTES).toHaveLength(12);
+    for (const p of MARKETING_ROUTES) expect(isMarketingPath(p)).toBe(true);
   });
+});
 
-  it("fails closed on missing or unparsable $current_url", () => {
-    expect(
-      guardOutgoingEvent({ event: "$autocapture", properties: {} }),
-    ).toBeNull();
-    expect(
-      guardOutgoingEvent({
-        event: "$autocapture",
-        properties: { $current_url: "not a url" },
-      }),
-    ).toBeNull();
-  });
-
-  it("keeps marketing autocapture but token-sanitizes $elements attributes (program test #3)", () => {
-    const ev = autocaptureEvent(`${HOST}/pricing`, [
-      { tag_name: "a", attr__href: `${HOST}/manage/tok_SYNTH_SECRET` },
-      { tag_name: "a", attr__href: "/features/treatment-memory" },
-    ]);
-    const out = guardOutgoingEvent(ev);
-    expect(out).not.toBeNull();
-    const serialized = JSON.stringify(out);
-    expect(serialized).not.toContain("tok_SYNTH_SECRET");
-    expect(serialized).toContain("/manage/[token]");
-    expect(serialized).toContain("/features/treatment-memory");
-    // elements_chain (the string-serialized form PostHog also sends) too.
-    expect(
-      (out?.properties as Record<string, unknown>).$elements_chain,
-    ).not.toContain("tok_SYNTH_SECRET");
-  });
-
-  it("token-sanitizes non-autocapture events (pageviews) as well", () => {
-    const out = guardOutgoingEvent({
-      event: "$pageview",
-      properties: {
-        $current_url: `${HOST}/cancel/tok_SYNTH_pv`,
-        $referrer: `${HOST}/manage/tok_SYNTH_ref`,
-      },
+describe("Scenario 8 — the 12 exact marketing paths permit $pageview/$pageleave", () => {
+  for (const path of MARKETING_ROUTES) {
+    it(`allows $pageview on ${path}`, () => {
+      expect(guardBrowserEvent(ev("$pageview", `${HOST}${path}`))).not.toBeNull();
     });
+    it(`allows $pageleave on ${path}`, () => {
+      expect(guardBrowserEvent(ev("$pageleave", `${HOST}${path}`))).not.toBeNull();
+    });
+  }
+});
+
+describe("Scenarios 1-3 — authenticated pageview/pageleave dropped", () => {
+  it("drops $pageview from an authenticated client route (/clients/<uuid>)", () => {
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/clients/${U1}`))).toBeNull();
+  });
+  it("drops $pageview from a session route (/clients/<uuid>/sessions/<uuid>)", () => {
+    expect(
+      guardBrowserEvent(ev("$pageview", `${HOST}/clients/${U1}/sessions/${U2}`)),
+    ).toBeNull();
+  });
+  it("drops $pageleave + $pageview + $autocapture from every authenticated route", () => {
+    for (const url of AUTHENTICATED_URLS) {
+      expect(guardBrowserEvent(ev("$pageleave", url)), url).toBeNull();
+      expect(guardBrowserEvent(ev("$pageview", url)), url).toBeNull();
+      expect(guardBrowserEvent(ev("$autocapture", url)), url).toBeNull();
+    }
+  });
+});
+
+describe("Scenario 4 — token-route browser events dropped, not redacted", () => {
+  for (const url of TOKEN_ROUTE_URLS) {
+    it(`drops every event on ${new URL(url).pathname.split("/")[1]}`, () => {
+      for (const name of ["$pageview", "$pageleave", "$autocapture", "$rageclick"]) {
+        expect(guardBrowserEvent(ev(name, url)), `${name} ${url}`).toBeNull();
+      }
+    });
+  }
+});
+
+describe("Scenario 5 — public booking browser events dropped", () => {
+  it("drops events on /book/*", () => {
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/book/willow-electrolysis`))).toBeNull();
+    expect(guardBrowserEvent(ev("$autocapture", `${HOST}/book/willow-electrolysis`))).toBeNull();
+  });
+});
+
+describe("Scenario 6 — portal events dropped", () => {
+  it("drops events on /portal and /portal/login", () => {
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/portal`))).toBeNull();
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/portal/login`))).toBeNull();
+  });
+});
+
+describe("Scenario 7 — login/auth events dropped", () => {
+  it("drops events on /login and /auth/*", () => {
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/login`))).toBeNull();
+    expect(guardBrowserEvent(ev("$pageview", `${HOST}/auth/callback`))).toBeNull();
+  });
+});
+
+describe("Scenario 9 — unknown route under an allowed prefix is denied", () => {
+  it("denies /resources/future-user-content (no prefix escalation)", () => {
+    expect(
+      guardBrowserEvent(ev("$pageview", `${HOST}/resources/future-user-content`)),
+    ).toBeNull();
+    // The exact allowed resource articles still pass.
+    expect(
+      guardBrowserEvent(
+        ev("$pageview", `${HOST}/resources/electrolysis-treatment-record-checklist`),
+      ),
+    ).not.toBeNull();
+  });
+});
+
+describe("Scenario 10 — marketing URLs drop unapproved query params + fragments", () => {
+  it("keeps only reviewed attribution params on $current_url", () => {
+    const out = guardBrowserEvent(
+      ev(
+        "$pageview",
+        `${HOST}/pricing?utm_source=news&utm_campaign=q3&secret_ref=abc&email=a@b.com#plans`,
+      ),
+    );
+    expect(out).not.toBeNull();
+    const url = (out!.properties as Record<string, unknown>).$current_url as string;
+    expect(url).toContain("utm_source=news");
+    expect(url).toContain("utm_campaign=q3");
+    expect(url).not.toContain("secret_ref");
+    expect(url).not.toContain("email=");
+    expect(url).not.toContain("#plans");
+  });
+});
+
+describe("Scenario 11 — marketing referrers cannot carry token paths or sensitive query", () => {
+  it("redacts a token path and strips sensitive query in $referrer", () => {
+    const out = guardBrowserEvent(
+      ev("$pageview", `${HOST}/`, {
+        $referrer: `${HOST}/manage/tok_SYNTH_SECRET?email=jane@example.com`,
+      }),
+    );
+    expect(out).not.toBeNull();
+    const ref = (out!.properties as Record<string, unknown>).$referrer as string;
+    expect(ref).not.toContain("tok_SYNTH_SECRET");
+    expect(ref).toContain("/manage/[token]");
+    expect(ref).not.toContain("jane@example.com");
+  });
+  it("also sanitizes $initial_current_url inside $set_once", () => {
+    const out = guardBrowserEvent(
+      ev("$pageview", `${HOST}/`, {
+        $set_once: {
+          $initial_current_url: `${HOST}/cancel/tok_SYNTH_INIT?x=1`,
+        },
+      }),
+    );
+    const setOnce = (out!.properties as Record<string, Record<string, unknown>>)
+      .$set_once;
+    expect(String(setOnce.$initial_current_url)).not.toContain("tok_SYNTH_INIT");
+    expect(String(setOnce.$initial_current_url)).toContain("/cancel/[token]");
+    expect(String(setOnce.$initial_current_url)).not.toContain("x=1");
+  });
+});
+
+describe("Scenario 12 — $identify never leaves the browser", () => {
+  it("drops $identify even on a marketing surface (identify is server-side)", () => {
+    expect(
+      guardBrowserEvent(
+        ev("$identify", `${HOST}/`, { $set: { email: "jane@example.com" } }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("Scenario 13 — unknown event names fail closed", () => {
+  it("drops non-allowlisted event names even on marketing", () => {
+    for (const name of ["$snapshot", "$web_vitals", "$feature_flag_called", "custom_event"]) {
+      expect(guardBrowserEvent(ev(name, `${HOST}/pricing`)), name).toBeNull();
+    }
+  });
+  it("allows explicitly-namespaced marketing:* events on marketing", () => {
+    expect(guardBrowserEvent(ev("marketing:cta_click", `${HOST}/pricing`))).not.toBeNull();
+  });
+  it("drops marketing:* events OFF marketing surfaces", () => {
+    expect(guardBrowserEvent(ev("marketing:cta_click", `${HOST}/dashboard`))).toBeNull();
+  });
+});
+
+describe("fail-closed URL handling + shape safety", () => {
+  it("drops events with missing or unparsable $current_url", () => {
+    expect(guardBrowserEvent(ev("$pageview", null))).toBeNull();
+    expect(guardBrowserEvent(ev("$pageview", "not a url"))).toBeNull();
+  });
+  it("drops events with no event name", () => {
+    expect(
+      guardBrowserEvent({ event: "", properties: { $current_url: `${HOST}/` } }),
+    ).toBeNull();
+  });
+  it("passes null through", () => {
+    expect(guardBrowserEvent(null)).toBeNull();
+  });
+});
+
+describe("autocapture on marketing: token-sanitized $elements", () => {
+  it("keeps the event but redacts token attr__href, strips query", () => {
+    const out = guardBrowserEvent(
+      ev("$autocapture", `${HOST}/pricing`, {
+        $elements: [
+          { tag_name: "a", attr__href: `${HOST}/manage/tok_SYNTH_LEAK` },
+          { tag_name: "a", attr__href: `${HOST}/features/treatment-memory?ref=x` },
+        ],
+        $elements_chain: `a:attr__href="${HOST}/manage/tok_SYNTH_LEAK"`,
+      }),
+    );
     expect(out).not.toBeNull();
     const s = JSON.stringify(out);
-    expect(s).not.toContain("tok_SYNTH_pv");
-    expect(s).not.toContain("tok_SYNTH_ref");
+    expect(s).not.toContain("tok_SYNTH_LEAK");
+    expect(s).toContain("/manage/[token]");
+    expect(s).not.toContain("ref=x");
   });
+});
 
-  it("passes null through and never throws on odd shapes", () => {
-    expect(guardOutgoingEvent(null)).toBeNull();
-    expect(
-      guardOutgoingEvent({ event: "custom", properties: undefined }),
-    ).toEqual({ event: "custom", properties: undefined });
+describe("sanitizeMarketingUrl unit behavior", () => {
+  it("handles relative paths and drops fragments", () => {
+    expect(sanitizeMarketingUrl("/pricing?utm_source=x&z=1#frag")).toBe(
+      "/pricing?utm_source=x",
+    );
+    expect(sanitizeMarketingUrl("garbage://[")).toBe("[redacted]");
+  });
+});
+
+describe("AUTOCAPTURE_URL_ALLOWLIST (SDK defence layer)", () => {
+  it("matches marketing URLs and rejects sensitive ones", () => {
+    const matches = (u: string) => AUTOCAPTURE_URL_ALLOWLIST.some((re) => re.test(u));
+    expect(matches(`${HOST}/`)).toBe(true);
+    expect(matches(`${HOST}/pricing?utm_source=x`)).toBe(true);
+    expect(matches(`${HOST}/clients/${U1}`)).toBe(false);
+    expect(matches(`${HOST}/manage/tok`)).toBe(false);
+    expect(matches(`${HOST}/resources/future-user-content`)).toBe(false);
   });
 });

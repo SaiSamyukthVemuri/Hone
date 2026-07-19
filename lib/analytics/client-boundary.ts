@@ -1,31 +1,44 @@
-// Client-side analytics privacy boundary (P1-ANALYTICS-01 / P1-ANALYTICS-02).
+// Browser analytics privacy boundary (P1-ANALYTICS-01 / -02).
 //
-// Hone is a clinical app. The PostHog browser SDK initializes globally (every
-// route), so WITHOUT a boundary, autocapture would run on the authenticated
-// clinical product and on token-bearing public routes, where element
-// attributes (`href` on a "Cancel appointment" link, for example) contain
-// reusable bearer credentials. `mask_all_text` only masks textContent — it
-// does not protect attributes — and `sanitize_properties` in the original
-// integration only sanitized $current_url/$referrer, not the serialized
-// `$elements` / `elements_chain` payload of an autocapture event.
+// Hone is a clinical app and the PostHog browser SDK initializes globally (all
+// routes). The threat is NOT limited to autocapture: `$pageview` / `$pageleave`
+// are NOT governed by `autocapture.url_allowlist`, so by default they leave
+// EVERY route — and authenticated URLs carry linkable clinical identifiers
+// (client/session/appointment/record UUIDs, query params). This was confirmed
+// live: production PostHog Activity showed `$pageview` with Current URL
+// `https://hone.care/clients/<uuid>`.
 //
-// Model: an explicit SURFACE ALLOWLIST, not a sensitive-route denylist.
-// Autocapture is permitted ONLY on the enumerated public marketing pages.
-// Everything else — the authenticated app, public booking, portal, and every
-// token-bearing route — sends no autocapture events at all. Two independent
-// layers enforce this:
+// Policy: FAIL CLOSED by (event, surface). The `before_send` guard
+// (`guardBrowserEvent`) is the single authoritative boundary for EVERY browser
+// event. An event survives ONLY if BOTH hold:
+//   1. its `$current_url` pathname is one of the exact canonical marketing
+//      routes (derived from the marketing page registry so sitemap, metadata,
+//      tests and analytics cannot drift — a new route is NOT analytics-enabled
+//      by placement), AND
+//   2. its event name is on the marketing allowlist ($pageview, $pageleave,
+//      the autocapture family, or an explicit `marketing:*` event).
+// Everything else — the authenticated app, `/book/*`, portal, all six
+// token-bearing routes, login/auth, payment, and any unknown/unparsable URL —
+// is DROPPED (not redacted). Token redaction is defence in depth, not
+// permission to transmit.
 //
-//   1. `autocapture.url_allowlist` (SDK-level): PostHog only arms autocapture
-//      on allowlisted URLs.
-//   2. `before_send` (guarantee): any autocapture-family event whose URL is
-//      not allowlisted is DROPPED, and every string in an outgoing event
-//      (including $elements attributes and elements_chain) is token-sanitized.
+// Surviving marketing events are still sanitized: token path segments redacted,
+// query stripped to reviewed attribution params, fragments removed, referrers
+// sanitized, $elements attributes token-cleaned. Session replay, exception
+// capture, surveys, heatmaps and performance capture are disabled in init.
 //
-// Pure module: no PostHog import, unit-testable in isolation.
+// Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
-// Token-bearing route prefixes. These are credentials; a URL containing one
-// must never leave the app un-redacted. Keep in sync with TOKEN_ROUTE_PATTERNS
-// in next.config.ts and the token routes in lib/supabase/middleware.ts.
+import { MARKETING_PAGES } from "@/lib/marketing/content";
+
+// The exact canonical marketing surfaces, derived from the single registry the
+// sitemap and metadata also read. Analytics cannot drift from the site map.
+export const MARKETING_ROUTES: ReadonlySet<string> = new Set(
+  MARKETING_PAGES.map((p) => p.path),
+);
+
+// Token-bearing route prefixes. Any event on these is dropped; the token is
+// also redacted wherever it appears (defence in depth).
 export const TOKEN_PATH_PREFIXES = [
   "/portal/verify/",
   "/cancel/",
@@ -35,54 +48,74 @@ export const TOKEN_PATH_PREFIXES = [
   "/calendar-feed/",
 ];
 
-// The ONLY surfaces where autocapture may run: the public marketing site.
-// Exact-match paths plus the /resources/* article prefix. Deliberately
-// excluded: /login, /book/* (public booking collects client identity),
-// /portal*, every token route, and the entire authenticated app.
-export const AUTOCAPTURE_ALLOWED_EXACT_PATHS = [
-  "/",
-  "/pricing",
-  "/electrolysis-software",
-  "/features/treatment-memory",
-  "/features/booking-calendar",
-  "/features/charting-records",
-  "/resources",
-  "/demo",
-  "/privacy",
-  "/terms",
-];
+// Reviewed attribution query params retained on marketing URLs. Every other
+// query parameter is stripped.
+const ATTRIBUTION_PARAMS = new Set([
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+]);
 
-export const AUTOCAPTURE_ALLOWED_PREFIXES = ["/resources/"];
+// Browser event names permitted on marketing surfaces. Fail closed: anything
+// not here (including $identify, $web_vitals, $set, SDK internals) is dropped.
+const MARKETING_ALLOWED_EVENTS = new Set([
+  "$pageview",
+  "$pageleave",
+  "$autocapture",
+  "$rageclick",
+  "$dead_click",
+]);
+const MARKETING_EVENT_PREFIX = "marketing:";
 
-/** True only for the enumerated public marketing surfaces. */
-export function isAutocaptureAllowedPath(pathname: string): boolean {
-  if (AUTOCAPTURE_ALLOWED_EXACT_PATHS.includes(pathname)) return true;
-  return AUTOCAPTURE_ALLOWED_PREFIXES.some((p) => pathname.startsWith(p));
+// Property keys whose string value is a URL — sanitized as a URL (query/
+// fragment/token handling), not merely token-redacted.
+const URL_PROP_KEYS = new Set([
+  "$current_url",
+  "$referrer",
+  "$initial_current_url",
+  "$initial_referrer",
+  "attr__href",
+]);
+
+const MAX_DEPTH = 8;
+
+export function isMarketingPath(pathname: string): boolean {
+  return MARKETING_ROUTES.has(pathname);
 }
 
-// URL-allowlist regexes handed to PostHog's autocapture config. Anchored on
-// the path portion of the full URL the SDK matches against, tolerating an
-// optional trailing slash and query/hash suffixes.
-export const AUTOCAPTURE_URL_ALLOWLIST: RegExp[] = [
-  ...AUTOCAPTURE_ALLOWED_EXACT_PATHS.map(
-    (p) =>
-      new RegExp(
-        `^https?://[^/]+${p === "/" ? "/" : p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?([?#].*)?$`,
-      ),
-  ),
-  ...AUTOCAPTURE_ALLOWED_PREFIXES.map(
-    (p) =>
-      new RegExp(`^https?://[^/]+${p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.+`),
-  ),
-];
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-/** Redact the token segment of any token-bearing path inside a string. Works
- *  on full URLs and on bare paths (as found in attr__href / elements_chain). */
+// SDK-level defence in depth: autocapture is only ARMED on marketing routes, so
+// the SDK does not even generate autocapture events elsewhere. `before_send`
+// (guardBrowserEvent) remains the authoritative guarantee for every event type.
+export const AUTOCAPTURE_URL_ALLOWLIST: RegExp[] = [...MARKETING_ROUTES].map(
+  (p) =>
+    new RegExp(`^https?://[^/]+${p === "/" ? "/" : escapeRegex(p)}/?([?#].*)?$`),
+);
+
+/** Pathname of an absolute URL, or null if unparsable. */
+function pathnameOf(url: string): string | null {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedMarketingEvent(name: string): boolean {
+  return (
+    MARKETING_ALLOWED_EVENTS.has(name) || name.startsWith(MARKETING_EVENT_PREFIX)
+  );
+}
+
+/** Redact token segments in any string (full URL or bare path). */
 export function sanitizeTokenPaths(value: string): string {
   let out = value;
   for (const prefix of TOKEN_PATH_PREFIXES) {
-    // The token is the path segment immediately after the prefix. Stop at a
-    // segment/query/fragment/quote boundary so surrounding text is preserved.
     const re = new RegExp(
       `${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^/?#"'\\s]+`,
       "g",
@@ -92,72 +125,106 @@ export function sanitizeTokenPaths(value: string): string {
   return out;
 }
 
-/** Legacy single-URL sanitizer (kept for $current_url / $referrer). */
+/**
+ * Rebuild a URL/path keeping only path (token-redacted) + reviewed attribution
+ * query params. Fragments dropped. Handles absolute and relative inputs;
+ * returns "[redacted]" for the unparsable case.
+ */
+export function sanitizeMarketingUrl(raw: string): string {
+  let u: URL;
+  let relative = false;
+  try {
+    u = new URL(raw);
+  } catch {
+    try {
+      u = new URL(raw, "https://redacted.invalid");
+      relative = true;
+    } catch {
+      return "[redacted]";
+    }
+  }
+  let pathname = u.pathname;
+  for (const prefix of TOKEN_PATH_PREFIXES) {
+    if (pathname.startsWith(prefix)) {
+      pathname = `${prefix}[token]`;
+      break;
+    }
+  }
+  const params = new URLSearchParams();
+  for (const [k, v] of u.searchParams) {
+    if (ATTRIBUTION_PARAMS.has(k)) params.set(k, v);
+  }
+  const qs = params.toString();
+  const suffix = qs ? `?${qs}` : "";
+  return relative ? `${pathname}${suffix}` : `${u.origin}${pathname}${suffix}`;
+}
+
+/** Legacy single-URL sanitizer (token redaction only). */
 export function sanitizeUrl(url: string): string {
   return sanitizeTokenPaths(url);
 }
 
-const AUTOCAPTURE_EVENT_NAMES = new Set([
-  "$autocapture",
-  "$rageclick",
-  "$dead_click",
-  "$heatmap",
-  "$$heatmap",
-]);
-
-function deepSanitizeStrings(value: unknown, depth: number): unknown {
-  if (depth > 8) return value;
-  if (typeof value === "string") return sanitizeTokenPaths(value);
-  if (Array.isArray(value)) return value.map((v) => deepSanitizeStrings(v, depth + 1));
-  if (typeof value === "object" && value !== null) {
+function sanitizeProps(value: unknown, key: string, depth: number): unknown {
+  if (depth > MAX_DEPTH) {
+    return typeof value === "string" ? "[redacted]" : value;
+  }
+  if (typeof value === "string") {
+    return URL_PROP_KEYS.has(key)
+      ? sanitizeMarketingUrl(value)
+      : sanitizeTokenPaths(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => sanitizeProps(v, key, depth + 1));
+  }
+  if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = deepSanitizeStrings(v, depth + 1);
+      out[k] = sanitizeProps(v, k, depth + 1);
     }
     return out;
   }
   return value;
 }
 
-// Loose structural constraint so this module does not depend on posthog-js
-// types; generic so the function is directly assignable to BeforeSendFn.
+// Loose structural constraint so this module avoids depending on posthog-js
+// types; generic so it is directly assignable to BeforeSendFn.
 type OutgoingEventShape = {
   event?: string;
   properties?: Record<string, unknown>;
 };
 
 /**
- * before_send guarantee layer:
- *  - DROP any autocapture-family event whose $current_url is not an
- *    allowlisted marketing surface (belt-and-suspenders over url_allowlist).
- *  - Token-sanitize EVERY string in the event properties — including
- *    $elements[].attr__href / attr__src and the serialized elements_chain —
- *    so a bearer token can never ride an attribute or URL property.
+ * before_send: the single authoritative browser-event boundary. Returns the
+ * (sanitized) event only for an allowed marketing event on a canonical
+ * marketing route; returns null (drop) for everything else, fail closed.
  */
-export function guardOutgoingEvent<T extends OutgoingEventShape | null>(
+export function guardBrowserEvent<T extends OutgoingEventShape | null>(
   event: T,
 ): T | null {
   if (!event) return event;
 
-  if (event.event && AUTOCAPTURE_EVENT_NAMES.has(event.event)) {
-    const url = event.properties?.["$current_url"];
-    let allowed = false;
-    if (typeof url === "string") {
-      try {
-        allowed = isAutocaptureAllowedPath(new URL(url).pathname);
-      } catch {
-        allowed = false; // unparsable URL -> fail closed
-      }
-    }
-    if (!allowed) return null;
+  const name = event.event;
+  if (typeof name !== "string" || name.length === 0) return null; // fail closed
+
+  const props = event.properties;
+  const currentUrl =
+    props && typeof props.$current_url === "string" ? props.$current_url : null;
+  const pathname = currentUrl ? pathnameOf(currentUrl) : null;
+
+  // Fail closed: require a parsable marketing URL AND an allowed marketing
+  // event name. Drops all authenticated, booking, portal, token, login,
+  // payment, unknown-route and malformed-URL events (and $identify, which is
+  // handled server-side).
+  if (
+    pathname === null ||
+    !isMarketingPath(pathname) ||
+    !isAllowedMarketingEvent(name)
+  ) {
+    return null;
   }
 
-  if (event.properties) {
-    event.properties = deepSanitizeStrings(event.properties, 0) as Record<
-      string,
-      unknown
-    >;
+  if (props) {
+    event.properties = sanitizeProps(props, "", 0) as Record<string, unknown>;
   }
-
   return event;
 }

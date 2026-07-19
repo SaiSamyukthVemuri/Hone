@@ -1,39 +1,39 @@
-// Safe server-side analytics dispatch (P1/P2-ANALYTICS-03).
+// Safe server-side analytics dispatch (P1/P2-ANALYTICS-03 + Correction 2).
 //
-// Before this module, server actions, the auth callback, and the Stripe
-// webhook called `posthog.capture(...)` followed by `await posthog.flush()`
-// INLINE in the request path, after the primary operation had committed.
-// posthog-node's `flush()` returns its underlying send promise to the caller
-// (only the internal waitUntil copy attaches `.catch`), so a PostHog outage
-// could: delay a committed payment response for the full retry window, make a
-// committed operation appear failed, or 500 the Stripe webhook and trigger
-// provider retries — all for telemetry.
+// Server actions, the auth callback, and the Stripe webhook must never let
+// analytics latency or failure affect a committed product operation. Before
+// this module they awaited `posthog.flush()` inline after commit; posthog-node
+// returns the un-caught send promise, so a PostHog outage could delay/fail a
+// committed charge, refund, booking or sign-in, or 500 the webhook and trigger
+// Stripe retries.
 //
-// Properties of this wrapper:
-//   * product success NEVER depends on analytics success — nothing here throws;
-//   * dispatch runs AFTER the response via Next's stable `after()` (falls back
-//     to a caught fire-and-forget promise if `after()` is unavailable);
+// Guarantees:
+//   * product success NEVER depends on analytics — nothing here throws into a
+//     caller; every failure mode is caught;
+//   * dispatch runs AFTER the response via Next's stable `after()` (caught
+//     fire-and-forget fallback when out of request scope);
 //   * bounded execution time (DISPATCH_TIMEOUT_MS race);
-//   * event properties are ALLOWLISTED — only approved coarse, non-clinical
-//     keys leave the process; unknown keys are dropped, never sent;
-//   * `identify` carries the opaque distinctId only — properties are not
-//     accepted at the type level;
-//   * repeated failures surface via a safe console signal (event name only,
-//     no payload contents) that Sentry breadcrumbs/ops can observe without
-//     recording clinical data.
+//   * distinctIds are opaque, UUID-validated actors (lib/analytics/ids.ts) —
+//     an email/phone/token/free-text id fails closed (event dropped) and is
+//     never logged;
+//   * event properties are ALLOWLISTED — unknown keys are dropped, never sent;
+//   * `identify` carries the opaque id and, optionally, a validated coarse role
+//     enum only.
 //
-// Design choice: best-effort bounded post-commit dispatch (framework
-// `after()`), NOT a durable analytics outbox. Product analytics is tolerable
-// to lose on a crashed instance; a durable queue for it would add write
-// amplification to clinical request paths for no product benefit. Revisit
-// only if an analytics event ever becomes business-critical.
+// Design: best-effort bounded post-commit dispatch (framework `after()`), NOT a
+// durable outbox — product analytics is tolerable-loss and a queue would add
+// write amplification to clinical paths for no product benefit.
 
 import { after } from "next/server";
 import { getPostHogClient } from "@/lib/posthog-server";
+import {
+  resolveDistinctId,
+  validateRole,
+  type AnalyticsActor,
+} from "@/lib/analytics/ids";
 
 // Every property a server-side event may carry. Adding a key here is a
-// privacy-review event: keys must be coarse, non-clinical, non-identifying
-// (opaque ids and enums only — never names, notes, tokens, emails, phones).
+// privacy-review event: coarse, non-clinical, non-identifying values only.
 const ALLOWED_EVENT_PROPERTIES = new Set([
   "studio_id",
   "modality",
@@ -50,6 +50,11 @@ type ServerEventProperties = Record<
   string | number | boolean | null | undefined
 >;
 
+function warnNameOnly(fields: Record<string, string | undefined>): void {
+  // Name-only ops signal; never includes an id, value, or payload content.
+  console.warn(JSON.stringify(fields));
+}
+
 function allowlistProperties(
   properties: ServerEventProperties | undefined,
   event: string,
@@ -60,14 +65,11 @@ function allowlistProperties(
     if (ALLOWED_EVENT_PROPERTIES.has(key)) {
       out[key] = value;
     } else {
-      // Dropped, never sent. Name-only signal; no values logged.
-      console.warn(
-        JSON.stringify({
-          event: "analytics_property_dropped",
-          analyticsEvent: event,
-          property: key,
-        }),
-      );
+      warnNameOnly({
+        event: "analytics_property_dropped",
+        analyticsEvent: event,
+        property: key,
+      });
     }
   }
   return out;
@@ -83,73 +85,87 @@ async function boundedDispatch(
     send(client);
     await Promise.race([
       client.flush().catch((err: unknown) => {
-        console.warn(
-          JSON.stringify({
-            event: "analytics_dispatch_failed",
-            analyticsEvent: label,
-            reason: err instanceof Error ? err.name : "unknown",
-          }),
-        );
+        warnNameOnly({
+          event: "analytics_dispatch_failed",
+          analyticsEvent: label,
+          reason: err instanceof Error ? err.name : "unknown",
+        });
       }),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, DISPATCH_TIMEOUT_MS);
       }),
     ]);
   } catch (err) {
-    console.warn(
-      JSON.stringify({
-        event: "analytics_dispatch_failed",
-        analyticsEvent: label,
-        reason: err instanceof Error ? err.name : "unknown",
-      }),
-    );
+    warnNameOnly({
+      event: "analytics_dispatch_failed",
+      analyticsEvent: label,
+      reason: err instanceof Error ? err.name : "unknown",
+    });
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
 /** Schedule work post-response; never let scheduling itself throw. */
-function schedule(label: string, work: () => Promise<void>): void {
+function schedule(work: () => Promise<void>): void {
   try {
     after(work);
   } catch {
-    // Outside a request scope (or after() unavailable): best-effort inline
-    // fire-and-forget. The promise is caught inside `work`; void it so an
-    // unhandled rejection is impossible.
+    // Out of request scope (or after() unavailable): caught fire-and-forget.
     void work();
   }
 }
 
 /**
- * Fire a product analytics event from the server. Non-blocking, bounded,
- * never throws, never affects the caller's result.
+ * Fire a product analytics event from the server. Non-blocking, bounded, never
+ * throws, never affects the caller's result. The actor's id is UUID-validated
+ * inside the post-response work — a non-UUID id drops the event (no value
+ * logged).
  */
 export function captureServerEvent(args: {
-  distinctId: string;
+  actor: AnalyticsActor;
   event: string;
   properties?: ServerEventProperties;
 }): void {
   const properties = allowlistProperties(args.properties, args.event);
-  schedule(args.event, () =>
-    boundedDispatch(args.event, (client) =>
-      client.capture({
-        distinctId: args.distinctId,
-        event: args.event,
-        properties,
-      }),
-    ),
-  );
+  schedule(async () => {
+    const distinctId = resolveDistinctId(args.actor);
+    if (distinctId === null) {
+      warnNameOnly({
+        event: "analytics_actor_rejected",
+        actorKind: args.actor.kind,
+        analyticsEvent: args.event,
+      });
+      return;
+    }
+    await boundedDispatch(args.event, (client) =>
+      client.capture({ distinctId, event: args.event, properties }),
+    );
+  });
 }
 
 /**
- * Identify a user by opaque id ONLY. Person properties are deliberately not
- * accepted — attaching email/name/etc. to the PostHog person profile is a
- * privacy-review event and must go through a code change here.
+ * Identify a user by opaque UUID only, optionally with a validated coarse role
+ * enum. No other person properties are accepted; email/name/etc. cannot be
+ * attached. Non-blocking, bounded, never throws.
  */
-export function identifyServerUser(args: { distinctId: string }): void {
-  schedule("$identify", () =>
-    boundedDispatch("$identify", (client) =>
-      client.identify({ distinctId: args.distinctId }),
-    ),
-  );
+export function identifyServerUser(args: { id: string; role?: string }): void {
+  schedule(async () => {
+    const distinctId = resolveDistinctId({ kind: "user", id: args.id });
+    if (distinctId === null) {
+      warnNameOnly({
+        event: "analytics_actor_rejected",
+        actorKind: "user",
+        analyticsEvent: "$identify",
+      });
+      return;
+    }
+    const role = validateRole(args.role);
+    await boundedDispatch("$identify", (client) =>
+      client.identify({
+        distinctId,
+        ...(role ? { properties: { role } } : {}),
+      }),
+    );
+  });
 }

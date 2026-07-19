@@ -65,7 +65,7 @@ export async function finalizeSessionAction(
   if (!alreadyFinalized) {
     // Post-response, bounded, never blocks or fails the committed finalize.
     captureServerEvent({
-      distinctId: practitioner.id,
+      actor: { kind: "user", id: practitioner.id },
       event: "session_finalized",
       properties: { studio_id: studio.id },
     });

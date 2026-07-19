@@ -1019,7 +1019,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Post-response, bounded: a PostHog outage must never make a COMMITTED
   // public booking report failure to the client (P1/P2-ANALYTICS-03).
   captureServerEvent({
-    distinctId: `studio:${studio.id}`,
+    actor: { kind: "studio", id: studio.id },
     event: "public_appointment_booked",
     properties: { studio_id: studio.id, source: "public_booking" },
   });

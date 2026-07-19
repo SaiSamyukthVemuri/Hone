@@ -156,7 +156,7 @@ export async function createClientAction(
 
   // Post-response, bounded, never blocks or fails the committed create.
   captureServerEvent({
-    distinctId: practitioner.id,
+    actor: { kind: "user", id: practitioner.id },
     event: "client_created",
     properties: { studio_id: studio.id },
   });

@@ -356,7 +356,7 @@ async function handleStripeEvent(
         // Post-response, bounded: analytics failure must never 500 this
         // webhook and trigger Stripe retries (P1/P2-ANALYTICS-03).
         captureServerEvent({
-          distinctId: `studio:${ctx.studioId}`,
+          actor: { kind: "studio", id: ctx.studioId },
           event: "stripe_account_connected",
           properties: { studio_id: ctx.studioId, livemode: ctx.livemode },
         });
@@ -699,7 +699,7 @@ async function handleSetupIntentSucceeded(
   // Post-response, bounded: analytics failure must never 500 this webhook
   // and trigger Stripe retries (P1/P2-ANALYTICS-03).
   captureServerEvent({
-    distinctId: `studio:${metaStudioId}`,
+    actor: { kind: "studio", id: metaStudioId },
     event: "card_on_file_saved",
     properties: { studio_id: metaStudioId, livemode: ctx.livemode },
   });

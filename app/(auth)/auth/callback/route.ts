@@ -4,6 +4,7 @@ import {
   captureServerEvent,
   identifyServerUser,
 } from "@/lib/analytics/server";
+import { isAnalyticsUuid } from "@/lib/analytics/ids";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -15,16 +16,16 @@ export async function GET(request: Request) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error && data.user) {
       // Post-response, bounded: sign-in must never fail or stall because
-      // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify carries the
-      // opaque auth user id ONLY — the wrapper does not accept person
-      // properties (clinical-data posture); the (app)-layout PostHogIdentify
-      // separately attaches the non-PII `role` client-side.
-      identifyServerUser({ distinctId: data.user.id });
-      captureServerEvent({
-        distinctId: data.user.id,
-        event: "user_signed_in",
-        properties: { provider: "magic_link" },
-      });
+      // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify by opaque UUID
+      // only; the (app) layout re-identifies with the validated coarse role.
+      if (isAnalyticsUuid(data.user.id)) {
+        identifyServerUser({ id: data.user.id });
+        captureServerEvent({
+          actor: { kind: "user", id: data.user.id },
+          event: "user_signed_in",
+          properties: { provider: "magic_link" },
+        });
+      }
       return NextResponse.redirect(`${origin}${next}`);
     }
   }

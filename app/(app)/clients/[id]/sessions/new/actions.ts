@@ -298,7 +298,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
 
   // Post-response, bounded, never blocks the session-start redirect.
   captureServerEvent({
-    distinctId: practitioner.id,
+    actor: { kind: "user", id: practitioner.id },
     event: "session_started",
     properties: {
       studio_id: studio.id,

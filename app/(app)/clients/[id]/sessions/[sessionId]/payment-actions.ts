@@ -350,7 +350,7 @@ export async function executeSessionPaymentChargeAction(
     // Post-response, bounded: a PostHog outage must never delay or fail a
     // COMMITTED charge response (P1/P2-ANALYTICS-03).
     captureServerEvent({
-      distinctId: practitionerId,
+      actor: { kind: "user", id: practitionerId },
       event: "payment_charge_executed",
       properties: { studio_id: studioId },
     });
@@ -596,7 +596,7 @@ export async function refundPaymentChargeAttemptAction(
     // Post-response, bounded: a PostHog outage must never delay or fail a
     // COMMITTED refund response (P1/P2-ANALYTICS-03).
     captureServerEvent({
-      distinctId: practitionerId,
+      actor: { kind: "user", id: practitionerId },
       event: "payment_refunded",
       properties: { studio_id: studioId },
     });

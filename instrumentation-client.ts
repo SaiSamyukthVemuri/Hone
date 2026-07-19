@@ -37,29 +37,20 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // --- PostHog ---
-// Clinical-data privacy boundary (P1-ANALYTICS-01/-02). Full rationale and the
-// pure, tested logic live in lib/analytics/client-boundary.ts:
-//   * Autocapture runs ONLY on the explicit public-marketing surface
-//     allowlist. The authenticated app, public booking, portal, and every
-//     token-bearing route send NO autocapture events. Two independent layers:
-//     `autocapture.url_allowlist` (SDK) + `before_send` (drops any
-//     autocapture-family event whose URL is not allowlisted, fail closed).
-//   * `before_send` also token-sanitizes EVERY string in every outgoing
-//     event — including $elements[].attr__href / attr__src and the serialized
-//     elements_chain — so a bearer credential can never ride an attribute.
-//     (mask_all_text only masks textContent; sanitize_properties only sees
-//     top-level properties. Neither protects $elements — before_send does.)
-//   * Session recording OFF — it records the live DOM (client names,
-//     treatment notes, probe settings on screen).
-//   * Exception capture OFF — Sentry owns error tracking, WITH scrubbing.
-//   * Surveys OFF — no remotely-configured PostHog UI may inject into a
-//     clinical product.
-//   * mask_all_text + element_attribute_ignorelist retained for the allowed
-//     marketing surface (defense-in-depth even where autocapture is allowed).
+// Clinical-data browser-event boundary (P1-ANALYTICS-01/-02). Full rationale +
+// pure, tested logic in lib/analytics/client-boundary.ts. Fail closed by
+// (event, surface): the ONLY browser events that leave are $pageview,
+// $pageleave, autocapture-family, and marketing:* — and ONLY on the exact
+// canonical marketing routes. The authenticated app, /book/*, portal, all
+// token routes, login/auth and payment send NOTHING (browser $pageview/
+// $pageleave/autocapture all dropped). Authenticated product measurement runs
+// through the server taxonomy (lib/analytics/server.ts); identify is
+// server-side only. Config is explicit — never rely on an SDK default that a
+// future release could flip; `before_send` is the default-independent
+// guarantee.
 import {
   AUTOCAPTURE_URL_ALLOWLIST,
-  guardOutgoingEvent,
-  sanitizeUrl,
+  guardBrowserEvent,
 } from "@/lib/analytics/client-boundary";
 
 posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
@@ -67,30 +58,26 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   ui_host: "https://us.posthog.com",
   defaults: "2026-01-30",
 
-  disable_session_recording: true,
-  disable_surveys: true,
-  capture_exceptions: false,
+  // Explicit safety switches (do not rely on SDK defaults):
+  disable_session_recording: true, // never record the live DOM
+  disable_surveys: true, // no remotely-injected UI in a clinical product
+  capture_exceptions: false, // Sentry owns errors, with scrubbing
+  capture_heatmaps: false, // no heatmap events
+  capture_performance: false, // no $web_vitals (carries URLs)
+
+  // Pageview/pageleave ARE generated, but before_send delivers them only on
+  // marketing surfaces. Set explicitly so behaviour is not default-dependent.
+  capture_pageview: true,
+  capture_pageleave: true,
 
   autocapture: {
-    // Layer 1: SDK-level surface allowlist (public marketing pages only).
-    url_allowlist: AUTOCAPTURE_URL_ALLOWLIST,
-    // Drop attributes that commonly hold human-readable PII; keep structural
-    // ones (id/class/data-*) for element identification.
+    url_allowlist: AUTOCAPTURE_URL_ALLOWLIST, // arm autocapture on marketing only
     element_attribute_ignorelist: ["aria-label", "title", "alt", "placeholder"],
   },
   mask_all_text: true,
 
   debug: process.env.NODE_ENV === "development",
-  sanitize_properties: (properties) => {
-    const urlKeys = ["$current_url", "$referrer"];
-    for (const key of urlKeys) {
-      if (typeof properties[key] === "string") {
-        properties[key] = sanitizeUrl(properties[key] as string);
-      }
-    }
-    return properties;
-  },
-  // Layer 2: the guarantee. Drops non-allowlisted autocapture-family events
-  // and token-sanitizes every string in the payload (incl. $elements).
-  before_send: guardOutgoingEvent,
+
+  // The authoritative, fail-closed boundary for EVERY browser event.
+  before_send: guardBrowserEvent,
 });

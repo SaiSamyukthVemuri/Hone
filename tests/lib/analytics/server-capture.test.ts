@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Behavioral tests for the safe server-side analytics dispatch
-// (P1/P2-ANALYTICS-03): product success never depends on analytics success,
-// dispatch is post-response and bounded, and event properties are allowlisted.
+// (P1/P2-ANALYTICS-03 + Correction 2 + scenarios 15-16): product success never
+// depends on analytics; dispatch is post-response + bounded; properties are
+// allowlisted; distinctIds are UUID-validated fail-closed; identify carries an
+// opaque id + validated role only.
 
 const afterMock = vi.fn();
 const captureMock = vi.fn();
@@ -23,125 +25,146 @@ vi.mock("@/lib/posthog-server", () => ({
 
 import { captureServerEvent, identifyServerUser } from "@/lib/analytics/server";
 
-// Run whatever work was scheduled via after().
+const UID = "11111111-1111-4111-8111-111111111111";
+const SID = "22222222-2222-4222-8222-222222222222";
+
 async function runScheduled(): Promise<void> {
-  for (const call of afterMock.mock.calls) {
-    await call[0]();
-  }
+  for (const call of afterMock.mock.calls) await call[0]();
   afterMock.mockClear();
 }
 
 beforeEach(() => {
-  // resetAllMocks clears implementations too (a leaked mockImplementation
-  // from one test must not bleed into the next).
   vi.resetAllMocks();
   flushMock.mockResolvedValue(undefined);
 });
 
-describe("captureServerEvent", () => {
+describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
   it("schedules via after() and does not touch PostHog inline", () => {
     captureServerEvent({
-      distinctId: "prac-1",
+      actor: { kind: "user", id: UID },
       event: "client_created",
-      properties: { studio_id: "studio-1" },
+      properties: { studio_id: SID },
     });
     expect(afterMock).toHaveBeenCalledTimes(1);
-    expect(captureMock).not.toHaveBeenCalled(); // nothing happens pre-response
+    expect(captureMock).not.toHaveBeenCalled();
   });
 
-  it("sends allowlisted properties and drops unknown keys entirely", async () => {
+  it("sends the resolved distinctId for a user and a studio actor", async () => {
+    captureServerEvent({ actor: { kind: "user", id: UID }, event: "a" });
+    captureServerEvent({ actor: { kind: "studio", id: SID }, event: "b" });
+    await runScheduled();
+    expect(captureMock.mock.calls[0][0].distinctId).toBe(UID);
+    expect(captureMock.mock.calls[1][0].distinctId).toBe(`studio:${SID}`);
+  });
+
+  it("allowlists properties and drops unknown keys entirely", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     captureServerEvent({
-      distinctId: "prac-1",
+      actor: { kind: "user", id: UID },
       event: "session_started",
       properties: {
-        studio_id: "studio-1",
+        studio_id: SID,
         modality: "electrolysis",
-        is_new_session: true,
-        client_name: "Synthia Testcase", // must never leave the process
-        treatment_note: "synthetic", // must never leave the process
+        client_name: "Synthia Testcase",
+        treatment_note: "synthetic",
       },
     });
     await runScheduled();
-    expect(captureMock).toHaveBeenCalledTimes(1);
     const sent = captureMock.mock.calls[0][0];
-    expect(sent.properties).toEqual({
-      studio_id: "studio-1",
-      modality: "electrolysis",
-      is_new_session: true,
-    });
+    expect(sent.properties).toEqual({ studio_id: SID, modality: "electrolysis" });
     expect(JSON.stringify(sent)).not.toContain("Synthia");
     expect(JSON.stringify(sent)).not.toContain("synthetic");
-    // Dropped keys emit a name-only signal (no values).
-    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(logged).toContain("analytics_property_dropped");
-    expect(logged).toContain("client_name");
-    expect(logged).not.toContain("Synthia");
     warn.mockRestore();
   });
+});
 
-  it("never throws when capture or flush fail", async () => {
+describe("captureServerEvent — opaque-id enforcement (Correction 2)", () => {
+  it("drops the event when the actor id is not a UUID, without logging the value", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    captureServerEvent({
+      actor: { kind: "user", id: "jane.doe@example.com" },
+      event: "client_created",
+    });
+    await runScheduled();
+    expect(captureMock).not.toHaveBeenCalled();
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("analytics_actor_rejected");
+    expect(logged).not.toContain("jane.doe@example.com");
+    warn.mockRestore();
+  });
+});
+
+describe("captureServerEvent — never affects product (scenario 16)", () => {
+  it("does not throw when capture or flush fail", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     captureMock.mockImplementation(() => {
       throw new Error("capture boom");
     });
     expect(() =>
-      captureServerEvent({ distinctId: "p", event: "appointment_booked" }),
+      captureServerEvent({ actor: { kind: "user", id: UID }, event: "e" }),
     ).not.toThrow();
     await expect(runScheduled()).resolves.toBeUndefined();
 
     captureMock.mockReset();
     flushMock.mockRejectedValue(new Error("network down"));
-    captureServerEvent({ distinctId: "p", event: "appointment_booked" });
+    captureServerEvent({ actor: { kind: "user", id: UID }, event: "e" });
     await expect(runScheduled()).resolves.toBeUndefined();
     warn.mockRestore();
   });
 
-  it("bounds a hanging flush with the timeout race", async () => {
+  it("bounds a hung flush with the timeout race", async () => {
     vi.useFakeTimers();
     try {
-      flushMock.mockReturnValue(new Promise(() => {})); // hangs forever
-      captureServerEvent({ distinctId: "p", event: "payment_charge_executed" });
+      flushMock.mockReturnValue(new Promise(() => {}));
+      captureServerEvent({ actor: { kind: "user", id: UID }, event: "payment_charge_executed" });
       const scheduled = afterMock.mock.calls[0][0]() as Promise<void>;
       let settled = false;
       void scheduled.then(() => {
         settled = true;
       });
-      await vi.advanceTimersByTimeAsync(2100); // past DISPATCH_TIMEOUT_MS
-      expect(settled).toBe(true); // resolved despite the hung flush
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(settled).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("falls back to fire-and-forget when after() is unavailable", async () => {
+  it("falls back to caught fire-and-forget when after() is unavailable", async () => {
     afterMock.mockImplementation(() => {
       throw new Error("after() outside request scope");
     });
     expect(() =>
-      captureServerEvent({
-        distinctId: "p",
-        event: "card_on_file_saved",
-        properties: { studio_id: "s", livemode: false },
-      }),
+      captureServerEvent({ actor: { kind: "studio", id: SID }, event: "card_on_file_saved" }),
     ).not.toThrow();
     await vi.waitFor(() => expect(captureMock).toHaveBeenCalledTimes(1));
   });
 });
 
 describe("identifyServerUser", () => {
-  it("identifies by opaque id only — no person properties are sent", async () => {
-    identifyServerUser({ distinctId: "auth-user-1" });
+  it("identifies by opaque UUID with a validated role", async () => {
+    identifyServerUser({ id: UID, role: "owner" });
     await runScheduled();
-    expect(identifyMock).toHaveBeenCalledTimes(1);
     expect(identifyMock.mock.calls[0][0]).toEqual({
-      distinctId: "auth-user-1",
+      distinctId: UID,
+      properties: { role: "owner" },
     });
-    // The wrapper's type does not accept properties; assert the wire call
-    // carries none (no email/name can ride an identify).
-    expect(
-      Object.keys(identifyMock.mock.calls[0][0]),
-    ).toEqual(["distinctId"]);
+  });
+
+  it("drops an unknown role but still identifies by id", async () => {
+    identifyServerUser({ id: UID, role: "super_admin" });
+    await runScheduled();
+    expect(identifyMock.mock.calls[0][0]).toEqual({ distinctId: UID });
+  });
+
+  it("drops the identify entirely when the id is not a UUID (no value logged)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    identifyServerUser({ id: "jane@example.com", role: "owner" });
+    await runScheduled();
+    expect(identifyMock).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain(
+      "jane@example.com",
+    );
+    warn.mockRestore();
   });
 
   it("never throws when identify fails", async () => {
@@ -149,7 +172,7 @@ describe("identifyServerUser", () => {
     identifyMock.mockImplementation(() => {
       throw new Error("identify boom");
     });
-    expect(() => identifyServerUser({ distinctId: "u" })).not.toThrow();
+    expect(() => identifyServerUser({ id: UID })).not.toThrow();
     await expect(runScheduled()).resolves.toBeUndefined();
     warn.mockRestore();
   });

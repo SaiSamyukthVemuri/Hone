@@ -303,7 +303,7 @@ export async function bookAppointmentForClientAction(
 
   // Post-response, bounded, never blocks or fails the committed booking.
   captureServerEvent({
-    distinctId: practitioner.id,
+    actor: { kind: "user", id: practitioner.id },
     event: "appointment_booked",
     properties: {
       studio_id: studio.id,
