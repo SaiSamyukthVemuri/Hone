@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { getPostHogClient } from "@/lib/posthog-server";
 import {
   getSessionPaymentEligibility,
 } from "@/lib/billing/session-payment-eligibility";
@@ -346,6 +347,13 @@ export async function executeSessionPaymentChargeAction(
   }
 
   if (result.ok) {
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId: practitionerId,
+      event: "payment_charge_executed",
+      properties: { studio_id: studioId },
+    });
+    await posthog.flush();
     return {
       ok: true,
       outcome: "succeeded",
@@ -585,6 +593,13 @@ export async function refundPaymentChargeAttemptAction(
   }
 
   if (result.ok) {
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId: practitionerId,
+      event: "payment_refunded",
+      properties: { studio_id: studioId },
+    });
+    await posthog.flush();
     return {
       ok: true,
       outcome: "succeeded",

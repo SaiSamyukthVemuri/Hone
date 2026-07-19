@@ -12,6 +12,7 @@ import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
+import { PostHogIdentify } from "@/app/_components/PostHogIdentify";
 
 export default async function AppLayout({
   children,
@@ -156,6 +157,7 @@ export default async function AppLayout({
           layouts + marketing leaf pages) instead of the root layout,
           so token-bearing public routes never inherit it. */}
       <SafeAnalytics />
+      <PostHogIdentify userId={practitioner.id} role={practitioner.role} />
     </div>
   );
 }

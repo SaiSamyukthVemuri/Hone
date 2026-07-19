@@ -55,6 +55,7 @@ import {
 } from "@/lib/booking/marketing-consent";
 import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { getPostHogClient } from "@/lib/posthog-server";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
 // error logs so a raw client email never lands in server logs while
 // repeated failures stay correlatable. Same helper + salt the portal
@@ -1014,6 +1015,15 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
+
+  const posthog = getPostHogClient();
+  posthog.capture({
+    distinctId: `studio:${studio.id}`,
+    event: "public_appointment_booked",
+    properties: { studio_id: studio.id, source: "public_booking" },
+  });
+  await posthog.flush();
+
   return { ok: true, appointmentId: created.id };
 }
 

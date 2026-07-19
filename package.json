@@ -34,6 +34,8 @@
     "@vercel/speed-insights": "^2.0.0",
     "jszip": "^3.10.1",
     "next": "^15.1.4",
+    "posthog-js": "^1.404.1",
+    "posthog-node": "^5.45.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "resend": "^6.12.3",

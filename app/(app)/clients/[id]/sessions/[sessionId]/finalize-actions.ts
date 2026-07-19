@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { getPostHogClient } from "@/lib/posthog-server";
 
 // Clinical Record — Phase 1. "Finalize & sign" a session: calls the trusted,
 // atomic, idempotent SECURITY DEFINER RPC (migration 0119) which builds the
@@ -58,10 +59,23 @@ export async function finalizeSessionAction(
 
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+
+  const alreadyFinalized = Boolean(row.already_finalized);
+
+  if (!alreadyFinalized) {
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId: practitioner.id,
+      event: "session_finalized",
+      properties: { studio_id: studio.id },
+    });
+    await posthog.flush();
+  }
+
   return {
     ok: true,
     snapshotId: row.snapshot_id as string,
     versionNo: row.version_no as number,
-    alreadyFinalized: Boolean(row.already_finalized),
+    alreadyFinalized,
   };
 }
