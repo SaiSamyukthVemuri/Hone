@@ -43,7 +43,19 @@ not "fixed by design".
 - HNE-REC-002 closed by migration **0118** (DB-enforced submitted/reviewed intake immutability
   via trigger; amendment = new attributable row).
 - P1-13 closed by the observation-chips contract work (structured persist + read-back
-  verification + narrative/history/export/finalization inclusion).
+  verification + narrative/history/export/finalization inclusion). Reconciled DEPLOYED on
+  code+tests; NOT Chloe-validated (a human-validation script remains before PRODUCTION VERIFIED).
+
+**Analytics findings (P1-ANALYTICS-01/-02/-03) — FIXED IN CODE, undeployed (PR #450, head
+`4bbe3a2`).** Independent review of the first containment patch found a residual blocking leak:
+browser `$pageview`/`$pageleave` are NOT governed by `autocapture.url_allowlist`, so they left
+every route including authenticated ones (`/clients/<uuid>`), confirmed in live PostHog Activity.
+The patch replaces the autocapture-only guard with a fail-closed `before_send` boundary governing
+EVERY browser event by (event, surface): only $pageview/$pageleave/autocapture-family/`marketing:*`
+on the 12 exact canonical marketing routes survive; the authenticated app, booking, portal, all
+token routes, login/auth and payment send nothing. Correction 2 replaces the `distinctId: string`
+API with a discriminated, UUID-validated, fail-closed `AnalyticsActor`. 98 behavioral tests. These
+three remain OPEN as production risk until #450 merges + deploys.
 
 ## Duplicate / relationship map
 
