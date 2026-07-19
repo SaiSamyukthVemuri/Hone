@@ -77,7 +77,7 @@
     "product_analytics_posthog": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,
       "exercised": true, "approved": false, "generally_available": true,
-      "notes": "LIVE and flowing (/ingest traffic observed). Open P1s in production: browser $pageview/$pageleave leave authenticated routes (client/session UUIDs), token-attribute exposure, request-path coupling. Containment on draft PR #450 (FIXED IN CODE at 4bbe3a2, UNDEPLOYED): fail-closed browser-event boundary + discriminated opaque IDs + post-response server dispatch, 98 tests."
+      "notes": "LIVE. Analytics P1s (browser pageview/pageleave leak, token-attribute exposure, request-path coupling) contained by PR #450 — MERGED (32b6eef) + DEPLOYED (Vercel 8iDB4Je, success 2026-07-19T03:02:38Z): fail-closed browser-event boundary (12-route allowlist, drop-not-redact), discriminated opaque IDs, post-response server dispatch, 98 tests. Classified DEPLOYED not PRODUCTION VERIFIED: controlled network positive/negative event verification blocked by PostHog headless bot-detection, needs Sam's real browser session. approved=false until then."
     },
     "platform_admin": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,

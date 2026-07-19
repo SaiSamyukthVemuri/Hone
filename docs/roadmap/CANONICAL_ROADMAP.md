@@ -1423,10 +1423,14 @@ and `P1_RECONCILIATION_REPORT_2026-07-18.md` (same directory); capability axes:
   HNE-SEC-002 (0116), HNE-REC-002 (0118), P1-13 (chips contract). HNE-REC-001 enforcement is
   deployed via 0119/0120 but **flag-OFF** (protects nothing yet; enablement needs separate
   authorization + Chloe validation).
-- **New P1 class since v1.1:** analytics (PostHog #447/#449 live in production).
-  P1-ANALYTICS-01/-02/-03 contained on PR #450 (draft, CI green, awaiting merge
-  authorization). Until merged+deployed, token-bearing `href` attributes on token routes can
-  reach PostHog and server analytics remains coupled to request paths.
+- **New P1 class since v1.1:** analytics (PostHog #447/#449). P1-ANALYTICS-01/-02/-03 contained
+  by PR #450 — **MERGED (`32b6eef`) + DEPLOYED (Vercel `8iDB4Je`, 2026-07-19)**, classified
+  **DEPLOYED** (not PRODUCTION VERIFIED). The deployed boundary is fail-closed by (event, surface):
+  only the 12 canonical marketing routes emit browser events; the authenticated app, booking,
+  portal, all token routes, login/auth and payment send nothing. Opaque IDs are runtime-validated;
+  server analytics is decoupled from request paths. Remaining to PRODUCTION VERIFIED: controlled
+  real-browser network verification (headless automation is blocked by PostHog bot detection). No
+  migration; worker off; Willow untouched.
 - **Historical P1 set correction:** the roadmap's P1-01..13 list remains accurate for the 9
   still-open/partial items; P1-13 is closed; P1-03..08/10/11 are PARTIALLY FIXED with specific
   remaining criteria (see register).

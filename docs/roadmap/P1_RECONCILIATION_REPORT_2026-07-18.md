@@ -23,13 +23,20 @@ is stated, not hidden).
 
 | Classification | Count | IDs |
 |---|---|---|
-| DEPLOYED | 5 | HNE-SEC-001, HNE-SEC-002, HNE-REC-001*, HNE-REC-002, P1-13 |
-| FIXED IN CODE | 3 | P1-ANALYTICS-01, P1-ANALYTICS-02, P1-ANALYTICS-03 (PR #450, draft, CI green, unmerged) |
+| DEPLOYED | 8 | HNE-SEC-001, HNE-SEC-002, HNE-REC-001*, HNE-REC-002, P1-13, P1-ANALYTICS-01†, P1-ANALYTICS-02†, P1-ANALYTICS-03† |
 | PARTIALLY FIXED | 16 | HNE-ADM-001, HNE-AUD-001, HNE-CONC-001, HNE-DEP-001, HNE-JOB-001, HNE-PAY-001, HNE-PAY-002, HNE-STO-001, P1-03, P1-04, P1-05, P1-06, P1-07, P1-08, P1-10, P1-11 |
 | OPEN | 10 | HNE-CAL-001, HNE-EXP-001, HNE-LOC-001, HNE-PRV-001, HNE-RBAC-001, HNE-SAA-001, P1-01, P1-02, P1-09, P1-12 |
 
 \* HNE-REC-001 is deployed with **both clinical flags OFF** — the finalization/amendment
 enforcement protects no production record until enablement is separately authorized.
+
+† The three analytics findings moved **FIXED IN CODE → DEPLOYED** when PR #450 merged
+(`32b6eef`) and Vercel deployed (`8iDB4JezgQgNg4ycMnt58Ld7EFpM`, success 2026-07-19T03:02:38Z).
+They are **NOT PRODUCTION VERIFIED**: the controlled network-level positive (marketing sanitized)
++ negative (sensitive surfaces send nothing) event evidence could not be captured via headless
+automation because PostHog's bot detection prevents the SDK transmitting any event in an automated
+browser. Reaching PRODUCTION VERIFIED requires a real interactive browser session (Sam's
+controlled account).
 
 **Program-level P1s (cannot be patched, remain OPEN by design):** HNE-SAA-001 (self-service
 lifecycle), HNE-LOC-001 (multi-location model). Delivered as verified-gap + architecture-input,
@@ -46,16 +53,20 @@ not "fixed by design".
   verification + narrative/history/export/finalization inclusion). Reconciled DEPLOYED on
   code+tests; NOT Chloe-validated (a human-validation script remains before PRODUCTION VERIFIED).
 
-**Analytics findings (P1-ANALYTICS-01/-02/-03) — FIXED IN CODE, undeployed (PR #450, head
-`4bbe3a2`).** Independent review of the first containment patch found a residual blocking leak:
+**Analytics findings (P1-ANALYTICS-01/-02/-03) — DEPLOYED (PR #450 merged `32b6eef`, Vercel
+deploy `8iDB4Je` success; head `4bbe3a2`).** Independent review of the first containment patch
+found a residual blocking leak:
 browser `$pageview`/`$pageleave` are NOT governed by `autocapture.url_allowlist`, so they left
 every route including authenticated ones (`/clients/<uuid>`), confirmed in live PostHog Activity.
 The patch replaces the autocapture-only guard with a fail-closed `before_send` boundary governing
 EVERY browser event by (event, surface): only $pageview/$pageleave/autocapture-family/`marketing:*`
 on the 12 exact canonical marketing routes survive; the authenticated app, booking, portal, all
 token routes, login/auth and payment send nothing. Correction 2 replaces the `distinctId: string`
-API with a discriminated, UUID-validated, fail-closed `AnalyticsActor`. 98 behavioral tests. These
-three remain OPEN as production risk until #450 merges + deploys.
+API with a discriminated, UUID-validated, fail-closed `AnalyticsActor`. 98 behavioral tests.
+**Now merged + live** (`32b6eef`, deploy `8iDB4Je`); classified DEPLOYED — the fail-closed boundary
+is the deployed artifact and its behaviour is test-proven, but headless automation cannot
+reproduce PostHog event transmission (bot detection) so the controlled network positive/negative
+verification is a remaining Sam step before PRODUCTION VERIFIED.
 
 ## Duplicate / relationship map
 
