@@ -20,8 +20,12 @@
 // * Not a report-only path. A future PR may add
 //   Content-Security-Policy-Report-Only with a report endpoint to
 //   collect violations before tightening further.
-// * Not a Sentry-aware policy. Sentry is NOT installed; do NOT add
-//   *.ingest.sentry.io to any source list.
+// * No Sentry ingest host in any source list — and there must not be.
+//   Sentry IS installed (@sentry/nextjs), but the browser SDK sends
+//   events through a SAME-ORIGIN tunnel (tunnelRoute: "/monitoring" in
+//   next.config.ts), so connect-src 'self' already covers it. Do NOT
+//   add *.ingest.sentry.io here: it would loosen the policy for no
+//   benefit and is asserted against in the security tests.
 
 export type SecurityHeader = { key: string; value: string };
 

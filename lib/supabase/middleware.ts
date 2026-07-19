@@ -58,6 +58,12 @@ export async function updateSession(request: NextRequest) {
     // indexing.
     pathname === "/sitemap.xml" ||
     pathname === "/robots.txt" ||
+    // Sentry same-origin event tunnel (tunnelRoute: "/monitoring" in
+    // next.config.ts). The browser SDK POSTs error/trace envelopes here from
+    // any page, including public ones and before login; a /login redirect
+    // would silently drop all client-side error reporting. It carries only
+    // scrubbed telemetry, never app data.
+    pathname === "/monitoring" ||
     // Metadata image routes (Next file conventions: opengraph-image, icon,
     // apple-icon). Social scrapers and browsers fetch these while logged out;
     // they are generated, public, branded images with no sensitive data, so

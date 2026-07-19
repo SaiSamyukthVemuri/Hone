@@ -23,6 +23,7 @@
     "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.66.0",
     "@stripe/react-stripe-js": "^6.6.0",
     "@stripe/stripe-js": "^9.7.0",
     "@supabase/ssr": "^0.5.2",

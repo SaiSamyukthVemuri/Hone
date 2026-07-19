@@ -1,8 +1,6 @@
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
-import {
-  buildGlobalSecurityHeaders,
-  buildTokenRoutePrivacyHeaders,
-} from "./lib/security/headers";
+import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -99,4 +97,43 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Sentry build-time integration (source-map upload + client event tunnel).
+// Options reference: https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
+export default withSentryConfig(nextConfig, {
+  org: "hone-w1",
+  project: "javascript-nextjs",
+
+  // Only surface source-map upload logs in CI; stay quiet locally.
+  silent: !process.env.CI,
+
+  // Don't send anonymous build telemetry to Sentry (minimal-data posture).
+  telemetry: false,
+
+  // Upload a wider set of client source maps for readable stack traces.
+  widenClientFileUpload: true,
+
+  // Delete source maps from the build output after they're uploaded to Sentry,
+  // so raw sources are never served publicly from the deployment. (This is the
+  // SDK default; pinned explicitly so a future default change can't regress it.)
+  sourcemaps: {
+    deleteSourcemapsAfterUpload: true,
+  },
+
+  // Route browser -> Sentry traffic through a same-origin rewrite (/monitoring)
+  // instead of hitting *.ingest.sentry.io directly. This keeps the strict CSP
+  // (connect-src 'self') intact and defeats ad-blockers. The route is
+  // allowlisted in lib/supabase/middleware.ts so auth middleware never bounces
+  // the envelope POST to /login. Adds some serverless invocations.
+  tunnelRoute: "/monitoring",
+
+  webpack: {
+    // Instrument Vercel Cron Monitors automatically. No PII; gives cron
+    // reliability signals once the (currently dormant) cron jobs activate.
+    automaticVercelMonitors: true,
+
+    treeshake: {
+      // Tree-shake Sentry's own debug logger statements out of the bundle.
+      removeDebugLogging: true,
+    },
+  },
+});

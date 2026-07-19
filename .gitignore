@@ -34,3 +34,6 @@ Hone_Pilot_Control_Sheet.xlsx
 /test-results/
 /playwright-report/
 .env.local
+
+# Sentry Config File
+.env.sentry-build-plugin
