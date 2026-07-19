@@ -12,7 +12,7 @@ import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
-import { PostHogIdentify } from "@/app/_components/PostHogIdentify";
+import { identifyServerUser } from "@/lib/analytics/server";
 
 export default async function AppLayout({
   children,
@@ -24,6 +24,12 @@ export default async function AppLayout({
   // never render the app shell, nav, or any studio data.
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const admin = isAdmin(practitioner.email);
+
+  // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
+  // only). Moved off the browser: the authenticated app sends no browser
+  // events, so client identify is neither needed nor safe. Post-response,
+  // bounded, never blocks render (P1-ANALYTICS-01/-02).
+  identifyServerUser({ id: practitioner.id, role: practitioner.role });
 
   // Show the "Switch studio" affordance only when the user is an active
   // practitioner in 2+ studios. RLS-scoped; a single-studio user sees nothing new.
@@ -157,7 +163,6 @@ export default async function AppLayout({
           layouts + marketing leaf pages) instead of the root layout,
           so token-bearing public routes never inherit it. */}
       <SafeAnalytics />
-      <PostHogIdentify userId={practitioner.id} role={practitioner.role} />
     </div>
   );
 }

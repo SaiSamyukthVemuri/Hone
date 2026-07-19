@@ -37,74 +37,47 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // --- PostHog ---
-// Token-bearing route prefixes that must never have their URLs sent to
-// analytics. These are credentials; the same list is enforced structurally in
-// the SafeAnalytics component, and sanitized here as a defence-in-depth layer.
-const TOKEN_PATH_PREFIXES = [
-  "/portal/verify/",
-  "/cancel/",
-  "/reschedule/",
-  "/manage/",
-  "/intake/",
-  "/calendar-feed/",
-];
-
-function sanitizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    for (const prefix of TOKEN_PATH_PREFIXES) {
-      if (parsed.pathname.startsWith(prefix)) {
-        parsed.pathname = prefix + "[token]";
-        return parsed.toString();
-      }
-    }
-  } catch {
-    // Non-URL string; return as-is
-  }
-  return url;
-}
+// Clinical-data browser-event boundary (P1-ANALYTICS-01/-02). Full rationale +
+// pure, tested logic in lib/analytics/client-boundary.ts. Fail closed by
+// (event, surface): the ONLY browser events that leave are $pageview,
+// $pageleave, autocapture-family, and marketing:* — and ONLY on the exact
+// canonical marketing routes. The authenticated app, /book/*, portal, all
+// token routes, login/auth and payment send NOTHING (browser $pageview/
+// $pageleave/autocapture all dropped). Authenticated product measurement runs
+// through the server taxonomy (lib/analytics/server.ts); identify is
+// server-side only. Config is explicit — never rely on an SDK default that a
+// future release could flip; `before_send` is the default-independent
+// guarantee.
+import {
+  AUTOCAPTURE_URL_ALLOWLIST,
+  guardBrowserEvent,
+} from "@/lib/analytics/client-boundary";
 
 posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   api_host: "/ingest",
   ui_host: "https://us.posthog.com",
   defaults: "2026-01-30",
 
-  // Clinical-data hardening (do NOT weaken without a privacy review):
-  //   * Session recording OFF — it records the live DOM (client names,
-  //     treatment notes, probe settings on screen).
-  //   * Autocapture ON, but text-masked — we get interaction analytics
-  //     (clicks, form submits, navigation) WITHOUT the literal on-screen text.
-  //     `mask_all_text` is a TOP-LEVEL PostHog option (NOT an autocapture
-  //     sub-key — AutocaptureConfig has no masking key). Per the SDK it
-  //     "prevent[s] autocapture from capturing textContent on elements"; it
-  //     feeds the autocapture serializer (maskAllText), which is separate from
-  //     session-replay masking (session_recording.*). PostHog also never
-  //     captures the value of text/search/email/tel/url/number/password inputs,
-  //     so typed names/notes aren't sent. Element ATTRIBUTES that can carry
-  //     human-readable PII (aria-label, title, alt, placeholder) are dropped
-  //     via autocapture.element_attribute_ignorelist below — mask_all_text only
-  //     covers textContent. Structural attrs (id/class/data-*) are kept so
-  //     events remain useful for analytics.
-  //   * Exception capture OFF — Sentry owns error tracking and scrubs PII;
-  //     PostHog's exception capture is un-scrubbed, so don't double-send raw
-  //     error messages/stack traces here.
-  disable_session_recording: true,
+  // Explicit safety switches (do not rely on SDK defaults):
+  disable_session_recording: true, // never record the live DOM
+  disable_surveys: true, // no remotely-injected UI in a clinical product
+  capture_exceptions: false, // Sentry owns errors, with scrubbing
+  capture_heatmaps: false, // no heatmap events
+  capture_performance: false, // no $web_vitals (carries URLs)
+
+  // Pageview/pageleave ARE generated, but before_send delivers them only on
+  // marketing surfaces. Set explicitly so behaviour is not default-dependent.
+  capture_pageview: true,
+  capture_pageleave: true,
+
   autocapture: {
-    // Drop attributes that commonly hold human-readable PII; keep structural
-    // ones (id/class/data-*) for element identification.
+    url_allowlist: AUTOCAPTURE_URL_ALLOWLIST, // arm autocapture on marketing only
     element_attribute_ignorelist: ["aria-label", "title", "alt", "placeholder"],
   },
   mask_all_text: true,
-  capture_exceptions: false,
 
   debug: process.env.NODE_ENV === "development",
-  sanitize_properties: (properties) => {
-    const urlKeys = ["$current_url", "$referrer"];
-    for (const key of urlKeys) {
-      if (typeof properties[key] === "string") {
-        properties[key] = sanitizeUrl(properties[key] as string);
-      }
-    }
-    return properties;
-  },
+
+  // The authoritative, fail-closed boundary for EVERY browser event.
+  before_send: guardBrowserEvent,
 });

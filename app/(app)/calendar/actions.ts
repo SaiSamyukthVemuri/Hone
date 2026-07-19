@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots } from "@/lib/booking/slots";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent } from "@/lib/analytics/server";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import {
   generateAppointmentToken,
@@ -301,16 +301,15 @@ export async function bookAppointmentForClientAction(
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
 
-  const posthog = getPostHogClient();
-  posthog.capture({
-    distinctId: practitioner.id,
+  // Post-response, bounded, never blocks or fails the committed booking.
+  captureServerEvent({
+    actor: { kind: "user", id: practitioner.id },
     event: "appointment_booked",
     properties: {
       studio_id: studio.id,
       source: "practitioner_ui",
     },
   });
-  await posthog.flush();
 
   return { ok: true, appointmentId: created.id };
 }

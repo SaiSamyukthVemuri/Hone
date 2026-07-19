@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent } from "@/lib/analytics/server";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -154,13 +154,12 @@ export async function createClientAction(
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
 
-  const posthog = getPostHogClient();
-  posthog.capture({
-    distinctId: practitioner.id,
+  // Post-response, bounded, never blocks or fails the committed create.
+  captureServerEvent({
+    actor: { kind: "user", id: practitioner.id },
     event: "client_created",
     properties: { studio_id: studio.id },
   });
-  await posthog.flush();
 
   revalidatePath("/clients");
   revalidatePath("/dashboard");
