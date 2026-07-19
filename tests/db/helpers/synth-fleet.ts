@@ -2,29 +2,40 @@ import { randomUUID } from "node:crypto";
 import { adminQuery, type SeededStudio } from "./harness";
 
 // ===========================================================================
-// SAFE-SYNTH — deterministic synthetic tenant fleet (Wave 1, PR 1)
+// SAFE-SYNTH — synthetic tenant fleet (Wave 1, PR 1) — PARTIALLY DELIVERED
 // ===========================================================================
 //
 // Studio A/B/C synthetic tenants built ON the local-only DB/RLS harness
 // (tests/db/helpers/harness.ts — localhost-pinned; never production, never
-// Willow). Every later tenant-boundary / provider P1 negative test seeds from
-// this fleet so isolation and failure behaviour are proven against the real
-// migrated schema, not mocked.
+// Willow). Later tenant-boundary / provider P1 tests seed from this fleet so
+// isolation is proven against the real migrated schema, not mocked.
 //
-// Guarantees:
+// Properties (accurate claims only):
 //   * Recognizable synthetic identifiers — every studio name is prefixed
 //     "SYNTH-<A|B|C>" and every email is "<slug>@synth.local"; nothing shares
 //     an identifier space with production.
-//   * Deterministic per run but collision-free — all ids are random UUIDs, so
-//     the fleet is safe to recreate and safe under parallel test files.
-//   * Deterministic cleanup — dropSynthStudio removes a studio and its fake
-//     auth users by id (never by global truncation).
+//   * RUN-UNIQUE and parallel-safe — all ids are randomUUID(). They therefore
+//     DIFFER on every run; this is NOT deterministic/stable-across-runs
+//     seeding. It makes the fleet safe to recreate and safe under parallel
+//     test files (no id collisions).
+//   * Cleanup by id — dropSynthStudio removes a studio and its fake auth users
+//     by id (never by global truncation). Proven, not asserted, by
+//     tests/db/synth-fleet-cleanup.db.test.ts.
 //   * No real providers, no secrets — pure local SQL seeding.
 //
 // Studio A: solo studio (one owner).
 // Studio B: three-practitioner studio (owner + two members).
-// Studio C: failure/recovery studio, carrying an injectable failure switch
-//   consumed by later provisioning/payment/OAuth/export/purge/worker tests.
+// Studio C: failure/recovery studio carrying an INERT failure-mode label
+//   (SynthFailureMode) — vocabulary only. There is NO executable failure
+//   injection yet; the enum names the primitives later slices will implement.
+//
+// NOT YET DELIVERED (named remaining scope, tracked in WAVE1_DESIGN.md):
+//   * richer per-domain seeding (appointments, intake/consent, sessions/
+//     clinical, treatment-photo metadata, payment/provider test state);
+//   * EXECUTABLE failure injection for Studio C (each SynthFailureMode wired
+//     to a real forced error / revoked token / rejected provider call / etc.).
+// Do NOT describe SAFE-SYNTH as complete or Studio C failure injection as
+// working until those land.
 
 const SYNTH_EMAIL_DOMAIN = "@synth.local";
 
@@ -42,10 +53,10 @@ export type SynthStudio = SeededStudio & {
   practitioners: SynthPractitioner[];
 };
 
-// Failure modes Studio C can be primed for. The switch itself is inert data
-// the fleet records; the consuming test decides how to act on it (e.g. force a
-// provisioning error, drop an OAuth token, reject a provider call). Kept here
-// so the vocabulary is centralized and type-checked.
+// INERT failure-mode vocabulary for Studio C. This is a TYPE-CHECKED LABEL
+// ONLY — the fleet records it and does nothing with it. There is NO failure
+// injection implemented here; a future slice must wire each mode to a real
+// forced error before any test may claim to exercise that failure path.
 export type SynthFailureMode =
   | "provisioning"
   | "payment"
@@ -139,8 +150,9 @@ export function seedSynthStudioB(): Promise<SynthStudio> {
   return seedStudioShell("B", 3);
 }
 
-/** Studio C — failure/recovery studio. `failureMode` is inert data recorded on
- *  the returned object for the consuming test; it drives no side effect here. */
+/** Studio C — failure/recovery studio. `failureMode` is an INERT label recorded
+ *  on the returned object; it drives NO side effect and NO failure injection
+ *  exists yet. A future slice must wire it to a real forced error. */
 export async function seedSynthStudioC(
   failureMode: SynthFailureMode = "provisioning",
 ): Promise<SynthStudio & { failureMode: SynthFailureMode }> {
@@ -148,9 +160,10 @@ export async function seedSynthStudioC(
   return { ...studio, failureMode };
 }
 
-/** Deterministic teardown: delete the studio's rows and its fake auth users by
- *  id. Cascades cover child rows; auth.users are removed explicitly since they
- *  live outside the public schema. Never truncates. */
+/** Teardown by id: delete the studio's rows and its fake auth users by id.
+ *  Cascades cover child rows; auth.users are removed explicitly since they
+ *  live outside the public schema. Never truncates. Proven by
+ *  tests/db/synth-fleet-cleanup.db.test.ts. */
 export async function dropSynthStudio(studio: SynthStudio): Promise<void> {
   await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]);
   for (const p of studio.practitioners) {

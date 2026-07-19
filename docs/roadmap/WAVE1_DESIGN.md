@@ -10,7 +10,7 @@ The two deliverables live on different existing test layers, so each is independ
 and reviewable. Coupling them would make one large PR that mixes DB/RLS integration with
 browser E2E for no benefit.
 
-- **PR 1 — SAFE-SYNTH** (this slice; foundation). Deterministic Studio A/B/C synthetic tenants
+- **PR 1 — SAFE-SYNTH** (this slice; foundation, partially delivered). Run-unique Studio A/B/C synthetic tenants
   on the **local-only DB/RLS harness** (`tests/db/helpers/harness.ts`, localhost-pinned, never
   production/Willow), plus the cross-tenant **isolation matrix** — the negative-boundary
   primitive Wave 6 and every provider wave reuse.
@@ -23,24 +23,35 @@ Dependency: PR 2 is conceptually downstream of PR 1's tenant model but uses the 
 so it does not import PR 1 code. Order is PR 1 first because it is the isolation foundation the
 later waves block on.
 
-## PR 1 — SAFE-SYNTH (implemented in this slice)
+## PR 1 — SAFE-SYNTH — PARTIALLY DELIVERED (this slice)
 
-**Files:** `tests/db/helpers/synth-fleet.ts`, `tests/db/synth-fleet-isolation.db.test.ts` (the
-`.db.test.ts` suffix routes it to the db-integration lane, `vitest.db.config.ts`; it is excluded
-from the fast unit lane).
+**Files:** `tests/db/helpers/synth-fleet.ts`, `tests/db/synth-fleet-isolation.db.test.ts`,
+`tests/db/synth-fleet-cleanup.db.test.ts` (the `.db.test.ts` suffix routes them to the
+db-integration lane, `vitest.db.config.ts`; excluded from the fast unit lane).
 
+**Delivered in this slice:**
 - **Studio A** — solo (owner). **Studio B** — owner + 2 practitioners. **Studio C** —
-  failure/recovery, carries an inert `SynthFailureMode` switch (`provisioning | payment |
-  revoked_oauth | provider_rejection | export | cancellation | legal_hold | purge |
-  stale_worker_claim | retry_dead_letter`) consumed by later tests.
-- **Identifiers:** studio name `SYNTH-<A|B|C>`, emails `*@synth.local`; all ids random UUIDs
-  (parallel-safe, safe to recreate). Never shares an id space with production.
-- **Cleanup:** `dropSynthStudio` deletes by id (studio cascade + fake auth.users); never truncates.
-- **No providers/secrets** — pure local SQL via the harness `adminQuery`/`asUser`.
-- **Isolation matrix (foundational negative test):** Studio A's owner cannot read / update /
-  insert into Studio B's rows through RLS; positive control that B's owner reads B's own data.
+  failure/recovery shell that carries an **INERT `SynthFailureMode` label** (`provisioning |
+  payment | revoked_oauth | provider_rejection | export | cancellation | legal_hold | purge |
+  stale_worker_claim | retry_dead_letter`) — **vocabulary only; there is NO executable failure
+  injection yet.**
+- **Identifiers:** studio name `SYNTH-<A|B|C>`, emails `*@synth.local`; all ids are
+  `randomUUID()` — **run-unique and parallel-safe** (they differ every run; this is NOT
+  deterministic/stable-across-runs seeding). Never shares an id space with production.
+- **Cleanup by id** (`dropSynthStudio`; studio cascade + fake auth.users; never truncates),
+  **proven** by `synth-fleet-cleanup.db.test.ts` (zero residual rows across studios/
+  practitioners/clients/auth.users; dropping A cannot touch B).
+- **Isolation matrix:** Studio A's owner cannot read / update / insert into Studio B's rows
+  through RLS; positive control that B's owner reads B's own data.
+- **No providers/secrets** — pure local SQL via the harness.
 
-**Runs in:** the `db integration (local supabase)` CI lane (real migrated schema). Not runnable
+**NOT yet delivered (named remaining scope for SAFE-SYNTH):**
+- richer per-domain seeding (appointments, intake/consent, sessions/clinical, treatment-photo
+  metadata, payment/provider test state);
+- **executable failure injection for Studio C** — each `SynthFailureMode` wired to a real forced
+  error / revoked token / rejected provider call / stale worker claim / dead-letter path.
+
+**Runs in:** the `db integration (local supabase)` lane (real migrated schema). Not runnable
 without a local Supabase stack; behaviour is CI-validated.
 
 **Rollback:** test-only additions; revert the two files. No runtime/migration/flag impact.
