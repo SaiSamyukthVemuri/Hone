@@ -76,8 +76,8 @@
     },
     "product_analytics_posthog": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,
-      "exercised": true, "approved": false, "generally_available": true,
-      "notes": "LIVE. Analytics P1s (browser pageview/pageleave leak, token-attribute exposure, request-path coupling) contained by PR #450 — MERGED (32b6eef) + DEPLOYED (Vercel 8iDB4Je, success 2026-07-19T03:02:38Z): fail-closed browser-event boundary (12-route allowlist, drop-not-redact), discriminated opaque IDs, post-response server dispatch, 98 tests. Classified DEPLOYED not PRODUCTION VERIFIED: controlled network positive/negative event verification blocked by PostHog headless bot-detection, needs Sam's real browser session. approved=false until then."
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "LIVE + PRODUCTION VERIFIED (session 3). Analytics P1s (browser pageview/pageleave leak, token-attribute exposure, request-path coupling) contained by PR #450 — MERGED (32b6eef) + DEPLOYED (Vercel 8iDB4Je, 2026-07-19T03:02:38Z): fail-closed browser-event boundary (12-route allowlist, drop-not-redact), discriminated opaque IDs, post-response server dispatch, 98 tests. Real-browser evidence: exactly one sanitized /ingest/e capture on /pricing; ZERO capture on authenticated/token/booking/portal/login surfaces (only the SDK config.js load, not an event). Optional non-finding: SDK still inits globally + fetches config.js on non-marketing routes; surface-gated init would remove that."
     },
     "platform_admin": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,

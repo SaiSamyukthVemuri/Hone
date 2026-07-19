@@ -1,6 +1,13 @@
 # P1 Reconciliation Report — 2026-07-18
 
-**Exact production head:** `0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3` (merge of PR #449)
+**Reconciliation baseline (exact head):** `0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3` (merge of
+PR #449). Every finding below is classified as-of this baseline **except the analytics trio**,
+which subsequently progressed on descendant commits and is tracked to its current production
+state: **P1-ANALYTICS-01/-02/-03 were merged at `32b6eef` (PR #450, a descendant of the baseline)
+and PRODUCTION VERIFIED (session 3)**. So this document is an exact-head reconciliation *plus* the
+post-baseline production progression of the analytics group — the register's `last_verified_commit`
+column names the exact commit each row was verified at (`32b6eef` for the analytics rows, the
+baseline for the rest).
 **Hosted migration parity:** repo max = hosted max = **0133** (verified via linked CLI)
 **Hosted flags at reconciliation:** `calendar_sync_control.worker_enabled=false`; 1 calendar
 connection (`my-studio-9d37c5` only — **Willow excluded**); 3 studios total; Vercel prod deploy
@@ -23,20 +30,28 @@ is stated, not hidden).
 
 | Classification | Count | IDs |
 |---|---|---|
-| DEPLOYED | 8 | HNE-SEC-001, HNE-SEC-002, HNE-REC-001*, HNE-REC-002, P1-13, P1-ANALYTICS-01†, P1-ANALYTICS-02†, P1-ANALYTICS-03† |
+| PRODUCTION VERIFIED | 3 | P1-ANALYTICS-01, P1-ANALYTICS-02, P1/P2-ANALYTICS-03 |
+| DEPLOYED | 5 | HNE-SEC-001, HNE-SEC-002, HNE-REC-001*, HNE-REC-002, P1-13 |
 | PARTIALLY FIXED | 16 | HNE-ADM-001, HNE-AUD-001, HNE-CONC-001, HNE-DEP-001, HNE-JOB-001, HNE-PAY-001, HNE-PAY-002, HNE-STO-001, P1-03, P1-04, P1-05, P1-06, P1-07, P1-08, P1-10, P1-11 |
 | OPEN | 10 | HNE-CAL-001, HNE-EXP-001, HNE-LOC-001, HNE-PRV-001, HNE-RBAC-001, HNE-SAA-001, P1-01, P1-02, P1-09, P1-12 |
 
 \* HNE-REC-001 is deployed with **both clinical flags OFF** — the finalization/amendment
 enforcement protects no production record until enablement is separately authorized.
 
-† The three analytics findings moved **FIXED IN CODE → DEPLOYED** when PR #450 merged
-(`32b6eef`) and Vercel deployed (`8iDB4JezgQgNg4ycMnt58Ld7EFpM`, success 2026-07-19T03:02:38Z).
-They are **NOT PRODUCTION VERIFIED**: the controlled network-level positive (marketing sanitized)
-+ negative (sensitive surfaces send nothing) event evidence could not be captured via headless
-automation because PostHog's bot detection prevents the SDK transmitting any event in an automated
-browser. Reaching PRODUCTION VERIFIED requires a real interactive browser session (Sam's
-controlled account).
+**Analytics trio — PRODUCTION VERIFIED (session 3).** P1-ANALYTICS-01/-02/-03 moved
+FIXED IN CODE → DEPLOYED (PR #450 merge `32b6eef`, Vercel deploy `8iDB4JezgQgNg4ycMnt58Ld7EFpM`
+success 2026-07-19T03:02:38Z) → **PRODUCTION VERIFIED** on controlled real-browser evidence
+(Chrome DevTools vs production, Network filtered to `/ingest`):
+- **Positive:** `/pricing?utm_source=p1_verify` produced **exactly one `/ingest/e/` capture
+  request (200)**, alongside the SDK's `config.js` script load.
+- **Negatives** (zero `/ingest/e/` capture requests on each; the only `/ingest` traffic is the
+  SDK's `config.js` remote-config script load, which is not an event): authenticated `/dashboard`
+  incl. navigation, authenticated `/calendar`, `/clients/00000000-0000-0000-0000-000000000000`
+  (404), `/login`, `/cancel/fake-token-123` (graceful error page), `/portal/login`.
+
+*Optional low-priority hardening (NOT a finding):* the SDK still initializes globally and fetches
+`config.js` via `/ingest` on non-marketing routes; gating SDK initialization by surface would
+remove even that config fetch.
 
 **Program-level P1s (cannot be patched, remain OPEN by design):** HNE-SAA-001 (self-service
 lifecycle), HNE-LOC-001 (multi-location model). Delivered as verified-gap + architecture-input,
@@ -53,9 +68,9 @@ not "fixed by design".
   verification + narrative/history/export/finalization inclusion). Reconciled DEPLOYED on
   code+tests; NOT Chloe-validated (a human-validation script remains before PRODUCTION VERIFIED).
 
-**Analytics findings (P1-ANALYTICS-01/-02/-03) — DEPLOYED (PR #450 merged `32b6eef`, Vercel
-deploy `8iDB4Je` success; head `4bbe3a2`).** Independent review of the first containment patch
-found a residual blocking leak:
+**Analytics findings (P1-ANALYTICS-01/-02/-03) — PRODUCTION VERIFIED (PR #450 merged `32b6eef`,
+Vercel deploy `8iDB4Je` success; head `4bbe3a2`).** Independent review of the first containment
+patch found a residual blocking leak:
 browser `$pageview`/`$pageleave` are NOT governed by `autocapture.url_allowlist`, so they left
 every route including authenticated ones (`/clients/<uuid>`), confirmed in live PostHog Activity.
 The patch replaces the autocapture-only guard with a fail-closed `before_send` boundary governing
@@ -63,10 +78,14 @@ EVERY browser event by (event, surface): only $pageview/$pageleave/autocapture-f
 on the 12 exact canonical marketing routes survive; the authenticated app, booking, portal, all
 token routes, login/auth and payment send nothing. Correction 2 replaces the `distinctId: string`
 API with a discriminated, UUID-validated, fail-closed `AnalyticsActor`. 98 behavioral tests.
-**Now merged + live** (`32b6eef`, deploy `8iDB4Je`); classified DEPLOYED — the fail-closed boundary
-is the deployed artifact and its behaviour is test-proven, but headless automation cannot
-reproduce PostHog event transmission (bot detection) so the controlled network positive/negative
-verification is a remaining Sam step before PRODUCTION VERIFIED.
+**Merged + live** (`32b6eef`, deploy `8iDB4Je`) and now **PRODUCTION VERIFIED** on controlled
+real-browser evidence (session 3): exactly one sanitized `/ingest/e/` capture on
+`/pricing?utm_source=p1_verify`, and ZERO `/ingest/e/` capture on every sensitive surface
+(authenticated `/dashboard`+nav, `/calendar`, `/clients/<zero-uuid>` 404, `/login`,
+`/cancel/fake-token-123`, `/portal/login`) — the only `/ingest` traffic there is the SDK's
+`config.js` remote-config load, which is not an event. Optional low-priority hardening (NOT a
+finding): the SDK still initializes globally and fetches `config.js` on non-marketing routes;
+gating SDK init by surface would remove even that config fetch.
 
 ## Duplicate / relationship map
 
@@ -133,7 +152,11 @@ verification is a remaining Sam step before PRODUCTION VERIFIED.
 - **Proposed PR:** None required for the contract. Optional follow-ups: a docs-only PR recording the production verification, and a dedicated printable/exportable chart view if a formal chart-print artifact becomes a requirement.
 
 
-## FIXED IN CODE (0 + 3 analytics)
+## PRODUCTION VERIFIED (3)
+
+P1-ANALYTICS-01, P1-ANALYTICS-02, P1/P2-ANALYTICS-03 — see the analytics summary above
+(merged `32b6eef`, deployed `8iDB4Je`, real-browser verified session 3). No findings remain in
+FIXED IN CODE.
 
 
 ## PARTIALLY FIXED (16)

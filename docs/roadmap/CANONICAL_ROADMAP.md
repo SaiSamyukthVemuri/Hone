@@ -1417,20 +1417,21 @@ above. Strategic decisions are untouched. Full evidence: `P1_MASTER_REGISTER_202
 and `P1_RECONCILIATION_REPORT_2026-07-18.md` (same directory); capability axes:
 `CAPABILITY_MANIFEST.json`.
 
-- **Phase 0 exact-head reconciliation: DONE** (this annex + register). 34 source P1s → 5
-  DEPLOYED / 3 FIXED IN CODE (analytics, PR #450 draft) / 16 PARTIALLY FIXED / 10 OPEN.
+- **Phase 0 exact-head reconciliation: DONE** (this annex + register). 34 source P1s → **3
+  PRODUCTION VERIFIED (analytics trio, PR #450 merged `32b6eef` + real-browser verified) / 5
+  DEPLOYED / 16 PARTIALLY FIXED / 10 OPEN** (0 FIXED IN CODE).
 - **Closed since the 2026-07-10 audit** (evidence-verified): HNE-SEC-001 (migration 0115),
   HNE-SEC-002 (0116), HNE-REC-002 (0118), P1-13 (chips contract). HNE-REC-001 enforcement is
   deployed via 0119/0120 but **flag-OFF** (protects nothing yet; enablement needs separate
   authorization + Chloe validation).
 - **New P1 class since v1.1:** analytics (PostHog #447/#449). P1-ANALYTICS-01/-02/-03 contained
-  by PR #450 — **MERGED (`32b6eef`) + DEPLOYED (Vercel `8iDB4Je`, 2026-07-19)**, classified
-  **DEPLOYED** (not PRODUCTION VERIFIED). The deployed boundary is fail-closed by (event, surface):
-  only the 12 canonical marketing routes emit browser events; the authenticated app, booking,
-  portal, all token routes, login/auth and payment send nothing. Opaque IDs are runtime-validated;
-  server analytics is decoupled from request paths. Remaining to PRODUCTION VERIFIED: controlled
-  real-browser network verification (headless automation is blocked by PostHog bot detection). No
-  migration; worker off; Willow untouched.
+  by PR #450 — **MERGED (`32b6eef`) + DEPLOYED (Vercel `8iDB4Je`, 2026-07-19) + PRODUCTION
+  VERIFIED (session 3)**. The deployed boundary is fail-closed by (event, surface): only the 12
+  canonical marketing routes emit browser events; the authenticated app, booking, portal, all
+  token routes, login/auth and payment send nothing. Opaque IDs runtime-validated; server
+  analytics decoupled from request paths. Real-browser evidence: one sanitized `/ingest/e/`
+  capture on `/pricing`; zero capture on every sensitive surface (only the SDK `config.js` load,
+  not an event). No migration; worker off; Willow untouched.
 - **Historical P1 set correction:** the roadmap's P1-01..13 list remains accurate for the 9
   still-open/partial items; P1-13 is closed; P1-03..08/10/11 are PARTIALLY FIXED with specific
   remaining criteria (see register).
