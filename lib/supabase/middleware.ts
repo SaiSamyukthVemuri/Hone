@@ -64,6 +64,13 @@ export async function updateSession(request: NextRequest) {
     // would silently drop all client-side error reporting. It carries only
     // scrubbed telemetry, never app data.
     pathname === "/monitoring" ||
+    // PostHog same-origin analytics ingest proxy (rewritten to *.i.posthog.com
+    // in next.config.ts). PostHog initializes on every route, so pageview /
+    // event POSTs fire from PUBLIC pages too (marketing pageview capture is
+    // intended); a /login redirect would silently drop them. Token-bearing URLs
+    // are sanitized in instrumentation-client.ts before send.
+    pathname === "/ingest" ||
+    pathname.startsWith("/ingest/") ||
     // Metadata image routes (Next file conventions: opengraph-image, icon,
     // apple-icon). Social scrapers and browsers fetch these while logged out;
     // they are generated, public, branded images with no sensitive data, so
