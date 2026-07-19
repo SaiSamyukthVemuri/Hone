@@ -75,7 +75,7 @@ import { getStripe } from "@/lib/stripe/server";
 import { accountToStatusSnapshot } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent } from "@/lib/analytics/server";
 import {
   handlePaymentIntentSucceeded,
   handlePaymentIntentPaymentFailed,
@@ -353,13 +353,13 @@ async function handleStripeEvent(
       }
 
       if (snapshot.chargesEnabled) {
-        const posthog = getPostHogClient();
-        posthog.capture({
+        // Post-response, bounded: analytics failure must never 500 this
+        // webhook and trigger Stripe retries (P1/P2-ANALYTICS-03).
+        captureServerEvent({
           distinctId: `studio:${ctx.studioId}`,
           event: "stripe_account_connected",
           properties: { studio_id: ctx.studioId, livemode: ctx.livemode },
         });
-        await posthog.flush();
       }
 
       return {
@@ -696,13 +696,13 @@ async function handleSetupIntentSucceeded(
     );
   }
 
-  const posthog = getPostHogClient();
-  posthog.capture({
+  // Post-response, bounded: analytics failure must never 500 this webhook
+  // and trigger Stripe retries (P1/P2-ANALYTICS-03).
+  captureServerEvent({
     distinctId: `studio:${metaStudioId}`,
     event: "card_on_file_saved",
     properties: { studio_id: metaStudioId, livemode: ctx.livemode },
   });
-  await posthog.flush();
 
   return {
     eventType: event.type,

@@ -37,65 +37,48 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // --- PostHog ---
-// Token-bearing route prefixes that must never have their URLs sent to
-// analytics. These are credentials; the same list is enforced structurally in
-// the SafeAnalytics component, and sanitized here as a defence-in-depth layer.
-const TOKEN_PATH_PREFIXES = [
-  "/portal/verify/",
-  "/cancel/",
-  "/reschedule/",
-  "/manage/",
-  "/intake/",
-  "/calendar-feed/",
-];
-
-function sanitizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    for (const prefix of TOKEN_PATH_PREFIXES) {
-      if (parsed.pathname.startsWith(prefix)) {
-        parsed.pathname = prefix + "[token]";
-        return parsed.toString();
-      }
-    }
-  } catch {
-    // Non-URL string; return as-is
-  }
-  return url;
-}
+// Clinical-data privacy boundary (P1-ANALYTICS-01/-02). Full rationale and the
+// pure, tested logic live in lib/analytics/client-boundary.ts:
+//   * Autocapture runs ONLY on the explicit public-marketing surface
+//     allowlist. The authenticated app, public booking, portal, and every
+//     token-bearing route send NO autocapture events. Two independent layers:
+//     `autocapture.url_allowlist` (SDK) + `before_send` (drops any
+//     autocapture-family event whose URL is not allowlisted, fail closed).
+//   * `before_send` also token-sanitizes EVERY string in every outgoing
+//     event — including $elements[].attr__href / attr__src and the serialized
+//     elements_chain — so a bearer credential can never ride an attribute.
+//     (mask_all_text only masks textContent; sanitize_properties only sees
+//     top-level properties. Neither protects $elements — before_send does.)
+//   * Session recording OFF — it records the live DOM (client names,
+//     treatment notes, probe settings on screen).
+//   * Exception capture OFF — Sentry owns error tracking, WITH scrubbing.
+//   * Surveys OFF — no remotely-configured PostHog UI may inject into a
+//     clinical product.
+//   * mask_all_text + element_attribute_ignorelist retained for the allowed
+//     marketing surface (defense-in-depth even where autocapture is allowed).
+import {
+  AUTOCAPTURE_URL_ALLOWLIST,
+  guardOutgoingEvent,
+  sanitizeUrl,
+} from "@/lib/analytics/client-boundary";
 
 posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   api_host: "/ingest",
   ui_host: "https://us.posthog.com",
   defaults: "2026-01-30",
 
-  // Clinical-data hardening (do NOT weaken without a privacy review):
-  //   * Session recording OFF — it records the live DOM (client names,
-  //     treatment notes, probe settings on screen).
-  //   * Autocapture ON, but text-masked — we get interaction analytics
-  //     (clicks, form submits, navigation) WITHOUT the literal on-screen text.
-  //     `mask_all_text` is a TOP-LEVEL PostHog option (NOT an autocapture
-  //     sub-key — AutocaptureConfig has no masking key). Per the SDK it
-  //     "prevent[s] autocapture from capturing textContent on elements"; it
-  //     feeds the autocapture serializer (maskAllText), which is separate from
-  //     session-replay masking (session_recording.*). PostHog also never
-  //     captures the value of text/search/email/tel/url/number/password inputs,
-  //     so typed names/notes aren't sent. Element ATTRIBUTES that can carry
-  //     human-readable PII (aria-label, title, alt, placeholder) are dropped
-  //     via autocapture.element_attribute_ignorelist below — mask_all_text only
-  //     covers textContent. Structural attrs (id/class/data-*) are kept so
-  //     events remain useful for analytics.
-  //   * Exception capture OFF — Sentry owns error tracking and scrubs PII;
-  //     PostHog's exception capture is un-scrubbed, so don't double-send raw
-  //     error messages/stack traces here.
   disable_session_recording: true,
+  disable_surveys: true,
+  capture_exceptions: false,
+
   autocapture: {
+    // Layer 1: SDK-level surface allowlist (public marketing pages only).
+    url_allowlist: AUTOCAPTURE_URL_ALLOWLIST,
     // Drop attributes that commonly hold human-readable PII; keep structural
     // ones (id/class/data-*) for element identification.
     element_attribute_ignorelist: ["aria-label", "title", "alt", "placeholder"],
   },
   mask_all_text: true,
-  capture_exceptions: false,
 
   debug: process.env.NODE_ENV === "development",
   sanitize_properties: (properties) => {
@@ -107,4 +90,7 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
     }
     return properties;
   },
+  // Layer 2: the guarantee. Drops non-allowlisted autocapture-family events
+  // and token-sanitizes every string in the payload (incl. $elements).
+  before_send: guardOutgoingEvent,
 });

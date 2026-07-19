@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getActiveTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import type { Modality } from "@/lib/types/database";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent } from "@/lib/analytics/server";
 
 // PR #180. Loaded from a separate scope so the RPC call can use the
 // service role (the mark_appointment_complete RPC is SECURITY DEFINER
@@ -296,8 +296,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     revalidatePath(`/calendar/${appointmentId}`);
   }
 
-  const posthog = getPostHogClient();
-  posthog.capture({
+  // Post-response, bounded, never blocks the session-start redirect.
+  captureServerEvent({
     distinctId: practitioner.id,
     event: "session_started",
     properties: {
@@ -306,7 +306,6 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       is_new_session: !existing,
     },
   });
-  await posthog.flush();
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
