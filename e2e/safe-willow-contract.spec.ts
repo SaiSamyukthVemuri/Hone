@@ -106,9 +106,14 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
       `/clients/${clientId}/sessions/new?appointment_id=${firstAppointmentId}`,
     );
     await page.getByRole("button", { name: /electrolysis/i }).click();
-    await page.waitForURL(/sessions\//, { timeout: 20_000 });
-    sessionId = page.url().match(/sessions\/([0-9a-f-]{36})/)?.[1] ?? "";
-    expect(sessionId).toMatch(/[0-9a-f-]{36}/);
+    // Wait for the REAL session detail URL (/sessions/<uuid>), NOT the starting
+    // /sessions/new URL — which also contains "/sessions/" and would satisfy a
+    // looser matcher immediately, leaving page.url() on /new.
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}(\?|#|$|\/)/, {
+      timeout: 20_000,
+    });
+    sessionId = page.url().match(/\/sessions\/([0-9a-f-]{36})/)?.[1] ?? "";
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
 
     await expect(
       page.getByRole("heading", { name: /add settings block/i }),
