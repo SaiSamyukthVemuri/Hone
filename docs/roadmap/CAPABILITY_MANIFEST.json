@@ -1,0 +1,103 @@
+{
+  "$schema_note": "Capability status manifest per the P1 closure program vocabulary. Axes: designed, code_complete, deployed (on prod head), enabled (flags/config on), exercised (real controlled use), approved (customer/operator validated), generally_available (all tenants, no gate). Evidence basis: exact head 0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3, hosted migration parity 0133, read-only hosted checks 2026-07-18. Never treat designed/code_complete/deployed as live.",
+  "as_of": "2026-07-18",
+  "production_head": "0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3",
+  "hosted_migration_max": "0133",
+  "capabilities": {
+    "public_booking": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Live for Willow pilot; per-studio readiness soft-gate. P1-01/P1-10 identity + transaction-boundary findings remain open against it."
+    },
+    "intake_and_consent": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Signed-consent visibility fixed (PR #405). P1-03/04/05/06 + HNE-REC-002 lifecycle/concurrency findings remain open."
+    },
+    "calendar_scheduling": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Studio-wide collision semantics (HNE-CAL-001) — single-practitioner-safe only. 0133 adds practitioner_move_appointment RPC."
+    },
+    "charting_treatment_memory": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Core product; charting capability is GA + Willow-exercised. Multi-area+laterality live (0128/0129). Chart-note chip contract (P1-13) reconciled as DEPLOYED (persist/read-back/narrative/history/export/finalization all satisfied in shipped code+tests) — NOT claimed Chloe-validated; a Chloe human-validation script is the remaining step to PRODUCTION VERIFIED."
+    },
+    "clinical_finalization_amendments": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": false,
+      "exercised": false, "approved": false, "generally_available": false,
+      "notes": "Migrations 0119/0120 deployed; BOTH clinical flags OFF (parked pending customer approval of UI). Backend proven in controlled tests only."
+    },
+    "treatment_photos": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "HNE-STO-001 hosted-storage posture verification remains an open gap."
+    },
+    "client_portal": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Separate auth realm (magic link + httpOnly session)."
+    },
+    "payments_card_on_file_charges_refunds": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": false,
+      "notes": "Willow live at pilot scale (controlled validation incl. quick checkout PR #419). NOT broadly proven (HNE-PAY-001); per-studio canonical approval state absent (HNE-PAY-002). Draft PR #335 (mode-scope attempts) stale."
+    },
+    "sms_email_reminders_postcare": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": false,
+      "notes": "Live at pilot scale; SMS P0 sender-strategy decision pending for multi-tenant."
+    },
+    "disinfectant_notifications": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Computed read-time alerts (PR #422); no cron dependency."
+    },
+    "google_calendar_two_way_sync": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": false,
+      "exercised": false, "approved": false, "generally_available": false,
+      "notes": "DORMANT: worker_enabled=false, all studio flags off, only Sam's test studio connected (dedicated-destination validated 2026-07-14). Willow NOT connected. 3 crons registered; C2 no-work validation incomplete."
+    },
+    "records_export": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "HNE-EXP-001: scope narrower than 'full export' copy; synchronous/in-memory."
+    },
+    "marketing_site_seo": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "Flagship rebuild live (PR #439-#446), product-owner approved; sitemap submitted."
+    },
+    "error_tracking_sentry": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": true, "generally_available": true,
+      "notes": "PII-scrubbed (sendDefaultPii off, deny-by-default scrubbers, Replay/Logs off, same-origin tunnel). Preview payload human-verified."
+    },
+    "product_analytics_posthog": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": false, "generally_available": true,
+      "notes": "LIVE. Analytics P1s (browser pageview/pageleave leak, token-attribute exposure, request-path coupling) contained by PR #450 — MERGED (32b6eef) + DEPLOYED (Vercel 8iDB4Je, success 2026-07-19T03:02:38Z): fail-closed browser-event boundary (12-route allowlist, drop-not-redact), discriminated opaque IDs, post-response server dispatch, 98 tests. Classified DEPLOYED not PRODUCTION VERIFIED: controlled network positive/negative event verification blocked by PostHog headless bot-detection, needs Sam's real browser session. approved=false until then."
+    },
+    "platform_admin": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": true,
+      "exercised": true, "approved": false, "generally_available": false,
+      "notes": "ADMIN_EMAILS env allowlist + service-role (HNE-ADM-001 open). Operator-only studio provisioning."
+    },
+    "self_service_saas_lifecycle": {
+      "designed": false, "code_complete": false, "deployed": false, "enabled": false,
+      "exercised": false, "approved": false, "generally_available": false,
+      "notes": "Absent (HNE-SAA-001). Program-level P1; requires Wave 6 foundations first."
+    },
+    "multi_location_model": {
+      "designed": false, "code_complete": false, "deployed": false, "enabled": false,
+      "exercised": false, "approved": false, "generally_available": false,
+      "notes": "Absent (HNE-LOC-001). Program-level P1."
+    },
+    "scheduled_jobs": {
+      "designed": true, "code_complete": true, "deployed": true, "enabled": "partial",
+      "exercised": "partial", "approved": false, "generally_available": false,
+      "notes": "vercel.json registers 3 crons (materialize-breaks active; 2 calendar crons gated dormant by worker flag). No canonical job registry/health model (HNE-JOB-001)."
+    }
+  }
+}
