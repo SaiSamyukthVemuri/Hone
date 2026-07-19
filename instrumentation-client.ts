@@ -69,18 +69,32 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   ui_host: "https://us.posthog.com",
   defaults: "2026-01-30",
 
-  // Clinical-data hardening (do NOT re-enable without a privacy review):
+  // Clinical-data hardening (do NOT weaken without a privacy review):
   //   * Session recording OFF — it records the live DOM (client names,
   //     treatment notes, probe settings on screen).
-  //   * Autocapture OFF — otherwise every click/input/DOM-text snapshot is
-  //     sent automatically, which would capture on-screen clinical data. Only
-  //     the explicit, reviewed server-side events in the *-actions.ts files
-  //     are sent.
+  //   * Autocapture ON, but text-masked — we get interaction analytics
+  //     (clicks, form submits, navigation) WITHOUT the literal on-screen text.
+  //     `mask_all_text` is a TOP-LEVEL PostHog option (NOT an autocapture
+  //     sub-key — AutocaptureConfig has no masking key). Per the SDK it
+  //     "prevent[s] autocapture from capturing textContent on elements"; it
+  //     feeds the autocapture serializer (maskAllText), which is separate from
+  //     session-replay masking (session_recording.*). PostHog also never
+  //     captures the value of text/search/email/tel/url/number/password inputs,
+  //     so typed names/notes aren't sent. Element ATTRIBUTES that can carry
+  //     human-readable PII (aria-label, title, alt, placeholder) are dropped
+  //     via autocapture.element_attribute_ignorelist below — mask_all_text only
+  //     covers textContent. Structural attrs (id/class/data-*) are kept so
+  //     events remain useful for analytics.
   //   * Exception capture OFF — Sentry owns error tracking and scrubs PII;
   //     PostHog's exception capture is un-scrubbed, so don't double-send raw
   //     error messages/stack traces here.
   disable_session_recording: true,
-  autocapture: false,
+  autocapture: {
+    // Drop attributes that commonly hold human-readable PII; keep structural
+    // ones (id/class/data-*) for element identification.
+    element_attribute_ignorelist: ["aria-label", "title", "alt", "placeholder"],
+  },
+  mask_all_text: true,
   capture_exceptions: false,
 
   debug: process.env.NODE_ENV === "development",
