@@ -167,6 +167,58 @@ function checkDormant() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Two-flag state model (0136). Reports the derived Legacy/Configuring/Live/
+//     Draining state, proves the invalid state (capacity OFF + booking ON) is
+//     absent, and — for any enabled studio — the structural-deactivation
+//     blockers (booking still on, overlapping appointments). No PII.
+// ---------------------------------------------------------------------------
+function checkStateModel() {
+  try {
+    const bookingOn = n(
+      scalar(
+        "select count(*) as c from public.studios where practitioner_capacity_booking_enabled = true;",
+      ),
+    );
+    bookingOn === 0
+      ? pass("Booking dormant", "0 studios accept practitioner-aware bookings")
+      : report("Booking ENABLED studios (review intent)", String(bookingOn));
+
+    const invalid = n(
+      scalar(
+        "select count(*) as c from public.studios " +
+          "where practitioner_capacity_booking_enabled = true and practitioner_capacity_enabled = false;",
+      ),
+    );
+    invalid === 0
+      ? pass("No invalid capacity state", "no studio has booking on without capacity")
+      : fail("No invalid capacity state", `${invalid} studio(s) booking-on without capacity`);
+
+    // Derived-state + retirement-blocker report for any enabled studio.
+    const rows = dbRows(
+      "select id, practitioner_capacity_enabled cap, practitioner_capacity_booking_enabled book " +
+        "from public.studios where practitioner_capacity_enabled = true order by id;",
+    );
+    for (const r of rows) {
+      const state = r.book ? "Live" : "Draining/Configuring";
+      const overlaps = n(
+        scalar(
+          "select count(*) as c from public.appointments a1 " +
+            "join public.appointments a2 on a1.studio_id=a2.studio_id and a1.id<a2.id " +
+            `where a1.studio_id='${r.id}' and a1.status='confirmed' and a2.status='confirmed' ` +
+            "and tstzrange(a1.starts_at,a1.blocked_ends_at,'[)') && tstzrange(a2.starts_at,a2.blocked_ends_at,'[)');",
+        ),
+      );
+      report(
+        `Studio ${r.id} state`,
+        `${state}; deactivation blockers: booking_on=${!!r.book}, overlapping_appointments=${overlaps}`,
+      );
+    }
+  } catch (e) {
+    fail("State model", e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. OFF-studio reservation parity — the core Willow-safety invariant. Every
 //    shadow row belonging to a flag-OFF studio must be keyed studio-wide
 //    (resource_key = studio_id), i.e. identical to pre-0134 behaviour.
@@ -363,6 +415,7 @@ function main() {
   console.log("\nPractitioner-capacity verification (READ-ONLY, no PII)\n");
   checkSchemaPresent();
   checkDormant();
+  checkStateModel();
   checkOffParity();
   checkIntegrity();
   checkOrphans();

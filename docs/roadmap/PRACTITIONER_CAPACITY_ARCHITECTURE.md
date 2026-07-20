@@ -117,9 +117,20 @@ stay studio-wide. **Willow's flag stays `false` and is never flipped by this wor
 ### Q8 — Migration + rollback approach
 
 **Expand → verify → contract, all additive; one metadata-only constraint swap; no data
-loss.** Detailed below. Rollback for PR A = flip the flag off (instant, per-studio) and,
-if ever needed, drop the additive columns/table/constraints in reverse — no row is
-deleted or rewritten by the forward migration.
+loss.** Detailed below.
+
+**Rollback (corrected in PR B 3B-0).** The *structural* flag
+`practitioner_capacity_enabled` is NOT an instant kill-switch once a studio has live
+parallel appointments: flipping it OFF rematerializes them into one studio-wide resource,
+which the studio-wide exclusion rejects (`23P01`). Migration 0136 therefore separates the
+concerns into two operator flags — `practitioner_capacity_enabled` (structural model) and
+`practitioner_capacity_booking_enabled` (booking acceptance) — yielding
+Legacy / Configuring / Live / Draining (invalid `capacity=false, booking=true` rejected by a
+CHECK). **The emergency rollback is flipping `booking` OFF (instant; existing parallel
+appointments stay valid; no rematerialization).** *Structural* deactivation is a preflighted,
+service-role-only retirement (`retire_practitioner_capacity`) that fails closed with reason
+codes if parallel data would collide. Dropping the additive columns/table/constraints in
+reverse remains possible — no row is deleted or rewritten by the forward migrations.
 
 ---
 

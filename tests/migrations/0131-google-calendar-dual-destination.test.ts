@@ -13,19 +13,20 @@ const SQL = readFileSync(
 );
 
 describe("0131 — repo migration-max tripwire", () => {
-  it("advances the repo migration max to 0135 (0134 precedes; nothing 0136+)", () => {
+  it("advances the repo migration max to 0136 (0135 precedes; nothing 0137+)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0135"); // 0135 = per-practitioner availability (PR B, repo-only until hosted-applied)
+    expect(nums[nums.length - 1]).toBe("0136"); // 0136 = capacity booking flag (PR B, repo-only until hosted-applied)
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0135_"))).toBe(true);
-    // Nothing 0136+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(3[6-9]|[4-9]\d)_/.test(f))).toEqual([]);
+    expect(files.some((f) => f.startsWith("0136_"))).toBe(true);
+    // Nothing 0137+ yet. Bump this tripwire consciously when adding migrations.
+    expect(files.filter((f) => /^01(3[7-9]|[4-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

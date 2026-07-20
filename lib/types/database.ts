@@ -49,6 +49,10 @@ export type Studio = {
   // enables per-practitioner capacity + parallelism. Default OFF; opt-in per
   // studio. Optional at the type level for rows loaded via `select *` before 0134.
   practitioner_capacity_enabled?: boolean;
+  // Migration 0136: booking-acceptance kill-switch, separate from the structural
+  // flag above. Default OFF; operator-controlled. Legacy/Configuring/Live/
+  // Draining are derived from the pair. Optional for rows loaded before 0136.
+  practitioner_capacity_booking_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
