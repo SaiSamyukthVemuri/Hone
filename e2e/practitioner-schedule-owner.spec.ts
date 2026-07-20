@@ -107,5 +107,9 @@ test("a tampered / unknown practitioner id falls back to Studio default scope", 
     "aria-current",
     "page",
   );
-  await expect(page.getByText(/weekly hours$/i)).toHaveCount(0); // no "<name>'s weekly hours" heading
+  // The per-practitioner editor is NOT rendered — its full-week control (unique
+  // to PractitionerWeekEditor) is absent in the studio-scope fallback.
+  await expect(
+    page.getByRole("button", { name: "Customize full week from studio default" }),
+  ).toHaveCount(0);
 });
