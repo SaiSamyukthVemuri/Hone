@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
-import { adminQuery, closePool } from "./helpers/harness";
+import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 import {
   dropSynthStudio,
   seedSynthStudioA,
@@ -18,6 +18,13 @@ let B: SynthStudio;
 
 beforeEach(async () => {
   B = await seedSynthStudioB();
+  // Enable capacity so the 0135 practitioner-scope guard permits
+  // practitioner_id rows. Studio-wide (NULL) rows are unaffected by the guard,
+  // so the flag-OFF upsert-compat cases below still exercise the same paths.
+  await adminQuery(
+    `update public.studios set practitioner_capacity_enabled = true where id = $1`,
+    [B.studioId],
+  );
 });
 afterEach(async () => {
   if (B) await dropSynthStudio(B);
@@ -201,5 +208,80 @@ describe("0135: same-studio composite FK", () => {
     } finally {
       await dropSynthStudio(A);
     }
+  });
+});
+
+describe("Part 2: availability authorization (owner-only RLS + scope guard)", () => {
+  const ownerUser = () => B.practitioners.find((p) => p.role === "owner")!.userId;
+  const memberUser = () =>
+    B.practitioners.find((p) => p.role === "practitioner")!.userId;
+
+  const studioWideInsert = (
+    q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null }>,
+  ) =>
+    q(
+      `insert into public.studio_availability_default
+         (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+       values ($1, 0, null, true, '09:00', '17:00')
+       on conflict (studio_id, day_of_week, practitioner_id) do update set is_open = excluded.is_open`,
+      [B.studioId],
+    );
+
+  it("owner may write studio-wide availability (RLS owner-write)", async () => {
+    const r = await asUser(ownerUser(), (q) => studioWideInsert(q));
+    expect(r.rowCount).toBe(1);
+  });
+
+  it("a non-owner practitioner cannot write availability (42501)", async () => {
+    await expect(
+      asUser(memberUser(), (q) => studioWideInsert(q)),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("anon cannot write availability", async () => {
+    const outcome = await asRole("anon", (q) => studioWideInsert(q))
+      .then((r) => ({ rows: r.rowCount, err: null as string | null }))
+      .catch((e) => ({ rows: null, err: e.code as string }));
+    expect(outcome.rows === 0 || outcome.err != null).toBe(true);
+  });
+
+  it("a practitioner-scoped row on a flag-OFF studio is rejected by the guard (42501)", async () => {
+    await adminQuery(
+      `update public.studios set practitioner_capacity_enabled = false where id = $1`,
+      [B.studioId],
+    );
+    await expect(
+      insDefault(B.studioId, 1, B.practitioners[1].practitionerId),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("an inactive practitioner cannot get an availability row (guard 23514)", async () => {
+    const p = B.practitioners[2].practitionerId;
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [p]);
+    await expect(insDefault(B.studioId, 1, p)).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("reset deletes ONLY the practitioner's row — studio-wide + other practitioners intact", async () => {
+    const p1 = B.practitioners[1].practitionerId;
+    const p2 = B.practitioners[2].practitionerId;
+    await insDefault(B.studioId, 4, null); // studio-wide
+    await insDefault(B.studioId, 4, p1);
+    await insDefault(B.studioId, 4, p2);
+    // Reset p1's Thursday only.
+    await adminQuery(
+      `delete from public.studio_availability_default
+         where studio_id = $1 and practitioner_id = $2 and day_of_week = 4`,
+      [B.studioId, p1],
+    );
+    const rows = await adminQuery(
+      `select practitioner_id from public.studio_availability_default
+         where studio_id = $1 and day_of_week = 4`,
+      [B.studioId],
+    );
+    const ids = rows.rows.map((r) => r.practitioner_id);
+    expect(ids).toHaveLength(2);
+    expect(ids).toContain(null); // studio-wide intact
+    expect(ids).toContain(p2); // other practitioner intact
+    expect(ids).not.toContain(p1); // only p1's row removed
   });
 });

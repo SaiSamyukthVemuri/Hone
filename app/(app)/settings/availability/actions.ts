@@ -277,6 +277,268 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/availability");
 }
 
+// ===========================================================================
+// PR B Part 2 — per-practitioner (scoped) availability actions. Every action:
+// derives the studio from the authenticated OWNER (never a client-supplied
+// studio id), requires role owner, validates any target practitioner as ACTIVE
+// + same-studio, requires the capacity flag ON for practitioner-scoped writes
+// (studio-wide writes remain allowed OFF), validates strict HH:MM + open<close,
+// always sends an explicit practitioner_id + the 3-column conflict target, and
+// scopes deletes by studio + practitioner + weekday/date. Returns a typed,
+// user-safe result; the DB guard + owner-only RLS enforce the same rules.
+// ===========================================================================
+
+export type AvailabilityActionResult = { ok: true } | { ok: false; error: string };
+
+// Resolves + validates a requested practitioner target. Empty => studio-wide.
+// A non-empty target requires the flag ON, and must be an ACTIVE practitioner of
+// the OWNER's studio; anything else fails closed WITHOUT revealing whether the
+// id belongs to another studio.
+async function resolveScopeTarget(
+  supabase: SupabaseClient,
+  studio: Studio,
+  practitionerIdRaw: string,
+): Promise<{ ok: true; practitionerId: string | null } | { ok: false; error: string }> {
+  if (!practitionerIdRaw) return { ok: true, practitionerId: null };
+  if (studio.practitioner_capacity_enabled !== true) {
+    return {
+      ok: false,
+      error: "Per-practitioner schedules are not enabled for this studio.",
+    };
+  }
+  const { data } = await supabase
+    .from("practitioners")
+    .select("id")
+    .eq("id", practitionerIdRaw)
+    .eq("studio_id", studio.id)
+    .eq("active", true)
+    .maybeSingle();
+  if (!data) return { ok: false, error: "Practitioner not found." };
+  return { ok: true, practitionerId: practitionerIdRaw };
+}
+
+function validateHours(
+  isOpen: boolean,
+  open: string | null,
+  close: string | null,
+): string | null {
+  if (!isOpen) return null;
+  if (!open || !close) return "Open and close times are required for open days.";
+  if (!TIME_RE.test(open) || !TIME_RE.test(close))
+    return "Times must be in HH:MM format.";
+  if (open >= close) return "Close time must be after open time.";
+  return null;
+}
+
+// Save ONE weekday for the studio-wide (empty practitioner_id) or a specific
+// practitioner scope. Customizing a practitioner weekday persists a scoped row.
+export async function upsertScopedDayDefaultAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+
+  const dow = Number(trimmed(formData.get("day_of_week")));
+  if (!Number.isInteger(dow) || dow < 0 || dow > 6)
+    return { ok: false, error: "Day of week must be 0–6." };
+  const isOpen = trimmed(formData.get("is_open")) === "true";
+  const open = nullable(formData.get("open_time"));
+  const close = nullable(formData.get("close_time"));
+  const hoursError = validateHours(isOpen, open, close);
+  if (hoursError) return { ok: false, error: hoursError };
+
+  const { error } = await supabase.from("studio_availability_default").upsert(
+    {
+      studio_id: studio.id,
+      day_of_week: dow,
+      practitioner_id: scope.practitionerId,
+      is_open: isOpen,
+      open_time: isOpen ? open : null,
+      close_time: isOpen ? close : null,
+    },
+    { onConflict: "studio_id,day_of_week,practitioner_id" },
+  );
+  if (error) return { ok: false, error: "Could not save these hours." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset ONE practitioner weekday to the studio default — deletes ONLY that
+// practitioner's scoped row for that weekday; never touches the studio-wide row.
+export async function resetPractitionerDayAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+  const dow = Number(trimmed(formData.get("day_of_week")));
+  if (!Number.isInteger(dow) || dow < 0 || dow > 6)
+    return { ok: false, error: "Day of week must be 0–6." };
+
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId)
+    .eq("day_of_week", dow);
+  if (error) return { ok: false, error: "Could not reset this day." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Customize a practitioner's FULL week from the studio default — copies each
+// studio-wide weekday into a scoped practitioner row (upsert; idempotent).
+export async function customizePractitionerWeekAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to customize." };
+
+  const { data: studioRows, error: readErr } = await supabase
+    .from("studio_availability_default")
+    .select("day_of_week, is_open, open_time, close_time")
+    .eq("studio_id", studio.id)
+    .is("practitioner_id", null);
+  if (readErr) return { ok: false, error: "Could not read studio hours." };
+
+  const byDow = new Map(
+    (studioRows ?? []).map((r) => [r.day_of_week as number, r]),
+  );
+  const rows = Array.from({ length: 7 }, (_, dow) => {
+    const s = byDow.get(dow);
+    return {
+      studio_id: studio.id,
+      day_of_week: dow,
+      practitioner_id: scope.practitionerId,
+      is_open: s?.is_open ?? false,
+      open_time: s?.is_open ? (s?.open_time ?? null) : null,
+      close_time: s?.is_open ? (s?.close_time ?? null) : null,
+    };
+  });
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .upsert(rows, { onConflict: "studio_id,day_of_week,practitioner_id" });
+  if (error) return { ok: false, error: "Could not customize the week." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset a practitioner's FULL week — one atomic DELETE of all their weekly rows.
+export async function resetPractitionerWeekAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId);
+  if (error) return { ok: false, error: "Could not reset the week." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Save a date override for the studio-wide or a specific practitioner scope.
+export async function upsertScopedOverrideAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+
+  const effectiveDate = trimmed(formData.get("effective_date"));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
+    return { ok: false, error: "A valid date is required." };
+  const isOpen = trimmed(formData.get("is_open")) === "true";
+  const open = nullable(formData.get("open_time"));
+  const close = nullable(formData.get("close_time"));
+  const note = nullable(formData.get("note"));
+  const hoursError = validateHours(isOpen, open, close);
+  if (hoursError) return { ok: false, error: hoursError };
+
+  const { error } = await supabase.from("studio_availability_overrides").upsert(
+    {
+      studio_id: studio.id,
+      effective_date: effectiveDate,
+      practitioner_id: scope.practitionerId,
+      is_open: isOpen,
+      open_time: isOpen ? open : null,
+      close_time: isOpen ? close : null,
+      note,
+    },
+    { onConflict: "studio_id,effective_date,practitioner_id" },
+  );
+  if (error) return { ok: false, error: "Could not save this date override." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset a practitioner date override — deletes ONLY the (studio, practitioner,
+// date) row; the studio-wide date override for that date is untouched.
+export async function resetPractitionerOverrideAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+  const effectiveDate = trimmed(formData.get("effective_date"));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
+    return { ok: false, error: "A valid date is required." };
+
+  const { error } = await supabase
+    .from("studio_availability_overrides")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId)
+    .eq("effective_date", effectiveDate);
+  if (error) return { ok: false, error: "Could not reset this date override." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
 export async function createBlockoutAction(
   formData: FormData,
 ): Promise<BlockActionResult> {

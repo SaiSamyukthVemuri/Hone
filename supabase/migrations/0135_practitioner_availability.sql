@@ -95,4 +95,75 @@ create index if not exists studio_availability_default_practitioner_idx
 create index if not exists studio_availability_overrides_practitioner_idx
   on public.studio_availability_overrides (practitioner_id);
 
+-- ---------------------------------------------------------------------------
+-- Owner-only WRITES. The 0010 policies were `member_all` (any active member
+-- could write availability directly, broader than the owner-only UI). Tighten
+-- to: members may READ (unchanged — the authenticated settings/calendar and the
+-- studio-scoped slot reads depend on it), but only the studio OWNER may
+-- INSERT/UPDATE/DELETE. This closes the non-owner direct-write gap at the DB
+-- layer, not merely in the server action.
+-- ---------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['studio_availability_default', 'studio_availability_overrides']
+  loop
+    execute format('drop policy if exists %I on public.%I', t || '_member_all', t);
+    execute format('drop policy if exists %I on public.%I', t || '_member_select', t);
+    execute format('drop policy if exists %I on public.%I', t || '_owner_write', t);
+    execute format(
+      'create policy %I on public.%I for select using (public.is_studio_member(studio_id))',
+      t || '_member_select', t);
+    execute format(
+      'create policy %I on public.%I for all using (public.is_studio_owner(studio_id)) with check (public.is_studio_owner(studio_id))',
+      t || '_owner_write', t);
+  end loop;
+end $$;
+
+-- Practitioner-scope guard: a per-practitioner availability row
+-- (practitioner_id NOT NULL) may only exist when the studio has capacity
+-- enabled AND the target practitioner is active in that studio. Studio-wide
+-- rows (NULL) are unaffected (allowed OFF or ON). Fires on INSERT/UPDATE only,
+-- so deactivating a practitioner later leaves their historical rows intact. The
+-- composite FK already enforces same-studio; this adds the flag + active gates
+-- as defense in depth beyond the owner-only server actions.
+create or replace function public.guard_availability_practitioner_scope()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.practitioner_id is not null then
+    if not public.studio_capacity_enabled(new.studio_id) then
+      raise exception
+        'per-practitioner availability requires practitioner capacity to be enabled for this studio'
+        using errcode = '42501';
+    end if;
+    -- Reject an INACTIVE target. Same-studio is left to the composite FK
+    -- (23503), so this guard does not shadow that check; here we only add the
+    -- flag + active gates the FK cannot express.
+    if not exists (
+      select 1 from public.practitioners p
+      where p.id = new.practitioner_id and p.active = true
+    ) then
+      raise exception 'practitioner is not active'
+        using errcode = '23514';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace trigger studio_availability_default_scope_guard_trg
+  before insert or update on public.studio_availability_default
+  for each row execute function public.guard_availability_practitioner_scope();
+create or replace trigger studio_availability_overrides_scope_guard_trg
+  before insert or update on public.studio_availability_overrides
+  for each row execute function public.guard_availability_practitioner_scope();
+
+revoke execute on function public.guard_availability_practitioner_scope() from public;
+revoke execute on function public.guard_availability_practitioner_scope() from anon;
+revoke execute on function public.guard_availability_practitioner_scope() from authenticated;
+
 commit;
