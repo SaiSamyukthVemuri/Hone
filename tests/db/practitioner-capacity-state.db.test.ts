@@ -67,17 +67,24 @@ describe("Part 3B-0: both flags are operator-controlled", () => {
 
   it("a non-owner practitioner and anon cannot flip the booking flag", async () => {
     await setCap(true);
-    await expect(
-      asUser(memberUser(), (q) =>
-        q(`update public.studios set practitioner_capacity_booking_enabled = true where id = $1`, [B.studioId]),
-      ),
-    ).rejects.toMatchObject({ code: "42501" });
+    // Non-owner is blocked by the studios owner-update RLS (0 rows) BEFORE the
+    // guard fires; either way the flag does not change.
+    const member = await asUser(memberUser(), (q) =>
+      q(`update public.studios set practitioner_capacity_booking_enabled = true where id = $1`, [B.studioId]),
+    );
+    expect(member.rowCount).toBe(0);
     const anon = await asRole("anon", (q) =>
       q(`update public.studios set practitioner_capacity_booking_enabled = true where id = $1`, [B.studioId]),
     )
       .then((r) => ({ rows: r.rowCount, err: null as string | null }))
       .catch((e) => ({ rows: null, err: e.code as string }));
     expect(anon.rows === 0 || anon.err != null).toBe(true);
+    // Confirm the flag never changed.
+    const s = await adminQuery(
+      `select practitioner_capacity_booking_enabled b from public.studios where id = $1`,
+      [B.studioId],
+    );
+    expect(s.rows[0].b).toBe(false);
   });
 
   it("service_role can perform the reviewed transition", async () => {
