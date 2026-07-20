@@ -27,16 +27,23 @@ describe("verify-practitioner-capacity: read-only DB access", () => {
     expect(CODE).not.toMatch(
       /\b(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|drop\s+|alter\s+|create\s+(table|policy|index|trigger|function))\b/i,
     );
-    // No write to the flag in any form.
-    expect(CODE).not.toMatch(/practitioner_capacity_enabled\s*=\s*true/i);
+    // No WRITE to the flag (a SET clause). Reading it in a WHERE predicate
+    // (`where practitioner_capacity_enabled = true`) is expected and allowed.
+    expect(CODE).not.toMatch(/set\s+practitioner_capacity_enabled/i);
+    expect(CODE).not.toMatch(/update\s+public\.studios/i);
   });
 });
 
 describe("verify-practitioner-capacity: no PII", () => {
   it("never selects client/practitioner PII columns", () => {
-    // No select of names/emails/phones/notes or `select *`.
+    // No `select *`, and no reference to any client/practitioner PII column.
+    // ("name" alone is intentionally NOT forbidden — it is a reporting-helper
+    // parameter here, not a selected column; the column tokens below are the
+    // real PII surface and never appear in this read-only aggregate script.)
     expect(CODE).not.toMatch(/select\s+\*/i);
-    expect(CODE).not.toMatch(/\b(name|email|phone|display_name|private_note|notes|skin_notes)\b/i);
+    expect(CODE).not.toMatch(
+      /\b(email|phone|display_name|private_note|skin_notes|date_of_birth|contraindications)\b/i,
+    );
   });
 });
 

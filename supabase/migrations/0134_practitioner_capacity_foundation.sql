@@ -136,6 +136,30 @@ alter table public.studio_calendar_reservations
 create index if not exists studio_calendar_reservations_practitioner_idx
   on public.studio_calendar_reservations (practitioner_id);
 
+-- Backward-compat default: any inserter that does NOT specify resource_key
+-- (external code, tests, future call sites) gets studio-wide keying
+-- (resource_key = studio_id) — the pre-0134 semantics. The 0134 trigger writers
+-- always set resource_key explicitly, so this is a no-op for them. Runs BEFORE
+-- the NOT NULL check, so the column stays NOT NULL without breaking such inserts.
+create or replace function public.set_reservation_resource_key_default()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.resource_key is null then
+    new.resource_key := new.studio_id;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace trigger studio_calendar_reservations_resource_key_default_trg
+  before insert on public.studio_calendar_reservations
+  for each row
+  execute function public.set_reservation_resource_key_default();
+
 -- ---------------------------------------------------------------------------
 -- Step 4: widen the upsert arbiter. Fan-out produces N rows per studio-wide
 -- source (one per active practitioner), so (source_kind, source_id) is no
@@ -316,13 +340,24 @@ begin
       v_rk := new.studio_id;
     end if;
 
-    delete from public.studio_calendar_reservations
-      where source_kind = 'appointment' and source_id = new.id;
+    -- Upsert (NOT delete+insert) so a reschedule/move keeps the SAME reservation
+    -- row id — the stable-reservation-identity contract the move RPC relies on.
     insert into public.studio_calendar_reservations
       (studio_id, practitioner_id, resource_key, source_kind, source_id, starts_at, ends_at)
     values
       (new.studio_id, new.practitioner_id, v_rk, 'appointment', new.id,
-       new.starts_at, new.blocked_ends_at);
+       new.starts_at, new.blocked_ends_at)
+    on conflict on constraint studio_calendar_reservations_source_unique
+    do update set
+      studio_id       = excluded.studio_id,
+      practitioner_id = excluded.practitioner_id,
+      starts_at       = excluded.starts_at,
+      ends_at         = excluded.ends_at;
+    -- Clean up a stale row keyed to a PREVIOUS resource_key (practitioner
+    -- reassignment changes v_rk; the upsert above inserts a fresh row, this
+    -- removes the orphan).
+    delete from public.studio_calendar_reservations
+      where source_kind = 'appointment' and source_id = new.id and resource_key <> v_rk;
   else
     delete from public.studio_calendar_reservations
       where source_kind = 'appointment' and source_id = new.id;
@@ -667,7 +702,8 @@ begin
     'public.on_studio_capacity_flag_change()',
     'public.on_practitioner_change_refan()',
     'public.default_eligibility_for_service()',
-    'public.default_eligibility_for_practitioner()'
+    'public.default_eligibility_for_practitioner()',
+    'public.set_reservation_resource_key_default()'
   ]
   loop
     execute format('revoke execute on function %s from public', fn);
