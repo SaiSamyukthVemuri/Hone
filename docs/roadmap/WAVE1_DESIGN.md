@@ -56,17 +56,38 @@ without a local Supabase stack; behaviour is CI-validated.
 
 **Rollback:** test-only additions; revert the two files. No runtime/migration/flag impact.
 
-## PR 2 — SAFE-WILLOW (design; next slice)
+## SAFE-WILLOW — dependency-ordered slice roadmap
 
-**File:** `e2e/safe-willow-contract.spec.ts`, on `seedE2eStudio()` + fake providers.
+SAFE-WILLOW is delivered as a sequence of behavioural-contract slices, each on `seedE2eStudio()`
+(synthetic, local stack, never Willow) + fake providers. Status:
 
-Behavioural contract scenarios (synthetic data), each asserting the approved outcome:
-public booking · intake + consent (signed-consent visibility) · reminders/postcare (Mailpit
-capture, no real send) · calendar + Move appointment · portal access · charting · observation/
-narrative persistence + reload · Before Today treatment memory · treatment-photos metadata ·
-approved payment/refund via **fake Stripe** · records/export · practitioner access · all Willow
-provider gates unchanged. The suite MUST NOT connect to or mutate Willow (enforced by the
-harness's localhost pin + synthetic seed).
+1. **Activation loop — MERGED** (`e2e/safe-willow-contract.spec.ts`, PR #454). book → intake/
+   consent → chart chips+narrative → save → reload persistence → second visit → Before Today.
+2. **Appointment lifecycle — THIS PR** (`e2e/safe-willow-appointment-lifecycle.spec.ts`). Owner
+   Move (same-record / no-duplicate / scheduling-only / tenant-scoped) + owner authorization
+   (non-owner denied) + cancel/reschedule/manage token **resolution** + cross-tenant token
+   isolation. *Deferred within this area to a follow-up:* exercising cancel/reschedule **submit**
+   + immutable policy/evidence snapshots.
+3. **Client portal** — separate auth realm (portal magic-link via Mailpit → own-data-only →
+   rebooking preserves studio context; another synthetic tenant cannot resolve the session).
+   Its own slice because there is no existing portal E2E helper.
+4. **Communications** — reminder + postcare intents; Mailpit delivery; no duplicate sends;
+   consent + opt-out behaviour; **no real email/SMS**.
+5. **Payments** — fake-Stripe card save → charge → refund; test/live mode isolation; persisted
+   Hone canonical state; **analytics failure cannot affect the payment result**.
+6. **Photos & records** — treatment-photo metadata; same-parent ownership; signed-URL behaviour
+   on the local harness; records / print / export consistency.
+7. **Clinical finalization** — enable finalization only on a synthetic tenant; immutable
+   snapshot; direct mutation denied; attributable amendment/correction; observation + narrative
+   agreement after finalization.
+8. **Practitioner access & provider gates** — approved practitioner access; removed practitioner
+   denied; Google / SMS / experimental controls remain off; no worker claims synthetic or Willow
+   work unexpectedly.
+
+Each slice must use synthetic IDs only, deterministic cleanup by captured IDs, and MUST NOT
+connect to or mutate Willow (enforced by the harness localhost pin + synthetic seed). A slice
+that exposes a real P1 defect is documented + classified against the master register and fixed in
+a separate narrowly-scoped PR — the contract is never weakened to make CI green.
 
 ## What Wave 1 does NOT do
 
