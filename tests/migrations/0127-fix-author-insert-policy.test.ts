@@ -31,11 +31,11 @@ describe("0127 — file + repo-max tripwire", () => {
 
   it("is present; the repo-max tripwire now lives in the 0131 test; 0126 + 0125 precede it", () => {
     // The absolute repo-max pin lives in the 0131 test (now 0134 =
-    // practitioner-capacity foundation). Nothing above 0134 may exist yet.
+    // practitioner-capacity foundation). Nothing above 0135 may exist yet.
     expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(3[5-9]|[4-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(3[6-9]|[4-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 
