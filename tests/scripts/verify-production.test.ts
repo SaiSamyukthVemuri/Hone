@@ -97,15 +97,14 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0133 (practitioner Move appointment — the atomic
-    // `practitioner_move_appointment` RPC), on top of 0132 (Google Calendar
-    // B2.3-c1 event-link transitions) and 0131 (B2.4 dual-destination scope). 0133
-    // is additive and is repo-only until its migration-first hosted apply in this
-    // rollout — UNTIL then the live verifier's "Remote migration max" will
-    // (correctly) report expected 0133 vs the current remote (0132), the intended
-    // pending-apply signal. This assertion still fails on the next new migration,
-    // forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0133");
+    // Repo max advances to 0134 (practitioner-capacity foundation — additive
+    // resource_key + default-OFF flag + eligibility), on top of 0133
+    // (practitioner Move appointment RPC). 0134 is additive and is repo-only
+    // until its migration-first hosted apply — UNTIL then the live verifier's
+    // "Remote migration max" will (correctly) report expected 0134 vs the
+    // current remote, the intended pending-apply signal. This assertion still
+    // fails on the next new migration, forcing a conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0134");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

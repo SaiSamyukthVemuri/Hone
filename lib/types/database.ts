@@ -45,6 +45,10 @@ export type Studio = {
   google_calendar_outbound_sync_enabled?: boolean;
   google_calendar_inbound_busy_enabled?: boolean;
   google_calendar_two_way_updates_enabled?: boolean;
+  // Migration 0134 (practitioner-capacity foundation): studio-scoped flag that
+  // enables per-practitioner capacity + parallelism. Default OFF; opt-in per
+  // studio. Optional at the type level for rows loaded via `select *` before 0134.
+  practitioner_capacity_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -261,6 +265,10 @@ export type StudioCalendarReservation = {
   source_id: string;
   starts_at: string;
   ends_at: string;
+  // Migration 0134 (practitioner-capacity foundation): GiST partition key
+  // (studio_id when OFF, practitioner_id when ON) + provenance practitioner_id.
+  resource_key?: string;
+  practitioner_id?: string | null;
 };
 
 export type Service = {
@@ -319,6 +327,10 @@ export type Appointment = {
   cancelled_by: CancelledBy | null;
   created_at: string;
   updated_at: string;
+  // Migration 0134 (practitioner-capacity foundation): denormalized mirror of
+  // the studio capacity flag, maintained by trigger; routes the row into the
+  // studio-wide vs per-practitioner exclusion. Optional for pre-0134 rows.
+  capacity_enabled?: boolean;
   // Migration 0025: email tracking + opaque token used in cancel and
   // reschedule URLs.
   confirmation_sent_at: string | null;
