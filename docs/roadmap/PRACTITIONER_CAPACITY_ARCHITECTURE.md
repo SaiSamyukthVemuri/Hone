@@ -124,9 +124,11 @@ loss.** Detailed below.
 parallel appointments: flipping it OFF rematerializes them into one studio-wide resource,
 which the studio-wide exclusion rejects (`23P01`). Migration 0136 therefore separates the
 concerns into two operator flags — `practitioner_capacity_enabled` (structural model) and
-`practitioner_capacity_booking_enabled` (booking acceptance) — yielding
-Legacy / Configuring / Live / Draining (invalid `capacity=false, booking=true` rejected by a
-CHECK). **The emergency rollback is flipping `booking` OFF (instant; existing parallel
+`practitioner_capacity_booking_enabled` (booking acceptance). The two booleans yield **three
+valid technical states** — `LEGACY` (F/F), `CAPACITY_READY_BOOKING_PAUSED` (T/F), `LIVE` (T/T);
+the invalid `capacity=false, booking=true` is rejected by a CHECK. "Configuring" vs "draining"
+is an *operational* reading of the paused state (reported via indicators like future confirmed
+appointments / retirement blockers), not a distinct persisted state. **The emergency rollback is flipping `booking` OFF (instant; existing parallel
 appointments stay valid; no rematerialization).** *Structural* deactivation is a preflighted,
 service-role-only retirement (`retire_practitioner_capacity`) that fails closed with reason
 codes if parallel data would collide. Dropping the additive columns/table/constraints in

@@ -68,3 +68,50 @@ describe("0136 — structural retirement RPC", () => {
     expect(CODE).not.toMatch(/\b(email|phone|display_name|notes|client_id)\b/i);
   });
 });
+
+describe("0136 — 3B-1 three-state model", () => {
+  it("documents THREE technical states, not four", () => {
+    expect(SQL).toMatch(/CAPACITY_READY_BOOKING_PAUSED/);
+    expect(SQL).toMatch(/THREE\b/i);
+    expect(SQL).not.toMatch(/yield four states/i);
+  });
+});
+
+describe("0136 — 3B-2 capacity-participation predicate (used consistently)", () => {
+  it("defines one named predicate: confirmed OR completed-not-expired", () => {
+    expect(CODE).toMatch(
+      /function public\.appointment_participates_in_capacity\(\s*p_status text,\s*p_blocked_ends_at timestamptz/i,
+    );
+    expect(CODE).toMatch(
+      /p_status = 'confirmed'\s*or \(p_status = 'completed' and p_blocked_ends_at > now\(\)\)/i,
+    );
+  });
+  it("the sync trigger, rematerialize, retire, and blockers ALL use the predicate", () => {
+    const uses = CODE.match(/appointment_participates_in_capacity\(/g) ?? [];
+    // definition + sync + rematerialize + retire(2) + blockers(2) => >= 6 call sites.
+    expect(uses.length).toBeGreaterThanOrEqual(6);
+    // The old confirmed-only overlap literal is gone from the retirement path.
+    expect(CODE).not.toMatch(/a1\.status = 'confirmed' and a2\.status = 'confirmed'/);
+  });
+});
+
+describe("0136 — 3B-3 nonexistent-studio + 3B-4 advisory lock", () => {
+  it("blockers reports studio_exists first", () => {
+    expect(CODE).toMatch(
+      /returns table \(studio_exists boolean, booking_still_enabled boolean, overlapping_appointments int\)/i,
+    );
+    expect(CODE).toMatch(/exists \(select 1 from public\.studios s where s\.id = p_studio_id\)/i);
+  });
+  it("a per-studio transaction advisory lock helper exists and retire takes it first", () => {
+    expect(CODE).toMatch(
+      /function public\.acquire_studio_capacity_lock\(p_studio_id uuid\)[\s\S]*?pg_advisory_xact_lock\(hashtextextended\('studio_capacity:' \|\| p_studio_id::text, 0\)\)/i,
+    );
+    // retire acquires the lock before reading the studio row.
+    const retire = CODE.match(/function public\.retire_practitioner_capacity[\s\S]*?\$\$;/i)?.[0];
+    expect(retire).toMatch(/acquire_studio_capacity_lock\(p_studio_id\)[\s\S]*for update/i);
+  });
+  it("the new helpers are execute-revoked from browser roles", () => {
+    expect(CODE).toContain("public.appointment_participates_in_capacity(text, timestamptz)");
+    expect(CODE).toContain("public.acquire_studio_capacity_lock(uuid)");
+  });
+});

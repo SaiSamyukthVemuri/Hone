@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
-import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
+import { Client } from "pg";
+import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import {
   dropSynthStudio,
   seedSynthStudioB,
@@ -37,13 +38,18 @@ const setCap = (v: boolean) =>
 const setBook = (v: boolean) =>
   adminQuery(`update public.studios set practitioner_capacity_booking_enabled = $2 where id = $1`, [B.studioId, v]);
 
-function insertAppt(practitionerId: string, startsAt: string, endsAt: string) {
+function insertAppt(
+  practitionerId: string,
+  startsAt: string,
+  endsAt: string,
+  status = "confirmed",
+) {
   return adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, practitioner_id, starts_at, ends_at,
         duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
-     values ($1, $2, $3, $4, $5, $6, 60, 0, $6, 'confirmed') returning id`,
-    [randomUUID(), B.studioId, clientB, practitionerId, startsAt, endsAt],
+     values ($1, $2, $3, $4, $5, $6, 60, 0, $6, $7) returning id`,
+    [randomUUID(), B.studioId, clientB, practitionerId, startsAt, endsAt, status],
   );
 }
 
@@ -181,5 +187,88 @@ describe("Part 3B-0: emergency pause vs structural retirement", () => {
     await expect(
       asRole("anon", (q) => q(`select public.practitioner_capacity_retirement_blockers($1)`, [B.studioId])),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+});
+
+describe("Part 3B-2: capacity-participation predicate (preflight == rematerialize)", () => {
+  it("retirement is NOT blocked by expired (historical) completed parallel appointments", async () => {
+    await setCap(true); // Configuring/Draining (booking stays false)
+    // Two overlapping COMPLETED appointments in the PAST for different
+    // practitioners — historical parallel work that must not participate.
+    await insertAppt(B.practitioners[0].practitionerId, "2020-01-01T10:00:00Z", "2020-01-01T11:00:00Z", "completed");
+    await insertAppt(B.practitioners[1].practitionerId, "2020-01-01T10:30:00Z", "2020-01-01T11:30:00Z", "completed");
+
+    // Blockers report zero overlaps (predicate excludes expired completed).
+    const bl = await adminQuery(
+      `select overlapping_appointments o from public.practitioner_capacity_retirement_blockers($1)`,
+      [B.studioId],
+    );
+    expect(bl.rows[0].o).toBe(0);
+    // Retirement succeeds — preflight and rematerialization agree (neither counts
+    // nor re-keys the expired rows), so no studio-wide 23P01.
+    await expect(
+      adminQuery(`select public.retire_practitioner_capacity($1)`, [B.studioId]),
+    ).resolves.toBeTruthy();
+    const s = await adminQuery(
+      `select practitioner_capacity_enabled c from public.studios where id = $1`,
+      [B.studioId],
+    );
+    expect(s.rows[0].c).toBe(false);
+  });
+
+  it("a FUTURE confirmed parallel pair still blocks (predicate includes confirmed)", async () => {
+    await setCap(true);
+    await insertAppt(B.practitioners[0].practitionerId, T10, T11);
+    await insertAppt(B.practitioners[1].practitionerId, T1030, T1130);
+    const bl = await adminQuery(
+      `select overlapping_appointments o from public.practitioner_capacity_retirement_blockers($1)`,
+      [B.studioId],
+    );
+    expect(bl.rows[0].o).toBe(1);
+  });
+});
+
+describe("Part 3B-3: nonexistent-studio preflight is not a safe zero", () => {
+  it("blockers reports studio_exists=false for an unknown studio", async () => {
+    const r = await adminQuery(
+      `select studio_exists e, overlapping_appointments o from public.practitioner_capacity_retirement_blockers($1)`,
+      [randomUUID()],
+    );
+    expect(r.rows[0].e).toBe(false);
+  });
+  it("retirement of an unknown studio raises studio_not_found (P0002)", async () => {
+    await expect(
+      adminQuery(`select public.retire_practitioner_capacity($1)`, [randomUUID()]),
+    ).rejects.toMatchObject({ message: expect.stringContaining("studio_not_found") });
+  });
+});
+
+describe("Part 3B-4: retirement serializes per studio via the advisory lock", () => {
+  it("a second transaction cannot acquire the studio capacity lock while held", async () => {
+    const a = new Client({ connectionString: resolveLocalDbUrl() });
+    const b = new Client({ connectionString: resolveLocalDbUrl() });
+    await a.connect();
+    await b.connect();
+    try {
+      await a.query("begin");
+      await a.query("select public.acquire_studio_capacity_lock($1)", [B.studioId]); // A holds it
+      await b.query("begin");
+      await b.query("set local statement_timeout = '800ms'");
+      // B blocks on the SAME lock -> statement timeout (57014).
+      await expect(
+        b.query("select public.acquire_studio_capacity_lock($1)", [B.studioId]),
+      ).rejects.toMatchObject({ code: "57014" });
+      await b.query("rollback").catch(() => undefined);
+      // A releases on rollback; B can then acquire.
+      await a.query("rollback");
+      await b.query("begin");
+      await expect(
+        b.query("select public.acquire_studio_capacity_lock($1)", [B.studioId]),
+      ).resolves.toBeTruthy();
+      await b.query("rollback");
+    } finally {
+      await a.end();
+      await b.end();
+    }
   });
 });

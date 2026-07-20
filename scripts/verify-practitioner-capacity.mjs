@@ -199,7 +199,10 @@ function checkStateModel() {
         "from public.studios where practitioner_capacity_enabled = true order by id;",
     );
     for (const r of rows) {
-      const state = r.book ? "Live" : "Draining/Configuring";
+      // Only THREE technical states exist; "configuring" vs "draining" is an
+      // operational reading of CAPACITY_READY_BOOKING_PAUSED, surfaced via the
+      // operational indicators (overlaps / blockers), not a distinct DB state.
+      const state = r.book ? "LIVE" : "CAPACITY_READY_BOOKING_PAUSED";
       const overlaps = n(
         scalar(
           "select count(*) as c from public.appointments a1 " +
