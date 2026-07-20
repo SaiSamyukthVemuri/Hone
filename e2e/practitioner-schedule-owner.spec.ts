@@ -4,6 +4,7 @@ import {
   seedE2eMember,
   setStudioCapacityEnabled,
   seedStudioWideDefault,
+  seedPractitionerDefault,
   getPractitionerWeekday,
   type E2eSeed,
 } from "./helpers/seed";
@@ -112,4 +113,21 @@ test("a tampered / unknown practitioner id falls back to Studio default scope", 
   await expect(
     page.getByRole("button", { name: "Customize full week from studio default" }),
   ).toHaveCount(0);
+});
+
+test("rollback: with retained practitioner rows, the flag-OFF page renders studio-wide only (no crash)", async ({
+  page,
+}) => {
+  // Give member A a retained custom Monday (flag still ON), then roll back.
+  await seedPractitionerDefault(seed.studioId, memberA.practitionerId, MON, true, "11:00", "15:00");
+  await setStudioCapacityEnabled(seed.studioId, false);
+
+  await loginAsOwner(page, seed);
+  await page.goto("/settings/availability");
+  // Renders without a mixed-rows crash; flag OFF => no scope selector.
+  await expect(page.getByRole("heading", { name: /^Availability$/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Studio default" })).toHaveCount(0);
+  // The retained practitioner row is untouched by loading the OFF page.
+  const a = await getPractitionerWeekday(seed.studioId, memberA.practitionerId, MON);
+  expect(a?.open_time).toMatch(/^11:00/);
 });

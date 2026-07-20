@@ -261,6 +261,69 @@ describe("Part 2: availability authorization (owner-only RLS + scope guard)", ()
     await expect(insDefault(B.studioId, 1, p)).rejects.toMatchObject({ code: "23514" });
   });
 
+  it("rollback lifecycle: disabling the flag RETAINS practitioner rows; studio-wide-only stays single; re-enable restores", async () => {
+    const p1 = B.practitioners[1].practitionerId;
+    const p2 = B.practitioners[2].practitionerId;
+    // Flag ON (beforeEach). Studio-wide + A + B Monday rows.
+    await insDefault(B.studioId, 1, null);
+    await insDefault(B.studioId, 1, p1);
+    await insDefault(B.studioId, 1, p2);
+    // Studio + practitioner date overrides for the same date.
+    await adminQuery(
+      `insert into public.studio_availability_overrides
+         (studio_id, effective_date, practitioner_id, is_open, open_time, close_time)
+       values ($1,'2031-09-01',null,true,'09:00','17:00'), ($1,'2031-09-01',$2,false,null,null)`,
+      [B.studioId, p1],
+    );
+
+    // Rollback: disable capacity. Rows must be RETAINED (non-destructive).
+    await adminQuery(
+      `update public.studios set practitioner_capacity_enabled = false where id = $1`,
+      [B.studioId],
+    );
+    const retained = await adminQuery(
+      `select count(*)::int as c from public.studio_availability_default where studio_id = $1 and day_of_week = 1`,
+      [B.studioId],
+    );
+    expect(retained.rows[0].c).toBe(3); // studio-wide + A + B all kept
+
+    // The studio-wide-only read (what the safe OFF loader runs) returns exactly
+    // ONE Monday row — no duplicate weekday reaches the UI / slot maybeSingle.
+    const studioWide = await adminQuery(
+      `select count(*)::int as c from public.studio_availability_default
+         where studio_id = $1 and day_of_week = 1 and practitioner_id is null`,
+      [B.studioId],
+    );
+    expect(studioWide.rows[0].c).toBe(1);
+
+    // A studio-wide upsert while OFF still works (Part-1 fix); A/B untouched.
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+       values ($1, 1, null, true, '10:00', '18:00')
+       on conflict (studio_id, day_of_week, practitioner_id)
+       do update set open_time = excluded.open_time, close_time = excluded.close_time`,
+      [B.studioId],
+    );
+    const afterSave = await adminQuery(
+      `select count(*)::int as c from public.studio_availability_default where studio_id = $1 and day_of_week = 1`,
+      [B.studioId],
+    );
+    expect(afterSave.rows[0].c).toBe(3); // studio-wide updated in place; A/B retained
+
+    // Re-enable: A + B customizations are still present (restored).
+    await adminQuery(
+      `update public.studios set practitioner_capacity_enabled = true where id = $1`,
+      [B.studioId],
+    );
+    const restored = await adminQuery(
+      `select practitioner_id from public.studio_availability_default
+         where studio_id = $1 and day_of_week = 1 and practitioner_id is not null`,
+      [B.studioId],
+    );
+    expect(restored.rows.map((r) => r.practitioner_id).sort()).toEqual([p1, p2].sort());
+  });
+
   it("reset deletes ONLY the practitioner's row — studio-wide + other practitioners intact", async () => {
     const p1 = B.practitioners[1].practitionerId;
     const p2 = B.practitioners[2].practitionerId;

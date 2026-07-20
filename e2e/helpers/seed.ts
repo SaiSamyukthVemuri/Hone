@@ -207,6 +207,27 @@ export async function seedStudioWideDefault(
   );
 }
 
+// Seeds a practitioner-scoped weekday row (requires the flag ON + active
+// practitioner — the 0135 guard runs; this runs as superuser so RLS is bypassed
+// but the guard still applies).
+export async function seedPractitionerDefault(
+  studioId: string,
+  practitionerId: string,
+  dayOfWeek: number,
+  isOpen: boolean,
+  openTime: string | null,
+  closeTime: string | null,
+): Promise<void> {
+  await sql(
+    `insert into public.studio_availability_default
+       (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+     values ($1, $2, $3, $4, $5, $6)
+     on conflict (studio_id, day_of_week, practitioner_id)
+     do update set is_open = excluded.is_open, open_time = excluded.open_time, close_time = excluded.close_time`,
+    [studioId, dayOfWeek, practitionerId, isOpen, openTime, closeTime],
+  );
+}
+
 export async function getPractitionerWeekday(
   studioId: string,
   practitionerId: string,

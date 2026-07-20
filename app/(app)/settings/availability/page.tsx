@@ -1,9 +1,7 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import {
-  getAvailabilityDefaults,
   getBlockouts,
-  getOverridesForRange,
   getRecurringBreakRules,
   getUpcomingTimedBlocks,
 } from "@/lib/booking/queries";
@@ -84,10 +82,15 @@ export default async function AvailabilitySettingsPage({
   // never queries practitioner_id / any 0135-only column (getAvailability* use
   // `select *` and no per-practitioner rows exist while the flag is off). ----
   if (!capacityOn) {
+    // Rollback-safe: load ONLY studio-wide rows (practitioner_id IS NULL). A
+    // studio that was enabled then disabled retains practitioner rows; those
+    // must never leak into the studio-wide editor. The safe loader falls back
+    // to the legacy query only if the 0135 column is genuinely absent.
+    const supabase = await createClient();
     const [defaults, overrides, blockouts, recurringRules, timedBlocks] =
       await Promise.all([
-        getAvailabilityDefaults(studio.id),
-        getOverridesForRange(studio.id, today, ninetyDaysOut),
+        studioWideDefaults(supabase, studio.id),
+        studioWideOverrides(supabase, studio.id, today, ninetyDaysOut),
         getBlockouts(studio.id),
         getRecurringBreakRules(studio.id),
         getUpcomingTimedBlocks(studio.id, nowIso),

@@ -6,6 +6,10 @@ import {
   minutesToHHMM,
   utcInstantFromLocal,
 } from "./tz";
+import {
+  getStudioWideDaySafe,
+  getStudioWideOverrideDaySafe,
+} from "./studio-wide-availability";
 
 export type Slot = {
   start: string; // ISO UTC
@@ -210,23 +214,17 @@ export async function getAvailableSlots(
       if (def) applyWindow(def);
     }
   } else {
-    // OFF: exactly today — never references practitioner_id.
-    const { data: overrideRows } = await supabase
-      .from("studio_availability_overrides")
-      .select("is_open, open_time, close_time")
-      .eq("studio_id", studio.id)
-      .eq("effective_date", dateStr)
-      .maybeSingle();
-    if (overrideRows) {
-      applyWindow(overrideRows as OverrideRow);
+    // OFF: studio-wide window only. The migration-order-safe loaders filter
+    // practitioner_id IS NULL, so a rolled-back studio's retained practitioner
+    // rows are ignored (and never make maybeSingle throw on a doubled weekday);
+    // they fall back to the exact legacy query only if the 0135 column is
+    // genuinely absent (pre-apply).
+    const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
+    if (override) {
+      applyWindow(override);
     } else {
-      const { data: defaultRow } = await supabase
-        .from("studio_availability_default")
-        .select("is_open, open_time, close_time")
-        .eq("studio_id", studio.id)
-        .eq("day_of_week", dow)
-        .maybeSingle();
-      if (defaultRow) applyWindow(defaultRow as DefaultRow);
+      const def = await getStudioWideDaySafe(supabase, studio.id, dow);
+      if (def) applyWindow(def);
     }
   }
 

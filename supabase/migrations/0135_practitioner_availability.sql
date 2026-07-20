@@ -10,8 +10,11 @@
 -- overrides the fallback for practitioner P only.
 --
 -- OFF-safety: this migration only ADDS a nullable column + swaps the uniqueness
--- to partial indexes (studio-wide + per-practitioner). Existing rows keep
--- practitioner_id NULL, so a flag-OFF studio (Willow) is byte-for-byte
+-- to ONE `UNIQUE NULLS NOT DISTINCT (studio_id, day_of_week|effective_date,
+-- practitioner_id)` constraint per table (a real constraint a 3-column
+-- ON CONFLICT infers, keeping one studio-wide NULL row + one row per
+-- practitioner). Existing rows keep practitioner_id NULL, so a flag-OFF studio
+-- (Willow) is byte-for-byte
 -- identical. The slot engine's OFF path never reads practitioner_id; only the
 -- flag-ON path does. Blocks/blockouts/breaks are intentionally NOT
 -- per-practitioner in this slice — they remain studio-wide (a whole-studio

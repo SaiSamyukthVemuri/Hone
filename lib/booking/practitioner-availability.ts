@@ -3,6 +3,10 @@ import type {
   StudioAvailabilityDefault,
   StudioAvailabilityOverride,
 } from "@/lib/types/database";
+import {
+  getStudioWideDefaultsSafe,
+  getStudioWideOverridesSafe,
+} from "@/lib/booking/studio-wide-availability";
 
 // Server-side per-practitioner availability model (PR B Part 2). Everything
 // here is reached ONLY when studio.practitioner_capacity_enabled === true; the
@@ -79,19 +83,16 @@ export function resolveScope(
     : { kind: "studio", practitionerId: null };
 }
 
-/** Studio-wide weekly rows (practitioner_id IS NULL). */
+/**
+ * Studio-wide weekly rows (practitioner_id IS NULL). Delegates to the
+ * migration-order-safe loader so a rolled-back studio (retained practitioner
+ * rows) never surfaces mixed rows here.
+ */
 export async function studioWideDefaults(
   supabase: SupabaseClient,
   studioId: string,
 ): Promise<StudioAvailabilityDefault[]> {
-  const { data, error } = await supabase
-    .from("studio_availability_default")
-    .select("*")
-    .eq("studio_id", studioId)
-    .is("practitioner_id", null)
-    .order("day_of_week");
-  if (error) throw new Error(`Failed to load studio hours: ${error.message}`);
-  return (data ?? []) as StudioAvailabilityDefault[];
+  return getStudioWideDefaultsSafe(supabase, studioId);
 }
 
 async function practitionerDefaults(
@@ -116,16 +117,7 @@ export async function studioWideOverrides(
   startDate: string,
   endDate: string,
 ): Promise<StudioAvailabilityOverride[]> {
-  const { data, error } = await supabase
-    .from("studio_availability_overrides")
-    .select("*")
-    .eq("studio_id", studioId)
-    .is("practitioner_id", null)
-    .gte("effective_date", startDate)
-    .lte("effective_date", endDate)
-    .order("effective_date");
-  if (error) throw new Error(`Failed to load overrides: ${error.message}`);
-  return (data ?? []) as StudioAvailabilityOverride[];
+  return getStudioWideOverridesSafe(supabase, studioId, startDate, endDate);
 }
 
 async function practitionerOverrides(
