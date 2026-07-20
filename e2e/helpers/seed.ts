@@ -135,13 +135,16 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
 // pending_invitation + a real local GoTrue user, so the 0081 handle_new_user
 // trigger creates the member practitioner. Used to prove owner-only surfaces deny
 // non-owners. Returns the login email.
-export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
+export async function seedE2eMember(
+  seed: E2eSeed,
+): Promise<{ email: string; displayName: string; practitionerId: string }> {
   const uniq = randomUUID().slice(0, 8);
   const email = `e2e-member-${seed.runId}-${uniq}@harness.local`;
+  const displayName = `E2E Member ${uniq}`;
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)
      values ($1, $2, 'practitioner', $3)`,
-    [seed.studioId, email, `E2E Member ${uniq}`],
+    [seed.studioId, email, displayName],
   );
   const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
     method: "POST",
@@ -166,7 +169,59 @@ export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
   if (rows[0]?.role !== "practitioner") {
     throw new Error("seed failed: member invitation did not create a practitioner");
   }
-  return { email };
+  const pr = await sql<{ id: string }>(
+    `select pr.id from public.practitioners pr
+       join auth.users u on u.id = pr.user_id
+      where pr.studio_id = $1 and lower(u.email) = lower($2)`,
+    [seed.studioId, email],
+  );
+  return { email, displayName, practitionerId: pr[0]!.id };
+}
+
+// PR B Part 2 — E2E helpers for the flag-ON owner schedule UI.
+export async function setStudioCapacityEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  // Runs as the local superuser, so the 0134 operator-only flag guard permits it.
+  await sql(
+    `update public.studios set practitioner_capacity_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
+export async function seedStudioWideDefault(
+  studioId: string,
+  dayOfWeek: number,
+  isOpen: boolean,
+  openTime: string | null,
+  closeTime: string | null,
+): Promise<void> {
+  await sql(
+    `insert into public.studio_availability_default
+       (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+     values ($1, $2, null, $3, $4, $5)
+     on conflict (studio_id, day_of_week, practitioner_id)
+     do update set is_open = excluded.is_open, open_time = excluded.open_time, close_time = excluded.close_time`,
+    [studioId, dayOfWeek, isOpen, openTime, closeTime],
+  );
+}
+
+export async function getPractitionerWeekday(
+  studioId: string,
+  practitionerId: string,
+  dayOfWeek: number,
+): Promise<{ is_open: boolean; open_time: string | null; close_time: string | null } | null> {
+  const rows = await sql<{
+    is_open: boolean;
+    open_time: string | null;
+    close_time: string | null;
+  }>(
+    `select is_open, open_time, close_time from public.studio_availability_default
+      where studio_id = $1 and practitioner_id = $2 and day_of_week = $3`,
+    [studioId, practitionerId, dayOfWeek],
+  );
+  return rows[0] ?? null;
 }
 
 // PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
