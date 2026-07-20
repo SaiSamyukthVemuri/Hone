@@ -78,6 +78,98 @@ describe("0135: studio-wide + per-practitioner availability coexist", () => {
   });
 });
 
+describe("0135: availability upsert compatibility (the ON CONFLICT regression)", () => {
+  // The exact SQL a supabase-js `.upsert(row, { onConflict })` emits, run against
+  // the real migrated schema, so we reproduce the regression and prove the fix
+  // at the persistence layer PostgREST actually uses.
+
+  it("REPRODUCTION: the OLD column-only ON CONFLICT (studio_id, day_of_week) fails 42P10", async () => {
+    // 0135 replaced the plain unique(studio_id, day_of_week) with a
+    // NULLS-NOT-DISTINCT constraint over three columns, so a 2-column arbiter no
+    // longer matches any constraint — the exact break the old action would hit.
+    await expect(
+      adminQuery(
+        `insert into public.studio_availability_default
+           (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+         values ($1, 1, null, true, '09:00', '17:00')
+         on conflict (studio_id, day_of_week)
+         do update set is_open = excluded.is_open`,
+        [B.studioId],
+      ),
+    ).rejects.toMatchObject({ code: "42P10" }); // no matching ON CONFLICT constraint
+  });
+
+  it("FIX: the 3-column ON CONFLICT (…, practitioner_id) INSERTS then UPDATES the studio-wide row (no duplicate)", async () => {
+    const upsert = (open: string, close: string) =>
+      adminQuery(
+        `insert into public.studio_availability_default
+           (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+         values ($1, 2, null, true, $2, $3)
+         on conflict (studio_id, day_of_week, practitioner_id)
+         do update set is_open = excluded.is_open,
+                       open_time = excluded.open_time,
+                       close_time = excluded.close_time`,
+        [B.studioId, open, close],
+      );
+    // First save creates the studio-wide row; second UPDATES it in place.
+    await expect(upsert("09:00", "17:00")).resolves.toBeTruthy();
+    await expect(upsert("10:00", "18:00")).resolves.toBeTruthy();
+    const rows = await adminQuery(
+      `select open_time, close_time from public.studio_availability_default
+         where studio_id = $1 and day_of_week = 2 and practitioner_id is null`,
+      [B.studioId],
+    );
+    expect(rows.rows).toHaveLength(1); // upsert UPDATED — did NOT duplicate
+    expect(String(rows.rows[0].open_time)).toMatch(/^10:00/);
+    expect(String(rows.rows[0].close_time)).toMatch(/^18:00/);
+  });
+
+  it("FIX: overrides upsert the same way (insert then update, no duplicate)", async () => {
+    const upsert = (open: string) =>
+      adminQuery(
+        `insert into public.studio_availability_overrides
+           (studio_id, effective_date, practitioner_id, is_open, open_time, close_time)
+         values ($1, '2031-06-01', null, true, $2, '20:00')
+         on conflict (studio_id, effective_date, practitioner_id)
+         do update set open_time = excluded.open_time`,
+        [B.studioId, open],
+      );
+    await expect(upsert("09:00")).resolves.toBeTruthy();
+    await expect(upsert("11:00")).resolves.toBeTruthy();
+    const rows = await adminQuery(
+      `select open_time from public.studio_availability_overrides
+         where studio_id = $1 and effective_date = '2031-06-01' and practitioner_id is null`,
+      [B.studioId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(String(rows.rows[0].open_time)).toMatch(/^11:00/);
+  });
+
+  it("NULLS NOT DISTINCT: a studio-wide and a per-practitioner row for the same day still upsert independently", async () => {
+    const p = B.practitioners[1].practitionerId;
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+       values ($1, 3, null, true, '09:00', '17:00')
+       on conflict (studio_id, day_of_week, practitioner_id) do update set is_open = excluded.is_open`,
+      [B.studioId],
+    );
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+       values ($1, 3, $2, true, '11:00', '15:00')
+       on conflict (studio_id, day_of_week, practitioner_id) do update set is_open = excluded.is_open`,
+      [B.studioId, p],
+    );
+    const rows = await adminQuery(
+      `select count(*)::int as c from public.studio_availability_default
+         where studio_id = $1 and day_of_week = 3`,
+      [B.studioId],
+    );
+    expect(rows.rows[0].c).toBe(2); // one studio-wide + one per-practitioner
+  });
+});
+
 describe("0135: same-studio composite FK", () => {
   it("a per-practitioner row referencing a practitioner from ANOTHER studio is rejected", async () => {
     const A = await seedSynthStudioA();

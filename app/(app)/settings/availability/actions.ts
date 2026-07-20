@@ -165,11 +165,18 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
       {
         studio_id: studioId,
         day_of_week: dow,
+        // Studio-wide scope. Migration 0135 keys uniqueness on
+        // (studio_id, day_of_week, practitioner_id) via UNIQUE NULLS NOT
+        // DISTINCT, so the studio-wide row must send an explicit NULL and the
+        // conflict target must name all three columns (a column-only target
+        // cannot infer the constraint). Per-practitioner writes (PR B owner UI)
+        // send a validated practitioner_id instead.
+        practitioner_id: null,
         is_open: isOpen,
         open_time: isOpen ? open : null,
         close_time: isOpen ? close : null,
       },
-      { onConflict: "studio_id,day_of_week" },
+      { onConflict: "studio_id,day_of_week,practitioner_id" },
     );
   if (error) throw new Error(`Failed to save: ${error.message}`);
   revalidatePath("/settings/availability");
@@ -183,6 +190,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
   const rows: {
     studio_id: string;
     day_of_week: number;
+    practitioner_id: string | null;
     is_open: boolean;
     open_time: string | null;
     close_time: string | null;
@@ -201,6 +209,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
     rows.push({
       studio_id: studioId,
       day_of_week: dow,
+      practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
       is_open: isOpen,
       open_time: isOpen ? open : null,
       close_time: isOpen ? close : null,
@@ -211,7 +220,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
   for (const row of rows) {
     const { error } = await supabase
       .from("studio_availability_default")
-      .upsert(row, { onConflict: "studio_id,day_of_week" });
+      .upsert(row, { onConflict: "studio_id,day_of_week,practitioner_id" });
     if (error)
       throw new Error(`Failed to save weekly defaults: ${error.message}`);
   }
@@ -241,12 +250,13 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
       {
         studio_id: studioId,
         effective_date: effectiveDate,
+        practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
         is_open: isOpen,
         open_time: isOpen ? open : null,
         close_time: isOpen ? close : null,
         note,
       },
-      { onConflict: "studio_id,effective_date" },
+      { onConflict: "studio_id,effective_date,practitioner_id" },
     );
   if (error)
     throw new Error(`Failed to save override: ${error.message}`);

@@ -87,7 +87,13 @@ describe("OFF-safety: capacity off ignores practitionerId entirely", () => {
     const slots = await getAvailableSlots(
       mock({
         defaults: [open(null, "10:00", "17:00"), open(P1, "08:00", "20:00")],
-        reservationsByKey: { [STUDIO]: [], [P1]: [] },
+        // P1's timeline has a 10:00 booking; the studio-wide timeline is empty.
+        // The OFF path must read the STUDIO timeline (studio_id), NOT P1's
+        // resource_key — so it must NOT see this booking.
+        reservationsByKey: {
+          [STUDIO]: [],
+          [P1]: [{ starts_at: localISO("10:00"), ends_at: localISO("11:00") }],
+        },
       }),
       studio({ on: false }),
       DATE,
@@ -95,7 +101,8 @@ describe("OFF-safety: capacity off ignores practitionerId entirely", () => {
       undefined,
       P1, // passed, but ignored because the flag is off
     );
-    // Studio-wide 10–17 (hourly), NOT the practitioner's 08–20.
+    // Studio-wide 10–17 (hourly), NOT the practitioner's 08–20 window; and the
+    // 10:00 slot is OPEN (OFF read the empty studio timeline, not P1's booking).
     expect(starts(slots)).toContain(localISO("10:00"));
     expect(starts(slots)).not.toContain(localISO("08:00"));
     expect(starts(slots)).not.toContain(localISO("19:00"));

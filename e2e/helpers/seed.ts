@@ -344,6 +344,29 @@ export async function setStudioCorrectionsEnabled(
   );
 }
 
+// Reads the persisted weekly default availability rows (studio-wide +
+// per-practitioner). Used by the PR-B availability-save compatibility contract
+// to assert the real server action actually persisted through PostgREST.
+export async function getStudioWeeklyDefaults(
+  studioId: string,
+): Promise<
+  Array<{
+    day_of_week: number;
+    is_open: boolean;
+    open_time: string | null;
+    close_time: string | null;
+    practitioner_id: string | null;
+  }>
+> {
+  return sql(
+    `select day_of_week, is_open, open_time, close_time, practitioner_id
+       from public.studio_availability_default
+      where studio_id = $1
+      order by day_of_week`,
+    [studioId],
+  );
+}
+
 // Google Calendar — Phase A. Toggle the studio-scoped connection flag so the
 // e2e can exercise the flag gate (card hidden when OFF, shown when ON).
 export async function setStudioGoogleCalendarConnectionEnabled(
