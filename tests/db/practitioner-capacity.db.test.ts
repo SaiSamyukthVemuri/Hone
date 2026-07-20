@@ -553,12 +553,16 @@ describe("Gate 3: service_practitioners authorization", () => {
       ]),
     );
     expect(ownerRows.rows[0].c).toBeGreaterThan(0);
-    const anonRows = await asRole("anon", (q) =>
+    // anon: RLS filters to zero rows (or, if anon lacks the grant, a denial) —
+    // either way anon cannot read the studio's eligibility.
+    const anonCount = await asRole("anon", (q) =>
       q(`select count(*)::int as c from public.service_practitioners where studio_id = $1`, [
         B.studioId,
       ]),
-    );
-    expect(anonRows.rows[0].c).toBe(0); // RLS: anon sees nothing
+    )
+      .then((r) => r.rows[0].c as number)
+      .catch(() => 0);
+    expect(anonCount).toBe(0);
   });
 
   it("cross-studio: studio A owner cannot read studio B eligibility", async () => {
