@@ -257,3 +257,73 @@ draft PRs.
 Then Part 4 (3-practitioner E2E on synthetic Studio B), Part 5 (feature controls + no-PII
 verifier), Part 6 (gates). **Stop before merging PR A, B, or C.** Final recommendation is
 for PR A only.
+
+---
+
+## Final pre-merge gates (PR #457)
+
+### Gate 1 — the capacity flag is operator-controlled, not tenant-writable
+
+`studios` has a row-level owner-UPDATE policy (`"studios: owners update"`, 0001), and RLS
+cannot restrict columns, so an owner could otherwise `UPDATE studios SET
+practitioner_capacity_enabled = true` via a direct table write (UI absence is not
+protection). 0134 adds a **SECURITY INVOKER** `BEFORE UPDATE OF practitioner_capacity_enabled`
+guard (`guard_capacity_flag_activation`) that raises `42501` when the value changes and
+`current_user IN ('anon','authenticated')`. Result: anon / non-owner → 0 rows (RLS); owner →
+`42501` (guard); service role / operator → allowed. Activation stays a reviewed operator action.
+
+### Gate 2 — SECURITY DEFINER helpers are not browser-callable
+
+Every mutation-capable / trigger function 0134 creates is `EXECUTE`-revoked from
+`public`, `anon`, and `authenticated` (Step 11 loop): `set_appointment_capacity_enabled`,
+`studio_capacity_enabled`, `fanout_studio_wide_reservation`, the four
+`sync_*_to_calendar_reservation` mirrors, `rematerialize_studio_reservations`,
+`on_studio_capacity_flag_change`, `on_practitioner_change_refan`,
+`default_eligibility_for_service/_practitioner`, `set_reservation_resource_key_default`, and
+both guards. Trigger functions keep firing regardless (trigger execution does not check the
+invoker's EXECUTE privilege), but no browser role can call them directly — proven by DB tests
+that get `42501` calling `rematerialize`/`fanout`/`studio_capacity_enabled` as `authenticated`/
+`anon`. Definer helpers are `SECURITY DEFINER` with `search_path = pg_catalog, pg_temp`; the
+Gate-1 guard is deliberately INVOKER so it sees the real caller.
+
+### Gate 3 — `service_practitioners` authorization
+
+RLS on; **member/owner SELECT only, no browser write policy** — writes are service-role /
+definer-trigger only until PR B ships the reviewed owner-managed eligibility contract.
+Same-studio enforced by composite FKs to the 0032 companion uniques. A `BEFORE INSERT` guard
+rejects marking an **inactive** practitioner eligible (`23514`); the backfill + default
+triggers only ever add active practitioners. Removal is explicit (a practitioner deactivated
+after being eligible keeps existing rows; hard-delete cascades via the composite FK).
+
+### Gate 4 — migration apply impact (real migration, not "just metadata")
+
+0134 takes `EXCLUSIVE` locks on `studio_calendar_reservations` + `appointments`, drops/recreates
+two GiST exclusions, adds columns, and backfills derived fields — treat as a real production
+migration.
+
+- **Current prod size** (read-only, 2026-07-20): appointments **84** (42 confirmed),
+  `studio_calendar_reservations` **74**, studios **3**, active practitioners **3**, services
+  **9**; hosted migration max **0133** (0134 not applied).
+- **Work done in-txn:** backfill `resource_key = studio_id` (74 rows), `capacity_enabled = false`
+  (84 rows), `service_practitioners` (9 services × active practitioners), + rebuild two GiST
+  exclusions over ~74/84 rows. `btree_gist` already installed.
+- **Estimated lock duration:** sub-second at current size; the GiST rebuilds dominate and are
+  trivial at this scale. Even at 100× (~8k appts / 7k reservations) it stays within a few
+  seconds. Constraint/index build time is negligible.
+- **Live-booking impact while locked:** `EXCLUSIVE` mode allows plain SELECTs but blocks
+  concurrent INSERT/UPDATE/DELETE (new bookings, moves, blocks) for the lock's duration —
+  sub-second here, so booking writes queue briefly then proceed. Apply in an off-peak,
+  studio-local low-traffic window regardless.
+- **Timeout / abort plan:** apply the session with a bounded `lock_timeout` (e.g. 5s) and
+  `statement_timeout` (e.g. 30s) so it fails fast instead of queueing behind a long lock. Abort
+  criteria: `lock_timeout` trips (couldn't acquire the exclusive lock) → retry in a quieter
+  window; any statement error → the single `begin…commit` rolls back atomically (no partial
+  state) → investigate before retry.
+- **Post-apply verification:** run `scripts/verify-practitioner-capacity.mjs` (dormancy,
+  OFF-parity, integrity, orphans, eligibility coverage, per-practitioner overlaps); confirm
+  hosted migration max = 0134, every studio flag `false`, zero orphan reservations, and every
+  reservation `resource_key = studio_id`.
+
+**Merge ≠ apply ≠ activate.** Merging PR #457 lands the code only; hosted apply is a separately
+authorized, migration-first window (per [[hone-prod-migration-process]]), and enabling the flag
+for any studio is a further separately authorized step gated behind PR B + PR C.

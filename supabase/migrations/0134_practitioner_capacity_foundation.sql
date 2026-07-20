@@ -55,6 +55,38 @@ alter table public.studios
   add column if not exists practitioner_capacity_enabled boolean not null default false;
 
 -- ---------------------------------------------------------------------------
+-- Step 1b: the flag is OPERATOR-CONTROLLED. The studios UPDATE RLS policy
+-- ("studios: owners update", 0001) is row-level, so it otherwise lets a studio
+-- owner write ANY studios column — including this one — via a direct table
+-- update. Activation must instead be a reviewed service-role/operator action
+-- (and, later, a reviewed PR-B/PR-C activation path). This SECURITY INVOKER
+-- guard (invoker so current_user is the REAL caller, not the function owner)
+-- rejects any change to the flag by a browser role (anon / authenticated,
+-- studio owners included). Service role and direct operator connections are
+-- unaffected, as are updates that do not change the flag.
+create or replace function public.guard_capacity_flag_activation()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.practitioner_capacity_enabled is distinct from old.practitioner_capacity_enabled
+     and current_user in ('anon', 'authenticated') then
+    raise exception
+      'practitioner_capacity_enabled is operator-controlled; role % may not change it',
+      current_user
+      using errcode = '42501';  -- insufficient_privilege
+  end if;
+  return new;
+end;
+$$;
+
+create or replace trigger studios_guard_capacity_flag_trg
+  before update of practitioner_capacity_enabled on public.studios
+  for each row
+  execute function public.guard_capacity_flag_activation();
+
+-- ---------------------------------------------------------------------------
 -- Step 2: denormalized capacity mirror on appointments + integrity CHECK.
 -- The mirror lets the appointment-level partial exclusions be evaluated purely
 -- from the row (partial-index predicates cannot join to studios). A BEFORE
@@ -608,18 +640,46 @@ create index if not exists service_practitioners_practitioner_idx
 
 alter table public.service_practitioners enable row level security;
 
+-- PR-A posture: SERVICE-ROLE-ONLY writes. Eligibility rows are maintained by
+-- the SECURITY DEFINER default-eligibility triggers + the migration backfill;
+-- NO browser role (studio owner included) may INSERT/UPDATE/DELETE here until
+-- PR B ships the reviewed owner-managed eligibility contract. Owners + members
+-- may READ their own studio's eligibility. RLS with no write policy denies all
+-- browser writes; the definer triggers and service role bypass RLS.
 drop policy if exists "service_practitioners_owner_all" on public.service_practitioners;
-create policy "service_practitioners_owner_all"
-  on public.service_practitioners
-  for all
-  using (public.is_studio_owner(studio_id))
-  with check (public.is_studio_owner(studio_id));
-
 drop policy if exists "service_practitioners_member_select" on public.service_practitioners;
 create policy "service_practitioners_member_select"
   on public.service_practitioners
   for select
   using (public.is_studio_member(studio_id));
+
+-- Inactive practitioners can never be NEWLY marked eligible. Fires on INSERT
+-- only, so a practitioner deactivated AFTER being made eligible keeps their
+-- existing rows (removal is a separate, explicit action). The definer default-
+-- eligibility triggers and the backfill only ever insert active practitioners,
+-- so this is a fail-closed guard for any direct (operator) insert.
+create or replace function public.guard_service_practitioner_active()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if not exists (
+    select 1 from public.practitioners p
+    where p.id = new.practitioner_id and p.active = true
+  ) then
+    raise exception 'cannot mark inactive practitioner % eligible for a service', new.practitioner_id
+      using errcode = '23514';  -- check_violation
+  end if;
+  return new;
+end;
+$$;
+
+create or replace trigger service_practitioners_active_guard_trg
+  before insert on public.service_practitioners
+  for each row
+  execute function public.guard_service_practitioner_active();
 
 -- Backfill = every ACTIVE practitioner eligible for every service in the same
 -- studio. This is behaviourally identical to today, where booking ignores
@@ -703,7 +763,9 @@ begin
     'public.on_practitioner_change_refan()',
     'public.default_eligibility_for_service()',
     'public.default_eligibility_for_practitioner()',
-    'public.set_reservation_resource_key_default()'
+    'public.set_reservation_resource_key_default()',
+    'public.guard_capacity_flag_activation()',
+    'public.guard_service_practitioner_active()'
   ]
   loop
     execute format('revoke execute on function %s from public', fn);

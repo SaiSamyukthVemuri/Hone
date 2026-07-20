@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, afterAll, describe, expect, it } from "vitest";
-import { adminQuery, closePool } from "./helpers/harness";
+import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 import {
   dropSynthStudio,
   seedSynthStudioA,
@@ -424,5 +424,183 @@ describe("PR A: integrity + activation lifecycle", () => {
     await expect(
       adminQuery(`delete from public.practitioners where id = $1`, [p]),
     ).resolves.toBeTruthy();
+  });
+});
+
+// ===========================================================================
+// Final pre-merge gates — access control (Gates 1/2/3).
+// ===========================================================================
+
+const ownerUser = (s: SynthStudio) =>
+  s.practitioners.find((p) => p.role === "owner")!.userId;
+const memberUser = (s: SynthStudio) =>
+  s.practitioners.find((p) => p.role === "practitioner")!.userId;
+
+describe("Gate 1: capacity flag is operator-controlled (not tenant-writable)", () => {
+  const setFlag = (q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null }>) =>
+    q(`update public.studios set practitioner_capacity_enabled = true where id = $1`, [
+      B.studioId,
+    ]);
+
+  it("owner's direct flag UPDATE is rejected by the guard (42501)", async () => {
+    await expect(
+      asUser(ownerUser(B), (q) => setFlag(q)),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("a non-owner practitioner's flag UPDATE matches zero rows (RLS)", async () => {
+    const r = await asUser(memberUser(B), (q) => setFlag(q));
+    expect(r.rowCount).toBe(0);
+  });
+
+  it("anon cannot set the flag (denied or zero rows)", async () => {
+    const outcome = await asRole("anon", (q) => setFlag(q))
+      .then((r) => ({ rows: r.rowCount, err: null as string | null }))
+      .catch((e) => ({ rows: null, err: e.code as string }));
+    expect(outcome.rows === 0 || outcome.err != null).toBe(true);
+  });
+
+  it("service_role CAN set the flag", async () => {
+    const r = await asRole("service_role", (q) => setFlag(q));
+    expect(r.rowCount).toBe(1); // rolled back by asRole; proves the write is permitted
+  });
+
+  it("no browser attempt leaked through — the flag is still false", async () => {
+    // Run the three browser attempts, then confirm the persisted value.
+    await asUser(ownerUser(B), (q) => setFlag(q)).catch(() => undefined);
+    await asUser(memberUser(B), (q) => setFlag(q)).catch(() => undefined);
+    await asRole("anon", (q) => setFlag(q)).catch(() => undefined);
+    const v = await adminQuery(
+      `select practitioner_capacity_enabled from public.studios where id = $1`,
+      [B.studioId],
+    );
+    expect(v.rows[0].practitioner_capacity_enabled).toBe(false);
+  });
+});
+
+describe("Gate 2: SECURITY DEFINER helpers are not browser-callable", () => {
+  it("authenticated cannot execute rematerialize_studio_reservations (42501)", async () => {
+    await expect(
+      asRole("authenticated", (q) =>
+        q(`select public.rematerialize_studio_reservations($1::uuid)`, [B.studioId]),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("anon cannot execute fanout_studio_wide_reservation (42501)", async () => {
+    await expect(
+      asRole("anon", (q) =>
+        q(
+          `select public.fanout_studio_wide_reservation($1::uuid, 'timed_block', gen_random_uuid(), now(), now())`,
+          [B.studioId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("authenticated cannot probe studio_capacity_enabled directly (42501)", async () => {
+    await expect(
+      asRole("authenticated", (q) =>
+        q(`select public.studio_capacity_enabled($1::uuid)`, [B.studioId]),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+});
+
+describe("Gate 3: service_practitioners authorization", () => {
+  it("owner cannot INSERT eligibility (service-role-only until PR B)", async () => {
+    const svc = randomUUID();
+    await adminQuery(
+      `insert into public.services (id, studio_id, name) values ($1, $2, 'g3 svc')`,
+      [svc, B.studioId],
+    );
+    await expect(
+      asUser(ownerUser(B), (q) =>
+        q(
+          `insert into public.service_practitioners (studio_id, service_id, practitioner_id) values ($1,$2,$3)`,
+          // A VALID active practitioner so the row passes the BEFORE active-guard
+          // and the composite FKs; RLS (no write policy) is then the failing check.
+          [B.studioId, svc, B.practitioners[0].practitionerId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("a non-owner practitioner cannot INSERT eligibility", async () => {
+    const svc = randomUUID();
+    await adminQuery(
+      `insert into public.services (id, studio_id, name) values ($1, $2, 'g3 svc2')`,
+      [svc, B.studioId],
+    );
+    await expect(
+      asUser(memberUser(B), (q) =>
+        q(
+          `insert into public.service_practitioners (studio_id, service_id, practitioner_id) values ($1,$2,$3)`,
+          [B.studioId, svc, B.practitioners[1].practitionerId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("owner/member may READ their own studio's eligibility; anon cannot", async () => {
+    await adminQuery(
+      `insert into public.services (id, studio_id, name) values ($1, $2, 'g3 read')`,
+      [randomUUID(), B.studioId],
+    );
+    const ownerRows = await asUser(ownerUser(B), (q) =>
+      q(`select count(*)::int as c from public.service_practitioners where studio_id = $1`, [
+        B.studioId,
+      ]),
+    );
+    expect(ownerRows.rows[0].c).toBeGreaterThan(0);
+    const anonRows = await asRole("anon", (q) =>
+      q(`select count(*)::int as c from public.service_practitioners where studio_id = $1`, [
+        B.studioId,
+      ]),
+    );
+    expect(anonRows.rows[0].c).toBe(0); // RLS: anon sees nothing
+  });
+
+  it("cross-studio: studio A owner cannot read studio B eligibility", async () => {
+    const A = await seedSynthStudioA();
+    try {
+      await adminQuery(
+        `insert into public.services (id, studio_id, name) values ($1, $2, 'g3 xstudio')`,
+        [randomUUID(), B.studioId],
+      );
+      const rows = await asUser(ownerUser(A), (q) =>
+        q(`select count(*)::int as c from public.service_practitioners where studio_id = $1`, [
+          B.studioId,
+        ]),
+      );
+      expect(rows.rows[0].c).toBe(0);
+    } finally {
+      await dropSynthStudio(A);
+    }
+  });
+
+  it("an inactive practitioner cannot be newly marked eligible (23514)", async () => {
+    const p = B.practitioners[2].practitionerId;
+    // Deactivate FIRST, so the default-eligibility trigger skips p entirely and
+    // there is no pre-existing (svc, p) row to confound the guard.
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [p]);
+    const svc = randomUUID();
+    await adminQuery(
+      `insert into public.services (id, studio_id, name) values ($1, $2, 'g3 inactive')`,
+      [svc, B.studioId],
+    );
+    // The default trigger added the 2 ACTIVE practitioners, not p.
+    const seeded = await adminQuery(
+      `select count(*)::int as c from public.service_practitioners where service_id = $1`,
+      [svc],
+    );
+    expect(seeded.rows[0].c).toBe(2);
+    // Even an operator (service-role/postgres) direct insert of p is fail-closed.
+    await expect(
+      adminQuery(
+        `insert into public.service_practitioners (studio_id, service_id, practitioner_id) values ($1,$2,$3)`,
+        [B.studioId, svc, p],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
   });
 });
