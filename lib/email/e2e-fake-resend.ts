@@ -93,12 +93,14 @@ export type MinimalEmailTransport = {
   };
 };
 
+// In-memory record of recipients that have already been failed once, so the
+// `failonce` mode can succeed on retry. MODULE-scoped (not per-transport): the
+// single E2E Next server process keeps it across requests within a run, and
+// getResendTransport() constructs a fresh transport per send. Holds only the
+// mode-prefixed harness address (never real recipient content).
+const failedOnceRecipients = new Set<string>();
+
 export function createFakeResendTransport(): MinimalEmailTransport {
-  // In-memory record of recipients that have already been failed once, so the
-  // `failonce` mode can succeed on retry. Module-scoped: the single E2E Next
-  // server process keeps it across requests within a run. Holds only the mode-
-  // prefixed harness address (never real recipient content).
-  const failedOnce = new Set<string>();
   return {
     emails: {
       // Records nothing that could leak (no recipient/content persisted beyond
@@ -113,8 +115,8 @@ export function createFakeResendTransport(): MinimalEmailTransport {
           return { error: { message: "fake resend rejected" } };
         }
         if (mode === "failonce") {
-          if (!failedOnce.has(to)) {
-            failedOnce.add(to);
+          if (!failedOnceRecipients.has(to)) {
+            failedOnceRecipients.add(to);
             throw new Error("fake resend network exception (first attempt)");
           }
           return { error: null };
