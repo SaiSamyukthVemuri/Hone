@@ -11,9 +11,14 @@ import {
   reopenOnboarding,
   completeOnboarding,
   markCelebrated,
+  getOnboardingRow,
+  toPersisted,
 } from "@/lib/onboarding/state";
+import { getOnboardingSignals } from "@/lib/onboarding/signals";
 import {
   ONBOARDING_STEP_ORDER,
+  buildOnboardingModel,
+  type OnboardingModel,
   type OnboardingStepKey,
 } from "@/lib/onboarding/steps";
 
@@ -25,7 +30,17 @@ import {
 
 export type OnboardingActionResult = { ok: boolean; error?: string };
 
-type OwnerCtx = { studioId: string; practitionerId: string };
+// The full studio row is carried so completion actions can rebuild the live
+// onboarding model server-side (getOnboardingSignals needs the studio, not just
+// its id) rather than trusting the client's claim that setup is finished.
+type OwnerStudio = Awaited<
+  ReturnType<typeof getCurrentPractitionerWithStudio>
+>["studio"];
+type OwnerCtx = {
+  studioId: string;
+  practitionerId: string;
+  studio: OwnerStudio;
+};
 
 const NOT_ALLOWED: OnboardingActionResult = {
   ok: false,
@@ -36,7 +51,27 @@ async function requireOnboardingOwner(): Promise<OwnerCtx | null> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") return null;
   if (studio.onboarding_v2_enabled !== true) return null; // fail closed
-  return { studioId: studio.id, practitionerId: practitioner.id };
+  return { studioId: studio.id, practitionerId: practitioner.id, studio };
+}
+
+// Rebuild the authoritative onboarding model from REAL signals + the persisted
+// row — the same assembly the dashboard renders. Completion decisions are made
+// from this, never from the client, so a forged "I'm done" call cannot mark an
+// unbookable studio complete or fire the celebration early. Returns the model
+// plus the persisted completed_at (to distinguish the FIRST completion
+// transition from an idempotent repeat).
+async function loadLiveModel(
+  ctx: OwnerCtx,
+): Promise<{ model: OnboardingModel; alreadyCompletedAt: string | null }> {
+  const [signals, row] = await Promise.all([
+    getOnboardingSignals(ctx.studio),
+    getOnboardingRow(ctx.studioId),
+  ]);
+  const persisted = toPersisted(row);
+  return {
+    model: buildOnboardingModel(signals, persisted),
+    alreadyCompletedAt: persisted.completedAt,
+  };
 }
 
 function isStepKey(value: string): value is OnboardingStepKey {
@@ -80,15 +115,35 @@ export async function skipPaymentsAction(): Promise<OnboardingActionResult> {
 }
 
 // Acknowledge the success step -> onboarding complete + wizard_completed event.
+// Server-authoritative: the required data steps (service + availability +
+// bookable) must ACTUALLY be green in the live model, so a client that calls
+// this early — or a replayed/forged request — cannot stamp completion on an
+// unbookable studio. The analytics event fires ONCE, only on the first real
+// transition from not-completed to completed (a repeat call is an idempotent
+// no-op that emits nothing).
 export async function completeOnboardingAction(): Promise<OnboardingActionResult> {
   const ctx = await requireOnboardingOwner();
   if (!ctx) return NOT_ALLOWED;
+
+  const { model, alreadyCompletedAt } = await loadLiveModel(ctx);
+  if (!model.requiredComplete) {
+    // Setup isn't actually finished — refuse to record completion.
+    return { ok: false, error: "not_ready" };
+  }
+
   const res = await completeOnboarding(ctx.studioId);
-  captureServerEvent({
-    actor: { kind: "user", id: ctx.practitionerId },
-    event: "onboarding_wizard_completed",
-    properties: { studio_id: ctx.studioId },
-  });
+  if (!res.ok) return res;
+
+  // Emit only when THIS call performed the first transition (persisted
+  // completed_at was previously unset). Idempotent repeats stay silent.
+  if (!alreadyCompletedAt) {
+    captureServerEvent({
+      actor: { kind: "user", id: ctx.practitionerId },
+      event: "onboarding_wizard_completed",
+      properties: { studio_id: ctx.studioId },
+    });
+  }
+
   revalidatePath("/dashboard");
   return res;
 }
@@ -111,10 +166,20 @@ export async function reopenOnboardingAction(): Promise<OnboardingActionResult> 
   return res;
 }
 
-// The one-time celebration has been shown — never fire it again.
+// The one-time celebration has been shown — never fire it again. Guarded by the
+// live model: the celebration is only ever suppressible once required setup is
+// genuinely green (a stray call on an incomplete studio must NOT consume the
+// one-time stamp, or the owner would never see their celebration). markCelebrated
+// is itself idempotent, so a legitimate repeat is a harmless no-op.
 export async function markCelebrationShownAction(): Promise<OnboardingActionResult> {
   const ctx = await requireOnboardingOwner();
   if (!ctx) return NOT_ALLOWED;
+
+  const { model } = await loadLiveModel(ctx);
+  if (!model.requiredComplete) {
+    return { ok: false, error: "not_ready" };
+  }
+
   const res = await markCelebrated(ctx.studioId);
   revalidatePath("/dashboard");
   return res;
