@@ -200,6 +200,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/admin/studios/[id]/actions.ts",
+    purpose: "Operator-only admin console surface (resend onboarding welcome email).",
+    why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Reads the target studio + stamps studio_onboarding via service role for any studio, so service-role is required.",
+    scopeGuard: "isAdmin",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
