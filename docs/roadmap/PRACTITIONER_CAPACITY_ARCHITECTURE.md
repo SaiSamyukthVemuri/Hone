@@ -271,6 +271,21 @@ Then Part 4 (3-practitioner E2E on synthetic Studio B), Part 5 (feature controls
 verifier), Part 6 (gates). **Stop before merging PR A, B, or C.** Final recommendation is
 for PR A only.
 
+### Scoped calendar sources (PR B 3C–3E)
+
+Timed blocks and recurring break rules/occurrences carry an optional `practitioner_id`
+(`NULL` = studio-wide; `= P` = only P; full-day blockouts stay studio-wide). One canonical
+`sync_scoped_calendar_reservation` materializes every source by the state table:
+**Legacy (capacity OFF) + studio-wide → one studio-keyed row; Legacy + scoped → ZERO rows
+(retained but DORMANT — never widened to a studio-wide closure); capacity ON + studio-wide →
+fan out to every practitioner; capacity ON + scoped → one `resource_key = P` row.** It
+delete-then-inserts inside the source transaction and does not swallow the GiST `23P01`, so any
+scope/time transition is atomic and a conflict rolls the source + shadow back together. Every
+structural-reservation mutation (source writes via the guard, `materialize_*`/`update_*` RPCs,
+and `rematerialize_studio_reservations`) first takes the shared per-studio transaction advisory
+lock (0136), so a scoped source cannot appear between a retirement preflight and deactivation.
+On re-enable, retained scoped sources rematerialize under their original practitioner scope.
+
 ---
 
 ## Final pre-merge gates (PR #457)
