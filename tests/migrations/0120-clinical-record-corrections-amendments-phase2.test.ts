@@ -25,7 +25,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
     // (per-practitioner availability). Bump this tripwire consciously
     // when a new migration lands.
-    expect(maxNum).toBe(144); // 0144 = move target-integrity + legacy wrapper
+    expect(maxNum).toBe(145); // 0145 = move preserve-target race fix
     expect(FILE).toMatch(/^0120_/);
   });
 });

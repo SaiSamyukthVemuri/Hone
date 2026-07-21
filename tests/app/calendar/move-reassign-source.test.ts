@@ -15,9 +15,11 @@ describe("move action — routes through move_or_reassign_appointment (0143)", (
     expect(MOVE).toMatch(/\.rpc\("move_or_reassign_appointment"/);
     expect(MOVE).not.toMatch(/\.rpc\("practitioner_move_appointment"/);
   });
-  it("passes an explicit actor + target (current practitioner for a time-only move)", () => {
+  it("passes the actor + a NULL target so a time-only move preserves the current practitioner race-safely", () => {
     expect(MOVE).toMatch(/p_actor_practitioner_id: practitioner\.id/);
-    expect(MOVE).toMatch(/p_target_practitioner_id: appt\.practitioner_id/);
+    // 0145: NULL target = preserve current, resolved from the LOCKED row (no
+    // pre-lock read → no stale-target race that could become a reassignment).
+    expect(MOVE).toMatch(/p_target_practitioner_id: null/);
   });
   it("maps the new result codes (booking_paused / eligibility) to safe copy", () => {
     for (const code of ["booking_paused", "invalid_practitioner", "not_eligible", "reassigned"]) {

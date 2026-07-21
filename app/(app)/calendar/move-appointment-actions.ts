@@ -228,7 +228,10 @@ export async function moveAppointmentAction(input: {
     p_appointment_id: appointmentId,
     p_studio_id: studio.id,
     p_actor_practitioner_id: practitioner.id,
-    p_target_practitioner_id: appt.practitioner_id,
+    // NULL = preserve the CURRENT practitioner, resolved inside the command from
+    // the LOCKED appointment row. A time-only move can never become an
+    // unintended reassignment under a concurrent reassign (migration 0145).
+    p_target_practitioner_id: null,
     p_expected_starts_at: expectedStartsAt,
     p_expected_ends_at: expectedEndsAt,
     p_new_starts_at: newStart.toISOString(),
