@@ -58,7 +58,12 @@ function bookingResultMessage(result: string | undefined): string {
       return "That time is in the past. Please choose a future time.";
     case "invalid_duration":
       return "That appointment length isn't valid.";
+    case "practitioner_closed":
+      return "That practitioner isn't working at that time.";
+    case "outside_availability":
+      return "That time is outside the practitioner's availability.";
     case "studio_not_found":
+    case "invalid_studio":
       return "Could not create the appointment. Please try again.";
     default:
       return "Could not create the appointment. Please try again.";
@@ -284,8 +289,14 @@ export async function bookAppointmentForClientAction(
   // authority (23P01 → rolled back → "slot taken"). Service-role only, so it
   // runs on the admin client.
   const admin = createAdminClient();
+  // Part 4 Item 2/3: the v2 command derives the authoritative duration from the
+  // LOCKED service row (never a caller-supplied length) and runs every booking
+  // through the shared, target-aware availability validator. The custom length
+  // (p_duration_override_minutes) and the availability bypass
+  // (p_allow_outside_availability) are OWNER-ONLY and re-checked server-side
+  // inside the command — the values below are only honoured for an owner actor.
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
-    "create_internal_appointment",
+    "create_internal_appointment_v2",
     {
       p_studio_id: studio.id,
       p_actor_practitioner_id: practitioner.id,
@@ -293,9 +304,10 @@ export async function bookAppointmentForClientAction(
       p_client_id: clientId,
       p_service_id: serviceId,
       p_starts_at: start.toISOString(),
-      p_duration_minutes: effectiveDurationMinutes,
       p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
       p_notes: notes,
+      p_duration_override_minutes: durationOverride,
+      p_allow_outside_availability: allowOutsideAvailability,
     },
   );
   if (rpcErr) {

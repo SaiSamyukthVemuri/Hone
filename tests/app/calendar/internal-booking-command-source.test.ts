@@ -11,9 +11,14 @@ const ACTIONS = readFileSync(
 );
 
 describe("bookAppointmentForClientAction — canonical command wiring", () => {
-  it("calls create_internal_appointment via the admin (service_role) client", () => {
+  it("calls the v2 command via the admin (service_role) client with authoritative duration", () => {
     expect(ACTIONS).toMatch(/createAdminClient\(\)/);
-    expect(ACTIONS).toMatch(/\.rpc\(\s*"create_internal_appointment"/);
+    // Item 2: v2 derives the duration from the locked service row — no caller
+    // p_duration_minutes; an owner-only override + availability bypass instead.
+    expect(ACTIONS).toMatch(/\.rpc\(\s*"create_internal_appointment_v2"/);
+    expect(ACTIONS).not.toMatch(/p_duration_minutes:/);
+    expect(ACTIONS).toMatch(/p_duration_override_minutes: durationOverride/);
+    expect(ACTIONS).toMatch(/p_allow_outside_availability: allowOutsideAvailability/);
   });
 
   it("passes an explicit actor + target practitioner (no silent self-assign in the insert)", () => {
@@ -36,7 +41,10 @@ describe("bookAppointmentForClientAction — canonical command wiring", () => {
 
   it("maps the command's result codes to fixed owner-facing copy", () => {
     expect(ACTIONS).toMatch(/function bookingResultMessage/);
-    for (const code of ["booking_paused", "not_authorized", "invalid_practitioner", "not_eligible"]) {
+    for (const code of [
+      "booking_paused", "not_authorized", "invalid_practitioner", "not_eligible",
+      "practitioner_closed", "outside_availability", "invalid_duration",
+    ]) {
       expect(ACTIONS).toContain(`"${code}"`);
     }
   });
