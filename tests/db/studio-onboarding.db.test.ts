@@ -78,14 +78,21 @@ describe("studio_onboarding — owner write / member read", () => {
     );
     expect(read.rows).toHaveLength(1);
 
-    // But cannot update it (owner-write RLS).
-    await expect(
-      userQuery(
-        memberA.userId,
-        `update public.studio_onboarding set current_step = 'booking' where studio_id = $1`,
-        [studioA.studioId],
-      ),
-    ).rejects.toThrow(/row-level security|permission denied/i);
+    // But cannot actually update it: the owner-write UPDATE policy's USING
+    // clause hides the row from a non-owner member, so the UPDATE matches 0 rows
+    // and changes nothing. (RLS UPDATE denial is SILENT — 0 rows — not an error;
+    // only a failing INSERT WITH CHECK or a revoked grant raises.)
+    const memberUpdate = await userQuery(
+      memberA.userId,
+      `update public.studio_onboarding set current_step = 'booking' where studio_id = $1`,
+      [studioA.studioId],
+    );
+    expect(memberUpdate.rowCount).toBe(0);
+    const unchanged = await adminQuery(
+      `select current_step from public.studio_onboarding where studio_id = $1`,
+      [studioA.studioId],
+    );
+    expect(unchanged.rows[0].current_step).not.toBe("booking");
 
     // And cannot insert a fresh one for studio B (not even a member there).
     await expect(
