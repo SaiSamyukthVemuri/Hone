@@ -232,16 +232,22 @@ export function buildOnboardingModel(
   const isComplete = requiredComplete && !!persisted.completedAt;
   const shouldCelebrate = requiredComplete && !persisted.celebratedAt;
 
-  // Resume pointer: honour the persisted position when valid; otherwise open on
-  // the first not-yet-done step (skipping steps already satisfied by data), and
-  // fall back to the success step when everything required is done.
+  // Resume pointer. Honour the persisted position ONLY while that step is still
+  // actionable ('todo'); otherwise auto-advance to the first open step — so a
+  // data step completed on a settings page shows the NEXT step on return (the
+  // "automatically continue" behaviour), a skipped step is stepped past, and
+  // when nothing is left the success step is shown.
   const persistedStep = clampStep(persisted.currentStep);
-  const firstOpen = steps.find(
+  const stepByKey = new Map(steps.map((st) => [st.key, st]));
+  const firstTodo = steps.find(
     (st) => st.status === "todo" && st.key !== "done",
   );
+  const persistedUsable =
+    persistedStep && stepByKey.get(persistedStep)?.status === "todo"
+      ? persistedStep
+      : null;
   const currentStep: OnboardingStepKey =
-    persistedStep ??
-    (requiredComplete ? "done" : (firstOpen?.key ?? "welcome"));
+    persistedUsable ?? firstTodo?.key ?? "done";
 
   return {
     steps,

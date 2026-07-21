@@ -179,3 +179,30 @@ body {
     animation: none;
   }
 }
+
+/* Onboarding celebration — pure-CSS confetti burst (no animation library).
+   Falls once and fades. Disabled entirely under reduced-motion. */
+.hone-confetti {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 12px;
+  border-radius: 1px;
+  opacity: 0;
+  animation: hone-confetti-fall 1500ms ease-in forwards;
+}
+@keyframes hone-confetti-fall {
+  0% {
+    transform: translateY(-12px) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(240px) rotate(360deg);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hone-confetti {
+    display: none;
+  }
+}

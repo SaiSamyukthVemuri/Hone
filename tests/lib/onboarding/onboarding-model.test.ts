@@ -151,12 +151,43 @@ describe("buildOnboardingModel — resume pointer", () => {
     expect(m.currentStep).toBe("availability");
   });
 
-  it("points at 'done' when everything required is complete", () => {
+  it("resumes at the optional payments step when it's the only thing left", () => {
+    // welcome acknowledged, required done, payments still todo -> next open step.
     const m = buildOnboardingModel(READY_SIGNALS, {
       ...FRESH_PERSISTED,
       currentStep: "not-a-step",
+      completedSteps: ["welcome"],
     });
+    expect(m.currentStep).toBe("payments");
+  });
+
+  it("points at 'done' when nothing is left to do", () => {
+    const m = buildOnboardingModel(
+      { ...READY_SIGNALS, paymentsReady: true },
+      {
+        ...FRESH_PERSISTED,
+        currentStep: "not-a-step",
+        completedSteps: ["welcome"],
+      },
+    );
     expect(m.currentStep).toBe("done");
+  });
+
+  it("steps past a completed data step even if it's the persisted pointer", () => {
+    // persisted at 'service' but service is now done -> auto-advance.
+    const m = buildOnboardingModel(READY_SIGNALS, {
+      ...FRESH_PERSISTED,
+      currentStep: "service",
+      completedSteps: ["welcome"],
+    });
+    expect(m.currentStep).toBe("payments");
+  });
+
+  it("an unacknowledged welcome is always the first stop, even if setup is done", () => {
+    // A studio configured via settings before opening the wizard still starts
+    // at the welcome intro.
+    const m = buildOnboardingModel(READY_SIGNALS, FRESH_PERSISTED);
+    expect(m.currentStep).toBe("welcome");
   });
 
   it("booking step resolves its href to the live public URL when known", () => {
