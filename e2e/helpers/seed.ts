@@ -190,6 +190,20 @@ export async function setStudioCapacityEnabled(
   );
 }
 
+// Part 4 Item 6 — the SECOND flag (0136): capacity ON alone still rejects new
+// bookings (booking_paused). Enabling internal booking requires this too. The
+// studios_capacity_booking_valid CHECK forbids cap=false+book=true, so enable the
+// structural flag first.
+export async function setStudioCapacityBookingEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set practitioner_capacity_booking_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
 export async function seedStudioWideDefault(
   studioId: string,
   dayOfWeek: number,

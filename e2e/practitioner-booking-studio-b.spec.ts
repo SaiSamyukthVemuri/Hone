@@ -4,6 +4,7 @@ import {
   seedE2eMember,
   seedE2eClient,
   setStudioCapacityEnabled,
+  setStudioCapacityBookingEnabled,
   setPractitionerActive,
   seedPractitionerDefault,
   getE2eServiceId,
@@ -36,6 +37,7 @@ test.beforeAll(async () => {
   C = await seedE2eMember(seed);
   await setPractitionerActive(C.practitionerId, false); // inactive → never a target
   await setStudioCapacityEnabled(seed.studioId, true);
+  await setStudioCapacityBookingEnabled(seed.studioId, true); // else new bookings are paused
 
   // Make A + B eligible (the service-insert trigger only seeded the OWNER, who
   // predates the members). The selector will show O + A + B; the inactive C is
