@@ -4,7 +4,7 @@ import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./help
 import { dropSynthStudio, seedSynthStudioA, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 — create_internal_appointment (migration 0141): the canonical
+// PR B Part 4 — create_internal_appointment (migration 0142): the canonical
 // atomic internal booking command. Contracts + concurrency on synthetic Studio B
 // (owner P0 + members P1, P2). Capacity ON + booking ON unless a test toggles it.
 // Never Willow.
@@ -79,7 +79,7 @@ const insScopedBlock = (pid: string | null, s: string, e: string) =>
   );
 
 // ---------------------------------------------------------------------------
-describe("0141 booking contracts (capacity ON, booking ON)", () => {
+describe("0142 booking contracts (capacity ON, booking ON)", () => {
   it("two bookings for A at the same time: one succeeds, one fails (23P01)", async () => {
     const first = await book(owner().practitionerId, P(1), T("10:00"));
     expect(first).toMatchObject({ ok: true, result: "created" });
@@ -129,7 +129,7 @@ describe("0141 booking contracts (capacity ON, booking ON)", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("0141 booking-state contract", () => {
+describe("0142 booking-state contract", () => {
   it("capacity-ready / booking-PAUSED rejects new creation", async () => {
     await setBooking(false); // cap ON, book OFF
     expect(await book(owner().practitionerId, P(1), T("10:00"))).toMatchObject({ result: "booking_paused" });
@@ -148,7 +148,7 @@ describe("0141 booking-state contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("0141 concurrency + privilege", () => {
+describe("0142 concurrency + privilege", () => {
   it("the advisory lock serializes concurrent bookings for the studio (second blocks)", async () => {
     const a = new Client({ connectionString: resolveLocalDbUrl() });
     const b = new Client({ connectionString: resolveLocalDbUrl() });
