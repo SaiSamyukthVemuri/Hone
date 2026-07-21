@@ -147,6 +147,56 @@ create or replace trigger studio_onboarding_set_updated_at_trg
   execute function public.set_studio_onboarding_updated_at();
 
 -- ---------------------------------------------------------------------------
+-- Step 2c: PROTECT the completion-lifecycle fields from direct browser writes.
+-- Owners have row-level INSERT/UPDATE on this table (to drive the wizard), but
+-- the fields that make "completed / celebrated" TRUTHFUL must only ever be set
+-- by the trusted service-role commands below — never by a hand-crafted browser
+-- write. This SECURITY INVOKER guard (invoker so current_user is the REAL caller,
+-- not the SECURITY DEFINER function owner) rejects any browser-role (anon /
+-- authenticated) attempt to write: completed_at, celebrated_at, a status
+-- transition INTO 'completed', or the completion-only 'done' step marker — on
+-- BOTH insert and update. Normal owner-controlled navigation (current_step,
+-- skipped_steps, dismissed_at, status='in_progress', resume/reopen) is untouched;
+-- the trusted commands run SECURITY DEFINER (current_user = the function owner)
+-- and direct service_role connections are unaffected.
+create or replace function public.guard_onboarding_completion_fields()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' then
+      if new.completed_at is not null
+         or new.celebrated_at is not null
+         or new.status = 'completed'
+         or ('done' = any (new.completed_steps)) then
+        raise exception
+          'onboarding completion fields are trusted-server-only (role %)',
+          current_user using errcode = '42501';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.completed_at is distinct from old.completed_at
+         or new.celebrated_at is distinct from old.celebrated_at
+         or (new.status = 'completed' and old.status is distinct from 'completed')
+         or (('done' = any (new.completed_steps))
+             and not ('done' = any (old.completed_steps))) then
+        raise exception
+          'onboarding completion fields are trusted-server-only (role %)',
+          current_user using errcode = '42501';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace trigger studio_onboarding_guard_completion_trg
+  before insert or update on public.studio_onboarding
+  for each row
+  execute function public.guard_onboarding_completion_fields();
+
+-- ---------------------------------------------------------------------------
 -- Step 3: RLS. Studio members READ their studio's onboarding row; only the
 -- studio OWNER may INSERT/UPDATE their own row (drive the wizard). No delete
 -- policy (parent-studio CASCADE tears the row down). The admin studio-creation
@@ -182,25 +232,45 @@ revoke all on public.studio_onboarding from anon;
 grant select, insert, update on public.studio_onboarding to service_role;
 
 -- ---------------------------------------------------------------------------
--- Step 3b: ATOMIC onboarding completion. Stamps completed_at exactly ONCE — only
--- when it is currently null — and returns whether THIS call performed that first
--- transition. The analytics event is then emitted only on a true return, so two
--- concurrent "complete" calls produce exactly one transition and one event
--- (previously the action read completed_at then wrote it in a separate step: a
--- read-then-write race that could double-emit). Owner-only (is_studio_owner);
--- the first-transition test is the `where ... completed_at is null` CAS, which
--- Postgres serializes on the row so a loser sees the freshly-stamped value and
--- returns false. SECURITY DEFINER + pinned search_path.
+-- Step 3b: TRUSTED completion + celebration commands (SERVICE-ROLE ONLY). The
+-- browser can NEVER self-complete: these are reachable only from the trusted
+-- /dashboard server actions via the admin client, which resolve the session user
+-- and pass ONLY (p_user_id, p_studio_id) — no role/status/timestamp/step state.
+-- Each command re-verifies IN THE DB that p_user_id is an ACTIVE OWNER of
+-- p_studio_id AND that onboarding_v2 is enabled, so a forged user/studio pairing
+-- or a flag-off studio is refused at the source, independent of the app layer.
+-- Any direct authenticated call is denied by the grants below; any hand-crafted
+-- direct table write is denied by guard_onboarding_completion_fields above.
+--
+-- admin_complete_onboarding stamps completed_at exactly ONCE (CAS on
+-- `completed_at is null`) and returns whether THIS call performed the transition,
+-- so two concurrent calls produce exactly one transition (Postgres serializes on
+-- the row; the loser sees the freshly-stamped value and returns false). The
+-- action then schedules the analytics dispatch only on a true return.
 -- ---------------------------------------------------------------------------
-create or replace function public.complete_onboarding(p_studio_id uuid)
+create or replace function public.admin_complete_onboarding(
+  p_user_id uuid,
+  p_studio_id uuid
+)
 returns boolean
 language plpgsql security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare v_transitioned boolean;
 begin
-  if not public.is_studio_owner(p_studio_id) then
-    raise exception 'not authorized' using errcode = '42501';
+  if not exists (
+    select 1 from public.practitioners
+    where studio_id = p_studio_id and user_id = p_user_id
+      and role = 'owner' and active
+  ) then
+    raise exception 'not an active owner of the studio' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.studios
+    where id = p_studio_id and onboarding_v2_enabled = true
+  ) then
+    raise exception 'onboarding_v2 is not enabled for the studio'
+      using errcode = '42501';
   end if;
 
   insert into public.studio_onboarding as so
@@ -223,27 +293,76 @@ begin
 end;
 $$;
 
+-- admin_mark_onboarding_celebrated stamps celebrated_at exactly once (idempotent
+-- CAS on `celebrated_at is null`) so the one-time celebration fires once. The
+-- action gates the call on LIVE required completion, so a premature celebration
+-- is never consumed. Same service-role-only + active-owner + flag guards.
+create or replace function public.admin_mark_onboarding_celebrated(
+  p_user_id uuid,
+  p_studio_id uuid
+)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_stamped boolean;
+begin
+  if not exists (
+    select 1 from public.practitioners
+    where studio_id = p_studio_id and user_id = p_user_id
+      and role = 'owner' and active
+  ) then
+    raise exception 'not an active owner of the studio' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.studios
+    where id = p_studio_id and onboarding_v2_enabled = true
+  ) then
+    raise exception 'onboarding_v2 is not enabled for the studio'
+      using errcode = '42501';
+  end if;
+
+  insert into public.studio_onboarding as so (studio_id, celebrated_at)
+  values (p_studio_id, now())
+  on conflict (studio_id) do update
+    set celebrated_at = now()
+    where so.celebrated_at is null  -- stamp-once compare-and-set
+  returning true into v_stamped;
+
+  return coalesce(v_stamped, false);
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
--- Step 4: lock down the new trigger functions (match the 0030/0134 posture — no
--- direct client execute; they run only inside triggers). The owner-callable
--- complete_onboarding RPC is granted to authenticated (self-authorized inside).
+-- Step 4: lock down the new functions. The trigger functions run only inside
+-- triggers (no direct client execute). The completion + celebration commands are
+-- SERVICE-ROLE ONLY — revoked from public/anon/authenticated so a browser role
+-- can never call them directly (bypassing the flag / live-model validation).
 -- ---------------------------------------------------------------------------
 do $$
 declare fn text;
 begin
   foreach fn in array array[
     'public.guard_onboarding_flag_activation()',
-    'public.set_studio_onboarding_updated_at()'
+    'public.set_studio_onboarding_updated_at()',
+    'public.guard_onboarding_completion_fields()'
   ]
   loop
     execute format('revoke execute on function %s from public', fn);
     execute format('revoke execute on function %s from anon', fn);
     execute format('revoke execute on function %s from authenticated', fn);
   end loop;
-end $$;
 
-revoke execute on function public.complete_onboarding(uuid) from public;
-revoke execute on function public.complete_onboarding(uuid) from anon;
-grant execute on function public.complete_onboarding(uuid) to authenticated;
+  foreach fn in array array[
+    'public.admin_complete_onboarding(uuid, uuid)',
+    'public.admin_mark_onboarding_celebrated(uuid, uuid)'
+  ]
+  loop
+    execute format('revoke execute on function %s from public', fn);
+    execute format('revoke execute on function %s from anon', fn);
+    execute format('revoke execute on function %s from authenticated', fn);
+    execute format('grant execute on function %s to service_role', fn);
+  end loop;
+end $$;
 
 commit;

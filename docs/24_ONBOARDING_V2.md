@@ -264,17 +264,33 @@ implemented.
 (`not_ready`) unless the required data steps are genuinely green — a forged /
 early / replayed call cannot mark an unbookable studio complete.
 
-Persistence and first-transition detection are a **single atomic DB operation**,
-`complete_onboarding(p_studio_id)` (owner-only, migration 0140): an
-`insert … on conflict do update … where completed_at is null` compare-and-set
-that stamps `completed_at` exactly once and **returns whether THIS call performed
-the transition**. `onboarding_wizard_completed` is emitted **iff that return is
-true**, so two concurrent completions produce exactly one transition and one
-event (the loser sees `transitioned=false` — Postgres serializes on the row — and
-emits nothing). This replaces the earlier read-then-write (read `completed_at`,
-then upsert) that could double-emit under a race. `markCelebrationShownAction`
-is likewise guarded by live required completion (a stray call cannot consume the
-one-time celebration stamp) and stays idempotent.
+**Completion is TRUSTED-SERVER-ONLY.** The browser can never self-complete: the
+action resolves the session user + active owner membership, rebuilds the live
+model, rejects unless `requiredComplete`, then calls the **service-role**
+`admin_complete_onboarding(p_user_id, p_studio_id)` command through the admin
+client. That command (migration 0140, `service_role` grant only) re-verifies in
+the DB that `p_user_id` is an ACTIVE OWNER of `p_studio_id` AND the flag is on,
+and does an `insert … on conflict do update … where completed_at is null`
+compare-and-set that stamps `completed_at` exactly once and **returns whether THIS
+call performed the transition** (Postgres serializes on the row; the loser of two
+concurrent calls gets `transitioned=false`). A `guard_onboarding_completion_fields`
+SECURITY INVOKER trigger additionally blocks any direct browser write of
+`completed_at`, `celebrated_at`, a `status→'completed'` transition, or the `'done'`
+marker — on INSERT and UPDATE — while leaving normal owner navigation
+(`current_step`/`skipped_steps`/`dismissed_at`/reopen) untouched.
+
+**Analytics guarantee.** `onboarding_wizard_completed` is scheduled **iff
+`transitioned=true`**, so **exactly one analytics dispatch is scheduled for the
+first successful transition** (concurrent losers schedule nothing). Product
+analytics are best-effort (fire-and-forget, **no durable outbox**) — this is a
+one-dispatch-scheduled guarantee, not a once-delivered one.
+
+`markCelebrationShownAction` is guarded by live required completion (a stray call
+cannot consume the one-time stamp) and calls the service-role
+`admin_mark_onboarding_celebrated(p_user_id, p_studio_id)` (same owner+flag gate),
+which stamps `celebrated_at` exactly once. Neither path ever returns a raw DB
+error — fixed owner-facing codes (`complete_failed`/`celebrate_failed`) with a
+bounded `onboarding_action_db_error:<op>:<safe_code>` log marker.
 
 ## 9. Manual test checklist
 
@@ -321,7 +337,7 @@ stale-cannot-overwrite), `tests/db/new-studio-wizard.db.test.ts`,
 `e2e/welcome-email-admin.spec.ts` (admin resend contracts),
 `e2e/invite-only.spec.ts` (login consent-copy contract),
 `tests/db/welcome-email-delivery.db.test.ts` (delayed-provider concurrency →
-one delivery), `tests/lib/onboarding/*`,
+one delivery), `tests/lib/onboarding/*` (incl. `completion-error-bounded.test.ts`),
 `tests/app/dashboard/onboarding-completion-revalidation.test.ts`,
 `tests/app/admin/welcome-resend-audit-outcome.test.ts`,
 `tests/lib/email/welcome-email.test.ts`,

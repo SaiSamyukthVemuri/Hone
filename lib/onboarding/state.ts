@@ -130,32 +130,54 @@ export async function reopenOnboarding(
   return upsertOwner(studioId, { dismissed_at: null, status: "in_progress" });
 }
 
+// Bounded DB-error marker for the trusted completion/celebration commands.
+// NEVER logs the raw Supabase/Postgres error, the studio, the user, or any DB
+// text — only onboarding_action_db_error:<op>:<safe_code>.
+function logOnboardingDbError(op: "complete" | "celebrate", code: string): void {
+  console.error(`onboarding_action_db_error:${op}:${code}`);
+}
+
 // Acknowledge the success step: required setup is done and the owner finished.
-// Delegates to the atomic complete_onboarding RPC, which stamps completed_at only
-// when it is currently null and reports whether THIS call performed the first
-// transition — so completion persistence and first-transition detection are a
-// SINGLE atomic operation (no read-then-write race that could double-emit the
-// analytics event under concurrency). Owner-authorized inside the RPC.
+// TRUSTED-SERVER-ONLY: calls the service-role admin_complete_onboarding command
+// through the admin client (the browser cannot reach it). The command re-verifies
+// active ownership + the flag and does the atomic completed_at CAS, reporting
+// whether THIS call performed the first transition (so the action schedules the
+// analytics dispatch exactly once). Never returns the raw DB error.
 export async function completeOnboarding(
+  userId: string,
   studioId: string,
-): Promise<{ ok: boolean; transitioned: boolean; error?: string }> {
-  const supabase = await createClient();
-  const { data, error } = await supabase.rpc("complete_onboarding", {
+): Promise<{ ok: boolean; transitioned: boolean }> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("admin_complete_onboarding", {
+    p_user_id: userId,
     p_studio_id: studioId,
   });
-  if (error) return { ok: false, transitioned: false, error: error.message };
+  if (error) {
+    logOnboardingDbError("complete", "rpc_failed");
+    return { ok: false, transitioned: false };
+  }
   return { ok: true, transitioned: data === true };
 }
 
-// The one-time celebration has been shown — never re-fire it.
+// The one-time celebration has been shown — never re-fire it. TRUSTED-SERVER-ONLY:
+// celebrated_at is a protected field (the guard trigger blocks direct browser
+// writes), so this calls the service-role admin_mark_onboarding_celebrated command
+// (active-owner + flag verified), which stamps celebrated_at exactly once. The
+// action gates the call on live required completion. Never returns the raw DB error.
 export async function markCelebrated(
+  userId: string,
   studioId: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const row = await getOnboardingRow(studioId);
-  if (row?.celebrated_at) return { ok: true };
-  return upsertOwner(studioId, {
-    celebrated_at: new Date().toISOString(),
+): Promise<{ ok: boolean }> {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("admin_mark_onboarding_celebrated", {
+    p_user_id: userId,
+    p_studio_id: studioId,
   });
+  if (error) {
+    logOnboardingDbError("celebrate", "rpc_failed");
+    return { ok: false };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

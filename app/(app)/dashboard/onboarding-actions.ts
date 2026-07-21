@@ -39,6 +39,9 @@ type OwnerStudio = Awaited<
 type OwnerCtx = {
   studioId: string;
   practitionerId: string;
+  // The authenticated user id, resolved server-side from the session — passed to
+  // the service-role completion/celebration commands (never from the browser).
+  userId: string;
   studio: OwnerStudio;
 };
 
@@ -51,7 +54,13 @@ async function requireOnboardingOwner(): Promise<OwnerCtx | null> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") return null;
   if (studio.onboarding_v2_enabled !== true) return null; // fail closed
-  return { studioId: studio.id, practitionerId: practitioner.id, studio };
+  if (!practitioner.user_id) return null; // an active owner maps to an auth user
+  return {
+    studioId: studio.id,
+    practitionerId: practitioner.id,
+    userId: practitioner.user_id,
+    studio,
+  };
 }
 
 // Rebuild the authoritative onboarding model from REAL signals + the persisted
@@ -107,15 +116,17 @@ export async function skipPaymentsAction(): Promise<OnboardingActionResult> {
   return res;
 }
 
-// Acknowledge the success step -> onboarding complete + wizard_completed event.
-// Server-authoritative: the required data steps (service + availability +
-// bookable) must ACTUALLY be green in the live model, so a client that calls
-// this early — or a replayed/forged request — cannot stamp completion on an
-// unbookable studio. Persistence + first-transition detection are a SINGLE
-// atomic RPC (complete_onboarding stamps completed_at only when null and returns
-// whether THIS call transitioned), so the analytics event fires exactly once
-// even under two concurrent calls (the loser gets transitioned=false and emits
-// nothing).
+// Acknowledge the success step -> onboarding complete + wizard_completed dispatch.
+// Server-authoritative and TRUSTED-SERVER-ONLY: (1) resolve the authenticated
+// user + active owner membership; (2) rebuild the live model; (3) reject unless
+// the required data steps are ACTUALLY green (a client that calls this early — or
+// a replayed/forged request — cannot stamp completion on an unbookable studio);
+// (4) call the service-role admin_complete_onboarding command through the admin
+// client (which re-verifies ownership + flag and does the atomic completed_at
+// CAS). The analytics DISPATCH is scheduled once — only when THIS call performed
+// the first transition (the loser of two concurrent calls gets transitioned=false
+// and schedules nothing). Analytics are best-effort (fire-and-forget, no outbox),
+// so this guarantees one dispatch is scheduled, not one durable delivery.
 export async function completeOnboardingAction(): Promise<OnboardingActionResult> {
   const ctx = await requireOnboardingOwner();
   if (!ctx) return NOT_ALLOWED;
@@ -126,10 +137,15 @@ export async function completeOnboardingAction(): Promise<OnboardingActionResult
     return { ok: false, error: "not_ready" };
   }
 
-  const res = await completeOnboarding(ctx.studioId);
-  if (!res.ok) return { ok: false, error: res.error };
+  const res = await completeOnboarding(ctx.userId, ctx.studioId);
+  if (!res.ok) {
+    // Fixed owner-facing code — never the raw DB error (bounded marker logged
+    // inside completeOnboarding).
+    return { ok: false, error: "complete_failed" };
+  }
 
-  // Emit only when THIS call performed the atomic first transition.
+  // Schedule the analytics dispatch only when THIS call performed the atomic
+  // first transition.
   if (res.transitioned) {
     captureServerEvent({
       actor: { kind: "user", id: ctx.practitionerId },
@@ -163,8 +179,9 @@ export async function reopenOnboardingAction(): Promise<OnboardingActionResult> 
 // The one-time celebration has been shown — never fire it again. Guarded by the
 // live model: the celebration is only ever suppressible once required setup is
 // genuinely green (a stray call on an incomplete studio must NOT consume the
-// one-time stamp, or the owner would never see their celebration). markCelebrated
-// is itself idempotent, so a legitimate repeat is a harmless no-op.
+// one-time stamp, or the owner would never see their celebration). The stamp
+// itself is a TRUSTED-SERVER-ONLY, stamp-once command (celebrated_at is a
+// protected field), so a legitimate repeat is a harmless no-op.
 export async function markCelebrationShownAction(): Promise<OnboardingActionResult> {
   const ctx = await requireOnboardingOwner();
   if (!ctx) return NOT_ALLOWED;
@@ -174,7 +191,8 @@ export async function markCelebrationShownAction(): Promise<OnboardingActionResu
     return { ok: false, error: "not_ready" };
   }
 
-  const res = await markCelebrated(ctx.studioId);
+  const res = await markCelebrated(ctx.userId, ctx.studioId);
+  if (!res.ok) return { ok: false, error: "celebrate_failed" };
   revalidatePath("/dashboard");
-  return res;
+  return { ok: true };
 }

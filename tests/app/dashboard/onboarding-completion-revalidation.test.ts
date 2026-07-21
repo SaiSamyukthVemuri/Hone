@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-// Defect 2 — server-authoritative onboarding completion. completeOnboarding /
+// Server-authoritative onboarding completion. completeOnboarding /
 // markCelebrationShown must NOT trust the client's claim that setup is finished:
 // they rebuild the live model from real signals + the persisted row and refuse
-// unless the REQUIRED data steps are genuinely green. The wizard_completed event
-// fires exactly once, only on the first not-completed -> completed transition.
-// All deps mocked; NO db, NO network.
+// unless the REQUIRED data steps are genuinely green. Exactly ONE wizard_completed
+// analytics DISPATCH is scheduled for the first successful transition (analytics
+// are best-effort / no outbox, so this is a one-dispatch-scheduled guarantee, not
+// a once-delivered one). All deps mocked; NO db, NO network.
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -46,7 +47,7 @@ const celebrate = markCelebrated as unknown as Mock;
 
 function setCaller(role: "owner" | "practitioner", flagOn: boolean): void {
   whoami.mockResolvedValue({
-    practitioner: { id: "prac-1", role, display_name: "Alex" },
+    practitioner: { id: "prac-1", user_id: "user-1", role, display_name: "Alex" },
     studio: { id: "studio-1", name: "Rivera", onboarding_v2_enabled: flagOn },
   });
 }
@@ -110,14 +111,15 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
     expect(event).not.toHaveBeenCalled();
   });
 
-  it("emits ONCE only when the atomic RPC reports transitioned=true", async () => {
+  it("schedules ONE dispatch only when the atomic RPC reports transitioned=true", async () => {
     setCaller("owner", true);
     setSignals(true);
     setRow(null);
     complete.mockResolvedValueOnce({ ok: true, transitioned: true });
     const res = await completeOnboardingAction();
     expect(res).toEqual({ ok: true });
-    expect(complete).toHaveBeenCalledWith("studio-1");
+    // The session user id (never a browser value) is passed to the trusted command.
+    expect(complete).toHaveBeenCalledWith("user-1", "studio-1");
     expect(event).toHaveBeenCalledTimes(1);
     expect(event).toHaveBeenCalledWith({
       actor: { kind: "user", id: "prac-1" },
@@ -133,17 +135,17 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
     complete.mockResolvedValueOnce({ ok: true, transitioned: false });
     const res = await completeOnboardingAction();
     expect(res).toEqual({ ok: true });
-    expect(complete).toHaveBeenCalledWith("studio-1");
+    expect(complete).toHaveBeenCalledWith("user-1", "studio-1");
     expect(event).not.toHaveBeenCalled();
   });
 
-  it("a persistence error surfaces and suppresses the event", async () => {
+  it("a persistence error returns FIXED copy (no raw DB text) and suppresses the event", async () => {
     setCaller("owner", true);
     setSignals(true);
     setRow(null);
-    complete.mockResolvedValueOnce({ ok: false, transitioned: false, error: "db" });
+    complete.mockResolvedValueOnce({ ok: false, transitioned: false });
     const res = await completeOnboardingAction();
-    expect(res).toEqual({ ok: false, error: "db" });
+    expect(res).toEqual({ ok: false, error: "complete_failed" });
     expect(event).not.toHaveBeenCalled();
   });
 });
@@ -164,7 +166,7 @@ describe("markCelebrationShownAction — live-completion guard + idempotent", ()
     setRow(null);
     const res = await markCelebrationShownAction();
     expect(res).toEqual({ ok: true });
-    expect(celebrate).toHaveBeenCalledWith("studio-1");
+    expect(celebrate).toHaveBeenCalledWith("user-1", "studio-1");
   });
 
   it("non-owner is refused", async () => {

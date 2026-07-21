@@ -118,31 +118,65 @@ describe("0140 — Gate 4: trigger functions are execute-locked", () => {
   });
 });
 
-describe("0140 — Finding 1: complete_onboarding is an atomic first-transition CAS", () => {
-  function fn(): string {
+describe("0140 — completion is TRUSTED-SERVER-ONLY (admin commands + field guard)", () => {
+  function fn(name: string): string {
     return (
       CODE.match(
-        /create or replace function public\.complete_onboarding\(p_studio_id uuid\)[\s\S]*?\$\$;/i,
+        new RegExp(
+          `create or replace function public\\.${name}\\([\\s\\S]*?\\$\\$;`,
+          "i",
+        ),
       )?.[0] ?? ""
     );
   }
-  it("is owner-authorized, SECURITY DEFINER, pinned search_path, returns boolean", () => {
-    const f = fn();
+
+  it("admin_complete_onboarding: (uuid,uuid), DEFINER, pinned path, active-owner + flag gated", () => {
+    const f = fn("admin_complete_onboarding");
+    expect(f).toMatch(/admin_complete_onboarding\(\s*p_user_id uuid,\s*p_studio_id uuid/i);
     expect(f).toMatch(/returns boolean/i);
     expect(f).toMatch(/security definer/i);
     expect(f).toMatch(/set search_path = pg_catalog, pg_temp/i);
-    expect(f).toMatch(/if not public\.is_studio_owner\(p_studio_id\)[\s\S]*?42501/i);
-  });
-  it("stamps completed_at ONLY when null (CAS) and reports the transition", () => {
-    const f = fn();
-    // Conditional upsert: on conflict do update ... where completed_at is null.
+    // Verifies an ACTIVE OWNER membership for (p_user_id, p_studio_id).
+    expect(f).toMatch(/from public\.practitioners[\s\S]*?studio_id = p_studio_id and user_id = p_user_id[\s\S]*?role = 'owner' and active/i);
+    // Verifies the flag is on.
+    expect(f).toMatch(/from public\.studios[\s\S]*?onboarding_v2_enabled = true/i);
+    // Atomic first-transition CAS.
     expect(f).toMatch(/on conflict \(studio_id\) do update[\s\S]*?where so\.completed_at is null/i);
-    expect(f).toMatch(/returning true into v_transitioned/i);
     expect(f).toMatch(/return coalesce\(v_transitioned, false\)/i);
   });
-  it("is granted to authenticated only (self-authorized), never public/anon", () => {
-    expect(CODE).toMatch(/revoke execute on function public\.complete_onboarding\(uuid\) from public/i);
-    expect(CODE).toMatch(/revoke execute on function public\.complete_onboarding\(uuid\) from anon/i);
-    expect(CODE).toMatch(/grant execute on function public\.complete_onboarding\(uuid\) to authenticated/i);
+
+  it("admin_mark_onboarding_celebrated: stamp-once CAS, same owner + flag gate", () => {
+    const f = fn("admin_mark_onboarding_celebrated");
+    expect(f).toMatch(/admin_mark_onboarding_celebrated\(\s*p_user_id uuid,\s*p_studio_id uuid/i);
+    expect(f).toMatch(/security definer/i);
+    expect(f).toMatch(/role = 'owner' and active/i);
+    expect(f).toMatch(/onboarding_v2_enabled = true/i);
+    expect(f).toMatch(/on conflict \(studio_id\) do update[\s\S]*?where so\.celebrated_at is null/i);
+  });
+
+  it("both commands are SERVICE-ROLE ONLY — no public/anon/authenticated execute", () => {
+    for (const sig of [
+      "public.admin_complete_onboarding(uuid, uuid)",
+      "public.admin_mark_onboarding_celebrated(uuid, uuid)",
+    ]) {
+      expect(CODE).toContain(sig);
+    }
+    expect(CODE).toMatch(/grant execute on function %s to service_role/i);
+    // The OLD authenticated-callable complete_onboarding(uuid) is gone.
+    expect(CODE).not.toMatch(/grant execute on function public\.complete_onboarding\(uuid\) to authenticated/i);
+    expect(CODE).not.toMatch(/create or replace function public\.complete_onboarding\(p_studio_id uuid\)/i);
+  });
+
+  it("a SECURITY INVOKER guard blocks browser writes to completion fields on INSERT + UPDATE", () => {
+    const g = fn("guard_onboarding_completion_fields");
+    expect(g).toMatch(/current_user in \('anon', 'authenticated'\)/i);
+    expect(g).toMatch(/completed_at/i);
+    expect(g).toMatch(/celebrated_at/i);
+    expect(g).toMatch(/status = 'completed'/i);
+    expect(g).toMatch(/'done' = any \(new\.completed_steps\)/i);
+    // Fires on both INSERT and UPDATE.
+    expect(CODE).toMatch(/create or replace trigger studio_onboarding_guard_completion_trg\s*\n?\s*before insert or update on public\.studio_onboarding/i);
+    // The guard itself is not directly callable by browser roles.
+    expect(CODE).toContain("public.guard_onboarding_completion_fields()");
   });
 });

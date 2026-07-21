@@ -212,6 +212,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "auth.getUser",
   },
   {
+    path: "lib/onboarding/state.ts",
+    purpose: "Trusted onboarding completion + celebration adapters (wizard).",
+    why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields — a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
+    scopeGuard: "admin_complete_onboarding",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
