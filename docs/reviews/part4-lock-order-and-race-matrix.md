@@ -38,13 +38,23 @@ for safe "slot taken" mapping. No appointment, shadow row, or audit row survives
 | timezone rebuild | 0138 | ✓ | ✓ | — | n/a |
 | `validate_appointment_availability` | 0146 | pure read — runs INSIDE the caller's txn under the caller's locks; takes none itself | | | (self) |
 
-**Availability writers.** The weekly/date-override/eligibility/activation/timezone
-mutations write their tables through server actions that do **not yet** take the
-studios-row + advisory lock (Item 2, not yet implemented). Until they do, a
-concurrent availability edit is serialized only by row-level locks on the
-individual availability rows, not by the studio capacity lock. This table lists
-only the commands that DO implement the full order today; the availability writers
-are explicitly out until their atomic RPCs land.
+**Availability writers (Item 2 — partial).** The FULL-WEEK writers now take the
+lock and are atomic:
+
+| command | migration | (1) studios row | (2) advisory | atomic |
+|---|---|---|---|---|
+| `save_weekly_availability` (studio-wide + practitioner scope) | **0149** | ✓ | ✓ | all 7 days in one txn |
+
+`saveWeeklyDefaultsAction` + `customizePractitionerWeekAction` route through it, so
+a partial-week save is no longer possible and both serialize with booking /
+retirement / the timezone rebuild.
+
+The SINGLE-ROW writers (date-override upsert/delete, day upsert/reset,
+service-eligibility add/remove, practitioner activation/deactivation, timezone,
+booking-pause) are each already atomic (one statement) but do **not yet** take the
+studios-row + advisory lock. That lock is a consistency improvement, not a
+double-book safety fix (the per-resource GiST exclusion remains the collision
+authority regardless), and is the remaining Item 2 work.
 
 `validate_appointment_availability` deliberately takes no locks: it is only ever
 called after its caller already holds (1)+(2)+(3), so it reads a schedule that no

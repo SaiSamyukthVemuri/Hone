@@ -272,12 +272,9 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
 // Saves the weekly default in one round-trip. Form encodes seven rows.
 export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void> {
   const { studioId } = await assertOwner();
-  const supabase = await createClient();
 
-  const rows: {
-    studio_id: string;
+  const days: {
     day_of_week: number;
-    practitioner_id: string | null;
     is_open: boolean;
     open_time: string | null;
     close_time: string | null;
@@ -293,25 +290,33 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
       if (open >= close)
         throw new Error("Close time must be after open time.");
     }
-    rows.push({
-      studio_id: studioId,
+    days.push({
       day_of_week: dow,
-      practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
       is_open: isOpen,
       open_time: isOpen ? open : null,
       close_time: isOpen ? close : null,
     });
   }
 
-  // Upsert each day individually so a partial failure doesn't leave a half-applied state.
-  for (const row of rows) {
-    const { error } = await supabase
-      .from("studio_availability_default")
-      .upsert(row, { onConflict: "studio_id,day_of_week,practitioner_id" });
-    if (error) {
-      logAvailabilityDbError("save_weekly_defaults", "upsert", error.code);
-      throw new Error("Could not save these hours. Please try again.");
-    }
+  // Part 4 Item 2: ONE atomic RPC writes all seven days in a single transaction
+  // under the studios-row + capacity advisory lock. A bad day rolls the whole week
+  // back (no more half-applied week), and the save serializes with booking /
+  // retirement / the timezone rebuild. Studio-wide scope = NULL (unchanged rows);
+  // the owner is resolved server-side above, so the admin (service_role) client is
+  // safe here.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("save_weekly_availability", {
+    p_studio_id: studioId,
+    p_scope_practitioner_id: null,
+    p_days: days,
+  });
+  if (error) {
+    logAvailabilityDbError("save_weekly_defaults", "rpc", error.code);
+    throw new Error("Could not save these hours. Please try again.");
+  }
+  if (data !== "ok") {
+    logAvailabilityDbError("save_weekly_defaults", "result", typeof data === "string" ? data : "unknown");
+    throw new Error("Could not save these hours. Please try again.");
   }
   revalidatePath("/settings/availability");
 }
@@ -530,10 +535,21 @@ export async function customizePractitionerWeekAction(
       close_time: s?.is_open ? (s?.close_time ?? null) : null,
     };
   });
-  const { error } = await supabase
-    .from("studio_availability_default")
-    .upsert(rows, { onConflict: "studio_id,day_of_week,practitioner_id" });
-  if (error) return { ok: false, error: "Could not customize the week." };
+  // Part 4 Item 2: route the full-week practitioner customize through the same
+  // atomic, lock-taking RPC as the studio-wide save (one transaction, serialized
+  // with booking / retirement). The scope practitioner is re-validated in-DB.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("save_weekly_availability", {
+    p_studio_id: studio.id,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_days: rows.map((r) => ({
+      day_of_week: r.day_of_week,
+      is_open: r.is_open,
+      open_time: r.open_time,
+      close_time: r.close_time,
+    })),
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not customize the week." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }
