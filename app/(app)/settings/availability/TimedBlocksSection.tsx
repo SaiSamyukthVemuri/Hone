@@ -8,6 +8,13 @@ import {
   deleteTimedBlockAction,
   updateTimedBlockAction,
 } from "./actions";
+import {
+  ScopeField,
+  scopeRowLabel,
+  type ScopeDirectory,
+  type ScopeSelectable,
+  type ViewScope,
+} from "./ScopeField";
 
 type Props = {
   studioTimezone: string;
@@ -16,6 +23,13 @@ type Props = {
   timeFormat: TimeFormat;
   todayLocal: string;
   blocks: ReadonlyArray<StudioTimedBlock>;
+  // Scope wiring (PR B 3E-6). Absent = Legacy studio: no scope selector, parent
+  // has already filtered to studio-wide rows. A whole-day block always stays
+  // studio-wide regardless of the selector.
+  capacityOn?: boolean;
+  viewScope?: ViewScope;
+  selectable?: ReadonlyArray<ScopeSelectable>;
+  directory?: ScopeDirectory;
 };
 
 const CATEGORIES: ReadonlyArray<{ value: string; label: string }> = [
@@ -79,13 +93,20 @@ export function TimedBlocksSection({
   timeFormat,
   todayLocal,
   blocks,
+  capacityOn = false,
+  viewScope = { kind: "studio" },
+  selectable = [],
+  directory = {},
 }: Props) {
+  const defaultScope =
+    viewScope.kind === "practitioner" ? viewScope.practitionerId : "";
   const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState(todayLocal);
   const [startLocal, setStartLocal] = useState(DEFAULT_START);
   const [endLocal, setEndLocal] = useState(DEFAULT_END);
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [privateNote, setPrivateNote] = useState("");
+  const [scope, setScope] = useState<string>(defaultScope);
   // PR #139. All-day toggle for create. When checked the start /
   // end time inputs are visually disabled and the action receives
   // 'all_day=true'; the server synthesises a full studio-local-day
@@ -104,6 +125,7 @@ export function TimedBlocksSection({
     setCategory(DEFAULT_CATEGORY);
     setPrivateNote("");
     setAllDay(false);
+    setScope(defaultScope);
     setError(null);
   }
 
@@ -119,6 +141,11 @@ export function TimedBlocksSection({
     // not branch on it and keeps the legacy time-of-day shape.
     if (!editingId && allDay) {
       fd.set("all_day", "true");
+    }
+    // Scope only when capacity is on and this is NOT a whole-day block (whole-day
+    // blocks always apply studio-wide; the action also forces null for all_day).
+    if (capacityOn && !(!editingId && allDay)) {
+      fd.set("practitioner_id", scope);
     }
 
     if (editingId) {
@@ -164,6 +191,7 @@ export function TimedBlocksSection({
     // PR #139. Edit always uses the explicit time-of-day shape so
     // the visible state matches whatever is currently stored.
     setAllDay(false);
+    setScope(b.practitioner_id ?? "");
     setError(null);
   }
 
@@ -289,6 +317,22 @@ export function TimedBlocksSection({
             ))}
           </select>
         </label>
+        {capacityOn && (
+          <div className="md:col-span-2">
+            <ScopeField
+              value={!editingId && allDay ? "" : scope}
+              onChange={setScope}
+              selectable={selectable}
+              directory={directory}
+              disabled={pending || (!editingId && allDay)}
+            />
+            {!editingId && allDay && (
+              <span className="mt-1 block text-[11px] text-neutral-500">
+                Whole-day blocks apply to all practitioners.
+              </span>
+            )}
+          </div>
+        )}
         <label className="flex flex-col gap-1.5 md:col-span-4">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Private note (optional)
@@ -354,6 +398,11 @@ export function TimedBlocksSection({
                   <span className="text-neutral-500">
                     {startFmt.time} to {endFmt.time}
                   </span>
+                  {capacityOn && (
+                    <span className="text-[11px] text-neutral-400">
+                      {scopeRowLabel(b.practitioner_id, directory)}
+                    </span>
+                  )}
                   {b.private_note && (
                     <span className="text-neutral-500 italic">
                       {b.private_note}

@@ -8,9 +8,22 @@ import {
   toggleRecurringBreakRuleActiveAction,
   updateRecurringBreakRuleAction,
 } from "./actions";
+import {
+  ScopeField,
+  scopeRowLabel,
+  type ScopeDirectory,
+  type ScopeSelectable,
+  type ViewScope,
+} from "./ScopeField";
 
 type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
+  // Scope wiring (PR B 3E-6). Absent = Legacy studio: no scope selector, and
+  // the parent has already filtered to studio-wide rules only.
+  capacityOn?: boolean;
+  viewScope?: ViewScope;
+  selectable?: ReadonlyArray<ScopeSelectable>;
+  directory?: ScopeDirectory;
 };
 
 // Migration 0037: the recurring-break label column accepts free text
@@ -78,13 +91,24 @@ const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const DEFAULT_START = "12:00";
 const DEFAULT_END = "12:30";
 
-export function RecurringBreaksSection({ rules }: Props) {
+export function RecurringBreaksSection({
+  rules,
+  capacityOn = false,
+  viewScope = { kind: "studio" },
+  selectable = [],
+  directory = {},
+}: Props) {
+  // Default target for a NEW rule: the practitioner the view is anchored to, or
+  // studio-wide under the Studio-default view.
+  const defaultScope =
+    viewScope.kind === "practitioner" ? viewScope.practitionerId : "";
   const [editingId, setEditingId] = useState<string | null>(null);
   const [label, setLabel] = useState(DEFAULT_LABEL);
   const [days, setDays] = useState<number[]>(DEFAULT_DAYS);
   const [startLocal, setStartLocal] = useState(DEFAULT_START);
   const [endLocal, setEndLocal] = useState(DEFAULT_END);
   const [active, setActive] = useState(true);
+  const [scope, setScope] = useState<string>(defaultScope);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -95,6 +119,7 @@ export function RecurringBreaksSection({ rules }: Props) {
     setStartLocal(DEFAULT_START);
     setEndLocal(DEFAULT_END);
     setActive(true);
+    setScope(defaultScope);
     setError(null);
   }
 
@@ -111,6 +136,7 @@ export function RecurringBreaksSection({ rules }: Props) {
     setStartLocal(trimSeconds(r.start_local_time));
     setEndLocal(trimSeconds(r.end_local_time));
     setActive(r.active);
+    setScope(r.practitioner_id ?? "");
     setError(null);
   }
 
@@ -122,6 +148,9 @@ export function RecurringBreaksSection({ rules }: Props) {
     fd.set("start_local", startLocal);
     fd.set("end_local", endLocal);
     fd.set("active", active ? "true" : "false");
+    // Only send an explicit scope when capacity is on. In Legacy the action
+    // never sees the field and preserves studio-wide (see resolveSubmittedScope).
+    if (capacityOn) fd.set("practitioner_id", scope);
     if (editingId) fd.set("id", editingId);
 
     startTransition(async () => {
@@ -193,9 +222,9 @@ export function RecurringBreaksSection({ rules }: Props) {
         <h2 className="text-xl font-medium">Repeating breaks</h2>
         <p className="mt-1 text-sm text-neutral-500">
           Set up the regular times you&rsquo;re unavailable each week:
-          lunch, dinner, admin, or personal time. Generated for the next
-          six months and refreshed daily. Labels are private to your
-          studio; clients only see the slot as unavailable.
+          lunch, dinner, admin, or personal time. Generated up to a year
+          ahead and refreshed daily. Labels are private to your studio;
+          clients only see the slot as unavailable.
         </p>
       </div>
 
@@ -204,6 +233,15 @@ export function RecurringBreaksSection({ rules }: Props) {
           <div className="rounded bg-neutral-100 px-2 py-1 text-xs uppercase tracking-wider text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
             Editing rule
           </div>
+        )}
+        {capacityOn && (
+          <ScopeField
+            value={scope}
+            onChange={setScope}
+            selectable={selectable}
+            directory={directory}
+            disabled={pending}
+          />
         )}
         <div className="flex flex-col gap-1.5">
           <label className="flex flex-col gap-1.5">
@@ -372,6 +410,11 @@ export function RecurringBreaksSection({ rules }: Props) {
                     {formatTime12h(trimSeconds(r.start_local_time))} to{" "}
                     {formatTime12h(trimSeconds(r.end_local_time))}
                   </span>
+                  {capacityOn && (
+                    <span className="text-[11px] text-neutral-400">
+                      {scopeRowLabel(r.practitioner_id, directory)}
+                    </span>
+                  )}
                   {!r.active && (
                     <span className="text-neutral-400 italic">disabled</span>
                   )}

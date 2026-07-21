@@ -20,14 +20,16 @@ const TIMED = read("app/(app)/settings/availability/TimedBlocksSection.tsx");
 describe("Availability is the home for hours, breaks, and blocks", () => {
   it("renders the recurring breaks section", () => {
     expect(AVAIL_PAGE).toMatch(/import \{ RecurringBreaksSection \} from "\.\/RecurringBreaksSection"/);
-    expect(AVAIL_PAGE).toMatch(/<RecurringBreaksSection rules=\{recurringRules\}/);
-    expect(AVAIL_PAGE).toMatch(/getRecurringBreakRules\(studio\.id\)/);
+    expect(AVAIL_PAGE).toMatch(/<RecurringBreaksSection\b/);
+    // PR B 3E-5/6: loaded through the migration-order-safe SCOPED loader
+    // (replaces getRecurringBreakRules) so Legacy shows studio-wide only.
+    expect(AVAIL_PAGE).toMatch(/getScopedRecurringBreakRulesSafe\(supabase, studio\.id/);
   });
 
   it("renders the timed blocks section", () => {
     expect(AVAIL_PAGE).toMatch(/import \{ TimedBlocksSection \} from "\.\/TimedBlocksSection"/);
     expect(AVAIL_PAGE).toMatch(/<TimedBlocksSection/);
-    expect(AVAIL_PAGE).toMatch(/getUpcomingTimedBlocks\(studio\.id, nowIso\)/);
+    expect(AVAIL_PAGE).toMatch(/getScopedUpcomingTimedBlocksSafe\(supabase, studio\.id, nowIso/);
   });
 
   it("keeps the owner-only gate (no behavior loosened)", () => {
