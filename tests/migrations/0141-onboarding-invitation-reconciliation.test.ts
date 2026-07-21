@@ -106,6 +106,34 @@ describe("0141 — Defect 3: linker reactivates in place (UPDATE, never dup INSE
   });
 });
 
+describe("0141 — Defect 5: no two active practitioners sharing one login email", () => {
+  it("reconcile's conflict guard keys on an ACTIVE another-user row", () => {
+    const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
+    expect(r).toMatch(
+      /user_id is distinct from v_uid\s*\n?\s*and active[\s\S]*?'conflict'/i,
+    );
+  });
+  it("admin_accept re-checks the ACTIVE another-user conflict at reactivation time, unconditionally", () => {
+    const a = fnBlock("admin_accept_pending_invitation\\(p_user_id uuid\\)");
+    // The guard keys on an ACTIVE row held by a distinct user under the invited
+    // email, returns 'conflict', and runs BEFORE the link/reactivate call.
+    expect(a).toMatch(
+      /user_id is distinct from p_user_id\s*\n?\s*and active[\s\S]*?'conflict'/i,
+    );
+    const guardIdx = a.search(/and active\s*\n?\s*limit 1;[\s\S]*?'conflict'/i);
+    const linkIdx = a.indexOf("link_invited_membership");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(linkIdx).toBeGreaterThan(guardIdx);
+    // The conflict guard is NOT nested inside the already-active early return
+    // (it runs on the inactive-same-user reactivation path too): the active-
+    // same-user branch closes before the guard's distinct-user predicate.
+    const activeReturnIdx = a.indexOf("'already_linked'");
+    const distinctIdx = a.indexOf("is distinct from p_user_id");
+    expect(activeReturnIdx).toBeGreaterThan(-1);
+    expect(distinctIdx).toBeGreaterThan(activeReturnIdx);
+  });
+});
+
 describe("0141 — concurrency + authorization posture", () => {
   it("serializes per-email with an advisory xact lock + FOR UPDATE", () => {
     for (const fn of ["reconcile_my_pending_invitation\\(\\)", "admin_accept_pending_invitation\\(p_user_id uuid\\)"]) {

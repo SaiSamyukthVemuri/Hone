@@ -261,15 +261,21 @@ begin
         'studio_name', v_studio.name, 'role', v_same.role);
     end if;
     -- Same-user INACTIVE target row -> reactivation needs explicit consent.
+    -- (The safe-conflict guard against an ACTIVE another-user row is re-checked
+    -- there, in admin_accept_pending_invitation, at the moment of reactivation.)
     return jsonb_build_object('status', 'acceptance_required', 'choose_studio', false,
       'studio_name', v_studio.name, 'role', v_invite.role);
   end if;
 
+  -- Safe-conflict guard: a DIFFERENT user already holds an ACTIVE row under the
+  -- invited email in this studio. Auto-linking would create a second active
+  -- practitioner sharing one login email — refuse; operator cleanup required.
   select * into v_conflict
   from public.practitioners
   where studio_id = v_invite.studio_id
     and lower(email) = lower(v_email)
     and user_id is distinct from v_uid
+    and active
   limit 1;
   if found then
     return jsonb_build_object('status', 'conflict', 'choose_studio', false);
@@ -351,8 +357,9 @@ begin
     return jsonb_build_object('status', 'no_invitation', 'choose_studio', false);
   end if;
 
-  -- Resolution: (1) same-user row (active -> already_linked; inactive ->
-  -- reactivate below), (2) conflicting another-user row, (3) none -> insert.
+  -- Resolution: (1) same-user row already active -> already_linked; (2) an
+  -- ACTIVE another-user row under the invited email -> safe conflict; (3) same-
+  -- user inactive row -> reactivate in place; (4) none -> insert.
   select * into v_same
   from public.practitioners
   where studio_id = v_invite.studio_id and user_id = p_user_id
@@ -367,16 +374,20 @@ begin
       'studio_name', v_studio.name, 'role', v_same.role);
   end if;
 
-  if not found then
-    select * into v_conflict
-    from public.practitioners
-    where studio_id = v_invite.studio_id
-      and lower(email) = lower(v_email)
-      and user_id is distinct from p_user_id
-    limit 1;
-    if found then
-      return jsonb_build_object('status', 'conflict', 'choose_studio', false);
-    end if;
+  -- Safe-conflict guard (runs whether or not the caller has an inactive same-user
+  -- row): if a DIFFERENT user already holds an ACTIVE practitioner row under the
+  -- invited email in this studio, accepting would put TWO active practitioners on
+  -- one login email. That is not a supported product state — refuse and require
+  -- operator cleanup rather than silently reactivating/inserting a second row.
+  select * into v_conflict
+  from public.practitioners
+  where studio_id = v_invite.studio_id
+    and lower(email) = lower(v_email)
+    and user_id is distinct from p_user_id
+    and active
+  limit 1;
+  if found then
+    return jsonb_build_object('status', 'conflict', 'choose_studio', false);
   end if;
 
   -- Fresh, genuine acceptance: actual txn time + current versions. The linker

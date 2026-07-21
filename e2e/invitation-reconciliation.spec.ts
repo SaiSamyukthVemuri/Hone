@@ -133,4 +133,33 @@ test.describe("invitation reconciliation — existing accounts", () => {
     // No raw DB/Auth internals leaked.
     await expect(page.getByText(/duplicate key|violates|constraint|auth\./i)).toHaveCount(0);
   });
+
+  test("Defect 5: inactive own row + another user's ACTIVE row -> explicit accept is a safe conflict (no two active)", async ({
+    page,
+  }) => {
+    const invitedEmail = email("recon7");
+    const target = await insertBareStudio("recon7-target");
+    // The caller's OWN row exists but is inactive; another auth user holds an
+    // ACTIVE row in the same studio under the same invited email.
+    const callerId = await createLocalAuthUser(invitedEmail);
+    await insertMembershipInStudio(target.studioId, callerId, invitedEmail, false);
+    const otherId = await createLocalAuthUser(email("recon7-other"));
+    await insertMembershipInStudio(target.studioId, otherId, invitedEmail, true);
+    await insertPendingInvite(target.studioId, invitedEmail);
+
+    await signIn(page, invitedEmail);
+
+    // The inactive same-user row routes to explicit acceptance (not auto-link).
+    await page.waitForURL(/\/accept-invitation/, { timeout: 30_000 });
+    // Ticking consent and submitting must NOT reactivate into a second active
+    // membership sharing the email — it lands on the safe conflict destination.
+    await page.getByLabel(/I agree to the current/).check();
+    await page.getByRole("button", { name: /Join .* as/ }).click();
+    await page.waitForURL(/\/no-access\?reason=invite-conflict/, {
+      timeout: 30_000,
+    });
+    await expect(
+      page.getByText(/contact the studio or Hone support/i),
+    ).toBeVisible();
+  });
 });

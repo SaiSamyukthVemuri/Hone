@@ -441,21 +441,41 @@ describe("0141 — Defect 3: inactive target membership reactivation", () => {
     expect(await inviteStatus(t.studioId, u.email)).toBe("accepted");
   });
 
-  it("inactive same-user row wins over another user's row (same email)", async () => {
+  it("Defect 5: inactive same-user row + another user's ACTIVE row (same email) -> safe conflict, NOT two active rows", async () => {
     const t = await seedStudio("recon-d3c");
     const email = `d3c-${randomUUID().slice(0, 8)}@harness.local`;
     const u = await newAuthUser(email);
-    // The caller's own inactive row + another user's row under the same email.
+    // The caller's own inactive row + ANOTHER user's ACTIVE row under the same
+    // invited email in the same studio.
     await addPractitioner(t.studioId, u.id, email, { active: false });
     const other = await newAuthUser(`d3c-other-${randomUUID().slice(0, 8)}@harness.local`);
     await addPractitioner(t.studioId, other.id, email, { active: true });
     await inviteTo(t.studioId, email);
 
-    // Resolves the caller's own (inactive) row -> reactivates it, never touches
-    // the other user's row.
-    expect((await accept(u.id)).status).toBe("linked");
-    expect(await membershipRows(t.studioId, u.id)).toHaveLength(1);
-    expect((await membershipRows(t.studioId, u.id))[0].active).toBe(true);
+    // Explicit acceptance must NOT reactivate the caller's row (that would put
+    // two active practitioners on one login email). It returns a safe conflict
+    // for operator cleanup and mutates nothing.
+    expect((await accept(u.id)).status).toBe("conflict");
+    // Caller stays inactive; the other user's row is untouched; invite pending.
+    expect((await membershipRows(t.studioId, u.id))[0].active).toBe(false);
     expect((await membershipRows(t.studioId, other.id))[0].active).toBe(true);
+    expect(await inviteStatus(t.studioId, email)).toBe("pending");
+  });
+
+  it("Defect 5: inactive same-user row + another user's INACTIVE row (same email) -> reactivates safely (one active)", async () => {
+    const t = await seedStudio("recon-d3d");
+    const email = `d3d-${randomUUID().slice(0, 8)}@harness.local`;
+    const u = await newAuthUser(email);
+    await addPractitioner(t.studioId, u.id, email, { active: false });
+    const other = await newAuthUser(`d3d-other-${randomUUID().slice(0, 8)}@harness.local`);
+    // The other user's row is INACTIVE -> no shared-active-email hazard.
+    await addPractitioner(t.studioId, other.id, email, { active: false });
+    await inviteTo(t.studioId, email);
+
+    // Reactivating the caller's own row is safe: still only one active row under
+    // the email.
+    expect((await accept(u.id)).status).toBe("linked");
+    expect((await membershipRows(t.studioId, u.id))[0].active).toBe(true);
+    expect((await membershipRows(t.studioId, other.id))[0].active).toBe(false);
   });
 });
