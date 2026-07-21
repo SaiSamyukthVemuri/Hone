@@ -68,6 +68,15 @@ export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
+  // Explicitly propagate the fake-Resend marker to the Next server when the
+  // browser-e2e job requests it (the webServer.env replaces process.env, so it
+  // must be listed here — same pattern as the fake-Stripe lane). Only the
+  // welcome/invitation path reads getResendTransport, so other emails are
+  // unaffected. Server-only marker; the module's own guard refuses it in any
+  // deployed runtime.
+  ...(process.env.HONE_E2E_FAKE_RESEND === "1"
+    ? { HONE_E2E_FAKE_RESEND: "1" }
+    : {}),
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
   NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
