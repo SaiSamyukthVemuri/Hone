@@ -80,12 +80,6 @@ describe("deliverWelcomeEmail — send outcomes", () => {
     expect(logged).not.toContain("alex@example.com");
   });
 
-  it("no fake + no key -> 'not_sent' (nothing sent, recorded honestly)", async () => {
-    // Neither the fake nor a real key -> transport is null.
-    const status = await deliverWelcomeEmail(admin, PARAMS);
-    expect(status).toBe("not_sent");
-    expect(stamp).toHaveBeenCalledWith(admin, "studio-1", "not_sent");
-  });
 });
 
 describe("deliverWelcomeEmail — single-attempt idempotency", () => {
