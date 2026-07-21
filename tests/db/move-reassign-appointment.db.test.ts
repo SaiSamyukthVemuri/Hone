@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./helpers/harness";
-import { dropSynthStudio, seedSynthStudioA, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
+import { dropSynthStudio, seedSynthStudioA, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
 // PR B Part 4 — move_or_reassign_appointment (migration 0143): atomic time-move
@@ -22,6 +22,7 @@ beforeEach(async () => {
        practitioner_capacity_booking_enabled = true, timezone = 'UTC', buffer_minutes = 0 where id = $1`,
     [B.studioId],
   );
+  await seedStudioWideOpenAllWeek(B.studioId);
   const svc = await adminQuery(
     `insert into public.services (id, studio_id, name, default_duration_minutes, price_cents, active)
      values ($1,$2,'Consult',30,0,true) returning id`,

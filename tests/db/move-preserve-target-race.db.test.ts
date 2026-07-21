@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
-import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
+import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
 // PR B Part 4 (migration 0145) — the time-only move stale-target race is gone.
@@ -23,6 +23,7 @@ beforeEach(async () => {
        practitioner_capacity_booking_enabled = true, timezone = 'UTC', buffer_minutes = 0 where id = $1`,
     [B.studioId],
   );
+  await seedStudioWideOpenAllWeek(B.studioId);
   const svc = await adminQuery(
     `insert into public.services (id, studio_id, name, default_duration_minutes, price_cents, active)
      values ($1,$2,'Consult',30,0,true) returning id`,

@@ -21,6 +21,9 @@ describe("move action — routes through move_or_reassign_appointment (0143)", (
     // pre-lock read → no stale-target race that could become a reassignment).
     expect(MOVE).toMatch(/p_target_practitioner_id: null/);
   });
+  it("passes the owner outside-availability bypass ONLY for the owner-gated custom_time mode (0148)", () => {
+    expect(MOVE).toMatch(/p_allow_outside_availability: mode === "custom_time"/);
+  });
   it("maps the new result codes (booking_paused / eligibility) to safe copy", () => {
     for (const code of ["booking_paused", "invalid_practitioner", "not_eligible", "reassigned"]) {
       expect(MOVE).toContain(`"${code}"`);

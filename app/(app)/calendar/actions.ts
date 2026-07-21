@@ -256,6 +256,11 @@ export async function bookAppointmentForClientAction(
   // protection is preserved without any change to those rules.
   if (!allowOutsideAvailability) {
     const dateStr = localDateString(start, studio.timezone);
+    // Part 4 Item 3: the precheck must run against the EXACT practitioner the DB
+    // command will book (targetPractitionerId), not a studio-wide timeline. When
+    // capacity is ON, getAvailableSlots reads that practitioner's own hours +
+    // resource_key reservations, so A's calendar never advertises/consumes B's
+    // slots. Legacy (flag off) ignores the practitioner id → studio-wide, as today.
     const slots = await getAvailableSlots(
       supabase,
       {
@@ -264,9 +269,12 @@ export async function bookAppointmentForClientAction(
         default_appointment_duration_minutes:
           studio.default_appointment_duration_minutes,
         buffer_minutes: studio.buffer_minutes,
+        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
       },
       dateStr,
       service.default_duration_minutes,
+      undefined,
+      targetPractitionerId,
     );
     const isFree = slots.some(
       (s) => new Date(s.start).getTime() === start.getTime(),

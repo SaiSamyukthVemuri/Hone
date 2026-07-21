@@ -235,6 +235,12 @@ export async function moveAppointmentAction(input: {
     p_expected_starts_at: expectedStartsAt,
     p_expected_ends_at: expectedEndsAt,
     p_new_starts_at: newStart.toISOString(),
+    // Part 4 Item 4: custom_time IS the owner-only, acknowledgement-gated
+    // outside-availability move (owner re-checked above AND re-authorized in the
+    // command). It bypasses ONLY the working-hours window; the command still
+    // enforces blockouts, collisions, buffers, breaks, pause and eligibility.
+    // available_slot came from the hours-respecting slot list → validated (false).
+    p_allow_outside_availability: mode === "custom_time",
   });
 
   if (error) {

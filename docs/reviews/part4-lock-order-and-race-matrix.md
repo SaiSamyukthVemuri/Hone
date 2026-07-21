@@ -28,15 +28,23 @@ for safe "slot taken" mapping. No appointment, shadow row, or audit row survives
 
 ## Mutations that follow the order
 
-| command | migration | (1) studios row | (2) advisory | (3) source rows |
-|---|---|---|---|---|
-| `create_internal_appointment` | 0142 | ✓ | ✓ | — |
-| `create_internal_appointment_v2` | 0146 | ✓ | ✓ | `services` FOR UPDATE |
-| `move_or_reassign_appointment` | 0143/0144/0145 | ✓ | ✓ | `appointments` FOR UPDATE |
-| `practitioner_move_appointment` (wrapper) | 0133/0145 | delegates → move_or_reassign (same order; **no** pre-lock read after 0145) |
-| practitioner retirement | 0138 | ✓ | ✓ | — |
-| timezone rebuild | 0138 | ✓ | ✓ | — |
-| `validate_appointment_availability` | 0146 | pure read — runs INSIDE the caller's txn under the caller's locks; takes none itself |
+| command | migration | (1) studios row | (2) advisory | (3) source rows | availability validator |
+|---|---|---|---|---|---|
+| `create_internal_appointment` (legacy wrapper) | 0142→**0147** | ✓ | ✓ | `services` FOR UPDATE | ✓ via v2 |
+| `create_internal_appointment_v2` | 0146 | ✓ | ✓ | `services` FOR UPDATE | ✓ |
+| `move_or_reassign_appointment` | 0143/0144/0145/**0148** | ✓ | ✓ | `appointments` FOR UPDATE | ✓ (Item 4) |
+| `practitioner_move_appointment` (wrapper) | 0133/0145 | delegates → move_or_reassign (same order; **no** pre-lock read after 0145) | | | ✓ via move |
+| practitioner retirement | 0138 | ✓ | ✓ | — | n/a |
+| timezone rebuild | 0138 | ✓ | ✓ | — | n/a |
+| `validate_appointment_availability` | 0146 | pure read — runs INSIDE the caller's txn under the caller's locks; takes none itself | | | (self) |
+
+**Availability writers.** The weekly/date-override/eligibility/activation/timezone
+mutations write their tables through server actions that do **not yet** take the
+studios-row + advisory lock (Item 2, not yet implemented). Until they do, a
+concurrent availability edit is serialized only by row-level locks on the
+individual availability rows, not by the studio capacity lock. This table lists
+only the commands that DO implement the full order today; the availability writers
+are explicitly out until their atomic RPCs land.
 
 `validate_appointment_availability` deliberately takes no locks: it is only ever
 called after its caller already holds (1)+(2)+(3), so it reads a schedule that no

@@ -160,6 +160,30 @@ export async function seedSynthStudioC(
   return { ...studio, failureMode };
 }
 
+/** Seed a studio-wide (practitioner_id NULL) weekly availability window that is
+ *  OPEN on every weekday for the given [open, close) local times. Part 4 wired
+ *  the shared availability validator into the booking + move/reassign commands,
+ *  so a capacity-ON studio with NO availability rows now reads as "closed". Tests
+ *  whose subject is collisions / integrity / concurrency (not working hours) call
+ *  this so their appointment times fall inside a real window; per-practitioner or
+ *  date-override behaviour is asserted in the dedicated validator/parity suites. */
+export async function seedStudioWideOpenAllWeek(
+  studioId: string,
+  open = "00:00",
+  close = "23:59",
+): Promise<void> {
+  for (let dow = 0; dow <= 6; dow++) {
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (id, studio_id, practitioner_id, day_of_week, is_open, open_time, close_time)
+       values (gen_random_uuid(), $1, null, $2, true, $3, $4)
+       on conflict on constraint studio_availability_default_scope_key
+       do update set is_open = true, open_time = excluded.open_time, close_time = excluded.close_time`,
+      [studioId, dow, open, close],
+    );
+  }
+}
+
 /** Teardown by id: delete the studio's rows and its fake auth users by id.
  *  Cascades cover child rows; auth.users are removed explicitly since they
  *  live outside the public schema. Never truncates. Proven by
