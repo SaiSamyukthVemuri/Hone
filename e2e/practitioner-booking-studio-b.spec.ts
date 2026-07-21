@@ -70,7 +70,7 @@ test("owner books A, then B — distinct practitioner assignments", async ({ pag
   await selector.selectOption({ label: A.displayName });
   const slotA = page.getByRole("button", { name: SLOT });
   await expect(slotA.first()).toBeVisible({ timeout: 20_000 });
-  await slotA.first().click();
+  await slotA.last().click(); // latest slot today = future (local-morning tz)
   await expect(page.getByTestId("assigned-practitioner")).toContainText(A.displayName);
   await page.getByRole("button", { name: /^Confirm$/ }).click();
   await page.waitForURL(/\/calendar\//, { timeout: 20_000 });
@@ -80,7 +80,7 @@ test("owner books A, then B — distinct practitioner assignments", async ({ pag
   await page.getByLabel("Practitioner").selectOption({ label: B.displayName });
   const slotB = page.getByRole("button", { name: SLOT });
   await expect(slotB.first()).toBeVisible({ timeout: 20_000 });
-  await slotB.first().click();
+  await slotB.last().click();
   await expect(page.getByTestId("assigned-practitioner")).toContainText(B.displayName);
   await page.getByRole("button", { name: /^Confirm$/ }).click();
   await page.waitForURL(/\/calendar\//, { timeout: 20_000 });
@@ -98,7 +98,7 @@ test("changing the target clears the picked time (stale submission impossible)",
   await page.getByLabel("Practitioner").selectOption({ label: A.displayName });
   const slot = page.getByRole("button", { name: SLOT });
   await expect(slot.first()).toBeVisible({ timeout: 20_000 });
-  await slot.first().click();
+  await slot.last().click();
   const confirm = page.getByRole("button", { name: /^Confirm$/ });
   await expect(confirm).toBeEnabled();
   // Switch A -> B: the client-profile loader clears the picked slot on every
@@ -114,7 +114,7 @@ test("member sees no selector and books only themselves", async ({ page }) => {
   await expect(page.getByLabel("Practitioner")).toHaveCount(0);
   const slot = page.getByRole("button", { name: SLOT });
   await expect(slot.first()).toBeVisible({ timeout: 20_000 });
-  await slot.first().click();
+  await slot.last().click();
   await page.getByRole("button", { name: /^Confirm$/ }).click();
   await page.waitForURL(/\/calendar\//, { timeout: 20_000 });
   const appts = await getClientAppointmentsWithPractitioner(seed.studioId, clientId);
