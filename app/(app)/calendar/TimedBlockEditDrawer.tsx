@@ -115,7 +115,11 @@ export function TimedBlockEditDrawer({
     fd.set("id", block!.id);
     startTransition(async () => {
       try {
-        await deleteTimedBlockAction(fd);
+        const result = await deleteTimedBlockAction(fd);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
         router.refresh();
         onClose();
       } catch (e) {

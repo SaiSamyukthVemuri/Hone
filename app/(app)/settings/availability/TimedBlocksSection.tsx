@@ -172,7 +172,11 @@ export function TimedBlocksSection({
     fd.set("id", id);
     startTransition(async () => {
       try {
-        await deleteTimedBlockAction(fd);
+        const result = await deleteTimedBlockAction(fd);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
         if (editingId === id) {
           resetForm();
         }

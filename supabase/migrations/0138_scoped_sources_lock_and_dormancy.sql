@@ -80,7 +80,13 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  if new.practitioner_id is not null then
+  -- Validate only when the scope is being SET or CHANGED to a practitioner
+  -- (INSERT, or an UPDATE that changes practitioner_id). This lets the owner
+  -- still toggle-off / edit an EXISTING scoped source whose practitioner later
+  -- went inactive, or whose studio dropped to Legacy — without being able to
+  -- (re)assign a scoped source to an inactive practitioner or create one while OFF.
+  if new.practitioner_id is not null
+     and (tg_op = 'INSERT' or new.practitioner_id is distinct from old.practitioner_id) then
     if not public.studio_capacity_enabled(new.studio_id) then
       raise exception 'per-practitioner block/break requires practitioner capacity to be enabled'
         using errcode = '42501';

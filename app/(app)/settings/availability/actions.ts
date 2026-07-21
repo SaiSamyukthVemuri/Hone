@@ -116,6 +116,45 @@ function nullable(value: FormDataEntryValue | null): string | null {
   return t.length === 0 ? null : t;
 }
 
+// Resolve the per-practitioner scope a create/update should apply.
+//
+//   field ABSENT (a Legacy form that never renders a scope selector, or a
+//     tampered request that drops the field)   -> preserve `existing`
+//   field PRESENT but empty ("All practitioners") -> studio-wide (null)
+//   field PRESENT with a UUID                    -> that practitioner
+//
+// The DB is the source of truth for validity: the composite FK
+// (studio_id, practitioner_id) rejects a cross-tenant practitioner (23503),
+// and guard_scoped_source_capacity rejects assigning a scope while capacity
+// is OFF (42501) or to an inactive practitioner (23514). We never interpret
+// a missing field as a reset to studio-wide — that would silently widen a
+// scoped source. `existing` is undefined for CREATE (no prior row), so an
+// absent field there resolves to studio-wide, the correct Legacy default.
+function resolveSubmittedScope(
+  formData: FormData,
+  existing: string | null | undefined,
+): string | null {
+  if (!formData.has("practitioner_id")) return existing ?? null;
+  const raw = trimmed(formData.get("practitioner_id"));
+  return raw === "" ? null : raw;
+}
+
+// Maps the scope-guard sqlstates raised by the DB into owner-facing copy.
+// Returns null when the code is not a scope-guard violation so the caller
+// falls through to its generic error branch. No PII — codes only.
+function scopeGuardMessage(code: string | undefined): string | null {
+  switch (code) {
+    case "42501":
+      return "Per-practitioner scheduling is not enabled for this studio, so this item must apply to all practitioners.";
+    case "23514":
+      return "That practitioner is no longer active. Choose an active practitioner, or make this item apply to all practitioners.";
+    case "23503":
+      return "That practitioner does not belong to this studio.";
+    default:
+      return null;
+  }
+}
+
 async function assertOwner(): Promise<{ studioId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
@@ -714,6 +753,11 @@ export async function createTimedBlockAction(
     return { ok: false, error: "Blocked time must end in the future." };
   }
 
+  // A whole-day block stays studio-wide: it closes the studio for every
+  // practitioner, so it never carries a per-practitioner scope. Timed blocks
+  // may be studio-wide (null) or scoped to one practitioner.
+  const scope = allDay ? null : resolveSubmittedScope(formData, undefined);
+
   const supabase = await createClient();
   const { error } = await supabase.from("studio_timed_blocks").insert({
     studio_id: studio.id,
@@ -722,6 +766,7 @@ export async function createTimedBlockAction(
     category,
     private_note: privateNote,
     created_by: practitioner.id,
+    practitioner_id: scope,
   });
   if (error) {
     if (error.code === "23P01") {
@@ -734,6 +779,8 @@ export async function createTimedBlockAction(
       );
       return { ok: false, error: message };
     }
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
     return { ok: false, error: `Failed to add block: ${error.message}` };
   }
   revalidatePath("/settings/availability");
@@ -783,6 +830,19 @@ export async function updateTimedBlockAction(
   }
 
   const supabase = await createClient();
+  // Load the existing row by id + authenticated studio BEFORE mutating. This
+  // confirms tenant ownership and gives us the current scope to preserve when
+  // the request omits practitioner_id (a Legacy form, or a tampered request).
+  const { data: existing, error: loadErr } = await supabase
+    .from("studio_timed_blocks")
+    .select("practitioner_id")
+    .eq("id", id)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (loadErr) return { ok: false, error: `Failed to update block: ${loadErr.message}` };
+  if (!existing) return { ok: false, error: "Block not found." };
+  const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+
   const { error } = await supabase
     .from("studio_timed_blocks")
     .update({
@@ -790,6 +850,7 @@ export async function updateTimedBlockAction(
       ends_at: endsAt,
       category,
       private_note: privateNote,
+      practitioner_id: scope,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
@@ -810,6 +871,8 @@ export async function updateTimedBlockAction(
       );
       return { ok: false, error: message };
     }
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
     return { ok: false, error: `Failed to update block: ${error.message}` };
   }
   revalidatePath("/settings/availability");
@@ -819,19 +882,25 @@ export async function updateTimedBlockAction(
 
 export async function deleteTimedBlockAction(
   formData: FormData,
-): Promise<void> {
+): Promise<BlockActionResult> {
+  // Returns a BlockActionResult (not void) so a delete that fails the lock
+  // trigger or RLS surfaces inline instead of a masked production throw.
+  // Deleting a scoped block is always permitted — the lock/dormancy triggers
+  // fire, but no scope guard blocks removal, so a block whose practitioner
+  // later went inactive can still be cleaned up.
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
-  if (!id) throw new Error("Missing block id.");
+  if (!id) return { ok: false, error: "Missing block id." };
   const supabase = await createClient();
   const { error } = await supabase
     .from("studio_timed_blocks")
     .delete()
     .eq("id", id)
     .eq("studio_id", studio.id);
-  if (error) throw new Error(`Failed to delete block: ${error.message}`);
+  if (error) return { ok: false, error: `Failed to delete block: ${error.message}` };
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
+  return { ok: true };
 }
 
 // -------------------------------------------------------------------------
@@ -931,6 +1000,7 @@ export async function createRecurringBreakRuleAction(
     return { ok: false, error: "End time must be after start time." };
   }
 
+  const scope = resolveSubmittedScope(formData, undefined);
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   const { error } = await admin.rpc(
@@ -944,12 +1014,15 @@ export async function createRecurringBreakRuleAction(
       p_active: active,
       p_created_by: practitioner.id,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: scope,
     },
   );
   if (error) {
     if (error.code === "23P01") {
       return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
     }
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
     return { ok: false, error: `Failed to add recurring break: ${error.message}` };
   }
   revalidatePath("/settings/availability");
@@ -990,6 +1063,21 @@ export async function updateRecurringBreakRuleAction(
     return { ok: false, error: "End time must be after start time." };
   }
 
+  // Load the existing rule by id + authenticated studio first: confirms tenant
+  // ownership and yields the current scope to preserve when the request omits
+  // practitioner_id. Without this, the RPC's p_practitioner_id default (NULL)
+  // would silently widen a scoped rule to studio-wide on every edit.
+  const supabase = await createClient();
+  const { data: existing, error: loadErr } = await supabase
+    .from("studio_recurring_break_rules")
+    .select("practitioner_id")
+    .eq("id", id)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (loadErr) return { ok: false, error: `Failed to update recurring break: ${loadErr.message}` };
+  if (!existing) return { ok: false, error: "Rule not found." };
+  const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   // p_studio_id is the asserted owner's studio so the RPC cannot
@@ -1006,12 +1094,15 @@ export async function updateRecurringBreakRuleAction(
       p_end_local_time: endLocal,
       p_active: active,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: scope,
     },
   );
   if (error) {
     if (error.code === "23P01") {
       return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
     }
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
     return { ok: false, error: `Failed to update recurring break: ${error.message}` };
   }
   revalidatePath("/settings/availability");
@@ -1032,7 +1123,10 @@ export async function toggleRecurringBreakRuleActiveAction(
   const supabase = await createClient();
   const { data: rule, error: lookupErr } = await supabase
     .from("studio_recurring_break_rules")
-    .select("label, days_of_week, start_local_time, end_local_time")
+    // 0137: MUST read practitioner_id and pass it back, or toggling active
+    // would reset a practitioner-scoped rule to studio-wide (the RPC's
+    // p_practitioner_id defaults to NULL).
+    .select("label, days_of_week, start_local_time, end_local_time, practitioner_id")
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -1052,11 +1146,20 @@ export async function toggleRecurringBreakRuleActiveAction(
       p_end_local_time: rule.end_local_time,
       p_active: active,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: rule.practitioner_id ?? null, // preserve scope
     },
   );
   if (error) {
     if (error.code === "23P01") {
       return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+    }
+    // 23514 = re-activating a scoped rule whose practitioner is now inactive.
+    if (error.code === "23514") {
+      return {
+        ok: false,
+        error:
+          "This break is assigned to a practitioner who is no longer active. Reassign it to an active practitioner first.",
+      };
     }
     return { ok: false, error: `Failed to update recurring break: ${error.message}` };
   }
