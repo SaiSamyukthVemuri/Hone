@@ -8,12 +8,27 @@ const BASE = {
   bookingUrl: "https://hone.care/book/rivera",
 };
 
-describe("buildWelcomeEmail — new_owner variant", () => {
-  const email = buildWelcomeEmail({ ...BASE, variant: "new_owner" });
+describe("buildWelcomeEmail — one truthful invitation email", () => {
+  const email = buildWelcomeEmail(BASE);
 
-  it("uses a welcome subject naming the studio", () => {
+  it("uses an invitation subject naming the studio", () => {
     expect(email.subject).toBe(
-      "Welcome to Hone — Rivera Electrolysis is ready",
+      "You've been invited to Rivera Electrolysis on Hone",
+    );
+  });
+
+  it("says INVITED (not 'added'), and mentions confirming current policies", () => {
+    expect(email.text.toLowerCase()).toContain("you've been invited");
+    expect(email.text.toLowerCase()).not.toContain("has been added");
+    expect(email.text.toLowerCase()).not.toContain("now has access");
+    expect(email.text.toLowerCase()).toContain(
+      "confirm the current terms of service and privacy policy",
+    );
+  });
+
+  it("works for an existing account too (mentions using an existing account)", () => {
+    expect(email.text.toLowerCase()).toContain(
+      "if you already have a hone account",
     );
   });
 
@@ -23,25 +38,10 @@ describe("buildWelcomeEmail — new_owner variant", () => {
     expect(email.text).toContain("https://hone.care/book/rivera");
   });
 
-  it("mentions the ~5-minute guided setup, not sales copy", () => {
-    expect(email.text.toLowerCase()).toContain("five minutes");
-    // Onboarding, not marketing — no pricing/sales language.
-    expect(email.html.toLowerCase()).not.toMatch(/\bfree trial\b|\bupgrade\b|\bsale\b|\bdiscount\b/);
-  });
-});
-
-describe("buildWelcomeEmail — existing_account variant", () => {
-  const email = buildWelcomeEmail({ ...BASE, variant: "existing_account" });
-
-  it("uses an 'added to a studio' subject (no re-invitation)", () => {
-    expect(email.subject).toBe(
-      "You've been added to Rivera Electrolysis on Hone",
+  it("is onboarding, not marketing (no sales copy)", () => {
+    expect(email.html.toLowerCase()).not.toMatch(
+      /\bfree trial\b|\bupgrade\b|\bsale\b|\bdiscount\b/,
     );
-  });
-
-  it("tells the owner to sign in with their existing account", () => {
-    expect(email.text.toLowerCase()).toContain("account you already have");
-    expect(email.html).toContain("alex@example.com");
   });
 });
 
@@ -50,7 +50,6 @@ describe("buildWelcomeEmail — safety", () => {
     const email = buildWelcomeEmail({
       ...BASE,
       studioName: "<script>x</script> & Co",
-      variant: "new_owner",
     });
     expect(email.html).not.toContain("<script>x</script>");
     expect(email.html).toContain("&lt;script&gt;");
@@ -58,21 +57,13 @@ describe("buildWelcomeEmail — safety", () => {
   });
 
   it("omits the booking-page line when there is no URL", () => {
-    const email = buildWelcomeEmail({
-      ...BASE,
-      bookingUrl: "",
-      variant: "new_owner",
-    });
-    expect(email.html).not.toContain("Your booking page:");
-    expect(email.text).not.toContain("Your booking page:");
+    const email = buildWelcomeEmail({ ...BASE, bookingUrl: "" });
+    expect(email.html).not.toContain("Your booking page");
+    expect(email.text).not.toContain("Your booking page");
   });
 
   it("falls back to the email address when no display name is given", () => {
-    const email = buildWelcomeEmail({
-      ...BASE,
-      ownerDisplayName: null,
-      variant: "new_owner",
-    });
+    const email = buildWelcomeEmail({ ...BASE, ownerDisplayName: null });
     expect(email.html).toContain("alex@example.com");
   });
 });

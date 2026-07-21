@@ -1,12 +1,9 @@
-// Studio-owner welcome email. Two variants, matching the transactional style of
-// invitation.ts (warm off-white background, Georgia serif headline, sharp black
-// CTA). Onboarding, not marketing — no sales language, no overclaims.
-//
-//   * new_owner        — a brand-new owner (no existing Hone account). "Your
-//                        studio is ready", we'll guide you through setup.
-//   * existing_account — the owner's email already belongs to a Hone account.
-//                        Do NOT re-invite; tell them to sign in with the account
-//                        they already have.
+// Studio-owner invitation email. ONE truthful message for BOTH a brand-new and
+// an existing Hone account: at studio-creation time the owner has been INVITED,
+// not yet added — membership + the authoritative acceptance happen when they
+// sign in and confirm the current policies. So we never infer account existence
+// and never claim "has been added". Matches the transactional style of
+// invitation.ts (warm off-white, Georgia serif headline, sharp black CTA).
 
 const SIGN_IN_URL = "https://hone.care/login";
 const SUPPORT_EMAIL = "hello@hone.care";
@@ -27,61 +24,31 @@ export type WelcomeEmail = {
 };
 
 export type WelcomeEmailParams = {
-  variant: "new_owner" | "existing_account";
   ownerDisplayName: string | null;
   ownerEmail: string;
   studioName: string;
-  // Public booking URL (https://hone.care/book/<slug>). May be "" if a slug is
-  // somehow absent; the line is omitted when empty.
+  // Public booking URL (https://hone.care/book/<slug>). May be "".
   bookingUrl: string;
 };
 
-type Copy = {
-  subject: string;
-  headline: string;
-  lede: string;
-  cta: string;
-  helper: string;
-};
-
-function copyFor(params: WelcomeEmailParams, greetingName: string): Copy {
-  if (params.variant === "existing_account") {
-    return {
-      subject: `You've been added to ${params.studioName} on Hone`,
-      headline: `You've been added to ${params.studioName}.`,
-      // Do NOT claim access is already complete: an existing account may still
-      // need to review the current policies before entering the new studio.
-      lede: `${greetingName}, your Hone account (${params.ownerEmail}) has been added to ${params.studioName}. Sign in with the account you already have — you may be asked to review the current Terms of Service and Privacy Policy before entering the studio.`,
-      cta: "Sign in to Hone",
-      helper:
-        "Once you're in, a short guided setup on your dashboard helps you get the studio ready for bookings.",
-    };
-  }
-  return {
-    subject: `Welcome to Hone — ${params.studioName} is ready`,
-    headline: `${params.studioName} is ready on Hone.`,
-    lede: `${greetingName}, your studio is set up. Sign in to finish the last few steps — we'll guide you through it in about five minutes, and you'll be ready to take your first booking.`,
-    cta: "Sign in to Hone",
-    helper:
-      "Sign in with this email address. Your guided setup opens automatically on your dashboard.",
-  };
-}
-
 export function buildWelcomeEmail(params: WelcomeEmailParams): WelcomeEmail {
-  const greetingName =
-    params.ownerDisplayName?.trim() || params.ownerEmail;
-  const c = copyFor(params, greetingName);
+  const greetingName = params.ownerDisplayName?.trim() || params.ownerEmail;
 
-  const safeHeadline = escapeHtml(c.headline);
-  const safeLede = escapeHtml(c.lede);
-  const safeHelper = escapeHtml(c.helper);
+  const subject = `You've been invited to ${params.studioName} on Hone`;
+  const headline = `You've been invited to ${params.studioName}.`;
+  const lede = `${greetingName}, you've been invited to join ${params.studioName} on Hone. Sign in to join — if you already have a Hone account, use it. You'll confirm the current Terms of Service and Privacy Policy when you join, and then a short guided setup helps you get the studio ready for its first booking.`;
+  const helper = "Sign in with this email address to join your studio.";
+
+  const safeHeadline = escapeHtml(headline);
+  const safeLede = escapeHtml(lede);
+  const safeHelper = escapeHtml(helper);
   const hasBookingUrl = params.bookingUrl.trim().length > 0;
   const safeBookingUrl = escapeHtml(params.bookingUrl);
 
   const bookingRowHtml = hasBookingUrl
     ? `<tr>
               <td style="padding-bottom:32px; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#6B6B6B;">
-                Your booking page: <a href="${safeBookingUrl}" style="color:#0A0A0A;">${safeBookingUrl}</a>
+                Your booking page (live once setup is done): <a href="${safeBookingUrl}" style="color:#0A0A0A;">${safeBookingUrl}</a>
               </td>
             </tr>`
     : "";
@@ -91,7 +58,7 @@ export function buildWelcomeEmail(params: WelcomeEmailParams): WelcomeEmail {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(c.subject)}</title>
+    <title>${escapeHtml(subject)}</title>
   </head>
   <body style="margin:0; padding:0; background-color:#FAFAF7; color:#0A0A0A;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAFAF7; padding:40px 20px;">
@@ -116,7 +83,7 @@ export function buildWelcomeEmail(params: WelcomeEmailParams): WelcomeEmail {
             <tr>
               <td style="padding-bottom:32px;">
                 <a href="${SIGN_IN_URL}" style="display:inline-block; padding:14px 28px; background-color:#0A0A0A; color:#FAFAF7; font-family:-apple-system, system-ui, sans-serif; font-size:13px; font-weight:500; letter-spacing:0.15em; text-transform:uppercase; text-decoration:none;">
-                  ${escapeHtml(c.cta)}
+                  Sign in to Hone
                 </a>
               </td>
             </tr>
@@ -147,16 +114,16 @@ export function buildWelcomeEmail(params: WelcomeEmailParams): WelcomeEmail {
 </html>`;
 
   const bookingLineText = hasBookingUrl
-    ? `\nYour booking page: ${params.bookingUrl}\n`
+    ? `\nYour booking page (live once setup is done): ${params.bookingUrl}\n`
     : "";
 
-  const text = `${c.headline}
+  const text = `${headline}
 
-${c.lede}
+${lede}
 
 Sign in: ${SIGN_IN_URL}
 ${bookingLineText}
-${c.helper}
+${helper}
 
 Questions? Email ${SUPPORT_EMAIL}.
 
@@ -164,5 +131,5 @@ Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
 
-  return { subject: c.subject, html, text };
+  return { subject, html, text };
 }

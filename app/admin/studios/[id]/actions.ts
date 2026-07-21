@@ -6,8 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
+// (welcome email is one truthful invitation; no account-variant)
 import { logAdminAction } from "@/lib/audit/admin-actions";
-import type { WelcomeEmailVariant } from "@/lib/types/database";
 
 export type ResendWelcomeResult = {
   ok: boolean;
@@ -49,23 +49,9 @@ export async function resendWelcomeEmailAction(
     return { ok: false, error: "Studio not found." };
   }
 
-  // Existing-account proxy (accepted invitation), same heuristic as the
-  // studio-create path — never touches auth.users or practitioners.
-  const pattern = studio.owner_email.replace(/[\\%_]/g, "\\$&");
-  const { data: acceptedInvite } = await admin
-    .from("pending_invitations")
-    .select("id")
-    .ilike("email", pattern)
-    .eq("status", "accepted")
-    .limit(1)
-    .maybeSingle();
-  const variant: WelcomeEmailVariant = acceptedInvite
-    ? "existing_account"
-    : "new_owner";
-
+  // One truthful invitation email (no account-variant inference).
   const status = await deliverWelcomeEmail(admin, {
     studioId: studio.id,
-    variant,
     ownerDisplayName: null,
     ownerEmail: studio.owner_email,
     studioName: studio.name,

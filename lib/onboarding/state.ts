@@ -4,7 +4,6 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import type {
   StudioOnboarding,
   WelcomeEmailStatus,
-  WelcomeEmailVariant,
 } from "@/lib/types/database";
 import type { OnboardingPersisted, OnboardingStepKey } from "./steps";
 
@@ -156,23 +155,32 @@ export async function markCelebrated(
 }
 
 // ---------------------------------------------------------------------------
-// Provisioning-time welcome-email stamp (service-role, admin studio-create
-// path). Uses the caller's admin client; upserts the studio_onboarding row so
-// the admin status view can show Sent / Failed with a timestamp.
+// Welcome-email helpers (service-role, trusted send adapter). The claim gives
+// single-attempt idempotency (concurrent resend / double-click -> one send);
+// the status stamp records the send outcome (Sent / Failed) — never a
+// "delivered" state (no provider delivery evidence exists). No account-variant
+// is recorded: one truthful invitation email serves both new and existing
+// accounts.
 // ---------------------------------------------------------------------------
-export async function stampWelcomeEmail(
+export async function claimWelcomeEmailAttempt(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
-  input: { status: WelcomeEmailStatus; variant: WelcomeEmailVariant },
+): Promise<boolean> {
+  const { data } = await admin.rpc("claim_welcome_email_attempt", {
+    p_studio_id: studioId,
+  });
+  return data === true;
+}
+
+export async function stampWelcomeEmailStatus(
+  admin: ReturnType<typeof createAdminClient>,
+  studioId: string,
+  status: WelcomeEmailStatus,
 ): Promise<void> {
-  await admin.from(TABLE).upsert(
-    {
-      studio_id: studioId,
-      welcome_email_status: input.status,
-      welcome_email_variant: input.variant,
-      welcome_email_last_sent_at:
-        input.status === "sent" ? new Date().toISOString() : null,
-    },
-    { onConflict: "studio_id" },
-  );
+  await admin
+    .from(TABLE)
+    .upsert(
+      { studio_id: studioId, welcome_email_status: status },
+      { onConflict: "studio_id" },
+    );
 }

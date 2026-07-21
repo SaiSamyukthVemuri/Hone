@@ -51,10 +51,12 @@ describe("0141 — Defect 1: acceptance command is service-role only", () => {
     expect(a).toMatch(/select email into v_email from auth\.users where id = p_user_id/i);
   });
   it("is REVOKED from public/anon/authenticated and GRANTED to service_role", () => {
-    expect(CODE).toMatch(/revoke execute on function public\.admin_accept_pending_invitation\(uuid\) from authenticated/i);
-    expect(CODE).toMatch(/revoke execute on function public\.admin_accept_pending_invitation\(uuid\) from anon/i);
-    expect(CODE).toMatch(/revoke execute on function public\.admin_accept_pending_invitation\(uuid\) from public/i);
-    expect(CODE).toMatch(/grant execute on function public\.admin_accept_pending_invitation\(uuid\) to service_role/i);
+    // Named in the service-role-only revoke/grant loop.
+    expect(CODE).toContain("public.admin_accept_pending_invitation(uuid)");
+    expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+    expect(CODE).toMatch(/revoke execute on function %s from anon/i);
+    expect(CODE).toMatch(/revoke execute on function %s from public/i);
+    expect(CODE).toMatch(/grant execute on function %s to service_role/i);
   });
   it("there is NO authenticated-callable accept_my_pending_invitation", () => {
     expect(CODE).not.toMatch(/grant execute on function public\.accept_my_pending_invitation/i);
@@ -116,5 +118,19 @@ describe("0141 — concurrency + authorization posture", () => {
     expect(CODE).toContain("public.link_invited_membership(");
     expect(CODE).toContain("public.current_terms_version()");
     expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+  });
+});
+
+describe("0141 — Defect 4d: welcome-email single-attempt claim", () => {
+  it("claim_welcome_email_attempt is an atomic conditional upsert, service-role only", () => {
+    const c = fnBlock("claim_welcome_email_attempt\\(p_studio_id uuid\\)");
+    expect(c).toMatch(/security definer/i);
+    // Atomic claim: insert ... on conflict do update ... where <recent guard>.
+    expect(c).toMatch(/insert into public\.studio_onboarding[\s\S]*?on conflict \(studio_id\) do update/i);
+    expect(c).toMatch(/welcome_email_last_sent_at < now\(\) - interval '10 seconds'/i);
+    // Browser roles cannot call it.
+    expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+    expect(CODE).toMatch(/grant execute on function %s to service_role/i);
+    expect(CODE).toContain("public.claim_welcome_email_attempt(uuid)");
   });
 });

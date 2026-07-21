@@ -389,6 +389,31 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Step 6b: welcome-email single-attempt claim (idempotency). Atomically stamps
+-- welcome_email_last_sent_at only if there was no attempt in the last 10s, and
+-- returns whether THIS caller claimed it. Concurrent resends / rapid double-
+-- clicks serialize on the row lock, so exactly one caller claims and sends.
+-- Service-role only (called by the trusted send adapter).
+-- ---------------------------------------------------------------------------
+create or replace function public.claim_welcome_email_attempt(p_studio_id uuid)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_claimed boolean;
+begin
+  insert into public.studio_onboarding (studio_id, welcome_email_last_sent_at)
+  values (p_studio_id, now())
+  on conflict (studio_id) do update
+    set welcome_email_last_sent_at = now()
+    where studio_onboarding.welcome_email_last_sent_at is null
+       or studio_onboarding.welcome_email_last_sent_at < now() - interval '10 seconds'
+  returning true into v_claimed;
+  return coalesce(v_claimed, false);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Step 7: authorization.
 --   * reconcile / my_pending_invitation  -> authenticated (self-scoped).
 --   * admin_accept_pending_invitation    -> service_role ONLY (no browser role).
@@ -406,11 +431,17 @@ begin
     execute format('grant execute on function %s to authenticated', fn);
   end loop;
 
-  -- The authoritative acceptance command: browser roles CANNOT call it.
-  execute 'revoke execute on function public.admin_accept_pending_invitation(uuid) from public';
-  execute 'revoke execute on function public.admin_accept_pending_invitation(uuid) from anon';
-  execute 'revoke execute on function public.admin_accept_pending_invitation(uuid) from authenticated';
-  execute 'grant execute on function public.admin_accept_pending_invitation(uuid) to service_role';
+  -- The authoritative acceptance command + the welcome-email claim: service-role
+  -- only (the trusted server adapters). Browser roles CANNOT call them.
+  foreach fn in array array[
+    'public.admin_accept_pending_invitation(uuid)',
+    'public.claim_welcome_email_attempt(uuid)'
+  ] loop
+    execute format('revoke execute on function %s from public', fn);
+    execute format('revoke execute on function %s from anon', fn);
+    execute format('revoke execute on function %s from authenticated', fn);
+    execute format('grant execute on function %s to service_role', fn);
+  end loop;
 
   foreach fn in array array[
     'public.current_terms_version()',

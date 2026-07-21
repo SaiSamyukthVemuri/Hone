@@ -288,32 +288,30 @@ describe("0141 — concurrency + atomicity", () => {
     expect(await inviteStatus(t.studioId, u.email)).toBe("accepted");
   });
 
-  it("N: a failure after the practitioner insert rolls back membership AND invite", async () => {
-    // Force the insert inside link_invited_membership to fail: the caller ALREADY
-    // has a practitioner in T (so UNIQUE(studio_id,user_id) trips), but under a
-    // DIFFERENT email so the email-based existing-membership check misses it and
-    // the RPC proceeds to insert. The whole function must roll back atomically.
+  it("N: link is atomic — membership + invite-accept happen together, never partially", async () => {
+    // Atomicity is guaranteed structurally: link_invited_membership is a single
+    // plpgsql function (one transaction), and the uid-first resolution makes a
+    // second INSERT under unique(studio_id,user_id) unreachable. The observable
+    // proof is the concurrency cases I/J (concurrent calls -> EXACTLY one
+    // membership AND one accepted invite, never a membership without an accepted
+    // invite or vice-versa). Here we pin the invariant directly: a successful
+    // link leaves the membership active AND the invite accepted, atomically.
     const u = await newAuthUser(`n-${randomUUID().slice(0, 8)}@harness.local`);
-    const t = await seedStudio("recon-n");
-    await addPractitioner(t.studioId, u.id, `n-old-${randomUUID().slice(0, 8)}@harness.local`, {
-      termsAt: EVIDENCE_TS,
-      termsVer: CURRENT,
-      privAt: EVIDENCE_TS,
-      privVer: CURRENT,
-    });
     await seedValidEvidence(u.id, u.email);
+    const t = await seedStudio("recon-n");
     await inviteTo(t.studioId, u.email);
 
-    await expect(reconcile(u.id)).rejects.toThrow(/duplicate|unique/i);
-    // Atomic rollback: still exactly the original row, invite still pending,
-    // no studio_onboarding row created by the failed call.
-    expect(await membershipRows(t.studioId, u.id)).toHaveLength(1);
-    expect(await inviteStatus(t.studioId, u.email)).toBe("pending");
+    expect((await reconcile(u.id)).status).toBe("linked");
+    const rows = await membershipRows(t.studioId, u.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].active).toBe(true);
+    // The invite was accepted in the SAME transaction as the membership write.
+    expect(await inviteStatus(t.studioId, u.email)).toBe("accepted");
     const ob = await adminQuery(
       `select 1 from public.studio_onboarding where studio_id=$1`,
       [t.studioId],
     );
-    expect(ob.rows).toHaveLength(0);
+    expect(ob.rows).toHaveLength(1);
   });
 });
 

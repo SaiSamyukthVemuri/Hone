@@ -9,7 +9,6 @@ import { logAdminAction } from "@/lib/audit/admin-actions";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
-import type { WelcomeEmailVariant } from "@/lib/types/database";
 
 const BASE = "/admin/studios/new";
 
@@ -211,31 +210,14 @@ export async function createStudioWithOwnerInvite(
     properties: { studio_id: studio.id },
   });
 
-  // Onboarding v2 only: send the welcome email and seed studio_onboarding.
-  // Best-effort — the studio + invite already succeeded, and deliverWelcomeEmail
-  // never throws (studio creation must not depend on email/analytics).
+  // Onboarding v2 only: send the ONE truthful invitation email + seed
+  // studio_onboarding. Best-effort — the studio + invite already succeeded, and
+  // deliverWelcomeEmail never throws (studio creation must not depend on email).
+  // No account-variant is inferred: at this point the owner has been INVITED,
+  // not added; membership + acceptance happen when they sign in and consent.
   if (enableOnboardingV2) {
-    // Variant: does this email already belong to a Hone account? Heuristic that
-    // does NOT touch auth.users or practitioners (the latter is deliberately
-    // off-limits in this action — owner provisioning is the handle_new_user
-    // trigger's job). An ACCEPTED invitation for this email means the owner
-    // signed in before (invite-only), so an auth account already exists; send
-    // the "added to a studio" notice instead of a brand-new welcome. (The actual
-    // membership for an existing account is reconciled at sign-in.)
-    const { data: acceptedInvite } = await admin
-      .from("pending_invitations")
-      .select("id")
-      .ilike("email", ownerEmailPattern)
-      .eq("status", "accepted")
-      .limit(1)
-      .maybeSingle();
-    const variant: WelcomeEmailVariant = acceptedInvite
-      ? "existing_account"
-      : "new_owner";
-
     await deliverWelcomeEmail(admin, {
       studioId: studio.id,
-      variant,
       ownerDisplayName: input.ownerDisplayName,
       ownerEmail: input.ownerEmail,
       studioName: input.name,
