@@ -389,27 +389,66 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Step 6b: welcome-email single-attempt claim (idempotency). Atomically stamps
--- welcome_email_last_sent_at only if there was no attempt in the last 10s, and
--- returns whether THIS caller claimed it. Concurrent resends / rapid double-
--- clicks serialize on the row lock, so exactly one caller claims and sends.
--- Service-role only (called by the trusted send adapter).
+-- Step 6b: welcome-email attempt CLAIM. Atomically flips status -> 'sending',
+-- mints a FRESH attempt_id, and stamps last_attempted_at — but ONLY if no
+-- attempt is already in progress (status 'sending' within the last 30s, i.e. a
+-- live concurrent attempt). Returns the winning attempt_id, or NULL to a caller
+-- that lost the race ('already in progress'). Concurrent claims serialize on the
+-- row lock, so exactly one caller wins. Service-role only.
 -- ---------------------------------------------------------------------------
 create or replace function public.claim_welcome_email_attempt(p_studio_id uuid)
+returns uuid
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_attempt uuid;
+begin
+  insert into public.studio_onboarding
+    (studio_id, welcome_email_status, welcome_email_attempt_id, welcome_email_last_attempted_at)
+  values (p_studio_id, 'sending', gen_random_uuid(), now())
+  on conflict (studio_id) do update
+    set welcome_email_status = 'sending',
+        welcome_email_attempt_id = gen_random_uuid(),
+        welcome_email_last_attempted_at = now()
+    where studio_onboarding.welcome_email_status <> 'sending'
+       or studio_onboarding.welcome_email_last_attempted_at is null
+       or studio_onboarding.welcome_email_last_attempted_at < now() - interval '30 seconds'
+  returning welcome_email_attempt_id into v_attempt;
+  return v_attempt; -- NULL when a live attempt is already in progress
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Step 6c: welcome-email RESULT stamp (compare-and-set on attempt_id). Only the
+-- caller whose attempt_id is still current may write the final status, so a
+-- stale/slow attempt can never overwrite a newer retry's result. Returns whether
+-- the result was applied. last_sent_at is set ONLY on a genuine 'sent'.
+-- Service-role only.
+-- ---------------------------------------------------------------------------
+create or replace function public.record_welcome_email_result(
+  p_studio_id uuid,
+  p_attempt_id uuid,
+  p_status text
+)
 returns boolean
 language plpgsql security definer
 set search_path = pg_catalog, pg_temp
 as $$
-declare v_claimed boolean;
+declare v_updated boolean;
 begin
-  insert into public.studio_onboarding (studio_id, welcome_email_last_sent_at)
-  values (p_studio_id, now())
-  on conflict (studio_id) do update
-    set welcome_email_last_sent_at = now()
-    where studio_onboarding.welcome_email_last_sent_at is null
-       or studio_onboarding.welcome_email_last_sent_at < now() - interval '10 seconds'
-  returning true into v_claimed;
-  return coalesce(v_claimed, false);
+  if p_status not in ('not_sent', 'sent', 'failed') then
+    raise exception 'invalid welcome_email result status: %', p_status
+      using errcode = '22023';
+  end if;
+  update public.studio_onboarding set
+    welcome_email_status = p_status,
+    welcome_email_last_sent_at = case
+      when p_status = 'sent' then now()
+      else welcome_email_last_sent_at end
+  where studio_id = p_studio_id
+    and welcome_email_attempt_id = p_attempt_id  -- CAS: only the current attempt
+  returning true into v_updated;
+  return coalesce(v_updated, false);
 end;
 $$;
 
@@ -435,7 +474,8 @@ begin
   -- only (the trusted server adapters). Browser roles CANNOT call them.
   foreach fn in array array[
     'public.admin_accept_pending_invitation(uuid)',
-    'public.claim_welcome_email_attempt(uuid)'
+    'public.claim_welcome_email_attempt(uuid)',
+    'public.record_welcome_email_result(uuid, uuid, text)'
   ] loop
     execute format('revoke execute on function %s from public', fn);
     execute format('revoke execute on function %s from anon', fn);

@@ -16,10 +16,12 @@ export function ResendWelcomeButton({ studioId }: { studioId: string }) {
           startTransition(async () => {
             setMsg(null);
             const res = await resendWelcomeEmailAction(studioId);
-            if (!res.ok) {
-              setMsg(res.error ?? "Send failed.");
-            } else if (res.status === "not_sent") {
-              setMsg("Email not configured in this environment (nothing sent).");
+            if (!res.ok || res.status === "failed") {
+              setMsg(res.error ?? "Send failed. Please try again.");
+            } else if (res.status === "not_configured") {
+              setMsg("Email is not configured in this environment (nothing sent).");
+            } else if (res.status === "already_in_progress") {
+              setMsg("A send is already in progress — nothing sent this time.");
             } else {
               setMsg("Welcome email sent.");
             }

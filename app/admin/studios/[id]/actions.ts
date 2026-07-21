@@ -9,9 +9,11 @@ import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 // (welcome email is one truthful invitation; no account-variant)
 import { logAdminAction } from "@/lib/audit/admin-actions";
 
+import type { WelcomeEmailResult } from "@/lib/email/send-welcome";
+
 export type ResendWelcomeResult = {
   ok: boolean;
-  status?: "sent" | "failed" | "not_sent";
+  status?: WelcomeEmailResult;
   error?: string;
 };
 
@@ -67,8 +69,8 @@ export async function resendWelcomeEmailAction(
     targetType: "studio",
     targetId: studio.id,
     action: "welcome_email_resent",
-    outcome: status === "sent" ? "succeeded" : "failed",
-    metadata: { slug: studio.slug ?? undefined, welcome_email_status: status },
+    outcome: status === "failed" ? "failed" : "succeeded",
+    metadata: { slug: studio.slug ?? undefined, welcome_email_result: status },
   });
 
   revalidatePath(`/admin/studios/${studioId}`);

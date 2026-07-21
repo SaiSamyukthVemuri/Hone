@@ -150,9 +150,7 @@ export type OnboardingStatus =
   | "completed"
   | "skipped";
 
-export type WelcomeEmailStatus = "not_sent" | "sent" | "failed";
-
-export type WelcomeEmailVariant = "new_owner" | "existing_account";
+export type WelcomeEmailStatus = "not_sent" | "sending" | "sent" | "failed";
 
 export type StudioOnboarding = {
   studio_id: string;
@@ -164,7 +162,8 @@ export type StudioOnboarding = {
   completed_at: string | null;
   celebrated_at: string | null;
   welcome_email_status: WelcomeEmailStatus;
-  welcome_email_variant: WelcomeEmailVariant | null;
+  welcome_email_attempt_id: string | null;
+  welcome_email_last_attempted_at: string | null;
   welcome_email_last_sent_at: string | null;
   created_at: string;
   updated_at: string;

@@ -110,17 +110,18 @@ create table if not exists public.studio_onboarding (
   completed_at               timestamptz,
   -- The one-time celebration has been shown, so it never re-fires on later loads.
   celebrated_at              timestamptz,
-  -- Welcome-email send outcome (Sent / Failed / not-sent). "Accepted" is derived
-  -- separately from pending_invitations.status; this column is the SEND result
-  -- only. No delivered/opened tracking (no Resend webhook / pixel — deliberate
-  -- privacy posture for a clinical app).
-  welcome_email_status       text not null default 'not_sent'
-                               check (welcome_email_status in ('not_sent', 'sent', 'failed')),
-  -- Which welcome template variant was sent: a brand-new owner vs. an email that
-  -- already belongs to an existing Hone account (added-to-studio notice).
-  welcome_email_variant      text
-                               check (welcome_email_variant in ('new_owner', 'existing_account')),
-  welcome_email_last_sent_at timestamptz,
+  -- Welcome-email TRUTHFUL state machine: not_sent -> sending -> sent | failed.
+  -- attempt_id gates concurrent sends: a claim atomically flips to 'sending' and
+  -- mints a fresh attempt_id; only that winning attempt_id may stamp the final
+  -- result, so a stale/slow attempt can never overwrite a newer retry.
+  -- last_attempted_at = last claim time; last_sent_at is set ONLY on a genuine
+  -- successful send. No delivered/opened tracking (no webhook/pixel). "Accepted"
+  -- is derived separately from pending_invitations.status.
+  welcome_email_status            text not null default 'not_sent'
+                                    check (welcome_email_status in ('not_sent', 'sending', 'sent', 'failed')),
+  welcome_email_attempt_id        uuid,
+  welcome_email_last_attempted_at timestamptz,
+  welcome_email_last_sent_at      timestamptz,
   created_at                 timestamptz not null default now(),
   updated_at                 timestamptz not null default now()
 );

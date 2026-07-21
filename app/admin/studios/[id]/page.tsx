@@ -41,9 +41,8 @@ type StudioDetail = {
 type OnboardingAdminView = {
   enabled: boolean;
   status: string;
-  welcomeEmailStatus: "not_sent" | "sent" | "failed";
+  welcomeEmailStatus: "not_sent" | "sending" | "sent" | "failed";
   welcomeEmailLastSentAt: string | null;
-  welcomeEmailVariant: string | null;
   completedAt: string | null;
   dismissedAt: string | null;
   requiredDone: number;
@@ -77,7 +76,7 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
     admin
       .from("studio_onboarding")
       .select(
-        "status, welcome_email_status, welcome_email_last_sent_at, welcome_email_variant, completed_at, dismissed_at",
+        "status, welcome_email_status, welcome_email_last_sent_at, completed_at, dismissed_at",
       )
       .eq("studio_id", id)
       .maybeSingle(),
@@ -132,9 +131,8 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
 
   const ob = (onboardingRes.data ?? null) as {
     status: string;
-    welcome_email_status: "not_sent" | "sent" | "failed";
+    welcome_email_status: "not_sent" | "sending" | "sent" | "failed";
     welcome_email_last_sent_at: string | null;
-    welcome_email_variant: string | null;
     completed_at: string | null;
     dismissed_at: string | null;
   } | null;
@@ -160,7 +158,6 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
       status: ob?.status ?? "not_started",
       welcomeEmailStatus: ob?.welcome_email_status ?? "not_sent",
       welcomeEmailLastSentAt: ob?.welcome_email_last_sent_at ?? null,
-      welcomeEmailVariant: ob?.welcome_email_variant ?? null,
       completedAt: ob?.completed_at ?? null,
       dismissedAt: ob?.dismissed_at ?? null,
       requiredDone,
@@ -286,9 +283,6 @@ export default async function AdminStudioPage({
             {studio.onboarding.welcomeEmailStatus === "sent" ? (
               <span>
                 Sent
-                {studio.onboarding.welcomeEmailVariant
-                  ? ` (${studio.onboarding.welcomeEmailVariant.replace("_", " ")})`
-                  : ""}
                 {studio.onboarding.welcomeEmailLastSentAt ? (
                   <>
                     {" · "}
@@ -298,6 +292,8 @@ export default async function AdminStudioPage({
                   </>
                 ) : null}
               </span>
+            ) : studio.onboarding.welcomeEmailStatus === "sending" ? (
+              <span className="text-neutral-500">Sending…</span>
             ) : studio.onboarding.welcomeEmailStatus === "failed" ? (
               <span className="text-amber-700 dark:text-amber-300">Failed</span>
             ) : (

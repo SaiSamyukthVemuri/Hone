@@ -15,7 +15,7 @@ import type { OnboardingPersisted, OnboardingStepKey } from "./steps";
 
 const TABLE = "studio_onboarding";
 const COLUMNS =
-  "studio_id, status, current_step, completed_steps, skipped_steps, dismissed_at, completed_at, celebrated_at, welcome_email_status, welcome_email_variant, welcome_email_last_sent_at, created_at, updated_at";
+  "studio_id, status, current_step, completed_steps, skipped_steps, dismissed_at, completed_at, celebrated_at, welcome_email_status, welcome_email_attempt_id, welcome_email_last_attempted_at, welcome_email_last_sent_at, created_at, updated_at";
 
 function uniq(values: string[]): string[] {
   return [...new Set(values)];
@@ -155,32 +155,46 @@ export async function markCelebrated(
 }
 
 // ---------------------------------------------------------------------------
-// Welcome-email helpers (service-role, trusted send adapter). The claim gives
-// single-attempt idempotency (concurrent resend / double-click -> one send);
-// the status stamp records the send outcome (Sent / Failed) — never a
-// "delivered" state (no provider delivery evidence exists). No account-variant
-// is recorded: one truthful invitation email serves both new and existing
-// accounts.
+// Welcome-email helpers (service-role, trusted send adapter). The claim is an
+// attempt-id single-flight lock; the RESULT stamp is a compare-and-set on that
+// attempt-id, so a stale attempt can never overwrite a newer retry and status is
+// never a "delivered" state (no provider delivery evidence exists). Every
+// Supabase { error } is propagated so a DB failure cannot masquerade as success.
 // ---------------------------------------------------------------------------
+
+// { attemptId } is set only for the winning caller. attemptId === null with
+// error === false means another live attempt is in progress. error === true
+// means the claim RPC itself failed (do NOT send).
+export type WelcomeEmailClaim = {
+  attemptId: string | null;
+  error: boolean;
+};
+
 export async function claimWelcomeEmailAttempt(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
-): Promise<boolean> {
-  const { data } = await admin.rpc("claim_welcome_email_attempt", {
+): Promise<WelcomeEmailClaim> {
+  const { data, error } = await admin.rpc("claim_welcome_email_attempt", {
     p_studio_id: studioId,
   });
-  return data === true;
+  if (error) return { attemptId: null, error: true };
+  return { attemptId: (data as string | null) ?? null, error: false };
 }
 
-export async function stampWelcomeEmailStatus(
+// Compare-and-set the final result on the current attempt only. Returns whether
+// the result was applied (false = superseded by a newer attempt, or a write
+// error).
+export async function recordWelcomeEmailResult(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
-  status: WelcomeEmailStatus,
-): Promise<void> {
-  await admin
-    .from(TABLE)
-    .upsert(
-      { studio_id: studioId, welcome_email_status: status },
-      { onConflict: "studio_id" },
-    );
+  attemptId: string,
+  status: Exclude<WelcomeEmailStatus, "sending">,
+): Promise<{ applied: boolean; error: boolean }> {
+  const { data, error } = await admin.rpc("record_welcome_email_result", {
+    p_studio_id: studioId,
+    p_attempt_id: attemptId,
+    p_status: status,
+  });
+  if (error) return { applied: false, error: true };
+  return { applied: data === true, error: false };
 }

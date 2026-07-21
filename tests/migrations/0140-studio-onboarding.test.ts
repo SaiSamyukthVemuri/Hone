@@ -60,13 +60,13 @@ describe("0140 — Gate 2: studio_onboarding table shape + honest state", () => 
     );
   });
 
-  it("constrains status, welcome_email_status and welcome_email_variant to closed sets", () => {
+  it("constrains status + the welcome-email state machine to closed sets", () => {
     expect(CODE).toMatch(/status\s+text not null default 'not_started'[\s\S]*?check \(status in \('not_started', 'in_progress', 'completed', 'skipped'\)\)/i);
-    expect(CODE).toMatch(/welcome_email_status\s+text not null default 'not_sent'[\s\S]*?check \(welcome_email_status in \('not_sent', 'sent', 'failed'\)\)/i);
-    expect(CODE).toMatch(/welcome_email_variant[\s\S]*?check \(welcome_email_variant in \('new_owner', 'existing_account'\)\)/i);
+    // Truthful welcome-email state machine: adds 'sending'.
+    expect(CODE).toMatch(/welcome_email_status\s+text not null default 'not_sent'[\s\S]*?check \(welcome_email_status in \('not_sent', 'sending', 'sent', 'failed'\)\)/i);
   });
 
-  it("carries the resume pointer + celebrate-once + completed/skipped stamps", () => {
+  it("carries the resume pointer + celebrate-once + welcome-email attempt state", () => {
     for (const col of [
       "current_step",
       "completed_steps",
@@ -74,6 +74,8 @@ describe("0140 — Gate 2: studio_onboarding table shape + honest state", () => 
       "dismissed_at",
       "completed_at",
       "celebrated_at",
+      "welcome_email_attempt_id",
+      "welcome_email_last_attempted_at",
       "welcome_email_last_sent_at",
     ]) {
       expect(CODE, col).toContain(col);

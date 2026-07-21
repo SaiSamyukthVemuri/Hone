@@ -121,16 +121,30 @@ describe("0141 — concurrency + authorization posture", () => {
   });
 });
 
-describe("0141 — Defect 4d: welcome-email single-attempt claim", () => {
-  it("claim_welcome_email_attempt is an atomic conditional upsert, service-role only", () => {
+describe("0141 — Defect 1: truthful welcome-email attempt state machine", () => {
+  it("claim mints a fresh attempt_id, flips to 'sending', returns the attempt_id", () => {
     const c = fnBlock("claim_welcome_email_attempt\\(p_studio_id uuid\\)");
+    expect(c).toMatch(/returns uuid/i);
     expect(c).toMatch(/security definer/i);
-    // Atomic claim: insert ... on conflict do update ... where <recent guard>.
-    expect(c).toMatch(/insert into public\.studio_onboarding[\s\S]*?on conflict \(studio_id\) do update/i);
-    expect(c).toMatch(/welcome_email_last_sent_at < now\(\) - interval '10 seconds'/i);
-    // Browser roles cannot call it.
+    expect(c).toMatch(/welcome_email_status = 'sending'/i);
+    expect(c).toMatch(/welcome_email_attempt_id = gen_random_uuid\(\)/i);
+    // Only claims when no LIVE attempt is in progress.
+    expect(c).toMatch(/welcome_email_status <> 'sending'[\s\S]*?welcome_email_last_attempted_at < now\(\) - interval '30 seconds'/i);
+    expect(c).toMatch(/returning welcome_email_attempt_id into v_attempt/i);
+  });
+  it("record is a compare-and-set on attempt_id; last_sent_at only on 'sent'", () => {
+    const r = fnBlock("record_welcome_email_result\\(");
+    expect(r).toMatch(/security definer/i);
+    // CAS: only the current attempt may write the result.
+    expect(r).toMatch(/where studio_id = p_studio_id\s*and welcome_email_attempt_id = p_attempt_id/i);
+    expect(r).toMatch(/welcome_email_last_sent_at = case[\s\S]*?when p_status = 'sent' then now\(\)/i);
+    // Rejects an invalid status value.
+    expect(r).toMatch(/p_status not in \('not_sent', 'sent', 'failed'\)/i);
+  });
+  it("claim + record are service-role only", () => {
+    expect(CODE).toContain("public.claim_welcome_email_attempt(uuid)");
+    expect(CODE).toContain("public.record_welcome_email_result(uuid, uuid, text)");
     expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
     expect(CODE).toMatch(/grant execute on function %s to service_role/i);
-    expect(CODE).toContain("public.claim_welcome_email_attempt(uuid)");
   });
 });
