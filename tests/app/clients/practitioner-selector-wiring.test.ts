@@ -37,6 +37,36 @@ describe("target-aware slot loader + eligible-practitioners action", () => {
     // No email/metadata is ever SELECTED for the option list.
     expect(ACTIONS).not.toMatch(/\.select\([^)]*email/);
   });
+
+  it("1A: validates the requested target (active same-studio + service-eligible) with safe codes, no enumeration", () => {
+    // Target lookup: same-studio + active.
+    expect(ACTIONS).toMatch(/\.from\("practitioners"\)[\s\S]{0,160}\.eq\("active", true\)/);
+    // Eligibility lookup against service_practitioners.
+    expect(ACTIONS).toMatch(/\.from\("service_practitioners"\)[\s\S]{0,160}\.eq\("service_id", params\.serviceId\)/);
+    // Fixed safe codes; the message never reveals whether a foreign id exists.
+    expect(ACTIONS).toMatch(/code: "invalid_practitioner"/);
+    expect(ACTIONS).toMatch(/code: "practitioner_not_eligible"/);
+    expect(ACTIONS).toMatch(/code: "could_not_load_times"/);
+    expect(ACTIONS).toMatch(/That practitioner isn't available\./);
+  });
+});
+
+describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6 1B/1C)", () => {
+  it("1B: an eligible-lookup error clears target/slots and never falls back to self slots", () => {
+    expect(BOOK).toMatch(/setEligibleError\(r\.error\)/);
+    expect(BOOK).toMatch(/setTarget\(""\)/);
+    // Empty eligible list → no slot request.
+    expect(BOOK).toMatch(/if \(!nextTarget\) \{[\s\S]{0,220}return;/);
+    // Confirmation requires the target to be in the eligible list.
+    expect(BOOK).toMatch(/const targetValid = !showSelector \|\| eligible\.some\(\(p\) => p\.id === target\)/);
+    expect(BOOK).toMatch(/canConfirm =\s*\n?\s*targetValid &&/);
+  });
+  it("1C: latest-request-wins guards on both eligible + slot requests", () => {
+    expect(BOOK).toMatch(/const eligibleReq = useRef\(0\)/);
+    expect(BOOK).toMatch(/const slotReq = useRef\(0\)/);
+    expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return/);
+    expect(BOOK).toMatch(/if \(req !== eligibleReq\.current\) return/);
+  });
 });
 
 describe("BookAppointment — owner selector, member self-only, confirmation", () => {

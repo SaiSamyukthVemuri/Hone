@@ -39,6 +39,10 @@ type Props = {
   tz: string;
   timeFormat: TimeFormat;
   isOwner: boolean;
+  // Part 4 Item 6: forwarded to QuickBookDrawer's owner practitioner selector.
+  practitionerCapacityEnabled: boolean;
+  currentPractitionerId: string;
+  currentPractitionerName: string;
   clients: QuickBookClient[];
   services: Service[];
   returnTo: string;
@@ -64,6 +68,9 @@ export function CalendarMobileDayView({
   tz,
   timeFormat,
   isOwner,
+  practitionerCapacityEnabled,
+  currentPractitionerId,
+  currentPractitionerName,
   clients,
   services,
   returnTo,
@@ -299,6 +306,10 @@ export function CalendarMobileDayView({
         services={services}
         studioTimezone={tz}
         timeFormat={timeFormat}
+        practitionerCapacityEnabled={practitionerCapacityEnabled}
+        isOwner={isOwner}
+        currentPractitionerId={currentPractitionerId}
+        currentPractitionerName={currentPractitionerName}
         onClose={() => setDraft(null)}
       />
       {/* Block-time create — the same block-create drawer the desktop DayColumn

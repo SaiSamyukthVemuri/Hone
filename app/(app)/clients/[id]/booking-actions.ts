@@ -15,13 +15,17 @@ function logBookingSlotError(stage: string, code: string | undefined): void {
 // non-owner practitionerId is IGNORED here (resolved to self) — exactly the rule
 // bookAppointmentForClientAction enforces — and the DB command remains the final
 // authority at booking time.
+export type SlotResult =
+  | { ok: true; slots: Slot[] }
+  | { ok: false; error: string; code?: string };
+
 export async function fetchSlotsForClientBookingAction(params: {
   serviceId: string;
   date: string;
   practitionerId?: string | null;
-}): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
+}): Promise<SlotResult> {
   if (!params.serviceId || !params.date) {
-    return { ok: false, error: "Pick a service and date." };
+    return { ok: false, error: "Pick a service and date.", code: "invalid_input" };
   }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -35,15 +39,47 @@ export async function fetchSlotsForClientBookingAction(params: {
     .maybeSingle();
   if (serviceErr) {
     logBookingSlotError("service_lookup", serviceErr.code);
-    return { ok: false, error: "Could not load times. Please try again." };
+    return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
   }
-  if (!service) return { ok: false, error: "Service not found." };
+  if (!service) return { ok: false, error: "Service not found.", code: "service_not_found" };
 
+  // Item 6 (1A): resolve + VALIDATE the target BEFORE generating slots. Only an
+  // owner of a capacity-ON studio may target another practitioner; the target must
+  // be same-studio + active + eligible for the service. A member's (or any
+  // non-owner's) supplied id is ignored → self. Legacy ignores the dimension.
   const capacityOn = studio.practitioner_capacity_enabled === true;
-  const target =
-    capacityOn && practitioner.role === "owner" && params.practitionerId
-      ? params.practitionerId
-      : practitioner.id;
+  let target = practitioner.id;
+  if (capacityOn && practitioner.role === "owner" && params.practitionerId) {
+    const { data: t, error: tErr } = await supabase
+      .from("practitioners")
+      .select("id")
+      .eq("id", params.practitionerId)
+      .eq("studio_id", studio.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (tErr) {
+      logBookingSlotError("target_lookup", tErr.code);
+      return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
+    }
+    // Fixed copy — never reveals whether a FOREIGN id exists.
+    if (!t) return { ok: false, error: "That practitioner isn't available.", code: "invalid_practitioner" };
+
+    const { data: elig, error: eligErr } = await supabase
+      .from("service_practitioners")
+      .select("practitioner_id")
+      .eq("service_id", params.serviceId)
+      .eq("practitioner_id", params.practitionerId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (eligErr) {
+      logBookingSlotError("target_eligibility", eligErr.code);
+      return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
+    }
+    if (!elig) {
+      return { ok: false, error: "That practitioner isn't set up for this service.", code: "practitioner_not_eligible" };
+    }
+    target = params.practitionerId;
+  }
 
   const slots = await getAvailableSlots(
     supabase,

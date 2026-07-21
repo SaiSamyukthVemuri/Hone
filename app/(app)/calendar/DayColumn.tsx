@@ -154,6 +154,10 @@ type Props = {
   // PR C: whether the current practitioner is a studio owner. Owners can edit /
   // delete timed blocks from the calendar; non-owners get a read-only panel.
   isOwner: boolean;
+  // Part 4 Item 6: forwarded to QuickBookDrawer's owner practitioner selector.
+  practitionerCapacityEnabled: boolean;
+  currentPractitionerId: string;
+  currentPractitionerName: string;
   clients: QuickBookClient[];
   services: Service[];
   // Calendar Readability Repair: read-only visual context. Neither
@@ -192,6 +196,9 @@ export function DayColumn({
   tz,
   timeFormat,
   isOwner,
+  practitionerCapacityEnabled,
+  currentPractitionerId,
+  currentPractitionerName,
   clients,
   services,
   isToday,
@@ -781,6 +788,10 @@ export function DayColumn({
         services={services}
         studioTimezone={tz}
         timeFormat={timeFormat}
+        practitionerCapacityEnabled={practitionerCapacityEnabled}
+        isOwner={isOwner}
+        currentPractitionerId={currentPractitionerId}
+        currentPractitionerName={currentPractitionerName}
         onClose={() => setDraft(null)}
       />
 
