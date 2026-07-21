@@ -264,9 +264,9 @@ begin
   end if;
 
   if coalesce(p_eligible, false) then
-    insert into public.service_practitioners (service_id, practitioner_id)
-    values (p_service_id, p_practitioner_id)
-    on conflict do nothing;
+    insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+    values (p_studio_id, p_service_id, p_practitioner_id)
+    on conflict on constraint service_practitioners_unique do nothing;
   else
     delete from public.service_practitioners sp
      where sp.service_id = p_service_id and sp.practitioner_id = p_practitioner_id;
