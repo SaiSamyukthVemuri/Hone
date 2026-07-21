@@ -91,12 +91,18 @@ describe("0148 — move/reassign availability validation", () => {
   });
 
   it("blockout is NEVER bypassed, even with the owner override", async () => {
+    // Blockout on a DIFFERENT day than the appointment (a full-day blockout and an
+    // appointment cannot coexist on the same resource/day — they collide in the
+    // shadow). The appt lives on the open DATE; we move it onto the blocked day.
+    const BLOCKED = "2031-09-16";
     await adminQuery(
       `insert into public.studio_blockouts (id, studio_id, starts_on, ends_on) values (gen_random_uuid(),$1,$2,$2)`,
-      [B.studioId, DATE],
+      [B.studioId, BLOCKED],
     );
     const a = await seedAppt(P(1), T("10:00"));
-    expect((await move(a.id, owner(), null, a.exp, a.expEnd, T("14:00"), true)).result).toBe("practitioner_closed");
+    expect(
+      (await move(a.id, owner(), null, a.exp, a.expEnd, `${BLOCKED}T14:00:00.000Z`, true)).result,
+    ).toBe("practitioner_closed");
   });
 
   it("a MEMBER cannot forge the outside-availability bypass on their own move", async () => {
@@ -114,9 +120,10 @@ describe("0148 — move/reassign availability validation", () => {
       [B.studioId, P(2), DATE],
     );
     const a = await seedAppt(P(1), T("14:00")); // P1 within studio-wide 09–17
+    // Reassign-only (time unchanged): 14:00 is outside P2's 10–12 window.
     expect((await move(a.id, owner(), P(2), a.exp, a.expEnd, T("14:00"))).result).toBe("outside_availability");
-    // Reassigning to P2 at 10:30 (inside P2's window) succeeds.
+    // Reassign + move the time into P2's window → both changed → moved_and_reassigned.
     const a2 = await seedAppt(P(1), T("15:00"));
-    expect((await move(a2.id, owner(), P(2), a2.exp, a2.expEnd, T("10:30"))).result).toBe("reassigned");
+    expect((await move(a2.id, owner(), P(2), a2.exp, a2.expEnd, T("10:30"))).result).toBe("moved_and_reassigned");
   });
 });
