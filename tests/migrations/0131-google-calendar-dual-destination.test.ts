@@ -22,7 +22,7 @@ describe("0131 — repo migration-max tripwire", () => {
       .sort();
     // Part 4 stacks 0142 on the PR B stack; 0140 is deliberately owned by the
     // onboarding branch and is ABSENT here (intentional gap — do not depend on it).
-    expect(nums[nums.length - 1]).toBe("0143"); // 0143 = Part 4 move+reassign command
+    expect(nums[nums.length - 1]).toBe("0144"); // 0144 = move target-integrity + legacy wrapper
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0135_"))).toBe(true);
@@ -32,10 +32,11 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0139_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0142_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0143_"))).toBe(true);
+    expect(files.some((f) => f.startsWith("0144_"))).toBe(true);
     // 0140 is intentionally NOT on this branch.
     expect(files.some((f) => f.startsWith("0140_"))).toBe(false);
     // Nothing 0142+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(4[4-9]|[5-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(4[5-9]|[5-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

@@ -202,7 +202,10 @@ describe("successful move preserves the same record + every relationship", () =>
     expect(moved).toHaveLength(1); // 11: exactly one moved row
     expect(audit.some((x: { action: string }) => x.action === "created")).toBe(true); // existing history preserved
     const d = moved[0].details;
-    expect(d.source).toBe("practitioner_ui");
+    // 0144: practitioner_move_appointment is now a compatibility WRAPPER that
+    // delegates to move_or_reassign_appointment, which stamps this source. The
+    // audit still records action='moved' with the previous + new times.
+    expect(d.source).toBe("internal_move_reassign_command");
     expect(new Date(d.previous_starts_at).toISOString()).toBe(new Date(a.startsAt).toISOString()); // 12
     expect(new Date(d.new_starts_at).toISOString()).toBe(new Date(newStart).toISOString()); // 12
     expect(moved[0].actor_type).toBe("practitioner");

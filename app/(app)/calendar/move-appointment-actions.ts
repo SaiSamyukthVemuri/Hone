@@ -35,12 +35,16 @@ function studioRow(studio: {
   timezone: string;
   default_appointment_duration_minutes: number;
   buffer_minutes: number;
+  practitioner_capacity_enabled?: boolean;
 }) {
   return {
     id: studio.id,
     timezone: studio.timezone,
     default_appointment_duration_minutes: studio.default_appointment_duration_minutes,
     buffer_minutes: studio.buffer_minutes,
+    // Part 4: needed so getAvailableSlots computes PER-PRACTITIONER slots for the
+    // move target. Undefined/false keeps today's studio-wide behaviour (Legacy).
+    practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
   };
 }
 
@@ -65,7 +69,7 @@ export async function loadMoveSlotsAction(input: {
 
   const { data: appt } = await admin
     .from("appointments")
-    .select("id, studio_id, status, starts_at, duration_minutes")
+    .select("id, studio_id, status, starts_at, duration_minutes, practitioner_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id) // server-resolved studio; browser cannot widen the boundary
     .maybeSingle();
@@ -80,6 +84,9 @@ export async function loadMoveSlotsAction(input: {
     localDate,
     appt.duration_minutes, // use the appointment's EXISTING duration
     { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
+    // Part 4: the move surface is time-only, so slots are the CURRENT
+    // practitioner's availability — A's appointment never removes B's slot.
+    appt.practitioner_id,
   );
   // Never propose a past instant; return a PHI-free list (no client/notes/token/provider data).
   return {
@@ -193,6 +200,7 @@ export async function moveAppointmentAction(input: {
         localDate,
         appt.duration_minutes,
         { sourceKind: "appointment", sourceId: appointmentId },
+        appt.practitioner_id, // Part 4: recheck against the CURRENT practitioner's slots
       ),
     );
     // Match by START INSTANT. Each offered slot is re-derived the SAME way the
@@ -263,6 +271,12 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "That practitioner isn't set up for this service." };
     case "booking_paused":
       return { ok: false, error: "Changes are paused for this studio right now." };
+    case "practitioner_reassignment_required":
+      return {
+        ok: false,
+        error:
+          "This appointment's practitioner is no longer active or eligible. Reassign it to an active practitioner to move it.",
+      };
     default:
       return { ok: false, error: "We couldn't move the appointment. Please try again." };
   }
