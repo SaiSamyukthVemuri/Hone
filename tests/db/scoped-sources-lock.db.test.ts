@@ -179,3 +179,126 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
     expect(anon.rows === 0 || anon.err != null).toBe(true);
   });
 });
+
+// -------------------------------------------------------------------------
+// §1 — direct concurrency proofs. A second connection holding the studio
+// capacity lock must block EVERY recurring-rule mutation (each 57014, no
+// partial mutation, rollback releases, retry succeeds), and the retirement ×
+// timezone lock ordering must never deadlock in either direction.
+// -------------------------------------------------------------------------
+
+// Create one recurring rule via the admin RPC (returns its id).
+async function seedRule(practitionerId: string | null): Promise<string> {
+  const r = await adminQuery(
+    `select public.create_recurring_break_rule_and_materialize($1,'lunch','{1,2,3,4,5}'::int[],'12:00','13:00',true,$2,$3::date,$4) id`,
+    [B.studioId, owner().practitionerId, "2031-07-01", practitionerId],
+  );
+  return r.rows[0].id as string;
+}
+const ruleCount = async () =>
+  Number(
+    (await adminQuery(`select count(*)::int c from public.studio_recurring_break_rules where studio_id=$1`, [B.studioId]))
+      .rows[0].c,
+  );
+
+// A holds its OWN mutation's locks (not just the advisory) across an open
+// transaction; B's mutation must time out (57014) rather than deadlock (40P01).
+async function expectBlocksNoDeadlock(
+  hold: (a: Client) => Promise<unknown>,
+  attempt: (b: Client) => Promise<unknown>,
+) {
+  const a = new Client({ connectionString: resolveLocalDbUrl() });
+  const b = new Client({ connectionString: resolveLocalDbUrl() });
+  await a.connect();
+  await b.connect();
+  try {
+    await a.query("begin");
+    await hold(a); // A performs its mutation and holds its locks until commit
+    await b.query("begin");
+    await b.query("set local statement_timeout = '1200ms'");
+    let code: string | undefined;
+    try {
+      await attempt(b);
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe("57014"); // blocked by A's lock
+    expect(code).not.toBe("40P01"); // and NOT a deadlock abort
+    await b.query("rollback").catch(() => undefined);
+    await a.query("rollback");
+  } finally {
+    await a.end();
+    await b.end();
+  }
+}
+
+describe("§1: every recurring-rule mutation blocks on the capacity lock", () => {
+  it("CREATE blocks", async () => {
+    await expectBlockedByLock((b) =>
+      b.query(
+        `select public.create_recurring_break_rule_and_materialize($1,'lunch','{1,2,3,4,5}'::int[],'12:00','13:00',true,$2,$3::date,$4)`,
+        [B.studioId, owner().practitionerId, HORIZON, P(1)],
+      ),
+    );
+  });
+  it("UPDATE blocks", async () => {
+    const rule = await seedRule(P(1));
+    await expectBlockedByLock((b) =>
+      b.query(
+        `select public.update_recurring_break_rule_and_rematerialize($1,$2,'lunch','{1,2,3}'::int[],'11:00','12:00',true,$3::date,$4)`,
+        [rule, B.studioId, HORIZON, P(1)],
+      ),
+    );
+  });
+  it("TOGGLE (active flip via the update RPC) blocks", async () => {
+    const rule = await seedRule(P(1));
+    await expectBlockedByLock((b) =>
+      b.query(
+        `select public.update_recurring_break_rule_and_rematerialize($1,$2,'lunch','{1,2,3,4,5}'::int[],'12:00','13:00',false,$3::date,$4)`,
+        [rule, B.studioId, HORIZON, P(1)],
+      ),
+    );
+  });
+  it("DELETE blocks", async () => {
+    const rule = await seedRule(P(1));
+    await expectBlockedByLock((b) =>
+      b.query(`select public.delete_recurring_break_rule($1,$2)`, [rule, B.studioId]),
+    );
+  });
+  it("MATERIALIZE blocks", async () => {
+    const rule = await seedRule(P(1));
+    await expectBlockedByLock((b) =>
+      b.query(`select public.materialize_recurring_break_rule($1,$2::date)`, [rule, HORIZON]),
+    );
+  });
+
+  it("a blocked CREATE leaves NO partial row; after the lock releases a retry succeeds", async () => {
+    const before = await ruleCount();
+    await expectBlockedByLock((b) =>
+      b.query(
+        `select public.create_recurring_break_rule_and_materialize($1,'lunch','{1,2,3,4,5}'::int[],'12:00','13:00',true,$2,$3::date,$4)`,
+        [B.studioId, owner().practitionerId, HORIZON, P(1)],
+      ),
+    );
+    // B's aborted transaction left no rule behind.
+    expect(await ruleCount()).toBe(before);
+    // The lock is released (A rolled back) — the same create now succeeds.
+    await seedRule(P(1));
+    expect(await ruleCount()).toBe(before + 1);
+  });
+});
+
+describe("§1: retirement × timezone acquire locks in ONE order (no deadlock)", () => {
+  it("Direction A: retirement holds locks, a concurrent timezone change waits", async () => {
+    await expectBlocksNoDeadlock(
+      (a) => a.query(`select public.retire_practitioner_capacity($1)`, [B.studioId]),
+      (b) => b.query(`update public.studios set timezone='America/Vancouver' where id=$1`, [B.studioId]),
+    );
+  });
+  it("Direction B: a timezone change holds locks, concurrent retirement waits", async () => {
+    await expectBlocksNoDeadlock(
+      (a) => a.query(`update public.studios set timezone='America/Vancouver' where id=$1`, [B.studioId]),
+      (b) => b.query(`select public.retire_practitioner_capacity($1)`, [B.studioId]),
+    );
+  });
+});
