@@ -6,6 +6,9 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { parseNewStudioInput } from "@/lib/studios/new-studio";
 import { logAdminAction } from "@/lib/audit/admin-actions";
+import { captureServerEvent } from "@/lib/analytics/server";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 
 const BASE = "/admin/studios/new";
 
@@ -58,6 +61,12 @@ export async function createStudioWithOwnerInvite(
   });
   if (!parsed.ok) fail(parsed.error);
   const input = parsed.value;
+
+  // Onboarding v2 (guided welcome email + auto-opening wizard) is opt-in per
+  // studio during rollout. When the operator does NOT enable it, this action's
+  // observable behaviour is byte-for-byte today's: flag stays false (default),
+  // NO welcome email, NO studio_onboarding seed row.
+  const enableOnboardingV2 = formData.get("enable_onboarding_v2") != null;
 
   // Highest-risk admin write: log a 'started' event before the writes so a trail
   // exists even if the terminal event fails. Safe metadata only (slug is the
@@ -117,6 +126,10 @@ export async function createStudioWithOwnerInvite(
       owner_email: input.ownerEmail,
       slug: input.slug,
       timezone: input.timezone,
+      // Service-role insert bypasses the operator-only guard trigger (which
+      // only blocks browser roles), and the guard is BEFORE UPDATE anyway, so
+      // setting the flag at INSERT is safe. Omitted -> column default false.
+      ...(enableOnboardingV2 ? { onboarding_v2_enabled: true } : {}),
       ...(input.bookingDescription
         ? { booking_description: input.bookingDescription }
         : {}),
@@ -186,5 +199,31 @@ export async function createStudioWithOwnerInvite(
     outcome: "succeeded",
     metadata: { slug: input.slug },
   });
+
+  // Product-funnel entry event. Studio actor (no owner practitioner UUID exists
+  // yet — created later by handle_new_user on first sign-in). Non-blocking,
+  // post-response, only the already-allowlisted studio_id property. This is
+  // operator/product telemetry, independent of the per-studio onboarding flag.
+  captureServerEvent({
+    actor: { kind: "studio", id: studio.id },
+    event: "studio_created",
+    properties: { studio_id: studio.id },
+  });
+
+  // Onboarding v2 only: send the ONE truthful invitation email + seed
+  // studio_onboarding. Best-effort — the studio + invite already succeeded, and
+  // deliverWelcomeEmail never throws (studio creation must not depend on email).
+  // No account-variant is inferred: at this point the owner has been INVITED,
+  // not added; membership + acceptance happen when they sign in and consent.
+  if (enableOnboardingV2) {
+    await deliverWelcomeEmail(admin, {
+      studioId: studio.id,
+      ownerDisplayName: input.ownerDisplayName,
+      ownerEmail: input.ownerEmail,
+      studioName: input.name,
+      bookingUrl: `${getRequiredAppOrigin()}/book/${input.slug}`,
+    });
+  }
+
   redirect(`${BASE}?created=${studio.id}`);
 }

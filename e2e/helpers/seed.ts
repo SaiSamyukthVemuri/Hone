@@ -87,9 +87,11 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
     [studioId, serviceName],
   );
 
-  // Owner invitation, then a REAL local auth user via the GoTrue
-  // admin API. The 0081 handle_new_user trigger fires on the insert
-  // and creates the owner practitioner row from the invitation.
+  // Owner invitation + a REAL local GoTrue auth user. handle_new_user is a
+  // no-op (migration 0141) — provisioning + acceptance now happen at sign-in —
+  // so the test fixture provisions the fully-onboarded owner DIRECTLY (genuine
+  // current-version acceptance stamps) and marks the invitation accepted, which
+  // is equivalent to completing the acceptance flow.
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)
      values ($1, $2, 'owner', $3)`,
@@ -109,14 +111,26 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
       `local GoTrue admin createUser failed: ${response.status} ${await response.text()}`,
     );
   }
+  const created = (await response.json()) as { id: string };
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, $3, $4, 'owner', true,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, created.id, `E2E Owner ${runId}`, ownerEmail],
+  );
+  await sql(
+    `update public.pending_invitations set status = 'accepted', accepted_at = now()
+      where studio_id = $1 and lower(email) = lower($2)`,
+    [studioId, ownerEmail],
+  );
   const practitioner = await sql<{ id: string; role: string }>(
     `select id, role from public.practitioners where studio_id = $1`,
     [studioId],
   );
   if (practitioner.length !== 1 || practitioner[0].role !== "owner") {
-    throw new Error(
-      "seed failed: handle_new_user did not create the owner practitioner",
-    );
+    throw new Error("seed failed: owner practitioner was not provisioned");
   }
 
   return {
@@ -160,6 +174,22 @@ export async function seedE2eMember(
       `local GoTrue admin createUser (member) failed: ${response.status} ${await response.text()}`,
     );
   }
+  // handle_new_user is a no-op (0141); provision the member directly for the
+  // fixture and accept the invitation (equivalent to completing acceptance).
+  const created = (await response.json()) as { id: string };
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, $3, $4, 'practitioner', true,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [seed.studioId, created.id, `E2E Member ${uniq}`, email],
+  );
+  await sql(
+    `update public.pending_invitations set status = 'accepted', accepted_at = now()
+      where studio_id = $1 and lower(email) = lower($2)`,
+    [seed.studioId, email],
+  );
   const rows = await sql<{ role: string }>(
     `select pr.role from public.practitioners pr
        join auth.users u on u.id = pr.user_id
@@ -167,7 +197,7 @@ export async function seedE2eMember(
     [seed.studioId, email],
   );
   if (rows[0]?.role !== "practitioner") {
-    throw new Error("seed failed: member invitation did not create a practitioner");
+    throw new Error("seed failed: member practitioner was not provisioned");
   }
   const pr = await sql<{ id: string }>(
     `select pr.id from public.practitioners pr
@@ -659,6 +689,202 @@ export async function getStudioWeeklyDefaults(
       where studio_id = $1
       order by day_of_week`,
     [studioId],
+  );
+}
+
+// --- Existing-user invitation reconciliation (migration 0141) helpers -------
+
+// Create a REAL local GoTrue auth user (an "existing Hone account") with no
+// membership. Returns the auth user id.
+export async function createLocalAuthUser(email: string): Promise<string> {
+  const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: E2E_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, email_confirm: true }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `createLocalAuthUser failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  const body = (await response.json()) as { id: string };
+  return body.id;
+}
+
+// A minimal target studio (no linked owner practitioner) for an invitation.
+export async function insertBareStudio(
+  label: string,
+  ownerEmail?: string,
+): Promise<{ studioId: string; slug: string; name: string; ownerEmail: string }> {
+  const runId = randomUUID().slice(0, 8);
+  const studioId = randomUUID();
+  const slug = `e2e-${label}-${runId}`;
+  const name = `E2E ${label} ${runId}`;
+  // The owner_email drives the fake-Resend per-recipient mode control in the
+  // welcome-email browser contracts (e.g. `reject+<id>@harness.local`).
+  const resolvedOwnerEmail = ownerEmail ?? `owner-${runId}@harness.local`;
+  await sql(
+    `insert into public.studios (id, name, owner_email, slug, timezone)
+     values ($1, $2, $3, $4, $5)`,
+    [studioId, name, resolvedOwnerEmail, slug, timezoneWithLocalMorning()],
+  );
+  return { studioId, slug, name, ownerEmail: resolvedOwnerEmail };
+}
+
+export async function insertPendingInvite(
+  studioId: string,
+  email: string,
+  role: "owner" | "practitioner" = "practitioner",
+): Promise<void> {
+  await sql(
+    `insert into public.pending_invitations (studio_id, email, role, display_name)
+     values ($1, $2, $3, $4)`,
+    [studioId, email, role, "E2E Invitee"],
+  );
+}
+
+// A practitioner row carrying CURRENT-version terms+privacy acceptance — the
+// reusable evidence the reconcile RPC copies. `active` controls whether it also
+// counts as a live membership (active=false = evidence only, 0 active studios).
+export async function insertEvidenceMembership(
+  userId: string,
+  email: string,
+  active: boolean,
+): Promise<{ studioId: string }> {
+  const { studioId } = await insertBareStudio("evidence");
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, 'E2E Existing', $3, 'owner', $4,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, userId, email, active],
+  );
+  return { studioId };
+}
+
+// Insert a practitioner membership into a SPECIFIC studio (e.g. to construct a
+// conflicting membership held by another auth user under the invited email).
+export async function insertMembershipInStudio(
+  studioId: string,
+  userId: string,
+  email: string,
+  active = true,
+): Promise<void> {
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, 'E2E', $3, 'owner', $4,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, userId, email, active],
+  );
+}
+
+// Read the welcome-email send status recorded on studio_onboarding, by slug
+// (for the fake-Resend welcome-send browser contract).
+export async function getWelcomeEmailStatusBySlug(
+  slug: string,
+): Promise<string | null> {
+  const rows = await sql<{ welcome_email_status: string }>(
+    `select o.welcome_email_status
+       from public.studio_onboarding o
+       join public.studios s on s.id = o.studio_id
+      where s.slug = $1`,
+    [slug],
+  );
+  return rows[0]?.welcome_email_status ?? null;
+}
+
+// Fuller welcome-email attempt state (status machine + attempt id + timestamps)
+// for the fake-Resend browser contracts that assert single-attempt / retry /
+// no-duplicate behaviour.
+export async function getWelcomeEmailStateByStudio(studioId: string): Promise<{
+  status: string;
+  attemptId: string | null;
+  lastAttemptedAt: string | null;
+  lastSentAt: string | null;
+} | null> {
+  const rows = await sql<{
+    welcome_email_status: string;
+    welcome_email_attempt_id: string | null;
+    welcome_email_last_attempted_at: string | null;
+    welcome_email_last_sent_at: string | null;
+  }>(
+    `select welcome_email_status, welcome_email_attempt_id,
+            welcome_email_last_attempted_at, welcome_email_last_sent_at
+       from public.studio_onboarding where studio_id = $1`,
+    [studioId],
+  );
+  const r = rows[0];
+  return r
+    ? {
+        status: r.welcome_email_status,
+        attemptId: r.welcome_email_attempt_id,
+        lastAttemptedAt: r.welcome_email_last_attempted_at,
+        lastSentAt: r.welcome_email_last_sent_at,
+      }
+    : null;
+}
+
+// Force studio_onboarding into a LIVE 'sending' attempt (as if another caller
+// owns the single-flight claim right now), so a resend through the admin UI
+// observes the in-progress path instead of sending. Returns the attempt id.
+export async function seedWelcomeEmailInProgress(
+  studioId: string,
+): Promise<string> {
+  const attemptId = randomUUID();
+  await sql(
+    `insert into public.studio_onboarding
+       (studio_id, welcome_email_status, welcome_email_attempt_id,
+        welcome_email_last_attempted_at)
+     values ($1, 'sending', $2, now())
+     on conflict (studio_id) do update
+       set welcome_email_status = 'sending',
+           welcome_email_attempt_id = $2,
+           welcome_email_last_attempted_at = now()`,
+    [studioId, attemptId],
+  );
+  return attemptId;
+}
+
+// Count studios / pending invitations matching an owner email — proves a resend
+// never duplicates the studio or its invitation.
+export async function countStudiosByOwnerEmail(email: string): Promise<number> {
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.studios
+      where lower(owner_email) = lower($1)`,
+    [email],
+  );
+  return Number(rows[0]?.count ?? "0");
+}
+
+export async function countPendingInvitesForStudio(
+  studioId: string,
+): Promise<number> {
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.pending_invitations
+      where studio_id = $1`,
+    [studioId],
+  );
+  return Number(rows[0]?.count ?? "0");
+}
+
+// Onboarding v2 (migration 0140). Toggle the studio-scoped kill-switch so the
+// browser lane can exercise the guided wizard + pinned card. The direct SQL
+// connection is not a browser role, so the operator-only guard trigger allows
+// the flip (it only blocks anon/authenticated).
+export async function setStudioOnboardingV2Enabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set onboarding_v2_enabled = $2 where id = $1`,
+    [studioId, enabled],
   );
 }
 

@@ -28,7 +28,12 @@ const PALETTE = {
   rule: "#E5E2DA",
 } as const;
 
-export default async function NoAccessPage() {
+export default async function NoAccessPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reason?: string }>;
+}) {
+  const { reason } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -46,11 +51,24 @@ export default async function NoAccessPage() {
     redirect("/dashboard");
   }
   const multiple = memberships.length > 1;
+  // Safe, self-scoped copy for the reconciliation edge cases (no DB/Auth text,
+  // no cross-tenant information). These only apply to a 0-membership user.
+  const inviteIssue =
+    !multiple &&
+    (reason === "invite-conflict" || reason === "invite-ambiguous");
 
-  const heading = multiple ? "Choose a studio" : "No studio access yet";
+  const heading = multiple
+    ? "Choose a studio"
+    : inviteIssue
+      ? "We couldn't finish setting up your access"
+      : "No studio access yet";
   const body = multiple
     ? "Your account is an active member of more than one studio. Choose which studio you want to work in — you can switch anytime from the account menu."
-    : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
+    : reason === "invite-conflict"
+      ? "This invitation couldn't be completed automatically. Please contact the studio or Hone support so it can be sorted out."
+      : reason === "invite-ambiguous"
+        ? "There is more than one pending invitation for your account. Please contact the studio or Hone support so it can be resolved."
+        : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
 
   return (
     <main

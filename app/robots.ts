@@ -35,6 +35,7 @@ export default function robots(): MetadataRoute.Robots {
           "/notifications",
           "/login",
           "/no-access",
+          "/accept-invitation",
           "/auth/",
         ],
       },

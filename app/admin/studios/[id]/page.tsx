@@ -7,6 +7,7 @@ import {
 } from "@/lib/payments/admin-payment-status";
 import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { ResendWelcomeButton } from "./ResendWelcomeButton";
 
 // PR #256: admin studio-detail privacy follow-up. Operator-only (the /admin
 // layout's isAdmin gate covers this page). Shows operational metadata +
@@ -31,15 +32,33 @@ type StudioDetail = {
   appointment_count: number;
   imported_memory_count: number;
   owner_invite_status: OwnerInviteStatus;
+  onboarding: OnboardingAdminView;
+};
+
+// Onboarding-v2 status for the admin view (migration 0140). Send outcome only
+// (Sent / Failed / not sent) — no delivered/opened tracking. requiredDone is a
+// coarse progress derived from the aggregate counts already loaded here.
+type OnboardingAdminView = {
+  enabled: boolean;
+  status: string;
+  welcomeEmailStatus: "not_sent" | "sending" | "sent" | "failed";
+  welcomeEmailLastSentAt: string | null;
+  completedAt: string | null;
+  dismissedAt: string | null;
+  requiredDone: number;
+  requiredTotal: number;
 };
 
 async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
   const admin = createAdminClient();
 
-  const [studioRes, invitesRes] = await Promise.all([
+  const [studioRes, invitesRes, onboardingRes, flagRes] = await Promise.all([
     // Explicit columns + aggregate count embeds only (no row contents). Every
     // embedded table (practitioners/clients/services/studio_availability_default/
     // appointments/imported_treatment_memories) has a studio_id FK to studios.
+    // The onboarding-v2 flag + state are read SEPARATELY (below) so that a
+    // deployment where migration 0140 is not yet applied (or was rolled back)
+    // never breaks this core page — the onboarding section degrades to "off".
     admin
       .from("studios")
       .select(
@@ -52,6 +71,22 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
       .select("status")
       .eq("studio_id", id)
       .eq("role", "owner"),
+    // Skew-tolerant: a missing studio_onboarding table returns an error in the
+    // result (not a throw), so `ob` falls back to null -> "not started".
+    admin
+      .from("studio_onboarding")
+      .select(
+        "status, welcome_email_status, welcome_email_last_sent_at, completed_at, dismissed_at",
+      )
+      .eq("studio_id", id)
+      .maybeSingle(),
+    // Skew-tolerant: a missing onboarding_v2_enabled column returns an error in
+    // the result; we default the flag to false rather than throwing.
+    admin
+      .from("studios")
+      .select("onboarding_v2_enabled")
+      .eq("id", id)
+      .maybeSingle(),
   ]);
 
   if (studioRes.error) throw new Error(studioRes.error.message);
@@ -85,6 +120,23 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
       ? "pending"
       : "none";
 
+  const serviceCount = s.services?.[0]?.count ?? 0;
+  const availabilityCount = s.studio_availability_default?.[0]?.count ?? 0;
+  // Coarse required-setup progress (service / availability / booking-page), the
+  // same three signals that gate a studio being bookable.
+  const requiredDone =
+    (serviceCount > 0 ? 1 : 0) +
+    (availabilityCount > 0 ? 1 : 0) +
+    (s.slug && serviceCount > 0 ? 1 : 0);
+
+  const ob = (onboardingRes.data ?? null) as {
+    status: string;
+    welcome_email_status: "not_sent" | "sending" | "sent" | "failed";
+    welcome_email_last_sent_at: string | null;
+    completed_at: string | null;
+    dismissed_at: string | null;
+  } | null;
+
   return {
     id: s.id,
     name: s.name,
@@ -94,11 +146,23 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
     created_at: s.created_at,
     practitioner_count: s.practitioners?.[0]?.count ?? 0,
     client_count: s.clients?.[0]?.count ?? 0,
-    service_count: s.services?.[0]?.count ?? 0,
-    availability_count: s.studio_availability_default?.[0]?.count ?? 0,
+    service_count: serviceCount,
+    availability_count: availabilityCount,
     appointment_count: s.appointments?.[0]?.count ?? 0,
     imported_memory_count: s.imported_treatment_memories?.[0]?.count ?? 0,
     owner_invite_status: ownerInviteStatus,
+    onboarding: {
+      enabled:
+        (flagRes.data as { onboarding_v2_enabled?: boolean } | null)
+          ?.onboarding_v2_enabled === true,
+      status: ob?.status ?? "not_started",
+      welcomeEmailStatus: ob?.welcome_email_status ?? "not_sent",
+      welcomeEmailLastSentAt: ob?.welcome_email_last_sent_at ?? null,
+      completedAt: ob?.completed_at ?? null,
+      dismissedAt: ob?.dismissed_at ?? null,
+      requiredDone,
+      requiredTotal: 3,
+    },
   };
 }
 
@@ -193,6 +257,57 @@ export default async function AdminStudioPage({
             }`}
           />
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-xl font-medium">Onboarding</h2>
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800 sm:grid-cols-2">
+          <Row label="Guided onboarding">
+            {studio.onboarding.enabled ? (
+              "Enabled"
+            ) : (
+              <span className="text-neutral-400">Off</span>
+            )}
+          </Row>
+          <Row label="Owner invite">{inviteLabel}</Row>
+          <Row label="Progress">
+            {studio.onboarding.status === "completed" ? (
+              <span className="text-emerald-600 dark:text-emerald-400">
+                Complete
+              </span>
+            ) : (
+              `${studio.onboarding.requiredDone} / ${studio.onboarding.requiredTotal} required steps`
+            )}
+          </Row>
+          <Row label="Welcome email">
+            {studio.onboarding.welcomeEmailStatus === "sent" ? (
+              <span>
+                Sent
+                {studio.onboarding.welcomeEmailLastSentAt ? (
+                  <>
+                    {" · "}
+                    <FormattedDateTime
+                      iso={studio.onboarding.welcomeEmailLastSentAt}
+                    />
+                  </>
+                ) : null}
+              </span>
+            ) : studio.onboarding.welcomeEmailStatus === "sending" ? (
+              <span className="text-neutral-500">Sending…</span>
+            ) : studio.onboarding.welcomeEmailStatus === "failed" ? (
+              <span className="text-amber-700 dark:text-amber-300">Failed</span>
+            ) : (
+              <span className="text-neutral-400">Not sent</span>
+            )}
+          </Row>
+        </div>
+        <div className="mt-3">
+          <ResendWelcomeButton studioId={studio.id} />
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">
+          Sends the owner welcome email again and re-records the outcome.
+          Delivery/opened status is not tracked.
+        </p>
       </section>
 
       <section>
