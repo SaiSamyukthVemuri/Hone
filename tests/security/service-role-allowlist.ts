@@ -128,6 +128,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/actions.ts",
+    purpose: "Owner team management — practitioner deactivation via the locked set_practitioner_active_locked command (Part 4 Item 2).",
+    why: "removePractitionerAction resolves the owner + studio server-side (assertOwner → getCurrentPractitionerWithStudio) then calls the service-role-only locked RPC with the server-derived studio + actor ids; the RPC re-validates active-owner and same-studio target.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

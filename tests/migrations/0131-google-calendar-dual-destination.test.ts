@@ -22,7 +22,7 @@ describe("0131 — repo migration-max tripwire", () => {
       .sort();
     // Part 4 stacks 0142 on the PR B stack; 0140 is deliberately owned by the
     // onboarding branch and is ABSENT here (intentional gap — do not depend on it).
-    expect(nums[nums.length - 1]).toBe("0149"); // 0149 = atomic weekly availability save
+    expect(nums[nums.length - 1]).toBe("0150"); // 0150 = single-row schedule writers locked
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0135_"))).toBe(true);
@@ -38,10 +38,11 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0147_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0148_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0149_"))).toBe(true);
+    expect(files.some((f) => f.startsWith("0150_"))).toBe(true);
     // 0140 is intentionally NOT on this branch.
     expect(files.some((f) => f.startsWith("0140_"))).toBe(false);
     // Nothing 0142+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(5[0-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(5[1-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

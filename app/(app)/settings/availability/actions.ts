@@ -199,12 +199,12 @@ function scopeGuardMessage(code: string | undefined): string | null {
   }
 }
 
-async function assertOwner(): Promise<{ studioId: string }> {
+async function assertOwner(): Promise<{ studioId: string; practitionerId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     throw new Error("Only studio owners can change availability.");
   }
-  return { studioId: studio.id };
+  return { studioId: studio.id, practitionerId: practitioner.id };
 }
 
 async function assertOwnerWithStudio(): Promise<{
@@ -223,7 +223,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 // Upserts one day-of-week row. Lets the inline editor save a single day
 // without restating the other six. Returns nothing on success.
 export async function upsertDayDefaultAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+  const { studioId, practitionerId } = await assertOwner();
   const dowRaw = trimmed(formData.get("day_of_week"));
   const dow = Number(dowRaw);
   if (!Number.isFinite(dow) || dow < 0 || dow > 6) {
@@ -242,28 +242,21 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
       throw new Error("Close time must be after open time.");
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("studio_availability_default")
-    .upsert(
-      {
-        studio_id: studioId,
-        day_of_week: dow,
-        // Studio-wide scope. Migration 0135 keys uniqueness on
-        // (studio_id, day_of_week, practitioner_id) via UNIQUE NULLS NOT
-        // DISTINCT, so the studio-wide row must send an explicit NULL and the
-        // conflict target must name all three columns (a column-only target
-        // cannot infer the constraint). Per-practitioner writes (PR B owner UI)
-        // send a validated practitioner_id instead.
-        practitioner_id: null,
-        is_open: isOpen,
-        open_time: isOpen ? open : null,
-        close_time: isOpen ? close : null,
-      },
-      { onConflict: "studio_id,day_of_week,practitioner_id" },
-    );
-  if (error) {
-    logAvailabilityDbError("upsert_day_default", "upsert", error.code);
+  // Part 4 Item 2: the single-row weekday write goes through the atomic,
+  // lock-taking command (studios row → capacity advisory lock), so it serializes
+  // with booking / move / retirement. Studio-wide scope = NULL.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("upsert_availability_day_locked", {
+    p_studio_id: studioId,
+    p_actor_practitioner_id: practitionerId,
+    p_scope_practitioner_id: null,
+    p_day_of_week: dow,
+    p_is_open: isOpen,
+    p_open_time: isOpen ? open : null,
+    p_close_time: isOpen ? close : null,
+  });
+  if (error || data !== "ok") {
+    logAvailabilityDbError("upsert_day_default", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
     throw new Error("Could not save these hours. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -322,7 +315,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
 }
 
 export async function upsertOverrideAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+  const { studioId, practitionerId } = await assertOwner();
   const effectiveDate = trimmed(formData.get("effective_date"));
   if (!effectiveDate) throw new Error("Date is required.");
   const isOpen = trimmed(formData.get("is_open")) === "true";
@@ -337,40 +330,39 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
       throw new Error("Close time must be after open time.");
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("studio_availability_overrides")
-    .upsert(
-      {
-        studio_id: studioId,
-        effective_date: effectiveDate,
-        practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
-        is_open: isOpen,
-        open_time: isOpen ? open : null,
-        close_time: isOpen ? close : null,
-        note,
-      },
-      { onConflict: "studio_id,effective_date,practitioner_id" },
-    );
-  if (error) {
-    logAvailabilityDbError("upsert_override", "upsert", error.code);
+  // Part 4 Item 2: single-row date-override write through the locked command.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("upsert_availability_override_locked", {
+    p_studio_id: studioId,
+    p_actor_practitioner_id: practitionerId,
+    p_scope_practitioner_id: null,
+    p_effective_date: effectiveDate,
+    p_is_open: isOpen,
+    p_open_time: isOpen ? open : null,
+    p_close_time: isOpen ? close : null,
+    p_note: note,
+  });
+  if (error || data !== "ok") {
+    logAvailabilityDbError("upsert_override", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
     throw new Error("Could not save this date override. Please try again.");
   }
   revalidatePath("/settings/availability");
 }
 
 export async function deleteOverrideAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+  const { studioId, practitionerId } = await assertOwner();
   const id = trimmed(formData.get("id"));
   if (!id) throw new Error("Missing override id.");
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("studio_availability_overrides")
-    .delete()
-    .eq("id", id)
-    .eq("studio_id", studioId);
-  if (error) {
-    logAvailabilityDbError("delete_override", "delete", error.code);
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("delete_availability_override_locked", {
+    p_studio_id: studioId,
+    p_actor_practitioner_id: practitionerId,
+    p_id: id,
+    p_scope_practitioner_id: null,
+    p_effective_date: null,
+  });
+  if (error || data !== "ok") {
+    logAvailabilityDbError("delete_override", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
     throw new Error("Could not delete this date override. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -434,7 +426,7 @@ function validateHours(
 export async function upsertScopedDayDefaultAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -452,18 +444,17 @@ export async function upsertScopedDayDefaultAction(
   const hoursError = validateHours(isOpen, open, close);
   if (hoursError) return { ok: false, error: hoursError };
 
-  const { error } = await supabase.from("studio_availability_default").upsert(
-    {
-      studio_id: studio.id,
-      day_of_week: dow,
-      practitioner_id: scope.practitionerId,
-      is_open: isOpen,
-      open_time: isOpen ? open : null,
-      close_time: isOpen ? close : null,
-    },
-    { onConflict: "studio_id,day_of_week,practitioner_id" },
-  );
-  if (error) return { ok: false, error: "Could not save these hours." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("upsert_availability_day_locked", {
+    p_studio_id: studio.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_day_of_week: dow,
+    p_is_open: isOpen,
+    p_open_time: isOpen ? open : null,
+    p_close_time: isOpen ? close : null,
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not save these hours." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }
@@ -473,7 +464,7 @@ export async function upsertScopedDayDefaultAction(
 export async function resetPractitionerDayAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -487,13 +478,14 @@ export async function resetPractitionerDayAction(
   if (!Number.isInteger(dow) || dow < 0 || dow > 6)
     return { ok: false, error: "Day of week must be 0–6." };
 
-  const { error } = await supabase
-    .from("studio_availability_default")
-    .delete()
-    .eq("studio_id", studio.id)
-    .eq("practitioner_id", scope.practitionerId)
-    .eq("day_of_week", dow);
-  if (error) return { ok: false, error: "Could not reset this day." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("delete_availability_day_locked", {
+    p_studio_id: studio.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_day_of_week: dow,
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not reset this day." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }
@@ -558,7 +550,7 @@ export async function customizePractitionerWeekAction(
 export async function resetPractitionerWeekAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -569,12 +561,15 @@ export async function resetPractitionerWeekAction(
   if (scope.practitionerId === null)
     return { ok: false, error: "Choose a practitioner to reset." };
 
-  const { error } = await supabase
-    .from("studio_availability_default")
-    .delete()
-    .eq("studio_id", studio.id)
-    .eq("practitioner_id", scope.practitionerId);
-  if (error) return { ok: false, error: "Could not reset the week." };
+  // Full-week reset = the locked day-delete with a NULL weekday (all days).
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("delete_availability_day_locked", {
+    p_studio_id: studio.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_day_of_week: null,
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not reset the week." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }
@@ -583,7 +578,7 @@ export async function resetPractitionerWeekAction(
 export async function upsertScopedOverrideAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -602,19 +597,18 @@ export async function upsertScopedOverrideAction(
   const hoursError = validateHours(isOpen, open, close);
   if (hoursError) return { ok: false, error: hoursError };
 
-  const { error } = await supabase.from("studio_availability_overrides").upsert(
-    {
-      studio_id: studio.id,
-      effective_date: effectiveDate,
-      practitioner_id: scope.practitionerId,
-      is_open: isOpen,
-      open_time: isOpen ? open : null,
-      close_time: isOpen ? close : null,
-      note,
-    },
-    { onConflict: "studio_id,effective_date,practitioner_id" },
-  );
-  if (error) return { ok: false, error: "Could not save this date override." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("upsert_availability_override_locked", {
+    p_studio_id: studio.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_effective_date: effectiveDate,
+    p_is_open: isOpen,
+    p_open_time: isOpen ? open : null,
+    p_close_time: isOpen ? close : null,
+    p_note: note,
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not save this date override." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }
@@ -624,7 +618,7 @@ export async function upsertScopedOverrideAction(
 export async function resetPractitionerOverrideAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -638,13 +632,15 @@ export async function resetPractitionerOverrideAction(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
     return { ok: false, error: "A valid date is required." };
 
-  const { error } = await supabase
-    .from("studio_availability_overrides")
-    .delete()
-    .eq("studio_id", studio.id)
-    .eq("practitioner_id", scope.practitionerId)
-    .eq("effective_date", effectiveDate);
-  if (error) return { ok: false, error: "Could not reset this date override." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("delete_availability_override_locked", {
+    p_studio_id: studio.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_id: null,
+    p_scope_practitioner_id: scope.practitionerId,
+    p_effective_date: effectiveDate,
+  });
+  if (error || data !== "ok") return { ok: false, error: "Could not reset this date override." };
   revalidatePath("/settings/availability");
   return { ok: true };
 }

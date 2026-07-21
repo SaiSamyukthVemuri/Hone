@@ -38,23 +38,55 @@ for safe "slot taken" mapping. No appointment, shadow row, or audit row survives
 | timezone rebuild | 0138 | ✓ | ✓ | — | n/a |
 | `validate_appointment_availability` | 0146 | pure read — runs INSIDE the caller's txn under the caller's locks; takes none itself | | | (self) |
 
-**Availability writers (Item 2 — partial).** The FULL-WEEK writers now take the
-lock and are atomic:
+**Availability + schedule writers (Item 2 — complete).** Every application schedule
+writer now takes the lock order:
 
-| command | migration | (1) studios row | (2) advisory | atomic |
-|---|---|---|---|---|
-| `save_weekly_availability` (studio-wide + practitioner scope) | **0149** | ✓ | ✓ | all 7 days in one txn |
+| command | migration | (1) studios row | (2) advisory | atomic | replaces action |
+|---|---|---|---|---|---|
+| `save_weekly_availability` | 0149 | ✓ | ✓ | all 7 days / txn | saveWeeklyDefaults, customizePractitionerWeek |
+| `upsert_availability_day_locked` | **0150** | ✓ | ✓ | 1 upsert | upsertDayDefault, upsertScopedDayDefault |
+| `delete_availability_day_locked` | **0150** | ✓ | ✓ | 1 delete (day or whole week) | resetPractitionerDay, resetPractitionerWeek |
+| `upsert_availability_override_locked` | **0150** | ✓ | ✓ | 1 upsert | upsertOverride, upsertScopedOverride |
+| `delete_availability_override_locked` | **0150** | ✓ | ✓ | 1 delete | deleteOverride, resetPractitionerOverride |
+| `set_service_practitioner_eligibility_locked` | **0150** | ✓ | ✓ | 1 write | (READY — no UI writer yet) |
+| `set_practitioner_active_locked` | **0150** | ✓ | ✓ | 1 update | removePractitionerAction (deactivation) |
 
-`saveWeeklyDefaultsAction` + `customizePractitionerWeekAction` route through it, so
-a partial-week save is no longer possible and both serialize with booking /
-retirement / the timezone rebuild.
+All share `lock_studio_and_assert_owner` (studios row FOR UPDATE → advisory →
+active-owner check) and `validate_schedule_scope` (scoped rows require capacity ON +
+active same-studio target). Service_role only; the owner + studio come from the
+trusted server adapter. **Not app writers (reuse existing, already locked):**
+`studios.timezone` (no app writer — operator/migration-only rebuild); the capacity
+flags (operator-only `retire_practitioner_capacity`, 0138); blockouts / timed blocks
+/ recurring breaks (already lock via the 0138 trigger).
 
-The SINGLE-ROW writers (date-override upsert/delete, day upsert/reset,
-service-eligibility add/remove, practitioner activation/deactivation, timezone,
-booking-pause) are each already atomic (one statement) but do **not yet** take the
-studios-row + advisory lock. That lock is a consistency improvement, not a
-double-book safety fix (the per-resource GiST exclusion remains the collision
-authority regardless), and is the remaining Item 2 work.
+## Serialization policy (the lock gives SERIAL ORDER, not one-must-fail)
+
+A schedule mutation and a booking/move serialize on the shared studios-row +
+advisory lock. The ordered outcomes:
+
+**A. Configuration mutation acquires the lock first.** The booking/move WAITS,
+then validates against the NEW configuration and rejects if the resulting interval
+is no longer valid:
+- weekly/day close or date-override close first → later booking/move →
+  `practitioner_closed` / `outside_availability`; no appointment/shadow/audit row.
+- eligibility removal / deactivation first → later booking/move → `not_eligible` /
+  `invalid_practitioner` (or `practitioner_reassignment_required` for a time-only move).
+- booking-pause first → later booking/move → `booking_paused`.
+
+**B. Booking/move acquires the lock first.** It commits under the configuration it
+locked and validated. The later configuration mutation commits afterward per the
+existing product policy; the already-committed appointment is **never** silently
+cancelled, reassigned or retimed. An out-of-hours or now-ineligible EXISTING
+appointment simply cannot be time-only-moved later without reassignment.
+
+**Invariant:** no booking or move may validate against state S1 and commit after a
+schedule mutation to S2 that acquired the shared lock first. This holds because a
+booking that starts after the config commit reads the post-commit configuration
+inside the same lock it must acquire.
+
+**Timezone** uses the reviewed 0138 rebuild (absolute instants + shadow preserved);
+no plain-column bypass exists. **Legacy (capacity OFF)** stays studio-wide with no
+per-practitioner requirement.
 
 `validate_appointment_availability` deliberately takes no locks: it is only ever
 called after its caller already holds (1)+(2)+(3), so it reads a schedule that no
