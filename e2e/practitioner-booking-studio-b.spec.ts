@@ -8,9 +8,7 @@ import {
   seedPractitionerDefault,
   getE2eServiceId,
   seedServiceEligibility,
-  removeServiceEligibility,
   getClientAppointmentsWithPractitioner,
-  getOwnerPractitionerId,
   type E2eSeed,
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
@@ -39,10 +37,9 @@ test.beforeAll(async () => {
   await setPractitionerActive(C.practitionerId, false); // inactive → never a target
   await setStudioCapacityEnabled(seed.studioId, true);
 
-  // Eligibility = {A, B} exactly. The service-insert trigger seeded the OWNER;
-  // remove it and C so the selector shows only A + B.
-  const ownerId = await getOwnerPractitionerId(seed.studioId);
-  await removeServiceEligibility(seed.studioId, serviceId, ownerId);
+  // Make A + B eligible (the service-insert trigger only seeded the OWNER, who
+  // predates the members). The selector will show O + A + B; the inactive C is
+  // never eligible + never active, so it stays absent. We select A/B explicitly.
   await seedServiceEligibility(seed.studioId, serviceId, A.practitionerId);
   await seedServiceEligibility(seed.studioId, serviceId, B.practitionerId);
 

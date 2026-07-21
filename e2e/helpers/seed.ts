@@ -288,18 +288,6 @@ export async function seedServiceEligibility(
   );
 }
 
-export async function removeServiceEligibility(
-  studioId: string,
-  serviceId: string,
-  practitionerId: string,
-): Promise<void> {
-  await sql(
-    `delete from public.service_practitioners
-      where studio_id = $1 and service_id = $2 and practitioner_id = $3`,
-    [studioId, serviceId, practitionerId],
-  );
-}
-
 export async function getOwnerPractitionerId(studioId: string): Promise<string> {
   const rows = await sql<{ id: string }>(
     `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
