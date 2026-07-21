@@ -75,7 +75,9 @@ test("owner sees the selector (inactive C absent) and changing the target clears
 });
 
 test("owner moves and reassigns A→B; the DB shows B + a moved_and_reassigned audit", async ({ page }) => {
-  const apptId = await seedFutureAppointmentAt(seed.studioId, A.practitionerId, clientId, seedTz, "15:00");
+  // A distinct time from the prior (uncommitted) 15:00 appointment to avoid an
+  // A-vs-A overlap at seed time.
+  const apptId = await seedFutureAppointmentAt(seed.studioId, A.practitionerId, clientId, seedTz, "17:00");
   await loginByMagicLink(page, seed.ownerEmail);
   const dialog = await openMove(page, apptId);
   await dialog.getByLabel("Practitioner").selectOption({ label: B.displayName });
