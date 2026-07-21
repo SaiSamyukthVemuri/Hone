@@ -323,7 +323,7 @@ describe("0140 — completion command is trusted-server-only + atomic", () => {
   });
 });
 
-describe("0140 — completion fields are protected from direct browser writes", () => {
+describe("0140 — lifecycle fields are protected from direct browser writes", () => {
   // Seed a normal in-progress wizard row as the owner (allowed) so UPDATE cases
   // have a row to target.
   async function seedInProgress(): Promise<SeededStudio> {
@@ -393,6 +393,118 @@ describe("0140 — completion fields are protected from direct browser writes", 
         [s.studioId],
       ),
     ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  // --- Welcome-email lifecycle fields (Finding: extend the guard) -----------
+  it("owner direct INSERT forging welcome_email_status='sent' is REJECTED", async () => {
+    const s = await seedStudio("guard-we-insert-sent");
+    await expect(
+      userQuery(
+        s.userId,
+        `insert into public.studio_onboarding (studio_id, welcome_email_status)
+         values ($1, 'sent')`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct INSERT forging welcome_email_status='sending' is REJECTED", async () => {
+    const s = await seedStudio("guard-we-insert-sending");
+    await expect(
+      userQuery(
+        s.userId,
+        `insert into public.studio_onboarding (studio_id, welcome_email_status)
+         values ($1, 'sending')`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct INSERT providing an attempt id / attempted / sent timestamp is REJECTED", async () => {
+    const s = await seedStudio("guard-we-insert-attempt");
+    await expect(
+      userQuery(
+        s.userId,
+        `insert into public.studio_onboarding
+           (studio_id, welcome_email_attempt_id, welcome_email_last_attempted_at, welcome_email_last_sent_at)
+         values ($1, gen_random_uuid(), now(), now())`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct UPDATE changing welcome_email_status is REJECTED", async () => {
+    const s = await seedInProgress();
+    await expect(
+      userQuery(
+        s.userId,
+        `update public.studio_onboarding set welcome_email_status = 'sent' where studio_id=$1`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct UPDATE setting / replacing / clearing welcome_email_attempt_id is REJECTED", async () => {
+    // set from null
+    const a = await seedInProgress();
+    await expect(
+      userQuery(
+        a.userId,
+        `update public.studio_onboarding set welcome_email_attempt_id = gen_random_uuid() where studio_id=$1`,
+        [a.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+    // clearing an existing attempt id (seed one via the trusted claim first)
+    const b = await seedStudio("guard-we-clear-attempt");
+    await adminQuery(`select public.claim_welcome_email_attempt($1)`, [b.studioId]);
+    await expect(
+      userQuery(
+        b.userId,
+        `update public.studio_onboarding set welcome_email_attempt_id = null where studio_id=$1`,
+        [b.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct UPDATE changing welcome_email_last_attempted_at is REJECTED", async () => {
+    const s = await seedInProgress();
+    await expect(
+      userQuery(
+        s.userId,
+        `update public.studio_onboarding set welcome_email_last_attempted_at = now() where studio_id=$1`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("owner direct UPDATE changing welcome_email_last_sent_at is REJECTED", async () => {
+    const s = await seedInProgress();
+    await expect(
+      userQuery(
+        s.userId,
+        `update public.studio_onboarding set welcome_email_last_sent_at = now() where studio_id=$1`,
+        [s.studioId],
+      ),
+    ).rejects.toThrow(/trusted-server-only|42501/i);
+  });
+
+  it("the guard exception carries NO lifecycle value / email / id (role only)", async () => {
+    const s = await seedInProgress();
+    let msg = "";
+    try {
+      await userQuery(
+        s.userId,
+        `update public.studio_onboarding set welcome_email_status = 'sent' where studio_id=$1`,
+        [s.studioId],
+      );
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/trusted-server-only/i);
+    // No lifecycle value / studio id / email leaked into the error text.
+    expect(msg).not.toMatch(/sent|sending|not_sent/);
+    expect(msg).not.toContain(s.studioId);
+    expect(msg).not.toMatch(/@/);
   });
 
   it("normal wizard navigation writes STILL succeed (current_step / skip / dismiss / reopen)", async () => {

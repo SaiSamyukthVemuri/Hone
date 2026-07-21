@@ -147,19 +147,25 @@ create or replace trigger studio_onboarding_set_updated_at_trg
   execute function public.set_studio_onboarding_updated_at();
 
 -- ---------------------------------------------------------------------------
--- Step 2c: PROTECT the completion-lifecycle fields from direct browser writes.
+-- Step 2c: PROTECT the onboarding LIFECYCLE fields from direct browser writes.
 -- Owners have row-level INSERT/UPDATE on this table (to drive the wizard), but
--- the fields that make "completed / celebrated" TRUTHFUL must only ever be set
--- by the trusted service-role commands below — never by a hand-crafted browser
--- write. This SECURITY INVOKER guard (invoker so current_user is the REAL caller,
--- not the SECURITY DEFINER function owner) rejects any browser-role (anon /
--- authenticated) attempt to write: completed_at, celebrated_at, a status
--- transition INTO 'completed', or the completion-only 'done' step marker — on
--- BOTH insert and update. Normal owner-controlled navigation (current_step,
--- skipped_steps, dismissed_at, status='in_progress', resume/reopen) is untouched;
--- the trusted commands run SECURITY DEFINER (current_user = the function owner)
--- and direct service_role connections are unaffected.
-create or replace function public.guard_onboarding_completion_fields()
+-- two groups of fields make the row's status TRUTHFUL and must only ever be set
+-- by the trusted service-role commands — never by a hand-crafted browser write:
+--   * completion / celebration: completed_at, celebrated_at, a status transition
+--     INTO 'completed', the completion-only 'done' step marker (set by
+--     admin_complete_onboarding / admin_mark_onboarding_celebrated);
+--   * welcome-email lifecycle: welcome_email_status, welcome_email_attempt_id,
+--     welcome_email_last_attempted_at, welcome_email_last_sent_at (set only by
+--     claim_welcome_email_attempt / record_welcome_email_result + provisioning).
+-- This ONE consolidated SECURITY INVOKER guard (invoker so current_user is the
+-- REAL caller, not a SECURITY DEFINER function owner) rejects any browser-role
+-- (anon / authenticated) attempt to set/change ANY of those fields, on BOTH
+-- insert and update. Normal owner navigation (current_step, skipped_steps,
+-- dismissed_at, status='in_progress', resume/reopen) is untouched; the trusted
+-- commands run SECURITY DEFINER (current_user = the function owner) and direct
+-- service_role connections are unaffected. The exception carries ONLY the caller
+-- role name (no email / ids / provider data / lifecycle values).
+create or replace function public.guard_onboarding_lifecycle_fields()
 returns trigger
 language plpgsql
 set search_path = pg_catalog, pg_temp
@@ -170,9 +176,15 @@ begin
       if new.completed_at is not null
          or new.celebrated_at is not null
          or new.status = 'completed'
-         or ('done' = any (new.completed_steps)) then
+         or ('done' = any (new.completed_steps))
+         -- welcome-email lifecycle: a browser row may only ever land the default
+         -- not_sent + null attempt/timestamps; anything else is forged.
+         or new.welcome_email_status is distinct from 'not_sent'
+         or new.welcome_email_attempt_id is not null
+         or new.welcome_email_last_attempted_at is not null
+         or new.welcome_email_last_sent_at is not null then
         raise exception
-          'onboarding completion fields are trusted-server-only (role %)',
+          'onboarding lifecycle fields are trusted-server-only (role %)',
           current_user using errcode = '42501';
       end if;
     elsif tg_op = 'UPDATE' then
@@ -180,9 +192,15 @@ begin
          or new.celebrated_at is distinct from old.celebrated_at
          or (new.status = 'completed' and old.status is distinct from 'completed')
          or (('done' = any (new.completed_steps))
-             and not ('done' = any (old.completed_steps))) then
+             and not ('done' = any (old.completed_steps)))
+         -- welcome-email lifecycle: no browser change to status / attempt id /
+         -- attempted-at / sent-at (set, replace, or clear).
+         or new.welcome_email_status is distinct from old.welcome_email_status
+         or new.welcome_email_attempt_id is distinct from old.welcome_email_attempt_id
+         or new.welcome_email_last_attempted_at is distinct from old.welcome_email_last_attempted_at
+         or new.welcome_email_last_sent_at is distinct from old.welcome_email_last_sent_at then
         raise exception
-          'onboarding completion fields are trusted-server-only (role %)',
+          'onboarding lifecycle fields are trusted-server-only (role %)',
           current_user using errcode = '42501';
       end if;
     end if;
@@ -191,10 +209,10 @@ begin
 end;
 $$;
 
-create or replace trigger studio_onboarding_guard_completion_trg
+create or replace trigger studio_onboarding_guard_lifecycle_trg
   before insert or update on public.studio_onboarding
   for each row
-  execute function public.guard_onboarding_completion_fields();
+  execute function public.guard_onboarding_lifecycle_fields();
 
 -- ---------------------------------------------------------------------------
 -- Step 3: RLS. Studio members READ their studio's onboarding row; only the
@@ -345,7 +363,7 @@ begin
   foreach fn in array array[
     'public.guard_onboarding_flag_activation()',
     'public.set_studio_onboarding_updated_at()',
-    'public.guard_onboarding_completion_fields()'
+    'public.guard_onboarding_lifecycle_fields()'
   ]
   loop
     execute format('revoke execute on function %s from public', fn);

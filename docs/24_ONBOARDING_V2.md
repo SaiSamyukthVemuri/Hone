@@ -119,6 +119,13 @@ access is complete.
   Supabase `{ error }` is inspected — a claim/stamp DB failure returns `failed`
   and **never** masquerades as `sent`; a caller that doesn't own the claim never
   reports `sent`.
+- **Trusted-only fields:** `welcome_email_status`, `welcome_email_attempt_id`,
+  `welcome_email_last_attempted_at`, `welcome_email_last_sent_at` are protected by
+  the consolidated `guard_onboarding_lifecycle_fields` trigger — a browser
+  (anon/authenticated) INSERT/UPDATE that sets or changes any of them (e.g. forging
+  `status='sent'`, or setting/replacing/clearing the attempt id/timestamps) is
+  rejected with SQLSTATE 42501. Only the service-role claim/result commands +
+  provisioning write them; normal wizard navigation is unaffected.
 - **Bounded logging:** failures log only `welcome_email_error:<stage>:<safe_code>`
   (stages `claim`/`send`/`stamp`; codes `write_failed`/`provider_rejected`/
   `provider_exception`). Never the provider error object, recipient address, or
@@ -273,11 +280,18 @@ the DB that `p_user_id` is an ACTIVE OWNER of `p_studio_id` AND the flag is on,
 and does an `insert … on conflict do update … where completed_at is null`
 compare-and-set that stamps `completed_at` exactly once and **returns whether THIS
 call performed the transition** (Postgres serializes on the row; the loser of two
-concurrent calls gets `transitioned=false`). A `guard_onboarding_completion_fields`
-SECURITY INVOKER trigger additionally blocks any direct browser write of
-`completed_at`, `celebrated_at`, a `status→'completed'` transition, or the `'done'`
-marker — on INSERT and UPDATE — while leaving normal owner navigation
-(`current_step`/`skipped_steps`/`dismissed_at`/reopen) untouched.
+concurrent calls gets `transitioned=false`). One consolidated
+`guard_onboarding_lifecycle_fields` SECURITY INVOKER trigger additionally blocks
+any direct browser (anon/authenticated) write of the trusted lifecycle fields —
+**completion/celebration** (`completed_at`, `celebrated_at`, a `status→'completed'`
+transition, the `'done'` marker) **and welcome-email** (`welcome_email_status`,
+`welcome_email_attempt_id`, `welcome_email_last_attempted_at`,
+`welcome_email_last_sent_at`) — on INSERT and UPDATE (set / replace / clear),
+with SQLSTATE 42501 and no lifecycle value in the exception. Those fields are set
+only by the trusted service-role commands (`admin_complete_onboarding` /
+`admin_mark_onboarding_celebrated` / `claim_welcome_email_attempt` /
+`record_welcome_email_result`) and provisioning; normal owner navigation
+(`current_step`/`skipped_steps`/`dismissed_at`/reopen) is untouched.
 
 **Analytics guarantee.** `onboarding_wizard_completed` is scheduled **iff
 `transitioned=true`**, so **exactly one analytics dispatch is scheduled for the

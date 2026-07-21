@@ -167,16 +167,30 @@ describe("0140 — completion is TRUSTED-SERVER-ONLY (admin commands + field gua
     expect(CODE).not.toMatch(/create or replace function public\.complete_onboarding\(p_studio_id uuid\)/i);
   });
 
-  it("a SECURITY INVOKER guard blocks browser writes to completion fields on INSERT + UPDATE", () => {
-    const g = fn("guard_onboarding_completion_fields");
+  it("a consolidated SECURITY INVOKER guard blocks browser writes to ALL lifecycle fields on INSERT + UPDATE", () => {
+    const g = fn("guard_onboarding_lifecycle_fields");
     expect(g).toMatch(/current_user in \('anon', 'authenticated'\)/i);
+    // Completion / celebration fields.
     expect(g).toMatch(/completed_at/i);
     expect(g).toMatch(/celebrated_at/i);
     expect(g).toMatch(/status = 'completed'/i);
     expect(g).toMatch(/'done' = any \(new\.completed_steps\)/i);
+    // Welcome-email lifecycle fields — INSERT (non-default forged values).
+    expect(g).toMatch(/new\.welcome_email_status is distinct from 'not_sent'/i);
+    expect(g).toMatch(/new\.welcome_email_attempt_id is not null/i);
+    expect(g).toMatch(/new\.welcome_email_last_attempted_at is not null/i);
+    expect(g).toMatch(/new\.welcome_email_last_sent_at is not null/i);
+    // Welcome-email lifecycle fields — UPDATE (set / replace / clear).
+    expect(g).toMatch(/new\.welcome_email_status is distinct from old\.welcome_email_status/i);
+    expect(g).toMatch(/new\.welcome_email_attempt_id is distinct from old\.welcome_email_attempt_id/i);
+    expect(g).toMatch(/new\.welcome_email_last_attempted_at is distinct from old\.welcome_email_last_attempted_at/i);
+    expect(g).toMatch(/new\.welcome_email_last_sent_at is distinct from old\.welcome_email_last_sent_at/i);
+    // 42501; the exception carries only the role, never a lifecycle value.
+    expect(g).toMatch(/errcode = '42501'/i);
+    expect(g).not.toMatch(/welcome_email_status,|new\.welcome_email_status\)/); // not interpolated into the message
     // Fires on both INSERT and UPDATE.
-    expect(CODE).toMatch(/create or replace trigger studio_onboarding_guard_completion_trg\s*\n?\s*before insert or update on public\.studio_onboarding/i);
+    expect(CODE).toMatch(/create or replace trigger studio_onboarding_guard_lifecycle_trg\s*\n?\s*before insert or update on public\.studio_onboarding/i);
     // The guard itself is not directly callable by browser roles.
-    expect(CODE).toContain("public.guard_onboarding_completion_fields()");
+    expect(CODE).toContain("public.guard_onboarding_lifecycle_fields()");
   });
 });
