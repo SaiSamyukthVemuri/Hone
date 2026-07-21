@@ -27,7 +27,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // (practitioner Move appointment RPC). 0134 is additive (one metadata-only
     // GiST constraint swap; no data change). Bump this tripwire consciously when
     // a new migration lands.
-    expect(maxNum).toBe(140); // 0140 = first-time studio onboarding (0135-0139 = PR-B branch)
+    expect(maxNum).toBe(141); // 0141 = invitation reconciliation (0140 = onboarding; 0135-0139 = PR-B branch)
     expect(FILE).toMatch(/^0120_/);
   });
 });

@@ -37,7 +37,7 @@ describe("0130 — file + repo-max tripwire", () => {
       expect(FILES.some((f) => f.startsWith(`${n}_`))).toBe(true);
     }
     // 0140 (onboarding) is the new repo max; 0135-0139 (PR-B) absent here.
-    expect(FILES.filter((f) => /^01(3[5-9]|4[1-9]|[5-9]\d)_/.test(f))).toEqual([]);
+    expect(FILES.filter((f) => /^01(3[5-9]|4[2-9]|[5-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("migration 0129 is byte-for-byte unchanged", () => {
