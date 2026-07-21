@@ -4,6 +4,7 @@ import {
   seedE2eStudio,
   seedNoStudioAuthUser,
   seedOperatorAuthUser,
+  getWelcomeEmailStatusBySlug,
 } from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
@@ -98,6 +99,41 @@ test.describe("operator creates a studio + owner invitation", () => {
     await expect(
       page.getByText(/Payments are not connected until the studio completes Stripe/),
     ).toBeVisible();
+  });
+
+  test("with guided onboarding enabled, the welcome email is sent (fake Resend success)", async ({
+    page,
+  }) => {
+    // Requires the fake Resend transport (HONE_E2E_FAKE_RESEND=1, success mode).
+    // The failure / rejection / exception / single-attempt modes are covered by
+    // tests/lib/email/deliver-welcome-email.test.ts + tests/db/welcome-email-claim.db.test.ts.
+    test.skip(
+      process.env.HONE_E2E_FAKE_RESEND !== "1",
+      "requires HONE_E2E_FAKE_RESEND=1",
+    );
+    const { email: operatorEmail } = await seedOperatorAuthUser();
+    await loginViaMagicLink(page, operatorEmail);
+    await page.goto(WIZARD);
+
+    const runId = randomUUID().slice(0, 8);
+    const slug = `e2e-welcome-${runId}`;
+    const ownerEmail = `e2e-welcome-owner-${runId}@harness.local`;
+    await page.locator("#name").fill(`E2E Welcome Studio ${runId}`);
+    await page.locator("#slug").fill(slug);
+    await page.locator("#owner_display_name").fill(`E2E Welcome Owner ${runId}`);
+    await page.locator("#owner_email").fill(ownerEmail);
+    await page.locator('input[name="enable_onboarding_v2"]').check();
+    await page
+      .getByRole("button", { name: /create studio & owner invitation/i })
+      .click();
+
+    await expect(
+      page.getByRole("heading", { name: "Studio created", level: 1 }),
+    ).toBeVisible({ timeout: 20_000 });
+    // The welcome email went through the fake transport and was stamped 'sent'.
+    await expect
+      .poll(() => getWelcomeEmailStatusBySlug(slug), { timeout: 10_000 })
+      .toBe("sent");
   });
 
   test("rejects a reserved / malformed slug with an inline error (no studio created)", async ({

@@ -463,6 +463,21 @@ export async function insertMembershipInStudio(
   );
 }
 
+// Read the welcome-email send status recorded on studio_onboarding, by slug
+// (for the fake-Resend welcome-send browser contract).
+export async function getWelcomeEmailStatusBySlug(
+  slug: string,
+): Promise<string | null> {
+  const rows = await sql<{ welcome_email_status: string }>(
+    `select o.welcome_email_status
+       from public.studio_onboarding o
+       join public.studios s on s.id = o.studio_id
+      where s.slug = $1`,
+    [slug],
+  );
+  return rows[0]?.welcome_email_status ?? null;
+}
+
 // Onboarding v2 (migration 0140). Toggle the studio-scoped kill-switch so the
 // browser lane can exercise the guided wizard + pinned card. The direct SQL
 // connection is not a browser role, so the operator-only guard trigger allows

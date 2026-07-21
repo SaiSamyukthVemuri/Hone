@@ -240,6 +240,12 @@ jobs:
 
       - name: Browser E2E (core memory loop)
         run: npm run test:e2e
+        env:
+          # Enables the guarded fake-Resend transport for the ONE onboarding
+          # welcome-send contract (success mode). Server-only marker, refused in
+          # any deployed runtime; only the welcome path uses getResendTransport,
+          # so all other emails are unaffected.
+          HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
         if: failure()
