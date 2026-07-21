@@ -50,7 +50,9 @@ test.describe("invitation reconciliation — existing accounts", () => {
     await expect(
       page.getByRole("heading", { name: "Join your studio" }),
     ).toBeVisible();
-    await expect(page.getByText(studio.name)).toBeVisible();
+    // The studio name appears in both the lede and the Join button; the lede
+    // (first in DOM order) is enough to prove the correct invite was resolved.
+    await expect(page.getByText(studio.name).first()).toBeVisible();
     // The join button is disabled until the current-policy box is checked.
     const join = page.getByRole("button", { name: /Join .* as/ });
     await expect(join).toBeDisabled();
