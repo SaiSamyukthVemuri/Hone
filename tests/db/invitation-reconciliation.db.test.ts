@@ -80,10 +80,12 @@ async function reconcile(userId: string): Promise<Record<string, unknown>> {
   return r.rows[0].r as Record<string, unknown>;
 }
 
+// The authoritative acceptance command is SERVICE-ROLE only (a browser role
+// cannot call it); the trusted server adapter passes the session user id.
 async function accept(userId: string): Promise<Record<string, unknown>> {
-  const r = await userQuery(
-    userId,
-    `select public.accept_my_pending_invitation() as r`,
+  const r = await adminQuery(
+    `select public.admin_accept_pending_invitation($1) as r`,
+    [userId],
   );
   return r.rows[0].r as Record<string, unknown>;
 }
@@ -344,5 +346,118 @@ describe("0141 — authorization + no forged input", () => {
         `select public.reconcile_my_pending_invitation('forged-studio-id')`,
       ),
     ).rejects.toThrow(/does not exist|function/i);
+  });
+});
+
+describe("0141 — Defect 1: acceptance command cannot be called by the browser", () => {
+  it("anon cannot execute admin_accept_pending_invitation", async () => {
+    await expect(
+      asRole("anon", (q) =>
+        q(`select public.admin_accept_pending_invitation($1)`, [randomUUID()]),
+      ),
+    ).rejects.toThrow(/permission denied|not allowed|42501/i);
+  });
+
+  it("an authenticated user cannot execute admin_accept_pending_invitation", async () => {
+    const u = await newAuthUser(`d1-${randomUUID().slice(0, 8)}@harness.local`);
+    await expect(
+      userQuery(
+        u.id,
+        `select public.admin_accept_pending_invitation($1)`,
+        [u.id],
+      ),
+    ).rejects.toThrow(/permission denied|not allowed|42501/i);
+  });
+
+  it("the old authenticated-callable accept RPC no longer exists", async () => {
+    const u = await newAuthUser(`d1b-${randomUUID().slice(0, 8)}@harness.local`);
+    await expect(
+      userQuery(u.id, `select public.accept_my_pending_invitation()`),
+    ).rejects.toThrow(/does not exist|function/i);
+  });
+
+  it("service-role CAN execute it (the trusted adapter path)", async () => {
+    const u = await newAuthUser(`d1c-${randomUUID().slice(0, 8)}@harness.local`);
+    const t = await seedStudio("recon-d1c");
+    await inviteTo(t.studioId, u.email);
+    // Called with the (server-resolved) session user id.
+    expect((await accept(u.id)).status).toBe("linked");
+    expect(await membershipRows(t.studioId, u.id)).toHaveLength(1);
+  });
+});
+
+describe("0141 — Defect 2: no fabricated consent for new Auth users", () => {
+  it("creating an Auth user with a pending invite provisions NOTHING (trigger no-op)", async () => {
+    const t = await seedStudio("recon-d2");
+    const email = `d2-${randomUUID().slice(0, 8)}@harness.local`;
+    await inviteTo(t.studioId, email);
+    // Insert the auth user AFTER the invite exists -> handle_new_user fires.
+    const id = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
+      id,
+      email,
+    ]);
+    // No membership, no acceptance stamped, invite still pending & recoverable.
+    expect(await membershipRows(t.studioId, id)).toHaveLength(0);
+    expect(await inviteStatus(t.studioId, email)).toBe("pending");
+  });
+});
+
+describe("0141 — Defect 3: inactive target membership reactivation", () => {
+  it("reconcile routes a same-user INACTIVE target row to explicit acceptance", async () => {
+    const u = await newAuthUser(`d3a-${randomUUID().slice(0, 8)}@harness.local`);
+    const t = await seedStudio("recon-d3a");
+    await addPractitioner(t.studioId, u.id, u.email, {
+      termsAt: EVIDENCE_TS,
+      termsVer: CURRENT,
+      privAt: EVIDENCE_TS,
+      privVer: CURRENT,
+      active: false, // inactive
+    });
+    await inviteTo(t.studioId, u.email);
+    expect((await reconcile(u.id)).status).toBe("acceptance_required");
+  });
+
+  it("explicit accept REACTIVATES the exact inactive row in place (UPDATE, no dup)", async () => {
+    const u = await newAuthUser(`d3b-${randomUUID().slice(0, 8)}@harness.local`);
+    const t = await seedStudio("recon-d3b");
+    await addPractitioner(t.studioId, u.id, u.email, {
+      termsAt: "2025-01-01T00:00:00.000Z",
+      termsVer: "2025-old",
+      privAt: "2025-01-01T00:00:00.000Z",
+      privVer: "2025-old",
+      active: false,
+    });
+    await inviteTo(t.studioId, u.email, "practitioner");
+
+    expect((await accept(u.id)).status).toBe("linked");
+    const rows = await membershipRows(t.studioId, u.id);
+    // Exactly ONE row (reactivated, not a second INSERT), now active + freshly
+    // stamped at the current version.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].active).toBe(true);
+    expect(rows[0].terms_version).toBe(CURRENT);
+    expect(new Date(rows[0].terms_accepted_at).toISOString()).not.toBe(
+      "2025-01-01T00:00:00.000Z",
+    );
+    expect(await inviteStatus(t.studioId, u.email)).toBe("accepted");
+  });
+
+  it("inactive same-user row wins over another user's row (same email)", async () => {
+    const t = await seedStudio("recon-d3c");
+    const email = `d3c-${randomUUID().slice(0, 8)}@harness.local`;
+    const u = await newAuthUser(email);
+    // The caller's own inactive row + another user's row under the same email.
+    await addPractitioner(t.studioId, u.id, email, { active: false });
+    const other = await newAuthUser(`d3c-other-${randomUUID().slice(0, 8)}@harness.local`);
+    await addPractitioner(t.studioId, other.id, email, { active: true });
+    await inviteTo(t.studioId, email);
+
+    // Resolves the caller's own (inactive) row -> reactivates it, never touches
+    // the other user's row.
+    expect((await accept(u.id)).status).toBe("linked");
+    expect(await membershipRows(t.studioId, u.id)).toHaveLength(1);
+    expect((await membershipRows(t.studioId, u.id))[0].active).toBe(true);
+    expect((await membershipRows(t.studioId, other.id))[0].active).toBe(true);
   });
 });

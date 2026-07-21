@@ -2,14 +2,19 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
 
 export type AcceptState = { error: string } | null;
 
-// Explicit-acceptance submit. Requires the current-policy confirmation checkbox,
-// then calls the self-scoped accept RPC (which stamps the ACTUAL transaction
-// time + current versions and creates the membership atomically). Routes on the
-// result; a multi-studio user is sent through the truthful chooser.
+// THE authoritative acceptance point. The browser cannot call the acceptance
+// command directly (it is service-role only). This trusted server adapter:
+//   1. validates the unchecked-by-default current-policy checkbox;
+//   2. resolves the authenticated user from the session;
+//   3. calls admin_accept_pending_invitation(p_user_id) via the service-role
+//      client, passing ONLY the session user id — the command derives the
+//      verified email + current policy versions internally and accepts no
+//      email/studio/role/timestamps/versions from the browser.
 export async function acceptInvitationAction(
   _prev: AcceptState,
   formData: FormData,
@@ -28,8 +33,11 @@ export async function acceptInvitationAction(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: rec, error } = await supabase.rpc(
-    "accept_my_pending_invitation",
+  // Service-role acceptance command; the browser cannot reach it.
+  const admin = createAdminClient();
+  const { data: rec, error } = await admin.rpc(
+    "admin_accept_pending_invitation",
+    { p_user_id: user.id },
   );
   if (error) {
     return { error: "Something went wrong. Please try again." };

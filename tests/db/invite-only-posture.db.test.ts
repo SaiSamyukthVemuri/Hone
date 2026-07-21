@@ -145,9 +145,10 @@ describe("the supported invited-owner flow still works (positive controls)", () 
     ).rejects.toThrow(/row-level security/i);
   });
 
-  it("handle_new_user provisions a practitioner from an invitation (the invited first sign-in)", async () => {
-    // Mirror the production path: invitation row, then an auth user with
-    // that email. The SECURITY DEFINER trigger creates the practitioner.
+  it("an invited first sign-in provisions NOTHING from the trigger; explicit acceptance links it", async () => {
+    // handle_new_user is a NO-OP (migration 0141): creating the auth user must
+    // not fabricate a membership. Provisioning + consent happen via the
+    // service-role acceptance command (the authoritative event).
     const studioId = s.studioId;
     const email = `inviteflow-${randomUUID().slice(0, 8)}@harness.local`;
     await adminQuery(
@@ -155,9 +156,22 @@ describe("the supported invited-owner flow still works (positive controls)", () 
        values ($1, $2, 'practitioner', 'Invited Tech')`,
       [studioId, email],
     );
+    const userId = randomUUID();
     await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
-      randomUUID(),
+      userId,
       email,
+    ]);
+    // Trigger did nothing; invite still pending.
+    const afterSignin = await adminQuery(
+      `select count(*)::int as n from public.practitioners p
+         join auth.users u on u.id = p.user_id where lower(u.email) = lower($1)`,
+      [email],
+    );
+    expect(afterSignin.rows[0].n).toBe(0);
+
+    // Explicit acceptance (service-role only) links exactly one practitioner.
+    await adminQuery(`select public.admin_accept_pending_invitation($1)`, [
+      userId,
     ]);
     const created = await adminQuery(
       `select p.role, p.studio_id from public.practitioners p

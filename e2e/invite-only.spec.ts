@@ -42,7 +42,7 @@ test.describe("no-studio authenticated user is gated", () => {
     // emails; the account simply has no studio.
     await page.goto("/login");
     await page
-      .getByLabel("Agree to Terms of Service and Privacy Policy")
+      .getByLabel("I am using my invited email address")
       .check();
     await page.locator("#login-email").fill(email);
     const seen = await listMessageIds(email);

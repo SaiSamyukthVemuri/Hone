@@ -206,6 +206,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/(auth)/accept-invitation/actions.ts",
+    purpose: "Authoritative invitation-acceptance adapter (existing-user onboarding).",
+    why: "The user is being provisioned and has no practitioner session yet; the acceptance command admin_accept_pending_invitation is service-role ONLY (browser roles revoked). The adapter validates the current-policy checkbox and resolves the user from the verified session (auth.getUser), then passes ONLY that session user id — the command self-derives the email + policy versions and accepts nothing else from the browser.",
+    scopeGuard: "auth.getUser",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",

@@ -21,7 +21,7 @@ import { E2E_APP_ORIGIN } from "./helpers/local-env";
 // specific landing page (each case lands somewhere different).
 async function signIn(page: Page, email: string): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel("Agree to Terms of Service and Privacy Policy").check();
+  await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
   const seen = await listMessageIds(email);
   await page.getByRole("button", { name: /send magic link/i }).click();

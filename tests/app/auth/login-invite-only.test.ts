@@ -93,21 +93,28 @@ describe("login page: no direct OTP call remains", () => {
 });
 
 describe("invited users still get in (intended invite path intact)", () => {
-  it("the current handle_new_user (0081) still creates the practitioner on invite match", () => {
-    // 0081 removed the no-invite fresh-studio fallback (the Google
-    // OAuth bypass); the invited arm is unchanged. Detailed pins live
-    // in tests/migrations/0081-invite-only-handle-new-user.test.ts.
-    const trigger = readFileSync(
+  it("handle_new_user provisioning moved to sign-in: 0141 supersedes 0081 to a no-op", () => {
+    // 0081 was the historical provisioning trigger (invitation -> practitioner +
+    // stamped acceptance). Migration 0141 replaces handle_new_user with a NO-OP
+    // so Auth-user creation no longer fabricates consent or activates a
+    // membership; provisioning + the ONE authoritative acceptance now happen at
+    // sign-in (reconcile_my_pending_invitation / admin_accept_pending_invitation).
+    const trigger0141 = readFileSync(
       path.resolve(
         __dirname,
-        "../../../supabase/migrations/0081_invite_only_handle_new_user.sql",
+        "../../../supabase/migrations/0141_onboarding_invitation_reconciliation.sql",
       ),
       "utf8",
     );
-    expect(trigger).toMatch(/create or replace function public\.handle_new_user\(\)/);
-    expect(trigger).toMatch(/status = 'pending'/);
-    expect(trigger).toMatch(/insert into public\.practitioners/);
-    expect(trigger).not.toMatch(/insert into public\.studios/);
+    const fn = trigger0141.match(
+      /create or replace function public\.handle_new_user\(\)[\s\S]*?\$\$;/i,
+    )?.[0];
+    expect(fn).toBeTruthy();
+    expect(fn).not.toMatch(/insert into public\.practitioners/i);
+    expect(fn).not.toMatch(/terms_accepted_at/i);
+    expect(fn).toMatch(/return new;/i);
+    // The invite-only gate is preserved by the reconciliation RPCs.
+    expect(trigger0141).toMatch(/admin_accept_pending_invitation/);
   });
 
   it("the invite action still inserts pending status rows the gate matches on", () => {

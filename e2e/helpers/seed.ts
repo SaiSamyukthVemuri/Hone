@@ -87,9 +87,11 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
     [studioId, serviceName],
   );
 
-  // Owner invitation, then a REAL local auth user via the GoTrue
-  // admin API. The 0081 handle_new_user trigger fires on the insert
-  // and creates the owner practitioner row from the invitation.
+  // Owner invitation + a REAL local GoTrue auth user. handle_new_user is a
+  // no-op (migration 0141) — provisioning + acceptance now happen at sign-in —
+  // so the test fixture provisions the fully-onboarded owner DIRECTLY (genuine
+  // current-version acceptance stamps) and marks the invitation accepted, which
+  // is equivalent to completing the acceptance flow.
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)
      values ($1, $2, 'owner', $3)`,
@@ -109,14 +111,26 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
       `local GoTrue admin createUser failed: ${response.status} ${await response.text()}`,
     );
   }
+  const created = (await response.json()) as { id: string };
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, $3, $4, 'owner', true,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, created.id, `E2E Owner ${runId}`, ownerEmail],
+  );
+  await sql(
+    `update public.pending_invitations set status = 'accepted', accepted_at = now()
+      where studio_id = $1 and lower(email) = lower($2)`,
+    [studioId, ownerEmail],
+  );
   const practitioner = await sql<{ id: string; role: string }>(
     `select id, role from public.practitioners where studio_id = $1`,
     [studioId],
   );
   if (practitioner.length !== 1 || practitioner[0].role !== "owner") {
-    throw new Error(
-      "seed failed: handle_new_user did not create the owner practitioner",
-    );
+    throw new Error("seed failed: owner practitioner was not provisioned");
   }
 
   return {
@@ -157,6 +171,22 @@ export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
       `local GoTrue admin createUser (member) failed: ${response.status} ${await response.text()}`,
     );
   }
+  // handle_new_user is a no-op (0141); provision the member directly for the
+  // fixture and accept the invitation (equivalent to completing acceptance).
+  const created = (await response.json()) as { id: string };
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, $3, $4, 'practitioner', true,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [seed.studioId, created.id, `E2E Member ${uniq}`, email],
+  );
+  await sql(
+    `update public.pending_invitations set status = 'accepted', accepted_at = now()
+      where studio_id = $1 and lower(email) = lower($2)`,
+    [seed.studioId, email],
+  );
   const rows = await sql<{ role: string }>(
     `select pr.role from public.practitioners pr
        join auth.users u on u.id = pr.user_id
@@ -164,7 +194,7 @@ export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
     [seed.studioId, email],
   );
   if (rows[0]?.role !== "practitioner") {
-    throw new Error("seed failed: member invitation did not create a practitioner");
+    throw new Error("seed failed: member practitioner was not provisioned");
   }
   return { email };
 }
