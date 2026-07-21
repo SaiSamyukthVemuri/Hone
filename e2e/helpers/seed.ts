@@ -344,6 +344,95 @@ export async function setStudioCorrectionsEnabled(
   );
 }
 
+// --- Existing-user invitation reconciliation (migration 0141) helpers -------
+
+// Create a REAL local GoTrue auth user (an "existing Hone account") with no
+// membership. Returns the auth user id.
+export async function createLocalAuthUser(email: string): Promise<string> {
+  const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: E2E_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, email_confirm: true }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `createLocalAuthUser failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  const body = (await response.json()) as { id: string };
+  return body.id;
+}
+
+// A minimal target studio (no linked owner practitioner) for an invitation.
+export async function insertBareStudio(
+  label: string,
+): Promise<{ studioId: string; slug: string; name: string }> {
+  const runId = randomUUID().slice(0, 8);
+  const studioId = randomUUID();
+  const slug = `e2e-${label}-${runId}`;
+  const name = `E2E ${label} ${runId}`;
+  await sql(
+    `insert into public.studios (id, name, owner_email, slug, timezone)
+     values ($1, $2, $3, $4, $5)`,
+    [studioId, name, `owner-${runId}@harness.local`, slug, timezoneWithLocalMorning()],
+  );
+  return { studioId, slug, name };
+}
+
+export async function insertPendingInvite(
+  studioId: string,
+  email: string,
+  role: "owner" | "practitioner" = "practitioner",
+): Promise<void> {
+  await sql(
+    `insert into public.pending_invitations (studio_id, email, role, display_name)
+     values ($1, $2, $3, $4)`,
+    [studioId, email, role, "E2E Invitee"],
+  );
+}
+
+// A practitioner row carrying CURRENT-version terms+privacy acceptance — the
+// reusable evidence the reconcile RPC copies. `active` controls whether it also
+// counts as a live membership (active=false = evidence only, 0 active studios).
+export async function insertEvidenceMembership(
+  userId: string,
+  email: string,
+  active: boolean,
+): Promise<{ studioId: string }> {
+  const { studioId } = await insertBareStudio("evidence");
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, 'E2E Existing', $3, 'owner', $4,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, userId, email, active],
+  );
+  return { studioId };
+}
+
+// Insert a practitioner membership into a SPECIFIC studio (e.g. to construct a
+// conflicting membership held by another auth user under the invited email).
+export async function insertMembershipInStudio(
+  studioId: string,
+  userId: string,
+  email: string,
+  active = true,
+): Promise<void> {
+  await sql(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, 'E2E', $3, 'owner', $4,
+             now(), '2026-05-22', now(), '2026-05-22')`,
+    [studioId, userId, email, active],
+  );
+}
+
 // Onboarding v2 (migration 0140). Toggle the studio-scoped kill-switch so the
 // browser lane can exercise the guided wizard + pinned card. The direct SQL
 // connection is not a browser role, so the operator-only guard trigger allows
