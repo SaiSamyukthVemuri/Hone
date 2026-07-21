@@ -9,10 +9,10 @@ import { loginAsOwner } from "./helpers/flows";
 // the dismiss/resume behaviour. The flag-OFF case proves the byte-for-byte
 // legacy dashboard.
 //
-// Not covered here (needs a fake-Resend transport, deferred): the admin
-// studio-create welcome-email SEND success and the email-failure/resend admin
-// flow. In this lane Resend has a dummy key and app email never sends, so the
-// welcome-email send path is covered by unit + DB tests instead.
+// The admin welcome-email SEND + resend flows (success / rejection / exception /
+// retry / in-progress / no-duplicate / no-delivered) are covered end to end via
+// the fake-Resend transport in e2e/welcome-email-admin.spec.ts (and the
+// studio-create success path in e2e/new-studio-wizard.spec.ts).
 
 const WIZARD = '[data-testid="onboarding-wizard"]';
 

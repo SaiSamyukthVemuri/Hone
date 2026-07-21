@@ -2,7 +2,6 @@ import { Resend } from "resend";
 import {
   assertFakeResendNotRequestedInDeployment,
   createFakeResendTransport,
-  fakeResendModeFromEnv,
   isE2eFakeResendEnabled,
   type MinimalEmailTransport,
 } from "./e2e-fake-resend";
@@ -29,7 +28,9 @@ export const FROM_ADDRESS = "Hone <hello@hone.care>";
 // structurally compatible with the minimal transport shape the send path uses.
 export function getResendTransport(): MinimalEmailTransport | null {
   if (isE2eFakeResendEnabled()) {
-    return createFakeResendTransport(fakeResendModeFromEnv());
+    // Per-recipient mode control: the fake decides success/reject/throw/failonce
+    // at send time from the recipient prefix (or a forcing env override).
+    return createFakeResendTransport();
   }
   return resend as unknown as MinimalEmailTransport | null;
 }

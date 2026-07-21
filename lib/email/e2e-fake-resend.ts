@@ -38,13 +38,45 @@ export function isE2eFakeResendEnabled(
   );
 }
 
-export type FakeResendMode = "success" | "reject" | "throw";
+// success  -> provider accepts (error: null)
+// reject   -> provider returns an error object (deliverWelcomeEmail -> 'failed')
+// throw    -> provider throws (network exception -> 'failed')
+// failonce -> throws the FIRST time per recipient, then succeeds (proves retry)
+export type FakeResendMode = "success" | "reject" | "throw" | "failonce";
+
+const KNOWN_MODES = new Set<FakeResendMode>([
+  "success",
+  "reject",
+  "throw",
+  "failonce",
+]);
+
+function asMode(value: string | undefined): FakeResendMode | null {
+  return value && KNOWN_MODES.has(value as FakeResendMode)
+    ? (value as FakeResendMode)
+    : null;
+}
 
 export function fakeResendModeFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): FakeResendMode {
-  const m = env.HONE_E2E_FAKE_RESEND_MODE;
-  return m === "reject" || m === "throw" ? m : "success";
+  return asMode(env.HONE_E2E_FAKE_RESEND_MODE) ?? "success";
+}
+
+// Per-recipient mode control. A single running E2E server exercises every send
+// outcome without restarts by seeding studios whose owner_email local-part is
+// prefixed with the mode, e.g. `reject+<id>@harness.local`. A global
+// HONE_E2E_FAKE_RESEND_MODE env, when set, OVERRIDES the prefix (unit tests rely
+// on that); otherwise the recipient prefix decides, defaulting to success.
+export function fakeResendModeForRecipient(
+  to: string,
+  env: NodeJS.ProcessEnv = process.env,
+): FakeResendMode {
+  const forced = asMode(env.HONE_E2E_FAKE_RESEND_MODE);
+  if (forced) return forced;
+  const localPart = to.split("@")[0] ?? "";
+  const prefix = localPart.split("+")[0]?.toLowerCase();
+  return asMode(prefix) ?? "success";
 }
 
 // Structural shape both the real Resend client and the fake satisfy (the send
@@ -61,19 +93,31 @@ export type MinimalEmailTransport = {
   };
 };
 
-export function createFakeResendTransport(
-  mode: FakeResendMode,
-): MinimalEmailTransport {
+export function createFakeResendTransport(): MinimalEmailTransport {
+  // In-memory record of recipients that have already been failed once, so the
+  // `failonce` mode can succeed on retry. Module-scoped: the single E2E Next
+  // server process keeps it across requests within a run. Holds only the mode-
+  // prefixed harness address (never real recipient content).
+  const failedOnce = new Set<string>();
   return {
     emails: {
-      // Records nothing that could leak (no recipient/content persisted here);
-      // the outcome is asserted via studio_onboarding.welcome_email_status.
-      send: async () => {
+      // Records nothing that could leak (no recipient/content persisted beyond
+      // the failonce bookkeeping); the outcome is asserted via
+      // studio_onboarding.welcome_email_status.
+      send: async ({ to }) => {
+        const mode = fakeResendModeForRecipient(to);
         if (mode === "throw") {
           throw new Error("fake resend network exception");
         }
         if (mode === "reject") {
           return { error: { message: "fake resend rejected" } };
+        }
+        if (mode === "failonce") {
+          if (!failedOnce.has(to)) {
+            failedOnce.add(to);
+            throw new Error("fake resend network exception (first attempt)");
+          }
+          return { error: null };
         }
         return { error: null };
       },

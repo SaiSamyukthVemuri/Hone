@@ -400,17 +400,21 @@ export async function createLocalAuthUser(email: string): Promise<string> {
 // A minimal target studio (no linked owner practitioner) for an invitation.
 export async function insertBareStudio(
   label: string,
-): Promise<{ studioId: string; slug: string; name: string }> {
+  ownerEmail?: string,
+): Promise<{ studioId: string; slug: string; name: string; ownerEmail: string }> {
   const runId = randomUUID().slice(0, 8);
   const studioId = randomUUID();
   const slug = `e2e-${label}-${runId}`;
   const name = `E2E ${label} ${runId}`;
+  // The owner_email drives the fake-Resend per-recipient mode control in the
+  // welcome-email browser contracts (e.g. `reject+<id>@harness.local`).
+  const resolvedOwnerEmail = ownerEmail ?? `owner-${runId}@harness.local`;
   await sql(
     `insert into public.studios (id, name, owner_email, slug, timezone)
      values ($1, $2, $3, $4, $5)`,
-    [studioId, name, `owner-${runId}@harness.local`, slug, timezoneWithLocalMorning()],
+    [studioId, name, resolvedOwnerEmail, slug, timezoneWithLocalMorning()],
   );
-  return { studioId, slug, name };
+  return { studioId, slug, name, ownerEmail: resolvedOwnerEmail };
 }
 
 export async function insertPendingInvite(
@@ -476,6 +480,80 @@ export async function getWelcomeEmailStatusBySlug(
     [slug],
   );
   return rows[0]?.welcome_email_status ?? null;
+}
+
+// Fuller welcome-email attempt state (status machine + attempt id + timestamps)
+// for the fake-Resend browser contracts that assert single-attempt / retry /
+// no-duplicate behaviour.
+export async function getWelcomeEmailStateByStudio(studioId: string): Promise<{
+  status: string;
+  attemptId: string | null;
+  lastAttemptedAt: string | null;
+  lastSentAt: string | null;
+} | null> {
+  const rows = await sql<{
+    welcome_email_status: string;
+    welcome_email_attempt_id: string | null;
+    welcome_email_last_attempted_at: string | null;
+    welcome_email_last_sent_at: string | null;
+  }>(
+    `select welcome_email_status, welcome_email_attempt_id,
+            welcome_email_last_attempted_at, welcome_email_last_sent_at
+       from public.studio_onboarding where studio_id = $1`,
+    [studioId],
+  );
+  const r = rows[0];
+  return r
+    ? {
+        status: r.welcome_email_status,
+        attemptId: r.welcome_email_attempt_id,
+        lastAttemptedAt: r.welcome_email_last_attempted_at,
+        lastSentAt: r.welcome_email_last_sent_at,
+      }
+    : null;
+}
+
+// Force studio_onboarding into a LIVE 'sending' attempt (as if another caller
+// owns the single-flight claim right now), so a resend through the admin UI
+// observes the in-progress path instead of sending. Returns the attempt id.
+export async function seedWelcomeEmailInProgress(
+  studioId: string,
+): Promise<string> {
+  const attemptId = randomUUID();
+  await sql(
+    `insert into public.studio_onboarding
+       (studio_id, welcome_email_status, welcome_email_attempt_id,
+        welcome_email_last_attempted_at)
+     values ($1, 'sending', $2, now())
+     on conflict (studio_id) do update
+       set welcome_email_status = 'sending',
+           welcome_email_attempt_id = $2,
+           welcome_email_last_attempted_at = now()`,
+    [studioId, attemptId],
+  );
+  return attemptId;
+}
+
+// Count studios / pending invitations matching an owner email — proves a resend
+// never duplicates the studio or its invitation.
+export async function countStudiosByOwnerEmail(email: string): Promise<number> {
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.studios
+      where lower(owner_email) = lower($1)`,
+    [email],
+  );
+  return Number(rows[0]?.count ?? "0");
+}
+
+export async function countPendingInvitesForStudio(
+  studioId: string,
+): Promise<number> {
+  const rows = await sql<{ count: string }>(
+    `select count(*)::text as count from public.pending_invitations
+      where studio_id = $1`,
+    [studioId],
+  );
+  return Number(rows[0]?.count ?? "0");
 }
 
 // Onboarding v2 (migration 0140). Toggle the studio-scoped kill-switch so the

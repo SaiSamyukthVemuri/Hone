@@ -35,6 +35,7 @@ export function ResendWelcomeButton({ studioId }: { studioId: string }) {
         <span
           role="status"
           aria-live="polite"
+          data-testid="welcome-resend-status"
           className="text-xs text-neutral-500 dark:text-neutral-400"
         >
           {msg}
