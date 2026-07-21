@@ -57,11 +57,9 @@ export function MoveAppointmentButton({
         timeFormat={timeFormat}
         onMoved={(r) => {
           setOpen(false);
-          setNotice(
-            r.notificationStatus === "degraded"
-              ? "Appointment moved. The client email could not be delivered."
-              : "Appointment moved.",
-          );
+          // Item 7: the action's message is per-outcome truthful (moved / reassigned
+          // / moved and reassigned, with a degraded-delivery variant).
+          setNotice(r.message);
           router.refresh();
           onMoved?.();
         }}

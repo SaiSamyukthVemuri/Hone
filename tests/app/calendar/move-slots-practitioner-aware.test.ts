@@ -15,10 +15,12 @@ describe("move slots are practitioner-aware", () => {
     expect(MOVE).toMatch(/practitioner_capacity_enabled\?: boolean/);
     expect(MOVE).toMatch(/practitioner_capacity_enabled: studio\.practitioner_capacity_enabled/);
   });
-  it("both getAvailableSlots call sites pass the appointment's practitioner_id", () => {
-    // Selected on the appointment reads.
-    expect((MOVE.match(/duration_minutes, practitioner_id/g) ?? []).length).toBeGreaterThanOrEqual(1);
-    // Passed as the explicit practitioner argument on BOTH the loader + the recheck.
-    expect((MOVE.match(/appt\.practitioner_id,/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  it("both getAvailableSlots call sites pass the resolved slot target (current practitioner or reassignment target)", () => {
+    // Selected on the appointment reads (now also service_id for eligibility).
+    expect((MOVE.match(/duration_minutes, practitioner_id, service_id/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    // Item 7: both the loader + the recheck pass `slotTarget` — the proposed
+    // reassignment target when set, otherwise the appointment's current practitioner.
+    expect((MOVE.match(/slotTarget/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(MOVE).toMatch(/const slotTarget = target \?\? appt\.practitioner_id/);
   });
 });

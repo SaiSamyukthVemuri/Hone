@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, filterFutureSlots } from "@/lib/booking/slots";
 import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
@@ -24,9 +25,55 @@ function isValidInstant(s: unknown): s is string {
 }
 
 export type MoveSlot = { start: string; end: string; label: string };
+export type MovePractitionerOption = { id: string; displayName: string };
 export type LoadMoveSlotsResult =
-  | { ok: true; slots: MoveSlot[]; canUseCustomTime: boolean }
+  | {
+      ok: true;
+      slots: MoveSlot[];
+      canUseCustomTime: boolean;
+      // Item 7: owner-only reassignment context. reassignEnabled is true only for
+      // an owner of a capacity-ON studio; members + Legacy get an empty list and
+      // reassignEnabled=false (time-only move, no selector). Display names only.
+      reassignEnabled: boolean;
+      eligiblePractitioners: MovePractitionerOption[];
+      currentPractitionerId: string;
+      // Whether the appointment's CURRENT practitioner is still active + eligible;
+      // when false the owner must deliberately choose a replacement (no silent pick).
+      currentPractitionerValid: boolean;
+    }
   | { ok: false; error: string };
+
+// Active, same-studio practitioners ELIGIBLE for the appointment's service. A NULL
+// service (rare) means the command applies no eligibility filter, so mirror that:
+// every active practitioner is a valid target. Returns null on a lookup error
+// (fail closed). Display names only — never email / user id / metadata.
+async function loadEligiblePractitioners(
+  admin: SupabaseClient,
+  studioId: string,
+  serviceId: string | null,
+): Promise<MovePractitionerOption[] | null> {
+  let ids: string[] | null = null;
+  if (serviceId) {
+    const { data, error } = await admin
+      .from("service_practitioners")
+      .select("practitioner_id")
+      .eq("service_id", serviceId)
+      .eq("studio_id", studioId);
+    if (error) return null; // fail closed
+    ids = (data ?? []).map((r) => r.practitioner_id as string);
+    if (ids.length === 0) return [];
+  }
+  const base = admin
+    .from("practitioners")
+    .select("id, display_name")
+    .eq("studio_id", studioId)
+    .eq("active", true);
+  const { data, error } = ids ? await base.in("id", ids) : await base;
+  if (error) return null; // fail closed
+  return (data ?? [])
+    .map((p) => ({ id: p.id as string, displayName: p.display_name as string }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
 
 // The StudioRow the slot generator needs — always built from the SERVER-resolved
 // studio, never from anything the browser sent.
@@ -51,9 +98,16 @@ function studioRow(studio: {
 export async function loadMoveSlotsAction(input: {
   appointmentId: string;
   localDate: string;
+  // Item 7: an owner may request slots for a PROPOSED reassignment target. Ignored
+  // for members / Legacy. Validated server-side (active + same-studio + eligible).
+  targetPractitionerId?: string | null;
 }): Promise<LoadMoveSlotsResult> {
   const appointmentId = typeof input?.appointmentId === "string" ? input.appointmentId : "";
   const localDate = typeof input?.localDate === "string" ? input.localDate : "";
+  const requestedTarget =
+    typeof input?.targetPractitionerId === "string" && UUID_RE.test(input.targetPractitionerId)
+      ? input.targetPractitionerId
+      : null;
   if (!UUID_RE.test(appointmentId) || !DATE_RE.test(localDate)) {
     return { ok: false, error: "Invalid request." };
   }
@@ -69,7 +123,7 @@ export async function loadMoveSlotsAction(input: {
 
   const { data: appt } = await admin
     .from("appointments")
-    .select("id, studio_id, status, starts_at, duration_minutes, practitioner_id")
+    .select("id, studio_id, status, starts_at, duration_minutes, practitioner_id, service_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id) // server-resolved studio; browser cannot widen the boundary
     .maybeSingle();
@@ -78,30 +132,71 @@ export async function loadMoveSlotsAction(input: {
     return { ok: false, error: "This appointment can no longer be moved." };
   }
 
-  const slots = await getAvailableSlots(
-    admin,
-    studioRow(studio),
-    localDate,
-    appt.duration_minutes, // use the appointment's EXISTING duration
-    { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
-    // Part 4: the move surface is time-only, so slots are the CURRENT
-    // practitioner's availability — A's appointment never removes B's slot.
-    appt.practitioner_id,
-  );
+  // Item 7 reassignment context: OWNER of a capacity-ON studio only. Members +
+  // Legacy get no choices (reassignEnabled=false → time-only move, no selector).
+  const reassignEnabled =
+    practitioner.role === "owner" && studio.practitioner_capacity_enabled === true;
+  let eligible: MovePractitionerOption[] = [];
+  let currentValid = true;
+  if (reassignEnabled) {
+    const loaded = await loadEligiblePractitioners(admin, studio.id, appt.service_id ?? null);
+    if (loaded === null) {
+      return { ok: false, error: "Could not load practitioners. Please try again." }; // fail closed
+    }
+    eligible = loaded;
+    currentValid = eligible.some((p) => p.id === appt.practitioner_id);
+  }
+
+  // Resolve the slot target. Owner + a requested target must be validated; an
+  // unresolved target (current is inactive/ineligible + nothing chosen) yields NO
+  // slots (reassignment is required — never a silent self/first fallback).
+  let slotTarget: string | null = appt.practitioner_id;
+  if (reassignEnabled) {
+    if (requestedTarget) {
+      if (!eligible.some((p) => p.id === requestedTarget)) {
+        return { ok: false, error: "That practitioner isn't available." }; // fail closed, no enumeration
+      }
+      slotTarget = requestedTarget;
+    } else if (!currentValid) {
+      slotTarget = null; // reassignment required before any time can be offered
+    }
+  }
+
+  const slots = slotTarget
+    ? filterFutureSlots(
+        await getAvailableSlots(
+          admin,
+          studioRow(studio),
+          localDate,
+          appt.duration_minutes, // use the appointment's EXISTING duration
+          { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
+          slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
+        ),
+      ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
+    : [];
+
   // Never propose a past instant; return a PHI-free list (no client/notes/token/provider data).
   return {
     ok: true,
-    slots: filterFutureSlots(slots).map((s) => ({ start: s.start, end: s.end, label: s.startLabel })),
+    slots,
     canUseCustomTime,
+    reassignEnabled,
+    eligiblePractitioners: eligible,
+    currentPractitionerId: appt.practitioner_id,
+    currentPractitionerValid: currentValid,
   };
 }
 
+export type MoveResultKind = "moved" | "reassigned" | "moved_and_reassigned";
 export type MoveAppointmentResult =
   | {
       ok: true;
       appointmentId: string;
       startsAt: string;
       endsAt: string;
+      // Item 7: which operation actually committed, so the UI + client email are
+      // truthful (a same-time reassignment is NOT a "time changed").
+      resultKind: MoveResultKind;
       notificationStatus: MoveNotificationStatus;
       message: string;
     }
@@ -121,10 +216,17 @@ export async function moveAppointmentAction(input: {
   localTime: string;
   mode: MoveMode;
   outsideAvailabilityConfirmed: boolean;
+  // Item 7: an owner may propose a reassignment target. Ignored for members /
+  // Legacy (resolved to NULL = time-only). Re-validated server-side below.
+  targetPractitionerId?: string | null;
 }): Promise<MoveAppointmentResult> {
   const appointmentId = typeof input?.appointmentId === "string" ? input.appointmentId : "";
   const { expectedStartsAt, expectedEndsAt, localDate, localTime } = input ?? {};
   const mode = input?.mode;
+  const requestedTarget =
+    typeof input?.targetPractitionerId === "string" && UUID_RE.test(input.targetPractitionerId)
+      ? input.targetPractitionerId
+      : null;
   // NEVER accept role/isOwner/canUseCustomTime/allowOutsideAvailability/studioId/
   // practitionerId/duration/endTime as browser authority — none are read here.
   // outsideAvailabilityConfirmed is a user ACKNOWLEDGEMENT only; the owner ROLE is
@@ -150,7 +252,7 @@ export async function moveAppointmentAction(input: {
 
   const { data: appt } = await admin
     .from("appointments")
-    .select("id, status, starts_at, client_id, duration_minutes, practitioner_id")
+    .select("id, status, starts_at, client_id, duration_minutes, practitioner_id, service_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -170,6 +272,29 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "Confirm that you want to override regular availability." };
     }
   }
+
+  // Item 7: resolve + REVALIDATE the reassignment target. Only an OWNER of a
+  // capacity-ON studio may reassign, and only to an active, same-studio, service-
+  // eligible practitioner that DIFFERS from the current one. Any other case
+  // (member, Legacy, forged/ineligible id, or the same practitioner) resolves to
+  // NULL = a time-only move that preserves the current practitioner. The DB
+  // command re-validates the target independently.
+  let target: string | null = null;
+  const reassignEnabled =
+    practitioner.role === "owner" && studio.practitioner_capacity_enabled === true;
+  if (reassignEnabled && requestedTarget && requestedTarget !== appt.practitioner_id) {
+    const eligible = await loadEligiblePractitioners(admin, studio.id, appt.service_id ?? null);
+    if (eligible === null) {
+      return { ok: false, error: "We couldn't move the appointment. Please try again." };
+    }
+    if (!eligible.some((p) => p.id === requestedTarget)) {
+      return { ok: false, error: "That practitioner isn't available for this appointment." };
+    }
+    target = requestedTarget;
+  }
+  // The practitioner the slots must be validated against (reassignment target if
+  // set, otherwise the appointment's current practitioner).
+  const slotTarget = target ?? appt.practitioner_id;
 
   // §7.6: resolve + validate the required app origin BEFORE the mutation, so a bad
   // deployment origin cannot turn a committed move into a post-commit false failure.
@@ -200,7 +325,7 @@ export async function moveAppointmentAction(input: {
         localDate,
         appt.duration_minutes,
         { sourceKind: "appointment", sourceId: appointmentId },
-        appt.practitioner_id, // Part 4: recheck against the CURRENT practitioner's slots
+        slotTarget, // Item 7: recheck against the FINAL target (reassignment) or the current practitioner
       ),
     );
     // Match by START INSTANT. Each offered slot is re-derived the SAME way the
@@ -228,10 +353,11 @@ export async function moveAppointmentAction(input: {
     p_appointment_id: appointmentId,
     p_studio_id: studio.id,
     p_actor_practitioner_id: practitioner.id,
-    // NULL = preserve the CURRENT practitioner, resolved inside the command from
-    // the LOCKED appointment row. A time-only move can never become an
-    // unintended reassignment under a concurrent reassign (migration 0145).
-    p_target_practitioner_id: null,
+    // Item 7: an explicit validated target for an OWNER reassignment; NULL for a
+    // time-only move (member / Legacy / owner keeping the same practitioner),
+    // which preserves the current practitioner from the LOCKED row (0145). The
+    // command re-validates the target and is the final authority.
+    p_target_practitioner_id: target,
     p_expected_starts_at: expectedStartsAt,
     p_expected_ends_at: expectedEndsAt,
     p_new_starts_at: newStart.toISOString(),
@@ -278,6 +404,10 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "That practitioner isn't available for this appointment." };
     case "not_eligible":
       return { ok: false, error: "That practitioner isn't set up for this service." };
+    case "outside_availability":
+      return { ok: false, error: "That time is outside the practitioner's availability. Choose another time." };
+    case "practitioner_closed":
+      return { ok: false, error: "That practitioner isn't working at that time. Choose another time." };
     case "booking_paused":
       return { ok: false, error: "Changes are paused for this studio right now." };
     case "practitioner_reassignment_required":
@@ -290,12 +420,23 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "We couldn't move the appointment. Please try again." };
   }
 
-  // Committed. Notify the client AFTER commit (best-effort, fail-open). A notification
-  // failure NEVER reports the move as failed.
+  // Committed. The RPC's result tells us WHAT changed, so the client email + the
+  // UI copy are truthful (a same-time reassignment is not a "time changed").
+  const resultKind: MoveResultKind =
+    row.result === "reassigned"
+      ? "reassigned"
+      : row.result === "moved_and_reassigned"
+        ? "moved_and_reassigned"
+        : "moved";
+
+  // Notify the client AFTER commit (best-effort, fail-open). A notification
+  // failure NEVER reports the move as failed. The helper reads the post-commit
+  // row (new time + new practitioner) and builds truthful copy for resultKind.
   const notificationStatus = await notifyAppointmentMoved(admin, {
     appointmentId,
     studioId: studio.id,
     appOrigin,
+    resultKind,
   });
 
   revalidatePath("/calendar");
@@ -304,15 +445,22 @@ export async function moveAppointmentAction(input: {
   if (appt.client_id) revalidatePath(`/clients/${appt.client_id}`);
   revalidatePath("/dashboard");
 
+  const verb =
+    resultKind === "reassigned"
+      ? "reassigned"
+      : resultKind === "moved_and_reassigned"
+        ? "moved and reassigned"
+        : "moved";
   return {
     ok: true,
     appointmentId,
     startsAt: row.new_starts_at,
     endsAt: row.new_ends_at,
+    resultKind,
     notificationStatus,
     message:
       notificationStatus === "degraded"
-        ? "Appointment moved, but the client notification could not be delivered."
-        : "Appointment moved.",
+        ? `Appointment ${verb}, but the client notification could not be delivered.`
+        : `Appointment ${verb}.`,
   };
 }

@@ -15,11 +15,17 @@ describe("move action — routes through move_or_reassign_appointment (0143)", (
     expect(MOVE).toMatch(/\.rpc\("move_or_reassign_appointment"/);
     expect(MOVE).not.toMatch(/\.rpc\("practitioner_move_appointment"/);
   });
-  it("passes the actor + a NULL target so a time-only move preserves the current practitioner race-safely", () => {
+  it("passes the actor + a server-resolved target (Item 7: NULL for time-only, a validated id for owner reassignment)", () => {
     expect(MOVE).toMatch(/p_actor_practitioner_id: practitioner\.id/);
-    // 0145: NULL target = preserve current, resolved from the LOCKED row (no
-    // pre-lock read → no stale-target race that could become a reassignment).
-    expect(MOVE).toMatch(/p_target_practitioner_id: null/);
+    // Item 7: the action resolves `target` — NULL for a time-only move (member /
+    // Legacy / owner keeping the same practitioner), or a re-validated eligible id
+    // for an owner reassignment — and passes it. The command is the final authority.
+    expect(MOVE).toMatch(/p_target_practitioner_id: target/);
+    expect(MOVE).toMatch(/let target: string \| null = null/);
+    // The target is only honoured for an owner of a capacity-ON studio.
+    expect(MOVE).toMatch(/const reassignEnabled =\s*\n?\s*practitioner\.role === "owner" && studio\.practitioner_capacity_enabled === true/);
+    // A forged/ineligible target is rejected (re-validated against the eligible set).
+    expect(MOVE).toMatch(/if \(!eligible\.some\(\(p\) => p\.id === requestedTarget\)\)/);
   });
   it("passes the owner outside-availability bypass ONLY for the owner-gated custom_time mode (0148)", () => {
     expect(MOVE).toMatch(/p_allow_outside_availability: mode === "custom_time"/);
