@@ -53,14 +53,17 @@ type OnboardingAdminView = {
 async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
   const admin = createAdminClient();
 
-  const [studioRes, invitesRes, onboardingRes] = await Promise.all([
+  const [studioRes, invitesRes, onboardingRes, flagRes] = await Promise.all([
     // Explicit columns + aggregate count embeds only (no row contents). Every
     // embedded table (practitioners/clients/services/studio_availability_default/
     // appointments/imported_treatment_memories) has a studio_id FK to studios.
+    // The onboarding-v2 flag + state are read SEPARATELY (below) so that a
+    // deployment where migration 0140 is not yet applied (or was rolled back)
+    // never breaks this core page — the onboarding section degrades to "off".
     admin
       .from("studios")
       .select(
-        "id, name, slug, timezone, owner_email, created_at, onboarding_v2_enabled, practitioners(count), clients(count), services(count), studio_availability_default(count), appointments(count), imported_treatment_memories(count)",
+        "id, name, slug, timezone, owner_email, created_at, practitioners(count), clients(count), services(count), studio_availability_default(count), appointments(count), imported_treatment_memories(count)",
       )
       .eq("id", id)
       .maybeSingle(),
@@ -69,12 +72,21 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
       .select("status")
       .eq("studio_id", id)
       .eq("role", "owner"),
+    // Skew-tolerant: a missing studio_onboarding table returns an error in the
+    // result (not a throw), so `ob` falls back to null -> "not started".
     admin
       .from("studio_onboarding")
       .select(
         "status, welcome_email_status, welcome_email_last_sent_at, welcome_email_variant, completed_at, dismissed_at",
       )
       .eq("studio_id", id)
+      .maybeSingle(),
+    // Skew-tolerant: a missing onboarding_v2_enabled column returns an error in
+    // the result; we default the flag to false rather than throwing.
+    admin
+      .from("studios")
+      .select("onboarding_v2_enabled")
+      .eq("id", id)
       .maybeSingle(),
   ]);
 
@@ -89,7 +101,6 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
     timezone: string;
     owner_email: string;
     created_at: string;
-    onboarding_v2_enabled: boolean | null;
     practitioners: { count: number }[] | null;
     clients: { count: number }[] | null;
     services: { count: number }[] | null;
@@ -143,7 +154,9 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
     imported_memory_count: s.imported_treatment_memories?.[0]?.count ?? 0,
     owner_invite_status: ownerInviteStatus,
     onboarding: {
-      enabled: s.onboarding_v2_enabled === true,
+      enabled:
+        (flagRes.data as { onboarding_v2_enabled?: boolean } | null)
+          ?.onboarding_v2_enabled === true,
       status: ob?.status ?? "not_started",
       welcomeEmailStatus: ob?.welcome_email_status ?? "not_sent",
       welcomeEmailLastSentAt: ob?.welcome_email_last_sent_at ?? null,
