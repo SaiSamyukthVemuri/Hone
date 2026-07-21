@@ -135,18 +135,25 @@ describe("3E-2: materialize is a no-op for a deleted rule (lock-then-reread)", (
 });
 
 describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
-  const ownerIns = (q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null; rows: { id: string }[] }>, pid: string | null) =>
+  const ownerIns = (
+    q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null; rows: { id: string }[] }>,
+    pid: string | null,
+    starts = "2031-05-10T10:00:00Z",
+    ends = "2031-05-10T11:00:00Z",
+  ) =>
     q(
       `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
-       values ($1,$2,'2031-05-10T10:00:00Z','2031-05-10T11:00:00Z','break',$3) returning id`,
-      [randomUUID(), B.studioId, pid],
+       values ($1,$2,$4,$5,'break',$3) returning id`,
+      [randomUUID(), B.studioId, pid, starts, ends],
     );
 
   it("owner can INSERT studio-wide + scoped, UPDATE scope, DELETE — all via authenticated RLS", async () => {
     const scopedId = await asUser(owner().userId, async (q) => {
-      const wide = await ownerIns(q, null);
+      // Different times so the studio-wide fan-out (incl P1) and the P1-scoped
+      // block do not both reserve P1 at the same instant.
+      const wide = await ownerIns(q, null, "2031-05-10T10:00:00Z", "2031-05-10T11:00:00Z");
       expect(wide.rowCount).toBe(1);
-      const scoped = await ownerIns(q, P(1));
+      const scoped = await ownerIns(q, P(1), "2031-05-10T13:00:00Z", "2031-05-10T14:00:00Z");
       expect(scoped.rowCount).toBe(1);
       return scoped.rows[0].id;
     });
