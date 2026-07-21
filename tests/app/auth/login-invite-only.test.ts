@@ -80,6 +80,43 @@ describe("magic-link server action: invite-gated signup", () => {
   });
 });
 
+describe("login page: consent-checkbox copy is invitation confirmation, not legal acceptance", () => {
+  // The login checkbox does NOT record Terms/Privacy acceptance (that happens at
+  // accept-invitation, against the CURRENT versions). It only confirms the person
+  // is using their invited email. The un-ticked-box error and the label must say
+  // exactly that — never "agree to the Terms of Service and Privacy Policy", which
+  // would be a false claim that ticking it is legal acceptance.
+  it("the stale legal-acceptance error string is gone", () => {
+    // PAGE_CODE strips // comments (which reference the old phrase as a negative
+    // example) so this asserts on shipped strings only.
+    expect(PAGE_CODE).not.toMatch(/agree to the Terms of Service and Privacy Policy/i);
+    expect(PAGE_CODE).not.toMatch(/Please agree to the Terms/i);
+  });
+
+  it("the un-ticked-box error is the invited-email confirmation copy, used for BOTH sign-in paths", () => {
+    expect(PAGE).toMatch(
+      /Confirm that you're using the email address your studio invitation was sent to\./,
+    );
+    // Single shared constant referenced by the Google + magic-link handlers, so
+    // the two gates can never drift back to divergent copy.
+    const uses = PAGE_CODE.match(/CONFIRM_INVITED_EMAIL_MESSAGE/g) ?? [];
+    expect(uses.length).toBeGreaterThanOrEqual(3); // 1 definition + 2 handlers
+  });
+
+  it("the checkbox label frames itself as identity confirmation", () => {
+    expect(PAGE).toMatch(/using the email address my studio invitation was sent/i);
+    expect(PAGE).toMatch(/aria-label="I am using my invited email address"/);
+  });
+
+  it("the label still surfaces Terms/Privacy as informational links, with acceptance deferred to joining", () => {
+    // Truthful: the policies apply and are LINKED, but the current versions are
+    // confirmed later (at accept-invitation), not by this checkbox.
+    expect(PAGE).toMatch(/href="\/terms"/);
+    expect(PAGE).toMatch(/href="\/privacy"/);
+    expect(PAGE).toMatch(/confirm the current versions when you join a\s+studio/i);
+  });
+});
+
 describe("login page: no direct OTP call remains", () => {
   it("the magic-link handler calls the server action", () => {
     expect(PAGE_CODE).toMatch(

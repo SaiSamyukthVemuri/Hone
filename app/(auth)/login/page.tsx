@@ -20,6 +20,14 @@ type Status =
   | { kind: "sent" }
   | { kind: "error"; message: string };
 
+// The checkbox is an IDENTITY / invitation confirmation, not legal acceptance —
+// Hone is invite-only and this gate just confirms the person is using their
+// invited address (the current Terms/Privacy versions are confirmed later, when
+// they actually join a studio). The un-ticked-box error must say THAT, never
+// "agree to the Terms of Service and Privacy Policy".
+const CONFIRM_INVITED_EMAIL_MESSAGE =
+  "Confirm that you're using the email address your studio invitation was sent to.";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -27,10 +35,7 @@ export default function LoginPage() {
 
   async function handleGoogle() {
     if (!agreed) {
-      setStatus({
-        kind: "error",
-        message: "Please agree to the Terms of Service and Privacy Policy.",
-      });
+      setStatus({ kind: "error", message: CONFIRM_INVITED_EMAIL_MESSAGE });
       return;
     }
     setStatus({ kind: "google" });
@@ -50,10 +55,7 @@ export default function LoginPage() {
   async function handleMagicLink(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!agreed) {
-      setStatus({
-        kind: "error",
-        message: "Please agree to the Terms of Service and Privacy Policy.",
-      });
+      setStatus({ kind: "error", message: CONFIRM_INVITED_EMAIL_MESSAGE });
       return;
     }
     setStatus({ kind: "sending" });
