@@ -358,19 +358,30 @@ export async function bookAppointmentForClientAction(
     return { ok: true, appointmentId: createdId };
   }
 
-  await dispatchBookingEmails({
-    appointment: created,
-    service,
-    studio,
-    practitionerName: practitioner.display_name?.trim() || practitioner.email,
-    practitionerEmail: practitioner.email,
-    clientName: client.name,
-    clientEmail: client.email,
-    clientPhone: client.phone,
-    clientSmsConsentAt: client.sms_consent_at,
-    clientSmsOptedOutAt: client.sms_opted_out_at,
-    notes,
-  });
+  // The appointment is COMMITTED (create_internal_appointment_v2 returned). The
+  // post-commit notification dispatch is best-effort/fail-open: a throwing helper
+  // (e.g. a transient read inside the email context) must NEVER turn a committed
+  // booking into a client-visible failure + a confusing re-submit. Mirrors the
+  // follow-up-read handling above and the public booking flow. Bounded, PHI-free.
+  try {
+    await dispatchBookingEmails({
+      appointment: created,
+      service,
+      studio,
+      practitionerName: practitioner.display_name?.trim() || practitioner.email,
+      practitionerEmail: practitioner.email,
+      clientName: client.name,
+      clientEmail: client.email,
+      clientPhone: client.phone,
+      clientSmsConsentAt: client.sms_consent_at,
+      clientSmsOptedOutAt: client.sms_opted_out_at,
+      notes,
+    });
+  } catch (e) {
+    console.error(
+      `booking_action_post_commit_error:dispatch:${e instanceof Error ? e.name : "unknown"}`,
+    );
+  }
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
@@ -701,7 +712,11 @@ export async function createClientForCalendarBookingAction(
     .single();
 
   if (error || !data) {
-    return { ok: false, error: error?.message ?? "Could not create client." };
+    // Never surface a raw Postgres/PostgREST message (constraint names, schema
+    // hints, or submitted values) to the browser — the quick-book drawer renders
+    // this string verbatim. Log a bounded SQLSTATE marker instead.
+    logBookingDbError("create_client", "insert", error?.code);
+    return { ok: false, error: "Could not create the client. Please try again." };
   }
 
   // Same pages that the existing createClientAction revalidates —
@@ -783,7 +798,11 @@ export async function fetchLastServiceForClientAction(
       .order("starts_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) {
+      // Log the SQLSTATE only; never propagate the raw DB text to the browser.
+      logBookingDbError("last_service", "query", error.code);
+      throw new Error("last_service_query_failed");
+    }
     return (data as Row | null) ?? null;
   }
 
@@ -805,11 +824,9 @@ export async function fetchLastServiceForClientAction(
         lastLocalDate: localDateString(new Date(row.starts_at), studio.timezone),
       },
     };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Could not load last service.",
-    };
+  } catch {
+    // Fixed, safe copy — the inner query already logged a bounded SQLSTATE marker.
+    return { ok: false, error: "Could not load the last service. Please try again." };
   }
 }
 
