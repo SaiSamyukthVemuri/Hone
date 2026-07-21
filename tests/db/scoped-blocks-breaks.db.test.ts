@@ -156,23 +156,38 @@ describe("3C: integrity (guard / RLS / FK)", () => {
       await dropSynthStudio(A);
     }
   });
-  it("owner may write a scoped block; a non-owner member may not (RLS)", async () => {
-    const svcOk = await asUser(owner().userId, (q) =>
+  it("operator/service-role writes a scoped block; a browser member is denied scoped but keeps studio-wide", async () => {
+    // Privileged path (service-role / admin client, which the owner server
+    // action uses) writes a scoped block; the guard still runs.
+    const ok = await asRole("service_role", (q) =>
       q(
         `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
          values ($1,$2,$3,$4,'break',$5)`,
         [randomUUID(), B.studioId, T10, T11, P(1)],
       ),
     );
-    expect(svcOk.rowCount).toBe(1);
-    const memberTry = await asUser(member().userId, (q) =>
+    expect(ok.rowCount).toBe(1);
+    // A non-owner MEMBER cannot write a SCOPED block (member INSERT is now
+    // limited to studio-wide rows) — denied by RLS (throws or 0 rows).
+    const scoped = await asUser(member().userId, (q) =>
       q(
         `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
          values ($1,$2,$3,$4,'break',$5)`,
         [randomUUID(), B.studioId, "2031-05-10T12:00:00Z", "2031-05-10T12:30:00Z", P(1)],
       ),
+    )
+      .then((r) => ({ rows: r.rowCount, err: null as string | null }))
+      .catch((e) => ({ rows: null, err: e.code as string }));
+    expect(scoped.rows === 0 || scoped.err != null).toBe(true);
+    // ...but a member CAN still create a STUDIO-WIDE block (existing drag-to-block).
+    const wide = await asUser(member().userId, (q) =>
+      q(
+        `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
+         values ($1,$2,$3,$4,'break',null)`,
+        [randomUUID(), B.studioId, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z"],
+      ),
     );
-    expect(memberTry.rowCount).toBe(0); // RLS: member cannot write a SCOPED block
+    expect(wide.rowCount).toBe(1);
   });
   it("a practitioner with a scoped block cannot be hard-deleted (FK RESTRICT); studio delete still cascades", async () => {
     await insBlock(P(2));
