@@ -245,6 +245,101 @@ export async function getPractitionerWeekday(
   return rows[0] ?? null;
 }
 
+// PR B 3E — scoped block / recurring-break contract helpers (Studio B spec).
+export async function setPractitionerActive(
+  practitionerId: string,
+  active: boolean,
+): Promise<void> {
+  await sql(`update public.practitioners set active = $2 where id = $1`, [
+    practitionerId,
+    active,
+  ]);
+}
+
+export async function setStudioTimeFormat(
+  studioId: string,
+  format: "12h" | "24h",
+): Promise<void> {
+  await sql(`update public.studios set time_format_preference = $2 where id = $1`, [
+    studioId,
+    format,
+  ]);
+}
+
+export async function setStudioTimezone(studioId: string, tz: string): Promise<void> {
+  await sql(`update public.studios set timezone = $2 where id = $1`, [studioId, tz]);
+}
+
+export async function getTimedBlockScopes(
+  studioId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null }>> {
+  return sql(
+    `select id, practitioner_id from public.studio_timed_blocks where studio_id = $1 order by starts_at`,
+    [studioId],
+  );
+}
+
+// resource_keys the given source materialized into the shadow (proves scoping).
+export async function getSourceReservationKeys(
+  sourceKind: string,
+  sourceId: string,
+): Promise<string[]> {
+  const rows = await sql<{ resource_key: string }>(
+    `select resource_key from public.studio_calendar_reservations
+       where source_kind = $1 and source_id = $2 order by resource_key`,
+    [sourceKind, sourceId],
+  );
+  return rows.map((r) => r.resource_key);
+}
+
+export async function getRecurringRuleScopes(
+  studioId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null; active: boolean; label: string }>> {
+  return sql(
+    `select id, practitioner_id, active, label from public.studio_recurring_break_rules
+       where studio_id = $1 order by created_at`,
+    [studioId],
+  );
+}
+
+// Seed an ACTIVE practitioner-scoped recurring rule directly (fires the guard,
+// so the practitioner must be active at seed time).
+export async function seedActiveScopedRule(
+  studioId: string,
+  practitionerId: string,
+  label: string,
+  days: number[],
+  start: string,
+  end: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `insert into public.studio_recurring_break_rules
+       (id, studio_id, label, days_of_week, start_local_time, end_local_time, active, practitioner_id)
+     values (gen_random_uuid(), $1, $2, $3::int[], $4, $5, true, $6) returning id`,
+    [studioId, label, `{${days.join(",")}}`, start, end, practitionerId],
+  );
+  return rows[0]!.id;
+}
+
+// Seed a confirmed appointment for a practitioner (drives the shadow so a
+// resource-aware conflict lookup has something to hit).
+export async function seedConfirmedAppointment(
+  studioId: string,
+  practitionerId: string,
+  clientId: string,
+  startIso: string,
+  endIso: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `insert into public.appointments
+       (id, studio_id, client_id, practitioner_id, starts_at, ends_at, duration_minutes,
+        buffer_minutes_snapshot, blocked_ends_at, status)
+     values (gen_random_uuid(), $1, $3, $2, $4, $5, 60, 0, $5, 'confirmed') returning id`,
+    [studioId, practitionerId, clientId, startIso, endIso],
+  );
+  return rows[0]!.id;
+}
+
 // PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
 // email with NO pending invitation. The 0081 handle_new_user trigger
 // fires on creation, finds no invitation, and creates NOTHING (no studio,

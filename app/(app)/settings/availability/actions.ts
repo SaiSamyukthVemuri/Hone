@@ -43,68 +43,109 @@ function formatDateInTz(iso: string, tz: string): string {
   return long.replace(/,\s*\d{4}$/, "");
 }
 
-// Looks up the soonest reservation row that overlaps the requested
-// interval and returns an owner-facing message. Does NOT expose
-// client names, service details, private notes, or block categories.
-async function lookupConflictMessage(
-  supabase: SupabaseClient,
-  studioId: string,
-  studioTimezone: string,
-  startsAtIso: string,
-  endsAtIso: string,
-  exclude?: { source_kind: string; source_id: string },
+// PR B 3E-7 + §10: resource-aware, PII-safe conflict description. The two
+// SECURITY DEFINER RPCs (find_scoped_calendar_conflict / find_recurring_break_
+// conflict, migration 0139) filter to the resource set that actually reserves
+// the proposed source — so an appointment for practitioner A never produces a
+// conflict message for a B-only block — and return ONLY source kind + interval
+// + resource_key. They are service_role-only, so these run on the admin client.
+// The rendered message exposes only the conflicting item's KIND and studio-local
+// date/time — never a client, service, note, practitioner name, or token.
+type ConflictRow = {
+  source_kind: string;
+  starts_at: string;
+  ends_at: string;
+  resource_key: string;
+};
+
+function conflictMessageFromRow(
+  row: ConflictRow | undefined,
+  tz: string,
+  fallback: string,
+): string {
+  if (!row) return fallback;
+  const dateFmt = formatDateInTz(row.starts_at, tz);
+  const startFmt = formatTimeInTz(row.starts_at, tz);
+  const endFmt = formatTimeInTz(row.ends_at, tz);
+  switch (row.source_kind) {
+    case "appointment":
+      return `This overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a time that does not overlap that appointment, or reschedule or cancel it first.`;
+    case "timed_block":
+      return `This overlaps an existing blocked period on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove the existing block first.`;
+    case "recurring_break_occurrence":
+      return `This overlaps a repeating break on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove that break first.`;
+    case "full_day_blockout":
+      return `This overlaps an existing full-day blockout on ${dateFmt}. Edit or remove the existing blockout first.`;
+    default:
+      return fallback;
+  }
+}
+
+// One-off (timed-block / blockout) conflict lookup. `practitionerId` is the
+// proposed source's scope (null = studio-wide); `exclude` removes the source
+// being edited so it never self-conflicts.
+async function describeTimedConflict(
+  admin: SupabaseClient,
+  args: {
+    studioId: string;
+    tz: string;
+    practitionerId: string | null;
+    startsAt: string;
+    endsAt: string;
+    exclude?: { kind: string; id: string };
+  },
 ): Promise<string> {
-  const { data } = await supabase
-    .from("studio_calendar_reservations")
-    .select("source_kind, source_id, starts_at, ends_at")
-    .eq("studio_id", studioId)
-    .lt("starts_at", endsAtIso)
-    .gt("ends_at", startsAtIso)
-    .order("starts_at")
-    .limit(5);
+  const { data } = await admin.rpc("find_scoped_calendar_conflict", {
+    p_studio_id: args.studioId,
+    p_practitioner_id: args.practitionerId,
+    p_starts_at: args.startsAt,
+    p_ends_at: args.endsAt,
+    p_exclude_kind: args.exclude?.kind ?? null,
+    p_exclude_id: args.exclude?.id ?? null,
+  });
+  const row = (data as ConflictRow[] | null)?.[0];
+  return conflictMessageFromRow(row, args.tz, FALLBACK_CONFLICT_MESSAGE);
+}
 
-  if (!data || data.length === 0) {
-    return FALLBACK_CONFLICT_MESSAGE;
-  }
+// Recurring-break conflict projection: projects the proposed pattern across the
+// horizon in the studio timezone (DST-correct) and returns the earliest actual
+// collision, excluding the edited rule's own future occurrences.
+async function describeRecurringConflict(
+  admin: SupabaseClient,
+  args: {
+    studioId: string;
+    tz: string;
+    practitionerId: string | null;
+    days: number[];
+    startLocal: string;
+    endLocal: string;
+    horizonEnd: string;
+    excludeRuleId?: string | null;
+  },
+): Promise<string> {
+  const { data } = await admin.rpc("find_recurring_break_conflict", {
+    p_studio_id: args.studioId,
+    p_practitioner_id: args.practitionerId,
+    p_days_of_week: args.days,
+    p_start_local: args.startLocal,
+    p_end_local: args.endLocal,
+    p_horizon_end: args.horizonEnd,
+    p_exclude_rule_id: args.excludeRuleId ?? null,
+  });
+  const row = (data as ConflictRow[] | null)?.[0];
+  return conflictMessageFromRow(row, args.tz, RECURRING_BREAK_CONFLICT_MESSAGE);
+}
 
-  const candidates = exclude
-    ? data.filter(
-        (r) =>
-          !(
-            r.source_kind === exclude.source_kind &&
-            r.source_id === exclude.source_id
-          ),
-      )
-    : data;
-
-  if (candidates.length === 0) {
-    return FALLBACK_CONFLICT_MESSAGE;
-  }
-
-  const conflict = candidates[0];
-  // Conflict messages now include the conflicting item's date so the
-  // owner can tell which appointment in a multi-day blockout range
-  // is blocking the save. Previously the message only showed time,
-  // which read as "the app doesn't understand I'm blocking a range".
-  // Date format reuses the shared lib/booking/tz.ts helper so the
-  // wording matches the email/SMS day-string format.
-  if (conflict.source_kind === "appointment") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
-    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
-    return `This block overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a block that does not overlap that appointment, or reschedule or cancel the appointment first.`;
-  }
-  if (conflict.source_kind === "timed_block") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
-    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
-    return `This block overlaps an existing blocked period on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove the existing block first.`;
-  }
-  if (conflict.source_kind === "full_day_blockout") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    return `This block overlaps an existing full-day blockout on ${dateFmt}. Edit or remove the existing blockout first.`;
-  }
-  return FALLBACK_CONFLICT_MESSAGE;
+// Bounded operational marker for an unexpected DB error: action + stage +
+// SQLSTATE only. NEVER the raw DB/PostgREST message, row data, private note,
+// client, appointment, practitioner, or token. Owner-facing copy is always a
+// fixed safe string chosen by the caller.
+function logAvailabilityDbError(
+  action: string,
+  stage: string,
+  code: string | undefined,
+): void {
+  console.error(`availability_action_db_error:${action}:${stage}:${code ?? "unknown"}`);
 }
 
 function trimmed(value: FormDataEntryValue | null): string {
@@ -218,7 +259,10 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
       },
       { onConflict: "studio_id,day_of_week,practitioner_id" },
     );
-  if (error) throw new Error(`Failed to save: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("upsert_day_default", "upsert", error.code);
+    throw new Error("Could not save these hours. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -261,8 +305,10 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
     const { error } = await supabase
       .from("studio_availability_default")
       .upsert(row, { onConflict: "studio_id,day_of_week,practitioner_id" });
-    if (error)
-      throw new Error(`Failed to save weekly defaults: ${error.message}`);
+    if (error) {
+      logAvailabilityDbError("save_weekly_defaults", "upsert", error.code);
+      throw new Error("Could not save these hours. Please try again.");
+    }
   }
   revalidatePath("/settings/availability");
 }
@@ -298,8 +344,10 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
       },
       { onConflict: "studio_id,effective_date,practitioner_id" },
     );
-  if (error)
-    throw new Error(`Failed to save override: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("upsert_override", "upsert", error.code);
+    throw new Error("Could not save this date override. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -313,7 +361,10 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
     .delete()
     .eq("id", id)
     .eq("studio_id", studioId);
-  if (error) throw new Error(`Failed to delete override: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("delete_override", "delete", error.code);
+    throw new Error("Could not delete this date override. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -604,20 +655,23 @@ export async function createBlockoutAction(
     if (error.code === "23P01") {
       // Recompute the UTC range the trigger used so the lookup
       // matches exactly. Half-open: [local midnight starts, local
-      // midnight (ends + 1)) in the studio's tz.
+      // midnight (ends + 1)) in the studio's tz. A full-day blockout is
+      // studio-wide (practitionerId = null), so the resource-aware lookup
+      // spans every practitioner.
       const startUtc = utcInstantFromLocal(starts, "00:00", studio.timezone);
       const endDateStr = addDaysToIso(ends, 1);
       const endUtc = utcInstantFromLocal(endDateStr, "00:00", studio.timezone);
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
-        startUtc.toISOString(),
-        endUtc.toISOString(),
-      );
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: null,
+        startsAt: startUtc.toISOString(),
+        endsAt: endUtc.toISOString(),
+      });
       return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to add blockout: ${error.message}` };
+    logAvailabilityDbError("create_blockout", "insert", error.code);
+    return { ok: false, error: "Could not add this full-day blockout. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -642,7 +696,10 @@ export async function deleteBlockoutAction(formData: FormData): Promise<void> {
     .delete()
     .eq("id", id)
     .eq("studio_id", studioId);
-  if (error) throw new Error(`Failed to delete blockout: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("delete_blockout", "delete", error.code);
+    throw new Error("Could not delete this full-day blockout. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -753,10 +810,14 @@ export async function createTimedBlockAction(
     return { ok: false, error: "Blocked time must end in the future." };
   }
 
-  // A whole-day block stays studio-wide: it closes the studio for every
-  // practitioner, so it never carries a per-practitioner scope. Timed blocks
-  // may be studio-wide (null) or scoped to one practitioner.
-  const scope = allDay ? null : resolveSubmittedScope(formData, undefined);
+  // A timed block — including a whole-day one — may be studio-wide (NULL) or
+  // scoped to one practitioner. A practitioner-scoped all-day block takes that
+  // practitioner's entire day off without closing the studio for anyone else
+  // (the synchronizer keys the reservation to the practitioner, not the
+  // studio). This stays a studio_timed_blocks row with a local-midnight →
+  // next-local-midnight interval; studio_blockouts remain studio-wide date
+  // closures and are unaffected.
+  const scope = resolveSubmittedScope(formData, undefined);
 
   const supabase = await createClient();
   const { error } = await supabase.from("studio_timed_blocks").insert({
@@ -770,18 +831,19 @@ export async function createTimedBlockAction(
   });
   if (error) {
     if (error.code === "23P01") {
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: scope,
         startsAt,
         endsAt,
-      );
+      });
       return { ok: false, error: message };
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    return { ok: false, error: `Failed to add block: ${error.message}` };
+    logAvailabilityDbError("create_block", "insert", error.code);
+    return { ok: false, error: "Could not add this block. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -839,7 +901,10 @@ export async function updateTimedBlockAction(
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (loadErr) return { ok: false, error: `Failed to update block: ${loadErr.message}` };
+  if (loadErr) {
+    logAvailabilityDbError("update_block", "load", loadErr.code);
+    return { ok: false, error: "Could not update this block. Please try again." };
+  }
   if (!existing) return { ok: false, error: "Block not found." };
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
 
@@ -860,20 +925,22 @@ export async function updateTimedBlockAction(
       // Exclude the block we are editing from the conflict lookup
       // so we don't report a self-conflict. The shadow still holds
       // this row's pre-rollback values because the UPDATE was
-      // aborted by the exclusion check.
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
+      // aborted by the exclusion check. Scope-aware: only the resource(s)
+      // this block actually reserves are considered.
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: scope,
         startsAt,
         endsAt,
-        { source_kind: "timed_block", source_id: id },
-      );
+        exclude: { kind: "timed_block", id },
+      });
       return { ok: false, error: message };
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    return { ok: false, error: `Failed to update block: ${error.message}` };
+    logAvailabilityDbError("update_block", "update", error.code);
+    return { ok: false, error: "Could not update this block. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -897,7 +964,10 @@ export async function deleteTimedBlockAction(
     .delete()
     .eq("id", id)
     .eq("studio_id", studio.id);
-  if (error) return { ok: false, error: `Failed to delete block: ${error.message}` };
+  if (error) {
+    logAvailabilityDbError("delete_block", "delete", error.code);
+    return { ok: false, error: "Could not delete this block. Please try again." };
+  }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
   return { ok: true };
@@ -957,10 +1027,12 @@ function horizonEndDateInStudioTz(tz: string): string {
 // 23P01. The previous implementation queried the shadow for the
 // soonest future non-recurring reservation, but that row is not
 // guaranteed to be the one whose interval actually overlapped a
-// projected occurrence. Returning a tailored time/date for an
-// unrelated reservation would mislead the owner. A precise lookup
-// (project the proposed pattern, check each occurrence, return the
-// first colliding one) is a possible Phase 3 enhancement.
+// projected occurrence. The precise lookup (project the proposed pattern in the
+// studio timezone, check each occurrence against the relevant resource set,
+// return the first colliding one) is now implemented in describeRecurringConflict
+// (find_recurring_break_conflict, migration 0139). This static string is the
+// safe fallback used only when the projection returns no row (e.g. the colliding
+// reservation was resolved between the failed write and the lookup).
 const RECURRING_BREAK_CONFLICT_MESSAGE =
   "This recurring break overlaps an existing appointment, blocked period, or full-day blockout. Edit or remove the conflicting item first, then try again.";
 
@@ -1019,11 +1091,21 @@ export async function createRecurringBreakRuleAction(
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: scope,
+        days,
+        startLocal,
+        endLocal,
+        horizonEnd,
+      });
+      return { ok: false, error: message };
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    return { ok: false, error: `Failed to add recurring break: ${error.message}` };
+    logAvailabilityDbError("create_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not add this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -1074,7 +1156,10 @@ export async function updateRecurringBreakRuleAction(
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (loadErr) return { ok: false, error: `Failed to update recurring break: ${loadErr.message}` };
+  if (loadErr) {
+    logAvailabilityDbError("update_recurring", "load", loadErr.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
+  }
   if (!existing) return { ok: false, error: "Rule not found." };
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
 
@@ -1099,11 +1184,31 @@ export async function updateRecurringBreakRuleAction(
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: scope,
+        days,
+        startLocal,
+        endLocal,
+        horizonEnd,
+        excludeRuleId: id,
+      });
+      return { ok: false, error: message };
+    }
+    // 23514 = enabling / reassigning a scoped rule to an inactive practitioner
+    // (guard_scoped_recurring_rule_capacity, migration 0139).
+    if (error.code === "23514") {
+      return {
+        ok: false,
+        error:
+          "This break is assigned to a practitioner who is no longer active. Reassign it before enabling it.",
+      };
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+    logAvailabilityDbError("update_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -1130,11 +1235,15 @@ export async function toggleRecurringBreakRuleActiveAction(
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (lookupErr) return { ok: false, error: lookupErr.message };
+  if (lookupErr) {
+    logAvailabilityDbError("toggle_recurring", "load", lookupErr.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
+  }
   if (!rule) return { ok: false, error: "Rule not found." };
 
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
+  const scope = rule.practitioner_id ?? null;
   const { error } = await admin.rpc(
     "update_recurring_break_rule_and_rematerialize",
     {
@@ -1146,22 +1255,34 @@ export async function toggleRecurringBreakRuleActiveAction(
       p_end_local_time: rule.end_local_time,
       p_active: active,
       p_horizon_end: horizonEnd,
-      p_practitioner_id: rule.practitioner_id ?? null, // preserve scope
+      p_practitioner_id: scope, // preserve scope
     },
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        practitionerId: scope,
+        days: rule.days_of_week,
+        startLocal: String(rule.start_local_time).slice(0, 5),
+        endLocal: String(rule.end_local_time).slice(0, 5),
+        horizonEnd,
+        excludeRuleId: id,
+      });
+      return { ok: false, error: message };
     }
-    // 23514 = re-activating a scoped rule whose practitioner is now inactive.
+    // 23514 = enabling / saving an active scoped rule whose practitioner is now
+    // inactive (guard_scoped_recurring_rule_capacity, migration 0139).
     if (error.code === "23514") {
       return {
         ok: false,
         error:
-          "This break is assigned to a practitioner who is no longer active. Reassign it to an active practitioner first.",
+          "This break is assigned to a practitioner who is no longer active. Reassign it before enabling it.",
       };
     }
-    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+    logAvailabilityDbError("toggle_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -1181,7 +1302,8 @@ export async function deleteRecurringBreakRuleAction(
     p_studio_id: studio.id,
   });
   if (error) {
-    return { ok: false, error: `Failed to delete recurring break: ${error.message}` };
+    logAvailabilityDbError("delete_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not delete this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");

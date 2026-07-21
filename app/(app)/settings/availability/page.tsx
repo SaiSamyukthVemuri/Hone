@@ -136,7 +136,10 @@ export default async function AvailabilitySettingsPage({
           overrides={overrides}
           blockouts={blockouts}
         />
-        <RecurringBreaksSection rules={recurringRules} />
+        <RecurringBreaksSection
+          rules={recurringRules}
+          timeFormat={resolveTimeFormat(studio)}
+        />
         <TimedBlocksSection
           studioTimezone={studio.timezone}
           timeFormat={resolveTimeFormat(studio)}
@@ -192,6 +195,7 @@ export default async function AvailabilitySettingsPage({
         />
         <RecurringBreaksSection
           rules={recurringRules}
+          timeFormat={resolveTimeFormat(studio)}
           capacityOn
           viewScope={viewScope}
           selectable={scopeProps.selectable}
@@ -247,6 +251,7 @@ export default async function AvailabilitySettingsPage({
       />
       <RecurringBreaksSection
         rules={recurringRules}
+        timeFormat={resolveTimeFormat(studio)}
         capacityOn
         viewScope={viewScope}
         selectable={scopeProps.selectable}

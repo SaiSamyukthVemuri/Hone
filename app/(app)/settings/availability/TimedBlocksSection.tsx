@@ -142,9 +142,10 @@ export function TimedBlocksSection({
     if (!editingId && allDay) {
       fd.set("all_day", "true");
     }
-    // Scope only when capacity is on and this is NOT a whole-day block (whole-day
-    // blocks always apply studio-wide; the action also forces null for all_day).
-    if (capacityOn && !(!editingId && allDay)) {
+    // Send the explicit scope whenever capacity is on — INCLUDING whole-day
+    // blocks, which may be scoped to one practitioner (their whole day off) or
+    // studio-wide (All practitioners).
+    if (capacityOn) {
       fd.set("practitioner_id", scope);
     }
 
@@ -319,18 +320,15 @@ export function TimedBlocksSection({
         </label>
         {capacityOn && (
           <div className="md:col-span-2">
+            {/* Usable for all-day too: a whole-day block can be one
+                practitioner's day off or studio-wide (All practitioners). */}
             <ScopeField
-              value={!editingId && allDay ? "" : scope}
+              value={scope}
               onChange={setScope}
               selectable={selectable}
               directory={directory}
-              disabled={pending || (!editingId && allDay)}
+              disabled={pending}
             />
-            {!editingId && allDay && (
-              <span className="mt-1 block text-[11px] text-neutral-500">
-                Whole-day blocks apply to all practitioners.
-              </span>
-            )}
           </div>
         )}
         <label className="flex flex-col gap-1.5 md:col-span-4">

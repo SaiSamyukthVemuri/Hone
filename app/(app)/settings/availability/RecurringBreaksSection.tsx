@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { StudioRecurringBreakRule } from "@/lib/types/database";
+import { formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
 import {
   createRecurringBreakRuleAction,
   deleteRecurringBreakRuleAction,
@@ -18,6 +19,9 @@ import {
 
 type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
+  // Migration 0109: 12h/24h preference for the DISPLAYED break times. The form
+  // <input type="time"> fields stay 24h HH:MM machine values.
+  timeFormat: TimeFormat;
   // Scope wiring (PR B 3E-6). Absent = Legacy studio: no scope selector, and
   // the parent has already filtered to studio-wide rules only.
   capacityOn?: boolean;
@@ -72,16 +76,9 @@ function formatDays(days: number[]): string {
   return sorted.map((d) => WEEKDAY_LABELS[d]?.short ?? "").join(", ");
 }
 
-function formatTime12h(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(":");
-  const h = Number(hStr);
-  const m = Number(mStr);
-  const period = h >= 12 ? "PM" : "AM";
-  const hr12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hr12}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-// Postgres TIME may come back as "HH:MM:SS"; the form input expects HH:MM.
+// Postgres TIME may come back as "HH:MM:SS"; the form input expects HH:MM and
+// the shared formatClockLabel expects a bare "HH:MM" (it applies no timezone —
+// break times are naive local wall-clock, not UTC instants).
 function trimSeconds(time: string): string {
   return time.slice(0, 5);
 }
@@ -93,6 +90,7 @@ const DEFAULT_END = "12:30";
 
 export function RecurringBreaksSection({
   rules,
+  timeFormat,
   capacityOn = false,
   viewScope = { kind: "studio" },
   selectable = [],
@@ -407,8 +405,8 @@ export function RecurringBreaksSection({
                     {formatDays(r.days_of_week)}
                   </span>
                   <span className="text-neutral-500">
-                    {formatTime12h(trimSeconds(r.start_local_time))} to{" "}
-                    {formatTime12h(trimSeconds(r.end_local_time))}
+                    {formatClockLabel(trimSeconds(r.start_local_time), timeFormat)} to{" "}
+                    {formatClockLabel(trimSeconds(r.end_local_time), timeFormat)}
                   </span>
                   {capacityOn && (
                     <span className="text-[11px] text-neutral-400">
