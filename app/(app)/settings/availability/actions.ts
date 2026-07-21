@@ -10,6 +10,7 @@ import {
   todayInTz,
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
+import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
 
 // Typed result used by every action that can hit the unified shadow's
@@ -865,13 +866,12 @@ function parseDaysOfWeek(value: FormDataEntryValue | null): number[] {
 }
 
 function horizonEndDateInStudioTz(tz: string): string {
-  // When a recurring break rule is created or updated, materialize
-  // forward to today + 186 days (the maximum possible public booking
-  // horizon: 6 months × 31 days). The daily cron also uses 186; both
-  // were bumped from 90 in migration 0036 (Booking Horizon v1) so a
-  // studio raising its booking horizon never sees a coverage gap in
-  // the days before the next cron run. Returns YYYY-MM-DD that the
-  // RPC parses as a date.
+  // When a recurring break rule is created/updated/toggled, materialize forward
+  // to today + the SINGLE recurring-break horizon = maxPublicBookingHorizonDays()
+  // (12 months × 31 = 372) + 14 days margin = 386. Derived from the max
+  // configurable public horizon so a studio raising its horizon never sees a
+  // coverage gap before the next cron run (3E-3; the stale 186/90 are removed).
+  // The DB timezone-rebuild uses the matching public.recurring_break_horizon_days().
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -880,7 +880,7 @@ function horizonEndDateInStudioTz(tz: string): string {
   }).format(new Date());
   const [y, m, d] = today.split("-").map(Number);
   const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  noon.setUTCDate(noon.getUTCDate() + 186);
+  noon.setUTCDate(noon.getUTCDate() + maxPublicBookingHorizonDays() + 14);
   return `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
 }
 
