@@ -344,6 +344,20 @@ export async function setStudioCorrectionsEnabled(
   );
 }
 
+// Onboarding v2 (migration 0140). Toggle the studio-scoped kill-switch so the
+// browser lane can exercise the guided wizard + pinned card. The direct SQL
+// connection is not a browser role, so the operator-only guard trigger allows
+// the flip (it only blocks anon/authenticated).
+export async function setStudioOnboardingV2Enabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set onboarding_v2_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
 // Google Calendar — Phase A. Toggle the studio-scoped connection flag so the
 // e2e can exercise the flag gate (card hidden when OFF, shown when ON).
 export async function setStudioGoogleCalendarConnectionEnabled(
