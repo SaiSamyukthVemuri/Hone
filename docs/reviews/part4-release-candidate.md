@@ -179,12 +179,50 @@ is dropped and recreated 8-arg in 0148). No migration created for docs/tests.
 An integrated RC branch must be assembled from **#458 head `af32009`**, **#459 head
 `2a1f67d09cb7ac6a9459e9484b9f085efef38512`**, and the final **#460 Item 8 head**, then
 run through the full CI to prove the exact combined `0135→0150` application state
-(PR #460's own CI does not, because it omits 0140/0141). Hosted apply is migration-first
-and separate; both flags stay OFF; a controlled new-studio (synthetic, never Willow)
-staging acceptance test — configure availability, book A/B, move, reassign, verify
-Legacy untouched — is the gate before any flag activation. Rollback = flip
-`booking_enabled` OFF (instant pause, no rematerialize); structural rollback via the
-0138 `retire_practitioner_capacity` command after draining.
+(PR #460's own CI does not, because it omits 0140/0141).
+
+**Hosted deployment is APP-FIRST, not migration-first.** This corrects an earlier
+line in this document. Migration `0141` replaces `handle_new_user` with a no-op and
+moves provisioning + acceptance into the application (`/auth/callback` reconcile +
+`/accept-invitation`); `docs/24_ONBOARDING_V2.md` is authoritative. Applying `0141`
+before the reconciliation-capable application is live would let an invited user
+temporarily land on `/no-access` (recoverable, but a real regression), so
+migration-first is **operationally forbidden**. The safe hosted sequence is:
+
+1. Build and validate the combined RC (this branch + full five-lane CI).
+2. Deploy the reconciliation-capable combined application **first**.
+3. Verify the flag-OFF application is healthy (dashboard, auth, invitation
+   acceptance) against the still-current hosted schema.
+4. Apply migrations `0135–0150` in numerical order — with `0141` occurring **only
+   after** the new application is already live.
+5. Keep onboarding **and** capacity flags OFF (repo/hosted default).
+6. Perform post-migration smoke tests.
+7. Enable onboarding/capacity **only** for the controlled synthetic new studio
+   (never Willow, never an existing real studio).
+8. Never enable Willow during this gate.
+
+**App-first skew window — keep it short.** During step 2→4 (app live, `0135–0150`
+not yet applied) the auth/navigation/dashboard surface is fully safe (verified: the
+dashboard reads `studios` via `select *`, `/auth/callback` reconcile is fail-open on
+an absent RPC, and the availability/slot loaders catch `42703`/`PGRST204` and fall
+back to the legacy query). But **write actions that call the new RPCs will fail
+gracefully until the migrations land** — studio-wide/scoped availability save
+(`save_weekly_availability`, the `*_locked` day/override writers), internal booking
+(`create_internal_appointment_v2`), reschedule (`move_or_reassign_appointment`), and
+practitioner deactivation (`set_practitioner_active_locked`) each return a caught
+"please try again" error, not a crash, and self-heal the instant `0135–0150` apply.
+Apply the migrations promptly after the app is live (a low-traffic window) so this
+transient write-degradation is minimal.
+
+**Rollback (application-problem first response) = flip `booking_enabled` (and/or
+`onboarding_v2_enabled`) OFF** — an instant pause with no rematerialize; onboarding
+completion state is unaffected by capacity-flag changes. Schema rollback is a
+last resort, not the first response: only after draining, the `0138`
+`retire_practitioner_capacity` command performs the structural capacity teardown,
+and reverting `0141` restores the old provisioning trigger (existing memberships
+untouched). The staging acceptance test — configure A/B availability, book A/B at an
+overlapping time, time-only move, same-time reassign, verify Legacy untouched, verify
+onboarding completes exactly once — is the gate before any flag activation.
 
 ## 17. Evidence
 
