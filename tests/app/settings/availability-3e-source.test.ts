@@ -7,6 +7,8 @@ import { join } from "node:path";
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const ACTIONS = read("app/(app)/settings/availability/actions.ts");
 const RECURRING = read("app/(app)/settings/availability/RecurringBreaksSection.tsx");
+const TIMED = read("app/(app)/settings/availability/TimedBlocksSection.tsx");
+const DRAWER = read("app/(app)/calendar/TimedBlockEditDrawer.tsx");
 
 describe("defect #4 — owner-facing action results never interpolate raw DB text", () => {
   it("has NO `${...message}` interpolation anywhere in the actions file", () => {
@@ -47,9 +49,48 @@ describe("defect #4 — owner-facing action results never interpolate raw DB tex
 
 describe("defect #3 — RecurringBreaksSection honours the studio 12h/24h preference", () => {
   it("uses the shared formatClockLabel + a timeFormat prop, not a hardcoded 12h formatter", () => {
-    expect(RECURRING).toMatch(/import \{ formatClockLabel, type TimeFormat \}/);
+    expect(RECURRING).toMatch(/import \{[\s\S]*formatClockLabel[\s\S]*type TimeFormat[\s\S]*\}/);
     expect(RECURRING).toMatch(/timeFormat: TimeFormat;/);
     expect(RECURRING).toMatch(/formatClockLabel\(trimSeconds\(r\.start_local_time\), timeFormat\)/);
     expect(RECURRING).not.toMatch(/function formatTime12h/);
+  });
+});
+
+describe("item #5 — conflict messages honour the studio TimeFormat (no hardcoded hour12)", () => {
+  it("formatTimeInTz delegates to the shared formatTimeForStudio with a TimeFormat", () => {
+    expect(ACTIONS).toMatch(/function formatTimeInTz\(iso: string, tz: string, format: TimeFormat\)/);
+    expect(ACTIONS).toMatch(/return formatTimeForStudio\(new Date\(iso\), tz, format\)/);
+    // The only remaining "hour12" is in a comment, never in executable code.
+    const code = ACTIONS.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(code).not.toMatch(/hour12/);
+    // Every conflict-describe call passes the resolved studio format.
+    expect((ACTIONS.match(/format: resolveTimeFormat\(studio\),/g) ?? []).length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("item #4 — all-day timed blocks are fully editable (not delete+recreate)", () => {
+  it("updateTimedBlockAction has an all-day branch (buildAllDayBlockUtcRange used on create AND update)", () => {
+    expect(ACTIONS).toMatch(/const allDay = trimmed\(formData\.get\("all_day"\)\)/);
+    // buildAllDayBlockUtcRange is referenced by BOTH create and update actions.
+    expect((ACTIONS.match(/buildAllDayBlockUtcRange\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("both edit surfaces detect all-day by local-midnight boundaries (isAllDayInterval), never 24h duration", () => {
+    for (const src of [TIMED, DRAWER]) {
+      expect(src).toMatch(/isAllDayInterval\(/);
+    }
+    // The stale "converting between modes is delete + recreate" note is gone.
+    expect(TIMED).not.toMatch(/delete \+ recreate/);
+  });
+});
+
+describe("item #3 — the submit button is disabled while pending (prevents duplicate creation)", () => {
+  it("both section submit buttons bind disabled={pending} and drive a single in-flight transition", () => {
+    for (const src of [TIMED, RECURRING]) {
+      expect(src).toMatch(/disabled=\{pending\}/);
+      expect(src).toMatch(/startTransition\(/);
+      // The label flips to a busy state so the owner sees the in-flight save.
+      expect(src).toMatch(/Saving…/);
+    }
   });
 });

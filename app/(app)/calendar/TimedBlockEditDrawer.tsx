@@ -4,7 +4,11 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { TIMED_BLOCK_LABEL } from "./calendar-format";
-import { formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
+import {
+  formatClockLabel,
+  isAllDayInterval,
+  type TimeFormat,
+} from "@/lib/booking/tz";
 import {
   updateTimedBlockAction,
   deleteTimedBlockAction,
@@ -62,16 +66,21 @@ export function TimedBlockEditDrawer({
   const [endLocal, setEndLocal] = useState("");
   const [category, setCategory] = useState("other");
   const [privateNote, setPrivateNote] = useState("");
+  const [allDay, setAllDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!block) return;
-    // Seed the form from the block (24h HH:MM + YYYY-MM-DD machine values).
+    // Seed the form from the block. Detect all-day by its local-midnight
+    // boundaries (never by 24h duration) so editing preserves the mode; a timed
+    // block seeds explicit times.
     setDate(dateForInput(block.starts_at, studioTimezone));
-    setStartLocal(timeForInput(block.starts_at, studioTimezone));
-    setEndLocal(timeForInput(block.ends_at, studioTimezone));
+    const ad = isAllDayInterval(block.starts_at, block.ends_at, studioTimezone);
+    setAllDay(ad);
+    setStartLocal(ad ? "12:00" : timeForInput(block.starts_at, studioTimezone));
+    setEndLocal(ad ? "12:30" : timeForInput(block.ends_at, studioTimezone));
     setCategory(block.category);
     setPrivateNote(block.private_note ?? "");
     setError(null);
@@ -98,6 +107,9 @@ export function TimedBlockEditDrawer({
     fd.set("end_local", endLocal);
     fd.set("category", category);
     fd.set("private_note", privateNote);
+    // Preserve/convert all-day. Scope (practitioner_id) is intentionally NOT
+    // sent — updateTimedBlockAction loads the existing row and preserves it.
+    if (allDay) fd.set("all_day", "true");
     startTransition(async () => {
       const r = await updateTimedBlockAction(fd);
       if (!r.ok) {
@@ -130,8 +142,10 @@ export function TimedBlockEditDrawer({
 
   const label = TIMED_BLOCK_LABEL[block.category] ?? "Unavailable";
   // Displayed range honors the studio 12h/24h preference; the inputs above stay
-  // 24h machine values.
-  const rangeLabel = `${formatClockLabel(timeForInput(block.starts_at, studioTimezone), timeFormat)}–${formatClockLabel(timeForInput(block.ends_at, studioTimezone), timeFormat)}`;
+  // 24h machine values. An all-day block reads "All day" rather than 00:00–00:00.
+  const rangeLabel = isAllDayInterval(block.starts_at, block.ends_at, studioTimezone)
+    ? "All day"
+    : `${formatClockLabel(timeForInput(block.starts_at, studioTimezone), timeFormat)}–${formatClockLabel(timeForInput(block.ends_at, studioTimezone), timeFormat)}`;
 
   return (
     <div
@@ -176,14 +190,25 @@ export function TimedBlockEditDrawer({
                 className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={allDay}
+                onChange={(e) => setAllDay(e.target.checked)}
+                className="h-4 w-4 rounded border-neutral-400"
+              />
+              <span className="font-medium">All day</span>
+              <span className="text-xs text-neutral-500">Block the entire day</span>
+            </label>
             <div className="flex gap-3">
               <label className="flex flex-1 flex-col gap-1 text-sm">
                 <span className="font-medium">Start</span>
                 <input
                   type="time"
                   value={startLocal}
+                  disabled={allDay}
                   onChange={(e) => setStartLocal(e.target.value)}
-                  className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-950"
+                  className="rounded-md border border-neutral-300 px-3 py-2 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
                 />
               </label>
               <label className="flex flex-1 flex-col gap-1 text-sm">
@@ -191,8 +216,9 @@ export function TimedBlockEditDrawer({
                 <input
                   type="time"
                   value={endLocal}
+                  disabled={allDay}
                   onChange={(e) => setEndLocal(e.target.value)}
-                  className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-950"
+                  className="rounded-md border border-neutral-300 px-3 py-2 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
                 />
               </label>
             </div>

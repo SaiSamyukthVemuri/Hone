@@ -279,6 +279,42 @@ export async function getTimedBlockScopes(
   );
 }
 
+// Query the EXACT new block by its unique marker (private note) + tenant/scope/
+// interval, so an assertion can never pass because of a row from another test
+// or a prior retry. Returns the matching rows (expect exactly one).
+export async function getTimedBlocksByNote(
+  studioId: string,
+  note: string,
+): Promise<
+  Array<{
+    id: string;
+    practitioner_id: string | null;
+    starts_at: string;
+    ends_at: string;
+    category: string;
+  }>
+> {
+  return sql(
+    `select id, practitioner_id, starts_at::text, ends_at::text, category
+       from public.studio_timed_blocks
+      where studio_id = $1 and private_note = $2
+      order by starts_at`,
+    [studioId, note],
+  );
+}
+
+// Confirm an appointment is unchanged (interval + status) after a nearby block
+// attempt — proves a rolled-back block write never touched the appointment.
+export async function getAppointmentInterval(
+  appointmentId: string,
+): Promise<{ starts_at: string; ends_at: string; status: string } | null> {
+  const rows = await sql<{ starts_at: string; ends_at: string; status: string }>(
+    `select starts_at::text, ends_at::text, status from public.appointments where id = $1`,
+    [appointmentId],
+  );
+  return rows[0] ?? null;
+}
+
 // resource_keys the given source materialized into the shadow (proves scoping).
 export async function getSourceReservationKeys(
   sourceKind: string,

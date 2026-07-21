@@ -2,7 +2,11 @@
 
 import { useState, useTransition } from "react";
 import type { StudioTimedBlock } from "@/lib/types/database";
-import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
+import {
+  formatTimeForStudio,
+  isAllDayInterval,
+  type TimeFormat,
+} from "@/lib/booking/tz";
 import {
   createTimedBlockAction,
   deleteTimedBlockAction,
@@ -107,12 +111,10 @@ export function TimedBlocksSection({
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [privateNote, setPrivateNote] = useState("");
   const [scope, setScope] = useState<string>(defaultScope);
-  // PR #139. All-day toggle for create. When checked the start /
-  // end time inputs are visually disabled and the action receives
-  // 'all_day=true'; the server synthesises a full studio-local-day
-  // UTC range and ignores the time fields. Edit flow stays on the
-  // legacy time-of-day inputs for v1; converting between modes is
-  // delete + recreate.
+  // All-day toggle (create + edit). When checked the start/end inputs are
+  // disabled and the action synthesises a full studio-local-day UTC range. On
+  // edit it is pre-set from the block's stored local-midnight boundaries, so
+  // editing preserves the mode; toggling converts all-day ↔ timed explicitly.
   const [allDay, setAllDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -137,9 +139,9 @@ export function TimedBlocksSection({
     fd.set("end_local", endLocal);
     fd.set("category", category);
     fd.set("private_note", privateNote);
-    // Only send all_day on the create path; the update action does
-    // not branch on it and keeps the legacy time-of-day shape.
-    if (!editingId && allDay) {
+    // Send all_day on create AND edit — the update action now honours it, so
+    // editing an all-day block keeps it all-day and toggling converts modes.
+    if (allDay) {
       fd.set("all_day", "true");
     }
     // Send the explicit scope whenever capacity is on — INCLUDING whole-day
@@ -185,13 +187,15 @@ export function TimedBlocksSection({
   function onEdit(b: StudioTimedBlock) {
     setEditingId(b.id);
     setDate(formatDateForInput(b.starts_at, studioTimezone));
-    setStartLocal(formatTimeForInput(b.starts_at, studioTimezone));
-    setEndLocal(formatTimeForInput(b.ends_at, studioTimezone));
+    // Detect all-day by the stored local-midnight boundaries (never by 24h
+    // duration), so editing an all-day block PRESERVES all-day mode. A timed
+    // block prefills its explicit times.
+    const wasAllDay = isAllDayInterval(b.starts_at, b.ends_at, studioTimezone);
+    setAllDay(wasAllDay);
+    setStartLocal(wasAllDay ? DEFAULT_START : formatTimeForInput(b.starts_at, studioTimezone));
+    setEndLocal(wasAllDay ? DEFAULT_END : formatTimeForInput(b.ends_at, studioTimezone));
     setCategory(b.category);
     setPrivateNote(b.private_note ?? "");
-    // PR #139. Edit always uses the explicit time-of-day shape so
-    // the visible state matches whatever is currently stored.
-    setAllDay(false);
     setScope(b.practitioner_id ?? "");
     setError(null);
   }
@@ -252,30 +256,27 @@ export function TimedBlocksSection({
             className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
-        {/* PR #139. All-day toggle. When checked the start / end
-            inputs become read-only and the visible label switches to
-            'Block the entire day'. The server-side action ignores the
-            time inputs and synthesises a full studio-local-day UTC
-            range. Hidden during edit because v1 keeps the edit form
-            on the explicit time-of-day shape. */}
-        {!editingId && (
-          <label className="flex items-start gap-2 self-end text-xs md:col-span-1">
-            <input
-              type="checkbox"
-              checked={allDay}
-              onChange={(e) => setAllDay(e.target.checked)}
-              className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
-            />
-            <span className="flex flex-col">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                All day
-              </span>
-              <span className="text-[11px] text-neutral-500">
-                Block the entire day
-              </span>
+        {/* All-day toggle (create AND edit). When checked the start/end inputs
+            are disabled and the action synthesises a full studio-local-day UTC
+            range. On edit it is pre-checked for an all-day block (detected by
+            local-midnight boundaries), so editing preserves the mode; toggling
+            it explicitly converts all-day ↔ timed. */}
+        <label className="flex items-start gap-2 self-end text-xs md:col-span-1">
+          <input
+            type="checkbox"
+            checked={allDay}
+            onChange={(e) => setAllDay(e.target.checked)}
+            className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+          />
+          <span className="flex flex-col">
+            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              All day
             </span>
-          </label>
-        )}
+            <span className="text-[11px] text-neutral-500">
+              Block the entire day
+            </span>
+          </span>
+        </label>
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Start
@@ -284,7 +285,7 @@ export function TimedBlocksSection({
             type="time"
             value={startLocal}
             step={300}
-            disabled={!editingId && allDay}
+            disabled={allDay}
             onChange={(e) => setStartLocal(e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
           />
@@ -297,7 +298,7 @@ export function TimedBlocksSection({
             type="time"
             value={endLocal}
             step={300}
-            disabled={!editingId && allDay}
+            disabled={allDay}
             onChange={(e) => setEndLocal(e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950"
           />

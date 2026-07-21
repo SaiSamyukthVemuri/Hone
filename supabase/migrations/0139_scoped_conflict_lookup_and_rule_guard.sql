@@ -23,6 +23,15 @@
 --
 -- Migration-first, additive, flag-OFF. NOT hosted-applied; hosted max stays
 -- 0133. No data migration, no destructive change.
+--
+-- ATOMIC: the whole migration runs in one explicit transaction (matching 0134-
+-- 0138). Each SECURITY DEFINER reader is locked down (revoke default/public/
+-- anon/authenticated, grant service_role) IMMEDIATELY after its definition and
+-- inside the same transaction, so there is never a committed state where a
+-- reader exists but is still world-executable — a partial apply either commits
+-- fully (functions exist AND are service_role-only) or rolls back to nothing.
+
+begin;
 
 -- ---------------------------------------------------------------------------
 -- (A) Recurring-rule capacity + active-practitioner guard (defect #2)
@@ -134,6 +143,12 @@ as $$
   limit 1;
 $$;
 
+-- Lock down IMMEDIATELY (same transaction): service_role only, no browser role.
+revoke execute on function public.find_scoped_calendar_conflict(uuid, uuid, timestamptz, timestamptz, text, uuid) from public;
+revoke execute on function public.find_scoped_calendar_conflict(uuid, uuid, timestamptz, timestamptz, text, uuid) from anon;
+revoke execute on function public.find_scoped_calendar_conflict(uuid, uuid, timestamptz, timestamptz, text, uuid) from authenticated;
+grant execute on function public.find_scoped_calendar_conflict(uuid, uuid, timestamptz, timestamptz, text, uuid) to service_role;
+
 -- ---------------------------------------------------------------------------
 -- (B) §10: exact recurring-break conflict projection. Projects the proposed
 -- pattern across the full materialization horizon in the studio timezone
@@ -214,24 +229,10 @@ as $$
   limit 1;
 $$;
 
--- ---------------------------------------------------------------------------
--- Lock down: both conflict readers are service_role only (the server action
--- calls them via the admin client). The browser (anon/authenticated) can never
--- execute them, so no practitioner-linked reservation metadata is queryable
--- from a session token.
--- ---------------------------------------------------------------------------
-do $$
-declare fn text;
-begin
-  foreach fn in array array[
-    'public.find_scoped_calendar_conflict(uuid, uuid, timestamptz, timestamptz, text, uuid)',
-    'public.find_recurring_break_conflict(uuid, uuid, integer[], time, time, date, uuid)'
-  ]
-  loop
-    execute format('revoke execute on function %s from public', fn);
-    execute format('revoke execute on function %s from anon', fn);
-    execute format('revoke execute on function %s from authenticated', fn);
-    execute format('grant execute on function %s to service_role', fn);
-  end loop;
-end;
-$$;
+-- Lock down IMMEDIATELY (same transaction): service_role only, no browser role.
+revoke execute on function public.find_recurring_break_conflict(uuid, uuid, integer[], time, time, date, uuid) from public;
+revoke execute on function public.find_recurring_break_conflict(uuid, uuid, integer[], time, time, date, uuid) from anon;
+revoke execute on function public.find_recurring_break_conflict(uuid, uuid, integer[], time, time, date, uuid) from authenticated;
+grant execute on function public.find_recurring_break_conflict(uuid, uuid, integer[], time, time, date, uuid) to service_role;
+
+commit;

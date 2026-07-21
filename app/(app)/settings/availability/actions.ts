@@ -9,6 +9,9 @@ import {
   localLongDate,
   todayInTz,
   utcInstantFromLocal,
+  formatTimeForStudio,
+  resolveTimeFormat,
+  type TimeFormat,
 } from "@/lib/booking/tz";
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
@@ -24,13 +27,10 @@ export type BlockActionResult =
 const FALLBACK_CONFLICT_MESSAGE =
   "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
 
-function formatTimeInTz(iso: string, tz: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(iso));
+// Conflict-message time honours the studio's 12h/24h preference via the shared
+// TimeFormat contract (no hardcoded hour12). Always in the studio timezone.
+function formatTimeInTz(iso: string, tz: string, format: TimeFormat): string {
+  return formatTimeForStudio(new Date(iso), tz, format);
 }
 
 // Studio-local long date for the conflict message ("Tuesday, June 4").
@@ -61,12 +61,13 @@ type ConflictRow = {
 function conflictMessageFromRow(
   row: ConflictRow | undefined,
   tz: string,
+  format: TimeFormat,
   fallback: string,
 ): string {
   if (!row) return fallback;
   const dateFmt = formatDateInTz(row.starts_at, tz);
-  const startFmt = formatTimeInTz(row.starts_at, tz);
-  const endFmt = formatTimeInTz(row.ends_at, tz);
+  const startFmt = formatTimeInTz(row.starts_at, tz, format);
+  const endFmt = formatTimeInTz(row.ends_at, tz, format);
   switch (row.source_kind) {
     case "appointment":
       return `This overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a time that does not overlap that appointment, or reschedule or cancel it first.`;
@@ -89,6 +90,7 @@ async function describeTimedConflict(
   args: {
     studioId: string;
     tz: string;
+    format: TimeFormat;
     practitionerId: string | null;
     startsAt: string;
     endsAt: string;
@@ -104,7 +106,7 @@ async function describeTimedConflict(
     p_exclude_id: args.exclude?.id ?? null,
   });
   const row = (data as ConflictRow[] | null)?.[0];
-  return conflictMessageFromRow(row, args.tz, FALLBACK_CONFLICT_MESSAGE);
+  return conflictMessageFromRow(row, args.tz, args.format, FALLBACK_CONFLICT_MESSAGE);
 }
 
 // Recurring-break conflict projection: projects the proposed pattern across the
@@ -115,6 +117,7 @@ async function describeRecurringConflict(
   args: {
     studioId: string;
     tz: string;
+    format: TimeFormat;
     practitionerId: string | null;
     days: number[];
     startLocal: string;
@@ -133,7 +136,7 @@ async function describeRecurringConflict(
     p_exclude_rule_id: args.excludeRuleId ?? null,
   });
   const row = (data as ConflictRow[] | null)?.[0];
-  return conflictMessageFromRow(row, args.tz, RECURRING_BREAK_CONFLICT_MESSAGE);
+  return conflictMessageFromRow(row, args.tz, args.format, RECURRING_BREAK_CONFLICT_MESSAGE);
 }
 
 // Bounded operational marker for an unexpected DB error: action + stage +
@@ -664,6 +667,7 @@ export async function createBlockoutAction(
       const message = await describeTimedConflict(createAdminClient(), {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: null,
         startsAt: startUtc.toISOString(),
         endsAt: endUtc.toISOString(),
@@ -834,6 +838,7 @@ export async function createTimedBlockAction(
       const message = await describeTimedConflict(createAdminClient(), {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: scope,
         startsAt,
         endsAt,
@@ -855,6 +860,11 @@ export async function updateTimedBlockAction(
 ): Promise<BlockActionResult> {
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
+  // The edit form sends the block's CURRENT mode explicitly, so editing
+  // category / note / date / scope preserves all-day (or timed) mode, and the
+  // owner converts modes only by toggling the checkbox. All-day builds the
+  // local-midnight → next-local-midnight range and ignores start/end.
+  const allDay = trimmed(formData.get("all_day")).toLowerCase() === "true";
   const dateStr = trimmed(formData.get("date"));
   const startLocal = trimmed(formData.get("start_local"));
   const endLocal = trimmed(formData.get("end_local"));
@@ -862,18 +872,21 @@ export async function updateTimedBlockAction(
   const privateNote = nullable(formData.get("private_note"));
 
   if (!id) return { ok: false, error: "Missing block id." };
-  if (!dateStr || !startLocal || !endLocal) {
+  if (!dateStr) return { ok: false, error: "Date is required." };
+  if (!allDay && (!startLocal || !endLocal)) {
     return { ok: false, error: "Date and start/end times are required." };
   }
   const todayLocal = todayInTz(studio.timezone);
   if (dateStr < todayLocal) {
     return { ok: false, error: "Blocked time cannot be created in the past." };
   }
-  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
-    return { ok: false, error: "Times must be in HH:MM format." };
-  }
-  if (startLocal >= endLocal) {
-    return { ok: false, error: "End time must be after start time." };
+  if (!allDay) {
+    if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+      return { ok: false, error: "Times must be in HH:MM format." };
+    }
+    if (startLocal >= endLocal) {
+      return { ok: false, error: "End time must be after start time." };
+    }
   }
   if (
     !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
@@ -881,12 +894,9 @@ export async function updateTimedBlockAction(
     return { ok: false, error: "Invalid category." };
   }
 
-  const { startsAt, endsAt } = buildBlockUtcRange(
-    dateStr,
-    startLocal,
-    endLocal,
-    studio.timezone,
-  );
+  const { startsAt, endsAt } = allDay
+    ? buildAllDayBlockUtcRange(dateStr, studio.timezone)
+    : buildBlockUtcRange(dateStr, startLocal, endLocal, studio.timezone);
   if (new Date(endsAt).getTime() <= Date.now()) {
     return { ok: false, error: "Blocked time must end in the future." };
   }
@@ -930,6 +940,7 @@ export async function updateTimedBlockAction(
       const message = await describeTimedConflict(createAdminClient(), {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: scope,
         startsAt,
         endsAt,
@@ -1094,6 +1105,7 @@ export async function createRecurringBreakRuleAction(
       const message = await describeRecurringConflict(admin, {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: scope,
         days,
         startLocal,
@@ -1187,6 +1199,7 @@ export async function updateRecurringBreakRuleAction(
       const message = await describeRecurringConflict(admin, {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: scope,
         days,
         startLocal,
@@ -1263,6 +1276,7 @@ export async function toggleRecurringBreakRuleActiveAction(
       const message = await describeRecurringConflict(admin, {
         studioId: studio.id,
         tz: studio.timezone,
+        format: resolveTimeFormat(studio),
         practitionerId: scope,
         days: rule.days_of_week,
         startLocal: String(rule.start_local_time).slice(0, 5),

@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
-import { adminQuery, asRole, closePool } from "./helpers/harness";
+import { Client } from "pg";
+import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
@@ -17,6 +18,8 @@ import { randomUUID } from "node:crypto";
 
 let B: SynthStudio;
 const P = (i: number) => B.practitioners[i].practitionerId;
+const owner = () => B.practitioners.find((p) => p.role === "owner")!;
+const member = () => B.practitioners.find((p) => p.role === "practitioner")!;
 
 beforeEach(async () => {
   B = await seedSynthStudioB();
@@ -260,5 +263,103 @@ describe("0139 defect #1 — practitioner-scoped ALL-DAY block reserves only tha
     await setCap(false);
     const wide = await insBlock(null, DAY_START, DAY_END);
     expect(await resKeys(wide)).toEqual([B.studioId]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0139 §6 — full privilege matrix; the readers are no cross-tenant surface", () => {
+  const S = "2031-06-10T10:00:00Z";
+  const E = "2031-06-10T11:00:00Z";
+  // Denied calls pass a DIFFERENT (foreign / random) studio id, proving the
+  // denial is at the EXECUTE-privilege layer — a browser role can never use the
+  // reader to enumerate ANY studio, not just its own.
+  const FOREIGN = randomUUID();
+  const callAs = (
+    q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null }>,
+    studioId: string,
+  ) =>
+    q(
+      `select * from public.find_scoped_calendar_conflict($1,$2,$3::timestamptz,$4::timestamptz,null,null)`,
+      [studioId, P(1), S, E],
+    );
+  const code = (p: Promise<unknown>) =>
+    p.then(() => "ok").catch((e) => (e as { code?: string }).code ?? "err");
+
+  it("anon is denied (42501) even for a foreign studio id", async () => {
+    expect(await code(asRole("anon", (q) => callAs(q, FOREIGN)))).toBe("42501");
+  });
+  it("an authenticated OWNER is denied (42501)", async () => {
+    expect(await code(asUser(owner().userId, (q) => callAs(q, FOREIGN)))).toBe("42501");
+    // ...and denied for their OWN studio too — the browser path never reaches it.
+    expect(await code(asUser(owner().userId, (q) => callAs(q, B.studioId)))).toBe("42501");
+  });
+  it("an authenticated MEMBER is denied (42501)", async () => {
+    expect(await code(asUser(member().userId, (q) => callAs(q, FOREIGN)))).toBe("42501");
+  });
+  it("service_role is allowed (foreign studio → 0 rows, no error)", async () => {
+    const r = await asRole("service_role", (q) => callAs(q, FOREIGN));
+    expect(r.rowCount).toBe(0);
+  });
+  it("the recurring reader has the identical privilege posture (anon denied, service_role allowed)", async () => {
+    const callRecur = (
+      q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null }>,
+    ) =>
+      q(
+        `select * from public.find_recurring_break_conflict($1,$2,$3::int[],'12:00','13:00',$4::date,null)`,
+        [FOREIGN, P(1), "{1}", "2032-01-01"],
+      );
+    expect(await code(asRole("anon", callRecur))).toBe("42501");
+    expect(await code(asUser(member().userId, callRecur))).toBe("42501");
+    expect((await asRole("service_role", callRecur)).rowCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0139 item #1 — the migration's transaction is atomic (no partial apply)", () => {
+  it("after apply, both readers exist and are NOT executable by public/anon/authenticated", async () => {
+    const fns = await adminQuery(
+      `select proname from pg_proc
+        where proname in ('find_scoped_calendar_conflict','find_recurring_break_conflict')
+        order by proname`,
+    );
+    expect(fns.rows.map((r) => r.proname)).toEqual([
+      "find_recurring_break_conflict",
+      "find_scoped_calendar_conflict",
+    ]);
+    // has_function_privilege for each browser role is false; service_role true.
+    const priv = await adminQuery(
+      `select
+         has_function_privilege('anon','public.find_scoped_calendar_conflict(uuid,uuid,timestamptz,timestamptz,text,uuid)','execute') anon,
+         has_function_privilege('authenticated','public.find_scoped_calendar_conflict(uuid,uuid,timestamptz,timestamptz,text,uuid)','execute') auth,
+         has_function_privilege('service_role','public.find_scoped_calendar_conflict(uuid,uuid,timestamptz,timestamptz,text,uuid)','execute') svc`,
+    );
+    expect(priv.rows[0]).toMatchObject({ anon: false, auth: false, svc: true });
+  });
+
+  it("an induced failure inside the transaction leaves NO function and NO leaked privilege", async () => {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      // Model the migration shape: define a SECURITY DEFINER reader + revoke, then
+      // FAIL before completion. Postgres DDL is transactional, so the rollback must
+      // leave neither the function nor any privilege change — exactly why 0139
+      // wraps create+revoke in one begin/commit.
+      await c.query("begin");
+      await c.query(
+        `create or replace function public.__atomic_probe_0139() returns int
+           language sql security definer set search_path = pg_catalog, pg_temp as 'select 1'`,
+      );
+      await c.query(`revoke execute on function public.__atomic_probe_0139() from public`);
+      // Induced failure BEFORE the transaction completes.
+      await expect(c.query("select 1 / 0")).rejects.toMatchObject({ code: "22012" });
+      await c.query("rollback");
+      // Neither the function nor its (attempted) privilege change survived.
+      const exists = await c.query(
+        `select 1 from pg_proc where proname = '__atomic_probe_0139'`,
+      );
+      expect(exists.rowCount).toBe(0);
+    } finally {
+      await c.end();
+    }
   });
 });
