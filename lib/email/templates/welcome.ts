@@ -49,10 +49,12 @@ function copyFor(params: WelcomeEmailParams, greetingName: string): Copy {
     return {
       subject: `You've been added to ${params.studioName} on Hone`,
       headline: `You've been added to ${params.studioName}.`,
-      lede: `${greetingName}, your Hone account (${params.ownerEmail}) now has access to ${params.studioName}. Sign in with the account you already have — there's nothing new to set up to get in.`,
+      // Do NOT claim access is already complete: an existing account may still
+      // need to review the current policies before entering the new studio.
+      lede: `${greetingName}, your Hone account (${params.ownerEmail}) has been added to ${params.studioName}. Sign in with the account you already have — you may be asked to review the current Terms of Service and Privacy Policy before entering the studio.`,
       cta: "Sign in to Hone",
       helper:
-        "Once you're in, you'll find a short guided setup on your dashboard to get the studio ready for bookings.",
+        "Once you're in, a short guided setup on your dashboard helps you get the studio ready for bookings.",
     };
   }
   return {
