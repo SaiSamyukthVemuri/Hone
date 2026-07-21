@@ -35,8 +35,8 @@ const BUTTON = "app/(app)/calendar/MoveAppointmentButton.tsx";
 
 describe("move actions: atomic same-record move via the one RPC", () => {
   const c = code(ACTIONS);
-  it("routes the move through practitioner_move_appointment and nothing else", () => {
-    expect(c).toMatch(/rpc\(\s*["']practitioner_move_appointment["']/);
+  it("routes the move through move_or_reassign_appointment and nothing else", () => {
+    expect(c).toMatch(/rpc\(\s*["']move_or_reassign_appointment["']/);
   });
   it("never cancels + rebooks — no appointment insert / cancel / delete in the move path", () => {
     expect(c).not.toMatch(/\.insert\(/);
@@ -56,7 +56,7 @@ describe("move actions: server-resolved tenant, never browser-supplied", () => {
     expect(c).toMatch(/\.eq\(\s*["']studio_id["']\s*,\s*studio\.id\s*\)/);
   });
   it("passes the server-resolved practitioner.id + studio.id to the RPC", () => {
-    expect(c).toMatch(/p_practitioner_id:\s*practitioner\.id/);
+    expect(c).toMatch(/p_actor_practitioner_id:\s*practitioner\.id/);
     expect(c).toMatch(/p_studio_id:\s*studio\.id/);
   });
 });
@@ -94,7 +94,7 @@ describe("move actions: closed outcome mapping, no raw error leak", () => {
 describe("move actions: origin-before-mutation, notify-after-commit ordering", () => {
   const c = code(ACTIONS);
   const idxOrigin = c.indexOf("getRequiredAppOrigin(");
-  const idxRpc = c.search(/rpc\(\s*["']practitioner_move_appointment["']/);
+  const idxRpc = c.search(/rpc\(\s*["']move_or_reassign_appointment["']/);
   const idxNotify = c.indexOf("notifyAppointmentMoved(");
   it("resolves + validates the app origin BEFORE the RPC mutation", () => {
     expect(idxOrigin).toBeGreaterThan(-1);
@@ -191,7 +191,7 @@ describe("move: closed mode contract + owner-only custom time", () => {
   });
   it("still ONE dialog, ONE action, ONE RPC — no second mutation path", () => {
     // Exactly one rpc call site to the move RPC.
-    expect((code(ACTIONS).match(/rpc\(\s*["']practitioner_move_appointment["']/g) ?? []).length).toBe(1);
+    expect((code(ACTIONS).match(/rpc\(\s*["']move_or_reassign_appointment["']/g) ?? []).length).toBe(1);
     // The dialog mutates only through the two exported actions.
     const dialog = read(DIALOG);
     expect(dialog).toMatch(/moveAppointmentAction/);

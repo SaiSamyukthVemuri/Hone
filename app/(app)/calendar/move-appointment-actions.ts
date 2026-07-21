@@ -143,7 +143,7 @@ export async function moveAppointmentAction(input: {
 
   const { data: appt } = await admin
     .from("appointments")
-    .select("id, status, starts_at, client_id, duration_minutes")
+    .select("id, status, starts_at, client_id, duration_minutes, practitioner_id")
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -210,10 +210,17 @@ export async function moveAppointmentAction(input: {
     }
   }
 
-  const { data: rows, error } = await admin.rpc("practitioner_move_appointment", {
+  // Part 4: route through the atomic move-or-reassign command (migration 0143),
+  // which takes the shared capacity advisory lock and enforces the per-
+  // practitioner authorization + booking-pause contract. This is a TIME-ONLY
+  // move (target = the appointment's current practitioner); reassignment is a
+  // separate owner-only surface. The legacy time-only RPC (0133) is no longer
+  // called from the app, so there is no bypassable alternative.
+  const { data: rows, error } = await admin.rpc("move_or_reassign_appointment", {
     p_appointment_id: appointmentId,
     p_studio_id: studio.id,
-    p_practitioner_id: practitioner.id,
+    p_actor_practitioner_id: practitioner.id,
+    p_target_practitioner_id: appt.practitioner_id,
     p_expected_starts_at: expectedStartsAt,
     p_expected_ends_at: expectedEndsAt,
     p_new_starts_at: newStart.toISOString(),
@@ -247,6 +254,15 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "This appointment can no longer be moved." };
     case "invalid_time":
       return { ok: false, error: "Choose a valid future time." };
+    case "reassigned":
+    case "moved_and_reassigned":
+      break; // time-only move surface never returns these, but honour them
+    case "invalid_practitioner":
+      return { ok: false, error: "That practitioner isn't available for this appointment." };
+    case "not_eligible":
+      return { ok: false, error: "That practitioner isn't set up for this service." };
+    case "booking_paused":
+      return { ok: false, error: "Changes are paused for this studio right now." };
     default:
       return { ok: false, error: "We couldn't move the appointment. Please try again." };
   }
