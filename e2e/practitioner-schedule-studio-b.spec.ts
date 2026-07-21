@@ -16,6 +16,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { randomUUID } from "node:crypto";
 
 // PR B 3E-8 / §8 / §14 — the Studio B multi-practitioner block + recurring-break
 // owner contract, driven through the REAL browser and verified against the DB.
@@ -85,16 +86,24 @@ test("owner creates a practitioner-scoped one-off block; only that practitioner'
   await s.getByLabel("Applies to").selectOption({ label: `Only ${memberA.displayName}` });
   await s.getByRole("button", { name: "Add block" }).click();
 
-  // DB: exactly one block, scoped to A, reserving ONLY A.
+  // DB: a block scoped to A appears, and it reserves ONLY A (never B/C). Uses
+  // `some`/`find` (not an exact count) so a CI retry into the shared studio is safe.
   await expect
-    .poll(async () => (await getTimedBlockScopes(seed.studioId)).map((b) => b.practitioner_id))
-    .toEqual([memberA.practitionerId]);
-  const [block] = await getTimedBlockScopes(seed.studioId);
+    .poll(async () =>
+      (await getTimedBlockScopes(seed.studioId)).some((b) => b.practitioner_id === memberA.practitionerId),
+    )
+    .toBe(true);
+  const block = (await getTimedBlockScopes(seed.studioId)).find(
+    (b) => b.practitioner_id === memberA.practitionerId,
+  )!;
   expect(await getSourceReservationKeys("timed_block", block.id)).toEqual([
     memberA.practitionerId,
   ]);
-  // The row is labelled with its scope.
-  await expect(s.getByText(`Only ${memberA.displayName}`).first()).toBeVisible();
+  // The list ROW is labelled with its scope (scope the match to the <li> so it
+  // never resolves to the hidden "Only <name>" <option>s in the scope dropdown).
+  await expect(
+    s.getByRole("listitem").filter({ hasText: `Only ${memberA.displayName}` }),
+  ).toBeVisible();
 });
 
 test("a practitioner-scoped ALL-DAY block still scopes to one practitioner (selector stays usable)", async ({
@@ -124,10 +133,12 @@ test("a practitioner-scoped ALL-DAY block still scopes to one practitioner (sele
 test("toggling a scoped recurring break preserves its practitioner scope (never widens to studio-wide)", async ({
   page,
 }) => {
+  // Unique label so a CI retry (shared studio) never yields two matching rows.
+  const label = `Lunch-${randomUUID().slice(0, 6)}`;
   const ruleId = await seedActiveScopedRule(
     seed.studioId,
     memberA.practitionerId,
-    "Lunch",
+    label,
     [MON],
     "12:00",
     "12:30",
@@ -135,7 +146,7 @@ test("toggling a scoped recurring break preserves its practitioner scope (never 
   await loginAsOwner(page, seed);
   await page.goto("/settings/availability");
   const s = section(page, "Repeating breaks");
-  const row = s.getByRole("listitem").filter({ hasText: "Lunch" });
+  const row = s.getByRole("listitem").filter({ hasText: label });
 
   await row.getByRole("button", { name: "Disable" }).click();
   await expect
@@ -159,10 +170,11 @@ test("toggling a scoped recurring break preserves its practitioner scope (never 
 test("a recurring break assigned to a now-inactive practitioner cannot be re-enabled", async ({
   page,
 }) => {
+  const label = `Admin-${randomUUID().slice(0, 6)}`;
   const ruleId = await seedActiveScopedRule(
     seed.studioId,
     memberB.practitionerId,
-    "Admin",
+    label,
     [MON],
     "16:00",
     "16:30",
@@ -172,7 +184,7 @@ test("a recurring break assigned to a now-inactive practitioner cannot be re-ena
   await loginAsOwner(page, seed);
   await page.goto("/settings/availability");
   const s = section(page, "Repeating breaks");
-  const row = s.getByRole("listitem").filter({ hasText: "Admin" });
+  const row = s.getByRole("listitem").filter({ hasText: label });
 
   // Disabling is allowed.
   await row.getByRole("button", { name: "Disable" }).click();
@@ -257,7 +269,9 @@ test("Legacy hides retained scoped sources; reactivation restores them", async (
   // Flag OFF: no scope selector, and A-scoped rows are hidden (studio-wide only).
   await expect(page.getByRole("link", { name: "Studio default" })).toHaveCount(0);
   const s = section(page, "Block time");
-  await expect(s.getByText(`Only ${memberA.displayName}`)).toHaveCount(0);
+  await expect(
+    s.getByRole("listitem").filter({ hasText: `Only ${memberA.displayName}` }),
+  ).toHaveCount(0);
 
   // Reactivate: the scoped source is retained in the DB and becomes visible again.
   await setStudioCapacityEnabled(seed.studioId, true);
