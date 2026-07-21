@@ -215,18 +215,21 @@ export async function createStudioWithOwnerInvite(
   // Best-effort — the studio + invite already succeeded, and deliverWelcomeEmail
   // never throws (studio creation must not depend on email/analytics).
   if (enableOnboardingV2) {
-    // Variant: does this email already belong to a Hone account? Heuristic — an
-    // existing practitioner row with this email means the owner has been
-    // provisioned before (invite-only), so send the "added to a studio" notice
-    // rather than a brand-new welcome. (The actual membership for an existing
-    // account is reconciled at sign-in.)
-    const { data: existingPractitioner } = await admin
-      .from("practitioners")
+    // Variant: does this email already belong to a Hone account? Heuristic that
+    // does NOT touch auth.users or practitioners (the latter is deliberately
+    // off-limits in this action — owner provisioning is the handle_new_user
+    // trigger's job). An ACCEPTED invitation for this email means the owner
+    // signed in before (invite-only), so an auth account already exists; send
+    // the "added to a studio" notice instead of a brand-new welcome. (The actual
+    // membership for an existing account is reconciled at sign-in.)
+    const { data: acceptedInvite } = await admin
+      .from("pending_invitations")
       .select("id")
       .ilike("email", ownerEmailPattern)
+      .eq("status", "accepted")
       .limit(1)
       .maybeSingle();
-    const variant: WelcomeEmailVariant = existingPractitioner
+    const variant: WelcomeEmailVariant = acceptedInvite
       ? "existing_account"
       : "new_owner";
 

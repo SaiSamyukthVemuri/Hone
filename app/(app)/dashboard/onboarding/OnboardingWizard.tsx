@@ -12,8 +12,6 @@ import { OnboardingModal } from "./OnboardingModal";
 import { Celebration } from "./Celebration";
 import {
   acknowledgeWelcomeAction,
-  completeOnboardingAction,
-  dismissOnboardingAction,
   markCelebrationShownAction,
   setOnboardingStepAction,
   skipPaymentsAction,
@@ -39,7 +37,9 @@ function ProgressBar({
           <li key={s.key}>
             <div
               className={`h-1.5 w-full rounded-full ${
-                filled ? "bg-neutral-900 dark:bg-white" : "bg-neutral-200 dark:bg-neutral-800"
+                filled
+                  ? "bg-neutral-900 dark:bg-white"
+                  : "bg-neutral-200 dark:bg-neutral-800"
               }`}
               aria-hidden
             />
@@ -89,14 +89,20 @@ function StatusChip({ status }: { status: OnboardingStepState["status"] }) {
   return null;
 }
 
+// Controlled wizard: the parent OnboardingSurface owns `open` so the pinned card
+// can re-open it without a server round-trip. onDismiss = closed by the owner
+// (X / backdrop / Escape); onComplete = finished from the success step.
 export function OnboardingWizard({
   model,
-  initialOpen,
+  open,
+  onDismiss,
+  onComplete,
 }: {
   model: OnboardingModel;
-  initialOpen: boolean;
+  open: boolean;
+  onDismiss: () => void;
+  onComplete: () => void;
 }) {
-  const [open, setOpen] = useState(initialOpen);
   const [activeStep, setActiveStep] = useState<OnboardingStepKey>(
     model.currentStep,
   );
@@ -111,30 +117,21 @@ export function OnboardingWizard({
   const nextKey = ONBOARDING_STEP_ORDER[activeIndex + 1];
   const prevKey = ONBOARDING_STEP_ORDER[activeIndex - 1];
 
-  // One-time celebration when the owner reaches the success step and required
-  // setup just went green.
   const showConfetti = active.key === "done" && model.shouldCelebrate;
   useEffect(() => {
-    if (showConfetti) {
+    if (open && showConfetti) {
       startTransition(() => {
         void markCelebrationShownAction();
       });
     }
-    // Fire once per mount when landing on a celebratory success step.
-  }, [showConfetti]);
+    // Fire once when landing on a celebratory success step.
+  }, [open, showConfetti]);
 
   function goTo(step: OnboardingStepKey) {
     setActiveStep(step);
     startTransition(() => {
       void setOnboardingStepAction(step);
     });
-  }
-
-  function close() {
-    startTransition(() => {
-      void dismissOnboardingAction();
-    });
-    setOpen(false);
   }
 
   function persistPointer() {
@@ -146,11 +143,10 @@ export function OnboardingWizard({
   return (
     <OnboardingModal
       open={open}
-      onClose={close}
+      onClose={onDismiss}
       labelledById={titleId}
       describedById={descId}
     >
-      {/* Header: progress + step counter + close */}
       <div className="relative">
         {showConfetti && <Celebration />}
         <div className="flex items-start justify-between gap-3">
@@ -163,7 +159,7 @@ export function OnboardingWizard({
           </div>
           <button
             type="button"
-            onClick={close}
+            onClick={onDismiss}
             aria-label="Close setup"
             className="-m-2 flex h-11 w-11 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           >
@@ -172,7 +168,6 @@ export function OnboardingWizard({
         </div>
       </div>
 
-      {/* Body */}
       <div className="mt-5">
         <div className="flex items-center gap-3">
           <h2
@@ -216,7 +211,6 @@ export function OnboardingWizard({
         )}
       </div>
 
-      {/* Footer actions */}
       <div className="mt-6 flex flex-wrap items-center gap-2">
         {active.key === "welcome" && (
           <button
@@ -321,12 +315,7 @@ export function OnboardingWizard({
               type="button"
               className={PRIMARY_BTN}
               disabled={pending}
-              onClick={() => {
-                startTransition(() => {
-                  void completeOnboardingAction();
-                });
-                setOpen(false);
-              }}
+              onClick={onComplete}
             >
               Go to dashboard
             </button>
@@ -336,7 +325,6 @@ export function OnboardingWizard({
           </>
         )}
 
-        {/* Back — available on any step past welcome except the success screen. */}
         {activeIndex > 0 && active.key !== "done" && prevKey && (
           <button
             type="button"

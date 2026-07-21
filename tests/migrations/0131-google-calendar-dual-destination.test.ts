@@ -13,20 +13,26 @@ const SQL = readFileSync(
 );
 
 describe("0131 — repo migration-max tripwire", () => {
-  it("advances the repo migration max to 0134 (0133 precedes; nothing 0135+)", () => {
+  it("advances the repo migration max to 0140 (onboarding; 0135-0139 are the PR-B branch)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0134"); // 0134 = practitioner-capacity foundation (repo-only until hosted-applied)
-    expect(files.some((f) => f.startsWith("0130_"))).toBe(true);
+    // 0140 = first-time studio onboarding (additive, default-OFF flag + state
+    // table). It sits directly on 0134 (practitioner-capacity foundation) — the
+    // 0135-0139 numbers live on the practitioner-capacity PR-B branch and are
+    // intentionally absent here; Supabase applies in filename order so the gap
+    // is inert. Bump this tripwire consciously when adding migrations.
+    expect(nums[nums.length - 1]).toBe("0140");
     expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
-    // Nothing 0135+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(3[5-9]|[4-9]\d)_/.test(f))).toEqual([]);
+    expect(files.some((f) => f.startsWith("0140_"))).toBe(true);
+    // 0135-0139 are absent on this branch, and nothing above 0140 exists yet.
+    expect(files.filter((f) => /^013[5-9]_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(4[1-9]|[5-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

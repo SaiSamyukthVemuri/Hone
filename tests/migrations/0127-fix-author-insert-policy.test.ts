@@ -35,7 +35,8 @@ describe("0127 — file + repo-max tripwire", () => {
     expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(3[5-9]|[4-9]\d)_/.test(f));
+    // 0140 (onboarding) is the new repo max; 0135-0139 (PR-B) absent here.
+    const higher = FILES.filter((f) => /^01(3[5-9]|4[1-9]|[5-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 
