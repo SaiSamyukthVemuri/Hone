@@ -131,16 +131,20 @@ export async function reopenOnboarding(
 }
 
 // Acknowledge the success step: required setup is done and the owner finished.
+// Delegates to the atomic complete_onboarding RPC, which stamps completed_at only
+// when it is currently null and reports whether THIS call performed the first
+// transition — so completion persistence and first-transition detection are a
+// SINGLE atomic operation (no read-then-write race that could double-emit the
+// analytics event under concurrency). Owner-authorized inside the RPC.
 export async function completeOnboarding(
   studioId: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const row = await getOnboardingRow(studioId);
-  const completed = uniq([...(row?.completed_steps ?? []), "done"]);
-  return upsertOwner(studioId, {
-    status: "completed",
-    completed_at: row?.completed_at ?? new Date().toISOString(),
-    completed_steps: completed,
+): Promise<{ ok: boolean; transitioned: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("complete_onboarding", {
+    p_studio_id: studioId,
   });
+  if (error) return { ok: false, transitioned: false, error: error.message };
+  return { ok: true, transitioned: data === true };
 }
 
 // The one-time celebration has been shown — never re-fire it.

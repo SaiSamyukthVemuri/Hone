@@ -74,7 +74,9 @@ function setRow(completedAt: string | null): void {
 }
 
 beforeEach(() => {
-  complete.mockResolvedValue({ ok: true });
+  // The atomic RPC reports whether THIS call performed the transition; the
+  // action emits the analytics event iff transitioned === true.
+  complete.mockResolvedValue({ ok: true, transitioned: true });
   celebrate.mockResolvedValue({ ok: true });
 });
 
@@ -108,10 +110,11 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
     expect(event).not.toHaveBeenCalled();
   });
 
-  it("completes + emits ONCE on the first transition (completed_at was null)", async () => {
+  it("emits ONCE only when the atomic RPC reports transitioned=true", async () => {
     setCaller("owner", true);
     setSignals(true);
     setRow(null);
+    complete.mockResolvedValueOnce({ ok: true, transitioned: true });
     const res = await completeOnboardingAction();
     expect(res).toEqual({ ok: true });
     expect(complete).toHaveBeenCalledWith("studio-1");
@@ -123,10 +126,11 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
     });
   });
 
-  it("idempotent repeat (already completed) writes but emits NO event", async () => {
+  it("the concurrent LOSER (transitioned=false) writes but emits NO event", async () => {
     setCaller("owner", true);
     setSignals(true);
-    setRow("2026-07-01T00:00:00Z");
+    setRow(null);
+    complete.mockResolvedValueOnce({ ok: true, transitioned: false });
     const res = await completeOnboardingAction();
     expect(res).toEqual({ ok: true });
     expect(complete).toHaveBeenCalledWith("studio-1");
@@ -137,7 +141,7 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
     setCaller("owner", true);
     setSignals(true);
     setRow(null);
-    complete.mockResolvedValueOnce({ ok: false, error: "db" });
+    complete.mockResolvedValueOnce({ ok: false, transitioned: false, error: "db" });
     const res = await completeOnboardingAction();
     expect(res).toEqual({ ok: false, error: "db" });
     expect(event).not.toHaveBeenCalled();

@@ -156,8 +156,11 @@ describe("0141 — Defect 1: truthful welcome-email attempt state machine", () =
     expect(c).toMatch(/security definer/i);
     expect(c).toMatch(/welcome_email_status = 'sending'/i);
     expect(c).toMatch(/welcome_email_attempt_id = gen_random_uuid\(\)/i);
-    // Only claims when no LIVE attempt is in progress.
-    expect(c).toMatch(/welcome_email_status <> 'sending'[\s\S]*?welcome_email_last_attempted_at < now\(\) - interval '30 seconds'/i);
+    // Only claims when no LIVE attempt is in progress. The stale fence is a
+    // CONSERVATIVE 15 minutes (recovers a crashed attempt) — NOT 30s, which
+    // could duplicate a merely-slow in-flight provider send.
+    expect(c).toMatch(/welcome_email_status <> 'sending'[\s\S]*?welcome_email_last_attempted_at < now\(\) - interval '15 minutes'/i);
+    expect(c).not.toMatch(/interval '30 seconds'/i);
     expect(c).toMatch(/returning welcome_email_attempt_id into v_attempt/i);
   });
   it("record is a compare-and-set on attempt_id; last_sent_at only on 'sent'", () => {

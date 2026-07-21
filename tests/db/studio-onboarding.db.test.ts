@@ -194,3 +194,63 @@ describe("onboarding_v2_enabled — operator-controlled flag", () => {
     ).resolves.toBeDefined();
   });
 });
+
+// Finding 1 — atomic onboarding completion. complete_onboarding stamps
+// completed_at exactly once (CAS on `completed_at is null`) and returns whether
+// THIS call performed the transition, so the caller emits the analytics event
+// exactly once even under concurrency.
+describe("0140 — complete_onboarding is an atomic first-transition CAS", () => {
+  async function complete(userId: string, studioId: string): Promise<boolean> {
+    const r = await userQuery(
+      userId,
+      `select public.complete_onboarding($1) as t`,
+      [studioId],
+    );
+    return r.rows[0].t === true;
+  }
+
+  it("two CONCURRENT completions -> exactly one transition, one stamp, one 'done'", async () => {
+    const s = await seedStudio("complete-race");
+    const [a, b] = await Promise.all([
+      complete(s.userId, s.studioId),
+      complete(s.userId, s.studioId),
+    ]);
+    // Exactly one call reports it performed the transition (=> one event).
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const row = await adminQuery(
+      `select status, completed_at, completed_steps
+         from public.studio_onboarding where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(row.rows[0].status).toBe("completed");
+    expect(row.rows[0].completed_at).not.toBeNull();
+    expect(
+      (row.rows[0].completed_steps as string[]).filter((x) => x === "done"),
+    ).toHaveLength(1);
+  });
+
+  it("a repeat completion returns false and does NOT move completed_at", async () => {
+    const s = await seedStudio("complete-repeat");
+    expect(await complete(s.userId, s.studioId)).toBe(true);
+    const first = await adminQuery(
+      `select completed_at from public.studio_onboarding where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(await complete(s.userId, s.studioId)).toBe(false);
+    const second = await adminQuery(
+      `select completed_at from public.studio_onboarding where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(second.rows[0].completed_at).toStrictEqual(first.rows[0].completed_at);
+  });
+
+  it("a non-owner member cannot complete (authorization)", async () => {
+    const s = await seedStudio("complete-auth");
+    const member = await seedMember(s, "not-owner");
+    await expect(
+      userQuery(member.userId, `select public.complete_onboarding($1)`, [
+        s.studioId,
+      ]),
+    ).rejects.toThrow(/not authorized|42501/i);
+  });
+});

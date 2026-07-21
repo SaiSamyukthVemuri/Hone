@@ -182,8 +182,51 @@ revoke all on public.studio_onboarding from anon;
 grant select, insert, update on public.studio_onboarding to service_role;
 
 -- ---------------------------------------------------------------------------
+-- Step 3b: ATOMIC onboarding completion. Stamps completed_at exactly ONCE — only
+-- when it is currently null — and returns whether THIS call performed that first
+-- transition. The analytics event is then emitted only on a true return, so two
+-- concurrent "complete" calls produce exactly one transition and one event
+-- (previously the action read completed_at then wrote it in a separate step: a
+-- read-then-write race that could double-emit). Owner-only (is_studio_owner);
+-- the first-transition test is the `where ... completed_at is null` CAS, which
+-- Postgres serializes on the row so a loser sees the freshly-stamped value and
+-- returns false. SECURITY DEFINER + pinned search_path.
+-- ---------------------------------------------------------------------------
+create or replace function public.complete_onboarding(p_studio_id uuid)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_transitioned boolean;
+begin
+  if not public.is_studio_owner(p_studio_id) then
+    raise exception 'not authorized' using errcode = '42501';
+  end if;
+
+  insert into public.studio_onboarding as so
+    (studio_id, status, completed_at, completed_steps)
+  values (p_studio_id, 'completed', now(), array['done']::text[])
+  on conflict (studio_id) do update
+    set status = 'completed',
+        completed_at = now(),
+        completed_steps = (
+          select array(
+            select distinct t.step
+            from unnest(so.completed_steps || array['done']::text[]) as t(step)
+          )
+        )
+    where so.completed_at is null  -- first-transition compare-and-set
+  returning true into v_transitioned;
+
+  -- NULL (no row returned) => the row was already completed => not this call.
+  return coalesce(v_transitioned, false);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Step 4: lock down the new trigger functions (match the 0030/0134 posture — no
--- direct client execute; they run only inside triggers).
+-- direct client execute; they run only inside triggers). The owner-callable
+-- complete_onboarding RPC is granted to authenticated (self-authorized inside).
 -- ---------------------------------------------------------------------------
 do $$
 declare fn text;
@@ -198,5 +241,9 @@ begin
     execute format('revoke execute on function %s from authenticated', fn);
   end loop;
 end $$;
+
+revoke execute on function public.complete_onboarding(uuid) from public;
+revoke execute on function public.complete_onboarding(uuid) from anon;
+grant execute on function public.complete_onboarding(uuid) to authenticated;
 
 commit;

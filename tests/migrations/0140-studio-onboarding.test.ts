@@ -117,3 +117,32 @@ describe("0140 — Gate 4: trigger functions are execute-locked", () => {
     expect(CODE).toContain("public.set_studio_onboarding_updated_at()");
   });
 });
+
+describe("0140 — Finding 1: complete_onboarding is an atomic first-transition CAS", () => {
+  function fn(): string {
+    return (
+      CODE.match(
+        /create or replace function public\.complete_onboarding\(p_studio_id uuid\)[\s\S]*?\$\$;/i,
+      )?.[0] ?? ""
+    );
+  }
+  it("is owner-authorized, SECURITY DEFINER, pinned search_path, returns boolean", () => {
+    const f = fn();
+    expect(f).toMatch(/returns boolean/i);
+    expect(f).toMatch(/security definer/i);
+    expect(f).toMatch(/set search_path = pg_catalog, pg_temp/i);
+    expect(f).toMatch(/if not public\.is_studio_owner\(p_studio_id\)[\s\S]*?42501/i);
+  });
+  it("stamps completed_at ONLY when null (CAS) and reports the transition", () => {
+    const f = fn();
+    // Conditional upsert: on conflict do update ... where completed_at is null.
+    expect(f).toMatch(/on conflict \(studio_id\) do update[\s\S]*?where so\.completed_at is null/i);
+    expect(f).toMatch(/returning true into v_transitioned/i);
+    expect(f).toMatch(/return coalesce\(v_transitioned, false\)/i);
+  });
+  it("is granted to authenticated only (self-authorized), never public/anon", () => {
+    expect(CODE).toMatch(/revoke execute on function public\.complete_onboarding\(uuid\) from public/i);
+    expect(CODE).toMatch(/revoke execute on function public\.complete_onboarding\(uuid\) from anon/i);
+    expect(CODE).toMatch(/grant execute on function public\.complete_onboarding\(uuid\) to authenticated/i);
+  });
+});

@@ -83,6 +83,54 @@ describe("claim_welcome_email_attempt — single attempt", () => {
   });
 });
 
+// Finding 2 — conservative (15-minute) stale threshold. A SLOW provider send
+// still in flight must never be duplicated merely because time elapsed; the
+// window recovers only a genuinely crashed attempt.
+describe("claim_welcome_email_attempt — delayed-provider / stale recovery", () => {
+  // Age the live 'sending' attempt to simulate a provider send that is still in
+  // flight after `interval` (result not yet recorded).
+  async function ageSendingAttempt(studioId: string, interval: string): Promise<void> {
+    await adminQuery(
+      `update public.studio_onboarding
+          set welcome_email_last_attempted_at = now() - $2::interval
+        where studio_id = $1`,
+      [studioId, interval],
+    );
+  }
+
+  it("a SLOW in-flight send (minutes old, still 'sending') is NOT duplicated", async () => {
+    const s = await seedStudio("stale-slow");
+    const live = await claim(s.studioId); // attempt A wins; provider send starts
+    expect(live).not.toBeNull();
+    // A's send is taking 3 minutes (well past the old 30s fence) but is still in
+    // flight — a concurrent resend B must claim nothing (one provider delivery).
+    await ageSendingAttempt(s.studioId, "3 minutes");
+    expect(await claim(s.studioId)).toBeNull();
+    // A still solely owns the attempt.
+    expect((await readState(s.studioId)).welcome_email_attempt_id).toBe(live);
+  });
+
+  it("the fence is 15 MINUTES, not 30 seconds: a 90s-old send stays locked", async () => {
+    const s = await seedStudio("stale-90s");
+    const live = await claim(s.studioId);
+    await ageSendingAttempt(s.studioId, "90 seconds");
+    // Under the old 30s window this would have been re-claimable (a duplicate);
+    // the conservative window keeps it locked.
+    expect(await claim(s.studioId)).toBeNull();
+    expect((await readState(s.studioId)).welcome_email_attempt_id).toBe(live);
+  });
+
+  it("a genuinely CRASHED attempt (older than 15m) is recoverable", async () => {
+    const s = await seedStudio("stale-crashed");
+    const dead = await claim(s.studioId);
+    // The process crashed 20 minutes ago before recording a result.
+    await ageSendingAttempt(s.studioId, "20 minutes");
+    const recovered = await claim(s.studioId);
+    expect(recovered).not.toBeNull();
+    expect(recovered).not.toBe(dead); // a fresh attempt_id
+  });
+});
+
 describe("record_welcome_email_result — compare-and-set on attempt_id", () => {
   it("the current attempt stamps 'sent' and sets last_sent_at", async () => {
     const s = await seedStudio("record-1");

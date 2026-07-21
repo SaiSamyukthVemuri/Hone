@@ -402,10 +402,19 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Step 6b: welcome-email attempt CLAIM. Atomically flips status -> 'sending',
 -- mints a FRESH attempt_id, and stamps last_attempted_at — but ONLY if no
--- attempt is already in progress (status 'sending' within the last 30s, i.e. a
--- live concurrent attempt). Returns the winning attempt_id, or NULL to a caller
--- that lost the race ('already in progress'). Concurrent claims serialize on the
--- row lock, so exactly one caller wins. Service-role only.
+-- attempt is already in progress. Returns the winning attempt_id, or NULL to a
+-- caller that lost the race ('already in progress'). Concurrent claims serialize
+-- on the row lock, so exactly one caller wins. Service-role only.
+--
+-- Stale threshold = 15 MINUTES (deliberately conservative). The window exists
+-- ONLY to recover an attempt whose process CRASHED between claim and result
+-- (status stuck at 'sending' forever). A real provider send completes in
+-- seconds and is bounded far below 15m by the request timeout, so a merely
+-- SLOW in-flight send is never treated as stale and can never be duplicated —
+-- the earlier 30s window could let a >30s send spawn a second delivery. A
+-- genuinely stuck attempt self-heals after 15m (a rare crash); if faster
+-- recovery is ever needed it should be an explicit operator action, not a
+-- shorter fence that risks duplicate mail.
 -- ---------------------------------------------------------------------------
 create or replace function public.claim_welcome_email_attempt(p_studio_id uuid)
 returns uuid
@@ -423,7 +432,7 @@ begin
         welcome_email_last_attempted_at = now()
     where studio_onboarding.welcome_email_status <> 'sending'
        or studio_onboarding.welcome_email_last_attempted_at is null
-       or studio_onboarding.welcome_email_last_attempted_at < now() - interval '30 seconds'
+       or studio_onboarding.welcome_email_last_attempted_at < now() - interval '15 minutes'
   returning welcome_email_attempt_id into v_attempt;
   return v_attempt; -- NULL when a live attempt is already in progress
 end;

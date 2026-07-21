@@ -10,6 +10,7 @@ import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 
 import type { WelcomeEmailResult } from "@/lib/email/send-welcome";
+import { auditOutcomeFor } from "./audit-outcome";
 
 export type ResendWelcomeResult = {
   ok: boolean;
@@ -69,7 +70,7 @@ export async function resendWelcomeEmailAction(
     targetType: "studio",
     targetId: studio.id,
     action: "welcome_email_resent",
-    outcome: status === "failed" ? "failed" : "succeeded",
+    outcome: auditOutcomeFor(status),
     metadata: { slug: studio.slug ?? undefined, welcome_email_result: status },
   });
 

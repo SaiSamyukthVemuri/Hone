@@ -103,10 +103,16 @@ access is complete.
 - **Attempt-id single flight + CAS:** `claim_welcome_email_attempt(p_studio_id)`
   (service-role only) atomically flips `→ sending`, mints a fresh
   `welcome_email_attempt_id`, and returns it to the **winning** caller only
-  (NULL to a caller that lost the race, within a 30s live-attempt window).
-  `record_welcome_email_result(studio, attempt_id, status)` is a **compare-and-
-  set on `attempt_id`**, so a stale/slow attempt can never overwrite a newer
-  retry, and `last_sent_at` is stamped only when `status = 'sent'`.
+  (NULL to a caller that lost the race). `record_welcome_email_result(studio,
+  attempt_id, status)` is a **compare-and-set on `attempt_id`**, so a stale/slow
+  attempt can never overwrite a newer retry, and `last_sent_at` is stamped only
+  when `status = 'sent'`.
+- **Conservative stale fence (15 minutes).** The live-attempt window recovers
+  ONLY a crashed attempt (status stuck at `sending`). It is a deliberately large
+  15 minutes so a merely **slow** in-flight provider send is never treated as
+  stale and can never be duplicated (the earlier 30s window could let a >30s send
+  spawn a second delivery). A genuinely stuck attempt self-heals after 15m; faster
+  recovery, if ever needed, is an explicit operator action, not a shorter fence.
 - **Application result** (`deliverWelcomeEmail` → `WelcomeEmailResult`):
   `sent` | `failed` | `not_configured` (no transport; nothing sent) |
   `already_in_progress` (lost the single-flight race; nothing sent). Every
@@ -122,7 +128,11 @@ access is complete.
   recorded honestly. Studio creation never depends on email.
 - **Resend:** admin studio-detail page → **Resend welcome email**
   (`resendWelcomeEmailAction`, operator-only). The operator message distinguishes
-  sent / failed / not-configured / already-in-progress and leaks no raw text.
+  sent / failed / not-configured / already-in-progress and leaks no raw text. The
+  **audit outcome** is truthful (closed set from migration 0113): `sent →
+  succeeded`, `failed → failed`, `not_configured → blocked`, `already_in_progress
+  → blocked` (nothing sent = a prevented/no-op send, not a success); the exact
+  result is preserved verbatim in `metadata.welcome_email_result`.
 - **"Accepted"** is derived from `pending_invitations.status`, not from email.
 - **Fake transport** (E2E): `HONE_E2E_FAKE_RESEND=1` (server-only, refused in any
   deployed runtime) selects `lib/email/e2e-fake-resend.ts`. Mode is chosen
@@ -253,9 +263,16 @@ implemented.
 (`getOnboardingSignals` + persisted row → `buildOnboardingModel`) and **refuses**
 (`not_ready`) unless the required data steps are genuinely green — a forged /
 early / replayed call cannot mark an unbookable studio complete.
-`onboarding_wizard_completed` fires **exactly once**, only on the first
-not-completed → completed transition (persisted `completed_at` was null); an
-idempotent repeat writes nothing new and emits nothing. `markCelebrationShownAction`
+
+Persistence and first-transition detection are a **single atomic DB operation**,
+`complete_onboarding(p_studio_id)` (owner-only, migration 0140): an
+`insert … on conflict do update … where completed_at is null` compare-and-set
+that stamps `completed_at` exactly once and **returns whether THIS call performed
+the transition**. `onboarding_wizard_completed` is emitted **iff that return is
+true**, so two concurrent completions produce exactly one transition and one
+event (the loser sees `transitioned=false` — Postgres serializes on the row — and
+emits nothing). This replaces the earlier read-then-write (read `completed_at`,
+then upsert) that could double-emit under a race. `markCelebrationShownAction`
 is likewise guarded by live required completion (a stray call cannot consume the
 one-time celebration stamp) and stays idempotent.
 
@@ -302,8 +319,11 @@ stale-cannot-overwrite), `tests/db/new-studio-wizard.db.test.ts`,
 `tests/db/invite-only-posture.db.test.ts`, `e2e/onboarding.spec.ts`,
 `e2e/invitation-reconciliation.spec.ts` (incl. Defect-5 accept-path conflict),
 `e2e/welcome-email-admin.spec.ts` (admin resend contracts),
-`e2e/invite-only.spec.ts` (login consent-copy contract), `tests/lib/onboarding/*`,
+`e2e/invite-only.spec.ts` (login consent-copy contract),
+`tests/db/welcome-email-delivery.db.test.ts` (delayed-provider concurrency →
+one delivery), `tests/lib/onboarding/*`,
 `tests/app/dashboard/onboarding-completion-revalidation.test.ts`,
+`tests/app/admin/welcome-resend-audit-outcome.test.ts`,
 `tests/lib/email/welcome-email.test.ts`,
 `tests/lib/email/deliver-welcome-email.test.ts`,
 `tests/lib/email/fake-resend-mode.test.ts`,
