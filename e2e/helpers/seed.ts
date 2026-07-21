@@ -266,6 +266,59 @@ export async function setStudioTimeFormat(
   ]);
 }
 
+// Part 4 Item 6 — the single seeded service for an E2E studio.
+export async function getE2eServiceId(studioId: string): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.services where studio_id = $1 limit 1`,
+    [studioId],
+  );
+  return rows[0].id;
+}
+
+export async function seedServiceEligibility(
+  studioId: string,
+  serviceId: string,
+  practitionerId: string,
+): Promise<void> {
+  await sql(
+    `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+     values ($1, $2, $3)
+     on conflict on constraint service_practitioners_unique do nothing`,
+    [studioId, serviceId, practitionerId],
+  );
+}
+
+export async function removeServiceEligibility(
+  studioId: string,
+  serviceId: string,
+  practitionerId: string,
+): Promise<void> {
+  await sql(
+    `delete from public.service_practitioners
+      where studio_id = $1 and service_id = $2 and practitioner_id = $3`,
+    [studioId, serviceId, practitionerId],
+  );
+}
+
+export async function getOwnerPractitionerId(studioId: string): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+    [studioId],
+  );
+  return rows[0].id;
+}
+
+export async function getClientAppointmentsWithPractitioner(
+  studioId: string,
+  clientId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null; starts_at: string }>> {
+  return sql(
+    `select id, practitioner_id, starts_at from public.appointments
+      where studio_id = $1 and client_id = $2 order by starts_at`,
+    [studioId, clientId],
+  );
+}
+
 export async function setStudioTimezone(studioId: string, tz: string): Promise<void> {
   await sql(`update public.studios set timezone = $2 where id = $1`, [studioId, tz]);
 }
