@@ -205,10 +205,29 @@ function WizardForm({ error }: { error: string | null }) {
           </div>
         </details>
 
+        <label className="flex items-start gap-3 rounded-md border border-neutral-200 px-4 py-3 dark:border-neutral-800">
+          <input
+            type="checkbox"
+            name="enable_onboarding_v2"
+            className="mt-0.5 h-4 w-4 accent-neutral-900 dark:accent-white"
+          />
+          <span className="text-sm text-neutral-700 dark:text-neutral-300">
+            <span className="font-medium text-neutral-900 dark:text-neutral-100">
+              Enable guided onboarding
+            </span>
+            <span className="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+              Sends the owner a welcome email now and opens a guided setup
+              wizard on their dashboard at first sign-in. Leave off to create
+              the studio silently (today&rsquo;s behaviour).
+            </span>
+          </span>
+        </label>
+
         <div className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           Creates the studio and an <strong>owner</strong> invitation only. The
           owner&rsquo;s practitioner account is created when they first sign in
-          with the invited email. No payments, no Stripe, no emails are sent.
+          with the invited email. No payments or Stripe. A welcome email is sent
+          only when guided onboarding is enabled above.
         </div>
 
         <div>
