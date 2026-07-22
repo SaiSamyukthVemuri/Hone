@@ -24,8 +24,8 @@ guard_supabase() {
 
 guard_vercel() {
   local sid pid
-  sid="$(jq -r .projectId .vercel/project.json 2>/dev/null || true)"
-  pid="$(jq -r .projectId /Users/chloebaca/Hone/.vercel/project.json 2>/dev/null || true)"
+  sid="$(python3 -c 'import json; print(json.load(open(".vercel/project.json")).get("projectId", ""))' 2>/dev/null || true)"
+  pid="$(python3 -c 'import json; print(json.load(open("/Users/chloebaca/Hone/.vercel/project.json")).get("projectId", ""))' 2>/dev/null || true)"
   [ -n "$EXPECTED_STAGING_VERCEL_PROJECT_ID" ] || { echo "ABORT(D-2): EXPECTED_STAGING_VERCEL_PROJECT_ID unset"; return 1; }
   [ -n "$sid" ] || { echo "ABORT(D-2): clone not linked to a Vercel project"; return 1; }
   [ "$sid" = "$EXPECTED_STAGING_VERCEL_PROJECT_ID" ] || { echo "ABORT(D-2): vercel projectId != staging"; return 1; }
