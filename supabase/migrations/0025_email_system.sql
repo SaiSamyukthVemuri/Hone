@@ -67,5 +67,5 @@ alter table public.services
 -- Backfill tokens on existing confirmed appointments so any in-flight
 -- session can be cancelled or rescheduled via the new column-based path.
 update public.appointments
-  set cancellation_token = encode(gen_random_bytes(24), 'base64')
+  set cancellation_token = encode(extensions.gen_random_bytes(24), 'base64')
   where cancellation_token is null and status = 'confirmed';
