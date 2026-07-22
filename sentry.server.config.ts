@@ -13,8 +13,13 @@ import {
   tracesSampleRate,
 } from "@/lib/observability/sentry-scrub";
 
+// Staging isolation overlay: DSN is env-controlled. Left unset in staging so
+// `enabled:false` prevents any events reaching the production Sentry project.
+const sentryDsn = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
+
 Sentry.init({
-  dsn: "https://83582fd24c2d75b0a2ada024251147bc@o4511758551941120.ingest.us.sentry.io/4511758557839360",
+  dsn: sentryDsn,
+  enabled: Boolean(sentryDsn),
 
   sendDefaultPii: false,
 

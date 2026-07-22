@@ -22,8 +22,14 @@ import {
 //   * Events reach Sentry via the same-origin tunnel (/monitoring, configured
 //     in next.config.ts), so the strict CSP connect-src 'self' already permits
 //     them and no ingest host is added to the policy.
+// Staging isolation overlay: DSN is env-controlled (build-baked public var).
+// Left unset in staging so `enabled:false` prevents any events reaching the
+// production Sentry project.
+const sentryDsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+
 Sentry.init({
-  dsn: "https://83582fd24c2d75b0a2ada024251147bc@o4511758551941120.ingest.us.sentry.io/4511758557839360",
+  dsn: sentryDsn,
+  enabled: Boolean(sentryDsn),
 
   sendDefaultPii: false,
 
