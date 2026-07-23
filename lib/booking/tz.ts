@@ -147,6 +147,24 @@ export function formatTimeForStudio(
   return format === "24h" ? localTimeString(d, tz) : localTimeString12h(d, tz);
 }
 
+// Is this UTC interval a WHOLE studio-local day? True iff it starts at local
+// midnight, ends at local midnight, and spans exactly one local calendar day.
+// This is the ONLY correct all-day test: it reads the local wall-clock
+// boundaries, so it is right for a normal 24h day, a spring-forward 23h day,
+// AND a fall-back 25h day. Never infer all-day from a 24h duration — that
+// mislabels a 24h timed block and misses a 23h/25h all-day block.
+export function isAllDayInterval(
+  startsAtIso: string,
+  endsAtIso: string,
+  tz: string,
+): boolean {
+  const start = new Date(startsAtIso);
+  const end = new Date(endsAtIso);
+  if (localTimeString(start, tz) !== "00:00") return false;
+  if (localTimeString(end, tz) !== "00:00") return false;
+  return addDays(localDateString(start, tz), 1) === localDateString(end, tz);
+}
+
 // Format a naive local wall-clock "HH:MM" (24h machine value — e.g. from a
 // calendar drag / minutesToHHMM) into a DISPLAY label per the studio
 // preference: "1:00 PM" (12h) or "13:00" (24h). No timezone is applied because

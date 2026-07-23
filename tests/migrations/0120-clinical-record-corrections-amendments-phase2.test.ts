@@ -22,12 +22,10 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0134 (practitioner-capacity foundation — additive
-    // resource_key + default-OFF flag + eligibility), on top of 0133
-    // (practitioner Move appointment RPC). 0134 is additive (one metadata-only
-    // GiST constraint swap; no data change). Bump this tripwire consciously when
-    // a new migration lands.
-    expect(maxNum).toBe(134); // 0134 = practitioner-capacity foundation
+    // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
+    // (per-practitioner availability). Bump this tripwire consciously
+    // when a new migration lands.
+    expect(maxNum).toBe(139); // 0139 = scoped conflict lookup + rule guard (PR B)
     expect(FILE).toMatch(/^0120_/);
   });
 });

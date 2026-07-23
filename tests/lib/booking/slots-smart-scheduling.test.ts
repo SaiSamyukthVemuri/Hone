@@ -43,7 +43,7 @@ function mockSupabase(d: {
   function builder(table: string) {
     const result = results[table] ?? { data: null };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "lte", "gte", "lt", "gt", "order"]) {
+    for (const m of ["select", "eq", "is", "lte", "gte", "lt", "gt", "order"]) {
       b[m] = () => b;
     }
     b.maybeSingle = () => Promise.resolve(result);

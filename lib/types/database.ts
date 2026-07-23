@@ -49,6 +49,10 @@ export type Studio = {
   // enables per-practitioner capacity + parallelism. Default OFF; opt-in per
   // studio. Optional at the type level for rows loaded via `select *` before 0134.
   practitioner_capacity_enabled?: boolean;
+  // Migration 0136: booking-acceptance kill-switch, separate from the structural
+  // flag above. Default OFF; operator-controlled. Legacy/Configuring/Live/
+  // Draining are derived from the pair. Optional for rows loaded before 0136.
+  practitioner_capacity_booking_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -212,6 +216,10 @@ export type StudioTimedBlock = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // PR B (migration 0137): NULL = studio-wide (every practitioner), a UUID =
+  // scoped to that one practitioner. NULL on Legacy studios (column absent
+  // before 0135/0137 is applied — the safe loaders treat it as studio-wide).
+  practitioner_id: string | null;
 };
 
 // Migration 0031: weekly recurring break rules + materialized
@@ -237,6 +245,9 @@ export type StudioRecurringBreakRule = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // PR B (migration 0137): NULL = studio-wide, a UUID = scoped to one
+  // practitioner. See StudioTimedBlock.practitioner_id.
+  practitioner_id: string | null;
 };
 
 export type StudioRecurringBreakOccurrence = {
@@ -247,6 +258,9 @@ export type StudioRecurringBreakOccurrence = {
   starts_at: string;
   ends_at: string;
   created_at: string;
+  // PR B (migration 0137): copied from the parent rule at materialization so
+  // the shadow-sync fan-out can key each occurrence's reservation correctly.
+  practitioner_id: string | null;
 };
 
 // Migration 0030: unified shadow table. Source_kind covers
