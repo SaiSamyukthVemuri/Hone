@@ -53,6 +53,13 @@ export type Studio = {
   // flag above. Default OFF; operator-controlled. Legacy/Configuring/Live/
   // Draining are derived from the pair. Optional for rows loaded before 0136.
   practitioner_capacity_booking_enabled?: boolean;
+  // Migration 0140 (first-time onboarding experience): studio-scoped kill-switch
+  // for the guided owner onboarding v2 (welcome email, auto-opening wizard,
+  // pinned setup-progress card, celebration). Default OFF; operator-controlled
+  // (guard trigger blocks browser-role flips). While false the studio sees
+  // exactly today's read-only checklist. Optional for rows loaded via `select *`
+  // before 0140 is applied; always read as `=== true`.
+  onboarding_v2_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -133,6 +140,37 @@ export type Studio = {
   send_confirmation_sms: boolean;
   send_24h_sms_reminders: boolean;
   send_2h_sms_reminders: boolean;
+};
+
+// Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
+// ONE row per studio (studio_id primary key). Pure UI/progress state — step
+// "done" for data-backed steps stays DERIVED from real data; this table records
+// the resume pointer, explicit advanced/skipped steps, dismissed/completed/
+// celebrated stamps (celebrate-once), and the welcome-email send outcome.
+// Column set MUST match the migrated schema exactly (check-db-types drift gate).
+export type OnboardingStatus =
+  | "not_started"
+  | "in_progress"
+  | "completed"
+  | "skipped";
+
+export type WelcomeEmailStatus = "not_sent" | "sending" | "sent" | "failed";
+
+export type StudioOnboarding = {
+  studio_id: string;
+  status: OnboardingStatus;
+  current_step: string;
+  completed_steps: string[];
+  skipped_steps: string[];
+  dismissed_at: string | null;
+  completed_at: string | null;
+  celebrated_at: string | null;
+  welcome_email_status: WelcomeEmailStatus;
+  welcome_email_attempt_id: string | null;
+  welcome_email_last_attempted_at: string | null;
+  welcome_email_last_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 // Migration 0040: closed preset list for the birthday reminder accent.

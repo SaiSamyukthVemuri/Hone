@@ -80,6 +80,43 @@ describe("magic-link server action: invite-gated signup", () => {
   });
 });
 
+describe("login page: consent-checkbox copy is invitation confirmation, not legal acceptance", () => {
+  // The login checkbox does NOT record Terms/Privacy acceptance (that happens at
+  // accept-invitation, against the CURRENT versions). It only confirms the person
+  // is using their invited email. The un-ticked-box error and the label must say
+  // exactly that — never "agree to the Terms of Service and Privacy Policy", which
+  // would be a false claim that ticking it is legal acceptance.
+  it("the stale legal-acceptance error string is gone", () => {
+    // PAGE_CODE strips // comments (which reference the old phrase as a negative
+    // example) so this asserts on shipped strings only.
+    expect(PAGE_CODE).not.toMatch(/agree to the Terms of Service and Privacy Policy/i);
+    expect(PAGE_CODE).not.toMatch(/Please agree to the Terms/i);
+  });
+
+  it("the un-ticked-box error is the invited-email confirmation copy, used for BOTH sign-in paths", () => {
+    expect(PAGE).toMatch(
+      /Confirm that you're using the email address your studio invitation was sent to\./,
+    );
+    // Single shared constant referenced by the Google + magic-link handlers, so
+    // the two gates can never drift back to divergent copy.
+    const uses = PAGE_CODE.match(/CONFIRM_INVITED_EMAIL_MESSAGE/g) ?? [];
+    expect(uses.length).toBeGreaterThanOrEqual(3); // 1 definition + 2 handlers
+  });
+
+  it("the checkbox label frames itself as identity confirmation", () => {
+    expect(PAGE).toMatch(/using the email address my studio invitation was sent/i);
+    expect(PAGE).toMatch(/aria-label="I am using my invited email address"/);
+  });
+
+  it("the label still surfaces Terms/Privacy as informational links, with acceptance deferred to joining", () => {
+    // Truthful: the policies apply and are LINKED, but the current versions are
+    // confirmed later (at accept-invitation), not by this checkbox.
+    expect(PAGE).toMatch(/href="\/terms"/);
+    expect(PAGE).toMatch(/href="\/privacy"/);
+    expect(PAGE).toMatch(/confirm the current versions when you join a\s+studio/i);
+  });
+});
+
 describe("login page: no direct OTP call remains", () => {
   it("the magic-link handler calls the server action", () => {
     expect(PAGE_CODE).toMatch(
@@ -93,21 +130,28 @@ describe("login page: no direct OTP call remains", () => {
 });
 
 describe("invited users still get in (intended invite path intact)", () => {
-  it("the current handle_new_user (0081) still creates the practitioner on invite match", () => {
-    // 0081 removed the no-invite fresh-studio fallback (the Google
-    // OAuth bypass); the invited arm is unchanged. Detailed pins live
-    // in tests/migrations/0081-invite-only-handle-new-user.test.ts.
-    const trigger = readFileSync(
+  it("handle_new_user provisioning moved to sign-in: 0141 supersedes 0081 to a no-op", () => {
+    // 0081 was the historical provisioning trigger (invitation -> practitioner +
+    // stamped acceptance). Migration 0141 replaces handle_new_user with a NO-OP
+    // so Auth-user creation no longer fabricates consent or activates a
+    // membership; provisioning + the ONE authoritative acceptance now happen at
+    // sign-in (reconcile_my_pending_invitation / admin_accept_pending_invitation).
+    const trigger0141 = readFileSync(
       path.resolve(
         __dirname,
-        "../../../supabase/migrations/0081_invite_only_handle_new_user.sql",
+        "../../../supabase/migrations/0141_onboarding_invitation_reconciliation.sql",
       ),
       "utf8",
     );
-    expect(trigger).toMatch(/create or replace function public\.handle_new_user\(\)/);
-    expect(trigger).toMatch(/status = 'pending'/);
-    expect(trigger).toMatch(/insert into public\.practitioners/);
-    expect(trigger).not.toMatch(/insert into public\.studios/);
+    const fn = trigger0141.match(
+      /create or replace function public\.handle_new_user\(\)[\s\S]*?\$\$;/i,
+    )?.[0];
+    expect(fn).toBeTruthy();
+    expect(fn).not.toMatch(/insert into public\.practitioners/i);
+    expect(fn).not.toMatch(/terms_accepted_at/i);
+    expect(fn).toMatch(/return new;/i);
+    // The invite-only gate is preserved by the reconciliation RPCs.
+    expect(trigger0141).toMatch(/admin_accept_pending_invitation/);
   });
 
   it("the invite action still inserts pending status rows the gate matches on", () => {

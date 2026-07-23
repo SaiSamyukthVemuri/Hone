@@ -26,7 +26,49 @@ export async function GET(request: Request) {
           properties: { provider: "magic_link" },
         });
       }
-      return NextResponse.redirect(`${origin}${next}`);
+
+      // Existing-account invitation reconciliation. handle_new_user() only
+      // provisions the membership when a NEW auth.users row is inserted, so an
+      // email that already has a Hone account, invited to a new studio, would
+      // otherwise sign in with the invite left 'pending' and land on /no-access.
+      // The self-scoped RPC links the membership (copying valid current-version
+      // acceptance evidence) or routes to explicit acceptance. It must NEVER
+      // block sign-in, so any failure falls through to the default destination.
+      let dest = next;
+      let clearSelection = false;
+      try {
+        const { data: rec } = await supabase.rpc(
+          "reconcile_my_pending_invitation",
+        );
+        const status =
+          rec && typeof rec === "object"
+            ? (rec as { status?: string; choose_studio?: boolean })
+            : null;
+        if (status?.status === "acceptance_required") {
+          dest = "/accept-invitation";
+        } else if (status?.status === "conflict") {
+          dest = "/no-access?reason=invite-conflict";
+        } else if (status?.status === "ambiguous") {
+          dest = "/no-access?reason=invite-ambiguous";
+        } else if (
+          (status?.status === "linked" ||
+            status?.status === "already_linked") &&
+          status?.choose_studio === true
+        ) {
+          // Newly a multi-studio user: force a truthful chooser (clear any
+          // selection; middleware routes 2+ memberships w/o selection there).
+          dest = "/dashboard";
+          clearSelection = true;
+        }
+      } catch {
+        // Never block sign-in on reconciliation.
+      }
+
+      const response = NextResponse.redirect(`${origin}${dest}`);
+      if (clearSelection) {
+        response.cookies.delete("hone_selected_studio");
+      }
+      return response;
     }
   }
 

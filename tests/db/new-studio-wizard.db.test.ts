@@ -98,14 +98,37 @@ describe("the operator service-role path creates a studio + owner invite, and th
     );
     expect(before.rows[0].n).toBe(0);
 
-    // The owner signs in with the invited email -> handle_new_user provisions
-    // exactly one owner practitioner with terms/privacy stamped, and accepts
-    // the invitation.
+    // The owner signs in (an auth.users row is inserted). handle_new_user is a
+    // NO-OP now (migration 0141) — it must NOT fabricate a membership or
+    // acceptance. Provisioning + consent happen at sign-in via reconciliation /
+    // explicit acceptance instead.
+    const ownerUserId = randomUUID();
     await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
-      randomUUID(),
+      ownerUserId,
       ownerEmail,
     ]);
 
+    const afterSignin = await adminQuery(
+      `select count(*)::int as n from public.practitioners p
+         join auth.users u on u.id = p.user_id
+        where lower(u.email) = lower($1)`,
+      [ownerEmail],
+    );
+    expect(afterSignin.rows[0].n).toBe(0); // no fabricated membership
+    const stillPending = await adminQuery(
+      `select status from public.pending_invitations
+        where studio_id = $1 and lower(email) = lower($2)`,
+      [studioId, ownerEmail],
+    );
+    expect(stillPending.rows[0].status).toBe("pending"); // recoverable
+
+    // Explicit acceptance (the authoritative consent event, service-role only)
+    // provisions exactly one owner practitioner with terms/privacy stamped and
+    // accepts the invitation.
+    await adminQuery(
+      `select public.admin_accept_pending_invitation($1)`,
+      [ownerUserId],
+    );
     const provisioned = await adminQuery(
       `select p.role, p.active, p.studio_id,
               (p.terms_accepted_at is not null) as terms_ok,

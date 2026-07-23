@@ -13,23 +13,33 @@ const SQL = readFileSync(
 );
 
 describe("0131 — repo migration-max tripwire", () => {
-  it("advances the repo migration max to 0139 (0138 precedes; nothing 0140+)", () => {
+  // REFRESH RESOLUTION (post-#458 merge): this branch now carries the merged
+  // PR-B capacity stack (0135-0139) AND onboarding 0140-0141. Neither source
+  // side was correct for the combined tree: the base asserted 0140+ absent;
+  // this branch asserted 0135-0139 absent. This union asserts the complete
+  // 0132-0141 chain and trips only on 0142+.
+  it("advances the repo migration max to 0141 (capacity 0135-0139 + onboarding 0140-0141)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0139"); // 0139 = scoped conflict lookup + rule guard (PR B, repo-only until hosted-applied)
+    expect(nums[nums.length - 1]).toBe("0141"); // 0141 = invitation reconciliation
+    expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
+    // Capacity PR B stack (0135-0139) — merged from PR #458.
     expect(files.some((f) => f.startsWith("0135_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0136_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0137_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0138_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0139_"))).toBe(true);
-    // Nothing 0140+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(4\d|[5-9]\d)_/.test(f))).toEqual([]);
+    // Onboarding v2 (0140 foundation + 0141 invitation reconciliation).
+    expect(files.some((f) => f.startsWith("0140_"))).toBe(true);
+    expect(files.some((f) => f.startsWith("0141_"))).toBe(true);
+    // Nothing 0142+ yet. Bump this tripwire consciously when adding migrations.
+    expect(files.filter((f) => /^01(4[2-9]|[5-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

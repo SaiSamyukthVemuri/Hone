@@ -155,8 +155,11 @@ describe("5. dashboard: worklist first", () => {
     expect(DASH).toMatch(
       /const setupComplete =\s*\n?\s*gettingStarted\.autoTotal > 0 &&\s*\n?\s*gettingStarted\.autoDone === gettingStarted\.autoTotal/,
     );
-    expect(DASH).toMatch(/\{!setupComplete && \(/);
-    expect(DASH).toMatch(/\{setupComplete && \(/);
+    // Onboarding v2 (migration 0140) supersedes these when its per-studio flag
+    // is on, so the legacy link/footer are gated behind !onboardingV2On. On the
+    // default OFF path they render exactly as before.
+    expect(DASH).toMatch(/\{!onboardingV2On && !setupComplete && \(/);
+    expect(DASH).toMatch(/\{!onboardingV2On && setupComplete && \(/);
     expect(DASH).toMatch(/Setup complete\./);
     // Both states keep the route reachable.
     expect(DASH.match(/href="\/getting-started"/g)?.length).toBe(2);
@@ -165,10 +168,15 @@ describe("5. dashboard: worklist first", () => {
     expect(DASH).not.toMatch(/gettingStarted\.sections/);
   });
 
-  it("the incomplete card sits below Today, not above it", () => {
+  it("the legacy incomplete card sits below Today; the onboarding-v2 surface sits above it", () => {
     const today = DASH.indexOf('<h2 className="text-lg font-medium">Today</h2>');
-    const card = DASH.indexOf("{!setupComplete && (");
+    // Legacy (flag-off) getting-started card is unchanged: still below Today.
+    const card = DASH.indexOf("{!onboardingV2On && !setupComplete && (");
     expect(card).toBeGreaterThan(today);
+    // The onboarding-v2 pinned surface is above the fold (above Today).
+    const v2 = DASH.indexOf("{onboarding && (");
+    expect(v2).toBeGreaterThan(-1);
+    expect(v2).toBeLessThan(today);
   });
 
   it("PR #236 Today actions and the snapshot are untouched", () => {
