@@ -19,14 +19,14 @@ describe("0131 — repo migration-max tripwire", () => {
   // present here. Neither source side was correct for the combined repo: #460
   // asserted 0140 absent; #459 asserted 0135-0139/0142+ absent. This union asserts
   // the complete 0132-0150 chain and trips only on 0151+.
-  it("advances the repo migration max to 0150 (integrated RC: capacity 0135-0139/0142-0150 + onboarding 0140-0141)", () => {
+  it("advances the repo migration max to 0151 (integrated RC + RC hardening: appointment tenant consistency)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0150"); // 0150 = single-row schedule writers locked
+    expect(nums[nums.length - 1]).toBe("0151"); // 0151 = appointment tenant-consistency composite FKs (RC hardening)
     expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
@@ -50,8 +50,10 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0148_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0149_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0150_"))).toBe(true);
-    // Nothing 0151+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(5[1-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    // RC hardening: appointment tenant-consistency composite FKs.
+    expect(files.some((f) => f.startsWith("0151_"))).toBe(true);
+    // Nothing 0152+ yet. Bump this tripwire consciously when adding migrations.
+    expect(files.filter((f) => /^01(5[2-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 
