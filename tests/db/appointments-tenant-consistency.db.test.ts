@@ -285,6 +285,8 @@ describe("0151: preflight fails safely on corrupt data, unchanged otherwise (14)
     // RAISES — so the whole statement (drop + insert) rolls back atomically. This
     // proves the preflight both detects corruption and aborts before any persistent
     // constraint change.
+    // A DO block cannot take bind parameters, so the trusted seed UUIDs
+    // (randomUUID() — hex + hyphens only, no injection surface) are inlined.
     await expect(
       adminQuery(
         `do $$
@@ -293,7 +295,8 @@ describe("0151: preflight fails safely on corrupt data, unchanged otherwise (14)
            alter table public.appointments drop constraint appointments_client_same_studio_fk;
            insert into public.appointments
              (id, studio_id, client_id, starts_at, ends_at, duration_minutes, status, cancellation_token_hash)
-           values (gen_random_uuid(), $1, $2, '2033-01-01T10:00:00Z', '2033-01-01T11:00:00Z', 60, 'confirmed',
+           values (gen_random_uuid(), '${A.studioId}'::uuid, '${B.clientId}'::uuid,
+                   '2033-01-01T10:00:00Z', '2033-01-01T11:00:00Z', 60, 'confirmed',
                    replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''));
            select count(*) into v_bad
              from public.appointments a join public.clients c on c.id = a.client_id
@@ -303,7 +306,6 @@ describe("0151: preflight fails safely on corrupt data, unchanged otherwise (14)
                using errcode = 'raise_exception';
            end if;
          end $$;`,
-        [A.studioId, B.clientId],
       ),
     ).rejects.toThrow(/preflight failed: cross-studio appointment reference/);
 
