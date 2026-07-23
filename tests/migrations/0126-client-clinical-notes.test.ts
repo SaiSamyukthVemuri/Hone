@@ -25,11 +25,11 @@ describe("0126 — file + repo-max tripwire", () => {
 
   it("is present; the repo-max tripwire now lives in the 0131 test", () => {
     // The absolute repo-max pin lives in the 0131 test (now 0134 =
-    // practitioner-capacity foundation); nothing above 0134 may exist yet.
+    // practitioner-capacity foundation); nothing above 0138 may exist yet.
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
-    // 0140 (first-time studio onboarding) is the new repo max; 0135-0139 live on
-    // the PR-B branch and are absent here. Trip on anything else 0135+.
-    const higher = FILES.filter((f) => /^01(3[5-9]|4[2-9]|[5-9]\d)_/.test(f));
+    // 0141 (onboarding reconciliation) is the repo max; 0135-0139 (PR B) are
+    // now merged into this branch. Trip on anything 0142+.
+    const higher = FILES.filter((f) => /^01(4[2-9]|[5-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 });

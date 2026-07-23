@@ -6,6 +6,10 @@ import {
   minutesToHHMM,
   utcInstantFromLocal,
 } from "./tz";
+import {
+  getStudioWideDaySafe,
+  getStudioWideOverrideDaySafe,
+} from "./studio-wide-availability";
 
 export type Slot = {
   start: string; // ISO UTC
@@ -53,6 +57,10 @@ type StudioRow = {
   timezone: string;
   default_appointment_duration_minutes: number;
   buffer_minutes: number;
+  // Migration 0134: when true AND a practitionerId is supplied, slot generation
+  // is per-practitioner (0135 availability + the practitioner's resource_key
+  // reservations). Optional/absent => today's studio-wide behaviour.
+  practitioner_capacity_enabled?: boolean;
 };
 
 type DefaultRow = {
@@ -118,8 +126,18 @@ export async function getAvailableSlots(
   dateStr: string,
   serviceDurationMinutes?: number,
   excludeReservation?: ReservationExclusion,
+  practitionerId?: string | null,
 ): Promise<Slot[]> {
   const tz = studio.timezone;
+  // Per-practitioner generation is opt-in: it requires BOTH the studio flag
+  // (0134) AND an explicit practitionerId. When off, NOTHING below references
+  // the 0134/0135 columns (practitioner_id / resource_key), so this path is
+  // byte-for-byte today's studio-wide behaviour and safe before those
+  // migrations are applied.
+  const capacityOn =
+    studio.practitioner_capacity_enabled === true &&
+    practitionerId !== undefined &&
+    practitionerId !== null;
   const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
   const buffer = Math.max(0, studio.buffer_minutes ?? 0);
   const duration =
@@ -136,34 +154,77 @@ export async function getAvailableSlots(
     return [];
   }
 
-  // Determine open window: override wins over default.
+  // Determine open window: override wins over default. When ON, a
+  // practitioner-specific row (0135) wins over the studio-wide fallback.
   let openTime: string | null = null;
   let closeTime: string | null = null;
   let isOpen = false;
+  const applyWindow = (row: OverrideRow | DefaultRow) => {
+    isOpen = row.is_open;
+    openTime = trimTime(row.open_time);
+    closeTime = trimTime(row.close_time);
+  };
 
-  const { data: overrideRows } = await supabase
-    .from("studio_availability_overrides")
-    .select("is_open, open_time, close_time")
-    .eq("studio_id", studio.id)
-    .eq("effective_date", dateStr)
-    .maybeSingle();
-  if (overrideRows) {
-    const o = overrideRows as OverrideRow;
-    isOpen = o.is_open;
-    openTime = trimTime(o.open_time);
-    closeTime = trimTime(o.close_time);
+  if (capacityOn) {
+    // ON: practitioner-specific override, else studio-wide (practitioner_id NULL);
+    // then default the same way. Two maybeSingle probes keep each unique.
+    const pOverride = (
+      await supabase
+        .from("studio_availability_overrides")
+        .select("is_open, open_time, close_time")
+        .eq("studio_id", studio.id)
+        .eq("effective_date", dateStr)
+        .eq("practitioner_id", practitionerId)
+        .maybeSingle()
+    ).data as OverrideRow | null;
+    const override =
+      pOverride ??
+      ((
+        await supabase
+          .from("studio_availability_overrides")
+          .select("is_open, open_time, close_time")
+          .eq("studio_id", studio.id)
+          .eq("effective_date", dateStr)
+          .is("practitioner_id", null)
+          .maybeSingle()
+      ).data as OverrideRow | null);
+    if (override) {
+      applyWindow(override);
+    } else {
+      const pDefault = (
+        await supabase
+          .from("studio_availability_default")
+          .select("is_open, open_time, close_time")
+          .eq("studio_id", studio.id)
+          .eq("day_of_week", dow)
+          .eq("practitioner_id", practitionerId)
+          .maybeSingle()
+      ).data as DefaultRow | null;
+      const def =
+        pDefault ??
+        ((
+          await supabase
+            .from("studio_availability_default")
+            .select("is_open, open_time, close_time")
+            .eq("studio_id", studio.id)
+            .eq("day_of_week", dow)
+            .is("practitioner_id", null)
+            .maybeSingle()
+        ).data as DefaultRow | null);
+      if (def) applyWindow(def);
+    }
   } else {
-    const { data: defaultRow } = await supabase
-      .from("studio_availability_default")
-      .select("is_open, open_time, close_time")
-      .eq("studio_id", studio.id)
-      .eq("day_of_week", dow)
-      .maybeSingle();
-    if (defaultRow) {
-      const d = defaultRow as DefaultRow;
-      isOpen = d.is_open;
-      openTime = trimTime(d.open_time);
-      closeTime = trimTime(d.close_time);
+    // OFF: studio-wide window only. The migration-order-safe loaders filter
+    // practitioner_id IS NULL, so a rolled-back studio's retained practitioner
+    // rows are ignored (and never make maybeSingle throw on a doubled weekday);
+    // they fall back to the exact legacy query only if the 0135 column is
+    // genuinely absent (pre-apply).
+    const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
+    if (override) {
+      applyWindow(override);
+    } else {
+      const def = await getStudioWideDaySafe(supabase, studio.id, dow);
+      if (def) applyWindow(def);
     }
   }
 
@@ -177,12 +238,17 @@ export async function getAvailableSlots(
   // day we are searching.
   const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
-  const { data: reservations } = await supabase
+  // ON: the practitioner's own timeline — resource_key = practitionerId already
+  // holds their appointments PLUS every studio-wide block fanned to them (0134),
+  // so different practitioners run in parallel. OFF: studio-wide (today).
+  const reservationBase = supabase
     .from("studio_calendar_reservations")
     .select("starts_at, ends_at, source_kind, source_id")
-    .eq("studio_id", studio.id)
     .lt("starts_at", windowEndUtc.toISOString())
     .gt("ends_at", windowStartUtc.toISOString());
+  const { data: reservations } = await (capacityOn
+    ? reservationBase.eq("resource_key", practitionerId)
+    : reservationBase.eq("studio_id", studio.id));
 
   // The reservation rows already encode every relevant buffer:
   //   - appointment rows: ends_at = blocked_ends_at (starts_at +

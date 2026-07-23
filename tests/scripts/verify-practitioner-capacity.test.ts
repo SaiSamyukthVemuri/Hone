@@ -55,6 +55,7 @@ describe("verify-practitioner-capacity: fail-closed + covers required checks", (
     for (const fn of [
       "checkSchemaPresent",
       "checkDormant",
+      "checkStateModel",
       "checkOffParity",
       "checkIntegrity",
       "checkOrphans",

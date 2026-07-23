@@ -9,7 +9,11 @@ import {
   localLongDate,
   todayInTz,
   utcInstantFromLocal,
+  formatTimeForStudio,
+  resolveTimeFormat,
+  type TimeFormat,
 } from "@/lib/booking/tz";
+import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
 
 // Typed result used by every action that can hit the unified shadow's
@@ -23,13 +27,10 @@ export type BlockActionResult =
 const FALLBACK_CONFLICT_MESSAGE =
   "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
 
-function formatTimeInTz(iso: string, tz: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(iso));
+// Conflict-message time honours the studio's 12h/24h preference via the shared
+// TimeFormat contract (no hardcoded hour12). Always in the studio timezone.
+function formatTimeInTz(iso: string, tz: string, format: TimeFormat): string {
+  return formatTimeForStudio(new Date(iso), tz, format);
 }
 
 // Studio-local long date for the conflict message ("Tuesday, June 4").
@@ -42,68 +43,112 @@ function formatDateInTz(iso: string, tz: string): string {
   return long.replace(/,\s*\d{4}$/, "");
 }
 
-// Looks up the soonest reservation row that overlaps the requested
-// interval and returns an owner-facing message. Does NOT expose
-// client names, service details, private notes, or block categories.
-async function lookupConflictMessage(
-  supabase: SupabaseClient,
-  studioId: string,
-  studioTimezone: string,
-  startsAtIso: string,
-  endsAtIso: string,
-  exclude?: { source_kind: string; source_id: string },
+// PR B 3E-7 + §10: resource-aware, PII-safe conflict description. The two
+// SECURITY DEFINER RPCs (find_scoped_calendar_conflict / find_recurring_break_
+// conflict, migration 0139) filter to the resource set that actually reserves
+// the proposed source — so an appointment for practitioner A never produces a
+// conflict message for a B-only block — and return ONLY source kind + interval
+// + resource_key. They are service_role-only, so these run on the admin client.
+// The rendered message exposes only the conflicting item's KIND and studio-local
+// date/time — never a client, service, note, practitioner name, or token.
+type ConflictRow = {
+  source_kind: string;
+  starts_at: string;
+  ends_at: string;
+  resource_key: string;
+};
+
+function conflictMessageFromRow(
+  row: ConflictRow | undefined,
+  tz: string,
+  format: TimeFormat,
+  fallback: string,
+): string {
+  if (!row) return fallback;
+  const dateFmt = formatDateInTz(row.starts_at, tz);
+  const startFmt = formatTimeInTz(row.starts_at, tz, format);
+  const endFmt = formatTimeInTz(row.ends_at, tz, format);
+  switch (row.source_kind) {
+    case "appointment":
+      return `This overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a time that does not overlap that appointment, or reschedule or cancel it first.`;
+    case "timed_block":
+      return `This overlaps an existing blocked period on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove the existing block first.`;
+    case "recurring_break_occurrence":
+      return `This overlaps a repeating break on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove that break first.`;
+    case "full_day_blockout":
+      return `This overlaps an existing full-day blockout on ${dateFmt}. Edit or remove the existing blockout first.`;
+    default:
+      return fallback;
+  }
+}
+
+// One-off (timed-block / blockout) conflict lookup. `practitionerId` is the
+// proposed source's scope (null = studio-wide); `exclude` removes the source
+// being edited so it never self-conflicts.
+async function describeTimedConflict(
+  admin: SupabaseClient,
+  args: {
+    studioId: string;
+    tz: string;
+    format: TimeFormat;
+    practitionerId: string | null;
+    startsAt: string;
+    endsAt: string;
+    exclude?: { kind: string; id: string };
+  },
 ): Promise<string> {
-  const { data } = await supabase
-    .from("studio_calendar_reservations")
-    .select("source_kind, source_id, starts_at, ends_at")
-    .eq("studio_id", studioId)
-    .lt("starts_at", endsAtIso)
-    .gt("ends_at", startsAtIso)
-    .order("starts_at")
-    .limit(5);
+  const { data } = await admin.rpc("find_scoped_calendar_conflict", {
+    p_studio_id: args.studioId,
+    p_practitioner_id: args.practitionerId,
+    p_starts_at: args.startsAt,
+    p_ends_at: args.endsAt,
+    p_exclude_kind: args.exclude?.kind ?? null,
+    p_exclude_id: args.exclude?.id ?? null,
+  });
+  const row = (data as ConflictRow[] | null)?.[0];
+  return conflictMessageFromRow(row, args.tz, args.format, FALLBACK_CONFLICT_MESSAGE);
+}
 
-  if (!data || data.length === 0) {
-    return FALLBACK_CONFLICT_MESSAGE;
-  }
+// Recurring-break conflict projection: projects the proposed pattern across the
+// horizon in the studio timezone (DST-correct) and returns the earliest actual
+// collision, excluding the edited rule's own future occurrences.
+async function describeRecurringConflict(
+  admin: SupabaseClient,
+  args: {
+    studioId: string;
+    tz: string;
+    format: TimeFormat;
+    practitionerId: string | null;
+    days: number[];
+    startLocal: string;
+    endLocal: string;
+    horizonEnd: string;
+    excludeRuleId?: string | null;
+  },
+): Promise<string> {
+  const { data } = await admin.rpc("find_recurring_break_conflict", {
+    p_studio_id: args.studioId,
+    p_practitioner_id: args.practitionerId,
+    p_days_of_week: args.days,
+    p_start_local: args.startLocal,
+    p_end_local: args.endLocal,
+    p_horizon_end: args.horizonEnd,
+    p_exclude_rule_id: args.excludeRuleId ?? null,
+  });
+  const row = (data as ConflictRow[] | null)?.[0];
+  return conflictMessageFromRow(row, args.tz, args.format, RECURRING_BREAK_CONFLICT_MESSAGE);
+}
 
-  const candidates = exclude
-    ? data.filter(
-        (r) =>
-          !(
-            r.source_kind === exclude.source_kind &&
-            r.source_id === exclude.source_id
-          ),
-      )
-    : data;
-
-  if (candidates.length === 0) {
-    return FALLBACK_CONFLICT_MESSAGE;
-  }
-
-  const conflict = candidates[0];
-  // Conflict messages now include the conflicting item's date so the
-  // owner can tell which appointment in a multi-day blockout range
-  // is blocking the save. Previously the message only showed time,
-  // which read as "the app doesn't understand I'm blocking a range".
-  // Date format reuses the shared lib/booking/tz.ts helper so the
-  // wording matches the email/SMS day-string format.
-  if (conflict.source_kind === "appointment") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
-    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
-    return `This block overlaps an appointment on ${dateFmt} from ${startFmt} to ${endFmt}. Choose a block that does not overlap that appointment, or reschedule or cancel the appointment first.`;
-  }
-  if (conflict.source_kind === "timed_block") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    const startFmt = formatTimeInTz(conflict.starts_at, studioTimezone);
-    const endFmt = formatTimeInTz(conflict.ends_at, studioTimezone);
-    return `This block overlaps an existing blocked period on ${dateFmt} from ${startFmt} to ${endFmt}. Edit or remove the existing block first.`;
-  }
-  if (conflict.source_kind === "full_day_blockout") {
-    const dateFmt = formatDateInTz(conflict.starts_at, studioTimezone);
-    return `This block overlaps an existing full-day blockout on ${dateFmt}. Edit or remove the existing blockout first.`;
-  }
-  return FALLBACK_CONFLICT_MESSAGE;
+// Bounded operational marker for an unexpected DB error: action + stage +
+// SQLSTATE only. NEVER the raw DB/PostgREST message, row data, private note,
+// client, appointment, practitioner, or token. Owner-facing copy is always a
+// fixed safe string chosen by the caller.
+function logAvailabilityDbError(
+  action: string,
+  stage: string,
+  code: string | undefined,
+): void {
+  console.error(`availability_action_db_error:${action}:${stage}:${code ?? "unknown"}`);
 }
 
 function trimmed(value: FormDataEntryValue | null): string {
@@ -113,6 +158,45 @@ function trimmed(value: FormDataEntryValue | null): string {
 function nullable(value: FormDataEntryValue | null): string | null {
   const t = trimmed(value);
   return t.length === 0 ? null : t;
+}
+
+// Resolve the per-practitioner scope a create/update should apply.
+//
+//   field ABSENT (a Legacy form that never renders a scope selector, or a
+//     tampered request that drops the field)   -> preserve `existing`
+//   field PRESENT but empty ("All practitioners") -> studio-wide (null)
+//   field PRESENT with a UUID                    -> that practitioner
+//
+// The DB is the source of truth for validity: the composite FK
+// (studio_id, practitioner_id) rejects a cross-tenant practitioner (23503),
+// and guard_scoped_source_capacity rejects assigning a scope while capacity
+// is OFF (42501) or to an inactive practitioner (23514). We never interpret
+// a missing field as a reset to studio-wide — that would silently widen a
+// scoped source. `existing` is undefined for CREATE (no prior row), so an
+// absent field there resolves to studio-wide, the correct Legacy default.
+function resolveSubmittedScope(
+  formData: FormData,
+  existing: string | null | undefined,
+): string | null {
+  if (!formData.has("practitioner_id")) return existing ?? null;
+  const raw = trimmed(formData.get("practitioner_id"));
+  return raw === "" ? null : raw;
+}
+
+// Maps the scope-guard sqlstates raised by the DB into owner-facing copy.
+// Returns null when the code is not a scope-guard violation so the caller
+// falls through to its generic error branch. No PII — codes only.
+function scopeGuardMessage(code: string | undefined): string | null {
+  switch (code) {
+    case "42501":
+      return "Per-practitioner scheduling is not enabled for this studio, so this item must apply to all practitioners.";
+    case "23514":
+      return "That practitioner is no longer active. Choose an active practitioner, or make this item apply to all practitioners.";
+    case "23503":
+      return "That practitioner does not belong to this studio.";
+    default:
+      return null;
+  }
 }
 
 async function assertOwner(): Promise<{ studioId: string }> {
@@ -165,13 +249,23 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
       {
         studio_id: studioId,
         day_of_week: dow,
+        // Studio-wide scope. Migration 0135 keys uniqueness on
+        // (studio_id, day_of_week, practitioner_id) via UNIQUE NULLS NOT
+        // DISTINCT, so the studio-wide row must send an explicit NULL and the
+        // conflict target must name all three columns (a column-only target
+        // cannot infer the constraint). Per-practitioner writes (PR B owner UI)
+        // send a validated practitioner_id instead.
+        practitioner_id: null,
         is_open: isOpen,
         open_time: isOpen ? open : null,
         close_time: isOpen ? close : null,
       },
-      { onConflict: "studio_id,day_of_week" },
+      { onConflict: "studio_id,day_of_week,practitioner_id" },
     );
-  if (error) throw new Error(`Failed to save: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("upsert_day_default", "upsert", error.code);
+    throw new Error("Could not save these hours. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -183,6 +277,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
   const rows: {
     studio_id: string;
     day_of_week: number;
+    practitioner_id: string | null;
     is_open: boolean;
     open_time: string | null;
     close_time: string | null;
@@ -201,6 +296,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
     rows.push({
       studio_id: studioId,
       day_of_week: dow,
+      practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
       is_open: isOpen,
       open_time: isOpen ? open : null,
       close_time: isOpen ? close : null,
@@ -211,9 +307,11 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
   for (const row of rows) {
     const { error } = await supabase
       .from("studio_availability_default")
-      .upsert(row, { onConflict: "studio_id,day_of_week" });
-    if (error)
-      throw new Error(`Failed to save weekly defaults: ${error.message}`);
+      .upsert(row, { onConflict: "studio_id,day_of_week,practitioner_id" });
+    if (error) {
+      logAvailabilityDbError("save_weekly_defaults", "upsert", error.code);
+      throw new Error("Could not save these hours. Please try again.");
+    }
   }
   revalidatePath("/settings/availability");
 }
@@ -241,15 +339,18 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
       {
         studio_id: studioId,
         effective_date: effectiveDate,
+        practitioner_id: null, // studio-wide scope (see upsertDayDefaultAction)
         is_open: isOpen,
         open_time: isOpen ? open : null,
         close_time: isOpen ? close : null,
         note,
       },
-      { onConflict: "studio_id,effective_date" },
+      { onConflict: "studio_id,effective_date,practitioner_id" },
     );
-  if (error)
-    throw new Error(`Failed to save override: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("upsert_override", "upsert", error.code);
+    throw new Error("Could not save this date override. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -263,8 +364,273 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
     .delete()
     .eq("id", id)
     .eq("studio_id", studioId);
-  if (error) throw new Error(`Failed to delete override: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("delete_override", "delete", error.code);
+    throw new Error("Could not delete this date override. Please try again.");
+  }
   revalidatePath("/settings/availability");
+}
+
+// ===========================================================================
+// PR B Part 2 — per-practitioner (scoped) availability actions. Every action:
+// derives the studio from the authenticated OWNER (never a client-supplied
+// studio id), requires role owner, validates any target practitioner as ACTIVE
+// + same-studio, requires the capacity flag ON for practitioner-scoped writes
+// (studio-wide writes remain allowed OFF), validates strict HH:MM + open<close,
+// always sends an explicit practitioner_id + the 3-column conflict target, and
+// scopes deletes by studio + practitioner + weekday/date. Returns a typed,
+// user-safe result; the DB guard + owner-only RLS enforce the same rules.
+// ===========================================================================
+
+export type AvailabilityActionResult = { ok: true } | { ok: false; error: string };
+
+// Resolves + validates a requested practitioner target. Empty => studio-wide.
+// A non-empty target requires the flag ON, and must be an ACTIVE practitioner of
+// the OWNER's studio; anything else fails closed WITHOUT revealing whether the
+// id belongs to another studio.
+async function resolveScopeTarget(
+  supabase: SupabaseClient,
+  studio: Studio,
+  practitionerIdRaw: string,
+): Promise<{ ok: true; practitionerId: string | null } | { ok: false; error: string }> {
+  if (!practitionerIdRaw) return { ok: true, practitionerId: null };
+  if (studio.practitioner_capacity_enabled !== true) {
+    return {
+      ok: false,
+      error: "Per-practitioner schedules are not enabled for this studio.",
+    };
+  }
+  const { data } = await supabase
+    .from("practitioners")
+    .select("id")
+    .eq("id", practitionerIdRaw)
+    .eq("studio_id", studio.id)
+    .eq("active", true)
+    .maybeSingle();
+  if (!data) return { ok: false, error: "Practitioner not found." };
+  return { ok: true, practitionerId: practitionerIdRaw };
+}
+
+function validateHours(
+  isOpen: boolean,
+  open: string | null,
+  close: string | null,
+): string | null {
+  if (!isOpen) return null;
+  if (!open || !close) return "Open and close times are required for open days.";
+  if (!TIME_RE.test(open) || !TIME_RE.test(close))
+    return "Times must be in HH:MM format.";
+  if (open >= close) return "Close time must be after open time.";
+  return null;
+}
+
+// Save ONE weekday for the studio-wide (empty practitioner_id) or a specific
+// practitioner scope. Customizing a practitioner weekday persists a scoped row.
+export async function upsertScopedDayDefaultAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+
+  const dow = Number(trimmed(formData.get("day_of_week")));
+  if (!Number.isInteger(dow) || dow < 0 || dow > 6)
+    return { ok: false, error: "Day of week must be 0–6." };
+  const isOpen = trimmed(formData.get("is_open")) === "true";
+  const open = nullable(formData.get("open_time"));
+  const close = nullable(formData.get("close_time"));
+  const hoursError = validateHours(isOpen, open, close);
+  if (hoursError) return { ok: false, error: hoursError };
+
+  const { error } = await supabase.from("studio_availability_default").upsert(
+    {
+      studio_id: studio.id,
+      day_of_week: dow,
+      practitioner_id: scope.practitionerId,
+      is_open: isOpen,
+      open_time: isOpen ? open : null,
+      close_time: isOpen ? close : null,
+    },
+    { onConflict: "studio_id,day_of_week,practitioner_id" },
+  );
+  if (error) return { ok: false, error: "Could not save these hours." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset ONE practitioner weekday to the studio default — deletes ONLY that
+// practitioner's scoped row for that weekday; never touches the studio-wide row.
+export async function resetPractitionerDayAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+  const dow = Number(trimmed(formData.get("day_of_week")));
+  if (!Number.isInteger(dow) || dow < 0 || dow > 6)
+    return { ok: false, error: "Day of week must be 0–6." };
+
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId)
+    .eq("day_of_week", dow);
+  if (error) return { ok: false, error: "Could not reset this day." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Customize a practitioner's FULL week from the studio default — copies each
+// studio-wide weekday into a scoped practitioner row (upsert; idempotent).
+export async function customizePractitionerWeekAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to customize." };
+
+  const { data: studioRows, error: readErr } = await supabase
+    .from("studio_availability_default")
+    .select("day_of_week, is_open, open_time, close_time")
+    .eq("studio_id", studio.id)
+    .is("practitioner_id", null);
+  if (readErr) return { ok: false, error: "Could not read studio hours." };
+
+  const byDow = new Map(
+    (studioRows ?? []).map((r) => [r.day_of_week as number, r]),
+  );
+  const rows = Array.from({ length: 7 }, (_, dow) => {
+    const s = byDow.get(dow);
+    return {
+      studio_id: studio.id,
+      day_of_week: dow,
+      practitioner_id: scope.practitionerId,
+      is_open: s?.is_open ?? false,
+      open_time: s?.is_open ? (s?.open_time ?? null) : null,
+      close_time: s?.is_open ? (s?.close_time ?? null) : null,
+    };
+  });
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .upsert(rows, { onConflict: "studio_id,day_of_week,practitioner_id" });
+  if (error) return { ok: false, error: "Could not customize the week." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset a practitioner's FULL week — one atomic DELETE of all their weekly rows.
+export async function resetPractitionerWeekAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+
+  const { error } = await supabase
+    .from("studio_availability_default")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId);
+  if (error) return { ok: false, error: "Could not reset the week." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Save a date override for the studio-wide or a specific practitioner scope.
+export async function upsertScopedOverrideAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+
+  const effectiveDate = trimmed(formData.get("effective_date"));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
+    return { ok: false, error: "A valid date is required." };
+  const isOpen = trimmed(formData.get("is_open")) === "true";
+  const open = nullable(formData.get("open_time"));
+  const close = nullable(formData.get("close_time"));
+  const note = nullable(formData.get("note"));
+  const hoursError = validateHours(isOpen, open, close);
+  if (hoursError) return { ok: false, error: hoursError };
+
+  const { error } = await supabase.from("studio_availability_overrides").upsert(
+    {
+      studio_id: studio.id,
+      effective_date: effectiveDate,
+      practitioner_id: scope.practitionerId,
+      is_open: isOpen,
+      open_time: isOpen ? open : null,
+      close_time: isOpen ? close : null,
+      note,
+    },
+    { onConflict: "studio_id,effective_date,practitioner_id" },
+  );
+  if (error) return { ok: false, error: "Could not save this date override." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
+}
+
+// Reset a practitioner date override — deletes ONLY the (studio, practitioner,
+// date) row; the studio-wide date override for that date is untouched.
+export async function resetPractitionerOverrideAction(
+  formData: FormData,
+): Promise<AvailabilityActionResult> {
+  const { studio } = await assertOwnerWithStudio();
+  const supabase = await createClient();
+  const scope = await resolveScopeTarget(
+    supabase,
+    studio,
+    trimmed(formData.get("practitioner_id")),
+  );
+  if (!scope.ok) return scope;
+  if (scope.practitionerId === null)
+    return { ok: false, error: "Choose a practitioner to reset." };
+  const effectiveDate = trimmed(formData.get("effective_date"));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
+    return { ok: false, error: "A valid date is required." };
+
+  const { error } = await supabase
+    .from("studio_availability_overrides")
+    .delete()
+    .eq("studio_id", studio.id)
+    .eq("practitioner_id", scope.practitionerId)
+    .eq("effective_date", effectiveDate);
+  if (error) return { ok: false, error: "Could not reset this date override." };
+  revalidatePath("/settings/availability");
+  return { ok: true };
 }
 
 export async function createBlockoutAction(
@@ -292,20 +658,24 @@ export async function createBlockoutAction(
     if (error.code === "23P01") {
       // Recompute the UTC range the trigger used so the lookup
       // matches exactly. Half-open: [local midnight starts, local
-      // midnight (ends + 1)) in the studio's tz.
+      // midnight (ends + 1)) in the studio's tz. A full-day blockout is
+      // studio-wide (practitionerId = null), so the resource-aware lookup
+      // spans every practitioner.
       const startUtc = utcInstantFromLocal(starts, "00:00", studio.timezone);
       const endDateStr = addDaysToIso(ends, 1);
       const endUtc = utcInstantFromLocal(endDateStr, "00:00", studio.timezone);
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
-        startUtc.toISOString(),
-        endUtc.toISOString(),
-      );
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: null,
+        startsAt: startUtc.toISOString(),
+        endsAt: endUtc.toISOString(),
+      });
       return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to add blockout: ${error.message}` };
+    logAvailabilityDbError("create_blockout", "insert", error.code);
+    return { ok: false, error: "Could not add this full-day blockout. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -330,7 +700,10 @@ export async function deleteBlockoutAction(formData: FormData): Promise<void> {
     .delete()
     .eq("id", id)
     .eq("studio_id", studioId);
-  if (error) throw new Error(`Failed to delete blockout: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("delete_blockout", "delete", error.code);
+    throw new Error("Could not delete this full-day blockout. Please try again.");
+  }
   revalidatePath("/settings/availability");
 }
 
@@ -441,6 +814,15 @@ export async function createTimedBlockAction(
     return { ok: false, error: "Blocked time must end in the future." };
   }
 
+  // A timed block — including a whole-day one — may be studio-wide (NULL) or
+  // scoped to one practitioner. A practitioner-scoped all-day block takes that
+  // practitioner's entire day off without closing the studio for anyone else
+  // (the synchronizer keys the reservation to the practitioner, not the
+  // studio). This stays a studio_timed_blocks row with a local-midnight →
+  // next-local-midnight interval; studio_blockouts remain studio-wide date
+  // closures and are unaffected.
+  const scope = resolveSubmittedScope(formData, undefined);
+
   const supabase = await createClient();
   const { error } = await supabase.from("studio_timed_blocks").insert({
     studio_id: studio.id,
@@ -449,19 +831,24 @@ export async function createTimedBlockAction(
     category,
     private_note: privateNote,
     created_by: practitioner.id,
+    practitioner_id: scope,
   });
   if (error) {
     if (error.code === "23P01") {
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: scope,
         startsAt,
         endsAt,
-      );
+      });
       return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to add block: ${error.message}` };
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
+    logAvailabilityDbError("create_block", "insert", error.code);
+    return { ok: false, error: "Could not add this block. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -473,6 +860,11 @@ export async function updateTimedBlockAction(
 ): Promise<BlockActionResult> {
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
+  // The edit form sends the block's CURRENT mode explicitly, so editing
+  // category / note / date / scope preserves all-day (or timed) mode, and the
+  // owner converts modes only by toggling the checkbox. All-day builds the
+  // local-midnight → next-local-midnight range and ignores start/end.
+  const allDay = trimmed(formData.get("all_day")).toLowerCase() === "true";
   const dateStr = trimmed(formData.get("date"));
   const startLocal = trimmed(formData.get("start_local"));
   const endLocal = trimmed(formData.get("end_local"));
@@ -480,18 +872,21 @@ export async function updateTimedBlockAction(
   const privateNote = nullable(formData.get("private_note"));
 
   if (!id) return { ok: false, error: "Missing block id." };
-  if (!dateStr || !startLocal || !endLocal) {
+  if (!dateStr) return { ok: false, error: "Date is required." };
+  if (!allDay && (!startLocal || !endLocal)) {
     return { ok: false, error: "Date and start/end times are required." };
   }
   const todayLocal = todayInTz(studio.timezone);
   if (dateStr < todayLocal) {
     return { ok: false, error: "Blocked time cannot be created in the past." };
   }
-  if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
-    return { ok: false, error: "Times must be in HH:MM format." };
-  }
-  if (startLocal >= endLocal) {
-    return { ok: false, error: "End time must be after start time." };
+  if (!allDay) {
+    if (!TIME_RE.test(startLocal) || !TIME_RE.test(endLocal)) {
+      return { ok: false, error: "Times must be in HH:MM format." };
+    }
+    if (startLocal >= endLocal) {
+      return { ok: false, error: "End time must be after start time." };
+    }
   }
   if (
     !(TIMED_BLOCK_CATEGORIES as ReadonlyArray<string>).includes(category)
@@ -499,17 +894,30 @@ export async function updateTimedBlockAction(
     return { ok: false, error: "Invalid category." };
   }
 
-  const { startsAt, endsAt } = buildBlockUtcRange(
-    dateStr,
-    startLocal,
-    endLocal,
-    studio.timezone,
-  );
+  const { startsAt, endsAt } = allDay
+    ? buildAllDayBlockUtcRange(dateStr, studio.timezone)
+    : buildBlockUtcRange(dateStr, startLocal, endLocal, studio.timezone);
   if (new Date(endsAt).getTime() <= Date.now()) {
     return { ok: false, error: "Blocked time must end in the future." };
   }
 
   const supabase = await createClient();
+  // Load the existing row by id + authenticated studio BEFORE mutating. This
+  // confirms tenant ownership and gives us the current scope to preserve when
+  // the request omits practitioner_id (a Legacy form, or a tampered request).
+  const { data: existing, error: loadErr } = await supabase
+    .from("studio_timed_blocks")
+    .select("practitioner_id")
+    .eq("id", id)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (loadErr) {
+    logAvailabilityDbError("update_block", "load", loadErr.code);
+    return { ok: false, error: "Could not update this block. Please try again." };
+  }
+  if (!existing) return { ok: false, error: "Block not found." };
+  const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+
   const { error } = await supabase
     .from("studio_timed_blocks")
     .update({
@@ -517,6 +925,7 @@ export async function updateTimedBlockAction(
       ends_at: endsAt,
       category,
       private_note: privateNote,
+      practitioner_id: scope,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
@@ -526,18 +935,23 @@ export async function updateTimedBlockAction(
       // Exclude the block we are editing from the conflict lookup
       // so we don't report a self-conflict. The shadow still holds
       // this row's pre-rollback values because the UPDATE was
-      // aborted by the exclusion check.
-      const message = await lookupConflictMessage(
-        supabase,
-        studio.id,
-        studio.timezone,
+      // aborted by the exclusion check. Scope-aware: only the resource(s)
+      // this block actually reserves are considered.
+      const message = await describeTimedConflict(createAdminClient(), {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: scope,
         startsAt,
         endsAt,
-        { source_kind: "timed_block", source_id: id },
-      );
+        exclude: { kind: "timed_block", id },
+      });
       return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to update block: ${error.message}` };
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
+    logAvailabilityDbError("update_block", "update", error.code);
+    return { ok: false, error: "Could not update this block. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -546,19 +960,28 @@ export async function updateTimedBlockAction(
 
 export async function deleteTimedBlockAction(
   formData: FormData,
-): Promise<void> {
+): Promise<BlockActionResult> {
+  // Returns a BlockActionResult (not void) so a delete that fails the lock
+  // trigger or RLS surfaces inline instead of a masked production throw.
+  // Deleting a scoped block is always permitted — the lock/dormancy triggers
+  // fire, but no scope guard blocks removal, so a block whose practitioner
+  // later went inactive can still be cleaned up.
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
-  if (!id) throw new Error("Missing block id.");
+  if (!id) return { ok: false, error: "Missing block id." };
   const supabase = await createClient();
   const { error } = await supabase
     .from("studio_timed_blocks")
     .delete()
     .eq("id", id)
     .eq("studio_id", studio.id);
-  if (error) throw new Error(`Failed to delete block: ${error.message}`);
+  if (error) {
+    logAvailabilityDbError("delete_block", "delete", error.code);
+    return { ok: false, error: "Could not delete this block. Please try again." };
+  }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
+  return { ok: true };
 }
 
 // -------------------------------------------------------------------------
@@ -593,13 +1016,12 @@ function parseDaysOfWeek(value: FormDataEntryValue | null): number[] {
 }
 
 function horizonEndDateInStudioTz(tz: string): string {
-  // When a recurring break rule is created or updated, materialize
-  // forward to today + 186 days (the maximum possible public booking
-  // horizon: 6 months × 31 days). The daily cron also uses 186; both
-  // were bumped from 90 in migration 0036 (Booking Horizon v1) so a
-  // studio raising its booking horizon never sees a coverage gap in
-  // the days before the next cron run. Returns YYYY-MM-DD that the
-  // RPC parses as a date.
+  // When a recurring break rule is created/updated/toggled, materialize forward
+  // to today + the SINGLE recurring-break horizon = maxPublicBookingHorizonDays()
+  // (12 months × 31 = 372) + 14 days margin = 386. Derived from the max
+  // configurable public horizon so a studio raising its horizon never sees a
+  // coverage gap before the next cron run (3E-3; the stale 186/90 are removed).
+  // The DB timezone-rebuild uses the matching public.recurring_break_horizon_days().
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -608,7 +1030,7 @@ function horizonEndDateInStudioTz(tz: string): string {
   }).format(new Date());
   const [y, m, d] = today.split("-").map(Number);
   const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  noon.setUTCDate(noon.getUTCDate() + 186);
+  noon.setUTCDate(noon.getUTCDate() + maxPublicBookingHorizonDays() + 14);
   return `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
 }
 
@@ -616,10 +1038,12 @@ function horizonEndDateInStudioTz(tz: string): string {
 // 23P01. The previous implementation queried the shadow for the
 // soonest future non-recurring reservation, but that row is not
 // guaranteed to be the one whose interval actually overlapped a
-// projected occurrence. Returning a tailored time/date for an
-// unrelated reservation would mislead the owner. A precise lookup
-// (project the proposed pattern, check each occurrence, return the
-// first colliding one) is a possible Phase 3 enhancement.
+// projected occurrence. The precise lookup (project the proposed pattern in the
+// studio timezone, check each occurrence against the relevant resource set,
+// return the first colliding one) is now implemented in describeRecurringConflict
+// (find_recurring_break_conflict, migration 0139). This static string is the
+// safe fallback used only when the projection returns no row (e.g. the colliding
+// reservation was resolved between the failed write and the lookup).
 const RECURRING_BREAK_CONFLICT_MESSAGE =
   "This recurring break overlaps an existing appointment, blocked period, or full-day blockout. Edit or remove the conflicting item first, then try again.";
 
@@ -659,6 +1083,7 @@ export async function createRecurringBreakRuleAction(
     return { ok: false, error: "End time must be after start time." };
   }
 
+  const scope = resolveSubmittedScope(formData, undefined);
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   const { error } = await admin.rpc(
@@ -672,13 +1097,27 @@ export async function createRecurringBreakRuleAction(
       p_active: active,
       p_created_by: practitioner.id,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: scope,
     },
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: scope,
+        days,
+        startLocal,
+        endLocal,
+        horizonEnd,
+      });
+      return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to add recurring break: ${error.message}` };
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
+    logAvailabilityDbError("create_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not add this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -718,6 +1157,24 @@ export async function updateRecurringBreakRuleAction(
     return { ok: false, error: "End time must be after start time." };
   }
 
+  // Load the existing rule by id + authenticated studio first: confirms tenant
+  // ownership and yields the current scope to preserve when the request omits
+  // practitioner_id. Without this, the RPC's p_practitioner_id default (NULL)
+  // would silently widen a scoped rule to studio-wide on every edit.
+  const supabase = await createClient();
+  const { data: existing, error: loadErr } = await supabase
+    .from("studio_recurring_break_rules")
+    .select("practitioner_id")
+    .eq("id", id)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (loadErr) {
+    logAvailabilityDbError("update_recurring", "load", loadErr.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
+  }
+  if (!existing) return { ok: false, error: "Rule not found." };
+  const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   // p_studio_id is the asserted owner's studio so the RPC cannot
@@ -734,13 +1191,37 @@ export async function updateRecurringBreakRuleAction(
       p_end_local_time: endLocal,
       p_active: active,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: scope,
     },
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: scope,
+        days,
+        startLocal,
+        endLocal,
+        horizonEnd,
+        excludeRuleId: id,
+      });
+      return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+    // 23514 = enabling / reassigning a scoped rule to an inactive practitioner
+    // (guard_scoped_recurring_rule_capacity, migration 0139).
+    if (error.code === "23514") {
+      return {
+        ok: false,
+        error:
+          "This break is assigned to a practitioner who is no longer active. Reassign it before enabling it.",
+      };
+    }
+    const scopeMsg = scopeGuardMessage(error.code);
+    if (scopeMsg) return { ok: false, error: scopeMsg };
+    logAvailabilityDbError("update_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -760,15 +1241,22 @@ export async function toggleRecurringBreakRuleActiveAction(
   const supabase = await createClient();
   const { data: rule, error: lookupErr } = await supabase
     .from("studio_recurring_break_rules")
-    .select("label, days_of_week, start_local_time, end_local_time")
+    // 0137: MUST read practitioner_id and pass it back, or toggling active
+    // would reset a practitioner-scoped rule to studio-wide (the RPC's
+    // p_practitioner_id defaults to NULL).
+    .select("label, days_of_week, start_local_time, end_local_time, practitioner_id")
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (lookupErr) return { ok: false, error: lookupErr.message };
+  if (lookupErr) {
+    logAvailabilityDbError("toggle_recurring", "load", lookupErr.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
+  }
   if (!rule) return { ok: false, error: "Rule not found." };
 
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
+  const scope = rule.practitioner_id ?? null;
   const { error } = await admin.rpc(
     "update_recurring_break_rule_and_rematerialize",
     {
@@ -780,13 +1268,35 @@ export async function toggleRecurringBreakRuleActiveAction(
       p_end_local_time: rule.end_local_time,
       p_active: active,
       p_horizon_end: horizonEnd,
+      p_practitioner_id: scope, // preserve scope
     },
   );
   if (error) {
     if (error.code === "23P01") {
-      return { ok: false, error: RECURRING_BREAK_CONFLICT_MESSAGE };
+      const message = await describeRecurringConflict(admin, {
+        studioId: studio.id,
+        tz: studio.timezone,
+        format: resolveTimeFormat(studio),
+        practitionerId: scope,
+        days: rule.days_of_week,
+        startLocal: String(rule.start_local_time).slice(0, 5),
+        endLocal: String(rule.end_local_time).slice(0, 5),
+        horizonEnd,
+        excludeRuleId: id,
+      });
+      return { ok: false, error: message };
     }
-    return { ok: false, error: `Failed to update recurring break: ${error.message}` };
+    // 23514 = enabling / saving an active scoped rule whose practitioner is now
+    // inactive (guard_scoped_recurring_rule_capacity, migration 0139).
+    if (error.code === "23514") {
+      return {
+        ok: false,
+        error:
+          "This break is assigned to a practitioner who is no longer active. Reassign it before enabling it.",
+      };
+    }
+    logAvailabilityDbError("toggle_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -806,7 +1316,8 @@ export async function deleteRecurringBreakRuleAction(
     p_studio_id: studio.id,
   });
   if (error) {
-    return { ok: false, error: `Failed to delete recurring break: ${error.message}` };
+    logAvailabilityDbError("delete_recurring", "rpc", error.code);
+    return { ok: false, error: "Could not delete this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");

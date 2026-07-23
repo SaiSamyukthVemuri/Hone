@@ -149,13 +149,16 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
 // pending_invitation + a real local GoTrue user, so the 0081 handle_new_user
 // trigger creates the member practitioner. Used to prove owner-only surfaces deny
 // non-owners. Returns the login email.
-export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
+export async function seedE2eMember(
+  seed: E2eSeed,
+): Promise<{ email: string; displayName: string; practitionerId: string }> {
   const uniq = randomUUID().slice(0, 8);
   const email = `e2e-member-${seed.runId}-${uniq}@harness.local`;
+  const displayName = `E2E Member ${uniq}`;
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)
      values ($1, $2, 'practitioner', $3)`,
-    [seed.studioId, email, `E2E Member ${uniq}`],
+    [seed.studioId, email, displayName],
   );
   const response = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
     method: "POST",
@@ -196,7 +199,211 @@ export async function seedE2eMember(seed: E2eSeed): Promise<{ email: string }> {
   if (rows[0]?.role !== "practitioner") {
     throw new Error("seed failed: member practitioner was not provisioned");
   }
-  return { email };
+  const pr = await sql<{ id: string }>(
+    `select pr.id from public.practitioners pr
+       join auth.users u on u.id = pr.user_id
+      where pr.studio_id = $1 and lower(u.email) = lower($2)`,
+    [seed.studioId, email],
+  );
+  return { email, displayName, practitionerId: pr[0]!.id };
+}
+
+// PR B Part 2 — E2E helpers for the flag-ON owner schedule UI.
+export async function setStudioCapacityEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  // Runs as the local superuser, so the 0134 operator-only flag guard permits it.
+  await sql(
+    `update public.studios set practitioner_capacity_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
+export async function seedStudioWideDefault(
+  studioId: string,
+  dayOfWeek: number,
+  isOpen: boolean,
+  openTime: string | null,
+  closeTime: string | null,
+): Promise<void> {
+  await sql(
+    `insert into public.studio_availability_default
+       (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+     values ($1, $2, null, $3, $4, $5)
+     on conflict (studio_id, day_of_week, practitioner_id)
+     do update set is_open = excluded.is_open, open_time = excluded.open_time, close_time = excluded.close_time`,
+    [studioId, dayOfWeek, isOpen, openTime, closeTime],
+  );
+}
+
+// Seeds a practitioner-scoped weekday row (requires the flag ON + active
+// practitioner — the 0135 guard runs; this runs as superuser so RLS is bypassed
+// but the guard still applies).
+export async function seedPractitionerDefault(
+  studioId: string,
+  practitionerId: string,
+  dayOfWeek: number,
+  isOpen: boolean,
+  openTime: string | null,
+  closeTime: string | null,
+): Promise<void> {
+  await sql(
+    `insert into public.studio_availability_default
+       (studio_id, day_of_week, practitioner_id, is_open, open_time, close_time)
+     values ($1, $2, $3, $4, $5, $6)
+     on conflict (studio_id, day_of_week, practitioner_id)
+     do update set is_open = excluded.is_open, open_time = excluded.open_time, close_time = excluded.close_time`,
+    [studioId, dayOfWeek, practitionerId, isOpen, openTime, closeTime],
+  );
+}
+
+export async function getPractitionerWeekday(
+  studioId: string,
+  practitionerId: string,
+  dayOfWeek: number,
+): Promise<{ is_open: boolean; open_time: string | null; close_time: string | null } | null> {
+  const rows = await sql<{
+    is_open: boolean;
+    open_time: string | null;
+    close_time: string | null;
+  }>(
+    `select is_open, open_time, close_time from public.studio_availability_default
+      where studio_id = $1 and practitioner_id = $2 and day_of_week = $3`,
+    [studioId, practitionerId, dayOfWeek],
+  );
+  return rows[0] ?? null;
+}
+
+// PR B 3E — scoped block / recurring-break contract helpers (Studio B spec).
+export async function setPractitionerActive(
+  practitionerId: string,
+  active: boolean,
+): Promise<void> {
+  await sql(`update public.practitioners set active = $2 where id = $1`, [
+    practitionerId,
+    active,
+  ]);
+}
+
+export async function setStudioTimeFormat(
+  studioId: string,
+  format: "12h" | "24h",
+): Promise<void> {
+  await sql(`update public.studios set time_format_preference = $2 where id = $1`, [
+    studioId,
+    format,
+  ]);
+}
+
+export async function setStudioTimezone(studioId: string, tz: string): Promise<void> {
+  await sql(`update public.studios set timezone = $2 where id = $1`, [studioId, tz]);
+}
+
+export async function getTimedBlockScopes(
+  studioId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null }>> {
+  return sql(
+    `select id, practitioner_id from public.studio_timed_blocks where studio_id = $1 order by starts_at`,
+    [studioId],
+  );
+}
+
+// Query the EXACT new block by its unique marker (private note) + tenant/scope/
+// interval, so an assertion can never pass because of a row from another test
+// or a prior retry. Returns the matching rows (expect exactly one).
+export async function getTimedBlocksByNote(
+  studioId: string,
+  note: string,
+): Promise<
+  Array<{
+    id: string;
+    practitioner_id: string | null;
+    starts_at: string;
+    ends_at: string;
+    category: string;
+  }>
+> {
+  return sql(
+    `select id, practitioner_id, starts_at::text, ends_at::text, category
+       from public.studio_timed_blocks
+      where studio_id = $1 and private_note = $2
+      order by starts_at`,
+    [studioId, note],
+  );
+}
+
+// Confirm an appointment is unchanged (interval + status) after a nearby block
+// attempt — proves a rolled-back block write never touched the appointment.
+export async function getAppointmentInterval(
+  appointmentId: string,
+): Promise<{ starts_at: string; ends_at: string; status: string } | null> {
+  const rows = await sql<{ starts_at: string; ends_at: string; status: string }>(
+    `select starts_at::text, ends_at::text, status from public.appointments where id = $1`,
+    [appointmentId],
+  );
+  return rows[0] ?? null;
+}
+
+// resource_keys the given source materialized into the shadow (proves scoping).
+export async function getSourceReservationKeys(
+  sourceKind: string,
+  sourceId: string,
+): Promise<string[]> {
+  const rows = await sql<{ resource_key: string }>(
+    `select resource_key from public.studio_calendar_reservations
+       where source_kind = $1 and source_id = $2 order by resource_key`,
+    [sourceKind, sourceId],
+  );
+  return rows.map((r) => r.resource_key);
+}
+
+export async function getRecurringRuleScopes(
+  studioId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null; active: boolean; label: string }>> {
+  return sql(
+    `select id, practitioner_id, active, label from public.studio_recurring_break_rules
+       where studio_id = $1 order by created_at`,
+    [studioId],
+  );
+}
+
+// Seed an ACTIVE practitioner-scoped recurring rule directly (fires the guard,
+// so the practitioner must be active at seed time).
+export async function seedActiveScopedRule(
+  studioId: string,
+  practitionerId: string,
+  label: string,
+  days: number[],
+  start: string,
+  end: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `insert into public.studio_recurring_break_rules
+       (id, studio_id, label, days_of_week, start_local_time, end_local_time, active, practitioner_id)
+     values (gen_random_uuid(), $1, $2, $3::int[], $4, $5, true, $6) returning id`,
+    [studioId, label, `{${days.join(",")}}`, start, end, practitionerId],
+  );
+  return rows[0]!.id;
+}
+
+// Seed a confirmed appointment for a practitioner (drives the shadow so a
+// resource-aware conflict lookup has something to hit).
+export async function seedConfirmedAppointment(
+  studioId: string,
+  practitionerId: string,
+  clientId: string,
+  startIso: string,
+  endIso: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `insert into public.appointments
+       (id, studio_id, client_id, practitioner_id, starts_at, ends_at, duration_minutes,
+        buffer_minutes_snapshot, blocked_ends_at, status)
+     values (gen_random_uuid(), $1, $3, $2, $4, $5, 60, 0, $5, 'confirmed') returning id`,
+    [studioId, practitionerId, clientId, startIso, endIso],
+  );
+  return rows[0]!.id;
 }
 
 // PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
@@ -371,6 +578,29 @@ export async function setStudioCorrectionsEnabled(
   await sql(
     `update public.studios set clinical_corrections_enabled = $2 where id = $1`,
     [studioId, enabled],
+  );
+}
+
+// Reads the persisted weekly default availability rows (studio-wide +
+// per-practitioner). Used by the PR-B availability-save compatibility contract
+// to assert the real server action actually persisted through PostgREST.
+export async function getStudioWeeklyDefaults(
+  studioId: string,
+): Promise<
+  Array<{
+    day_of_week: number;
+    is_open: boolean;
+    open_time: string | null;
+    close_time: string | null;
+    practitioner_id: string | null;
+  }>
+> {
+  return sql(
+    `select day_of_week, is_open, open_time, close_time, practitioner_id
+       from public.studio_availability_default
+      where studio_id = $1
+      order by day_of_week`,
+    [studioId],
   );
 }
 

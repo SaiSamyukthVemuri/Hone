@@ -117,9 +117,22 @@ stay studio-wide. **Willow's flag stays `false` and is never flipped by this wor
 ### Q8 — Migration + rollback approach
 
 **Expand → verify → contract, all additive; one metadata-only constraint swap; no data
-loss.** Detailed below. Rollback for PR A = flip the flag off (instant, per-studio) and,
-if ever needed, drop the additive columns/table/constraints in reverse — no row is
-deleted or rewritten by the forward migration.
+loss.** Detailed below.
+
+**Rollback (corrected in PR B 3B-0).** The *structural* flag
+`practitioner_capacity_enabled` is NOT an instant kill-switch once a studio has live
+parallel appointments: flipping it OFF rematerializes them into one studio-wide resource,
+which the studio-wide exclusion rejects (`23P01`). Migration 0136 therefore separates the
+concerns into two operator flags — `practitioner_capacity_enabled` (structural model) and
+`practitioner_capacity_booking_enabled` (booking acceptance). The two booleans yield **three
+valid technical states** — `LEGACY` (F/F), `CAPACITY_READY_BOOKING_PAUSED` (T/F), `LIVE` (T/T);
+the invalid `capacity=false, booking=true` is rejected by a CHECK. "Configuring" vs "draining"
+is an *operational* reading of the paused state (reported via indicators like future confirmed
+appointments / retirement blockers), not a distinct persisted state. **The emergency rollback is flipping `booking` OFF (instant; existing parallel
+appointments stay valid; no rematerialization).** *Structural* deactivation is a preflighted,
+service-role-only retirement (`retire_practitioner_capacity`) that fails closed with reason
+codes if parallel data would collide. Dropping the additive columns/table/constraints in
+reverse remains possible — no row is deleted or rewritten by the forward migrations.
 
 ---
 
@@ -257,6 +270,21 @@ draft PRs.
 Then Part 4 (3-practitioner E2E on synthetic Studio B), Part 5 (feature controls + no-PII
 verifier), Part 6 (gates). **Stop before merging PR A, B, or C.** Final recommendation is
 for PR A only.
+
+### Scoped calendar sources (PR B 3C–3E)
+
+Timed blocks and recurring break rules/occurrences carry an optional `practitioner_id`
+(`NULL` = studio-wide; `= P` = only P; full-day blockouts stay studio-wide). One canonical
+`sync_scoped_calendar_reservation` materializes every source by the state table:
+**Legacy (capacity OFF) + studio-wide → one studio-keyed row; Legacy + scoped → ZERO rows
+(retained but DORMANT — never widened to a studio-wide closure); capacity ON + studio-wide →
+fan out to every practitioner; capacity ON + scoped → one `resource_key = P` row.** It
+delete-then-inserts inside the source transaction and does not swallow the GiST `23P01`, so any
+scope/time transition is atomic and a conflict rolls the source + shadow back together. Every
+structural-reservation mutation (source writes via the guard, `materialize_*`/`update_*` RPCs,
+and `rematerialize_studio_reservations`) first takes the shared per-studio transaction advisory
+lock (0136), so a scoped source cannot appear between a retirement preflight and deactivation.
+On re-enable, retained scoped sources rematerialize under their original practitioner scope.
 
 ---
 

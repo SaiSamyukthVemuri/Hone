@@ -97,13 +97,12 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0134 (practitioner-capacity foundation — additive
-    // resource_key + default-OFF flag + eligibility), on top of 0133
-    // (practitioner Move appointment RPC). 0134 is additive and is repo-only
-    // until its migration-first hosted apply — UNTIL then the live verifier's
-    // "Remote migration max" will (correctly) report expected 0134 vs the
-    // current remote, the intended pending-apply signal. This assertion still
-    // fails on the next new migration, forcing a conscious review of the verifier.
+    // Repo max advances to 0141 (onboarding v2 reconciliation), on top of the
+    // merged PR-B capacity stack 0135-0139 + onboarding 0140. All are repo-only
+    // until their hosted apply — UNTIL then the live verifier's "Remote
+    // migration max" will (correctly) report expected 0141 vs the current
+    // remote, the intended pending-apply signal. This assertion still fails on
+    // the next new migration, forcing a conscious review of the verifier.
     expect(nums[nums.length - 1]).toBe("0141");
   });
   it("0093 bucket private + policies/trigger", () => {
