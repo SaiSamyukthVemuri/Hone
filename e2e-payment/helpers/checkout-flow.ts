@@ -27,7 +27,7 @@ export async function closeModal(page: Page): Promise<void> {
 // and wait for the in-modal prepared confirmation. The 'ready' row now exists.
 export async function prepareInModal(modal: Locator): Promise<void> {
   await modal
-    .getByPlaceholder(/short note explaining the session payment/i)
+    .getByPlaceholder(/note explaining the session payment/i)
     .fill("E2E concurrency-safety session payment");
   await modal.getByRole("button", { name: /prepare session payment/i }).click();
   await expect(modal.getByText(/session payment prepared/i)).toBeVisible();
