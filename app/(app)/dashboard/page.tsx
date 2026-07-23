@@ -60,6 +60,10 @@ import {
   buildGettingStarted,
   getGettingStartedSignals,
 } from "@/lib/onboarding/getting-started";
+import { buildOnboardingModel } from "@/lib/onboarding/steps";
+import { getOnboardingSignals } from "@/lib/onboarding/signals";
+import { getOnboardingRow, toPersisted } from "@/lib/onboarding/state";
+import { OnboardingSurface } from "./onboarding/OnboardingSurface";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
   Appointment,
@@ -383,6 +387,25 @@ export default async function DashboardPage({
     gettingStarted.autoTotal > 0 &&
     gettingStarted.autoDone === gettingStarted.autoTotal;
 
+  // Onboarding v2 (guided welcome wizard + pinned setup-progress card). Strictly
+  // opt-in per studio and owner-only: when the flag is off, NONE of this runs
+  // and the dashboard renders exactly as today (the getting-started link card /
+  // footer below). Read as `=== true` so an undefined flag is off.
+  const onboardingV2On = isOwner && studio.onboarding_v2_enabled === true;
+  const onboarding = onboardingV2On
+    ? await (async () => {
+        const [signals, row] = await Promise.all([
+          getOnboardingSignals(studio),
+          getOnboardingRow(studio.id),
+        ]);
+        const model = buildOnboardingModel(signals, toPersisted(row));
+        // Auto-open on load until the owner dismisses it or finishes; the pinned
+        // card re-opens it thereafter.
+        const initialOpen = !model.dismissed && !model.isComplete;
+        return { model, initialOpen };
+      })()
+    : null;
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-1">
@@ -392,6 +415,16 @@ export default async function DashboardPage({
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
       </section>
+
+      {/* Onboarding v2: pinned setup-progress card + auto-opening guided wizard,
+          above the fold. Opt-in per studio + owner-only; supersedes the legacy
+          getting-started link/footer below (which is gated off when v2 is on). */}
+      {onboarding && (
+        <OnboardingSurface
+          model={onboarding.model}
+          initialOpen={onboarding.initialOpen}
+        />
+      )}
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -447,7 +480,7 @@ export default async function DashboardPage({
           link card, never a blocking modal. PR #238: shown here, under
           Today, only while auto-detected steps remain; the full
           checklist always lives on /getting-started. */}
-      {!setupComplete && (
+      {!onboardingV2On && !setupComplete && (
         <Link
           href="/getting-started"
           className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
@@ -501,7 +534,7 @@ export default async function DashboardPage({
       {/* PR #238: completed setup collapses to a quiet footer link;
           the /getting-started route stays reachable (also in the
           account/mobile menus). */}
-      {setupComplete && (
+      {!onboardingV2On && setupComplete && (
         <p className="text-xs text-neutral-500">
           Setup complete.{" "}
           <Link

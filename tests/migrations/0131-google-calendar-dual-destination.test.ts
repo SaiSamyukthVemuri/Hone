@@ -13,23 +13,34 @@ const SQL = readFileSync(
 );
 
 describe("0131 — repo migration-max tripwire", () => {
-  it("advances the repo migration max to 0142 (Part 4 booking; 0140 is the SEPARATE onboarding branch)", () => {
+  // INTEGRATION RESOLUTION (RC branch): the integrated release candidate carries
+  // the FULL union of both stacks — capacity 0135-0139 (PR B) + 0142-0150 (Part 4)
+  // AND onboarding 0140-0141 (PR #459). Unlike either source branch, 0140 IS
+  // present here. Neither source side was correct for the combined repo: #460
+  // asserted 0140 absent; #459 asserted 0135-0139/0142+ absent. This union asserts
+  // the complete 0132-0150 chain and trips only on 0151+.
+  it("advances the repo migration max to 0150 (integrated RC: capacity 0135-0139/0142-0150 + onboarding 0140-0141)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Part 4 stacks 0142 on the PR B stack; 0140 is deliberately owned by the
-    // onboarding branch and is ABSENT here (intentional gap — do not depend on it).
     expect(nums[nums.length - 1]).toBe("0150"); // 0150 = single-row schedule writers locked
+    expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
+    // Capacity PR B stack (0135-0139).
     expect(files.some((f) => f.startsWith("0135_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0136_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0137_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0138_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0139_"))).toBe(true);
+    // Onboarding v2 (0140 foundation + 0141 invitation reconciliation) — PRESENT
+    // in the integrated RC (this is the union that neither source branch had).
+    expect(files.some((f) => f.startsWith("0140_"))).toBe(true);
+    expect(files.some((f) => f.startsWith("0141_"))).toBe(true);
+    // Capacity Part 4 internal-booking stack (0142-0150).
     expect(files.some((f) => f.startsWith("0142_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0143_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0144_"))).toBe(true);
@@ -39,9 +50,7 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0148_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0149_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0150_"))).toBe(true);
-    // 0140 is intentionally NOT on this branch.
-    expect(files.some((f) => f.startsWith("0140_"))).toBe(false);
-    // Nothing 0142+ yet. Bump this tripwire consciously when adding migrations.
+    // Nothing 0151+ yet. Bump this tripwire consciously when adding migrations.
     expect(files.filter((f) => /^01(5[1-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });

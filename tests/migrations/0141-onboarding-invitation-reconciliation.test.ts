@@ -1,0 +1,181 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+// Source/structural contract for migration 0141 (invitation reconciliation +
+// one authoritative consent). Complements the behavioural DB suite
+// (tests/db/invitation-reconciliation.db.test.ts).
+
+const MIGRATIONS_DIR = join(process.cwd(), "supabase/migrations");
+const FILES = readdirSync(MIGRATIONS_DIR);
+const FILE = FILES.find((f) => f.startsWith("0141_"));
+const SQL = FILE ? readFileSync(join(MIGRATIONS_DIR, FILE), "utf8") : "";
+const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
+
+function fnBlock(name: string): string {
+  return (
+    CODE.match(
+      new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\$\\$;`, "i"),
+    )?.[0] ?? ""
+  );
+}
+
+describe("0141 — file present + single transaction", () => {
+  it("exists with a purpose-encoding filename", () => {
+    expect(FILE).toBe("0141_onboarding_invitation_reconciliation.sql");
+    expect(SQL.length).toBeGreaterThan(2000);
+  });
+  it("installs as ONE transaction", () => {
+    expect(CODE).toMatch(/^\s*begin;/im);
+    expect(CODE.trimEnd().endsWith("commit;")).toBe(true);
+  });
+});
+
+describe("0141 — Defect 2: handle_new_user no longer fabricates consent", () => {
+  it("handle_new_user is a NO-OP: no membership insert, no acceptance stamp", () => {
+    const h = fnBlock("handle_new_user\\(\\)");
+    expect(h).toBeTruthy();
+    expect(h).not.toMatch(/insert into public\.practitioners/i);
+    expect(h).not.toMatch(/terms_accepted_at/i);
+    expect(h).not.toMatch(/current_terms_version/i);
+    expect(h).toMatch(/return new;/i);
+  });
+});
+
+describe("0141 — Defect 1: acceptance command is service-role only", () => {
+  it("admin_accept_pending_invitation(uuid) is SECURITY DEFINER + pinned path", () => {
+    const a = fnBlock("admin_accept_pending_invitation\\(p_user_id uuid\\)");
+    expect(a).toMatch(/security definer/i);
+    expect(a).toMatch(/set search_path = pg_catalog, pg_temp/i);
+    // Derives the verified email from the passed user id; no caller email/etc.
+    expect(a).toMatch(/select email into v_email from auth\.users where id = p_user_id/i);
+  });
+  it("is REVOKED from public/anon/authenticated and GRANTED to service_role", () => {
+    // Named in the service-role-only revoke/grant loop.
+    expect(CODE).toContain("public.admin_accept_pending_invitation(uuid)");
+    expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+    expect(CODE).toMatch(/revoke execute on function %s from anon/i);
+    expect(CODE).toMatch(/revoke execute on function %s from public/i);
+    expect(CODE).toMatch(/grant execute on function %s to service_role/i);
+  });
+  it("there is NO authenticated-callable accept_my_pending_invitation", () => {
+    expect(CODE).not.toMatch(/grant execute on function public\.accept_my_pending_invitation/i);
+  });
+});
+
+describe("0141 — reconcile stays authenticated + self-scoped", () => {
+  it("reconcile + my_pending_invitation are SECURITY DEFINER, granted to authenticated only", () => {
+    for (const fn of ["reconcile_my_pending_invitation\\(\\)", "my_pending_invitation\\(\\)"]) {
+      const b = fnBlock(fn);
+      expect(b).toMatch(/security definer/i);
+      expect(b).toMatch(/auth\.uid\(\)/);
+    }
+    expect(CODE).toMatch(/grant execute on function %s to authenticated/i);
+    expect(CODE).toMatch(/revoke execute on function %s from anon/i);
+  });
+});
+
+describe("0141 — no fabricated consent (evidence rules)", () => {
+  it("reconcile copies a SINGLE current-version row's evidence, never now()", () => {
+    const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
+    expect(r).toMatch(/terms_version = public\.current_terms_version\(\)/i);
+    expect(r).toMatch(/privacy_version = public\.current_privacy_version\(\)/i);
+    expect(r).toMatch(/v_ev\.terms_accepted_at/);
+    // same-user INACTIVE target -> acceptance_required (not an auto-link).
+    expect(r).toMatch(/v_same\.active[\s\S]*?acceptance_required/i);
+  });
+  it("admin_accept stamps the ACTUAL transaction time + current versions", () => {
+    const a = fnBlock("admin_accept_pending_invitation\\(p_user_id uuid\\)");
+    expect(a).toMatch(/v_now timestamptz := now\(\)/i);
+    expect(a).toMatch(/v_now, public\.current_terms_version\(\)/);
+    expect(a).toMatch(/v_now, public\.current_privacy_version\(\)/);
+  });
+});
+
+describe("0141 — Defect 3: linker reactivates in place (UPDATE, never dup INSERT)", () => {
+  it("link_invited_membership UPDATEs a same-user row, else INSERTs", () => {
+    const l = fnBlock("link_invited_membership\\(");
+    expect(l).toMatch(/where studio_id = p_invite\.studio_id and user_id = p_uid/i);
+    expect(l).toMatch(/if found then[\s\S]*?update public\.practitioners set/i);
+    expect(l).toMatch(/else[\s\S]*?insert into public\.practitioners/i);
+    expect(l).toMatch(/active\s*=\s*true/i);
+  });
+  it("never overwrites another user's membership (conflict guard)", () => {
+    const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
+    expect(r).toMatch(/user_id is distinct from v_uid[\s\S]*?conflict/i);
+  });
+});
+
+describe("0141 — Defect 5: no two active practitioners sharing one login email", () => {
+  it("reconcile's conflict guard keys on an ACTIVE another-user row", () => {
+    const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
+    expect(r).toMatch(
+      /user_id is distinct from v_uid\s*\n?\s*and active[\s\S]*?'conflict'/i,
+    );
+  });
+  it("admin_accept re-checks the ACTIVE another-user conflict at reactivation time, unconditionally", () => {
+    const a = fnBlock("admin_accept_pending_invitation\\(p_user_id uuid\\)");
+    // The guard keys on an ACTIVE row held by a distinct user under the invited
+    // email, returns 'conflict', and runs BEFORE the link/reactivate call.
+    expect(a).toMatch(
+      /user_id is distinct from p_user_id\s*\n?\s*and active[\s\S]*?'conflict'/i,
+    );
+    const guardIdx = a.search(/and active\s*\n?\s*limit 1;[\s\S]*?'conflict'/i);
+    const linkIdx = a.indexOf("link_invited_membership");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(linkIdx).toBeGreaterThan(guardIdx);
+    // The conflict guard is NOT nested inside the already-active early return
+    // (it runs on the inactive-same-user reactivation path too): the active-
+    // same-user branch closes before the guard's distinct-user predicate.
+    const activeReturnIdx = a.indexOf("'already_linked'");
+    const distinctIdx = a.indexOf("is distinct from p_user_id");
+    expect(activeReturnIdx).toBeGreaterThan(-1);
+    expect(distinctIdx).toBeGreaterThan(activeReturnIdx);
+  });
+});
+
+describe("0141 — concurrency + authorization posture", () => {
+  it("serializes per-email with an advisory xact lock + FOR UPDATE", () => {
+    for (const fn of ["reconcile_my_pending_invitation\\(\\)", "admin_accept_pending_invitation\\(p_user_id uuid\\)"]) {
+      const b = fnBlock(fn);
+      expect(b).toMatch(/pg_advisory_xact_lock\(hashtext\('hone:invite:'/i);
+      expect(b).toMatch(/for update/i);
+    }
+  });
+  it("internal helpers + version fns are execute-locked from all browser roles", () => {
+    expect(CODE).toContain("public.link_invited_membership(");
+    expect(CODE).toContain("public.current_terms_version()");
+    expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+  });
+});
+
+describe("0141 — Defect 1: truthful welcome-email attempt state machine", () => {
+  it("claim mints a fresh attempt_id, flips to 'sending', returns the attempt_id", () => {
+    const c = fnBlock("claim_welcome_email_attempt\\(p_studio_id uuid\\)");
+    expect(c).toMatch(/returns uuid/i);
+    expect(c).toMatch(/security definer/i);
+    expect(c).toMatch(/welcome_email_status = 'sending'/i);
+    expect(c).toMatch(/welcome_email_attempt_id = gen_random_uuid\(\)/i);
+    // Only claims when no LIVE attempt is in progress. The stale fence is a
+    // CONSERVATIVE 15 minutes (recovers a crashed attempt) — NOT 30s, which
+    // could duplicate a merely-slow in-flight provider send.
+    expect(c).toMatch(/welcome_email_status <> 'sending'[\s\S]*?welcome_email_last_attempted_at < now\(\) - interval '15 minutes'/i);
+    expect(c).not.toMatch(/interval '30 seconds'/i);
+    expect(c).toMatch(/returning welcome_email_attempt_id into v_attempt/i);
+  });
+  it("record is a compare-and-set on attempt_id; last_sent_at only on 'sent'", () => {
+    const r = fnBlock("record_welcome_email_result\\(");
+    expect(r).toMatch(/security definer/i);
+    // CAS: only the current attempt may write the result.
+    expect(r).toMatch(/where studio_id = p_studio_id\s*and welcome_email_attempt_id = p_attempt_id/i);
+    expect(r).toMatch(/welcome_email_last_sent_at = case[\s\S]*?when p_status = 'sent' then now\(\)/i);
+    // Rejects an invalid status value.
+    expect(r).toMatch(/p_status not in \('not_sent', 'sent', 'failed'\)/i);
+  });
+  it("claim + record are service-role only", () => {
+    expect(CODE).toContain("public.claim_welcome_email_attempt(uuid)");
+    expect(CODE).toContain("public.record_welcome_email_result(uuid, uuid, text)");
+    expect(CODE).toMatch(/revoke execute on function %s from authenticated/i);
+    expect(CODE).toMatch(/grant execute on function %s to service_role/i);
+  });
+});

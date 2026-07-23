@@ -96,6 +96,8 @@ const CURATED_TABLES = {
   treatment_images: "TreatmentImage",
   // Migration 0126 (Willow PR A): dedicated consultation + skin/hair clinical notes.
   client_clinical_notes: "ClientClinicalNote",
+  // Migration 0140 (first-time onboarding): per-studio resumable wizard state.
+  studio_onboarding: "StudioOnboarding",
 };
 
 // Recently added columns that MUST exist in both the database and

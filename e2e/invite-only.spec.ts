@@ -29,6 +29,41 @@ test.describe("invite-only login page", () => {
       page.getByRole("link", { name: /sign up|create account|create studio|start free/i }),
     ).toHaveCount(0);
   });
+
+  test("the consent gate reads as invited-email confirmation, not legal acceptance", async ({
+    page,
+  }) => {
+    await page.goto("/login");
+
+    // The checkbox label frames itself as identity confirmation, not acceptance.
+    await expect(
+      page.getByText(
+        /I['’]m using the email address my studio invitation was sent to\./,
+      ),
+    ).toBeVisible();
+    // Terms/Privacy appear only as informational links with acceptance deferred
+    // to when the owner actually joins a studio.
+    await expect(page.getByRole("link", { name: "Terms of Service" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Privacy Policy" })).toBeVisible();
+    await expect(
+      page.getByText(/confirm the current versions when you join a studio/i),
+    ).toBeVisible();
+
+    // The stale legal-acceptance phrasing never renders anywhere on the page.
+    await expect(
+      page.getByText(/agree to the Terms of Service and Privacy Policy/i),
+    ).toHaveCount(0);
+
+    // The gate is the checkbox: the Send button is disabled until the invited-
+    // email confirmation is ticked, then enabled — no acceptance is implied.
+    const sendBtn = page.getByRole("button", { name: /send magic link/i });
+    await page.locator("#login-email").fill("someone@studio.com");
+    await expect(sendBtn).toBeDisabled();
+    await page
+      .getByRole("checkbox", { name: /using my invited email address/i })
+      .check();
+    await expect(sendBtn).toBeEnabled();
+  });
 });
 
 test.describe("no-studio authenticated user is gated", () => {
@@ -42,7 +77,7 @@ test.describe("no-studio authenticated user is gated", () => {
     // emails; the account simply has no studio.
     await page.goto("/login");
     await page
-      .getByLabel("Agree to Terms of Service and Privacy Policy")
+      .getByLabel("I am using my invited email address")
       .check();
     await page.locator("#login-email").fill(email);
     const seen = await listMessageIds(email);

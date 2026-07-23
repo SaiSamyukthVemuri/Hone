@@ -47,7 +47,7 @@ export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
 // Real magic-link login for any seeded studio member (owner or practitioner).
 export async function loginByMagicLink(page: Page, email: string): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel("Agree to Terms of Service and Privacy Policy").check();
+  await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
   // Magic links are single-use: snapshot the inbox BEFORE requesting
   // so a repeat login (new context/device) waits for the fresh link.

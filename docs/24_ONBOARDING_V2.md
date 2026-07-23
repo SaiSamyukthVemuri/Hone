@@ -1,0 +1,362 @@
+# 24 — First-time studio onboarding (v2)
+
+Guided first-run experience for a new studio **owner**: welcome email → auto-opening
+resumable dashboard wizard → pinned setup-progress card → celebration, plus an
+admin invite/onboarding status view and an existing-account invitation
+reconciliation path.
+
+**Status:** built behind a per-studio flag, **default OFF**. Migrations
+0140–0141 are **repo-only** (not hosted-applied). Nothing is enabled for any
+production studio; Willow is untouched. See PR #459.
+
+---
+
+## 1. Feature flag & rollout
+
+`studios.onboarding_v2_enabled` — additive `boolean not null default false`
+(migration 0140). While it is not exactly `true`, the studio sees today's
+experience byte-for-byte (the legacy getting-started link/footer; no wizard, no
+welcome email, no celebration). Pinned by
+`tests/app/dashboard/onboarding-flag-off-contract.test.ts`.
+
+- **Operator-controlled.** A `SECURITY INVOKER` guard trigger
+  (`guard_onboarding_flag_activation`) rejects any change to the flag by a
+  browser role (anon/authenticated, studio owners included) with `42501`.
+  Enable it **only** via service role / operator SQL, or at studio-create time
+  (the admin wizard checkbox, which inserts with the flag set).
+- **Enable one studio (operator):**
+  ```sql
+  update public.studios set onboarding_v2_enabled = true where id = '<studio-id>';
+  ```
+  Rollback = set it back to `false` (instant, per studio; no data rewrite).
+- Read it as `studio.onboarding_v2_enabled === true` (undefined ⇒ off). The
+  owner dashboard reads it off a `select *` studio object, so it is
+  deployment-skew-safe; the admin studio-detail page reads it (and
+  `studio_onboarding`) separately and tolerates their absence.
+
+## 2. Migrations & deployment order
+
+| # | Adds | Hosted-applied? |
+|---|---|---|
+| 0140 `studio_onboarding` | flag + `public.studio_onboarding` state table (RLS member-read/owner-write, guard trigger) | **No** (repo-only) |
+| 0141 `onboarding_invitation_reconciliation` | reconcile (authenticated) + `admin_accept` (service-role) + read RPCs + welcome-email claim + centralized policy versions; makes `handle_new_user` a no-op | **No** (repo-only) |
+
+Both are additive, single-transaction. Required cross-PR apply order (do not
+merge/apply out of order):
+
+```
+0135–0139  PR #458 (per-practitioner availability)
+0140–0141  PR #459 (onboarding: state + reconciliation)   ← this work
+0142       PR #460 (internal booking; renumbered from 0141)
+```
+
+**Deployment order (APP-FIRST for 0141):**
+- **0140** (flag + state table) is a pure additive column/table; the app is
+  deployment-skew-safe (reads tolerate the column/table being absent), so 0140
+  can go migration-first or app-first.
+- **0141 MUST be APP-FIRST.** It replaces `handle_new_user` with a no-op, so
+  provisioning + acceptance move to the app (`/auth/callback` reconcile +
+  `/accept-invitation`). Deploy the reconciliation-capable app **first**, then
+  apply 0141.
+
+**Both deployment orders fail safely** (no data loss either way):
+- **App-first (mandated):** during the window the app has reconciliation and the
+  old trigger still provisions — no duplication (reconcile sees the invite
+  already accepted → `already_linked`). After 0141, new invited users go through
+  explicit acceptance. Zero stranding.
+- **Migration-first (forbidden operationally):** no-op trigger + an app without
+  reconciliation → a new invited user gets no membership and lands on
+  `/no-access`, but the invitation stays **pending and fully recoverable** — the
+  next sign-in once the app is live provisions them. Safe (a safe page, no
+  corruption), just avoidable.
+- **Rollback:** reverting 0141 restores the old provisioning trigger; existing
+  memberships are untouched. Reverting 0140 leaves the app functional (onboarding
+  degrades to off, skew-safe).
+
+## 3. Admin studio creation
+
+`/admin/studios/new` → `createStudioWithOwnerInvite`. New opt-in checkbox
+**"Enable guided onboarding"**:
+
+- **Off (default):** byte-for-byte today's — flag stays false, **no** welcome
+  email, **no** `studio_onboarding` seed row.
+- **On:** sets `onboarding_v2_enabled` at insert, then (best-effort, never blocks
+  the create) sends the welcome email and seeds `studio_onboarding`. Emits the
+  `studio_created` analytics event regardless.
+
+**Welcome email** (`lib/email/templates/welcome.ts`): ONE truthful invitation
+email for **both** new and existing accounts (no account-variant is inferred).
+At creation the owner has been **invited**, not added — so the copy says
+"you've been invited", mentions using an existing account if they have one, and
+notes they'll confirm the current Terms/Privacy when they join. It never claims
+access is complete.
+
+## 4. Email delivery / recovery / resend runbook
+
+- **Truthful state machine:** `welcome_email_status` ∈ `not_sent` (never
+  attempted / provider unconfigured) → `sending` (a live attempt owns the claim)
+  → `sent` (provider accepted) | `failed`. **Never `delivered`** — there is no
+  delivery evidence (no Resend webhook / pixel; deliberate clinical-data privacy
+  posture). `welcome_email_last_attempted_at` is the last **claim** time;
+  `welcome_email_last_sent_at` is set **only on a genuine `sent`**, never on a
+  mere attempt.
+- **Attempt-id single flight + CAS:** `claim_welcome_email_attempt(p_studio_id)`
+  (service-role only) atomically flips `→ sending`, mints a fresh
+  `welcome_email_attempt_id`, and returns it to the **winning** caller only
+  (NULL to a caller that lost the race). `record_welcome_email_result(studio,
+  attempt_id, status)` is a **compare-and-set on `attempt_id`**, so a stale/slow
+  attempt can never overwrite a newer retry, and `last_sent_at` is stamped only
+  when `status = 'sent'`.
+- **Conservative stale fence (15 minutes).** The live-attempt window recovers
+  ONLY a crashed attempt (status stuck at `sending`). It is a deliberately large
+  15 minutes so a merely **slow** in-flight provider send is never treated as
+  stale and can never be duplicated (the earlier 30s window could let a >30s send
+  spawn a second delivery). A genuinely stuck attempt self-heals after 15m; faster
+  recovery, if ever needed, is an explicit operator action, not a shorter fence.
+- **Application result** (`deliverWelcomeEmail` → `WelcomeEmailResult`):
+  `sent` | `failed` | `not_configured` (no transport; nothing sent) |
+  `already_in_progress` (lost the single-flight race; nothing sent). Every
+  Supabase `{ error }` is inspected — a claim/stamp DB failure returns `failed`
+  and **never** masquerades as `sent`; a caller that doesn't own the claim never
+  reports `sent`.
+- **Trusted-only fields:** `welcome_email_status`, `welcome_email_attempt_id`,
+  `welcome_email_last_attempted_at`, `welcome_email_last_sent_at` are protected by
+  the consolidated `guard_onboarding_lifecycle_fields` trigger — a browser
+  (anon/authenticated) INSERT/UPDATE that sets or changes any of them (e.g. forging
+  `status='sent'`, or setting/replacing/clearing the attempt id/timestamps) is
+  rejected with SQLSTATE 42501. Only the service-role claim/result commands +
+  provisioning write them; normal wizard navigation is unaffected.
+- **Bounded logging:** failures log only `welcome_email_error:<stage>:<safe_code>`
+  (stages `claim`/`send`/`stamp`; codes `write_failed`/`provider_rejected`/
+  `provider_exception`). Never the provider error object, recipient address, or
+  DB text.
+- **Dev/preview:** the transport is null (no key), so nothing sends → the claim
+  is reverted to `not_sent` and the result is `not_configured`; status is
+  recorded honestly. Studio creation never depends on email.
+- **Resend:** admin studio-detail page → **Resend welcome email**
+  (`resendWelcomeEmailAction`, operator-only). The operator message distinguishes
+  sent / failed / not-configured / already-in-progress and leaks no raw text. The
+  **audit outcome** is truthful (closed set from migration 0113): `sent →
+  succeeded`, `failed → failed`, `not_configured → blocked`, `already_in_progress
+  → blocked` (nothing sent = a prevented/no-op send, not a success); the exact
+  result is preserved verbatim in `metadata.welcome_email_result`.
+- **"Accepted"** is derived from `pending_invitations.status`, not from email.
+- **Fake transport** (E2E): `HONE_E2E_FAKE_RESEND=1` (server-only, refused in any
+  deployed runtime) selects `lib/email/e2e-fake-resend.ts`. Mode is chosen
+  **per-recipient** from the `owner_email` local-part prefix — `reject+…` /
+  `throw+…` / `failonce+…` (fail once then succeed, proving retry), default
+  success — so one server run exercises every outcome; a forcing
+  `HONE_E2E_FAKE_RESEND_MODE` env overrides it for unit tests.
+
+## 5. Existing-user invitation reconciliation (migration 0141)
+
+**Provisioning + consent happen at sign-in, with exactly ONE authoritative
+acceptance event.** `handle_new_user` is a **no-op** — Auth-user creation
+(magic-link OR Google OAuth) never creates a membership or stamps acceptance
+(that fabricated consent). This unifies new and existing users: both are
+provisioned at sign-in.
+
+**RPC grants (identity always derived internally — the browser passes no
+email/studio/role/timestamps/versions):**
+
+| RPC | Caller | Role |
+|---|---|---|
+| `reconcile_my_pending_invitation()` | `/auth/callback` (authenticated) | `authenticated` |
+| `my_pending_invitation()` | `/accept-invitation` page read (authenticated) | `authenticated` |
+| **`admin_accept_pending_invitation(p_user_id)`** | `/accept-invitation` server action via the admin client | **`service_role` ONLY** |
+| `claim_welcome_email_attempt(p_studio_id)` | send adapter | `service_role` ONLY |
+| `link_invited_membership(...)`, `current_terms_version()`, `current_privacy_version()` | internal | no browser execute |
+
+- **`reconcile`** (auto path): links **only** by copying a **single** existing
+  practitioner row with **both** current-version terms **and** privacy (the four
+  exact values — **never `now()`**). No reusable evidence, or a same-user
+  **inactive** target row → `acceptance_required`. Never stamps fresh acceptance.
+- **`admin_accept`** (the ONE authoritative acceptance): service-role only, so
+  the browser cannot self-accept. The `/accept-invitation` server action
+  validates the unchecked-by-default current-policy checkbox, resolves the user
+  from the session, and passes **only** that user id. It stamps the **actual
+  transaction time** + current versions, and REACTIVATES a same-user inactive
+  target row **in place** (UPDATE — never a second INSERT).
+
+**Target-state resolution order** (both RPCs): (1) same-user membership in the
+target studio (active → `already_linked`; inactive → reactivate/`acceptance_
+required`); (2) **an ACTIVE row held by a different user under the invited email
+→ `conflict`**; (3) none → insert. Policy versions are centralized; per-email
+advisory xact lock + `FOR UPDATE` for concurrency; `accepted_at` is consumption
+time, distinct from the legal `terms_accepted_at`.
+
+**Shared-email conflict policy (no two active practitioners on one login email).**
+Two active practitioner rows in one studio sharing a login email is not a
+supported product state. The conflict guard therefore keys on an **active**
+distinct-user row under the invited email and, critically, `admin_accept` runs
+it **unconditionally** — including on the same-user **inactive-row reactivation**
+path — so reactivating a caller's inactive row never silently produces a second
+active row sharing the email. Such a case returns `conflict`
+(→ `/no-access?reason=invite-conflict`) for **operator cleanup**; nothing is
+mutated. An *inactive* other-user row is not a hazard (reactivation still leaves
+one active row), so it proceeds. `reconcile` and `admin_accept` use the same
+active-keyed predicate, so the auto-link and explicit-accept paths agree end to
+end. A `user_id` is never overwritten.
+
+**Login page:** the checkbox is an **identity / invitation confirmation**, not a
+legal-acceptance control — it confirms the person is using their invited email;
+the current Terms/Privacy versions are confirmed later at `/accept-invitation`
+(the ONE authoritative acceptance). The un-ticked-box error says exactly that
+("Confirm that you're using the email address your studio invitation was sent
+to."), never "agree to the Terms of Service and Privacy Policy"; Terms/Privacy
+stay as informational links.
+
+**Routing (`/auth/callback`):**
+
+| RPC status | Destination |
+|---|---|
+| `linked` / `already_linked` (single membership) | `/dashboard` |
+| `linked` / `already_linked` (+ `choose_studio`) | clear selection cookie → `/dashboard` → chooser |
+| `acceptance_required` | `/accept-invitation` |
+| `conflict` | `/no-access?reason=invite-conflict` |
+| `ambiguous` | `/no-access?reason=invite-ambiguous` |
+| `no_invitation` / other | default (`/dashboard`) |
+
+Reconciliation **never blocks sign-in** (failures fall through to the default).
+
+### `/accept-invitation`
+
+Authenticated (the `!user` gate still applies) but exempt from the no-studio gate
+in middleware, so a pending-invite user with no membership can reach it. Shows
+only safe self-scoped info (studio name + role). An **unchecked-by-default**
+current-policy checkbox gates the submit — **no app access before affirmative
+consent**.
+
+## 6. Multi-studio chooser
+
+Hone supports multiple active memberships. After reconciliation:
+
+- **0 prior memberships** → continue to the new studio.
+- **≥1 prior** → **do not auto-select**; the callback clears
+  `hone_selected_studio` so the middleware routes 2+ memberships (no valid
+  selection) to the chooser (`/no-access?reason=multiple-studios`). Both
+  memberships are shown; nothing is auto-picked.
+
+## 7. `/no-access` troubleshooting
+
+Safe, self-scoped copy (no DB/Auth text, no cross-tenant info):
+
+- `?reason=multiple-studios` → the studio chooser.
+- `?reason=invite-conflict` → "couldn't finish setting up your access; contact
+  the studio or Hone support." (The invited email already has a membership held
+  by a different account.)
+- `?reason=invite-ambiguous` → more than one pending invitation for the account;
+  contact support.
+- no reason (0 memberships) → the invite-only gate.
+
+## 8. Analytics event catalogue
+
+Server-side only, opaque-id, allowlisted properties (`lib/analytics/server.ts`):
+
+| Event | Actor | Properties | Site |
+|---|---|---|---|
+| `studio_created` | studio | `studio_id` | `createStudioWithOwnerInvite` |
+| `onboarding_wizard_started` | user | `studio_id` | `acknowledgeWelcomeAction` |
+| `onboarding_wizard_completed` | user | `studio_id` | `completeOnboardingAction` |
+
+`stripe_account_connected` (existing) already serves as the "stripe connected"
+signal. Deferred (not yet emitted): `service_created`,
+`availability_configured`, `booking_page_opened`, `first_booking`,
+`first_payment`. Welcome-email open/delivered tracking is intentionally **not**
+implemented.
+
+**Server-authoritative completion (no client-trusted analytics).**
+`completeOnboardingAction` rebuilds the live model server-side
+(`getOnboardingSignals` + persisted row → `buildOnboardingModel`) and **refuses**
+(`not_ready`) unless the required data steps are genuinely green — a forged /
+early / replayed call cannot mark an unbookable studio complete.
+
+**Completion is TRUSTED-SERVER-ONLY.** The browser can never self-complete: the
+action resolves the session user + active owner membership, rebuilds the live
+model, rejects unless `requiredComplete`, then calls the **service-role**
+`admin_complete_onboarding(p_user_id, p_studio_id)` command through the admin
+client. That command (migration 0140, `service_role` grant only) re-verifies in
+the DB that `p_user_id` is an ACTIVE OWNER of `p_studio_id` AND the flag is on,
+and does an `insert … on conflict do update … where completed_at is null`
+compare-and-set that stamps `completed_at` exactly once and **returns whether THIS
+call performed the transition** (Postgres serializes on the row; the loser of two
+concurrent calls gets `transitioned=false`). One consolidated
+`guard_onboarding_lifecycle_fields` SECURITY INVOKER trigger additionally blocks
+any direct browser (anon/authenticated) write of the trusted lifecycle fields —
+**completion/celebration** (`completed_at`, `celebrated_at`, a `status→'completed'`
+transition, the `'done'` marker) **and welcome-email** (`welcome_email_status`,
+`welcome_email_attempt_id`, `welcome_email_last_attempted_at`,
+`welcome_email_last_sent_at`) — on INSERT and UPDATE (set / replace / clear),
+with SQLSTATE 42501 and no lifecycle value in the exception. Those fields are set
+only by the trusted service-role commands (`admin_complete_onboarding` /
+`admin_mark_onboarding_celebrated` / `claim_welcome_email_attempt` /
+`record_welcome_email_result`) and provisioning; normal owner navigation
+(`current_step`/`skipped_steps`/`dismissed_at`/reopen) is untouched.
+
+**Analytics guarantee.** `onboarding_wizard_completed` is scheduled **iff
+`transitioned=true`**, so **exactly one analytics dispatch is scheduled for the
+first successful transition** (concurrent losers schedule nothing). Product
+analytics are best-effort (fire-and-forget, **no durable outbox**) — this is a
+one-dispatch-scheduled guarantee, not a once-delivered one.
+
+`markCelebrationShownAction` is guarded by live required completion (a stray call
+cannot consume the one-time stamp) and calls the service-role
+`admin_mark_onboarding_celebrated(p_user_id, p_studio_id)` (same owner+flag gate),
+which stamps `celebrated_at` exactly once. Neither path ever returns a raw DB
+error — fixed owner-facing codes (`complete_failed`/`celebrate_failed`) with a
+bounded `onboarding_action_db_error:<op>:<safe_code>` log marker.
+
+## 9. Manual test checklist
+
+Wizard (flag ON studio): first login auto-opens at welcome → walk
+service/availability/booking → skip/connect payments → success celebration →
+Go to dashboard closes it and hides the card. Close (X) preserves progress; the
+pinned card re-opens it. Flag OFF: no wizard, legacy link only.
+
+Reconciliation (existing account): (1) no evidence → `/accept-invitation`,
+blocked from the app until consent, then in; (2) valid current-version evidence →
+straight to the dashboard, no consent screen; (3) one-studio user + a second
+invite → chooser, nothing auto-selected; (4) stale/one-policy evidence → the
+current-policy gate appears; (5) refresh/repeat → no duplicate membership /
+invitation / onboarding row; (6) conflicting membership → safe support message;
+(7) a same-user **inactive** target membership → explicit accept **reactivates
+it in place** (no duplicate row); (7b) a same-user inactive row **plus another
+user's ACTIVE row under the invited email** → explicit accept is a **safe
+conflict** (`/no-access?reason=invite-conflict`), never a second active row —
+an *inactive* other-user row still reactivates safely; (8) the acceptance command
+cannot be called by anon or an authenticated browser role; (9) creating an Auth
+user (magic-link or OAuth) provisions **nothing** and stamps no acceptance — the
+invite stays pending.
+
+New-user provisioning: welcome email → sign in → explicit current-policy
+acceptance → membership created → onboarding wizard. The login-page checkbox is
+NOT the acceptance control.
+
+Welcome email: one truthful invitation email; send outcome recorded via the
+attempt-id state machine (`not_sent`/`sending`/`sent`/`failed`, never
+delivered); a second caller during a live attempt sees `already_in_progress`
+(nothing sent); a failed attempt can be retried to success; a stale attempt
+cannot overwrite a newer result; no duplicate studio/invitation; failures log
+only bounded `welcome_email_error:<stage>:<code>` markers (no recipient /
+provider / DB text). Driven through the real admin **Resend welcome email** UI
+in `e2e/welcome-email-admin.spec.ts`.
+
+**Coverage:** `tests/db/studio-onboarding.db.test.ts`,
+`tests/db/invitation-reconciliation.db.test.ts` (A–N + direct-accept-denial,
+new-user-consent-provenance, inactive-reactivation, **Defect-5 shared-email
+conflict**), `tests/db/welcome-email-claim.db.test.ts` (attempt-id CAS,
+stale-cannot-overwrite), `tests/db/new-studio-wizard.db.test.ts`,
+`tests/db/invite-only-posture.db.test.ts`, `e2e/onboarding.spec.ts`,
+`e2e/invitation-reconciliation.spec.ts` (incl. Defect-5 accept-path conflict),
+`e2e/welcome-email-admin.spec.ts` (admin resend contracts),
+`e2e/invite-only.spec.ts` (login consent-copy contract),
+`tests/db/welcome-email-delivery.db.test.ts` (delayed-provider concurrency →
+one delivery), `tests/lib/onboarding/*` (incl. `completion-error-bounded.test.ts`),
+`tests/app/dashboard/onboarding-completion-revalidation.test.ts`,
+`tests/app/admin/welcome-resend-audit-outcome.test.ts`,
+`tests/lib/email/welcome-email.test.ts`,
+`tests/lib/email/deliver-welcome-email.test.ts`,
+`tests/lib/email/fake-resend-mode.test.ts`,
+`tests/app/auth/login-invite-only.test.ts`, `tests/migrations/0140-*`,
+`tests/migrations/0141-*`,
+`tests/app/dashboard/onboarding-flag-off-contract.test.ts`.

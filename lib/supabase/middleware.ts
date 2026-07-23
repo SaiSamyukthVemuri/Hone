@@ -153,7 +153,16 @@ export async function updateSession(request: NextRequest) {
   // read is studio-RLS-scoped to the caller; a no-studio user matches no
   // row. The shell layout keeps its own requirePractitionerWithStudio
   // guard as defense in depth.
-  if (user && !isPublicRoute && pathname !== "/no-access") {
+  // /accept-invitation is authenticated (the !user gate above still applies)
+  // but MUST be reachable by a signed-in user who has a pending invitation and
+  // no active membership yet (the existing-account reconciliation path) — so it
+  // is exempt from the no-studio gate, like /no-access itself.
+  if (
+    user &&
+    !isPublicRoute &&
+    pathname !== "/no-access" &&
+    pathname !== "/accept-invitation"
+  ) {
     // PR #254: platform operators (the ADMIN_EMAILS allowlist, fail-closed in
     // production) may reach the internal /admin surface WITHOUT a studio. The
     // New Studio Wizard must be usable by an operator who is bootstrapping a
