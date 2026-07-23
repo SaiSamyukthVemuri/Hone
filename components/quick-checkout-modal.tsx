@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
@@ -22,6 +22,18 @@ import {
 // protection, and the compact display are reused unchanged. It never marks
 // charting complete or touches clinical state — the practitioner closes it and
 // finishes charting later.
+//
+// CTA discoverability (Chloe workflow fix). The card advances through persisted
+// states (ready → succeeded → receipt) that the session detail PAGE picks up
+// automatically because the card's router.refresh() / the actions' revalidatePath
+// re-render that route's server components. This MODAL, however, holds the
+// eligibility in client state fetched once per open, which router.refresh() does
+// NOT re-run — so after "Prepare" the persisted "ready" attempt never surfaced,
+// the "Run charge" button never mounted, and the practitioner had to close and
+// reopen to find it. The fix: wrap the four payment actions so a SUCCESSFUL
+// result silently re-resolves the trusted server context here, advancing the
+// card to the correct next state in place. No change to the shared card or the
+// session detail page; the server actions and their gates are untouched.
 
 export function QuickCheckoutModal({
   appointmentId,
@@ -40,31 +52,58 @@ export function QuickCheckoutModal({
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  // Track open state + the latest request so a response that lands after the
+  // modal closed (or after a newer request started) is ignored.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+  const requestSeq = useRef(0);
+
+  // Resolve trusted server context. `silent` re-resolves WITHOUT tearing down
+  // the visible card (no spinner, no ctx reset) so an in-place state advance
+  // after a mutation does not flash "Loading checkout…". The initial open uses
+  // the loud path so the first render shows a spinner.
+  const fetchContext = useCallback(
+    (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent ?? false;
+      const seq = ++requestSeq.current;
+      if (!silent) {
+        setLoading(true);
+        setLoadError(null);
+        setCtx(null);
+      }
+      return getQuickCheckoutContextAction(appointmentId)
+        .then((result) => {
+          // Drop stale / post-close responses.
+          if (seq !== requestSeq.current || !openRef.current) return;
+          setCtx(result);
+          if (!silent) setLoadError(null);
+        })
+        .catch(() => {
+          if (seq !== requestSeq.current || !openRef.current) return;
+          // A silent refetch failure keeps the last good context (the card's
+          // own in-session success state still shows); only the loud initial
+          // load surfaces an error.
+          if (!silent) {
+            setLoadError(
+              "Could not load checkout. Reload the page and try again.",
+            );
+          }
+        })
+        .finally(() => {
+          if (!silent && seq === requestSeq.current) setLoading(false);
+        });
+    },
+    [appointmentId],
+  );
+
   // Re-read trusted server context every time the modal opens, so a stale local
   // view (e.g. a charge that succeeded in another tab) is never authoritative.
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
-    setCtx(null);
-    getQuickCheckoutContextAction(appointmentId)
-      .then((result) => {
-        if (!cancelled) setCtx(result);
-      })
-      .catch(() => {
-        if (!cancelled)
-          setLoadError(
-            "Could not load checkout. Reload the page and try again.",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, appointmentId]);
+    void fetchContext();
+  }, [open, fetchContext]);
 
   // Escape to close + move focus into the dialog on open.
   useEffect(() => {
@@ -76,6 +115,22 @@ export function QuickCheckoutModal({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  // Wrap a payment action so a successful result advances the card in place by
+  // silently re-resolving server context. Failures return unchanged so the
+  // card renders its own error state. The action itself is called exactly once
+  // (the wrapper never retries); this only refreshes THIS modal's view.
+  const withRefresh = useCallback(
+    <T extends { ok: boolean }>(
+        action: (fd: FormData) => Promise<T>,
+      ): ((fd: FormData) => Promise<T>) =>
+      async (fd: FormData) => {
+        const result = await action(fd);
+        if (result.ok) void fetchContext({ silent: true });
+        return result;
+      },
+    [fetchContext],
+  );
 
   if (!open) return null;
 
@@ -166,17 +221,19 @@ export function QuickCheckoutModal({
 
             {/* The EXISTING payment card — prepare / confirm / charge / receipt /
                 refund all run through the same hardened server actions, with the
-                compact (owner-gated) display from PR #418. */}
+                compact (owner-gated) display from PR #418. The actions are wrapped
+                with withRefresh so a successful step advances this modal's view to
+                the persisted next state without a close/reopen. */}
             <SessionPaymentPrepareCard
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
               eligibility={ctx.eligibility}
               defaultAmount={ctx.defaultAmount}
               isOwner={ctx.isOwner}
-              prepareAction={prepareSessionPaymentChargeAction}
-              executeAction={executeSessionPaymentChargeAction}
-              sendReceiptAction={sendPaymentChargeReceiptAction}
-              refundAction={refundPaymentChargeAttemptAction}
+              prepareAction={withRefresh(prepareSessionPaymentChargeAction)}
+              executeAction={withRefresh(executeSessionPaymentChargeAction)}
+              sendReceiptAction={withRefresh(sendPaymentChargeReceiptAction)}
+              refundAction={withRefresh(refundPaymentChargeAttemptAction)}
             />
 
             <p className="border-t border-neutral-200 pt-3 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">

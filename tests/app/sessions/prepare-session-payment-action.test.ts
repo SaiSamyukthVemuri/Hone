@@ -74,13 +74,27 @@ describe("prepare action: amount + note validation", () => {
     expect(ACTION).toMatch(/AMOUNT_TOO_LARGE_ERROR/);
   });
 
-  it("requires an internal note (mirrors manual fee prepare)", () => {
-    expect(ACTION).toMatch(/NOTE_REQUIRED_ERROR/);
-    expect(ACTION).toMatch(/Add an internal note explaining the reason/);
+  it("treats the internal note as OPTIONAL (no note-required error at all)", () => {
+    // Chloe workflow fix: the note is optional, so a quick client-present
+    // checkout is few-tap. The prepare action must not carry a
+    // note-required guard or its constant/copy anymore.
+    expect(ACTION).not.toMatch(/NOTE_REQUIRED_ERROR/);
+    expect(ACTION).not.toMatch(/Add an internal note explaining the reason/);
+    expect(ACTION).not.toMatch(/internalNote\.length === 0/);
   });
 
-  it("bounds internal note length to the constant from session-payment-types", () => {
+  it("stores a blank/whitespace-only note as NULL (no fabricated placeholder)", () => {
+    // strOrEmpty already trims, so whitespace-only collapses to "" and is
+    // written as null; a real note is preserved verbatim.
+    expect(ACTION).toMatch(
+      /internal_note:\s*internalNote\.length > 0 \? internalNote : null/,
+    );
+  });
+
+  it("still bounds internal note length to the constant from session-payment-types", () => {
+    // Max-length validation is RETAINED; only the required-ness is relaxed.
     expect(ACTION).toMatch(/SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH/);
+    expect(ACTION).toMatch(/NOTE_TOO_LONG_ERROR/);
   });
 });
 

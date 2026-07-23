@@ -1257,14 +1257,16 @@ function PrepareForm({
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Internal note
+          Internal note (optional)
         </span>
+        {/* Optional (Chloe workflow fix): the note is no longer `required`, so a
+            client-present quick checkout is few-tap. Blank input is stored as
+            NULL server-side; a real note is preserved and still length-capped. */}
         <textarea
           name="internal_note"
-          required
           rows={3}
           maxLength={SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH}
-          placeholder="Short note explaining the session payment (visible only to studio members)."
+          placeholder="Optional note explaining the session payment (visible only to studio members)."
           className="rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
         />
       </label>

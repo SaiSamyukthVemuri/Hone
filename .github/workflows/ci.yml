@@ -347,6 +347,83 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # Mobile-completion E2E (Chloe workflow fix). Runs the mobile-completion
+  # journey (in-DOM ConfirmDialog that replaced native window.confirm, optional
+  # note, in-place charge) on the CHROMIUM engine at iPhone dimensions (iPhone 13
+  # viewport + iOS UA + hasTouch) plus a Pixel 5 control. NOTE: this is Chromium
+  # emulation, NOT a real WebKit/iOS-Safari run — the repo E2E harness is
+  # hard-wired to plain-http http://localhost, and a real WebKit context upgrades
+  # localhost subresources to https (no hydration) + drops Secure cookies over
+  # http (auth fails); a real-WebKit lane needs an HTTPS harness (tracked as a
+  # follow-up). Same LOCAL-only, guarded-fake-Stripe posture as
+  # payment-browser-e2e (HONE_E2E_FAKE_STRIPE=1 + a per-job HONE_E2E_RUN_ID, no
+  # Vercel markers, sk_test_dummy) — no real charge/refund/email/SMS/Google can
+  # leave the lane; the specs additionally assert zero real provider egress.
+  # Separate job (own runner) → no port collision with the other browser lanes.
+  mobile-completion-e2e:
+    name: mobile completion e2e (chromium iphone-profile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the per-job fake-Stripe run id
+        # ONE validated run id, shared by the Next server + Playwright runner +
+        # both ledger sides (matches the fake-Stripe guard regex). Fake Stripe is
+        # enabled ONLY in this job and the payment job.
+        run: |
+          echo "HONE_E2E_RUN_ID=run-$(openssl rand -hex 6)" >> "$GITHUB_ENV"
+          echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          # Same pin and rationale as the other browser lanes (grants parity).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      - name: Start local Supabase stack (db + auth + mail capture)
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Install Playwright Chromium
+        # Both projects (iPhone-profile + Pixel 5 control) run on Chromium.
+        run: npx playwright install --with-deps chromium
+
+      - name: Mobile completion browser E2E (chromium iphone-profile + control)
+        run: npm run test:e2e:mobile
+
+      - name: Clean run-scoped fake ledger temp files
+        if: always()
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json || true
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-completion-playwright-traces
+          path: test-results/
+          retention-days: 7
+
   # Synthetic Google: sets the two server-only markers (HONE_E2E_FAKE_GOOGLE=1 +
   # a per-job HONE_E2E_RUN_ID) plus a FAKE Google OAuth client, so the fake-Google
   # activation guard passes here and NOWHERE else. No Vercel markers → the guard is

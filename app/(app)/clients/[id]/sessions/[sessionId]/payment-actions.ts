@@ -73,8 +73,10 @@ const NOT_AUTHORIZED_ERROR =
 // PR #201: refunds are owner-only across all charge reasons.
 const OWNER_ONLY_REFUND_ERROR =
   "Only the studio owner can issue a refund.";
-const NOTE_REQUIRED_ERROR =
-  "Add an internal note explaining the reason for this session payment.";
+// PR (Chloe workflow fix): the internal note is OPTIONAL. A blank or
+// whitespace-only note is stored as NULL (never a fabricated
+// placeholder); a non-empty note is preserved verbatim and still
+// length-capped. There is intentionally no "note required" error.
 const NOTE_TOO_LONG_ERROR =
   `Internal note must be under ${SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH} characters.`;
 const AMOUNT_INVALID_ERROR =
@@ -152,9 +154,10 @@ export async function prepareSessionPaymentChargeAction(
   if (!amountParsed.ok) {
     return { ok: false, error: amountParsed.error };
   }
-  if (internalNote.length === 0) {
-    return { ok: false, error: NOTE_REQUIRED_ERROR };
-  }
+  // The internal note is optional (blank/whitespace-only -> NULL, see the
+  // insert below). Only the maximum-length cap is enforced here; it still
+  // matches the manual-fee ceiling constant and guards against oversized
+  // input before the DB is touched.
   if (internalNote.length > SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH) {
     return { ok: false, error: NOTE_TOO_LONG_ERROR };
   }
@@ -208,7 +211,10 @@ export async function prepareSessionPaymentChargeAction(
       // (identical to before); the new payment_charge_attempts_live_requires_
       // account_check (0101) is satisfied because stripe_account_id is set above.
       stripe_livemode: inferStripeLivemode(),
-      internal_note: internalNote,
+      // Optional note: store NULL when blank/whitespace-only (strOrEmpty
+      // already trimmed it), never a fabricated placeholder. A real note is
+      // written verbatim. Mirrors the refund path's blank-to-null idiom below.
+      internal_note: internalNote.length > 0 ? internalNote : null,
     })
     .select("id")
     .single();

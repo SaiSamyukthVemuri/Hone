@@ -126,16 +126,20 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   // there is no PaymentIntent yet anyway).
   await expect(modal.getByText(/pi_test_e2e/)).toHaveCount(0);
 
-  // --- Prepare the payment (steps 14-15). The internal note is required.
+  // --- Prepare the payment (steps 14-15). The internal note is now OPTIONAL
+  //     (Chloe workflow fix); we still fill one here to cover the with-note path.
   await modal
-    .getByPlaceholder(/short note explaining the session payment/i)
+    .getByPlaceholder(/note explaining the session payment/i)
     .fill("E2E success-path session payment");
   await modal.getByRole("button", { name: /prepare session payment/i }).click();
 
-  // The modal loads trusted context ONCE per open (a server action), so a
-  // successful prepare shows the in-modal confirmation; the persisted 'ready' row
-  // + Run charge surface when the checkout is reopened with fresh context.
-  await expect(modal.getByText(/session payment prepared/i)).toBeVisible();
+  // --- Chloe workflow fix (CTA discoverability): the "Run charge" button now
+  //     surfaces IN PLACE right after Prepare — no close/reopen. The modal
+  //     silently re-resolves trusted context on a successful action, so the
+  //     persisted 'ready' attempt drives the Ready panel without tearing the
+  //     modal down. Waiting for Run charge also confirms the row committed.
+  const runCharge = modal.getByRole("button", { name: /^run charge$/i });
+  await expect(runCharge).toBeVisible();
 
   // --- Exactly one prepared attempt; ledger still empty (steps 16-18).
   const preparedRows = await getSessionPaymentAttemptRows(seed.sessionId);
@@ -148,16 +152,8 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const selector = idempotencySelectorForAttempt(attemptId);
   configureFakeStripeOutcome(selector, "success");
 
-  // --- Reopen the checkout so the prepared attempt drives the Ready panel. A
-  //     'ready' attempt is still "chargeable", so the dashboard keeps Checkout.
-  await modal.getByTestId("quick-checkout-close").click();
-  await expect(modal).toHaveCount(0);
-  await checkoutButton.click();
-  await expect(modal).toBeVisible();
-
-  // --- Execute the charge with the explicit two-click confirmation (21-23).
-  const runCharge = modal.getByRole("button", { name: /^run charge$/i });
-  await expect(runCharge).toBeVisible();
+  // --- Execute the charge with the explicit two-click confirmation (21-23),
+  //     WITHOUT any close/reopen dance.
   await runCharge.click(); // arms the confirm step
   const confirmCharge = modal.getByRole("button", { name: /confirm: run charge/i });
   await expect(confirmCharge).toBeVisible();
@@ -191,8 +187,17 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
     callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),
   ).toHaveLength(0);
 
-  // --- Close the modal (step 30).
-  await modal.getByTestId("quick-checkout-close").click();
+  // --- Close the modal if it is still mounted (step 30). A successful in-place
+  //     charge can auto-close the modal on its own: the dashboard re-renders the
+  //     checkout cell into the persisted "Paid" badge, which unmounts the modal.
+  //     So click Close only when it is still visible; skip it when the server
+  //     refresh already closed it. The click itself stays UNGUARDED so a real
+  //     interaction failure surfaces — we only avoid clicking an element that is
+  //     no longer there. Either way the modal must end up gone.
+  const closeButton = modal.getByTestId("quick-checkout-close");
+  if (await closeButton.isVisible()) {
+    await closeButton.click();
+  }
   await expect(modal).toHaveCount(0);
 
   // --- Dashboard reflects the persisted Paid state after reload (steps 31-33).

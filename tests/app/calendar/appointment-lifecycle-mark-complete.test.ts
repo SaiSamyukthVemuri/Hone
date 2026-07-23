@@ -85,47 +85,97 @@ describe("AppointmentLifecycleActions: Mark completed gating", () => {
   });
 });
 
-describe("AppointmentLifecycleActions: two-click confirm", () => {
-  it("runComplete asks for confirmation via window.confirm before the action runs", () => {
+describe("AppointmentLifecycleActions: confirmation dialog (replaces window.confirm)", () => {
+  // Chloe workflow fix. The confirmation step is now an in-DOM accessible
+  // dialog, not native window.confirm(), because window.confirm can be
+  // silently suppressed on iOS Safari (returns false with nothing shown),
+  // which the old code treated as a Cancel — so "Mark completed" did nothing.
+
+  it("imports and renders the accessible ConfirmDialog", () => {
     expect(COMPONENT).toMatch(
-      /function runComplete\([\s\S]{0,2000}window\.confirm\(COMPLETE_CONFIRM_MESSAGE\)/,
+      /import \{ ConfirmDialog \} from "@\/components\/confirm-dialog"/,
     );
+    // One dialog per action (complete + no-show).
+    const dialogs = COMPONENT.match(/<ConfirmDialog\b/g) ?? [];
+    expect(dialogs.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("declares COMPLETE_CONFIRM_MESSAGE with the exact prompt copy", () => {
+  it("does NOT use window.confirm anywhere (the iOS-suppressible API is gone)", () => {
+    const code = codeOnly(COMPONENT);
+    expect(code).not.toMatch(/window\.confirm/);
+    expect(code).not.toMatch(/\bconfirm\(/);
+  });
+
+  it("declares COMPLETE_CONFIRM_MESSAGE with the exact confirm copy", () => {
     expect(COMPONENT).toMatch(
       /COMPLETE_CONFIRM_MESSAGE\s*=\s*[\s\S]{0,200}This marks the appointment completed and allows the session to be charged after charting\./,
     );
   });
 
-  it("a cancelled confirm sets the 'Cancelled, no change made.' hint", () => {
-    // The cancel-confirm hint is shared by both runNoShow and
-    // runComplete; we check there are at least two occurrences so
-    // both runs surface the same UX.
-    const matches =
-      COMPONENT.match(/setHint\("Cancelled, no change made\.\"\)/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it("declares NO_SHOW_CONFIRM_MESSAGE with separate, truthful copy", () => {
+    expect(COMPONENT).toMatch(
+      /NO_SHOW_CONFIRM_MESSAGE\s*=\s*[\s\S]{0,200}records that the appointment was missed and cannot be undone from this screen\./,
+    );
+  });
+
+  it("each dialog carries a distinct confirm label so the copy is action-specific", () => {
+    expect(COMPONENT).toMatch(/confirmLabel="Mark completed"/);
+    expect(COMPONENT).toMatch(/confirmLabel="Mark no-show"/);
+  });
+
+  it("the buttons OPEN the dialog and send NO request (setConfirming, no action call)", () => {
+    // runComplete / runNoShow only set which dialog is open; they must not
+    // call a server action directly.
+    const runComplete =
+      COMPONENT.match(/function runComplete\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    const runNoShow =
+      COMPONENT.match(/function runNoShow\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(runComplete).toMatch(/setConfirming\("complete"\)/);
+    expect(runNoShow).toMatch(/setConfirming\("no_show"\)/);
+    expect(runComplete).not.toMatch(/markAppointment(Complete|NoShow)Action/);
+    expect(runNoShow).not.toMatch(/markAppointment(Complete|NoShow)Action/);
+  });
+
+  it("Cancel sends NO request: handleCancel closes and sets the calm hint only", () => {
+    const handleCancel =
+      COMPONENT.match(/function handleCancel\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(handleCancel).toMatch(/setConfirming\(null\)/);
+    expect(handleCancel).toMatch(/setHint\("Cancelled, no change made\."\)/);
+    expect(handleCancel).not.toMatch(/markAppointment(Complete|NoShow)Action/);
+    expect(handleCancel).not.toMatch(/startTransition/);
   });
 });
 
-describe("AppointmentLifecycleActions: success message", () => {
-  it("runComplete sets the success hint to 'Appointment marked completed.'", () => {
-    expect(COMPONENT).toMatch(
-      /setHint\("Appointment marked completed\."\)/,
-    );
+describe("AppointmentLifecycleActions: confirm runs the action once", () => {
+  const handleConfirm =
+    COMPONENT.match(/function handleConfirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+
+  it("handleConfirm forwards appointment_id via FormData", () => {
+    expect(handleConfirm).toMatch(/fd\.set\("appointment_id", appointmentId\)/);
   });
 
-  it("runComplete forwards appointment_id via FormData", () => {
-    const block =
-      COMPONENT.match(/function runComplete\([\s\S]{0,2000}router\.refresh/)?.[0] ??
-      "";
-    expect(block).toMatch(/fd\.set\("appointment_id", appointmentId\)/);
+  it("handleConfirm calls the correct action inside a transition", () => {
+    expect(handleConfirm).toMatch(/startTransition\(async \(\) => \{/);
+    expect(handleConfirm).toMatch(/markAppointmentCompleteAction\(fd\)/);
+    expect(handleConfirm).toMatch(/markAppointmentNoShowAction\(fd\)/);
   });
 
-  it("runComplete calls markAppointmentCompleteAction inside the transition", () => {
-    expect(COMPONENT).toMatch(
-      /startTransition\(async \(\) => \{[\s\S]{0,400}markAppointmentCompleteAction\(fd\)/,
-    );
+  it("guards against a double request (early-return while pending; dialog disables Confirm)", () => {
+    expect(handleConfirm).toMatch(/if \(pending\) return;/);
+    // The dialog is told the pending state so its Confirm button is disabled
+    // while a request is in flight — one request maximum per confirmation.
+    expect(COMPONENT).toMatch(/pending=\{pending\}/);
+  });
+
+  it("sets the success hint 'Appointment marked completed.' and refreshes on success", () => {
+    expect(handleConfirm).toMatch(/Appointment marked completed\./);
+    expect(handleConfirm).toMatch(/router\.refresh\(\)/);
+  });
+
+  it("surfaces the action's own SAFE error (no raw DB/provider text) in the dialog", () => {
+    // The server actions map every RPC failure to curated copy; the component
+    // shows res.error (with a fixed fallback) and never fabricates DB text.
+    expect(handleConfirm).toMatch(/setError\(res\.error \|\| GENERIC_FAILURE\)/);
   });
 });
 
