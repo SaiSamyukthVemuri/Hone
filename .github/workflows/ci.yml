@@ -108,6 +108,15 @@ jobs:
       - name: Stripe / payment safety grep gates
         run: npm run check:stripe-gates
 
+      - name: Migration extension-qualification check
+        # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
+        # in supabase/migrations must be extensions.<fn>-qualified so the
+        # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
+        # is NOT on the migration search_path (bare gen_random_bytes -> 42883).
+        # Deterministic, Docker-free static scan; gen_random_uuid() built-in is
+        # intentionally allowed. Regression fence for the 0025 fresh-apply defect.
+        run: npm run check:migration-extensions
+
   # PR #220. DB/RLS integration lane: applies the FULL migration
   # chain (0001-current) to a throwaway LOCAL Supabase Postgres in
   # the runner and exercises real RLS policies, triggers, claim
@@ -169,6 +178,15 @@ jobs:
         # fails to compile. This is itself a guarantee no static test
         # could give.
         run: supabase db reset --local
+
+      - name: Fresh-managed extension proof
+        # RC hardening: proves the just-migrated local DB matches a FRESH MANAGED
+        # project's extension layout — pgcrypto in `extensions`, and with
+        # `extensions` OFF the session search_path a BARE pgcrypto call fails
+        # (42883) while extensions.<fn> succeeds. Together with the static
+        # extension-qualification guard this proves the whole chain (through 0151)
+        # applies fresh-managed-like. Runs against the local supabase Postgres only.
+        run: npm run check:fresh-managed
 
       - name: DB/RLS integration tests
         run: npm run test:db
