@@ -18,9 +18,11 @@
     "e2e:server": "next build && next start -p 3111",
     "e2e:payment-server": "next build && next start -p 3111",
     "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
+    "check:migration-extensions": "node scripts/check-migration-extension-qualification.mjs",
+    "check:fresh-managed": "node scripts/check-fresh-managed-extensions.mjs",
     "check:db-types": "node scripts/check-db-types.mjs",
     "check:prod-env-gates": "node scripts/check-production-env-gates.mjs",
-    "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates"
+    "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates && npm run check:migration-extensions"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",
