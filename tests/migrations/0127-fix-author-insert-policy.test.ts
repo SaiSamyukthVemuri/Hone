@@ -35,8 +35,7 @@ describe("0127 — file + repo-max tripwire", () => {
     expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    // 0141 (onboarding) is the repo max; 0135-0139 (PR B) merged. Trip on 0142+.
-    const higher = FILES.filter((f) => /^01(4[2-9]|[5-9]\d)_/.test(f));
+    const higher = FILES.filter((f) => /^01(5[1-9]|[6-9]\d)_/.test(f));
     expect(higher).toEqual([]);
   });
 

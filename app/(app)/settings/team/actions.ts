@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
@@ -205,32 +206,27 @@ export async function removePractitionerAction(formData: FormData): Promise<void
     throw new Error("You cannot remove yourself.");
   }
 
-  const supabase = await createClient();
-
-  // Confirm the target is in this studio and is not the owner.
-  const { data: target, error: lookupErr } = await supabase
-    .from("practitioners")
-    .select("id, role, studio_id, active")
-    .eq("id", id)
-    .eq("studio_id", studioId)
-    .maybeSingle();
-  if (lookupErr) {
-    throw new Error(`Failed to look up practitioner: ${lookupErr.message}`);
-  }
-  if (!target) {
-    throw new Error("Practitioner not found in this studio.");
-  }
-  if (target.role === "owner") {
-    throw new Error("The studio owner cannot be removed.");
-  }
-
-  const { error } = await supabase
-    .from("practitioners")
-    .update({ active: false })
-    .eq("id", id)
-    .eq("studio_id", studioId);
-  if (error) {
-    throw new Error(`Failed to remove practitioner: ${error.message}`);
+  // Part 4 Item 2: deactivation goes through the locked command (studios row →
+  // capacity advisory lock), which validates the target (same-studio, not the
+  // owner) and sets active=false atomically — no raw active=false browser write,
+  // no leaked DB text. This is per-practitioner deactivation, NOT studio
+  // structural retirement; the target's appointments are preserved.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("set_practitioner_active_locked", {
+    p_studio_id: studioId,
+    p_actor_practitioner_id: practitionerId,
+    p_target_practitioner_id: id,
+    p_active: false,
+  });
+  if (error || data !== "ok") {
+    console.error(
+      `team_action_db_error:remove_practitioner:${error?.code ?? (typeof data === "string" ? data : "unknown")}`,
+    );
+    if (data === "cannot_modify_owner")
+      throw new Error("The studio owner cannot be removed.");
+    if (data === "invalid_practitioner")
+      throw new Error("Practitioner not found in this studio.");
+    throw new Error("Could not remove the practitioner. Please try again.");
   }
   revalidatePath("/settings/team");
 }

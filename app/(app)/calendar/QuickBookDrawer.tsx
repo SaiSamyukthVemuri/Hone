@@ -26,7 +26,11 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
-import { fetchSlotsForClientBookingAction } from "../clients/[id]/booking-actions";
+import {
+  fetchSlotsForClientBookingAction,
+  fetchEligiblePractitionersAction,
+  type EligiblePractitioner,
+} from "../clients/[id]/booking-actions";
 import {
   bookAppointmentForClientAction,
   createClientForCalendarBookingAction,
@@ -86,6 +90,13 @@ type Props = {
   // Studio 12h/24h preference (migration 0109). Formats the DISPLAYED header
   // time only; localTime stays a 24h HH:MM machine value used for submission.
   timeFormat: TimeFormat;
+  // Part 4 Item 6: practitioner capacity. When ON + owner, a practitioner
+  // selector is shown and drives target-specific slots + assignment. Identical
+  // targeting rules on desktop (DayColumn) and mobile (CalendarMobileDayView).
+  practitionerCapacityEnabled: boolean;
+  isOwner: boolean;
+  currentPractitionerId: string;
+  currentPractitionerName: string;
   onClose: () => void;
 };
 
@@ -128,6 +139,10 @@ export function QuickBookDrawer({
   services,
   studioTimezone,
   timeFormat,
+  practitionerCapacityEnabled,
+  isOwner,
+  currentPractitionerId,
+  currentPractitionerName,
   onClose,
 }: Props) {
   const router = useRouter();
@@ -136,6 +151,23 @@ export function QuickBookDrawer({
     [services],
   );
   const firstServiceId = serviceGroups[0]?.services[0]?.id ?? "";
+
+  // Item 6: owner practitioner selector (same rules as the client-profile
+  // surface). Shown ONLY when capacity is ON and the actor is an owner; members
+  // and Legacy studios always book the acting practitioner.
+  const showSelector = practitionerCapacityEnabled && isOwner;
+  const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
+  const [eligibleError, setEligibleError] = useState<string | null>(null);
+  const [target, setTarget] = useState<string>(currentPractitionerId);
+  const [loadingPractitioners, startLoadingPractitioners] = useTransition();
+  const eligibleReq = useRef(0);
+  // Default-target rule (identical to BookAppointment): preserve a still-eligible
+  // selection → else the current owner when eligible → else the first eligible.
+  function resolveDefaultTarget(list: EligiblePractitioner[], current: string): string {
+    if (list.some((p) => p.id === current)) return current;
+    if (list.some((p) => p.id === currentPractitionerId)) return currentPractitionerId;
+    return list[0]?.id ?? "";
+  }
 
   const [clientMode, setClientMode] = useState<"search" | "new">("search");
   const [clientQuery, setClientQuery] = useState("");
@@ -217,13 +249,16 @@ export function QuickBookDrawer({
       setPickedSlot(null);
       setNotes("");
       setError(null);
+      setEligible([]);
+      setEligibleError(null);
+      setTarget(currentPractitionerId);
       setOverrideEnabled(false);
       setOverrideConfirmed(false);
       setOverrideLocalTime("");
       setOverrideDurationMinutes("");
       autoOverrideRef.current = false;
     }
-  }, [open, firstServiceId]);
+  }, [open, firstServiceId, currentPractitionerId]);
 
   // When the drawer opens (or the draft time changes), seed the
   // override time field with the time the practitioner clicked on
@@ -293,6 +328,32 @@ export function QuickBookDrawer({
     // different service, not on every override-mode toggle.
   }, [open, serviceId]);
 
+  // Item 6: load the eligible practitioners for the selected service (owner +
+  // capacity ON only). Resolves the default target; FAILS CLOSED — a lookup
+  // error or an empty list leaves target "" so the slot effect below does not
+  // fetch and booking is blocked (never a silent self-slot fallback).
+  // Latest-request-wins: a stale service response cannot overwrite a newer one.
+  useEffect(() => {
+    if (!open || !showSelector || !serviceId) return;
+    const req = ++eligibleReq.current;
+    setEligibleError(null);
+    startLoadingPractitioners(async () => {
+      const r = await fetchEligiblePractitionersAction(serviceId);
+      if (req !== eligibleReq.current) return; // stale service response
+      if (!r.ok) {
+        setEligibleError(r.error);
+        setEligible([]);
+        setTarget("");
+        return;
+      }
+      setEligible(r.practitioners);
+      setTarget((prev) => resolveDefaultTarget(r.practitioners, prev));
+    });
+    // resolveDefaultTarget + startLoadingPractitioners are stable; excluded to
+    // avoid re-fetching the eligible list on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, showSelector, serviceId]);
+
   // Lazy rebook lookup: fetch the selected client's last service only
   // when a client is selected (never prefetched for the whole list).
   // Brand-new inline-created clients have no history, so this returns
@@ -334,7 +395,9 @@ export function QuickBookDrawer({
   // from the offered slots. We never send an arbitrary time to the
   // booking action.
   useEffect(() => {
-    if (!open || !draft || !serviceId) {
+    // Fail closed: when the owner selector is shown but no eligible target is
+    // resolved (empty/failed lookup), do NOT fetch self slots as a fallback.
+    if (!open || !draft || !serviceId || (showSelector && !target)) {
       setSlots([]);
       setPickedSlot(null);
       return;
@@ -346,6 +409,10 @@ export function QuickBookDrawer({
       const r = await fetchSlotsForClientBookingAction({
         serviceId,
         date: targetDate,
+        // Item 6: the EXACT target drives the slots. Changing target re-runs this
+        // effect (cleanup cancels the old response), so an A slot is never treated
+        // as valid for B and the picked time is recomputed for the new target.
+        practitionerId: showSelector ? target : undefined,
       });
       if (cancelled) return;
       if (!r.ok) {
@@ -389,9 +456,10 @@ export function QuickBookDrawer({
       cancelled = true;
     };
     // startLoadingSlots is a stable transition starter and intentionally
-    // excluded to avoid a re-fetch on every render.
+    // excluded to avoid a re-fetch on every render. target/showSelector are in
+    // the deps so changing the practitioner refetches target-specific slots.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft?.localDate, draft?.localTime, serviceId]);
+  }, [open, draft?.localDate, draft?.localTime, serviceId, showSelector, target]);
 
   // extraClients (created this drawer session) sort first so a
   // just-added client lands at the top of the list before the user
@@ -457,7 +525,14 @@ export function QuickBookDrawer({
   })();
   const overrideDurationValid =
     overrideDurationMinutes === "" || parsedOverrideDuration != null;
-  const canBook = !booking && !!selectedClient && !!serviceId && (
+  // Item 6: when the owner selector is shown, the current target MUST be a
+  // resolved eligible practitioner (fail closed: empty/failed lookup → "").
+  const targetValid = !showSelector || eligible.some((p) => p.id === target);
+  // The practitioner this booking assigns (for the "With <name>" line).
+  const assignedName = showSelector
+    ? (eligible.find((p) => p.id === target)?.displayName ?? "")
+    : currentPractitionerName;
+  const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
     overrideEnabled
       ? overrideTimeValid && overrideConfirmed && overrideDurationValid
       : !!pickedSlot
@@ -495,6 +570,8 @@ export function QuickBookDrawer({
 
   function handleSubmit() {
     if (!selectedClient || !serviceId) return;
+    // Item 6: an owner selector with no resolved eligible target blocks booking.
+    if (showSelector && !eligible.some((p) => p.id === target)) return;
     if (overrideEnabled) {
       if (!overrideTimeValid || !overrideConfirmed) return;
     } else if (!pickedSlot) {
@@ -504,6 +581,10 @@ export function QuickBookDrawer({
     const fd = new FormData();
     fd.set("client_id", selectedClient.id);
     fd.set("service_id", serviceId);
+    // Item 6: an owner (capacity ON) assigns the selected target on BOTH the
+    // normal-slot and outside-hours paths; the server re-validates it. Members /
+    // Legacy send none → the server books the acting practitioner.
+    if (showSelector && target) fd.set("practitioner_id", target);
     if (overrideEnabled) {
       // Compute the UTC instant from the practitioner's typed time
       // interpreted in the studio's timezone. DST-safe via the
@@ -550,6 +631,8 @@ export function QuickBookDrawer({
           const refetch = await fetchSlotsForClientBookingAction({
             serviceId,
             date: targetDate,
+            // The failure refetch stays scoped to the CURRENT target.
+            practitionerId: showSelector ? target : undefined,
           });
           if (refetch.ok) {
             setSlots(refetch.slots);
@@ -859,6 +942,39 @@ export function QuickBookDrawer({
           )}
         </section>
 
+        {/* Item 6: owner practitioner selector — active, service-eligible,
+            same-studio practitioners only (display names only, ids never shown).
+            Changing the target re-runs the slot effect for that practitioner. */}
+        {showSelector && (
+          <section className="flex flex-col gap-2">
+            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Practitioner
+            </span>
+            {loadingPractitioners ? (
+              <p className="text-sm text-neutral-500">Loading practitioners…</p>
+            ) : eligibleError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{eligibleError}</p>
+            ) : eligible.length === 0 ? (
+              <p className="text-sm text-neutral-500">
+                No practitioner is set up for this service.
+              </p>
+            ) : (
+              <select
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                aria-label="Practitioner"
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              >
+                {eligible.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.displayName}
+                  </option>
+                ))}
+              </select>
+            )}
+          </section>
+        )}
+
         {/* Step 3: time */}
         <section className="flex flex-col gap-2">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -1032,6 +1148,15 @@ export function QuickBookDrawer({
         {error && (
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {error}
+          </p>
+        )}
+
+        {assignedName && (
+          <p
+            className="text-xs text-neutral-500"
+            data-testid="assigned-practitioner"
+          >
+            With {assignedName}
           </p>
         )}
 

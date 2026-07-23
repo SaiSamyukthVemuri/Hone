@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -30,6 +31,54 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 export type BookResult =
   | { ok: true; appointmentId: string }
   | { ok: false; error: string; code?: "slot_taken" };
+
+// Part 4: the canonical booking command's result row + safe owner-facing copy.
+type BookingRpcRow = {
+  result: string;
+  appointment_id: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+};
+
+function bookingResultMessage(result: string | undefined): string {
+  switch (result) {
+    case "booking_paused":
+      return "New bookings are paused for this studio right now.";
+    case "not_authorized":
+      return "You can only book appointments for yourself.";
+    case "invalid_practitioner":
+      return "That practitioner isn't available for new bookings.";
+    case "not_eligible":
+      return "That practitioner isn't set up to perform this service.";
+    case "invalid_client":
+      return "Client not found.";
+    case "invalid_service":
+      return "Service not found.";
+    case "invalid_time":
+      return "That time is in the past. Please choose a future time.";
+    case "invalid_duration":
+      return "That appointment length isn't valid.";
+    case "practitioner_closed":
+      return "That practitioner isn't working at that time.";
+    case "outside_availability":
+      return "That time is outside the practitioner's availability.";
+    case "studio_not_found":
+    case "invalid_studio":
+      return "Could not create the appointment. Please try again.";
+    default:
+      return "Could not create the appointment. Please try again.";
+  }
+}
+
+// Bounded operational marker: action + stage + SQLSTATE only. Never the raw
+// DB/PostgREST message, row data, client, or clinical data.
+function logBookingDbError(
+  action: string,
+  stage: string,
+  code: string | undefined,
+): void {
+  console.error(`booking_action_db_error:${action}:${stage}:${code ?? "unknown"}`);
+}
 
 export async function bookAppointmentForClientAction(
   formData: FormData,
@@ -128,6 +177,18 @@ export async function bookAppointmentForClientAction(
     };
   }
 
+  // Part 4: a capacity-ON OWNER may book FOR another practitioner (submitted
+  // practitioner_id); every other case (Legacy, member, owner-without-selection)
+  // books for the acting practitioner. The canonical command re-validates the
+  // target authoritatively (active, same-studio, service-eligible) — this is
+  // only the default; nothing here is trusted as the final authority.
+  const submittedPractitionerId = formDataStrOrNull(formData, "practitioner_id");
+  const capacityOn = studio.practitioner_capacity_enabled === true;
+  const targetPractitionerId =
+    capacityOn && practitioner.role === "owner" && submittedPractitionerId
+      ? submittedPractitionerId
+      : practitioner.id;
+
   const supabase = await createClient();
 
   // Pull service for duration; also confirms it's in this studio.
@@ -138,7 +199,10 @@ export async function bookAppointmentForClientAction(
     .eq("studio_id", studio.id)
     .eq("active", true)
     .maybeSingle();
-  if (serviceErr) return { ok: false, error: serviceErr.message };
+  if (serviceErr) {
+    logBookingDbError("book_appointment", "service_lookup", serviceErr.code);
+    return { ok: false, error: "Could not load the service. Please try again." };
+  }
   if (!service) return { ok: false, error: "Service not found." };
 
   // Confirm the client belongs to the studio. SMS consent + opt-out
@@ -152,7 +216,10 @@ export async function bookAppointmentForClientAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    logBookingDbError("book_appointment", "client_lookup", clientErr.code);
+    return { ok: false, error: "Could not load the client. Please try again." };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   const start = new Date(startsAt);
@@ -189,6 +256,11 @@ export async function bookAppointmentForClientAction(
   // protection is preserved without any change to those rules.
   if (!allowOutsideAvailability) {
     const dateStr = localDateString(start, studio.timezone);
+    // Part 4 Item 3: the precheck must run against the EXACT practitioner the DB
+    // command will book (targetPractitionerId), not a studio-wide timeline. When
+    // capacity is ON, getAvailableSlots reads that practitioner's own hours +
+    // resource_key reservations, so A's calendar never advertises/consumes B's
+    // slots. Legacy (flag off) ignores the practitioner id → studio-wide, as today.
     const slots = await getAvailableSlots(
       supabase,
       {
@@ -197,9 +269,12 @@ export async function bookAppointmentForClientAction(
         default_appointment_duration_minutes:
           studio.default_appointment_duration_minutes,
         buffer_minutes: studio.buffer_minutes,
+        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
       },
       dateStr,
       service.default_duration_minutes,
+      undefined,
+      targetPractitionerId,
     );
     const isFree = slots.some(
       (s) => new Date(s.start).getTime() === start.getTime(),
@@ -214,31 +289,39 @@ export async function bookAppointmentForClientAction(
   }
 
   const appointmentToken = generateAppointmentToken();
-  const { data: created, error: insertErr } = await supabase
-    .from("appointments")
-    .insert({
-      studio_id: studio.id,
-      practitioner_id: practitioner.id,
-      client_id: clientId,
-      service_id: serviceId,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      duration_minutes: effectiveDurationMinutes,
-      status: "confirmed",
-      notes,
-      // PR #260: store ONLY the hash at rest. The raw appointmentToken is
-      // used by dispatchBookingEmails below (which reads the column off
-      // the returned row, now null, and mints an HMAC link instead).
-      cancellation_token_hash: hashAppointmentToken(appointmentToken),
-    })
-    .select("*")
-    .single();
-  if (insertErr || !created) {
-    // sqlstate 23P01 = exclusion_violation from the
-    // no_overlapping_active_appointments_per_studio constraint. The
-    // structured code lets the calendar UI surface a toast and
-    // refresh the grid without parsing the message string.
-    if (insertErr?.code === "23P01") {
+  // Part 4: the canonical atomic command. One SECURITY DEFINER transaction takes
+  // the studio-capacity advisory lock, re-validates the booking flag / actor
+  // authority / target practitioner / service eligibility / client + service
+  // tenancy, computes the interval server-side, and inserts the appointment +
+  // audit atomically. The per-resource shadow GiST exclusion is the final race
+  // authority (23P01 → rolled back → "slot taken"). Service-role only, so it
+  // runs on the admin client.
+  const admin = createAdminClient();
+  // Part 4 Item 2/3: the v2 command derives the authoritative duration from the
+  // LOCKED service row (never a caller-supplied length) and runs every booking
+  // through the shared, target-aware availability validator. The custom length
+  // (p_duration_override_minutes) and the availability bypass
+  // (p_allow_outside_availability) are OWNER-ONLY and re-checked server-side
+  // inside the command — the values below are only honoured for an owner actor.
+  const { data: rpcRows, error: rpcErr } = await admin.rpc(
+    "create_internal_appointment_v2",
+    {
+      p_studio_id: studio.id,
+      p_actor_practitioner_id: practitioner.id,
+      p_target_practitioner_id: targetPractitionerId,
+      p_client_id: clientId,
+      p_service_id: serviceId,
+      p_starts_at: start.toISOString(),
+      p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
+      p_notes: notes,
+      p_duration_override_minutes: durationOverride,
+      p_allow_outside_availability: allowOutsideAvailability,
+    },
+  );
+  if (rpcErr) {
+    // 23P01 = the per-resource exclusion — the slot was taken between the
+    // advisory pre-check and the insert. Safe, structured; no raw DB text.
+    if (rpcErr.code === "23P01") {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",
@@ -255,46 +338,50 @@ export async function bookAppointmentForClientAction(
         code: "slot_taken",
       };
     }
-    return { ok: false, error: insertErr?.message ?? "Insert failed." };
+    logBookingDbError("book_appointment", "rpc", rpcErr.code);
+    return { ok: false, error: "Could not create the appointment. Please try again." };
+  }
+  const outcome = (rpcRows as BookingRpcRow[] | null)?.[0];
+  if (!outcome || outcome.result !== "created" || !outcome.appointment_id) {
+    return { ok: false, error: bookingResultMessage(outcome?.result) };
+  }
+  const createdId = outcome.appointment_id;
+  // Fetch the created row for the (existing) email/SMS dispatch path.
+  const { data: created } = await supabase
+    .from("appointments")
+    .select("*")
+    .eq("id", createdId)
+    .maybeSingle();
+  if (!created) {
+    // Committed, but the follow-up read failed — the booking still succeeded.
+    revalidatePath("/calendar");
+    return { ok: true, appointmentId: createdId };
   }
 
-  await supabase.from("appointment_audit").insert({
-    appointment_id: created.id,
-    actor_type: "practitioner",
-    actor_id: practitioner.id,
-    action: "created",
-    details: {
-      source: "practitioner_ui",
+  // The appointment is COMMITTED (create_internal_appointment_v2 returned). The
+  // post-commit notification dispatch is best-effort/fail-open: a throwing helper
+  // (e.g. a transient read inside the email context) must NEVER turn a committed
+  // booking into a client-visible failure + a confusing re-submit. Mirrors the
+  // follow-up-read handling above and the public booking flow. Bounded, PHI-free.
+  try {
+    await dispatchBookingEmails({
+      appointment: created,
+      service,
+      studio,
+      practitionerName: practitioner.display_name?.trim() || practitioner.email,
+      practitionerEmail: practitioner.email,
+      clientName: client.name,
+      clientEmail: client.email,
+      clientPhone: client.phone,
+      clientSmsConsentAt: client.sms_consent_at,
+      clientSmsOptedOutAt: client.sms_opted_out_at,
       notes,
-      // Captured only when the override was used; absent otherwise so
-      // historical audit rows don't get noisy false negatives.
-      ...(allowOutsideAvailability ? { override: true } : {}),
-      // Captured when a drag-to-create selection produced a duration
-      // different from the service default. Records both numbers so
-      // the audit row is self-describing without a second lookup.
-      ...(durationOverride != null
-        ? {
-            duration_minutes_override: durationOverride,
-            service_default_duration_minutes:
-              service.default_duration_minutes,
-          }
-        : {}),
-    },
-  });
-
-  await dispatchBookingEmails({
-    appointment: created,
-    service,
-    studio,
-    practitionerName: practitioner.display_name?.trim() || practitioner.email,
-    practitionerEmail: practitioner.email,
-    clientName: client.name,
-    clientEmail: client.email,
-    clientPhone: client.phone,
-    clientSmsConsentAt: client.sms_consent_at,
-    clientSmsOptedOutAt: client.sms_opted_out_at,
-    notes,
-  });
+    });
+  } catch (e) {
+    console.error(
+      `booking_action_post_commit_error:dispatch:${e instanceof Error ? e.name : "unknown"}`,
+    );
+  }
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
@@ -625,7 +712,11 @@ export async function createClientForCalendarBookingAction(
     .single();
 
   if (error || !data) {
-    return { ok: false, error: error?.message ?? "Could not create client." };
+    // Never surface a raw Postgres/PostgREST message (constraint names, schema
+    // hints, or submitted values) to the browser — the quick-book drawer renders
+    // this string verbatim. Log a bounded SQLSTATE marker instead.
+    logBookingDbError("create_client", "insert", error?.code);
+    return { ok: false, error: "Could not create the client. Please try again." };
   }
 
   // Same pages that the existing createClientAction revalidates —
@@ -707,7 +798,11 @@ export async function fetchLastServiceForClientAction(
       .order("starts_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) {
+      // Log the SQLSTATE only; never propagate the raw DB text to the browser.
+      logBookingDbError("last_service", "query", error.code);
+      throw new Error("last_service_query_failed");
+    }
     return (data as Row | null) ?? null;
   }
 
@@ -729,11 +824,9 @@ export async function fetchLastServiceForClientAction(
         lastLocalDate: localDateString(new Date(row.starts_at), studio.timezone),
       },
     };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Could not load last service.",
-    };
+  } catch {
+    // Fixed, safe copy — the inner query already logged a bounded SQLSTATE marker.
+    return { ok: false, error: "Could not load the last service. Please try again." };
   }
 }
 

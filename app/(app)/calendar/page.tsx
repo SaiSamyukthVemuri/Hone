@@ -293,6 +293,9 @@ export default async function CalendarPage({
         tz={studio.timezone}
         timeFormat={timeFormat}
         isOwner={isOwner}
+        practitionerCapacityEnabled={studio.practitioner_capacity_enabled === true}
+        currentPractitionerId={practitioner.id}
+        currentPractitionerName={practitioner.display_name}
         clients={drawerClients}
         services={services}
         returnTo={returnTo}
@@ -400,6 +403,9 @@ export default async function CalendarPage({
                 tz={studio.timezone}
                 timeFormat={timeFormat}
                 isOwner={isOwner}
+                practitionerCapacityEnabled={studio.practitioner_capacity_enabled === true}
+                currentPractitionerId={practitioner.id}
+                currentPractitionerName={practitioner.display_name}
                 clients={drawerClients}
                 services={services}
                 isToday={date === today}

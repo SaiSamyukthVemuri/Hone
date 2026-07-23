@@ -1,13 +1,17 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Service } from "@/lib/types/database";
 import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
-import { fetchSlotsForClientBookingAction } from "./booking-actions";
+import {
+  fetchSlotsForClientBookingAction,
+  fetchEligiblePractitionersAction,
+  type EligiblePractitioner,
+} from "./booking-actions";
 import { bookAppointmentForClientAction } from "../../calendar/actions";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 
@@ -23,6 +27,11 @@ type Props = {
   // Owner-only outside-hours override. Non-owners never see the control; the
   // server (bookAppointmentForClientAction) enforces owner-only regardless.
   isOwner: boolean;
+  // Part 4 Item 6: practitioner capacity. When ON + owner, a practitioner
+  // selector is shown; the target drives target-specific slots + assignment.
+  practitionerCapacityEnabled: boolean;
+  currentPractitionerId: string;
+  currentPractitionerName: string;
 };
 
 const OVERRIDE_TIME_RE = /^\d{2}:\d{2}$/;
@@ -33,6 +42,9 @@ export function BookAppointment({
   defaultDate,
   timezone,
   isOwner,
+  practitionerCapacityEnabled,
+  currentPractitionerId,
+  currentPractitionerName,
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -54,14 +66,42 @@ export function BookAppointment({
   const [overrideConfirmed, setOverrideConfirmed] = useState(false);
   const overrideTimeValid = OVERRIDE_TIME_RE.test(overrideTime);
 
-  function loadSlots(nextServiceId: string, nextDate: string) {
+  // Item 6: owner practitioner selector. The selector is shown ONLY when capacity
+  // is ON and the actor is an owner; members and Legacy studios always book the
+  // acting practitioner (target === self, no selector).
+  const showSelector = practitionerCapacityEnabled && isOwner;
+  const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
+  const [eligibleError, setEligibleError] = useState<string | null>(null);
+  const [target, setTarget] = useState<string>(currentPractitionerId);
+  const [loadingPractitioners, startLoadingPractitioners] = useTransition();
+  // Item 6 (1C): latest-request-wins guards. A stale eligible/slot response from
+  // an earlier service/date/practitioner must never overwrite the current state.
+  const eligibleReq = useRef(0);
+  const slotReq = useRef(0);
+
+  // Default-target rule (documented): preserve an already-selected valid target;
+  // otherwise prefer the current owner when eligible; otherwise the first
+  // eligible practitioner. Never silently keep an ineligible target.
+  function resolveDefaultTarget(
+    list: EligiblePractitioner[],
+    current: string,
+  ): string {
+    if (list.some((p) => p.id === current)) return current;
+    if (list.some((p) => p.id === currentPractitionerId)) return currentPractitionerId;
+    return list[0]?.id ?? "";
+  }
+
+  function loadSlots(nextServiceId: string, nextDate: string, nextTarget: string) {
     setError(null);
     setPickedSlot(null);
+    const req = ++slotReq.current;
     startLoading(async () => {
       const r = await fetchSlotsForClientBookingAction({
         serviceId: nextServiceId,
         date: nextDate,
+        practitionerId: showSelector ? nextTarget : undefined,
       });
+      if (req !== slotReq.current) return; // stale — a newer request superseded this
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
@@ -71,26 +111,75 @@ export function BookAppointment({
     });
   }
 
-  function handleOpen() {
-    setOpen(true);
-    if (serviceId && date) loadSlots(serviceId, date);
+  // Load the eligible practitioners for a service, resolve the default target,
+  // then load that target's slots. Owner + capacity-ON only. FAILS CLOSED: a
+  // lookup error or an empty list clears the target/slots and never falls back to
+  // self slots.
+  function loadForService(nextServiceId: string, nextDate: string) {
+    if (!showSelector) {
+      loadSlots(nextServiceId, nextDate, currentPractitionerId);
+      return;
+    }
+    const req = ++eligibleReq.current;
+    setEligibleError(null);
+    startLoadingPractitioners(async () => {
+      const r = await fetchEligiblePractitionersAction(nextServiceId);
+      if (req !== eligibleReq.current) return; // stale service response
+      if (!r.ok) {
+        setEligibleError(r.error);
+        setEligible([]);
+        setTarget("");
+        setSlots([]);
+        setPickedSlot(null);
+        return;
+      }
+      const list = r.practitioners;
+      setEligible(list);
+      const nextTarget = resolveDefaultTarget(list, target);
+      setTarget(nextTarget);
+      if (!nextTarget) {
+        // Empty eligible list → do NOT request slots; booking is blocked.
+        setSlots([]);
+        setPickedSlot(null);
+        return;
+      }
+      loadSlots(nextServiceId, nextDate, nextTarget);
+    });
   }
 
+  function handleOpen() {
+    setOpen(true);
+    if (serviceId && date) loadForService(serviceId, date);
+  }
   function handleService(v: string) {
     setServiceId(v);
-    if (v && date) loadSlots(v, date);
+    if (v && date) loadForService(v, date);
   }
   function handleDate(v: string) {
     setDate(v);
-    if (serviceId && v) loadSlots(serviceId, v);
+    if (serviceId && v) loadSlots(serviceId, v, target);
+  }
+  function handleTarget(v: string) {
+    setTarget(v);
+    // Changing the practitioner refreshes target-specific slots and clears any
+    // previously selected time (loadSlots resets pickedSlot).
+    if (serviceId && date) loadSlots(serviceId, date, v);
   }
 
   // Owner override is usable only when the toggle is on, the time is valid, and
-  // the owner has confirmed. Otherwise a normal slot must be picked.
+  // the owner has confirmed. Otherwise a normal slot must be picked. When the
+  // selector is shown, the current target MUST be present in the eligible list
+  // (fail closed: an empty/failed lookup leaves target "" → booking blocked).
+  const targetValid = !showSelector || eligible.some((p) => p.id === target);
   const overrideActive = isOwner && overrideEnabled;
-  const canConfirm = overrideActive
-    ? overrideTimeValid && overrideConfirmed
-    : !!pickedSlot;
+  const canConfirm =
+    targetValid &&
+    (overrideActive ? overrideTimeValid && overrideConfirmed : !!pickedSlot);
+
+  // The practitioner this booking will be assigned to (for the confirmation line).
+  const assignedName = showSelector
+    ? (eligible.find((p) => p.id === target)?.displayName ?? "")
+    : currentPractitionerName;
 
   function handleConfirm() {
     if (!serviceId || !canConfirm) return;
@@ -99,6 +188,10 @@ export function BookAppointment({
     fd.set("client_id", clientId);
     fd.set("service_id", serviceId);
     fd.set("notes", notes);
+    // Item 6: an owner (capacity ON) assigns the selected target; the server
+    // re-validates it (active, same-studio, eligible). Members/Legacy send no
+    // practitioner_id → the server books the acting practitioner.
+    if (showSelector && target) fd.set("practitioner_id", target);
     if (overrideActive) {
       // Same contract as the calendar Quick Book override: a UTC instant from
       // the studio-local date + time, plus allow_outside_availability=true. The
@@ -195,6 +288,38 @@ export function BookAppointment({
         </label>
       </div>
 
+      {/* Item 6: owner practitioner selector — active, service-eligible, same-studio
+          practitioners only (display names only, ids never shown). */}
+      {showSelector && (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Practitioner
+          </span>
+          {loadingPractitioners ? (
+            <p className="text-sm text-neutral-500">Loading practitioners…</p>
+          ) : eligibleError ? (
+            <p className="text-sm text-red-600 dark:text-red-400">{eligibleError}</p>
+          ) : eligible.length === 0 ? (
+            <p className="text-sm text-neutral-500">
+              No practitioner is set up for this service.
+            </p>
+          ) : (
+            <select
+              value={target}
+              onChange={(e) => handleTarget(e.target.value)}
+              aria-label="Practitioner"
+              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            >
+              {eligible.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.displayName}
+                </option>
+              ))}
+            </select>
+          )}
+        </label>
+      )}
+
       <div className="flex flex-col gap-2">
         <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
           Available times
@@ -287,18 +412,25 @@ export function BookAppointment({
         />
       </label>
 
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={!canConfirm || booking}
-          className="rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          {booking ? "Booking…" : overrideActive ? "Book out-of-hours" : "Confirm"}
-        </button>
-        {error && (
-          <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
+      <div className="flex flex-col gap-2">
+        {assignedName && (
+          <p className="text-xs text-neutral-500" data-testid="assigned-practitioner">
+            With {assignedName}
+          </p>
         )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!canConfirm || booking}
+            className="rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          >
+            {booking ? "Booking…" : overrideActive ? "Book out-of-hours" : "Confirm"}
+          </button>
+          {error && (
+            <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
+          )}
+        </div>
       </div>
     </div>
   );

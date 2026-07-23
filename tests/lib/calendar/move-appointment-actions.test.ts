@@ -92,7 +92,7 @@ function baseMove(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   state.practitioner = { id: "prac-1", role: "owner" };
-  state.appt = { id: APPT_ID, status: "confirmed", starts_at: EXPECT_START, client_id: "client-1", duration_minutes: 60 };
+  state.appt = { id: APPT_ID, status: "confirmed", starts_at: EXPECT_START, client_id: "client-1", duration_minutes: 60, practitioner_id: "pr-1" };
   state.slots = [
     { start: localISO("10:00"), end: localISO("11:00"), startLabel: "10:00 AM" },
     { start: localISO("14:00"), end: localISO("15:00"), startLabel: "2:00 PM" },
@@ -111,7 +111,7 @@ describe("custom_time — owner authorization", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.appointmentId).toBe(APPT_ID);
     expect(state.rpcCalls).toHaveLength(1);
-    expect(state.rpcCalls[0].name).toBe("practitioner_move_appointment");
+    expect(state.rpcCalls[0].name).toBe("move_or_reassign_appointment");
     // Studio timezone is used (never the browser tz): 3 AM DAY Toronto -> its UTC instant.
     expect(state.rpcCalls[0].args.p_new_starts_at).toBe(localISO("03:00"));
     // custom_time does NOT gate on the generated slot list.

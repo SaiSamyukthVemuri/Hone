@@ -12,6 +12,7 @@ import {
   loadMoveSlotsAction,
   moveAppointmentAction,
   type MoveSlot,
+  type MovePractitionerOption,
 } from "./move-appointment-actions";
 
 // Practitioner Move appointment — ONE shared responsive dialog + state machine used by
@@ -79,6 +80,15 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [customTime, setCustomTime] = useState(""); // studio-local "HH:MM"
   const [ackOverride, setAckOverride] = useState(false);
 
+  // Item 7: owner-only reassignment. All server-authoritative from loadMoveSlotsAction.
+  const [reassignEnabled, setReassignEnabled] = useState(false);
+  const [eligible, setEligible] = useState<MovePractitionerOption[]>([]);
+  const [target, setTarget] = useState<string>(""); // "" = none chosen (reassignment required)
+  const [currentPractitionerId, setCurrentPractitionerId] = useState<string>("");
+  // Latest-request-wins: a stale slot/eligible response (appt fixed; date/target vary)
+  // must never overwrite the current list. Bumped on every load.
+  const loadReq = useRef(0);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -98,10 +108,18 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   // Load authorized available times for a given local date. Preserves the current
   // selection only when the new list still contains it (else clears the incompatible time).
   const load = useCallback(
-    (forDate: string) => {
+    // forTarget === null → the initial load (also resolves the default target);
+    // a string → an explicit target (owner date/practitioner change).
+    (forDate: string, forTarget: string | null) => {
       setLoadError(null);
+      const req = ++loadReq.current;
       startLoad(async () => {
-        const res = await loadMoveSlotsAction({ appointmentId: appointment.id, localDate: forDate });
+        const res = await loadMoveSlotsAction({
+          appointmentId: appointment.id,
+          localDate: forDate,
+          targetPractitionerId: forTarget,
+        });
+        if (req !== loadReq.current) return; // stale — a newer load superseded this
         if (!res.ok) {
           setSlots([]);
           setLoadError(res.error);
@@ -110,6 +128,15 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
         }
         setSlots(res.slots);
         setCanUseCustomTime(res.canUseCustomTime); // server-authoritative owner flag
+        setReassignEnabled(res.reassignEnabled);
+        setEligible(res.eligiblePractitioners);
+        setCurrentPractitionerId(res.currentPractitionerId);
+        // Default target on the FIRST load only: keep the current practitioner when
+        // still active + eligible; otherwise leave it empty so the owner must
+        // deliberately choose a replacement (never a silent first pick).
+        if (forTarget === null && res.reassignEnabled) {
+          setTarget(res.currentPractitionerValid ? res.currentPractitionerId : "");
+        }
         setSelected((prev) => (prev && res.slots.some((s) => s.start === prev.start) ? prev : null));
       });
     },
@@ -130,7 +157,11 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setCustomTime("");
     setAckOverride(false);
     setCanUseCustomTime(false);
-    load(currentLocalDate);
+    setReassignEnabled(false);
+    setEligible([]);
+    setTarget("");
+    setCurrentPractitionerId("");
+    load(currentLocalDate, null);
     const t = window.setTimeout(() => panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus(), 0);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,8 +229,21 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     // of the generated slot list, so no reload/clear is needed.
     if (mode === "available_slot") {
       setSelected(null);
-      load(d);
+      load(d, target);
     }
+  };
+
+  // Item 7: owner picks a reassignment target. Changing it synchronously clears the
+  // selected slot + any stale target-specific error, then reloads that target's
+  // slots (latest-request-wins inside `load`), forcing a deliberate re-confirmation.
+  const onPickTarget = (t: string) => {
+    if (submitting || t === target) return;
+    setTarget(t);
+    setSelected(null);
+    setMoveError(null);
+    setLoadError(null);
+    if (t) load(date, t);
+    else setSlots([]); // no target chosen → offer no times (reassignment required)
   };
 
   // Mode switches clear incompatible state so stale state from one mode can never
@@ -210,7 +254,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setCustomTime("");
     setAckOverride(false);
     setMoveError(null);
-    load(date); // reload current available slots
+    load(date, target); // reload current available slots
   };
   const switchToCustom = () => {
     if (submitting || mode === "custom_time" || !canUseCustomTime) return;
@@ -219,10 +263,40 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setMoveError(null); // clear generated-slot conflict errors
   };
 
+  // Item 7: when reassignment is enabled the current target MUST be a resolved
+  // eligible practitioner (fail closed — an empty/failed lookup leaves target "").
+  const targetChosen = !reassignEnabled || eligible.some((p) => p.id === target);
   const canConfirm =
-    mode === "available_slot"
+    targetChosen &&
+    (mode === "available_slot"
       ? !!selected && !loadingSlots
-      : DATE_RE.test(date) && TIME_RE.test(customTime) && ackOverride;
+      : DATE_RE.test(date) && TIME_RE.test(customTime) && ackOverride);
+
+  // Which operation the current selection represents (drives the summary + button).
+  const isReassign = reassignEnabled && !!target && target !== currentPractitionerId;
+  const timeChanged =
+    mode === "available_slot"
+      ? !!selected && selected.start !== appointment.startsAt
+      : !!customInstant && customInstant.getTime() !== new Date(appointment.startsAt).getTime();
+  const currentName =
+    eligible.find((p) => p.id === currentPractitionerId)?.displayName ?? appointment.practitionerName ?? null;
+  const targetName = eligible.find((p) => p.id === target)?.displayName ?? null;
+  const currentInvalid = reassignEnabled && !!currentPractitionerId && !eligible.some((p) => p.id === currentPractitionerId);
+  const opVerb = isReassign
+    ? timeChanged
+      ? "Move and reassign appointment"
+      : "Reassign appointment"
+    : "Move appointment";
+  const opBusy = isReassign
+    ? timeChanged
+      ? "Saving changes…"
+      : "Reassigning…"
+    : "Moving appointment…";
+  const confirmTitle = isReassign
+    ? timeChanged
+      ? "Confirm move and reassign"
+      : "Confirm reassign"
+    : "Confirm move";
 
   const confirmMove = () => {
     // Synchronous one-shot guard: a duplicate tap can NEVER start a second request,
@@ -260,6 +334,10 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           localTime,
           mode: submitMode,
           outsideAvailabilityConfirmed: ack,
+          // Item 7: the proposed reassignment target (owner only). The action
+          // ignores it for members/Legacy and resolves the same practitioner to
+          // NULL = time-only; it independently re-validates before the command.
+          targetPractitionerId: reassignEnabled ? target : null,
         });
       } catch {
         submittingRef.current = false;
@@ -280,9 +358,9 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       setMoveError(res.error);
       if (res.code === "conflict" && submitMode === "available_slot") {
         setSelected(null);
-        load(date); // the offered slot is gone; refresh the times (no move happened)
+        load(date, target); // the offered slot is gone; refresh the CURRENT target's times
       } else if (res.code === "stale" && submitMode === "available_slot") {
-        load(date);
+        load(date, target);
       }
       // custom mode keeps its entered time + acknowledgement; the error marks it invalid.
     })();
@@ -328,6 +406,43 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
             <div className="mt-0.5 text-neutral-500">{appointment.durationMinutes} min{appointment.practitionerName ? ` · ${appointment.practitionerName}` : ""}</div>
           </section>
 
+          {/* Item 7: owner-only practitioner selector (capacity ON). Members + Legacy
+              never see it. Active, service-eligible practitioners only; display names
+              only. Changing it reloads that practitioner's times + clears the pick. */}
+          {reassignEnabled && (
+            <div className="mt-5">
+              <label className="block">
+                <span className="text-sm font-medium">Practitioner</span>
+                <select
+                  value={target}
+                  onChange={(e) => onPickTarget(e.target.value)}
+                  disabled={submitting}
+                  aria-label="Practitioner"
+                  className="mt-1 block w-full rounded-lg border border-neutral-300 px-3 py-3 text-base focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900"
+                >
+                  {(currentInvalid || target === "") && <option value="">Choose a practitioner…</option>}
+                  {eligible.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName}
+                      {p.id === currentPractitionerId ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {currentInvalid && (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-300" data-testid="reassignment-required">
+                  This appointment&apos;s practitioner is no longer active or eligible. Choose a practitioner to reassign it.
+                </p>
+              )}
+              {isReassign && targetName && (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400" data-testid="reassign-from-to">
+                  Reassigning {currentName ? <>from {currentName} </> : null}→{" "}
+                  <span className="font-medium text-neutral-900 dark:text-neutral-100">{targetName}</span>
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Owner-only mode selector. Rendered ONLY when the server says the caller
               is an owner; a non-owner never sees the custom-time option. */}
           {canUseCustomTime && (
@@ -366,7 +481,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
               ) : loadError ? (
                 <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                   {loadError}{" "}
-                  <button type="button" onClick={() => load(date)} className="underline">Try again</button>
+                  <button type="button" onClick={() => load(date, target)} className="underline">Try again</button>
                 </div>
               ) : slots && slots.length === 0 ? (
                 <p className="mt-3 text-sm text-neutral-500">No available times on this date.</p>
@@ -425,10 +540,15 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           {/* Confirm summary */}
           {mode === "available_slot" && selected && (
             <section className="mt-5 rounded-xl border border-neutral-200 p-4 text-sm dark:border-neutral-800">
-              <div className="font-medium">Confirm move</div>
+              <div className="font-medium" data-testid="confirm-title">{confirmTitle}</div>
               <div className="mt-2 flex flex-col gap-1 text-neutral-600 dark:text-neutral-400">
                 <span>From: {currentDayLabel} at {currentTimeLabel}</span>
                 <span className="font-medium text-neutral-900 dark:text-neutral-100">To: {newDayLabel} at {selected.label}</span>
+                {isReassign && targetName && (
+                  <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                    Practitioner: {currentName ? `${currentName} → ` : ""}{targetName}
+                  </span>
+                )}
                 <span>Duration unchanged: {appointment.durationMinutes} min</span>
               </div>
             </section>
@@ -436,13 +556,18 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           {mode === "custom_time" && customInstant && (
             <section className="mt-5 rounded-xl border border-neutral-200 p-4 text-sm dark:border-neutral-800">
               <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">Confirm move</div>
+                <div className="font-medium" data-testid="confirm-title">{confirmTitle}</div>
                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">Custom-time override</span>
               </div>
               <div className="mt-2 flex flex-col gap-1 text-neutral-600 dark:text-neutral-400">
                 <span>{appointment.clientName ?? "Client"} · {appointment.serviceName ?? "Appointment"}</span>
                 <span>From: {currentDayLabel} at {currentTimeLabel}</span>
                 <span className="font-medium text-neutral-900 dark:text-neutral-100">To: {customDayLabel} at {customTimeLabel}</span>
+                {isReassign && targetName && (
+                  <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                    Practitioner: {currentName ? `${currentName} → ` : ""}{targetName}
+                  </span>
+                )}
                 <span>Duration unchanged: {appointment.durationMinutes} min</span>
               </div>
             </section>
@@ -463,7 +588,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
             {submitting && (
               <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-neutral-900/40 dark:border-t-neutral-900" />
             )}
-            {submitting ? "Moving appointment…" : "Move appointment"}
+            {submitting ? opBusy : opVerb}
           </button>
         </div>
       </div>

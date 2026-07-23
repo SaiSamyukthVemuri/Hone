@@ -22,11 +22,10 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0141 (onboarding v2 — invitation reconciliation) on a base
-    // that now carries the merged PR-B capacity stack (0135-0139) plus
-    // onboarding 0140-0141. Bump this tripwire consciously when a new
-    // migration lands.
-    expect(maxNum).toBe(141); // 0141 = invitation reconciliation (0140 = onboarding; 0135-0139 = PR B, merged)
+    // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
+    // (per-practitioner availability). Bump this tripwire consciously
+    // when a new migration lands.
+    expect(maxNum).toBe(150); // 0150 = single-row schedule writers locked
     expect(FILE).toMatch(/^0120_/);
   });
 });

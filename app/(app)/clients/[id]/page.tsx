@@ -552,6 +552,9 @@ export default async function ClientCheatSheetPage({
               defaultDate={today}
               timezone={studio.timezone}
               isOwner={practitioner.role === "owner"}
+              practitionerCapacityEnabled={studio.practitioner_capacity_enabled === true}
+              currentPractitionerId={practitioner.id}
+              currentPractitionerName={practitioner.display_name}
             />
           </div>
         </div>

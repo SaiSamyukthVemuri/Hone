@@ -220,6 +220,20 @@ export async function setStudioCapacityEnabled(
   );
 }
 
+// Part 4 Item 6 — the SECOND flag (0136): capacity ON alone still rejects new
+// bookings (booking_paused). Enabling internal booking requires this too. The
+// studios_capacity_booking_valid CHECK forbids cap=false+book=true, so enable the
+// structural flag first.
+export async function setStudioCapacityBookingEnabled(
+  studioId: string,
+  enabled: boolean,
+): Promise<void> {
+  await sql(
+    `update public.studios set practitioner_capacity_booking_enabled = $2 where id = $1`,
+    [studioId, enabled],
+  );
+}
+
 export async function seedStudioWideDefault(
   studioId: string,
   dayOfWeek: number,
@@ -294,6 +308,80 @@ export async function setStudioTimeFormat(
     studioId,
     format,
   ]);
+}
+
+// Part 4 Item 6 — the single seeded service for an E2E studio.
+export async function getE2eServiceId(studioId: string): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.services where studio_id = $1 limit 1`,
+    [studioId],
+  );
+  return rows[0].id;
+}
+
+export async function seedServiceEligibility(
+  studioId: string,
+  serviceId: string,
+  practitionerId: string,
+): Promise<void> {
+  await sql(
+    `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+     values ($1, $2, $3)
+     on conflict on constraint service_practitioners_unique do nothing`,
+    [studioId, serviceId, practitionerId],
+  );
+}
+
+// Item 7: seed a FUTURE confirmed appointment at a studio-local time today (the
+// e2e studio's timezone is chosen so "today" is local morning → an afternoon time
+// is future). Returns the appointment id.
+export async function seedFutureAppointmentAt(
+  studioId: string,
+  practitionerId: string,
+  clientId: string,
+  tz: string,
+  localHHMM: string,
+): Promise<string> {
+  const rows = await sql<{ startu: string; endu: string }>(
+    `select (to_char((now() at time zone $1)::date, 'YYYY-MM-DD') || ' ' || $2)::timestamp at time zone $1 as startu,
+            ((to_char((now() at time zone $1)::date, 'YYYY-MM-DD') || ' ' || $2)::timestamp + interval '60 min') at time zone $1 as endu`,
+    [tz, localHHMM],
+  );
+  const startIso = new Date(rows[0].startu).toISOString();
+  const endIso = new Date(rows[0].endu).toISOString();
+  return seedConfirmedAppointment(studioId, practitionerId, clientId, startIso, endIso);
+}
+
+export async function getStudioTimezone(studioId: string): Promise<string> {
+  const rows = await sql<{ timezone: string }>(`select timezone from public.studios where id = $1`, [studioId]);
+  return rows[0].timezone;
+}
+
+export async function getAppointmentAuditActions(appointmentId: string): Promise<string[]> {
+  const rows = await sql<{ action: string }>(
+    `select action from public.appointment_audit where appointment_id = $1 order by created_at`,
+    [appointmentId],
+  );
+  return rows.map((r) => r.action);
+}
+
+export async function getOwnerPractitionerId(studioId: string): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+    [studioId],
+  );
+  return rows[0].id;
+}
+
+export async function getClientAppointmentsWithPractitioner(
+  studioId: string,
+  clientId: string,
+): Promise<Array<{ id: string; practitioner_id: string | null; starts_at: string }>> {
+  return sql(
+    `select id, practitioner_id, starts_at from public.appointments
+      where studio_id = $1 and client_id = $2 order by starts_at`,
+    [studioId, clientId],
+  );
 }
 
 export async function setStudioTimezone(studioId: string, tz: string): Promise<void> {
