@@ -32,7 +32,7 @@ function mockSupabase(d: {
   blockouts?: unknown[];
   override?: unknown | null;
   defaultRow?: unknown | null;
-  reservations?: { starts_at: string; ends_at: string }[];
+  reservations?: { starts_at: string; ends_at: string; source_kind?: string }[];
 }) {
   const results: Record<string, { data: unknown }> = {
     studio_blockouts: { data: d.blockouts ?? [] },
@@ -57,7 +57,24 @@ function mockSupabase(d: {
 
 // Open 10:00–17:00 every day (the mock ignores day_of_week).
 const OPEN_10_17 = { is_open: true, open_time: "10:00:00", close_time: "17:00:00" };
+// Chloe's studio: opens 11:00, late enough close for afternoon slots.
+const OPEN_11_18 = { is_open: true, open_time: "11:00:00", close_time: "18:00:00" };
 const starts = (slots: { start: string }[]) => slots.map((s) => s.start);
+
+// Post-migration 0152 the appointment shadow stores the ACTUAL interval; the
+// generator re-applies the studio buffer for source_kind === "appointment".
+// Tests therefore model appointments with their REAL end + the source tag, and
+// timed blocks / breaks with raw intervals (protected end = actual end).
+const appt = (startHHMM: string, endHHMM: string) => ({
+  starts_at: localISO(startHHMM),
+  ends_at: localISO(endHHMM),
+  source_kind: "appointment",
+});
+const block = (startHHMM: string, endHHMM: string) => ({
+  starts_at: localISO(startHHMM),
+  ends_at: localISO(endHHMM),
+  source_kind: "timed_block",
+});
 
 describe("smart scheduling: empty day", () => {
   it("offers the opening anchor + a coarse hourly fallback — NOT every 15 minutes", async () => {
@@ -89,7 +106,7 @@ describe("smart scheduling: packs after an existing appointment", () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [{ starts_at: localISO("10:00"), ends_at: localISO("11:15") }],
+        reservations: [appt("10:00", "11:00")],
       }),
       studio(15),
       DATE,
@@ -113,10 +130,7 @@ describe("smart scheduling: packs after an existing appointment", () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [
-          { starts_at: localISO("10:00"), ends_at: localISO("11:15") },
-          { starts_at: localISO("13:00"), ends_at: localISO("14:15") },
-        ],
+        reservations: [appt("10:00", "11:00"), appt("13:00", "14:00")],
       }),
       studio(15),
       DATE,
@@ -127,12 +141,92 @@ describe("smart scheduling: packs after an existing appointment", () => {
   });
 });
 
+describe("smart scheduling: packs immediately BEFORE the next appointment (Chloe 11:30)", () => {
+  // Studio opens 11:00; existing appointment 13:00–14:00 (post-0152 shadow = the
+  // ACTUAL interval; the generator re-applies the 30-min buffer → protected end
+  // 14:30). Expected starts: 11:00, 11:30, 14:30, 15:00, 16:00, 17:00.
+  //   - 11:30 packs BEFORE: 12:30 + 30 touches 13:00 (backward anchor
+  //     reservation.start − duration − buffer = 11:30).
+  //   - 14:30 packs AFTER: the appointment's protected end (14:00 + 30).
+  //   - 14:00 is EXCLUDED — it violates the appointment's 30-min buffer, exactly
+  //     as the authoritative DB validator (0152) rejects it.
+  const chloeCase = () =>
+    getAvailableSlots(
+      mockSupabase({
+        defaultRow: OPEN_11_18,
+        reservations: [appt("13:00", "14:00")],
+      }),
+      studio(30),
+      DATE,
+      60,
+    );
+
+  it("produces the exact expected list — 11:30 + 14:30 in, 14:00 out (buffer parity)", async () => {
+    const s = starts(await chloeCase());
+    expect(s).toEqual([
+      localISO("11:00"),
+      localISO("11:30"),
+      localISO("14:30"),
+      localISO("15:00"),
+      localISO("16:00"),
+      localISO("17:00"),
+    ]);
+    // Explicit spec assertions.
+    expect(s).toContain(localISO("11:30"));
+    expect(s).toContain(localISO("14:30"));
+    expect(s).not.toContain(localISO("12:00"));
+    expect(s).not.toContain(localISO("13:00"));
+    expect(s).not.toContain(localISO("14:00")); // buffer violation — must not appear
+    // Sorted + unique.
+    expect(s).toEqual([...s].sort());
+    expect(new Set(s).size).toBe(s.length);
+  });
+
+  it("offers 11:30 identically under per-practitioner scheduling (capacity ON)", async () => {
+    const s = starts(
+      await getAvailableSlots(
+        mockSupabase({
+          defaultRow: OPEN_11_18,
+          reservations: [appt("13:00", "14:00")],
+        }),
+        { ...studio(30), practitioner_capacity_enabled: true },
+        DATE,
+        60,
+        undefined,
+        "prac-1",
+      ),
+    );
+    expect(s).toContain(localISO("11:30"));
+  });
+
+  it("does NOT offer a backward-packed slot that would cross the boundary (buffer respected)", async () => {
+    // Same case but a 45-min buffer: 13:00 − 45 − 60 = 11:15 would be the anchor,
+    // and its protected end (11:15 + 60 + 45 = 13:00) still touches — valid. But a
+    // candidate one minute later must be rejected. Assert the exact anchor is the
+    // latest offered start before the appointment, never anything overlapping.
+    const s = starts(
+      await getAvailableSlots(
+        mockSupabase({
+          defaultRow: OPEN_11_18,
+          reservations: [appt("13:00", "14:00")],
+        }),
+        studio(45),
+        DATE,
+        60,
+      ),
+    );
+    expect(s).toContain(localISO("11:15")); // 13:00 − 45 − 60
+    expect(s).not.toContain(localISO("11:30")); // 11:30 + 60 + 45 = 13:15 > 13:00 → crosses
+    expect(s).not.toContain(localISO("12:00"));
+  });
+});
+
 describe("smart scheduling: buffer 0 vs 15", () => {
   it("buffer 0 → next slot is exactly at the appointment end", async () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [{ starts_at: localISO("10:00"), ends_at: localISO("11:00") }],
+        reservations: [appt("10:00", "11:00")],
       }),
       studio(0),
       DATE,
@@ -144,7 +238,7 @@ describe("smart scheduling: buffer 0 vs 15", () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [{ starts_at: localISO("10:00"), ends_at: localISO("11:15") }],
+        reservations: [appt("10:00", "11:00")],
       }),
       studio(15),
       DATE,
@@ -161,7 +255,7 @@ describe("smart scheduling: duration / fit / overlap / blocks", () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [{ starts_at: localISO("15:30"), ends_at: localISO("16:30") }],
+        reservations: [appt("15:30", "16:30")],
       }),
       studio(0),
       DATE,
@@ -177,7 +271,7 @@ describe("smart scheduling: duration / fit / overlap / blocks", () => {
     const slots = await getAvailableSlots(
       mockSupabase({
         defaultRow: OPEN_10_17,
-        reservations: [{ starts_at: localISO("12:00"), ends_at: localISO("13:00") }],
+        reservations: [block("12:00", "13:00")],
       }),
       studio(15),
       DATE,
