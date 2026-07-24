@@ -35,7 +35,7 @@ describe("0127 — file + repo-max tripwire", () => {
     expect(FILES.some((f) => f.startsWith("0127_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
     expect(FILES.some((f) => f.startsWith("0125_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(5[2-9]|[6-9]\d)_/.test(f)); // 0151 now present (RC hardening); trip on 0152+
+    const higher = FILES.filter((f) => /^01(5[3-9]|[6-9]\d)_/.test(f)); // 0152 now present (manual-override buffer); trip on 0153+
     expect(higher).toEqual([]);
   });
 

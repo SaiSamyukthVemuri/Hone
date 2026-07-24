@@ -118,7 +118,9 @@ describe("Item 5 — availability parity (writer accepts offered, rejects hidden
        values (gen_random_uuid(),$1,$2,$3,$4,$5::timestamptz,$6::timestamptz,30,'confirmed',$7)`,
       [B.studioId, P(1), B.clientId, serviceId, T("10:00"), end, hash64()],
     );
-    await expect(book(T("10:40"))).rejects.toMatchObject({ code: "23P01" }); // inside the buffer
+    // Buffer is now a SOFT constraint: a non-override writer inside the buffer
+    // is rejected via the validator (result 'buffer_conflict'), not a hard 23P01.
+    expect((await book(T("10:40"))).result).toBe("buffer_conflict"); // inside the buffer
     expect((await book(T("10:45"))).result).toBe("created"); // exactly at the protected end
   });
 

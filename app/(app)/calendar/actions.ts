@@ -62,6 +62,11 @@ function bookingResultMessage(result: string | undefined): string {
       return "That practitioner isn't working at that time.";
     case "outside_availability":
       return "That time is outside the practitioner's availability.";
+    case "buffer_conflict":
+      // Soft buffer/gap (migration 0152). Only reachable on the NON-override
+      // path — the owner override bypasses the buffer server-side. Guide the
+      // practitioner to the override rather than expose any DB detail.
+      return "That time is within the buffer around another appointment. Turn on “Outside your regular availability” to book it anyway.";
     case "studio_not_found":
     case "invalid_studio":
       return "Could not create the appointment. Please try again.";

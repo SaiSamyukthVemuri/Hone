@@ -104,9 +104,11 @@ describe("E: overlapping confirmed appointments are structurally impossible", ()
       endsAt: T11,
     });
     expect(first.rowCount).toBe(1);
-    // The row blocks [10:00, 11:15) regardless of what the INSERT
-    // claimed blocked_ends_at was, so a back-to-back 11:00 booking
-    // collides.
+    // Actual overlap is the only HARD constraint now; the 15-min buffer is a
+    // SOFT proximity rule enforced for normal writers by the enforce_appointment_buffer
+    // trigger. A back-to-back 11:00 booking does NOT actually overlap [10:00,11:00)
+    // but sits inside the 15-min buffer, so this direct (non-override) insert is
+    // rejected by the trigger with HB001 — not the hard 23P01 exclusion.
     await expect(
       insertAppointment({
         studioId: buffered.studioId,
@@ -114,7 +116,7 @@ describe("E: overlapping confirmed appointments are structurally impossible", ()
         startsAt: T11,
         endsAt: "2030-01-15T12:00:00Z",
       }),
-    ).rejects.toMatchObject({ code: "23P01" });
+    ).rejects.toMatchObject({ code: "HB001" });
   });
 
   it("a cancelled appointment does not block the slot", async () => {

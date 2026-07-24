@@ -234,6 +234,19 @@ export async function setStudioCapacityBookingEnabled(
   );
 }
 
+// Migration 0152 (manual-override buffer): the studio's soft buffer/gap. The
+// enforce_appointment_buffer trigger + validator read this LIVE value (not the
+// per-row snapshot), so setting it here governs the buffer for every writer.
+export async function setStudioBufferMinutes(
+  studioId: string,
+  minutes: number,
+): Promise<void> {
+  await sql(`update public.studios set buffer_minutes = $2 where id = $1`, [
+    studioId,
+    minutes,
+  ]);
+}
+
 export async function seedStudioWideDefault(
   studioId: string,
   dayOfWeek: number,
