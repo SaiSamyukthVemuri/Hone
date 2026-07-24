@@ -1226,6 +1226,34 @@ export async function seedE2eClient(seed: E2eSeed): Promise<{ clientId: string }
   return { clientId };
 }
 
+// Seed one mutable pinned note (client_pinned_notes) for the client, attributed
+// to the owner practitioner. Returns its id so the e2e can assert it is edited
+// in place (same id).
+export async function seedPinnedNote(
+  studioId: string,
+  clientId: string,
+  text: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `insert into public.client_pinned_notes (id, client_id, studio_id, text, created_by_practitioner_id)
+     values (gen_random_uuid(), $1, $2, $3,
+             (select id from public.practitioners where studio_id=$2 and role='owner' limit 1))
+     returning id`,
+    [clientId, studioId, text],
+  );
+  return rows[0]!.id;
+}
+
+export async function getPinnedNoteById(
+  noteId: string,
+): Promise<{ id: string; text: string } | null> {
+  const rows = await sql<{ id: string; text: string }>(
+    `select id, text from public.client_pinned_notes where id=$1`,
+    [noteId],
+  );
+  return rows[0] ?? null;
+}
+
 // Ground truth for the clinical-notes e2e: how many rows of a kind exist, and
 // the CURRENT (non-superseded) body for a kind.
 export async function getClinicalNoteCount(

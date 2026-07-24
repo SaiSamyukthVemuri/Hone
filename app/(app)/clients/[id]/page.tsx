@@ -107,6 +107,7 @@ import {
 // surface.
 import {
   addClientPinnedNoteAction,
+  editClientPinnedNoteAction,
   removeClientPinnedNoteAction,
 } from "./pinned-notes-actions";
 import {
@@ -577,6 +578,7 @@ export default async function ClientCheatSheetPage({
             clientId={client.id}
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
+            editAction={editClientPinnedNoteAction}
             removeAction={removeClientPinnedNoteAction}
           />
 
