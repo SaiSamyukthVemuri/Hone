@@ -1340,7 +1340,8 @@ export type PractitionerNotificationEventType =
   // Card-on-file changes, written server-side from the setup_intent.succeeded
   // webhook arm. card_added = first card ever saved for the (studio, client,
   // Stripe mode); card_replaced = a prior card row existed for that pair+mode.
-  // Studio-wide (practitioner_id null). Deduped on the Stripe event id.
+  // Studio-wide (practitioner_id null). Deduped on the mode-scoped SetupIntent
+  // business key.
   | "card_added"
   | "card_replaced";
 
@@ -1357,8 +1358,8 @@ export type PractitionerNotification = {
   read_at: string | null;
   created_at: string;
   // Internal idempotency token (migration 0154). NULL for all v1 writers;
-  // set to "stripe:<event.id>" by the durable card-change writer. Never
-  // rendered to users.
+  // set to "stripe:setup_intent:<test|live>:<setup_intent_id>" by the durable
+  // card-change writer. Never rendered to users.
   dedupe_key: string | null;
 };
 

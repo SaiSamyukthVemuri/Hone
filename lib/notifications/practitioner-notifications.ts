@@ -53,8 +53,9 @@ const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
     // setup_intent.succeeded webhook arm via the DURABLE writer below
     // (ensurePractitionerNotification), never via the fire-and-forget
     // recorder — the webhook must not ack Stripe before the row is secured.
-    // Body carries only client name + brand + last4; deduped on the Stripe
-    // event id.
+    // Body carries only client name + brand + last4; deduped by the mode-scoped
+    // SetupIntent business key (not the Stripe event id), so two distinct events
+    // for the same successful SetupIntent still produce one notification.
     "card_added",
     "card_replaced",
   ]);
@@ -203,7 +204,7 @@ export type EnsurePractitionerNotificationInput = {
   clientId: string | null;
   href: string | null;
   appointmentId?: string | null;
-  // Internal idempotency token, e.g. "stripe:<event.id>". NEVER rendered
+  // Internal idempotency token, e.g. "stripe:setup_intent:<test|live>:<setup_intent_id>". NEVER rendered
   // to users. Its uniqueness (per studio) is what makes a redelivery a
   // no-op instead of a duplicate row.
   dedupeKey: string;
