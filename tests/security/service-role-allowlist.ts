@@ -92,6 +92,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/pinned-notes-actions.ts",
+    purpose: "Authenticated practitioner server action.",
+    why: "editClientPinnedNoteAction service-role UPDATE after the caller's studio is resolved via getCurrentPractitionerWithStudio(); the update is scoped to (id, studio_id = that studio.id, client_id) plus an optimistic-concurrency guard on the note text (client_pinned_notes has no UPDATE RLS policy).",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/clients/[id]/portal-messages-actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
