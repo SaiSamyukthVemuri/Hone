@@ -3,9 +3,24 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { isServiceColorKey } from "@/lib/calendar/service-colors";
+import { isMissingColumnError } from "@/lib/db/missing-column";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+// Server-side allowlist validation for the calendar color. ONLY the six allowed
+// keys pass; rose/red, arbitrary CSS, or any unknown value is rejected. Absent ->
+// the safe default 'sky'. This is the authoritative guard; the DB CHECK (0153) is
+// the backstop.
+function parseCalendarColor(value: FormDataEntryValue | null): string {
+  const v = trimmed(value);
+  if (v.length === 0) return "sky";
+  if (!isServiceColorKey(v)) {
+    throw new Error("Please choose a valid calendar color.");
+  }
+  return v;
 }
 
 function nullable(value: FormDataEntryValue | null): string | null {
@@ -91,7 +106,7 @@ export async function createServiceAction(formData: FormData): Promise<void> {
       : await nextSortOrderForModality(studioId, modality);
 
   const supabase = await createClient();
-  const { error } = await supabase.from("services").insert({
+  const base = {
     studio_id: studioId,
     name,
     description: nullable(formData.get("description")),
@@ -101,7 +116,14 @@ export async function createServiceAction(formData: FormData): Promise<void> {
     sort_order,
     active: true,
     pre_care_instructions: nullable(formData.get("pre_care_instructions")),
-  });
+  };
+  const calendar_color = parseCalendarColor(formData.get("calendar_color"));
+  let { error } = await supabase.from("services").insert({ ...base, calendar_color });
+  // Migration-order safety: if calendar_color does not exist YET (app deployed
+  // before 0153), insert without it. Any other error is re-thrown.
+  if (error && isMissingColumnError(error, "calendar_color")) {
+    ({ error } = await supabase.from("services").insert(base));
+  }
   if (error) throw new Error(`Failed to add service: ${error.message}`);
   revalidatePath("/settings/services");
 }
@@ -132,12 +154,21 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
     updated_at: new Date().toISOString(),
   };
   if (sort_order != null) update.sort_order = sort_order;
+  const calendar_color = parseCalendarColor(formData.get("calendar_color"));
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from("services")
-    .update(update)
+    .update({ ...update, calendar_color })
     .eq("id", id)
     .eq("studio_id", studioId);
+  // Migration-order safety: pre-0153, update without calendar_color. Other errors re-throw.
+  if (error && isMissingColumnError(error, "calendar_color")) {
+    ({ error } = await supabase
+      .from("services")
+      .update(update)
+      .eq("id", id)
+      .eq("studio_id", studioId));
+  }
   if (error) throw new Error(`Failed to update service: ${error.message}`);
   revalidatePath("/settings/services");
 }

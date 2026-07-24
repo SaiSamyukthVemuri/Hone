@@ -63,7 +63,9 @@ describe("stronger-but-calm fills + accent", () => {
   it("the APPOINTMENT card uses a clearer left accent (border-l-4)", () => {
     // Pin the appointment card className specifically (blocked-time cards keep
     // their own border treatment).
-    expect(DAYCOL).toMatch(/border-l-4 \$\{serviceCardClasses\(/);
+    // 0153: the card now renders the SERVICE's persisted calendar_color via the
+    // canonical appointmentCardClasses(service) helper (was the id-hash serviceCardClasses).
+    expect(DAYCOL).toMatch(/border-l-4 \$\{appointmentCardClasses\(/);
   });
 
   it("palette is deepened off the ultra-pale -50 default", () => {

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { isMissingColumnError } from "@/lib/db/missing-column";
 import type {
   Appointment,
   Service,
@@ -31,6 +32,23 @@ export async function getActiveServices(studioId: string): Promise<Service[]> {
     .order("name");
   if (error) throw new Error(`Failed to load services: ${error.message}`);
   return (data ?? []) as Service[];
+}
+
+// Explicit "does the services.calendar_color column exist yet?" probe for the
+// settings UI. Before 0153 applies, returns false so the page hides the color
+// selector; any non-missing-column error is re-thrown.
+export async function servicesHaveCalendarColor(studioId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("services")
+    .select("calendar_color")
+    .eq("studio_id", studioId)
+    .limit(1);
+  if (error) {
+    if (isMissingColumnError(error, "calendar_color")) return false;
+    throw new Error(`Failed to probe calendar color: ${error.message}`);
+  }
+  return true;
 }
 
 export async function getAllServices(studioId: string): Promise<Service[]> {
@@ -191,7 +209,12 @@ export async function getRecurringBreakOccurrencesForRange(
 export type AppointmentWithPractitionerColor = Appointment & {
   practitioner: { id: string; color: string } | null;
   client: { id: string; name: string } | null;
-  service: { id: string; name: string; modality: string | null } | null;
+  service: {
+    id: string;
+    name: string;
+    modality: string | null;
+    calendar_color: string | null;
+  } | null;
 };
 
 export async function getAppointmentsForRange(
@@ -200,15 +223,26 @@ export async function getAppointmentsForRange(
   endIso: string,
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
-      "*, practitioner:practitioners(id, color), client:clients(id, name), service:services(id, name, modality)",
-    )
-    .eq("studio_id", studioId)
-    .gte("starts_at", startIso)
-    .lt("starts_at", endIso)
-    .order("starts_at");
+  const BASE =
+    "*, practitioner:practitioners(id, color), client:clients(id, name), ";
+  const runSelect = (serviceEmbed: string) =>
+    supabase
+      .from("appointments")
+      .select(`${BASE}${serviceEmbed}`)
+      .eq("studio_id", studioId)
+      .gte("starts_at", startIso)
+      .lt("starts_at", endIso)
+      .order("starts_at");
+
+  // Prefer the persisted calendar_color; if that column does not exist YET (app
+  // deployed before 0153), retry the legacy embed and normalize calendar_color to
+  // null. Any OTHER database error is re-thrown, never swallowed.
+  let { data, error } = await runSelect(
+    "service:services(id, name, modality, calendar_color)",
+  );
+  if (error && isMissingColumnError(error, "calendar_color")) {
+    ({ data, error } = await runSelect("service:services(id, name, modality)"));
+  }
   if (error) throw new Error(`Failed to load appointments: ${error.message}`);
 
   // Supabase types joined relations as either a single row or an array.
@@ -224,20 +258,24 @@ export async function getAppointmentsForRange(
       | { id: string; name: string }[]
       | null;
     service:
-      | { id: string; name: string; modality: string | null }
-      | { id: string; name: string; modality: string | null }[]
+      | { id: string; name: string; modality: string | null; calendar_color?: string | null }
+      | { id: string; name: string; modality: string | null; calendar_color?: string | null }[]
       | null;
   };
-  return ((data ?? []) as Raw[]).map((row) => {
+  return ((data ?? []) as unknown as Raw[]).map((row) => {
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
     const c = Array.isArray(row.client)
       ? row.client[0] ?? null
       : row.client;
-    const s = Array.isArray(row.service)
+    const rawS = Array.isArray(row.service)
       ? row.service[0] ?? null
       : row.service;
+    // Normalize calendar_color to null when the legacy (pre-0153) embed omits it.
+    const s = rawS
+      ? { ...rawS, calendar_color: rawS.calendar_color ?? null }
+      : null;
     return { ...row, practitioner: p, client: c, service: s };
   });
 }

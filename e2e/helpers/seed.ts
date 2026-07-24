@@ -1423,3 +1423,12 @@ export async function getCancellationToken(
   );
   return `${payloadB64}.${sig}`;
 }
+
+// Read a service's persisted calendar_color (0153) — used by the color e2e.
+export async function getServiceCalendarColor(serviceId: string): Promise<string | null> {
+  const rows = await sql<{ calendar_color: string | null }>(
+    `select calendar_color from public.services where id=$1`,
+    [serviceId],
+  );
+  return rows[0]?.calendar_color ?? null;
+}

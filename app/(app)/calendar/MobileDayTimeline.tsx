@@ -13,7 +13,7 @@ import {
   minutesToHHMM,
   type TimeFormat,
 } from "@/lib/booking/tz";
-import { serviceCardClasses } from "@/lib/calendar/service-colors";
+import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import {
   GRID_HEIGHT,
@@ -296,7 +296,7 @@ export function MobileDayTimeline({
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
+              className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
             >
               <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
                 {timeRange}

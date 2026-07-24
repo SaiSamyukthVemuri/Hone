@@ -7,7 +7,7 @@ import {
   monthYearLabel,
 } from "@/lib/booking/month-grid";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
-import { serviceCardClasses } from "@/lib/calendar/service-colors";
+import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { displayBlockoutLabel } from "./calendar-format";
 import type { MonthDayBlocked } from "./month-blocked";
@@ -188,9 +188,8 @@ export function MonthView({
                           ? `${cleanTime} · ${serviceName}`
                           : cleanTime
                       }
-                      className={`truncate rounded-md border-l-[3px] px-1.5 py-0.5 text-[10px] leading-tight ${serviceCardClasses(
-                        a.service?.id ?? null,
-                        a.service?.name ?? null,
+                      className={`truncate rounded-md border-l-[3px] px-1.5 py-0.5 text-[10px] leading-tight ${appointmentCardClasses(
+                        a.service,
                       )} ${terminal ? "opacity-60" : ""}`}
                     >
                       <span className="font-medium tabular-nums">

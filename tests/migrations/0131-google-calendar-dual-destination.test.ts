@@ -26,7 +26,7 @@ describe("0131 — repo migration-max tripwire", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0152"); // 0152 = actual-overlap hard / buffer soft (Chloe manual-override booking)
+    expect(nums[nums.length - 1]).toBe("0153"); // 0153 = per-service calendar_color
     expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
@@ -54,8 +54,9 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0151_"))).toBe(true);
     // Chloe manual-override booking: actual-overlap HARD exclusion, buffer SOFT.
     expect(files.some((f) => f.startsWith("0152_"))).toBe(true);
+    expect(files.some((f) => f.startsWith("0153_"))).toBe(true);
     // Nothing 0153+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(5[3-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(5[4-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

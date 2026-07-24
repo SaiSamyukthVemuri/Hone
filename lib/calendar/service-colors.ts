@@ -43,6 +43,63 @@ const SERVICE_PALETTE: ReadonlyArray<string> = [
 const NEUTRAL_FALLBACK =
   "bg-neutral-100 text-neutral-800 border-l-neutral-400 dark:bg-neutral-800/60 dark:text-neutral-100 dark:border-l-neutral-500";
 
+// The SIX allowed service color keys — must match the 0153 DB CHECK constraint
+// exactly. Rose/red is intentionally absent (reserved for allergy / clinical
+// warnings). This is the trusted allowlist for server-side validation too.
+export const SERVICE_COLOR_KEYS = [
+  "amber",
+  "emerald",
+  "teal",
+  "sky",
+  "indigo",
+  "violet",
+] as const;
+export type ServiceColorKey = (typeof SERVICE_COLOR_KEYS)[number];
+
+// Canonical mapping: a persisted color KEY -> its trusted Tailwind class bundle.
+// This is the ONLY place a service color turns into CSS. Derived from the palette
+// above by name, so the two never drift. Never accepts arbitrary class strings.
+const SERVICE_COLOR_CLASSES: Record<ServiceColorKey, string> = Object.fromEntries(
+  SERVICE_COLOR_KEYS.map((key, i) => [key, SERVICE_PALETTE[i]]),
+) as Record<ServiceColorKey, string>;
+
+export function isServiceColorKey(value: unknown): value is ServiceColorKey {
+  return (
+    typeof value === "string" &&
+    (SERVICE_COLOR_KEYS as readonly string[]).includes(value)
+  );
+}
+
+// The NORMAL authority: render an appointment card from its service's PERSISTED
+// calendar_color. A valid key -> its bundle; a missing / deleted service or
+// invalid legacy value -> the neutral fallback (never the hash, never rose).
+export function serviceColorClasses(
+  colorKey: string | null | undefined,
+): string {
+  return isServiceColorKey(colorKey)
+    ? SERVICE_COLOR_CLASSES[colorKey]
+    : NEUTRAL_FALLBACK;
+}
+
+// The single entry point the calendar views use. Persisted calendar_color is the
+// authority: present + valid -> its bundle; present + invalid (legacy) -> neutral;
+// a missing / deleted service -> neutral. ONLY when calendar_color is absent
+// (undefined/null — the pre-0153 embed) does it TEMPORARILY fall back to the
+// legacy id hash so cards keep their look during the migration window; that path
+// disappears the moment the persisted value is available.
+export function appointmentCardClasses(
+  service:
+    | { id?: string | null; name?: string | null; calendar_color?: string | null }
+    | null
+    | undefined,
+): string {
+  if (!service) return NEUTRAL_FALLBACK;
+  if (service.calendar_color === undefined || service.calendar_color === null) {
+    return serviceCardClasses(service.id ?? null, service.name ?? null);
+  }
+  return serviceColorClasses(service.calendar_color);
+}
+
 function hashStringToIndex(input: string, modulo: number): number {
   // djb2 hash. Deterministic, stable across processes, no allocations.
   let h = 5381;
