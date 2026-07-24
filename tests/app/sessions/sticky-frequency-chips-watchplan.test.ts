@@ -86,14 +86,14 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     expect(FORM).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
   });
 
-  it("copy-settings still carries machine frequency (within-session and from last session)", () => {
-    // In-form copy now carries machine frequency via the shared snapshot
-    // contract; the whole-session action still selects it directly.
+  it("copy-settings still carries machine frequency (in-form, via the shared contract)", () => {
+    // In-form copy carries machine frequency via the shared snapshot contract.
+    // The whole-session action is temporarily contained (writes nothing), so it
+    // no longer selects/copies these columns at all.
     expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
     expect(SNAPSHOT).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
-    expect(ACTIONS).toMatch(
-      /minutes_performed, machine_frequency, probe_key/,
-    );
+    expect(ACTIONS).toMatch(/copyPreviousSessionAreasAction/);
+    expect(ACTIONS).toMatch(/temporarily unavailable/);
   });
 
   it("migration 0084 is additive and nullable (no backfill, old rows unaffected)", () => {

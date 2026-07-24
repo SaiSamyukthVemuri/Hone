@@ -75,9 +75,16 @@ describe("write paths use the shared validator (source pins)", () => {
     expect((BLOCK.match(/areaIsCustom: input\.areaIsCustom \?\? false/g) ?? []).length)
       .toBeGreaterThanOrEqual(4);
   });
-  it("copyPreviousSessionAreasAction validates each copied area (preserve legacy/custom)", () => {
-    expect(BLOCK).toMatch(/const areaCheck = validateTreatmentArea\(\s*b\.primary_area,\s*!isCanonicalTreatmentArea\(b\.primary_area\)/);
-    expect(BLOCK).toMatch(/primary_area: copiedPrimaryArea/);
+  it("copyPreviousSessionAreasAction is contained: it validates/copies no area (zero writes)", () => {
+    // The whole-session copy is temporarily paused; it no longer maps or
+    // validates any source area — it returns a fixed unavailable result.
+    const copyBlock = BLOCK.slice(
+      BLOCK.indexOf("copyPreviousSessionAreasAction"),
+      BLOCK.indexOf("softDeleteSessionBlockAction"),
+    );
+    expect(copyBlock).toMatch(/temporarily unavailable/);
+    expect(copyBlock).not.toMatch(/copiedPrimaryArea/);
+    expect(copyBlock).not.toMatch(/const areaCheck = validateTreatmentArea/);
   });
   it("the client form derives explicit custom intent from the canonical check", () => {
     expect(FORM).toMatch(/const areaIsCustom =\s*\n?\s*trimmedArea\.length > 0 && !isCanonicalTreatmentArea\(trimmedArea\)/);

@@ -1,72 +1,26 @@
-"use client";
+// TEMPORARY CONTAINMENT — the whole-session "Copy areas and settings from last
+// session" control is paused while it is upgraded to preserve complete settings
+// safely (the previous version persisted real blocks before today's treatment
+// was explicitly saved, which read as performed treatment). This renders a
+// truthful, NON-INTERACTIVE notice — it does not call the server action. The
+// in-form "Copy settings" control inside each treatment area is unaffected.
+//
+// This is a server component (no client interactivity) so it ships no action
+// reference to the browser. When the migration-first whole-session draft
+// workflow lands, this is replaced by the real prefill control.
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import {
-  copyPreviousSessionAreasAction,
-  type CopyPreviousAreasResult,
-} from "./block-actions";
-
-// PR #194 (Chloe retest). One-tap seed for a returning client's
-// chart: copies the previous session's treatment areas + settings
-// (never the client response) into this session as editable areas.
-// Rendered only when this session has no treatment areas yet, so
-// duplication is impossible. Feedback is explicit; the router refresh
-// pulls the freshly-created areas into the blocks view.
-
-export function CopyPreviousAreasButton({
-  clientId,
-  sessionId,
-  previousSessionId,
-}: {
-  clientId: string;
-  sessionId: string;
-  previousSessionId: string;
-}) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<CopyPreviousAreasResult | null>(null);
-
-  function copy() {
-    startTransition(async () => {
-      const res = await copyPreviousSessionAreasAction({
-        clientId,
-        sessionId,
-        previousSessionId,
-      });
-      setResult(res);
-      if (res.ok) router.refresh();
-    });
-  }
-
-  if (result?.ok) {
-    return (
-      <p className="text-sm text-green-700 dark:text-green-400" role="status">
-        Copied {result.copiedCount} treatment{" "}
-        {result.copiedCount === 1 ? "area" : "areas"} from last session.
-        Review and adjust before saving today&apos;s details.
-      </p>
-    );
-  }
-
+export function CopyPreviousAreasButton() {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        onClick={copy}
-        disabled={pending}
-        className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-      >
-        {pending ? "Copying…" : "Copy areas and settings from last session"}
-      </button>
-      <span className="text-xs text-neutral-500">
-        Settings only; today&apos;s client response is recorded fresh.
+    <div
+      role="status"
+      className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+    >
+      <span className="font-medium">Copy all areas from last session</span>
+      <span className="text-neutral-600 dark:text-neutral-400">
+        Temporarily unavailable while we upgrade it to preserve complete settings
+        safely. You can still use <strong>Copy settings</strong> inside an
+        individual treatment area.
       </span>
-      {result && !result.ok && (
-        <span className="text-sm text-red-600 dark:text-red-400" role="alert">
-          {result.error}
-        </span>
-      )}
     </div>
   );
 }

@@ -1,6 +1,11 @@
-// Canonical reusable "treatment setup" snapshot — the SINGLE shared contract
-// used by BOTH copy surfaces (the whole-session "Copy areas and settings" flow
-// and the in-form "Copy settings" control) so they can never drift.
+// Canonical reusable "treatment setup" snapshot.
+//
+// This is CURRENTLY the authoritative field contract for the in-form "Copy
+// settings" control (the only copy surface active today). It is deliberately
+// written to become the SHARED contract for the future migration-first
+// whole-session "Copy areas and settings" DRAFT workflow when that lands, so the
+// two surfaces cannot drift — but that whole-session workflow does not exist
+// yet, so today only the in-form control consumes this module.
 //
 // A treatment-setup snapshot is the machine/probe SETUP a practitioner reuses
 // from one session to the next. It is NOT the treatment outcome. It therefore
@@ -25,8 +30,9 @@
 export type SessionMode = "thermo" | "galv" | "blend";
 
 // The reusable machine readings that live on the primary electrolysis_entries
-// row (mode-gated). Kept as a named list so the RPC allowlist and the form draft
-// stay in lockstep with this module.
+// row (mode-gated). Named here so the form draft stays in lockstep with this
+// module, and so the future whole-session draft workflow can reuse the same
+// field set. (No copy RPC exists yet; this is not a live RPC allowlist.)
 export const ENTRY_SETUP_FIELDS = [
   "thermolysis_intensity_percent",
   "thermolysis_duration_seconds",
