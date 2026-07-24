@@ -83,6 +83,7 @@ import {
   handleChargeDisputeCreated,
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
+import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
 
 // Force Node runtime — Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -588,11 +589,25 @@ async function handleSetupIntentSucceeded(
       );
     }
     if (existing) {
+      // The card is already persisted (a prior delivery of THIS event
+      // inserted it). The notification may still be missing if that prior
+      // delivery failed after the card insert; ensure it now (deduped on the
+      // Stripe event id). This is awaited and throws on failure so the parent
+      // releases the claim and Stripe retries WITHOUT touching the card row.
+      const notif = await ensureCardChangeNotification(admin, {
+        studioId: metaStudioId,
+        clientId: metaClientId,
+        livemode: ctx.livemode,
+        setupIntentId: si.id,
+        stripeEventId: event.id,
+      });
       return {
         eventType: event.type,
         setupIntentId: si.id,
         idempotent: true,
         existingClientPaymentMethodId: existing.id,
+        cardChangeNotification: notif.eventType,
+        cardChangeNotificationDeduped: notif.deduped,
       };
     }
   }
@@ -684,11 +699,23 @@ async function handleSetupIntentSucceeded(
     // the partial unique blocked a concurrent dual-delivery.
     // Treat as success since the webhook's job is done.
     if (insertErr.code === "23505") {
+      // A concurrent/duplicate delivery already inserted the card for this
+      // SetupIntent. Still ensure the notification (deduped on the event id)
+      // so a card-saved-but-notification-missing race self-heals on retry.
+      const notif = await ensureCardChangeNotification(admin, {
+        studioId: metaStudioId,
+        clientId: metaClientId,
+        livemode: ctx.livemode,
+        setupIntentId: si.id,
+        stripeEventId: event.id,
+      });
       return {
         eventType: event.type,
         setupIntentId: si.id,
         cardBrandPresent: true,
         idempotent: true,
+        cardChangeNotification: notif.eventType,
+        cardChangeNotificationDeduped: notif.deduped,
       };
     }
     throw new Error(
@@ -697,11 +724,26 @@ async function handleSetupIntentSucceeded(
   }
 
   // Post-response, bounded: analytics failure must never 500 this webhook
-  // and trigger Stripe retries (P1/P2-ANALYTICS-03).
+  // and trigger Stripe retries (P1/P2-ANALYTICS-03). Fired here (before the
+  // notification) so the existing card_on_file_saved analytics event keeps
+  // firing on every fresh insert regardless of the notification outcome.
   captureServerEvent({
     actor: { kind: "studio", id: metaStudioId },
     event: "card_on_file_saved",
     properties: { studio_id: metaStudioId, livemode: ctx.livemode },
+  });
+
+  // Studio-facing notification (Chloe's ask): card added / replaced. Awaited
+  // and durable — if it throws, the parent handler releases the Stripe event
+  // claim and Stripe retries; the saved card is NOT undone (the row stays,
+  // and the retry's idempotency branch re-ensures the notification). Added vs
+  // replaced is derived from persisted same-mode history, not the portal mode.
+  const notif = await ensureCardChangeNotification(admin, {
+    studioId: metaStudioId,
+    clientId: metaClientId,
+    livemode: ctx.livemode,
+    setupIntentId: si.id,
+    stripeEventId: event.id,
   });
 
   return {
@@ -710,6 +752,8 @@ async function handleSetupIntentSucceeded(
     cardPaymentMethodId: pm.id,
     cardBrandPresent: true,
     insertedId: inserted?.id,
+    cardChangeNotification: notif.eventType,
+    cardChangeNotificationDeduped: notif.deduped,
   };
 }
 

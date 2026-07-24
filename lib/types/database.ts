@@ -1336,7 +1336,13 @@ export type PractitionerNotificationEventType =
   | "new_booking"
   | "appointment_cancelled"
   | "appointment_rescheduled"
-  | "intake_submitted";
+  | "intake_submitted"
+  // Card-on-file changes, written server-side from the setup_intent.succeeded
+  // webhook arm. card_added = first card ever saved for the (studio, client,
+  // Stripe mode); card_replaced = a prior card row existed for that pair+mode.
+  // Studio-wide (practitioner_id null). Deduped on the Stripe event id.
+  | "card_added"
+  | "card_replaced";
 
 export type PractitionerNotification = {
   id: string;
@@ -1350,6 +1356,10 @@ export type PractitionerNotification = {
   href: string | null;
   read_at: string | null;
   created_at: string;
+  // Internal idempotency token (migration 0154). NULL for all v1 writers;
+  // set to "stripe:<event.id>" by the durable card-change writer. Never
+  // rendered to users.
+  dedupe_key: string | null;
 };
 
 // Migration 0085 (PR #205): health-inspection record keeping.

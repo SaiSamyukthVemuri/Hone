@@ -48,6 +48,14 @@ const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
     // members) + safe text — never intake answers or the intake token. href
     // points at the authenticated intake review page.
     "intake_submitted",
+    // Card-on-file added / replaced. Written server-side from the
+    // setup_intent.succeeded webhook arm via the DURABLE writer below
+    // (ensurePractitionerNotification), never via the fire-and-forget
+    // recorder — the webhook must not ack Stripe before the row is secured.
+    // Body carries only client name + brand + last4; deduped on the Stripe
+    // event id.
+    "card_added",
+    "card_replaced",
   ]);
 
 export type RecordPractitionerNotificationInput = {
@@ -170,6 +178,69 @@ export function recordPractitionerNotification(
       });
     }
   })();
+}
+
+// Durable, AWAITED notification writer for webhook use. Unlike the
+// fire-and-forget recorder above, the caller MUST await this and a
+// failure MUST propagate (throw) so the caller can decline to ack the
+// external event and let it be retried. The webhook uses this so it
+// never returns "processed" to Stripe before the notification row is
+// secured. Idempotency is carried by dedupeKey (unique per studio via
+// the migration-0154 partial index): a re-delivery of the same Stripe
+// event conflicts on (studio_id, dedupe_key) and is reported as
+// { deduped: true } — an idempotent success, NOT an error.
+export type EnsurePractitionerNotificationInput = {
+  studioId: string;
+  practitionerId: string | null;
+  eventType: PractitionerNotificationEventType;
+  title: string;
+  body: string | null;
+  clientId: string | null;
+  href: string | null;
+  appointmentId?: string | null;
+  // Internal idempotency token, e.g. "stripe:<event.id>". NEVER rendered
+  // to users. Its uniqueness (per studio) is what makes a redelivery a
+  // no-op instead of a duplicate row.
+  dedupeKey: string;
+};
+
+export async function ensurePractitionerNotification(
+  input: EnsurePractitionerNotificationInput,
+): Promise<{ deduped: boolean }> {
+  // Programming-error guard. The type system already constrains eventType,
+  // so this is unreachable in practice; if a bad value ever reaches here we
+  // throw rather than silently swallow (durable path — the caller decides
+  // whether to retry).
+  if (!ALLOWED_EVENT_TYPES.has(input.eventType)) {
+    throw new Error(
+      `ensurePractitionerNotification: unknown event type ${input.eventType}`,
+    );
+  }
+  const admin = createAdminClient();
+  const { error } = await admin.from("practitioner_notifications").insert({
+    studio_id: input.studioId,
+    practitioner_id: input.practitionerId,
+    event_type: input.eventType,
+    title: input.title,
+    body: input.body,
+    appointment_id: input.appointmentId ?? null,
+    client_id: input.clientId,
+    href: input.href,
+    dedupe_key: input.dedupeKey,
+  });
+  if (error) {
+    // 23505 on the (studio_id, dedupe_key) partial unique index means this
+    // Stripe event already produced its notification. That is the idempotent
+    // success case, not a failure — report it so the caller can proceed to
+    // ack the event.
+    if (error.code === "23505") {
+      return { deduped: true };
+    }
+    throw new Error(
+      `ensure_practitioner_notification_failed:${error.code}:${error.message}`,
+    );
+  }
+  return { deduped: false };
 }
 
 // Local console-log helper. Keeps the stderr line shape compatible
