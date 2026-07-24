@@ -71,7 +71,7 @@ describe("3 + 4. collapsible session groups", () => {
   });
 });
 
-describe("5. copy areas and settings from last session", () => {
+describe("5. whole-session copy is TEMPORARILY CONTAINED (zero writes)", () => {
   const action = codeOnly(BLOCK_ACTIONS).slice(
     codeOnly(BLOCK_ACTIONS).indexOf(
       "export async function copyPreviousSessionAreasAction",
@@ -79,54 +79,42 @@ describe("5. copy areas and settings from last session", () => {
     codeOnly(BLOCK_ACTIONS).indexOf("export type SoftDeleteBlockInput"),
   );
 
-  it("copies area identity, settings, and the structured probe", () => {
-    for (const f of [
-      "block_name: b.block_name",
-      // Charting PR 2: the copied area is validated (canonical -> canonical
-      // casing, legacy/custom -> preserved as explicit custom), then carried
-      // forward — never dropped. Still an area copy, just validated.
-      "primary_area: copiedPrimaryArea",
-      "validateTreatmentArea(",
-      "mode: b.mode",
-      "energy_level: b.energy_level",
-      "minutes_performed: b.minutes_performed",
-      "machine_frequency: b.machine_frequency",
-      "probe_key: b.probe_key",
-      "probe_label: b.probe_label",
-    ]) {
-      expect(action).toContain(f);
-    }
-  });
-
-  it("never copies the previous client response", () => {
-    expect(action).not.toMatch(
-      /tolerance_rating:|reaction_type:|reaction_notes:|caution_for_next_session:|caution_note:/,
+  it("keeps the authenticated + current-session lineage checks", () => {
+    expect(action).toContain("getCurrentPractitionerWithStudio()");
+    expect(action).toContain(
+      "assertSessionForClient(studio.id, input.clientId, input.sessionId)",
     );
+    expect(action).toContain("Inactive practitioners cannot log sessions.");
   });
 
-  it("refuses when the current session already has areas (no duplication)", () => {
-    expect(action).toMatch(/\(existingCount \?\? 0\) > 0/);
-    expect(action).toMatch(/already has treatment areas/);
-  });
-
-  it("validates the previous session belongs to the same studio and client", () => {
+  it("returns a fixed unavailable result and performs ZERO writes/reads of the source", () => {
     expect(action).toMatch(
-      /\.eq\("id", input\.previousSessionId\)\s*\n?\s*\.eq\("studio_id", studio\.id\)\s*\n?\s*\.eq\("client_id", input\.clientId\)/,
+      /Copy all areas from last session is temporarily unavailable/,
     );
+    // No source-session lookup, no session_blocks read/insert, no revalidate.
+    expect(action).not.toContain("createClient(");
+    expect(action).not.toContain('.from("session_blocks")');
+    expect(action).not.toContain('.from("sessions")');
+    expect(action).not.toContain(".insert(");
+    expect(action).not.toContain("copiedCount");
+    expect(action).not.toContain("previousSessionId)"); // never dereferenced
   });
 
-  it("handles a previous session with nothing to copy", () => {
-    expect(action).toMatch(/has no treatment areas to copy/);
+  it("the control is a NON-INTERACTIVE notice — it never calls the action", () => {
+    expect(COPY_BUTTON).not.toContain("copyPreviousSessionAreasAction");
+    expect(COPY_BUTTON).not.toContain('"use client"');
+    expect(COPY_BUTTON).not.toContain("onClick");
+    expect(COPY_BUTTON).toMatch(/Temporarily unavailable/);
+    expect(COPY_BUTTON).toMatch(/Copy settings/); // points to the safe in-form path
+    // Never implies data loss.
+    expect(COPY_BUTTON).not.toMatch(/lost|deleted|removed your/i);
   });
 
-  it("the button renders only on an empty electrolysis chart with a previous session that HAS areas", () => {
+  it("the notice still renders only on an empty electrolysis chart with a previous session that HAS areas", () => {
     expect(SESSION_PAGE).toMatch(
-      /blockData\.blocks\.length === 0 &&\s*\n?\s*previousSessionAny &&\s*\n?\s*previousSessionHasAreas && \(/,
+      /blockData\.blocks\.length === 0 &&\s*\n?\s*previousSessionAny &&\s*\n?\s*previousSessionHasAreas && </,
     );
     expect(SESSION_PAGE).toMatch(/previousSessionHasAreas = \(count \?\? 0\) > 0;/);
-    expect(COPY_BUTTON).toMatch(/Copy areas and settings from last session/);
-    expect(COPY_BUTTON).toMatch(/Copied \{result\.copiedCount\} treatment/);
-    expect(COPY_BUTTON).toMatch(/Review and adjust before saving/);
   });
 });
 

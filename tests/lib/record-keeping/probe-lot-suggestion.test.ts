@@ -107,13 +107,15 @@ describe("confirm control persists probe_lot_confirmed (source pins)", () => {
     );
     expect(matches?.length).toBeGreaterThanOrEqual(2); // create + update
   });
-  it("copyPreviousSessionAreasAction carries probe_key forward but NOT the lot (auto-fill owns the lot)", () => {
-    expect(ACTIONS).toMatch(/probe_key: b\.probe_key/);
-    // The copied-rows insert never copies probe_lot_number / probe_lot_confirmed.
+  it("copyPreviousSessionAreasAction is contained: it copies no probe_key or lot (zero writes)", () => {
+    // The whole-session copy is temporarily paused, so it can never carry a
+    // stale probe or lot forward — it writes nothing at all.
     const copyBlock = ACTIONS.slice(
       ACTIONS.indexOf("copyPreviousSessionAreasAction"),
       ACTIONS.indexOf("softDeleteSessionBlockAction"),
     );
+    expect(copyBlock).toMatch(/temporarily unavailable/);
+    expect(copyBlock).not.toMatch(/probe_key:/);
     expect(copyBlock).not.toMatch(/probe_lot_number/);
     expect(copyBlock).not.toMatch(/probe_lot_confirmed/);
   });
