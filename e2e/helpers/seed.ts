@@ -1432,3 +1432,13 @@ export async function getServiceCalendarColor(serviceId: string): Promise<string
   );
   return rows[0]?.calendar_color ?? null;
 }
+
+// Count treatment plans for a client — proves the create-from-appointment flow
+// creates ZERO rows on open/cancel and exactly one on Save.
+export async function getTreatmentPlanCount(clientId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int n from public.treatment_plans where client_id=$1`,
+    [clientId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}

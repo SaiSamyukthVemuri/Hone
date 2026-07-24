@@ -381,6 +381,7 @@ export default async function AppointmentDetailPage({
         tags={tags}
         intake={intake}
         fitzpatrick={fitzpatrick}
+        appointmentId={id}
       />
 
       <LastSessionCard
@@ -819,11 +820,13 @@ function ClientBriefingCard({
   tags,
   intake,
   fitzpatrick,
+  appointmentId,
 }: {
   client: ClientBriefing | null;
   tags: ClientTag[];
   intake: ClientIntakeForm | null;
   fitzpatrick: string | null;
+  appointmentId: string;
 }) {
   if (!client) {
     return (
@@ -883,11 +886,23 @@ function ClientBriefingCard({
         >
           Health &amp; Forms
         </Link>
+        {/* Primary CTA: open the client's Treatment Plans tab AND auto-open the
+            existing create form (create_plan=1), with a validated back link to
+            THIS appointment. Uses the appointment's own authorized client id;
+            nothing is created until the practitioner presses Save. */}
+        <Link
+          href={`/clients/${client.id}?tab=treatment&create_plan=1&returnTo=${encodeURIComponent(
+            `/calendar/${appointmentId}`,
+          )}`}
+          className="rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 font-medium text-white hover:bg-neutral-800 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+        >
+          Create treatment plan
+        </Link>
         <Link
           href={`/clients/${client.id}?tab=treatment`}
           className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
-          Treatment plans
+          View treatment plans
         </Link>
       </nav>
       {contact && (

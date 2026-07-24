@@ -96,6 +96,7 @@ import { TreatmentTimeCard } from "@/components/treatment-time-card";
 import { upsertTreatmentGoalAction } from "./treatment-time-actions";
 import { ProfileTabBar } from "@/components/profile-tab-bar";
 import { isProfileTab, type ProfileTab } from "@/components/profile-tab";
+import { sanitizeAppointmentReturnTo } from "@/lib/nav/appointment-return";
 import { BookAppointment } from "./BookAppointment";
 import {
   addClientPricingAction,
@@ -162,11 +163,16 @@ export default async function ClientCheatSheetPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; create_plan?: string; returnTo?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
   const activeTab: ProfileTab = isProfileTab(sp.tab) ? sp.tab : "overview";
+  // Deep-link from an appointment: open the EXISTING treatment-plan create form.
+  // Only honoured on the treatment tab; it just opens the form (no auto-create).
+  const autoOpenCreatePlan = sp.create_plan === "1" && activeTab === "treatment";
+  // Validated internal "/calendar/<uuid>" back target, or null. Never external.
+  const planReturnTo = sanitizeAppointmentReturnTo(sp.returnTo);
 
   const { studio, practitioner } = await getCurrentPractitionerWithStudio();
   const data = await getClientById(studio.id, id);
@@ -1201,6 +1207,8 @@ export default async function ClientCheatSheetPage({
           updateStageAction={updateTreatmentPlanStageAction}
           deleteStageAction={deleteTreatmentPlanStageAction}
           practitionerNames={practitionerNames}
+          autoOpenCreate={autoOpenCreatePlan}
+          returnTo={planReturnTo}
         />
       )}
     </div>
