@@ -14,6 +14,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const FORM = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
 );
+const SNAPSHOT = read("lib/sessions/treatment-setup-snapshot.ts");
 const BLOCKS_VIEW = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
 );
@@ -62,16 +63,30 @@ describe("2. copy settings: full, area-aware, never the response", () => {
     codeOnly(FORM).indexOf("function submit"),
   );
 
-  it("copies every treatment setting a practitioner expects", () => {
+  it("copies every treatment setting a practitioner expects (via the shared snapshot contract)", () => {
+    // copySettings now delegates to the canonical treatment-setup contract,
+    // which carries the block machine settings AND the primary entry's
+    // mode-gated machine readings — a superset of the old block-only copy.
+    expect(copyFn).toMatch(/firstLiveEntry\(source\.electrolysis_entries\)/);
+    expect(copyFn).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
     for (const field of [
-      "mode: source.mode",
-      "apilusModality: source.apilus_modality",
-      "energyLevel:",
-      "probeKey: source.probe_key",
-      "machineFrequency: source.machine_frequency",
-      "minutes:",
+      "mode",
+      "apilusModality",
+      "energyLevel",
+      "probeKey",
+      "machineFrequency",
+      "minutes",
+      // primary-entry machine readings, now carried too:
+      "thermolysisIntensityPercent",
+      "thermolysisDurationSeconds",
+      "galvanicMa",
+      "galvanicDurationSeconds",
+      "galvanicIntensityPercent",
+      "unitsOfLye",
+      "pulseCount",
+      "pulseDelay",
     ]) {
-      expect(copyFn).toContain(field);
+      expect(SNAPSHOT).toContain(`${field}:`);
     }
   });
 

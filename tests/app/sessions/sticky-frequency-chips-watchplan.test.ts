@@ -16,6 +16,7 @@ const FORM = read(
 const ACTIONS = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
 );
+const SNAPSHOT = read("lib/sessions/treatment-setup-snapshot.ts");
 const VIEW = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
 );
@@ -85,11 +86,12 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     expect(FORM).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
   });
 
-  it("in-form copy-settings still carries machine frequency", () => {
-    // In-form copySettings (unchanged) carries machine frequency. The
-    // whole-session copy action is temporarily contained (writes nothing), so
-    // it no longer selects/copies those columns at all.
-    expect(FORM).toMatch(/machineFrequency: source\.machine_frequency \?\? ""/);
+  it("copy-settings still carries machine frequency (in-form, via the shared contract)", () => {
+    // In-form copy carries machine frequency via the shared snapshot contract.
+    // The whole-session action is temporarily contained (writes nothing), so it
+    // no longer selects/copies these columns at all.
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    expect(SNAPSHOT).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
     expect(ACTIONS).toMatch(/copyPreviousSessionAreasAction/);
     expect(ACTIONS).toMatch(/temporarily unavailable/);
   });

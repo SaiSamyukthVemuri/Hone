@@ -49,7 +49,8 @@ describe("charting field order (Chloe's exact flow)", () => {
   it("save payload and copy-settings are unchanged (layout-only move)", () => {
     expect(FORM).toMatch(/machineFrequency: \(draft\.machineFrequency \|\| null\) as/);
     expect(FORM).toMatch(/minutesPerformed:/);
-    expect(FORM).toMatch(/machineFrequency: source\.machine_frequency \?\? ""/);
+    // copy-settings still carries the full setup — now via the shared contract.
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
     // No field was removed.
     expect(FORM).toMatch(/<ProbePicker/);
     expect(FORM).toMatch(/>Energy level \(EL\)<\/span>/);

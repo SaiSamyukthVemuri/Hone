@@ -1084,6 +1084,101 @@ export async function seedE2eDraftElectrolysisSession(
   return { clientId, sessionId };
 }
 
+// Count the live settings blocks on a session — used to prove the in-form copy
+// persists NOTHING until the practitioner explicitly saves.
+export async function getSessionBlockCount(sessionId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int as n from public.session_blocks
+      where session_id = $1 and deleted_at is null`,
+    [sessionId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Read the persisted NEWEST live block (highest sort_order = the most recently
+// saved area, i.e. the destination just created through the UI) + its primary
+// entry, flattened, so a test can assert exactly what was saved (settings
+// persisted, outcomes blank) as DB ground truth after a UI save + reload. Reads
+// the NEWEST block deliberately — the earliest block is any pre-seeded source.
+export async function getSavedBlockSetup(
+  sessionId: string,
+): Promise<Record<string, unknown> | null> {
+  const blocks = await sql<Record<string, unknown>>(
+    `select id, primary_area, mode, energy_level, minutes_performed, machine_frequency,
+            probe_key, tolerance_rating, reaction_type, reaction_notes,
+            caution_for_next_session, caution_note, numbing_status,
+            probe_lot_number, probe_lot_confirmed
+       from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order desc limit 1`,
+    [sessionId],
+  );
+  if (blocks.length === 0) return null;
+  const block = blocks[0];
+  const entries = await sql<Record<string, unknown>>(
+    `select thermolysis_intensity_percent, thermolysis_duration_seconds,
+            pulse_count, pulse_delay_seconds, hairs_treated, comments, observation_chips
+       from public.electrolysis_entries
+      where block_id = $1 and deleted_at is null
+      order by created_at asc limit 1`,
+    [block.id],
+  );
+  return { ...block, entry: entries[0] ?? null };
+}
+
+// Seed a saved thermolysis settings block (+ its primary entry with mode-gated
+// machine readings) into an existing draft session, so the in-form "Copy
+// settings from another area in this session" control has a source. Outcomes
+// are left blank — this is a settings source, not a completed treatment.
+export async function seedE2eChartedThermolysisBlock(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: {
+    primaryArea: string;
+    energyLevel: number;
+    machineFrequency: string;
+    thermolysisIntensityPercent: number;
+    thermolysisDurationSeconds: number;
+    pulseCount: number;
+  },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, mode, energy_level,
+        minutes_performed, machine_frequency, probe_key)
+     values ($1,$2,$3,1,$4,'thermo',$5,12,$6,'sterex-stainless-steel-two-piece-f2-short')`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea,
+      opts.energyLevel,
+      opts.machineFrequency,
+    ],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, mode, energy_level, minutes_performed,
+        machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds,
+        pulse_count, pulse_delay_seconds)
+     values ($1,$2,$3,$4,'thermo',$5,12,$6,$7,$8,$9,$10)`,
+    [
+      randomUUID(),
+      sessionId,
+      blockId,
+      opts.primaryArea,
+      opts.energyLevel,
+      opts.machineFrequency,
+      opts.thermolysisIntensityPercent,
+      opts.thermolysisDurationSeconds,
+      opts.pulseCount,
+      opts.pulseCount > 1 ? 0.4 : null,
+    ],
+  );
+  return { blockId };
+}
+
 // Seed a probe row in the studio's sterilization inventory
 // (record_keeping_sterile_items) so the charting probe-lot selector has an
 // ACTIVE (or expired) candidate. expiryDate null = never expires.
