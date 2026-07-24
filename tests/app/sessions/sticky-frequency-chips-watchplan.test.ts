@@ -16,6 +16,7 @@ const FORM = read(
 const ACTIONS = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
 );
+const SNAPSHOT = read("lib/sessions/treatment-setup-snapshot.ts");
 const VIEW = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
 );
@@ -86,7 +87,10 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
   });
 
   it("copy-settings still carries machine frequency (within-session and from last session)", () => {
-    expect(FORM).toMatch(/machineFrequency: source\.machine_frequency \?\? ""/);
+    // In-form copy now carries machine frequency via the shared snapshot
+    // contract; the whole-session action still selects it directly.
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    expect(SNAPSHOT).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
     expect(ACTIONS).toMatch(
       /minutes_performed, machine_frequency, probe_key/,
     );

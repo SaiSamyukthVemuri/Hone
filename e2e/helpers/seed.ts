@@ -1084,6 +1084,59 @@ export async function seedE2eDraftElectrolysisSession(
   return { clientId, sessionId };
 }
 
+// Seed a saved thermolysis settings block (+ its primary entry with mode-gated
+// machine readings) into an existing draft session, so the in-form "Copy
+// settings from another area in this session" control has a source. Outcomes
+// are left blank — this is a settings source, not a completed treatment.
+export async function seedE2eChartedThermolysisBlock(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: {
+    primaryArea: string;
+    energyLevel: number;
+    machineFrequency: string;
+    thermolysisIntensityPercent: number;
+    thermolysisDurationSeconds: number;
+    pulseCount: number;
+  },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, mode, energy_level,
+        minutes_performed, machine_frequency, probe_key)
+     values ($1,$2,$3,1,$4,'thermo',$5,12,$6,'ballet-f3')`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea,
+      opts.energyLevel,
+      opts.machineFrequency,
+    ],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, mode, energy_level, minutes_performed,
+        machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds,
+        pulse_count, pulse_delay_seconds)
+     values ($1,$2,$3,$4,'thermo',$5,12,$6,$7,$8,$9,$10)`,
+    [
+      randomUUID(),
+      sessionId,
+      blockId,
+      opts.primaryArea,
+      opts.energyLevel,
+      opts.machineFrequency,
+      opts.thermolysisIntensityPercent,
+      opts.thermolysisDurationSeconds,
+      opts.pulseCount,
+      opts.pulseCount > 1 ? 0.4 : null,
+    ],
+  );
+  return { blockId };
+}
+
 // Seed a probe row in the studio's sterilization inventory
 // (record_keeping_sterile_items) so the charting probe-lot selector has an
 // ACTIVE (or expired) candidate. expiryDate null = never expires.
