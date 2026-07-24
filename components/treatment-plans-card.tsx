@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { TreatmentPlanWithStages } from "@/lib/treatment-plans/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -61,6 +62,11 @@ type Props = {
   updateStageAction: TreatmentScheduleAction;
   deleteStageAction: TreatmentScheduleAction;
   practitionerNames: Record<string, string>;
+  // Deep-link from an appointment (create_plan=1): open the create form on mount
+  // and focus its first field. Opening the form creates NOTHING — only Save does.
+  autoOpenCreate?: boolean;
+  // Validated internal "/calendar/<uuid>" back link, or null (nothing rendered).
+  returnTo?: string | null;
 };
 
 export function TreatmentPlansCard({
@@ -73,8 +79,17 @@ export function TreatmentPlansCard({
   updateStageAction,
   deleteStageAction,
   practitionerNames,
+  autoOpenCreate = false,
+  returnTo = null,
 }: Props) {
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(autoOpenCreate);
+  const router = useRouter();
+  // Drop the deep-link params (create_plan/returnTo) once the form closes so a
+  // refresh does not reopen it. Next replace (no new history entry), no scroll;
+  // harmless when the URL is already just ?tab=treatment.
+  const clearCreateUrlParams = () => {
+    router.replace(`/clients/${clientId}?tab=treatment`, { scroll: false });
+  };
   const [name, setName] = useState("");
   // Tracks whether the practitioner has manually edited the plan name.
   // While false, the name auto-fills from the first selected area
@@ -171,6 +186,7 @@ export function TreatmentPlansCard({
       setTimelineMin("");
       setTimelineMax("");
       setAdding(false);
+      clearCreateUrlParams();
     });
   }
 
@@ -283,6 +299,7 @@ export function TreatmentPlansCard({
               }}
               maxLength={MAX_NAME}
               placeholder="e.g. Chin treatment plan"
+              autoFocus={autoOpenCreate}
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
             <span className="text-[11px] text-neutral-500">
@@ -351,12 +368,22 @@ export function TreatmentPlansCard({
                 setTimelineMin("");
                 setTimelineMax("");
                 setError(null);
+                clearCreateUrlParams();
               }}
               disabled={pending}
               className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700"
             >
               Cancel
             </button>
+            {returnTo && (
+              // returnTo is a server-validated internal "/calendar/<uuid>" path.
+              <a
+                href={returnTo}
+                className="self-center rounded-md px-2 py-2 text-sm text-neutral-500 hover:underline"
+              >
+                Back to appointment
+              </a>
+            )}
           </div>
         </div>
       ) : (
