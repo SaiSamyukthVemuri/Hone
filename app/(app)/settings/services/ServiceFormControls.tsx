@@ -10,8 +10,66 @@
 
 import { useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { SERVICE_COLOR_KEYS } from "@/lib/calendar/service-colors";
 
 const DURATION_PRESETS_MINUTES: ReadonlyArray<number> = [15, 30, 45, 60, 90];
+
+// Swatch dot per allowed color key (preview only; the real card bundle lives in
+// lib/calendar/service-colors.ts). No rose/red.
+const COLOR_SWATCH: Record<string, string> = {
+  amber: "bg-amber-400",
+  emerald: "bg-emerald-400",
+  teal: "bg-teal-400",
+  sky: "bg-sky-400",
+  indigo: "bg-indigo-400",
+  violet: "bg-violet-400",
+};
+
+// "Calendar color" selector: six named, accessible swatches that submit the
+// chosen KEY via a hidden `calendar_color` input. Pre-selects the stored value.
+// Wraps so it never overflows at iPhone width. The server action re-validates the
+// value against the same allowlist; the DB CHECK is the final backstop.
+export function CalendarColorField({
+  name,
+  defaultValue,
+}: {
+  name: string;
+  defaultValue?: string | null;
+}) {
+  const keys = SERVICE_COLOR_KEYS as readonly string[];
+  const initial = defaultValue && keys.includes(defaultValue) ? defaultValue : "sky";
+  const [value, setValue] = useState<string>(initial);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <input type="hidden" name={name} value={value} />
+      <div className="flex flex-wrap gap-2">
+        {SERVICE_COLOR_KEYS.map((key) => {
+          const selected = value === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setValue(key)}
+              aria-pressed={selected}
+              aria-label={`Calendar color: ${key}`}
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] capitalize transition ${
+                selected
+                  ? "border-neutral-900 bg-neutral-100 dark:border-neutral-100 dark:bg-neutral-800"
+                  : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`inline-block h-3 w-3 rounded-full ${COLOR_SWATCH[key]}`}
+              />
+              {key}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Status pill shown in the collapsed service row. Copy is booking-centric
 // ("Visible in booking" / "Hidden from booking") so the effect of the

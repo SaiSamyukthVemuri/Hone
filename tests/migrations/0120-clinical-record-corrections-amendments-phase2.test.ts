@@ -25,7 +25,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
     // (per-practitioner availability). Bump this tripwire consciously
     // when a new migration lands.
-    expect(maxNum).toBe(152); // 0152 = actual-overlap hard / buffer soft (Chloe manual-override booking)
+    expect(maxNum).toBe(153); // 0153 = per-service calendar_color
     expect(FILE).toMatch(/^0120_/);
   });
 });

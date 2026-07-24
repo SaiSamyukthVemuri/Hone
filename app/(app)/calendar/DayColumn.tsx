@@ -49,7 +49,7 @@ import {
   VISIBLE_MINUTES,
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
-import { serviceCardClasses } from "@/lib/calendar/service-colors";
+import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import {
   displayBlockoutLabel,
   displayRecurringBreakLabel,
@@ -750,7 +750,7 @@ export function DayColumn({
             // red unique. softCardClasses still exists for any
             // future practitioner-color surface but is not used on
             // the per-appointment card any more.
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg text-left border-l-4 ${serviceCardClasses(a.service?.id ?? null, a.service?.name ?? null)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
               // Hierarchy (Chloe / Fresha-readability): time range, then the

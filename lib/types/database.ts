@@ -338,6 +338,10 @@ export type Service = {
   // Migration 0025: optional pre-care text included in confirmation +
   // reminder emails for appointments of this service.
   pre_care_instructions: string | null;
+  // Migration 0153: explicit per-service calendar color KEY (one of
+  // amber/emerald/teal/sky/indigo/violet; DB CHECK-constrained). Optional in the
+  // type so pre-0153 embeds (which omit it) still typecheck.
+  calendar_color?: string | null;
   created_at: string;
   updated_at: string;
 };

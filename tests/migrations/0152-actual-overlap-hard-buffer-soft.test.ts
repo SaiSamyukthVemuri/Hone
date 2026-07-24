@@ -21,7 +21,7 @@ describe("0152 — file present + precedes nothing unexpected", () => {
     expect(files.some((f) => f.startsWith("0151_"))).toBe(true);
     // The absolute repo-max pin lives in the 0131 test; this only guards that
     // 0152 is currently the top of the chain (nothing 0153+ has landed yet).
-    expect(files.filter((f) => /^01(5[3-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(5[4-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

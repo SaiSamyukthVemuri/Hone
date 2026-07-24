@@ -1,5 +1,5 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAllServices } from "@/lib/booking/queries";
+import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
 import {
   createServiceAction,
@@ -8,6 +8,7 @@ import {
   updateServiceAction,
 } from "./actions";
 import {
+  CalendarColorField,
   DurationField,
   MoveButton,
   ServiceAccordionItem,
@@ -31,6 +32,7 @@ export default async function ServicesSettingsPage() {
   }
 
   const services = await getAllServices(studio.id);
+  const calendarColorAvailable = await servicesHaveCalendarColor(studio.id);
   // One list, active services first (then hidden), each as a collapsed row.
   // Keeping hidden services inline (rather than in a separate section) means
   // the Hide/Show toggle flips the row's status pill in place instead of
@@ -108,7 +110,7 @@ export default async function ServicesSettingsPage() {
                       </>
                     }
                   >
-                    <ServiceEditForm service={s} />
+                    <ServiceEditForm service={s} calendarColorAvailable={calendarColorAvailable} />
                   </ServiceAccordionItem>
                 );
               });
@@ -117,7 +119,7 @@ export default async function ServicesSettingsPage() {
         )}
       </section>
 
-      <AddServiceCard />
+      <AddServiceCard calendarColorAvailable={calendarColorAvailable} />
     </div>
   );
 }
@@ -129,7 +131,13 @@ export default async function ServicesSettingsPage() {
 // the form body that appears when the row is expanded. All form field names
 // are byte-preserved so the unchanged updateServiceAction parses identically.
 // ---------------------------------------------------------------------------
-function ServiceEditForm({ service }: { service: Service }) {
+function ServiceEditForm({
+  service,
+  calendarColorAvailable,
+}: {
+  service: Service;
+  calendarColorAvailable: boolean;
+}) {
   return (
     <div className="flex flex-col gap-5">
       <p className="text-xs text-neutral-500">
@@ -168,6 +176,14 @@ function ServiceEditForm({ service }: { service: Service }) {
               required
             />
           </FieldLabel>
+          {calendarColorAvailable && (
+            <FieldLabel label="Calendar color">
+              <CalendarColorField
+                name="calendar_color"
+                defaultValue={service.calendar_color}
+              />
+            </FieldLabel>
+          )}
           <FieldLabel
             label="Price"
             hint="Shown to clients when booking."
@@ -283,7 +299,7 @@ function ReorderButtons({
 // status pill and without the Hide/Show toggle. The "+ Add service"
 // button replaces "Save changes" in the footer.
 // ---------------------------------------------------------------------------
-function AddServiceCard() {
+function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: boolean }) {
   return (
     <section className="flex flex-col gap-3">
       <div>
@@ -316,6 +332,11 @@ function AddServiceCard() {
                 required
               />
             </FieldLabel>
+            {calendarColorAvailable && (
+              <FieldLabel label="Calendar color">
+                <CalendarColorField name="calendar_color" defaultValue="sky" />
+              </FieldLabel>
+            )}
             <FieldLabel
               label="Price"
               hint="Shown to clients when booking."

@@ -103,7 +103,7 @@ describe("verify-production: covers every required check", () => {
     // migration max" will (correctly) report expected 0151 vs the current remote,
     // the intended pending-apply signal. This assertion still fails on the next
     // new migration, forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0152");
+    expect(nums[nums.length - 1]).toBe("0153");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
