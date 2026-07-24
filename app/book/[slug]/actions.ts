@@ -791,12 +791,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     .select("*")
     .single();
   if (insertErr || !created) {
-    // sqlstate 23P01 = exclusion_violation. Fires when the
-    // no_overlapping_active_appointments_per_studio constraint
-    // catches a race the UI-layer slot check could not. A rejected
-    // booking must NOT trigger a confirmation email, so we return
-    // before any send path.
-    if (insertErr?.code === "23P01") {
+    // sqlstate 23P01 = exclusion_violation (actual-overlap GiST). HB001 =
+    // migration 0152's soft-buffer trigger (public booking never bypasses the
+    // buffer; the slot generator already filters buffer-proximate times, so this
+    // only fires on a rare race). Both map to the SAME safe copy — never the raw
+    // DB message or SQLSTATE. A rejected booking must NOT trigger a confirmation
+    // email, so we return before any send path.
+    if (insertErr?.code === "23P01" || insertErr?.code === "HB001") {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",

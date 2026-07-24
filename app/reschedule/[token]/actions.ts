@@ -693,7 +693,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   );
 
   if (rpcErr) {
-    if (rpcErr.code === "23P01") {
+    if (rpcErr.code === "23P01" || rpcErr.code === "HB001") {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",

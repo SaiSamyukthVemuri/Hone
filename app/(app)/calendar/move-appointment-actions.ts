@@ -371,7 +371,10 @@ export async function moveAppointmentAction(input: {
 
   if (error) {
     // §7.11: an exclusion violation (double-book / block / break / blockout) -> safe conflict copy.
-    if ((error as { code?: string }).code === "23P01") {
+    if (
+      (error as { code?: string }).code === "23P01" ||
+      (error as { code?: string }).code === "HB001"
+    ) {
       return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
     }
     // Never surface raw Postgres/Supabase/RPC detail; log a PHI-free structured line.
@@ -406,6 +409,9 @@ export async function moveAppointmentAction(input: {
       return { ok: false, error: "That practitioner isn't set up for this service." };
     case "outside_availability":
       return { ok: false, error: "That time is outside the practitioner's availability. Choose another time." };
+    case "buffer_conflict":
+      // Soft buffer/gap (migration 0152); only on the non-override move path.
+      return { ok: false, code: "conflict", error: "That time is within the buffer around another appointment. Choose another time." };
     case "practitioner_closed":
       return { ok: false, error: "That practitioner isn't working at that time. Choose another time." };
     case "booking_paused":

@@ -27,7 +27,7 @@ describe("0126 — file + repo-max tripwire", () => {
     // The absolute repo-max pin lives in the 0131 test (now 0134 =
     // practitioner-capacity foundation); nothing above 0138 may exist yet.
     expect(FILES.some((f) => f.startsWith("0126_"))).toBe(true);
-    const higher = FILES.filter((f) => /^01(5[2-9]|[6-9]\d)_/.test(f)); // 0151 now present (RC hardening); trip on 0152+
+    const higher = FILES.filter((f) => /^01(5[3-9]|[6-9]\d)_/.test(f)); // 0152 now present (manual-override buffer); trip on 0153+
     expect(higher).toEqual([]);
   });
 });

@@ -19,14 +19,14 @@ describe("0131 — repo migration-max tripwire", () => {
   // present here. Neither source side was correct for the combined repo: #460
   // asserted 0140 absent; #459 asserted 0135-0139/0142+ absent. This union asserts
   // the complete 0132-0150 chain and trips only on 0151+.
-  it("advances the repo migration max to 0151 (integrated RC + RC hardening: appointment tenant consistency)", () => {
+  it("advances the repo migration max to 0152 (Chloe manual-override booking: actual-overlap hard / buffer soft)", () => {
     const files = readdirSync(join(process.cwd(), "supabase/migrations"));
     const nums = files
       .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0151"); // 0151 = appointment tenant-consistency composite FKs (RC hardening)
+    expect(nums[nums.length - 1]).toBe("0152"); // 0152 = actual-overlap hard / buffer soft (Chloe manual-override booking)
     expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
@@ -52,8 +52,10 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0150_"))).toBe(true);
     // RC hardening: appointment tenant-consistency composite FKs.
     expect(files.some((f) => f.startsWith("0151_"))).toBe(true);
-    // Nothing 0152+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(5[2-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    // Chloe manual-override booking: actual-overlap HARD exclusion, buffer SOFT.
+    expect(files.some((f) => f.startsWith("0152_"))).toBe(true);
+    // Nothing 0153+ yet. Bump this tripwire consciously when adding migrations.
+    expect(files.filter((f) => /^01(5[3-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

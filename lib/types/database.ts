@@ -383,6 +383,12 @@ export type Appointment = {
   // the studio capacity flag, maintained by trigger; routes the row into the
   // studio-wide vs per-practitioner exclusion. Optional for pre-0134 rows.
   capacity_enabled?: boolean;
+  // Migration 0152 (manual-override buffer bypass): true only when an
+  // authenticated internal OWNER booked/moved this row with
+  // allow_outside_availability=true; makes the soft-buffer trigger skip it.
+  // Actual-interval overlap remains a hard constraint regardless. Optional for
+  // pre-0152 rows.
+  booked_outside_availability?: boolean;
   // Migration 0025: email tracking + opaque token used in cancel and
   // reschedule URLs.
   confirmation_sent_at: string | null;
