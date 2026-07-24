@@ -532,21 +532,16 @@ export default async function SessionDetailPage({
         />
       </div>
 
-      {/* PR #194: one-tap seed from the previous session, only when
-          this chart has no treatment areas yet (duplication-proof)
-          and a previous session exists. */}
+      {/* PR #194 → temporarily contained: the whole-session copy is paused
+          (see CopyPreviousAreasButton). Shown only where the control used to
+          appear — an empty electrolysis chart with a previous session that has
+          areas — so the practitioner sees why the one-tap copy is missing. */}
       {!isFinalized &&
         session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
         previousSessionAny &&
-        previousSessionHasAreas && (
-          <CopyPreviousAreasButton
-            clientId={id}
-            sessionId={session.id}
-            previousSessionId={previousSessionAny.id}
-          />
-        )}
+        previousSessionHasAreas && <CopyPreviousAreasButton />}
 
       {/* Migration 0126: consultation + skin/hair analysis context during
           charting. Collapsible so it never crowds the charting flow; the

@@ -85,11 +85,13 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     expect(FORM).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
   });
 
-  it("copy-settings still carries machine frequency (within-session and from last session)", () => {
+  it("in-form copy-settings still carries machine frequency", () => {
+    // In-form copySettings (unchanged) carries machine frequency. The
+    // whole-session copy action is temporarily contained (writes nothing), so
+    // it no longer selects/copies those columns at all.
     expect(FORM).toMatch(/machineFrequency: source\.machine_frequency \?\? ""/);
-    expect(ACTIONS).toMatch(
-      /minutes_performed, machine_frequency, probe_key/,
-    );
+    expect(ACTIONS).toMatch(/copyPreviousSessionAreasAction/);
+    expect(ACTIONS).toMatch(/temporarily unavailable/);
   });
 
   it("migration 0084 is additive and nullable (no backfill, old rows unaffected)", () => {
