@@ -250,15 +250,20 @@ export async function getAvailableSlots(
     ? reservationBase.eq("resource_key", practitionerId)
     : reservationBase.eq("studio_id", studio.id));
 
-  // The reservation rows already encode every relevant buffer:
-  //   - appointment rows: ends_at = blocked_ends_at (starts_at +
-  //     snapshotted buffer at booking time, per migration 0029).
-  //   - timed_block rows: raw (starts_at, ends_at). Blocks do not
-  //     impose their own buffer.
-  //   - full_day_blockout rows: raw local-midnight UTC range.
-  // We MUST NOT widen these intervals again on the JS side. Doing
-  // so would double-count the buffer (the bug from the first
-  // migration 0029 attempt).
+  const durationMs = duration * 60_000;
+  const bufferMs = buffer * 60_000;
+
+  // Conflict intervals are SOURCE-AWARE. Post-migration 0152 the appointment
+  // shadow rows in studio_calendar_reservations store the ACTUAL treatment
+  // interval (starts_at, ends_at) with NO trailing buffer, so the protected end
+  // must be reconstructed per source:
+  //   - appointment rows: protectedEnd = ends_at + the CURRENT studio buffer.
+  //     This matches the authoritative DB buffer validator (0152's
+  //     enforce_appointment_buffer / appointment_buffer_conflict); without it the
+  //     generator would offer a start at an appointment's actual end that the DB
+  //     then rejects (e.g. 14:00 right after a 13:00–14:00 appt with a 30-min buffer).
+  //   - timed_block / recurring-break / full_day_blockout rows: raw (starts_at,
+  //     ends_at). These carry no buffer and MUST NOT be widened past their end.
   const conflicts = ((reservations ?? []) as ReservationRow[])
     // Exclude ONLY the exact own-reservation of the appointment being moved (the
     // (source_kind, source_id) pair is unique). Every other reservation stays a conflict.
@@ -270,18 +275,20 @@ export async function getAvailableSlots(
           r.source_id === excludeReservation.sourceId
         ),
     )
-    .map((r) => ({
-      start: new Date(r.starts_at).getTime(),
-      end: new Date(r.ends_at).getTime(),
-    }));
+    .map((r) => {
+      const start = new Date(r.starts_at).getTime();
+      const actualEnd = new Date(r.ends_at).getTime();
+      // Re-apply the current buffer ONLY for appointments (0152 stores actual ends).
+      const protectedEnd =
+        r.source_kind === "appointment" ? actualEnd + bufferMs : actualEnd;
+      return { start, end: protectedEnd };
+    });
 
   const openMin = localMinutesSinceMidnight(openTime);
   const closeMin = localMinutesSinceMidnight(closeTime);
 
   const openStartMs = utcInstantFromLocal(dateStr, openTime, tz).getTime();
   const closeMs = utcInstantFromLocal(dateStr, closeTime, tz).getTime();
-  const durationMs = duration * 60_000;
-  const bufferMs = buffer * 60_000;
 
   // Candidate slot starts come from three sources (NOT "every 15 minutes"):
   const candidateMs = new Set<number>();
@@ -294,14 +301,22 @@ export async function getAvailableSlots(
     candidateMs.add(utcInstantFromLocal(dateStr, minutesToHHMM(m), tz).getTime());
   }
 
-  // (2) immediately after each existing reservation's PROTECTED end. The
-  //     reservation rows already bake in the relevant buffer (appointment
-  //     ends_at = end + snapshotted buffer, migration 0029; blocks/blockouts
-  //     are raw) — so the conflict's `end` IS the earliest legal next start.
-  //     We must NOT add the buffer again here (the migration-0029 double-count
-  //     bug). This is what packs a new client in right after the previous one.
+  // (2) immediately after each existing reservation's SOURCE-AWARE protected end
+  //     (appointment: actual end + current buffer; timed blocks / breaks /
+  //     blockouts: raw end — see the conflicts map above). The conflict's `end`
+  //     IS the earliest legal next start, so this packs a new client right after
+  //     the previous one exactly as the DB buffer validator would allow.
   for (const c of conflicts) {
     candidateMs.add(c.end);
+    // (2b) immediately BEFORE each reservation: the LATEST start whose protected
+    //      interval [start, start + duration + buffer) exactly TOUCHES this
+    //      reservation's start — i.e. reservation.start − duration − buffer.
+    //      Symmetric to the forward anchor above (which packs right after). The
+    //      window + overlap filter below drop it if it falls before open,
+    //      overruns close, or collides with another reservation. This is the
+    //      useful "11:30" slot that a coarse opening grid + forward-only anchors
+    //      could never surface.
+    candidateMs.add(c.start - durationMs - bufferMs);
   }
 
   const slots: Slot[] = [];
