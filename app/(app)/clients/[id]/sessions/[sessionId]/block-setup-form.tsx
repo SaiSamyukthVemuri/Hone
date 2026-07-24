@@ -48,6 +48,11 @@ import {
 } from "@/lib/record-keeping/probe-lot-suggestion";
 import { ProbeLotSelect } from "@/components/probe-lot-select";
 import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
+import type { SessionBlockWithEntries } from "@/lib/supabase/queries";
+import {
+  buildTreatmentSetupDraftPatch,
+  firstLiveEntry,
+} from "@/lib/sessions/treatment-setup-snapshot";
 import type {
   ApilusModality,
   ElectrolysisEntry,
@@ -122,12 +127,12 @@ type Props = {
   sessionId: string;
   clientId: string;
   // For "Copy settings from another area in this session" (create mode only).
-  previousBlock: SessionBlock | null;
+  previousBlock: SessionBlockWithEntries | null;
   // PR #191: every saved treatment area in this session, in sort
   // order. Copy settings prefers the most recent area matching the
   // currently selected treatment area before falling back to the
   // last one.
-  savedBlocks?: SessionBlock[];
+  savedBlocks?: SessionBlockWithEntries[];
   // When present, the form edits this existing area instead of creating.
   block?: SessionBlock | null;
   // The block's first/primary entry, if any. In edit mode its readings seed
@@ -442,19 +447,14 @@ export function BlockSetupForm({
           .find((b) => (b.primary_area ?? "").trim().toLowerCase() === wantedArea)
       : undefined;
     const source = areaMatch ?? candidates[candidates.length - 1];
-    setDraft((d) => ({
-      ...d,
-      mode: source.mode ?? "",
-      apilusModality: source.apilus_modality ?? "",
-      energyLevel:
-        source.energy_level != null ? String(source.energy_level) : "",
-      probeKey: source.probe_key ?? "",
-      machineFrequency: source.machine_frequency ?? "",
-      minutes:
-        source.minutes_performed != null
-          ? String(source.minutes_performed)
-          : "",
-    }));
+    // Full reusable setup via the shared snapshot contract: block machine
+    // settings PLUS the primary (earliest live) entry's mode-gated machine
+    // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas, a
+    // manually entered probe lot, and every outcome/response field are
+    // preserved — the patch carries ONLY reusable setup keys.
+    const firstEntry = firstLiveEntry(source.electrolysis_entries);
+    const patch = buildTreatmentSetupDraftPatch(source, firstEntry);
+    setDraft((d) => ({ ...d, ...patch }));
     const sourceName = source.primary_area?.trim() || source.block_name?.trim();
     if (areaMatch) {
       setCopyMessage(
