@@ -9,8 +9,9 @@ import { randomUUID } from "node:crypto";
 
 // Migration 0154 + the card-change notification writer, proven against the
 // REAL migrated local database:
-//   * the (studio_id, dedupe_key) partial unique index makes a re-delivered
-//     Stripe event a no-op (the durable writer's 23505 -> deduped:true path);
+//   * the (studio_id, dedupe_key) partial unique index makes a re-attempt for
+//     the same mode-scoped SetupIntent a no-op (the durable writer's
+//     23505 -> confirm-row -> deduped:true path);
 //   * NULL dedupe_key rows (every existing booking/cancel/reschedule/intake
 //     notification) are unaffected;
 //   * the length CHECK bounds the key;
@@ -22,14 +23,19 @@ import { randomUUID } from "node:crypto";
 //     safe body.
 
 let s: SeededStudio;
+// stripe_account_id is globally UNIQUE; suffix per run so the suite re-runs
+// against the same local DB without colliding (CI uses a fresh DB either way).
+const RUN = randomUUID().slice(0, 8);
+const ACCT = { test: `acct_ccn_test_${RUN}`, live: `acct_ccn_live_${RUN}` };
+const CUS = { test: `cus_ccn_test_${RUN}`, live: `cus_ccn_live_${RUN}` };
 
 beforeAll(async () => {
   s = await seedStudio("card-change-notif");
   // Lineage prerequisites for client_payment_methods rows (0058 composite FKs):
   // a studio_payment_settings binding + a client_stripe_customers row per mode.
   for (const [acct, mode, cus] of [
-    ["acct_ccn_test", false, "cus_ccn_test"],
-    ["acct_ccn_live", true, "cus_ccn_live"],
+    [ACCT.test, false, CUS.test],
+    [ACCT.live, true, CUS.live],
   ] as const) {
     await adminQuery(
       `insert into public.studio_payment_settings (studio_id, stripe_account_id, stripe_livemode)
@@ -56,8 +62,8 @@ async function insertCard(
   brand = "visa",
   last4 = "4242",
 ) {
-  const acct = mode ? "acct_ccn_live" : "acct_ccn_test";
-  const cus = mode ? "cus_ccn_live" : "cus_ccn_test";
+  const acct = mode ? ACCT.live : ACCT.test;
+  const cus = mode ? CUS.live : CUS.test;
   const removedAt = status === "removed" ? "now()" : "null";
   return adminQuery(
     `insert into public.client_payment_methods
@@ -150,9 +156,9 @@ describe("added-vs-replaced determination (same-mode payment-method count)", () 
   });
 });
 
-describe("dedupe_key partial unique index (Stripe-event idempotency)", () => {
+describe("dedupe_key partial unique index (SetupIntent business-operation idempotency)", () => {
   it("two notifications with the SAME (studio, dedupe_key) => second hits 23505 (deduped)", async () => {
-    const dedupeKey = `stripe:evt_${randomUUID().slice(0, 8)}`;
+    const dedupeKey = `stripe:setup_intent:test:seti_${randomUUID().slice(0, 8)}`;
     const first = await insertNotification({
       dedupeKey,
       eventType: "card_added",
@@ -173,16 +179,16 @@ describe("dedupe_key partial unique index (Stripe-event idempotency)", () => {
     expect(second.code).toBe("23505"); // unique_violation -> writer returns deduped:true
   });
 
-  it("a DIFFERENT Stripe event id => a distinct notification is allowed", async () => {
+  it("a DIFFERENT SetupIntent => a distinct notification is allowed", async () => {
     const a = await insertNotification({
-      dedupeKey: `stripe:evt_${randomUUID().slice(0, 8)}`,
+      dedupeKey: `stripe:setup_intent:test:seti_${randomUUID().slice(0, 8)}`,
       eventType: "card_replaced",
       title: "Card replaced on file",
       body: "Client card-change-notif replaced the card on file with visa ending in 4242.",
       href: `/clients/${s.clientId}?tab=overview`,
     });
     const b = await insertNotification({
-      dedupeKey: `stripe:evt_${randomUUID().slice(0, 8)}`,
+      dedupeKey: `stripe:setup_intent:test:seti_${randomUUID().slice(0, 8)}`,
       eventType: "card_replaced",
       title: "Card replaced on file",
       body: "Client card-change-notif replaced the card on file with visa ending in 4242.",
@@ -228,7 +234,7 @@ describe("dedupe_key partial unique index (Stripe-event idempotency)", () => {
 
 describe("a card_added notification is studio-wide with a safe body", () => {
   it("practitioner_id is null (studio-wide) and body holds only name + brand + last4", async () => {
-    const dedupeKey = `stripe:evt_${randomUUID().slice(0, 8)}`;
+    const dedupeKey = `stripe:setup_intent:test:seti_${randomUUID().slice(0, 8)}`;
     const body = "Client card-change-notif added visa ending in 4242.";
     const ins = await insertNotification({
       dedupeKey,

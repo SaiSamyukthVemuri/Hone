@@ -30,6 +30,7 @@
 // import admin-server in a client tree.
 
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PractitionerNotificationEventType } from "@/lib/types/database";
 
@@ -186,9 +187,13 @@ export function recordPractitionerNotification(
 // external event and let it be retried. The webhook uses this so it
 // never returns "processed" to Stripe before the notification row is
 // secured. Idempotency is carried by dedupeKey (unique per studio via
-// the migration-0154 partial index): a re-delivery of the same Stripe
-// event conflicts on (studio_id, dedupe_key) and is reported as
+// the migration-0154 partial index): a re-attempt for the same business
+// operation conflicts on (studio_id, dedupe_key) and is reported as
 // { deduped: true } — an idempotent success, NOT an error.
+//
+// The caller passes its ALREADY-created admin client in (rather than the
+// writer minting a second one): it keeps a single service-role client per
+// request and makes this path directly testable with an injected client.
 export type EnsurePractitionerNotificationInput = {
   studioId: string;
   practitionerId: string | null;
@@ -205,6 +210,7 @@ export type EnsurePractitionerNotificationInput = {
 };
 
 export async function ensurePractitionerNotification(
+  admin: SupabaseClient,
   input: EnsurePractitionerNotificationInput,
 ): Promise<{ deduped: boolean }> {
   // Programming-error guard. The type system already constrains eventType,
@@ -216,7 +222,6 @@ export async function ensurePractitionerNotification(
       `ensurePractitionerNotification: unknown event type ${input.eventType}`,
     );
   }
-  const admin = createAdminClient();
   const { error } = await admin.from("practitioner_notifications").insert({
     studio_id: input.studioId,
     practitioner_id: input.practitionerId,
@@ -229,12 +234,30 @@ export async function ensurePractitionerNotification(
     dedupe_key: input.dedupeKey,
   });
   if (error) {
-    // 23505 on the (studio_id, dedupe_key) partial unique index means this
-    // Stripe event already produced its notification. That is the idempotent
-    // success case, not a failure — report it so the caller can proceed to
-    // ack the event.
     if (error.code === "23505") {
-      return { deduped: true };
+      // A unique violation is ONLY an idempotent dedupe if a row with THIS
+      // exact (studio_id, dedupe_key) already exists. We verify that rather
+      // than blindly swallowing every 23505 — an unrelated future unique
+      // constraint on this table must still surface as a real failure.
+      const { data: existing, error: selErr } = await admin
+        .from("practitioner_notifications")
+        .select("id")
+        .eq("studio_id", input.studioId)
+        .eq("dedupe_key", input.dedupeKey)
+        .maybeSingle();
+      if (selErr) {
+        throw new Error(
+          `ensure_practitioner_notification_dedupe_check_failed:${selErr.code}:${selErr.message}`,
+        );
+      }
+      if (existing) {
+        return { deduped: true };
+      }
+      // 23505 with no matching dedupe row => a different unique constraint
+      // tripped. Do NOT swallow it.
+      throw new Error(
+        `ensure_practitioner_notification_unexpected_unique_violation:${error.code}:${error.message}`,
+      );
     }
     throw new Error(
       `ensure_practitioner_notification_failed:${error.code}:${error.message}`,

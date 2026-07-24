@@ -592,14 +592,13 @@ async function handleSetupIntentSucceeded(
       // The card is already persisted (a prior delivery of THIS event
       // inserted it). The notification may still be missing if that prior
       // delivery failed after the card insert; ensure it now (deduped on the
-      // Stripe event id). This is awaited and throws on failure so the parent
+      // mode-scoped SetupIntent). This is awaited and throws on failure so the parent
       // releases the claim and Stripe retries WITHOUT touching the card row.
       const notif = await ensureCardChangeNotification(admin, {
         studioId: metaStudioId,
         clientId: metaClientId,
         livemode: ctx.livemode,
         setupIntentId: si.id,
-        stripeEventId: event.id,
       });
       return {
         eventType: event.type,
@@ -700,14 +699,13 @@ async function handleSetupIntentSucceeded(
     // Treat as success since the webhook's job is done.
     if (insertErr.code === "23505") {
       // A concurrent/duplicate delivery already inserted the card for this
-      // SetupIntent. Still ensure the notification (deduped on the event id)
-      // so a card-saved-but-notification-missing race self-heals on retry.
+      // SetupIntent. Still ensure the notification (deduped on the mode-scoped
+      // SetupIntent) so a card-saved-but-notification-missing race self-heals.
       const notif = await ensureCardChangeNotification(admin, {
         studioId: metaStudioId,
         clientId: metaClientId,
         livemode: ctx.livemode,
         setupIntentId: si.id,
-        stripeEventId: event.id,
       });
       return {
         eventType: event.type,
@@ -743,7 +741,6 @@ async function handleSetupIntentSucceeded(
     clientId: metaClientId,
     livemode: ctx.livemode,
     setupIntentId: si.id,
-    stripeEventId: event.id,
   });
 
   return {

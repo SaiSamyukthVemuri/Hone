@@ -10,8 +10,15 @@ import { ensurePractitionerNotification } from "@/lib/notifications/practitioner
 // card row is persisted — from every success branch (fresh insert, the
 // idempotency early-return where the card was already saved, and the 23505
 // backstop). It is awaited; a failure throws so the webhook releases its
-// Stripe event claim and Stripe retries. The dedupe key (the Stripe event id)
-// makes a retry a no-op once the notification exists.
+// Stripe event claim and Stripe retries.
+//
+// The dedupe key is the SUCCESSFUL SETUPINTENT, mode-scoped
+// ("stripe:setup_intent:test:<id>" / "stripe:setup_intent:live:<id>"), NOT the
+// Stripe event id. This matches the card row's own idempotency identity
+// (client_payment_methods is unique per stripe_setup_intent_id + mode), so:
+//   * a Stripe re-delivery of the same event still dedupes;
+//   * two DISTINCT Event objects that both represent the same successful
+//     SetupIntent produce only ONE practitioner notification.
 //
 // Added vs replaced is decided from PERSISTED same-mode payment-method
 // history, never from the browser's "add" or "replace" portal mode:
@@ -60,22 +67,21 @@ export function buildCardChangeNotification(input: {
 export type EnsureCardChangeNotificationParams = {
   studioId: string;
   clientId: string;
-  // The Stripe mode of the saved card (event.livemode). Determination and the
-  // card lookup are both scoped to this mode so a live save never reads the
-  // client's test card, and vice versa.
+  // The Stripe mode of the saved card (event.livemode). Determination, the
+  // card lookup, AND the dedupe key are all scoped to this mode so a live save
+  // never reads or dedupes against the client's test card, and vice versa.
   livemode: boolean;
   // The SetupIntent whose success this notification represents. Used to read
-  // the exact card row this event saved (authoritative brand/last4).
+  // the exact card row this event saved (authoritative brand/last4) AND as the
+  // dedupe identity (mirrors the card row's own per-SetupIntent idempotency).
   setupIntentId: string;
-  // Authoritative Stripe event id, used to build the dedupe key. Never rendered.
-  stripeEventId: string;
 };
 
 export async function ensureCardChangeNotification(
   admin: SupabaseClient,
   params: EnsureCardChangeNotificationParams,
 ): Promise<{ eventType: "card_added" | "card_replaced"; deduped: boolean }> {
-  const { studioId, clientId, livemode, setupIntentId, stripeEventId } = params;
+  const { studioId, clientId, livemode, setupIntentId } = params;
 
   // 1. The card row THIS SetupIntent saved — authoritative brand/last4.
   //    Keyed by setup_intent_id so the content describes the exact card this
@@ -139,9 +145,13 @@ export async function ensureCardChangeNotification(
     clientId,
   });
 
-  // 4. Secure the notification durably (awaited). A redelivery of this Stripe
-  //    event conflicts on the dedupe key and returns deduped:true.
-  const { deduped } = await ensurePractitionerNotification({
+  // 4. Secure the notification durably (awaited). The dedupe key is the
+  //    mode-scoped SetupIntent, so any re-attempt for the same successful
+  //    SetupIntent — a Stripe redelivery OR a second distinct Event object for
+  //    the same SetupIntent — conflicts on the dedupe key and returns
+  //    deduped:true. The already-created admin client is passed through.
+  const dedupeKey = `stripe:setup_intent:${livemode ? "live" : "test"}:${setupIntentId}`;
+  const { deduped } = await ensurePractitionerNotification(admin, {
     studioId,
     practitionerId: null, // studio-wide visibility
     eventType,
@@ -150,7 +160,7 @@ export async function ensureCardChangeNotification(
     appointmentId: null,
     clientId,
     href,
-    dedupeKey: `stripe:${stripeEventId}`,
+    dedupeKey,
   });
 
   return { eventType, deduped };
