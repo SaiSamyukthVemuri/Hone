@@ -7,11 +7,12 @@ const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0153_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
 
 describe("0153 — services.calendar_color (additive, CHECK-constrained, no rose)", () => {
-  it("is present and 0152 precedes it; nothing 0154+ yet", () => {
+  it("is present and 0152 precedes it; nothing 0155+ yet", () => {
     expect(FILE).toMatch(/^0153_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0152_"))).toBe(true);
-    expect(files.filter((f) => /^01(5[4-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    // 0154 (card-change notification dedupe_key) now exists; guard forward of it.
+    expect(files.filter((f) => /^01(5[5-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
   it("adds calendar_color, defaults it, sets NOT NULL, and CHECK-constrains to the six allowed keys", () => {
     expect(SQL).toMatch(/add column if not exists calendar_color text/);

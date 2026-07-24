@@ -19,9 +19,10 @@ describe("0152 — file present + precedes nothing unexpected", () => {
     expect(FILE).toMatch(/^0152_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0151_"))).toBe(true);
-    // The absolute repo-max pin lives in the 0131 test; this only guards that
-    // 0152 is currently the top of the chain (nothing 0153+ has landed yet).
-    expect(files.filter((f) => /^01(5[4-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    // The absolute repo-max pin lives in the 0131 test; this only guards
+    // forward of the current chain (0153 colors + 0154 card-change dedupe now
+    // present; trip on 0155+).
+    expect(files.filter((f) => /^01(5[5-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

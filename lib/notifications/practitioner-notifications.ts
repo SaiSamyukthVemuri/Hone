@@ -30,6 +30,7 @@
 // import admin-server in a client tree.
 
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PractitionerNotificationEventType } from "@/lib/types/database";
 
@@ -48,6 +49,15 @@ const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
     // members) + safe text — never intake answers or the intake token. href
     // points at the authenticated intake review page.
     "intake_submitted",
+    // Card-on-file added / replaced. Written server-side from the
+    // setup_intent.succeeded webhook arm via the DURABLE writer below
+    // (ensurePractitionerNotification), never via the fire-and-forget
+    // recorder — the webhook must not ack Stripe before the row is secured.
+    // Body carries only client name + brand + last4; deduped by the mode-scoped
+    // SetupIntent business key (not the Stripe event id), so two distinct events
+    // for the same successful SetupIntent still produce one notification.
+    "card_added",
+    "card_replaced",
   ]);
 
 export type RecordPractitionerNotificationInput = {
@@ -170,6 +180,91 @@ export function recordPractitionerNotification(
       });
     }
   })();
+}
+
+// Durable, AWAITED notification writer for webhook use. Unlike the
+// fire-and-forget recorder above, the caller MUST await this and a
+// failure MUST propagate (throw) so the caller can decline to ack the
+// external event and let it be retried. The webhook uses this so it
+// never returns "processed" to Stripe before the notification row is
+// secured. Idempotency is carried by dedupeKey (unique per studio via
+// the migration-0154 partial index): a re-attempt for the same business
+// operation conflicts on (studio_id, dedupe_key) and is reported as
+// { deduped: true } — an idempotent success, NOT an error.
+//
+// The caller passes its ALREADY-created admin client in (rather than the
+// writer minting a second one): it keeps a single service-role client per
+// request and makes this path directly testable with an injected client.
+export type EnsurePractitionerNotificationInput = {
+  studioId: string;
+  practitionerId: string | null;
+  eventType: PractitionerNotificationEventType;
+  title: string;
+  body: string | null;
+  clientId: string | null;
+  href: string | null;
+  appointmentId?: string | null;
+  // Internal idempotency token, e.g. "stripe:setup_intent:<test|live>:<setup_intent_id>". NEVER rendered
+  // to users. Its uniqueness (per studio) is what makes a redelivery a
+  // no-op instead of a duplicate row.
+  dedupeKey: string;
+};
+
+export async function ensurePractitionerNotification(
+  admin: SupabaseClient,
+  input: EnsurePractitionerNotificationInput,
+): Promise<{ deduped: boolean }> {
+  // Programming-error guard. The type system already constrains eventType,
+  // so this is unreachable in practice; if a bad value ever reaches here we
+  // throw rather than silently swallow (durable path — the caller decides
+  // whether to retry).
+  if (!ALLOWED_EVENT_TYPES.has(input.eventType)) {
+    throw new Error(
+      `ensurePractitionerNotification: unknown event type ${input.eventType}`,
+    );
+  }
+  const { error } = await admin.from("practitioner_notifications").insert({
+    studio_id: input.studioId,
+    practitioner_id: input.practitionerId,
+    event_type: input.eventType,
+    title: input.title,
+    body: input.body,
+    appointment_id: input.appointmentId ?? null,
+    client_id: input.clientId,
+    href: input.href,
+    dedupe_key: input.dedupeKey,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      // A unique violation is ONLY an idempotent dedupe if a row with THIS
+      // exact (studio_id, dedupe_key) already exists. We verify that rather
+      // than blindly swallowing every 23505 — an unrelated future unique
+      // constraint on this table must still surface as a real failure.
+      const { data: existing, error: selErr } = await admin
+        .from("practitioner_notifications")
+        .select("id")
+        .eq("studio_id", input.studioId)
+        .eq("dedupe_key", input.dedupeKey)
+        .maybeSingle();
+      if (selErr) {
+        throw new Error(
+          `ensure_practitioner_notification_dedupe_check_failed:${selErr.code}:${selErr.message}`,
+        );
+      }
+      if (existing) {
+        return { deduped: true };
+      }
+      // 23505 with no matching dedupe row => a different unique constraint
+      // tripped. Do NOT swallow it.
+      throw new Error(
+        `ensure_practitioner_notification_unexpected_unique_violation:${error.code}:${error.message}`,
+      );
+    }
+    throw new Error(
+      `ensure_practitioner_notification_failed:${error.code}:${error.message}`,
+    );
+  }
+  return { deduped: false };
 }
 
 // Local console-log helper. Keeps the stderr line shape compatible

@@ -97,13 +97,15 @@ describe("verify-production: covers every required check", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    // Repo max advances to 0152 (Chloe manual-override booking: actual-overlap
-    // stays a HARD exclusion, the buffer/gap becomes a SOFT constraint). 0152 is
-    // repo-only until its hosted apply — UNTIL then the live verifier's "Remote
-    // migration max" will (correctly) report expected 0151 vs the current remote,
-    // the intended pending-apply signal. This assertion still fails on the next
-    // new migration, forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0153");
+    // Repo max advances to 0154 (Chloe card-change notifications: a nullable
+    // additive dedupe_key on practitioner_notifications + a partial unique index
+    // so the setup_intent.succeeded webhook can write an idempotent studio
+    // notification when a client adds/replaces a card). 0154 is migration-first:
+    // it is repo-only until its hosted apply — UNTIL then the live verifier's
+    // "Remote migration max" will (correctly) report expected 0153 vs the current
+    // remote, the intended pending-apply signal. This assertion still fails on the
+    // next new migration, forcing a conscious review of the verifier.
+    expect(nums[nums.length - 1]).toBe("0154");
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
