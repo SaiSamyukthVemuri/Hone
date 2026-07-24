@@ -1442,3 +1442,22 @@ export async function getTreatmentPlanCount(clientId: string): Promise<number> {
   );
   return Number(rows[0]?.n ?? 0);
 }
+
+// Seed / read a client's personal_notes (plain text) for the bullets e2e.
+// personal_notes lives on client_personal_notes (migration 0035, unique client_id);
+// the BEFORE trigger keeps studio_id synced to the parent client.
+export async function seedClientPersonalNotes(clientId: string, text: string): Promise<void> {
+  await sql(
+    `insert into public.client_personal_notes (client_id, studio_id, personal_notes)
+     values ($1, (select studio_id from public.clients where id = $1), $2)
+     on conflict (client_id) do update set personal_notes = excluded.personal_notes`,
+    [clientId, text],
+  );
+}
+export async function getClientPersonalNotes(clientId: string): Promise<string> {
+  const rows = await sql<{ personal_notes: string | null }>(
+    `select personal_notes from public.client_personal_notes where client_id = $1`,
+    [clientId],
+  );
+  return rows[0]?.personal_notes ?? "";
+}

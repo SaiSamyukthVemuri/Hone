@@ -18,8 +18,13 @@
 // app/cancel/*, app/reschedule/*, app/api/cron/*, or
 // app/api/stripe/*. The import audit in PR #27 enforces this contract.
 
-import { useActionState } from "react";
+import { useActionState, useRef } from "react";
 import { useFormStatus } from "react-dom";
+import {
+  insertBullet,
+  bulletEnter,
+  bulletBackspace,
+} from "@/lib/notes/bullets";
 
 const MAX_NOTE_LENGTH = 20000;
 
@@ -70,6 +75,43 @@ export function ClientPersonalNotesEditor({
   // time; the textarea inside keeps its value across collapse/expand.
   const hasWarnings = initial.private_warnings.length > 0;
 
+  // Plain-text bullet helpers, applied directly to the UNCONTROLLED Personal
+  // notes textarea via a ref (so existing saved notes are never rewritten and no
+  // bullets appear on load). The value stays plain text; the existing action and
+  // maxLength are unchanged.
+  const notesRef = useRef<HTMLTextAreaElement>(null);
+  function applyEdit(edit: { value: string; cursor: number } | null): boolean {
+    const ta = notesRef.current;
+    if (!ta || !edit) return false;
+    ta.value = edit.value;
+    ta.setSelectionRange(edit.cursor, edit.cursor);
+    ta.focus();
+    return true;
+  }
+  function addBullet() {
+    const ta = notesRef.current;
+    if (!ta) return;
+    const at = ta.selectionStart ?? ta.value.length;
+    applyEdit(insertBullet(ta.value, at, MAX_NOTE_LENGTH));
+  }
+  function onNotesKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+    if (ta.selectionStart !== ta.selectionEnd) return; // only act on a collapsed caret
+    if (e.key === "Enter") {
+      const edit = bulletEnter(ta.value, ta.selectionStart, MAX_NOTE_LENGTH);
+      if (edit) {
+        e.preventDefault();
+        applyEdit(edit);
+      }
+    } else if (e.key === "Backspace") {
+      const edit = bulletBackspace(ta.value, ta.selectionStart);
+      if (edit) {
+        e.preventDefault();
+        applyEdit(edit);
+      }
+    }
+  }
+
   return (
     <form
       action={formAction}
@@ -78,18 +120,33 @@ export function ClientPersonalNotesEditor({
       <input type="hidden" name="client_id" value={clientId} />
 
       <section className="flex flex-col gap-2">
-        <header className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Personal notes
-          </h2>
-          <p className="text-xs text-neutral-500">
-            Private relationship notes for your own memory. These are not
-            shown to clients.
-          </p>
+        <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Personal notes
+            </h2>
+            <p className="text-xs text-neutral-500">
+              Private relationship notes for your own memory. These are not
+              shown to clients.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={addBullet}
+            className="shrink-0 rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            {"•"} Add bullet
+          </button>
         </header>
+        <p className="text-[11px] text-neutral-500">
+          Use bullets for quick things to remember. Press Enter to add another;
+          Enter on an empty bullet exits.
+        </p>
         <textarea
+          ref={notesRef}
           name="personal_notes"
           defaultValue={initial.personal_notes}
+          onKeyDown={onNotesKeyDown}
           rows={10}
           maxLength={MAX_NOTE_LENGTH}
           placeholder="Kids&rsquo; names, pets, partner or job, vacations, conversation follow-ups, preferences, things to ask about next time…"
