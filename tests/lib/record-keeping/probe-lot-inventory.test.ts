@@ -1,23 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProbeLotOptions,
-  activeProbeLotOptions,
+  activeProbeLotOptionsForProbe,
+  probeLotOptionsForProbe,
   filterProbeLotOptions,
-  suggestProbeLot,
+  resolveInventoryAutofill,
   probeLotOptionLabel,
   type ProbeLotInventoryRow,
-  type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
 
-// Active probe-lot inventory selection logic (migration 0128 charting release).
-// Source of truth = record_keeping_sterile_items probe rows; "active" = not past
-// expiry. Manual entry + historical snapshots are handled in the form; this
-// module only builds/searches/suggests options.
+// Inventory-backed probe-lot options (Chloe item #9, migration 0155). Identity
+// is the inventory row id; options are probe-specific via probe_key; expired
+// lots stay selectable but never auto-fill.
 
 const TODAY = "2026-07-13";
+const F3 = "sterex-gold-two-piece-f3-short";
+const F2 = "sterex-stainless-steel-two-piece-f2-short";
 
 function row(over: Partial<ProbeLotInventoryRow> = {}): ProbeLotInventoryRow {
   return {
+    id: over.id ?? "id-" + (over.lotNumber ?? "460941"),
+    probeKey: F3,
     lotNumber: "460941",
     itemDescription: "Sterex Gold F3 probe",
     manufacturerName: "Sterex",
@@ -26,122 +29,126 @@ function row(over: Partial<ProbeLotInventoryRow> = {}): ProbeLotInventoryRow {
   };
 }
 
-describe("buildProbeLotOptions: classification + ordering + dedupe", () => {
-  it("classifies expired by todayIso; a null expiry never expires", () => {
+describe("buildProbeLotOptions: one option per inventory row (NO dedupe by lot)", () => {
+  it("(#14) two DIFFERENT inventory rows with the SAME lot number stay DISTINCT (by id)", () => {
     const opts = buildProbeLotOptions(
       [
-        row({ lotNumber: "A", expiryDate: "2026-12-01" }), // future → active
-        row({ lotNumber: "B", expiryDate: "2025-01-01" }), // past → expired
-        row({ lotNumber: "C", expiryDate: null }), // no expiry → active
+        row({ id: "a", lotNumber: "LOT1", manufacturerName: "Sterex" }),
+        row({ id: "b", lotNumber: "LOT1", manufacturerName: "Ballet", probeKey: F2 }),
       ],
       TODAY,
     );
-    const byLot = Object.fromEntries(opts.map((o) => [o.lotNumber, o.isExpired]));
-    expect(byLot).toEqual({ A: false, B: true, C: false });
+    expect(opts).toHaveLength(2);
+    expect(opts.map((o) => o.id).sort()).toEqual(["a", "b"]);
   });
 
-  it("active options sort before expired ones (historical still selectable)", () => {
+  it("classifies expired by todayIso; a null expiry never expires; active sorts first", () => {
     const opts = buildProbeLotOptions(
       [
-        row({ lotNumber: "OLD", expiryDate: "2025-01-01" }),
-        row({ lotNumber: "NEW", expiryDate: "2026-12-01" }),
+        row({ id: "old", lotNumber: "OLD", expiryDate: "2025-01-01" }),
+        row({ id: "new", lotNumber: "NEW", expiryDate: "2026-12-01" }),
+        row({ id: "none", lotNumber: "NONE", expiryDate: null }),
       ],
       TODAY,
     );
-    expect(opts.map((o) => o.lotNumber)).toEqual(["NEW", "OLD"]);
-    // The expired lot is NOT dropped — a historical value must stay selectable.
-    expect(opts.find((o) => o.lotNumber === "OLD")?.isExpired).toBe(true);
+    expect(opts.find((o) => o.id === "old")?.isExpired).toBe(true);
+    // active (NONE null-expiry, NEW) before expired (OLD)
+    expect(opts[opts.length - 1].id).toBe("old");
+    expect(opts.find((o) => o.id === "old")).toBeTruthy(); // expired NOT dropped
   });
 
-  it("dedupes by case-insensitive lot number, preferring a non-expired row", () => {
+  it("carries id + probeKey through and drops blank lot numbers", () => {
     const opts = buildProbeLotOptions(
-      [
-        row({ lotNumber: "lot1", expiryDate: "2025-01-01" }), // expired
-        row({ lotNumber: "LOT1", expiryDate: "2026-12-01" }), // active dup
-      ],
+      [row({ id: "x", lotNumber: "   " }), row({ id: "y", probeKey: F2 })],
       TODAY,
     );
     expect(opts).toHaveLength(1);
-    expect(opts[0].isExpired).toBe(false);
-  });
-
-  it("drops rows with a blank lot number", () => {
-    const opts = buildProbeLotOptions([row({ lotNumber: "   " })], TODAY);
-    expect(opts).toHaveLength(0);
+    expect(opts[0].id).toBe("y");
+    expect(opts[0].probeKey).toBe(F2);
   });
 });
 
-describe("activeProbeLotOptions", () => {
-  it("returns only non-expired options", () => {
-    const opts = buildProbeLotOptions(
-      [
-        row({ lotNumber: "A", expiryDate: "2026-12-01" }),
-        row({ lotNumber: "B", expiryDate: "2025-01-01" }),
-      ],
-      TODAY,
-    );
-    expect(activeProbeLotOptions(opts).map((o) => o.lotNumber)).toEqual(["A"]);
-  });
-});
-
-describe("filterProbeLotOptions: search", () => {
+describe("probe-specific selection (#7 other probe never appears)", () => {
   const opts = buildProbeLotOptions(
     [
-      row({ lotNumber: "460941", itemDescription: "Gold F3 probe", manufacturerName: "Sterex" }),
-      row({ lotNumber: "770022", itemDescription: "Ballet Insulated probe", manufacturerName: "Ballet" }),
+      row({ id: "f3a", probeKey: F3, lotNumber: "AAA", expiryDate: "2026-12-01" }),
+      row({ id: "f2a", probeKey: F2, lotNumber: "BBB", expiryDate: "2026-12-01" }),
+      row({ id: "f3exp", probeKey: F3, lotNumber: "CCC", expiryDate: "2025-01-01" }),
     ],
     TODAY,
   );
-  it("matches by lot number, description, or manufacturer (case-insensitive)", () => {
-    expect(filterProbeLotOptions(opts, "4609").map((o) => o.lotNumber)).toEqual(["460941"]);
-    expect(filterProbeLotOptions(opts, "ballet").map((o) => o.lotNumber)).toEqual(["770022"]);
-    expect(filterProbeLotOptions(opts, "GOLD").map((o) => o.lotNumber)).toEqual(["460941"]);
+  it("activeProbeLotOptionsForProbe returns only ACTIVE options with the matching probe_key", () => {
+    expect(activeProbeLotOptionsForProbe(opts, F3).map((o) => o.id)).toEqual(["f3a"]);
+    expect(activeProbeLotOptionsForProbe(opts, F2).map((o) => o.id)).toEqual(["f2a"]);
+    expect(activeProbeLotOptionsForProbe(opts, "")).toEqual([]);
   });
-  it("an empty query returns everything unchanged", () => {
-    expect(filterProbeLotOptions(opts, "  ")).toHaveLength(2);
+  it("probeLotOptionsForProbe includes expired for the probe (edit visibility) but not other probes", () => {
+    expect(probeLotOptionsForProbe(opts, F3).map((o) => o.id).sort()).toEqual(["f3a", "f3exp"]);
+    expect(probeLotOptionsForProbe(opts, F3).some((o) => o.probeKey === F2)).toBe(false);
   });
 });
 
-describe("suggestProbeLot: never silently pick among several", () => {
-  const twoActive = buildProbeLotOptions(
+describe("resolveInventoryAutofill (#4/#5/#6/#15)", () => {
+  const one = buildProbeLotOptions([row({ id: "solo", probeKey: F3, lotNumber: "SOLO", expiryDate: null })], TODAY);
+  const two = buildProbeLotOptions(
     [
-      row({ lotNumber: "A", expiryDate: "2026-12-01" }),
-      row({ lotNumber: "B", expiryDate: "2026-12-01" }),
+      row({ id: "a", probeKey: F3, lotNumber: "A", expiryDate: "2026-12-01" }),
+      row({ id: "b", probeKey: F3, lotNumber: "B", expiryDate: "2026-12-01" }),
     ],
     TODAY,
   );
-  const oneActive = buildProbeLotOptions([row({ lotNumber: "SOLO", expiryDate: null })], TODAY);
 
-  it("suggests the ONLY active lot when there is exactly one", () => {
-    expect(suggestProbeLot(oneActive, null)?.lotNumber).toBe("SOLO");
+  it("(#4) exactly one active lot for the probe → only-active auto-fill", () => {
+    const r = resolveInventoryAutofill(one, F3, null);
+    expect(r.kind).toBe("only-active");
+    expect(r.kind !== "choose" && r.option.id).toBe("solo");
   });
-  it("returns null with multiple active lots and no last-used match", () => {
-    expect(suggestProbeLot(twoActive, null)).toBeNull();
+  it("(#6) multiple active lots + no prior linked id → choose (never auto-select)", () => {
+    expect(resolveInventoryAutofill(two, F3, null).kind).toBe("choose");
   });
-  it("a last-used ACTIVE lot is suggested (beats the multiple-active null rule)", () => {
-    expect(suggestProbeLot(twoActive, "b")?.lotNumber).toBe("B");
+  it("(#5) a last-confirmed linked active id wins among multiple", () => {
+    const r = resolveInventoryAutofill(two, F3, "b");
+    expect(r.kind).toBe("last-confirmed");
+    expect(r.kind !== "choose" && r.option.id).toBe("b");
   });
-  it("a last-used EXPIRED lot is NOT auto-suggested (only active candidates)", () => {
+  it("(#15) never auto-fills an EXPIRED lot, and a prior linked id pointing at an expired lot does not resolve", () => {
     const mixed = buildProbeLotOptions(
       [
-        row({ lotNumber: "GONE", expiryDate: "2025-01-01" }), // expired
-        row({ lotNumber: "X", expiryDate: "2026-12-01" }),
-        row({ lotNumber: "Y", expiryDate: "2026-12-01" }),
+        row({ id: "gone", probeKey: F3, lotNumber: "GONE", expiryDate: "2025-01-01" }),
+        row({ id: "x", probeKey: F3, lotNumber: "X", expiryDate: "2026-12-01" }),
+        row({ id: "y", probeKey: F3, lotNumber: "Y", expiryDate: "2026-12-01" }),
       ],
       TODAY,
     );
-    // last-used points at the expired lot → no active match → multiple active → null
-    expect(suggestProbeLot(mixed, "GONE")).toBeNull();
+    // Only ACTIVE lots are considered; the expired "gone" is never returned.
+    expect(resolveInventoryAutofill(mixed, F3, "gone").kind).toBe("choose");
+    expect(resolveInventoryAutofill(mixed, F3, null).kind).toBe("choose");
+  });
+  it("no probe selected → choose", () => {
+    expect(resolveInventoryAutofill(one, "", null).kind).toBe("choose");
   });
 });
 
-describe("probeLotOptionLabel", () => {
-  const [active] = buildProbeLotOptions([row({ lotNumber: "460941", expiryDate: "2026-12-01" })], TODAY);
-  const [expired] = buildProbeLotOptions([row({ lotNumber: "770022", expiryDate: "2025-01-01" })], TODAY);
-  const [noExpiry] = buildProbeLotOptions([row({ lotNumber: "990033", expiryDate: null })], TODAY);
-  it("shows expires / EXPIRED / no expiry", () => {
-    expect(probeLotOptionLabel(active as ProbeLotOption)).toContain("expires 2026-12-01");
-    expect(probeLotOptionLabel(expired as ProbeLotOption)).toContain("EXPIRED 2025-01-01");
-    expect(probeLotOptionLabel(noExpiry as ProbeLotOption)).toContain("no expiry");
+describe("filterProbeLotOptions + label", () => {
+  const opts = buildProbeLotOptions(
+    [
+      row({ id: "1", lotNumber: "460941", itemDescription: "Gold F3 probe", manufacturerName: "Sterex" }),
+      row({ id: "2", lotNumber: "770022", itemDescription: "Insulated probe", manufacturerName: "Ballet", probeKey: F2 }),
+    ],
+    TODAY,
+  );
+  it("matches by lot / description / manufacturer (case-insensitive)", () => {
+    expect(filterProbeLotOptions(opts, "4609").map((o) => o.id)).toEqual(["1"]);
+    expect(filterProbeLotOptions(opts, "ballet").map((o) => o.id)).toEqual(["2"]);
+    expect(filterProbeLotOptions(opts, "GOLD").map((o) => o.id)).toEqual(["1"]);
+    expect(filterProbeLotOptions(opts, "  ")).toHaveLength(2);
+  });
+  it("label shows expires / EXPIRED / no expiry", () => {
+    const [a] = buildProbeLotOptions([row({ id: "a", lotNumber: "1", expiryDate: "2026-12-01" })], TODAY);
+    const [e] = buildProbeLotOptions([row({ id: "e", lotNumber: "2", expiryDate: "2025-01-01" })], TODAY);
+    const [n] = buildProbeLotOptions([row({ id: "n", lotNumber: "3", expiryDate: null })], TODAY);
+    expect(probeLotOptionLabel(a)).toContain("expires 2026-12-01");
+    expect(probeLotOptionLabel(e)).toContain("EXPIRED 2025-01-01");
+    expect(probeLotOptionLabel(n)).toContain("no expiry");
   });
 });

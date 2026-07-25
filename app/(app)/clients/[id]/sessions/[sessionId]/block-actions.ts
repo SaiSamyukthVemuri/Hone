@@ -7,6 +7,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
+import { resolveProbeInventorySelection } from "@/lib/record-keeping/probe-inventory-validation";
 import { validateTreatmentArea } from "@/lib/sessions/area-validation";
 import {
   isLaterality,
@@ -439,7 +440,35 @@ export async function updateSessionBlockAction(
   // Validate any structured-area fields present in the patch. Each is
   // independent: callers can update just block_name without sending
   // area fields, or just primary_area without touching block_name.
-  const patch = input.patch;
+  //
+  // Allowlist the caller-suppliable columns BEFORE they reach .update(): the
+  // patch type is erased at runtime, so a crafted request could otherwise
+  // mass-assign server-managed columns. In particular the 0155 inventory link
+  // (probe_inventory_item_id), the lot-number snapshot (probe_lot_number) and
+  // the confirmation (probe_lot_confirmed) are ONLY ever written through the
+  // validated resolver in the charting entry actions — never here.
+  const PATCHABLE_BLOCK_COLUMNS = new Set<string>([
+    "block_name",
+    "block_notes",
+    "mode",
+    "apilus_modality",
+    "energy_level",
+    "minutes_performed",
+    "probe_type",
+    "probe_size",
+    "machine_frequency",
+    "started_at",
+    "ended_at",
+    "primary_area",
+    "side",
+    "custom_area_detail",
+  ]);
+  const patch: Partial<SessionBlock> = {};
+  for (const [k, v] of Object.entries(input.patch)) {
+    if (PATCHABLE_BLOCK_COLUMNS.has(k)) {
+      (patch as Record<string, unknown>)[k] = v;
+    }
+  }
   const wantsArea =
     "primary_area" in patch ||
     "side" in patch ||
@@ -839,8 +868,12 @@ export type CreateAreaWithEntryInput = {
   minutesPerformed?: number | null;
   probeOptionKey?: string | null;
   // PR #205 (migration 0085): probe lot/batch number for the
-  // health-inspection client procedure record. Optional free text.
+  // health-inspection client procedure record. Optional free text (the manual
+  // path); DERIVED from the inventory row on the linked path.
   probeLotNumber?: string | null;
+  // Migration 0155: the chosen sterile-inventory item id (durable link), or null
+  // for a manual lot. Validated + snapshot-derived server-side.
+  probeInventoryItemId?: string | null;
   machineFrequency?: MachineFrequency | null;
   primaryArea?: string | null;
   side?: string | null;
@@ -924,6 +957,20 @@ export async function createTreatmentAreaWithEntryAction(
 
   const supabase = await createClient();
 
+  // Migration 0155: resolve the probe-lot selection into a durable inventory
+  // link + a lot-number SNAPSHOT. The inventory-linked path validates the id
+  // server-side (UUID + same studio + nonblank lot + matching probe_key +
+  // expired-policy) and derives the snapshot FROM THE DB ROW; the manual path
+  // keeps the trimmed free-text. A forged / cross-studio / wrong-probe / stale /
+  // expired-unconfirmed id is rejected — never falling back to client text.
+  const inv = await resolveProbeInventorySelection(supabase, studio.id, {
+    probeInventoryItemId: input.probeInventoryItemId ?? null,
+    probeKey: probeCheck.columns.probe_key,
+    manualLotNumber: input.probeLotNumber ?? null,
+    probeLotConfirmed: Boolean(input.probeLotConfirmed),
+  });
+  if (!inv.ok) return inv;
+
   // The settable block column bag, shared by both write paths.
   const blockFields = {
     block_name: null,
@@ -932,10 +979,11 @@ export async function createTreatmentAreaWithEntryAction(
     energy_level: input.energyLevel ?? null,
     minutes_performed: input.minutesPerformed ?? null,
     machine_frequency: input.machineFrequency ?? null,
-    probe_lot_number: (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
-    // PR #279: confirmation only counts when a lot is actually present.
+    probe_lot_number: inv.probeLotNumber,
+    probe_inventory_item_id: inv.probeInventoryItemId,
+    // Confirmation only counts when a lot is actually present.
     probe_lot_confirmed:
-      Boolean(input.probeLotConfirmed) && (input.probeLotNumber ?? "").trim() !== "",
+      Boolean(input.probeLotConfirmed) && (inv.probeLotNumber ?? "").trim() !== "",
     primary_area: blockPrimaryArea,
     side: blockSide,
     custom_area_detail: blockCustomDetail,
@@ -1078,8 +1126,12 @@ export type UpdateAreaWithEntryInput = {
   minutesPerformed?: number | null;
   probeOptionKey?: string | null;
   // PR #205 (migration 0085): probe lot/batch number for the
-  // health-inspection client procedure record. Optional free text.
+  // health-inspection client procedure record. Optional free text (the manual
+  // path); DERIVED from the inventory row on the linked path.
   probeLotNumber?: string | null;
+  // Migration 0155: the chosen sterile-inventory item id (durable link), or null
+  // for a manual lot. Validated + snapshot-derived server-side.
+  probeInventoryItemId?: string | null;
   machineFrequency?: MachineFrequency | null;
   primaryArea?: string | null;
   side?: string | null;
@@ -1166,6 +1218,41 @@ export async function updateTreatmentAreaWithEntryAction(
 
   const supabase = await createClient();
 
+  // Read the block's currently-STORED link + snapshot (server-side, never from
+  // the client) so an UNCHANGED inventory link preserves its frozen snapshot
+  // instead of re-deriving from a since-edited inventory lot (contract #4/#7).
+  // Fail safe on a read error rather than silently re-deriving (which would
+  // defeat snapshot immutability).
+  const { data: storedBlock, error: storedErr } = await supabase
+    .from("session_blocks")
+    .select("probe_key, probe_inventory_item_id, probe_lot_number")
+    .eq("id", input.blockId)
+    .eq("studio_id", studio.id)
+    .eq("session_id", input.sessionId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (storedErr) {
+    return { ok: false, error: "Could not load the settings block to save." };
+  }
+
+  // Migration 0155: resolve the probe-lot selection (see create action). When the
+  // stored probe + inventory id are BOTH unchanged, the frozen snapshot is
+  // preserved with no live re-validation (a later inventory edit/reclassification
+  // never blocks an unrelated historical edit); otherwise the newly-selected link
+  // is fully validated + a fresh snapshot derived. "Unchanged" is judged ONLY
+  // against these server-loaded stored values, never a client claim.
+  const inv = await resolveProbeInventorySelection(supabase, studio.id, {
+    probeInventoryItemId: input.probeInventoryItemId ?? null,
+    probeKey: probeCheck.columns.probe_key,
+    manualLotNumber: input.probeLotNumber ?? null,
+    probeLotConfirmed: Boolean(input.probeLotConfirmed),
+    existingProbeKey: (storedBlock?.probe_key as string | null) ?? null,
+    existingInventoryItemId:
+      (storedBlock?.probe_inventory_item_id as string | null) ?? null,
+    existingSnapshot: (storedBlock?.probe_lot_number as string | null) ?? null,
+  });
+  if (!inv.ok) return inv;
+
   // block_name / block_notes are intentionally omitted so any legacy value
   // is preserved. Machine settings + structured area + structured probe are
   // fully overwritten from the form (which holds all of them).
@@ -1175,10 +1262,11 @@ export async function updateTreatmentAreaWithEntryAction(
     energy_level: input.energyLevel ?? null,
     minutes_performed: input.minutesPerformed ?? null,
     machine_frequency: input.machineFrequency ?? null,
-    probe_lot_number: (input.probeLotNumber ?? "").trim().slice(0, 120) || null,
-    // PR #279: confirmation only counts when a lot is actually present.
+    probe_lot_number: inv.probeLotNumber,
+    probe_inventory_item_id: inv.probeInventoryItemId,
+    // Confirmation only counts when a lot is actually present.
     probe_lot_confirmed:
-      Boolean(input.probeLotConfirmed) && (input.probeLotNumber ?? "").trim() !== "",
+      Boolean(input.probeLotConfirmed) && (inv.probeLotNumber ?? "").trim() !== "",
     primary_area: blockPrimaryArea,
     side: blockSide,
     custom_area_detail: blockCustomDetail,

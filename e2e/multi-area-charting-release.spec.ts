@@ -30,14 +30,19 @@ test("multi-area + probe lot: save, display everywhere, edit-down, conflict, leg
   // Active probe inventory: one clearly-active lot + one expired lot (still
   // selectable, flagged), so the selector must not silently pick and the active
   // one is findable.
+  // Both lots are FOR the same catalog probe (Sterex Gold F3 Short). Only one
+  // is active, so selecting that probe must auto-fill the active lot and leave
+  // the expired one flagged (never auto-filled).
   await seedE2eProbeInventoryItem(seed, {
     lotNumber: "460941",
     description: "Sterex Gold F3 probe",
+    probeKey: "sterex-gold-two-piece-f3-short",
     expiryDate: null,
   });
   await seedE2eProbeInventoryItem(seed, {
     lotNumber: "990099",
-    description: "Old Ballet probe",
+    description: "Old Sterex Gold F3 probe",
+    probeKey: "sterex-gold-two-piece-f3-short",
     expiryDate: "2020-01-01",
   });
   await loginAsOwner(page, seed);
@@ -70,12 +75,16 @@ test("multi-area + probe lot: save, display everywhere, edit-down, conflict, leg
     );
   });
 
-  await test.step("pick an ACTIVE probe lot from inventory (search + select)", async () => {
+  await test.step("select the F3 probe → its sole ACTIVE inventory lot auto-fills (linked, unconfirmed)", async () => {
+    // Choose Sterex · Gold · F3 Short.
+    await page.getByRole("button", { name: "Sterex", exact: true }).click();
+    await page.getByRole("button", { name: "Gold", exact: true }).click();
+    await page.getByRole("button", { name: "F3 Short", exact: true }).click();
+    // Exactly one ACTIVE lot for this probe → auto-filled + inventory-linked,
+    // but never auto-confirmed. The expired 990099 is not chosen.
     const input = page.getByTestId("probe-lot-input");
-    await input.click();
-    await input.fill("460");
-    await page.getByTestId("probe-lot-option-460941").click();
-    await expect(input).toHaveValue("460941");
+    await expect(input).toHaveValue("460941", { timeout: T });
+    await expect(page.getByTestId("probe-lot-linked")).toBeVisible();
   });
 
   await test.step("save → atomic write: both areas + laterality + probe snapshot", async () => {

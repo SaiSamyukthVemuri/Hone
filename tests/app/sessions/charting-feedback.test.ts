@@ -50,35 +50,32 @@ describe("item 2: underarms does not flood the whole Arms zone", () => {
 });
 
 describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () => {
-  it("suggests the most-recent lot per probe (keyed + label fallback), never auto-confirms", () => {
-    // Reliability update: the page passes richer suggestions (byKey + byLabel,
-    // each with a confirmed flag); the form auto-populates per selected probe.
+  it("(0155) suggestions carry the last-confirmed inventory item id per probe; never auto-confirms", () => {
     expect(RK).toMatch(/getProbeLotSuggestions/);
     expect(PAGE).toMatch(/getProbeLotSuggestions/);
     expect(FORM).toMatch(/probeLotSuggestions/);
-    // Confirmed-aware helper copy.
-    expect(FORM).toMatch(
-      /Auto-filled from last confirmed probe lot\. Please confirm this lot\/batch is correct\./,
-    );
-    expect(FORM).toMatch(
-      /Suggested from last probe lot\. Please confirm this lot\/batch is correct\./,
-    );
+    // The suggestions query surfaces the linked inventory item id for auto-fill.
+    expect(RK).toMatch(/probe_inventory_item_id/);
+    // Truthful inventory-backed copy.
+    expect(FORM).toMatch(/Auto-filled from your last confirmed inventory lot/);
+    expect(FORM).toMatch(/Only active inventory lot for this probe/);
     expect(FORM).toMatch(/Confirm lot\/batch/);
     // Old copy is gone.
     expect(FORM).not.toMatch(/Suggested from records/);
-    expect(FORM).not.toMatch(/Suggested from last use/);
+    expect(FORM).not.toMatch(/Suggested from last probe lot/);
   });
-  it("auto-populates from the keyed-then-label suggestion, always unconfirmed", () => {
-    // The reactive effect keys off the resolved suggestion (keyed first, then
-    // normalized-label fallback) and writes it unconfirmed; it never runs once
-    // the practitioner has edited manually.
-    expect(FORM).toMatch(/resolveProbeLotSuggestion\(draft\.probeKey, probeLotSuggestions\)/);
-    // The keyed-then-label resolution lives in the shared pure module.
-    expect(SUGG).toMatch(/suggestions\.byKey\[probeKey\]/);
-    expect(SUGG).toMatch(/suggestions\.byLabel\[normalizeProbeLabel\(opt\.displayLabel\)\]/);
+  it("(0155) auto-fills the last-confirmed / sole-active inventory lot, always unconfirmed", () => {
+    // The reactive effect resolves inventory (ACTIVE, matching probe_key) and
+    // writes the linked id + lot number unconfirmed; it never runs once the
+    // practitioner has edited manually.
+    expect(FORM).toMatch(
+      /resolveInventoryAutofill\(\s*probeLotInventory,\s*draft\.probeKey,/,
+    );
+    // The auto-fill rule lives in the shared pure module.
+    expect(SUGG).toMatch(/suggestions\.byKey\[probeKey\]/); // still exposes byKey
     expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
     expect(FORM).toMatch(
-      /probeLotNumber: suggestion,\s*\n?\s*probeLotConfirmed: false/,
+      /probeInventoryItemId: autofill\.option\.id,\s*\n\s*probeLotNumber: autofill\.option\.lotNumber,\s*\n\s*probeLotConfirmed: false/,
     );
   });
   it("typing the lot un-confirms it + marks a manual edit (probe switch won't clobber)", () => {

@@ -112,21 +112,30 @@ export async function getProbeLotInventory(
 ): Promise<ProbeLotOption[]> {
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);
+  // Migration 0155: inventory is now probe-SPECIFIC via the structured probe_key,
+  // not the free-text ILIKE '%probe%' heuristic. Only sterile items explicitly
+  // classified with a probe_key are selectable inventory lots; each carries its
+  // immutable inventory `id` so the chosen row can be durably linked. Legacy /
+  // unclassified rows (probe_key null) never appear as an exact probe match.
   const { data } = await supabase
     .from("record_keeping_sterile_items")
-    .select("lot_number, item_description, manufacturer_name, expiry_date")
+    .select("id, probe_key, lot_number, item_description, manufacturer_name, expiry_date")
     .eq("studio_id", studioId)
+    .not("probe_key", "is", null)
     .not("lot_number", "is", null)
-    .ilike("item_description", "%probe%")
     .order("expiry_date", { ascending: false, nullsFirst: true })
     .order("date_purchased", { ascending: false, nullsFirst: false })
     .limit(500);
   const rows: ProbeLotInventoryRow[] = ((data ?? []) as Array<{
+    id: string;
+    probe_key: string | null;
     lot_number: string | null;
     item_description: string | null;
     manufacturer_name: string | null;
     expiry_date: string | null;
   }>).map((r) => ({
+    id: r.id,
+    probeKey: r.probe_key,
     lotNumber: (r.lot_number ?? "").trim(),
     itemDescription: r.item_description ?? "",
     manufacturerName: r.manufacturer_name ?? null,
@@ -194,7 +203,7 @@ export async function getProbeLotSuggestions(
   const { data } = await supabase
     .from("session_blocks")
     .select(
-      "probe_key, probe_label, probe_lot_number, probe_lot_confirmed, created_at",
+      "probe_key, probe_label, probe_lot_number, probe_lot_confirmed, probe_inventory_item_id, created_at",
     )
     .eq("studio_id", studioId)
     .not("probe_lot_number", "is", null)
@@ -204,14 +213,48 @@ export async function getProbeLotSuggestions(
 
   const byKey: Record<string, ProbeLotSuggestion> = {};
   const byLabel: Record<string, ProbeLotSuggestion> = {};
+  // Two things are tracked per key/label, INDEPENDENTLY:
+  //   * the DISPLAY winner — the first row (confirmed-first, then newest) of any
+  //     source; its `inventoryItemId` may be null (a manual lot).
+  //   * lastConfirmedInventoryItemId — the newest row satisfying BOTH
+  //     probe_lot_confirmed = true AND probe_inventory_item_id IS NOT NULL. Since
+  //     confirmed rows sort first (newest-first), the FIRST confirmed+linked row
+  //     seen per key/label is the newest such row. This is what auto-fill uses,
+  //     so a newer confirmed MANUAL row can never mask an older confirmed LINKED
+  //     one, and an unconfirmed linked row never qualifies.
+  const seedFirst = (
+    map: Record<string, ProbeLotSuggestion>,
+    slot: string,
+    lot: string,
+    confirmed: boolean,
+    inventoryItemId: string | null,
+  ) => {
+    if (!(slot in map)) {
+      map[slot] = {
+        lot,
+        confirmed,
+        inventoryItemId,
+        lastConfirmedInventoryItemId: null,
+      };
+    }
+    if (
+      confirmed &&
+      inventoryItemId != null &&
+      map[slot].lastConfirmedInventoryItemId == null
+    ) {
+      map[slot].lastConfirmedInventoryItemId = inventoryItemId;
+    }
+  };
   for (const row of data ?? []) {
     const lot = (row.probe_lot_number as string | null)?.trim();
     if (!lot) continue;
     const confirmed = row.probe_lot_confirmed === true;
+    const inventoryItemId =
+      (row.probe_inventory_item_id as string | null) ?? null;
     const key = (row.probe_key as string | null)?.trim();
-    if (key && !(key in byKey)) byKey[key] = { lot, confirmed };
+    if (key) seedFirst(byKey, key, lot, confirmed, inventoryItemId);
     const label = normalizeProbeLabel(row.probe_label as string | null);
-    if (label && !(label in byLabel)) byLabel[label] = { lot, confirmed };
+    if (label) seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
   }
   return { byKey, byLabel };
 }

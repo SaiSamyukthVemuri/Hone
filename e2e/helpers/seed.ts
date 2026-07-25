@@ -1189,22 +1189,29 @@ export async function seedE2eProbeInventoryItem(
     description?: string;
     manufacturer?: string;
     expiryDate?: string | null;
+    // Migration 0155: the structured catalog probe this lot is FOR. A lot with
+    // a probe_key is what makes it inventory-backed + probe-specific in
+    // charting; NULL keeps it a plain (non-probe) sterile item.
+    probeKey?: string | null;
   },
-): Promise<void> {
+): Promise<{ itemId: string }> {
+  const itemId = randomUUID();
   await sql(
     `insert into public.record_keeping_sterile_items
        (id, studio_id, date_purchased, item_description, manufacturer_name,
-        amount_purchased, lot_number, expiry_date)
-     values ($1,$2, current_date, $3, $4, '1 box', $5, $6)`,
+        amount_purchased, lot_number, expiry_date, probe_key)
+     values ($1,$2, current_date, $3, $4, '1 box', $5, $6, $7)`,
     [
-      randomUUID(),
+      itemId,
       seed.studioId,
       opts.description ?? "Sterex Gold F3 probe",
       opts.manufacturer ?? "Sterex",
       opts.lotNumber,
       opts.expiryDate === undefined ? null : opts.expiryDate,
+      opts.probeKey ?? null,
     ],
   );
+  return { itemId };
 }
 
 // Willow follow-up: seed an OVERDUE disinfectant record (record_keeping_disinfectants)
@@ -1277,6 +1284,53 @@ export async function getSessionBlockProbeLots(
     [sessionId],
   );
   return rows.map((r) => r.probe_lot_number);
+}
+
+// Mutate an inventory item's lot number out-of-band (simulates a later
+// correction/reuse in Records), to prove a charted block's snapshot stays
+// FROZEN across an unrelated edit (migration 0155, contract #7/#18).
+export async function updateProbeInventoryLotNumber(
+  itemId: string,
+  newLot: string,
+): Promise<void> {
+  await sql(
+    `update public.record_keeping_sterile_items set lot_number = $2 where id = $1`,
+    [itemId, newLot],
+  );
+}
+
+// Reclassify an inventory item's probe_key out-of-band (simulates a later
+// correction in Records), to prove a historical block linked to it stays
+// editable when its stored probe + link are unchanged (migration 0155, #3).
+export async function updateProbeInventoryProbeKey(
+  itemId: string,
+  newProbeKey: string,
+): Promise<void> {
+  await sql(
+    `update public.record_keeping_sterile_items set probe_key = $2 where id = $1`,
+    [itemId, newProbeKey],
+  );
+}
+
+// Read the durable inventory LINK + snapshot saved on a session's (non-deleted)
+// blocks (migration 0155). Ground truth that a linked charting row stores BOTH
+// the inventory item id and the immutable lot-number snapshot.
+export async function getSessionBlockInventoryLinks(
+  sessionId: string,
+): Promise<Array<{ lot: string | null; itemId: string | null }>> {
+  const rows = await sql<{
+    probe_lot_number: string | null;
+    probe_inventory_item_id: string | null;
+  }>(
+    `select probe_lot_number, probe_inventory_item_id from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => ({
+    lot: r.probe_lot_number,
+    itemId: r.probe_inventory_item_id,
+  }));
 }
 
 // Force a block's updated_at to a stale value out-of-band, to exercise the
