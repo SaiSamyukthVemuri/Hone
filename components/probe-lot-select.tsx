@@ -3,29 +3,32 @@
 import Link from "next/link";
 import { useId, useMemo, useState } from "react";
 import {
-  activeProbeLotOptions,
   filterProbeLotOptions,
   probeLotOptionLabel,
   type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
 
-// Searchable ACTIVE probe-lot selector for the charting form (migration 0128
-// release). Backed by the studio's record_keeping_sterile_items probe inventory.
+// Searchable inventory-backed probe-lot selector for the charting form
+// (Chloe item #9, migration 0155). Backed by the studio's
+// record_keeping_sterile_items probe inventory for the SELECTED probe.
 //
 // Contract:
-//   * The text input IS the saved value — MANUAL ENTRY is always available and a
-//     typed value is never silently replaced. Selecting a lot fills the input.
+//   * MANUAL ENTRY is always available and a typed value is never silently
+//     replaced — typing calls onManualChange and clears any inventory link.
+//   * Selecting a row calls onSelectInventory(option) — the durable link is the
+//     inventory row `id`, never the lot number. Selected identity + React keys
+//     use the id, so two rows sharing a lot number stay distinct.
 //   * The dropdown lists ACTIVE (non-expired) lots by default; typing searches
-//     the FULL set (lot / description / manufacturer) so an expired historical
-//     lot is still findable, and shows it flagged "Expired".
-//   * Empty state ("No active probe lots found") + an authorized link to the
-//     inventory when there are no active lots.
-//   * Studio isolation is enforced upstream (the options are already
-//     studio-scoped by the server query); this component only renders them.
+//     the FULL set so an expired historical lot is still findable, flagged
+//     "Expired" (never auto-filled, never sorted ahead of active).
+//   * Studio isolation + probe_key filtering are enforced upstream (options are
+//     already studio-scoped and probe-specific); this component only renders.
 type Props = {
-  value: string;
-  onChange: (value: string) => void;
-  options: ReadonlyArray<ProbeLotOption>;
+  value: string; // the displayed lot NUMBER (manual text or a linked lot's number)
+  selectedInventoryItemId: string | null; // the linked inventory id (null = manual)
+  options: ReadonlyArray<ProbeLotOption>; // options for the selected probe (active + expired)
+  onSelectInventory: (option: ProbeLotOption) => void;
+  onManualChange: (value: string) => void;
   inventoryHref: string;
   placeholder?: string;
   inputId?: string;
@@ -33,16 +36,19 @@ type Props = {
 
 export function ProbeLotSelect({
   value,
-  onChange,
+  selectedInventoryItemId,
   options,
+  onSelectInventory,
+  onManualChange,
   inventoryHref,
   placeholder = "e.g. 460941",
   inputId,
 }: Props) {
   const [open, setOpen] = useState(false);
   const listId = useId();
-  const active = useMemo(() => activeProbeLotOptions(options), [options]);
+  const active = useMemo(() => options.filter((o) => !o.isExpired), [options]);
   const hasActiveInventory = active.length > 0;
+  const isManual = selectedInventoryItemId == null && value.trim() !== "";
 
   // Empty input → the active shortlist; typed input → search the full set (so an
   // expired historical lot remains findable) filtered by the query.
@@ -66,12 +72,12 @@ export function ProbeLotSelect({
           data-testid="probe-lot-input"
           value={value}
           onChange={(e) => {
-            // Typing is ALWAYS a manual edit; never auto-replaced.
-            onChange(e.target.value);
+            // Typing is ALWAYS a manual edit; never auto-replaced, and it breaks
+            // any inventory link.
+            onManualChange(e.target.value);
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          // Delay close so a tap on an option registers first (iPad-friendly).
           onBlur={() => window.setTimeout(() => setOpen(false), 150)}
           placeholder={placeholder}
           maxLength={120}
@@ -88,19 +94,23 @@ export function ProbeLotSelect({
               <li className="px-3 py-2 text-sm text-neutral-500">
                 {hasActiveInventory
                   ? "No probe lots match. Keep typing to enter it manually."
-                  : "No active probe lots found. Type the lot/batch manually, or add it to your inventory."}
+                  : "No active inventory lot for this probe. Type the lot/batch manually, or add it to your inventory."}
               </li>
             ) : (
               results.map((o) => (
-                <li key={`${o.lotNumber}-${o.expiryDate ?? "none"}`} role="option" aria-selected={o.lotNumber === value}>
+                <li
+                  key={o.id}
+                  role="option"
+                  aria-selected={selectedInventoryItemId === o.id}
+                >
                   <button
                     type="button"
-                    data-testid={`probe-lot-option-${o.lotNumber}`}
+                    data-testid={`probe-lot-option-${o.id}`}
                     // onMouseDown (not onClick) so the selection fires before the
                     // input's onBlur closes the list.
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      onChange(o.lotNumber);
+                      onSelectInventory(o);
                       setOpen(false);
                     }}
                     className="flex w-full min-h-[2.75rem] flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -114,7 +124,9 @@ export function ProbeLotSelect({
                       )}
                     </span>
                     <span className="text-xs text-neutral-500">
-                      {probeLotOptionLabel(o).replace(`${o.lotNumber} — `, "").replace(`${o.lotNumber} · `, "")}
+                      {probeLotOptionLabel(o)
+                        .replace(`${o.lotNumber} — `, "")
+                        .replace(`${o.lotNumber} · `, "")}
                     </span>
                   </button>
                 </li>
@@ -123,9 +135,22 @@ export function ProbeLotSelect({
           </ul>
         )}
       </div>
-      <div className="flex items-center gap-2 text-xs text-neutral-500">
-        {!hasActiveInventory && (
-          <span data-testid="probe-lot-empty">No active probe lots found.</span>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+        {selectedInventoryItemId != null && (
+          <span
+            data-testid="probe-lot-linked"
+            className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+          >
+            Inventory linked
+          </span>
+        )}
+        {isManual && (
+          <span
+            data-testid="probe-lot-manual"
+            className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+          >
+            Manual entry — not linked to inventory
+          </span>
         )}
         <Link
           href={inventoryHref}

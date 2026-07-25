@@ -109,6 +109,8 @@ describe("curated coverage", () => {
       "default_machine_frequency",
       "calendar_feed_token_hash",
       "probe_lot_number",
+      "probe_inventory_item_id",
+      "probe_key",
       "tolerance_rating",
       "reaction_type",
       "reaction_notes",
@@ -128,6 +130,8 @@ describe("app types declare the columns the drift check protects", () => {
     for (const col of [
       "default_machine_frequency",
       "probe_lot_number",
+      "probe_inventory_item_id",
+      "probe_key",
       "tolerance_rating",
       "reaction_type",
       "reaction_notes",

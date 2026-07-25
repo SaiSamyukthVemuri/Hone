@@ -165,15 +165,15 @@ describe("probe lot/batch number in charting", () => {
     );
   });
 
-  it("optional; saves on the session block via both save paths; null-safe load", () => {
+  it("(0155) optional; saves the server-derived snapshot via both save paths; null-safe load", () => {
     expect(FORM).toMatch(
       /probeLotNumber: draft\.probeLotNumber\.trim\(\) \|\| null/,
     );
     expect(FORM).toMatch(/probeLotNumber: block\.probe_lot_number \?\? ""/);
+    // Both actions now write the resolver's snapshot (DB-derived for a linked
+    // lot, trimmed text for manual). The trim/120 lives in the validator.
     expect(
-      BLOCK_ACTIONS.match(
-        /\(input\.probeLotNumber \?\? ""\)\.trim\(\)\.slice\(0, 120\) \|\| null/g,
-      )?.length,
+      BLOCK_ACTIONS.match(/probe_lot_number: inv\.probeLotNumber,/g)?.length,
     ).toBe(2);
   });
 

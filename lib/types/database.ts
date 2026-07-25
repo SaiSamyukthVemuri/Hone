@@ -1154,6 +1154,12 @@ export type SessionBlock = {
   // the 0095 CHECK + lib/sessions/clinical-response.ts.
   numbing_status: NumbingStatus | null;
   probe_lot_confirmed: boolean;
+  // Migration 0155: durable, same-studio link to the sterile-inventory record
+  // (record_keeping_sterile_items) this lot was chosen from. NULL = manual /
+  // unlinked / legacy. FK is ON DELETE SET NULL (this column only), so editing
+  // or archiving the inventory item never rewrites this clinical row or its
+  // probe_lot_number snapshot.
+  probe_inventory_item_id: string | null;
 };
 
 export type LaserEntry = {
@@ -1380,6 +1386,11 @@ export type RecordKeepingSterileItem = {
   created_by_practitioner_id: string | null;
   created_at: string;
   updated_at: string;
+  // Migration 0155: optional structured probe classification (stable catalog
+  // key from lib/probes.ts). NULL = not classified as a probe / legacy row.
+  // Never inferred from item_description; validated against the code catalog
+  // before write.
+  probe_key: string | null;
 };
 
 export type RecordKeepingDisinfectant = {

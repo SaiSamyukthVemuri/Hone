@@ -354,7 +354,10 @@ async function SterileItemsSection({
                   amount_purchased: records[0].amount_purchased,
                   expiry_date: records[0].expiry_date,
                   notes: records[0].notes,
-                  // NOTE: lot_number is intentionally omitted — never copied.
+                  // Migration 0155: probe classification IS reusable across
+                  // purchases, so copy-last carries it (unlike the lot number,
+                  // which is intentionally omitted — never copied).
+                  probe_key: records[0].probe_key,
                 }
               : null
           }

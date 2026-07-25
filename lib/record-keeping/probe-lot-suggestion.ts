@@ -5,7 +5,24 @@ import { findProbeOptionByKey } from "@/lib/probes";
 // (block-setup-form.tsx) import from here, so the shared types + matching logic
 // live in one place and stay unit-testable without a database.
 
-export type ProbeLotSuggestion = { lot: string; confirmed: boolean };
+export type ProbeLotSuggestion = {
+  lot: string;
+  confirmed: boolean;
+  // Migration 0155: the linked inventory item id of the DISPLAY-winning prior
+  // selection (the confirmed-then-newest row of ANY source). Null when that
+  // winning row was manual/free-text — which is exactly why it must NOT drive
+  // auto-fill on its own (a newer confirmed MANUAL row would otherwise mask an
+  // older confirmed LINKED one). Kept for display/debugging only.
+  inventoryItemId: string | null;
+  // Migration 0155 (last-confirmed-LINKED): the newest row satisfying BOTH
+  // probe_lot_confirmed = true AND probe_inventory_item_id IS NOT NULL, tracked
+  // INDEPENDENTLY of the display winner. This is the ONLY value the charting
+  // auto-fill uses to re-fill the practitioner's last inventory lot (and only
+  // when it is still active + matches the selected probe). Null when no prior
+  // confirmed LINKED selection exists (e.g. only confirmed manual rows, or only
+  // unconfirmed linked rows).
+  lastConfirmedInventoryItemId: string | null;
+};
 
 export type ProbeLotSuggestions = {
   // Keyed by session_blocks.probe_key.

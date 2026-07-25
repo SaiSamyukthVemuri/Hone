@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { isValidProbeOptionKey } from "@/lib/probes";
 
 // PR #205 (migration 0085): record-keeping server actions. All
 // practitioner-authenticated; studio_id always resolved server-side
@@ -16,6 +17,21 @@ const GENERIC_ERROR = "Couldn't save this record. Please try again.";
 
 function str(v: FormDataEntryValue | null, max = 2000): string {
   return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+// Migration 0155: an optional structured probe classification on a sterile item.
+// Empty = clears to NULL. A non-empty value MUST validate against the code
+// catalog (lib/probes.ts) — an arbitrary client-supplied key is rejected. We
+// never infer probe_key from item_description.
+function resolveProbeKeyField(
+  formData: FormData,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  const raw = str(formData.get("probe_key"), 120);
+  if (!raw) return { ok: true, value: null };
+  if (!isValidProbeOptionKey(raw)) {
+    return { ok: false, error: "That probe selection is not recognized." };
+  }
+  return { ok: true, value: raw };
 }
 
 // "YYYY-MM-DD" or empty. Bad input becomes empty (treated as missing).
@@ -81,6 +97,8 @@ export async function addSterileItemRecordAction(
     };
   }
   const expiry = dateStr(formData.get("expiry_date"));
+  const probeKey = resolveProbeKeyField(formData);
+  if (!probeKey.ok) return probeKey;
   const supabase = await createClient();
   const { error } = await supabase.from("record_keeping_sterile_items").insert({
     studio_id: studioId,
@@ -91,6 +109,7 @@ export async function addSterileItemRecordAction(
     lot_number: str(formData.get("lot_number"), 120),
     expiry_date: expiry || null,
     notes: str(formData.get("notes")) || null,
+    probe_key: probeKey.value,
     created_by_practitioner_id: practitionerId,
   });
   if (error) return { ok: false, error: GENERIC_ERROR };
@@ -259,6 +278,8 @@ export async function updateSterileItemRecordAction(
     };
   }
   const expiry = dateStr(formData.get("expiry_date"));
+  const probeKey = resolveProbeKeyField(formData);
+  if (!probeKey.ok) return probeKey;
   const supabase = await createClient();
   const { error } = await supabase
     .from("record_keeping_sterile_items")
@@ -270,6 +291,7 @@ export async function updateSterileItemRecordAction(
       lot_number: str(formData.get("lot_number"), 120),
       expiry_date: expiry || null,
       notes: str(formData.get("notes")) || null,
+      probe_key: probeKey.value,
     })
     .eq("id", recordId)
     .eq("studio_id", studioId);

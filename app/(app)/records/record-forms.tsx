@@ -3,6 +3,46 @@
 import { Fragment, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RecordActionResult } from "./actions";
+import { PROBE_OPTIONS } from "@/lib/probes";
+
+// Migration 0155: optional structured probe classification for a sterile item.
+// Storing a probe_key links this inventory record to a probe catalog option so
+// it appears in charting for that EXACT probe. "Not a probe" clears it to NULL.
+// Legacy rows are never auto-classified; the practitioner sets this deliberately.
+function ProbeClassificationField({
+  defaultValue,
+}: {
+  defaultValue?: string | null;
+}) {
+  return (
+    // min-w-0 lets this grid item shrink below the <select>'s intrinsic
+    // (widest-option) width instead of expanding the track past 390px.
+    <label className="flex min-w-0 flex-col gap-1 text-sm">
+      <span className="font-medium text-neutral-700 dark:text-neutral-300">
+        Probe (optional)
+      </span>
+      <select
+        name="probe_key"
+        defaultValue={defaultValue ?? ""}
+        data-testid="sterile-probe-key"
+        // w-full + min-w-0 stop the long option labels from dictating the
+        // control's intrinsic width and overflowing the 390px mobile viewport.
+        className="w-full min-w-0 max-w-full min-h-[2.75rem] truncate rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+      >
+        <option value="">Not a probe / not classified</option>
+        {PROBE_OPTIONS.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.displayLabel}
+          </option>
+        ))}
+      </select>
+      <span className="text-xs text-neutral-500">
+        Link this inventory item to a probe so its lot appears while charting
+        that exact probe.
+      </span>
+    </label>
+  );
+}
 
 // PR #280 (Chloe record-keeping feedback): shared option shapes for the
 // same-studio operator dropdown + exposed-person selector. All lists are fed
@@ -427,6 +467,7 @@ export type SterileCopyLast = {
   amount_purchased: string;
   expiry_date: string | null;
   notes: string | null;
+  probe_key: string | null;
 };
 
 export function AddSterileItemForm({
@@ -486,6 +527,7 @@ export function AddSterileItemForm({
           placeholder="e.g. Ballet F3 stainless probes"
           defaultValue={prefill?.item_description}
         />
+        <ProbeClassificationField defaultValue={prefill?.probe_key} />
         <ManufacturerPicker defaultValue={prefill?.manufacturer_name} />
         <Field
           label="Amount purchased"
@@ -623,6 +665,7 @@ type SterileItemRecord = {
   lot_number: string;
   expiry_date: string | null;
   notes: string | null;
+  probe_key: string | null;
 };
 
 export function EditSterileItemForm({
@@ -649,6 +692,7 @@ export function EditSterileItemForm({
           required
           defaultValue={record.item_description}
         />
+        <ProbeClassificationField defaultValue={record.probe_key} />
         <ManufacturerPicker defaultValue={record.manufacturer_name} />
         <Field
           label="Amount purchased"

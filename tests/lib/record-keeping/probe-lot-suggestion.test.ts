@@ -32,38 +32,38 @@ describe("normalizeProbeLabel", () => {
 
 describe("resolveProbeLotSuggestion", () => {
   it("keyed match wins", () => {
-    const s = suggestions({ byKey: { [probe.key]: { lot: "KEYLOT", confirmed: true } } });
-    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "KEYLOT", confirmed: true });
+    const s = suggestions({ byKey: { [probe.key]: { lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null } } });
+    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null });
   });
 
   it("keyed match BEATS a label fallback", () => {
     const s = suggestions({
-      byKey: { [probe.key]: { lot: "KEYLOT", confirmed: false } },
-      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: true } },
+      byKey: { [probe.key]: { lot: "KEYLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null } },
+      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null } },
     });
     expect(resolveProbeLotSuggestion(probe.key, s)?.lot).toBe("KEYLOT");
   });
 
   it("falls back to the normalized-label match when there is no keyed match", () => {
     const s = suggestions({
-      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: false } },
+      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null } },
     });
-    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "LABELLOT", confirmed: false });
+    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null });
   });
 
   it("returns null for an empty probe key or when nothing matches", () => {
-    expect(resolveProbeLotSuggestion("", suggestions({ byKey: { x: { lot: "L", confirmed: true } } }))).toBeNull();
+    expect(resolveProbeLotSuggestion("", suggestions({ byKey: { x: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null } } }))).toBeNull();
     expect(resolveProbeLotSuggestion(probe.key, suggestions())).toBeNull();
   });
 
   it("preserves the confirmed flag through both paths (drives the helper copy)", () => {
     expect(
-      resolveProbeLotSuggestion(probe.key, suggestions({ byKey: { [probe.key]: { lot: "L", confirmed: true } } }))?.confirmed,
+      resolveProbeLotSuggestion(probe.key, suggestions({ byKey: { [probe.key]: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null } } }))?.confirmed,
     ).toBe(true);
     expect(
       resolveProbeLotSuggestion(
         probe.key,
-        suggestions({ byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "L", confirmed: false } } }),
+        suggestions({ byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "L", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null } } }),
       )?.confirmed,
     ).toBe(false);
   });
@@ -81,29 +81,36 @@ function read(rel: string): string {
 describe("form wiring (source pins — NOT a DOM behavior test)", () => {
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
-  it("auto-fill effect uses the resolved keyed-then-label suggestion, gated by lotEditedManually", () => {
-    expect(FORM).toMatch(/resolveProbeLotSuggestion\(draft\.probeKey, probeLotSuggestions\)/);
+  it("(0155) auto-fill uses the inventory-backed resolver, gated by lotEditedManually, never auto-confirms", () => {
+    expect(FORM).toMatch(
+      /resolveInventoryAutofill\(\s*probeLotInventory,\s*draft\.probeKey,/,
+    );
     expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
-    expect(FORM).toMatch(/const suggestion = activeSuggestion\?\.lot \?\? "";/);
-    // Never auto-confirms.
     expect(FORM).toMatch(/probeLotConfirmed: false/);
+    // A probe change clears any linked lot for the old probe (choose branch).
+    expect(FORM).toMatch(/probeInventoryItemId: null,\s*\n\s*probeLotNumber: "",/);
   });
 
-  it("typed values are protected (manual edit sets lotEditedManually)", () => {
+  it("typed values are protected (manual edit sets lotEditedManually and clears the link)", () => {
     expect(FORM).toMatch(/setLotEditedManually\(value\.trim\(\) !== ""\)/);
+    // onManualChange clears the inventory link.
+    expect(FORM).toMatch(/probeInventoryItemId: null,\s*\n\s*probeLotNumber: value,/);
   });
 
-  it("helper copy reflects confirmed vs unconfirmed source", () => {
-    expect(FORM).toMatch(/Auto-filled from last confirmed probe lot/);
-    expect(FORM).toMatch(/Suggested from last probe lot/);
+  it("(0155) shows truthful inventory-backed source copy", () => {
+    expect(FORM).toMatch(/Auto-filled from your last confirmed inventory lot/);
+    expect(FORM).toMatch(/Only active inventory lot for this probe/);
+    expect(FORM).toMatch(/Choose the lot\/batch from inventory/);
   });
 });
 
 describe("confirm control persists probe_lot_confirmed (source pins)", () => {
   const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts");
   it("create + update actions persist probe_lot_confirmed (only when a lot is present)", () => {
+    // 0155: the snapshot is now inv.probeLotNumber (DB-derived for linked,
+    // trimmed text for manual); confirmation still only counts with a lot.
     const matches = ACTIONS.match(
-      /probe_lot_confirmed:\s*\n?\s*Boolean\(input\.probeLotConfirmed\) &&\s*\n?\s*\(input\.probeLotNumber \?\? ""\)\.trim\(\) !== ""/g,
+      /probe_lot_confirmed:\s*\n?\s*Boolean\(input\.probeLotConfirmed\) &&\s*\n?\s*\(inv\.probeLotNumber \?\? ""\)\.trim\(\) !== ""/g,
     );
     expect(matches?.length).toBeGreaterThanOrEqual(2); // create + update
   });
@@ -118,5 +125,45 @@ describe("confirm control persists probe_lot_confirmed (source pins)", () => {
     expect(copyBlock).not.toMatch(/probe_key:/);
     expect(copyBlock).not.toMatch(/probe_lot_number/);
     expect(copyBlock).not.toMatch(/probe_lot_confirmed/);
+    // 0155: a copy must never carry the durable inventory link forward either.
+    expect(copyBlock).not.toMatch(/probe_inventory_item_id/);
+  });
+});
+
+// Hardening pins from the adversarial verification pass (0155).
+describe("0155 hardening: no bypass of the validated resolver; frozen snapshot", () => {
+  const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts");
+  const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
+
+  it("updateSessionBlockAction allowlists its patch columns — the inventory link / snapshot / confirmation can NOT be mass-assigned", () => {
+    // The allowlist Set literal, isolated.
+    const setStart = ACTIONS.indexOf("PATCHABLE_BLOCK_COLUMNS = new Set");
+    expect(setStart).toBeGreaterThan(-1);
+    const allowlist = ACTIONS.slice(setStart, ACTIONS.indexOf("]);", setStart));
+    // The server-managed 0155 columns are NOT allowlisted.
+    expect(allowlist).not.toMatch(/probe_inventory_item_id/);
+    expect(allowlist).not.toMatch(/probe_lot_number/);
+    expect(allowlist).not.toMatch(/probe_lot_confirmed/);
+    // The mass-assignment iterates input.patch through the allowlist (not raw).
+    expect(ACTIONS).toMatch(/for \(const \[k, v\] of Object\.entries\(input\.patch\)\)/);
+    expect(ACTIONS).toMatch(/if \(PATCHABLE_BLOCK_COLUMNS\.has\(k\)\)/);
+  });
+
+  it("the EDIT action reads the STORED probe + link + snapshot server-side and passes all three to the resolver (frozen snapshot; reclassification-safe)", () => {
+    // Reads the block's own stored columns (not client-supplied) before resolving.
+    expect(ACTIONS).toMatch(
+      /\.select\("probe_key, probe_inventory_item_id, probe_lot_number"\)/,
+    );
+    expect(ACTIONS).toMatch(/existingProbeKey: \(storedBlock\?\.probe_key/);
+    expect(ACTIONS).toMatch(/existingInventoryItemId:\s*\n?\s*\(storedBlock\?\.probe_inventory_item_id/);
+    expect(ACTIONS).toMatch(/existingSnapshot: \(storedBlock\?\.probe_lot_number/);
+  });
+
+  it("auto-fill is driven ONLY by lastConfirmedInventoryItemId (newest confirmed-LINKED), never the display winner's id", () => {
+    expect(FORM).toMatch(
+      /probeLotSuggestions\.byKey\[draft\.probeKey\]\?\.lastConfirmedInventoryItemId\s*\?\?\s*\n?\s*null/,
+    );
+    // The old confirmed-display-winner shortcut must be gone.
+    expect(FORM).not.toMatch(/lastSuggestion\?\.confirmed \? \(lastSuggestion\.inventoryItemId/);
   });
 });

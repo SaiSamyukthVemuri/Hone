@@ -20,7 +20,7 @@
 // actions already accept every field used here — no action behavior
 // change.
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
   COMMON_COMMENTS,
@@ -42,12 +42,13 @@ import {
   type ProbeBrand,
   type ProbeMaterial,
 } from "@/lib/probes";
-import {
-  resolveProbeLotSuggestion,
-  type ProbeLotSuggestions,
-} from "@/lib/record-keeping/probe-lot-suggestion";
+import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import { ProbeLotSelect } from "@/components/probe-lot-select";
-import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
+import {
+  resolveInventoryAutofill,
+  probeLotOptionsForProbe,
+  type ProbeLotOption,
+} from "@/lib/record-keeping/probe-lot-inventory";
 import type { SessionBlockWithEntries } from "@/lib/supabase/queries";
 import {
   buildTreatmentSetupDraftPatch,
@@ -212,6 +213,10 @@ type Draft = {
   // "used". probeLotConfirmed records that the practitioner confirmed the lot.
   numbingStatus: string;
   probeLotConfirmed: boolean;
+  // Migration 0155: the linked sterile-inventory item id when the lot was chosen
+  // from inventory; null = manual/unlinked. The saved probe_lot_number is still
+  // the authoritative snapshot.
+  probeInventoryItemId: string | null;
 };
 
 const EMPTY: Draft = {
@@ -244,6 +249,7 @@ const EMPTY: Draft = {
   cautionNote: "",
   numbingStatus: "",
   probeLotConfirmed: false,
+  probeInventoryItemId: null,
 };
 
 function initialDraft(
@@ -346,6 +352,7 @@ function initialDraft(
     // PR #279 (migration 0095): round-trip numbing + lot confirmation.
     numbingStatus: block.numbing_status ?? "",
     probeLotConfirmed: block.probe_lot_confirmed ?? false,
+    probeInventoryItemId: block.probe_inventory_item_id ?? null,
   };
 }
 
@@ -372,8 +379,13 @@ export function BlockSetupForm({
   // false, the lot field auto-populates from the same-probe suggestion as the
   // practitioner picks a probe; once they edit, we stop suggesting so a probe
   // switch never overwrites a manual value.
+  // Only a MANUAL saved lot (probe_lot_number present AND no inventory link)
+  // counts as "manually edited" — a linked block is inventory-backed, not
+  // manual, so a probe switch re-runs the inventory auto-fill for it.
   const [lotEditedManually, setLotEditedManually] = useState<boolean>(
-    () => (block?.probe_lot_number ?? "").trim() !== "",
+    () =>
+      (block?.probe_lot_number ?? "").trim() !== "" &&
+      (block?.probe_inventory_item_id ?? null) == null,
   );
   const [error, setError] = useState<string | null>(null);
   // PR #191: inline feedback after "Copy settings" so the
@@ -385,31 +397,72 @@ export function BlockSetupForm({
   // region-grouped picker only expands when there's no area yet or the
   // practitioner taps "Change".
 
-  // Feature A: auto-populate the lot/batch from the most-recent-for-this-probe
-  // suggestion as the practitioner selects a probe. Runs when probe_key changes;
-  // does NOTHING once the practitioner has manually edited the lot (so a probe
-  // switch never clobbers a typed value). Auto-populated lots are always
-  // UNCONFIRMED — the practitioner must confirm or override. If the selected
-  // probe has no prior lot, the field is left blank (a prior auto-suggestion for
-  // a different probe is cleared).
-  // Keyed-then-label suggestion for the currently selected probe.
-  const activeSuggestion = useMemo(
-    () => resolveProbeLotSuggestion(draft.probeKey, probeLotSuggestions),
-    [draft.probeKey, probeLotSuggestions],
+  // Inventory-backed lot auto-fill (migration 0155). Runs ONLY when the
+  // practitioner CHANGES the probe (never on mount, so an edited block keeps its
+  // saved selection), and never over a manual entry. It considers ONLY ACTIVE
+  // inventory for the new probe_key; auto-fills the last-confirmed linked lot,
+  // else the sole active lot, else clears to the chooser. Auto-filled lots are
+  // always UNCONFIRMED. A linked lot for the OLD probe is cleared here.
+  const autofilledForProbeRef = useRef<string>(draft.probeKey);
+  const [lotStatus, setLotStatus] = useState<
+    "last-confirmed" | "only-active" | "choose" | "manual" | null
+  >(() =>
+    (block?.probe_lot_number ?? "").trim() !== "" &&
+    (block?.probe_inventory_item_id ?? null) == null
+      ? "manual"
+      : null,
+  );
+
+  // Options (active + expired) for the currently selected probe.
+  const probeOptions = useMemo(
+    () => probeLotOptionsForProbe(probeLotInventory, draft.probeKey),
+    [probeLotInventory, draft.probeKey],
   );
 
   useEffect(() => {
-    if (lotEditedManually) return;
-    const suggestion = activeSuggestion?.lot ?? "";
-    setDraft((d) =>
-      d.probeLotNumber === suggestion
-        ? d
-        : { ...d, probeLotNumber: suggestion, probeLotConfirmed: false },
+    if (draft.probeKey === autofilledForProbeRef.current) return; // no probe change
+    autofilledForProbeRef.current = draft.probeKey;
+    if (lotEditedManually) return; // a genuine manual lot survives a probe switch
+    // Auto-fill is driven ONLY by the newest prior selection that was BOTH
+    // confirmed AND inventory-linked (lastConfirmedInventoryItemId) — a newer
+    // confirmed MANUAL row can never mask it, and an unconfirmed linked row never
+    // qualifies. resolveInventoryAutofill still requires that id to be active +
+    // matching the selected probe (contract #2 unambiguous rule).
+    const lastConfirmedId =
+      probeLotSuggestions.byKey[draft.probeKey]?.lastConfirmedInventoryItemId ??
+      null;
+    const autofill = resolveInventoryAutofill(
+      probeLotInventory,
+      draft.probeKey,
+      lastConfirmedId,
     );
-    // Intentionally excludes draft.probeLotNumber: we react to the PROBE
-    // (its keyed/label suggestion) changing, not to our own write.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSuggestion, lotEditedManually]);
+    setLotStatus(autofill.kind);
+    setDraft((d) =>
+      autofill.kind === "choose"
+        ? {
+            ...d,
+            probeInventoryItemId: null,
+            probeLotNumber: "",
+            probeLotConfirmed: false,
+          }
+        : {
+            ...d,
+            probeInventoryItemId: autofill.option.id,
+            probeLotNumber: autofill.option.lotNumber,
+            probeLotConfirmed: false,
+          },
+    );
+    // React to the PROBE changing, not our own writes (setDraft is stable).
+  }, [draft.probeKey, lotEditedManually, probeLotInventory, probeLotSuggestions]);
+
+  const lotSourceMessage =
+    lotStatus === "last-confirmed"
+      ? "Auto-filled from your last confirmed inventory lot. Confirm the package."
+      : lotStatus === "only-active"
+        ? "Only active inventory lot for this probe. Confirm the package."
+        : lotStatus === "choose"
+          ? "Choose the lot/batch from inventory."
+          : null;
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -617,6 +670,7 @@ export function BlockSetupForm({
           probeOptionKey: draft.probeKey || null,
           probeLotNumber: draft.probeLotNumber.trim() || null,
           probeLotConfirmed: draft.probeLotConfirmed,
+          probeInventoryItemId: draft.probeInventoryItemId,
           machineFrequency: (draft.machineFrequency || null) as
             | MachineFrequency
             | null,
@@ -650,6 +704,7 @@ export function BlockSetupForm({
         probeOptionKey: draft.probeKey || null,
         probeLotNumber: draft.probeLotNumber.trim() || null,
         probeLotConfirmed: draft.probeLotConfirmed,
+          probeInventoryItemId: draft.probeInventoryItemId,
         machineFrequency: (draft.machineFrequency || null) as
           | MachineFrequency
           | null,
@@ -898,40 +953,52 @@ export function BlockSetupForm({
               no FK, so archiving/expiring a lot never rewrites past charting. */}
           <ProbeLotSelect
             value={draft.probeLotNumber}
-            options={probeLotInventory}
+            selectedInventoryItemId={draft.probeInventoryItemId}
+            options={probeOptions}
             inventoryHref="/records?section=sterile"
-            onChange={(value) => {
-              // Selecting OR typing a lot un-confirms it and marks it a manual
-              // edit so a later probe switch never clobbers it. Clearing it back
-              // to empty re-enables auto-suggestion for the next probe.
+            onSelectInventory={(option) => {
+              // An explicit inventory selection: store the durable id + the
+              // option's visible lot number, reset confirmation, NOT manual.
               setDraft((d) => ({
                 ...d,
+                probeInventoryItemId: option.id,
+                probeLotNumber: option.lotNumber,
+                probeLotConfirmed: false,
+              }));
+              setLotEditedManually(false);
+              setLotStatus(null);
+            }}
+            onManualChange={(value) => {
+              // Typing clears any inventory link, un-confirms, and marks manual
+              // so a later probe switch never clobbers it. Clearing it back to
+              // empty re-enables inventory auto-fill for the next probe.
+              setDraft((d) => ({
+                ...d,
+                probeInventoryItemId: null,
                 probeLotNumber: value,
                 probeLotConfirmed: false,
               }));
               setLotEditedManually(value.trim() !== "");
+              setLotStatus(value.trim() !== "" ? "manual" : "choose");
             }}
           />
+          {lotSourceMessage && (
+            <span
+              data-testid="probe-lot-source"
+              className="text-xs text-neutral-600 dark:text-neutral-400"
+            >
+              {lotSourceMessage}
+            </span>
+          )}
           <span className="text-xs text-neutral-500">
             Used for health inspection and client procedure records.
           </span>
         </div>
 
-        {/* Feature A: the lot field auto-populates (unconfirmed) from the most
-            recent lot used for THIS probe (keyed match, or label fallback).
-            The copy reflects whether that prior lot was CONFIRMED, and prompts
-            an explicit confirm. Shows only while the value is the un-edited
-            suggestion. */}
-        {!lotEditedManually &&
-          activeSuggestion &&
-          draft.probeLotNumber.trim() !== "" &&
-          draft.probeLotNumber === activeSuggestion.lot && (
-            <span className="text-xs text-neutral-500">
-              {activeSuggestion.confirmed
-                ? "Auto-filled from last confirmed probe lot. Please confirm this lot/batch is correct."
-                : "Suggested from last probe lot. Please confirm this lot/batch is correct."}
-            </span>
-          )}
+        {/* Migration 0155: the inventory-backed lot source/status message
+            (last-confirmed auto-fill / only-active / choose) is rendered
+            immediately under the selector above; manual/linked state shows as a
+            badge in the selector. */}
 
         {/* PR #279: confirm control + state. Only meaningful once a lot is
             present; confirmation is explicit (never automatic). */}

@@ -1,22 +1,28 @@
-// Active probe-lot inventory selection logic (migration 0128 charting release).
+// Inventory-backed probe-lot selection logic (Chloe item #9, migration 0155).
 //
 // SOURCE OF TRUTH: record_keeping_sterile_items — the studio's actively
-// maintained sterilization/inventory log — filtered to rows whose description
-// mentions a probe. The legacy `probe_lots` table is DORMANT (no writers, no
-// callers) and is deliberately NOT used here.
+// maintained sterile-inventory log. From 0155 a sterile item may carry a
+// structured probe_key (lib/probes.ts catalog), so probe lots are now selected
+// PROBE-SPECIFICALLY from real inventory rows, each carrying its immutable
+// inventory id. The legacy `probe_lots` table + electrolysis_entries.probe_lot_id
+// remain DORMANT and are deliberately NOT used here.
 //
-// This module is pure + client-safe (no DB, no server-only). The server query
-// (lib/record-keeping/queries.ts) shapes raw rows into ProbeLotInventoryRow[];
-// the charting form (block-setup-form.tsx) uses these helpers to render a
-// searchable ACTIVE-lot selector while ALWAYS keeping manual entry available and
+// This module is pure + client-safe. The server query (queries.ts) shapes rows
+// into ProbeLotInventoryRow[]; the charting form uses these helpers to render a
+// searchable ACTIVE-lot chooser while ALWAYS keeping manual entry available and
 // preserving the saved lot-number snapshot on session_blocks.probe_lot_number.
 //
-// "Active" = not past its expiry date (record_keeping_sterile_items has no
-// is_active/archived flag; an item with a null expiry never expires). Expired
-// lots are still SELECTABLE (a historical value must remain visible/usable), but
-// they never sort first and are never auto-suggested.
+// Identity is the inventory row `id`, NEVER the lot number: two different
+// inventory records may share a lot number (no DB uniqueness) yet differ by
+// probe / manufacturer / description / expiry — they stay DISTINCT options.
+//
+// "Active" = not past its expiry date (a null expiry never expires). Expired
+// lots are still SELECTABLE for truthful retrospective charting, but never sort
+// first and are never auto-filled.
 
 export type ProbeLotInventoryRow = {
+  id: string;
+  probeKey: string | null;
   lotNumber: string;
   itemDescription: string;
   manufacturerName: string | null;
@@ -25,6 +31,8 @@ export type ProbeLotInventoryRow = {
 };
 
 export type ProbeLotOption = {
+  id: string;
+  probeKey: string | null;
   lotNumber: string;
   itemDescription: string;
   manufacturerName: string | null;
@@ -41,56 +49,58 @@ function compareExpiryDesc(a: string | null, b: string | null): number {
   return a < b ? 1 : -1;
 }
 
-// Shape raw probe sterile-item rows into deduped, classified, ordered options.
-// Dedupe by case-insensitive lot number, preferring a NON-expired representative
-// (else the one with the later expiry). Active options sort first.
+// Shape raw probe sterile-item rows into classified, ordered options — ONE
+// option per inventory row (NO dedupe by lot number). Active options sort first,
+// then later expiry, then lot number, then id (stable). Rows with a blank lot
+// number are dropped (a lot with no number cannot be a durable selection).
 export function buildProbeLotOptions(
   rows: ReadonlyArray<ProbeLotInventoryRow>,
   todayIso: string,
 ): ProbeLotOption[] {
-  const byLot = new Map<string, ProbeLotOption>();
+  const options: ProbeLotOption[] = [];
   for (const r of rows) {
     const lot = (r.lotNumber ?? "").trim();
     if (!lot) continue;
-    const cand: ProbeLotOption = {
+    options.push({
+      id: r.id,
+      probeKey: r.probeKey,
       lotNumber: lot,
       itemDescription: (r.itemDescription ?? "").trim(),
       manufacturerName: (r.manufacturerName ?? "").trim() || null,
       expiryDate: r.expiryDate,
       isExpired: r.expiryDate != null && r.expiryDate < todayIso,
-    };
-    const key = lot.toLowerCase();
-    const existing = byLot.get(key);
-    if (!existing) {
-      byLot.set(key, cand);
-      continue;
-    }
-    if (existing.isExpired && !cand.isExpired) {
-      byLot.set(key, cand);
-      continue;
-    }
-    if (existing.isExpired === cand.isExpired) {
-      byLot.set(
-        key,
-        compareExpiryDesc(cand.expiryDate, existing.expiryDate) < 0
-          ? cand
-          : existing,
-      );
-    }
+    });
   }
-  return [...byLot.values()].sort((a, b) => {
-    if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1;
+  return options.sort((a, b) => {
+    if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1; // active first
     const e = compareExpiryDesc(a.expiryDate, b.expiryDate);
     if (e !== 0) return e;
-    return a.lotNumber.localeCompare(b.lotNumber);
+    const l = a.lotNumber.localeCompare(b.lotNumber);
+    return l !== 0 ? l : a.id.localeCompare(b.id);
   });
 }
 
-// Only the non-expired options (the default selectable set).
-export function activeProbeLotOptions(
+// Only the non-expired options for a specific probe (the default chooser set
+// after a probe is selected). probeKey must match exactly; a null probeKey on an
+// option (unclassified inventory) never matches a chosen probe.
+export function activeProbeLotOptionsForProbe(
   options: ReadonlyArray<ProbeLotOption>,
+  probeKey: string | null | undefined,
 ): ProbeLotOption[] {
-  return options.filter((o) => !o.isExpired);
+  const key = (probeKey ?? "").trim();
+  if (!key) return [];
+  return options.filter((o) => !o.isExpired && o.probeKey === key);
+}
+
+// All (active + expired) options for a specific probe — used when EDITING a
+// historical linked record so an expired linked lot stays visible.
+export function probeLotOptionsForProbe(
+  options: ReadonlyArray<ProbeLotOption>,
+  probeKey: string | null | undefined,
+): ProbeLotOption[] {
+  const key = (probeKey ?? "").trim();
+  if (!key) return [];
+  return options.filter((o) => o.probeKey === key);
 }
 
 // Search across lot number, description, and manufacturer (case-insensitive).
@@ -109,23 +119,35 @@ export function filterProbeLotOptions(
   );
 }
 
-// The single ACTIVE lot to SUGGEST (never auto-select), or null.
-//   * A last-used lot (a prior charting snapshot) that matches an ACTIVE option
-//     wins — the practitioner's own recent choice.
-//   * Otherwise suggest ONLY when there is EXACTLY ONE active option.
-//   * With multiple active options and no last-used match → null (never silently
-//     pick one).
-export function suggestProbeLot(
+export type ProbeLotAutofill =
+  | { kind: "last-confirmed"; option: ProbeLotOption }
+  | { kind: "only-active"; option: ProbeLotOption }
+  | { kind: "choose" };
+
+// Inventory-backed auto-fill for a probe (Chloe item #9 AUTO-FILL RULES). Only
+// ACTIVE inventory rows for THIS probe_key are considered. Never auto-fills an
+// expired lot; never chooses arbitrarily among multiple active lots. Every
+// auto-fill is UNCONFIRMED (the caller resets confirmation).
+//   1. If the last confirmed prior selection references one of these exact
+//      active inventory ids → auto-fill that item ("last-confirmed").
+//   2. Else if EXACTLY ONE active matching item exists → auto-fill it ("only-active").
+//   3. Otherwise → "choose" (empty; show the matching chooser).
+// A previous free-text lot that does not resolve to an active matching inventory
+// id is NOT passed here (the caller passes only a prior *inventory item id*), so
+// it can never be silently auto-filled as inventory-backed.
+export function resolveInventoryAutofill(
   options: ReadonlyArray<ProbeLotOption>,
-  lastUsedLot: string | null | undefined,
-): ProbeLotOption | null {
-  const active = activeProbeLotOptions(options);
-  const last = (lastUsedLot ?? "").trim().toLowerCase();
-  if (last) {
-    const match = active.find((o) => o.lotNumber.toLowerCase() === last);
-    if (match) return match;
+  probeKey: string | null | undefined,
+  lastConfirmedInventoryItemId: string | null | undefined,
+): ProbeLotAutofill {
+  const active = activeProbeLotOptionsForProbe(options, probeKey);
+  const lastId = (lastConfirmedInventoryItemId ?? "").trim();
+  if (lastId) {
+    const match = active.find((o) => o.id === lastId);
+    if (match) return { kind: "last-confirmed", option: match };
   }
-  return active.length === 1 ? active[0] : null;
+  if (active.length === 1) return { kind: "only-active", option: active[0] };
+  return { kind: "choose" };
 }
 
 // A one-line label for an option, e.g.
