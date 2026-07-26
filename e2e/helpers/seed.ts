@@ -1397,6 +1397,27 @@ export async function bumpSessionBlockUpdatedAt(sessionId: string): Promise<void
 
 // Read a session's structured block areas (migration 0128) for e2e ground truth.
 // Returns "<area>|<laterality>" strings ordered by block + display_order.
+// First block's minutes_performed for a session (null when unset). 0157 must
+// leave copied blocks' minutes NULL (they are never copied).
+export async function getFirstBlockMinutes(sessionId: string): Promise<number | null> {
+  const rows = await sql<{ minutes_performed: number | null }>(
+    `select minutes_performed from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0]?.minutes_performed ?? null;
+}
+
+// Mutate the source session so its fingerprint changes (stale-preview test).
+export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
+  await sql(
+    `update public.session_blocks set energy_level = coalesce(energy_level,0) + 1
+      where session_id = $1 and deleted_at is null`,
+    [sessionId],
+  );
+}
+
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
   const rows = await sql<{ area: string; laterality: string }>(
     `select a.area, a.laterality

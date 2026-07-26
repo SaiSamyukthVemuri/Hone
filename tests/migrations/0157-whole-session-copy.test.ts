@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Migration 0157 — whole-session "Copy areas and settings": one idempotency
-// ledger table + one atomic batch-copy RPC. Additive; carries the repo
-// migration-max tripwire.
+// Migration 0157 — whole-session "Copy areas and settings": a provenance ledger
+// + a service_role-only, source-authoritative, atomic, idempotent copy RPC, plus
+// a member-gated preview descriptor and a private source-fingerprint helper.
+// Additive; carries the repo migration-max tripwire.
 
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0157_")) as string;
@@ -27,48 +28,74 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(nums[nums.length - 1]).toBe(157);
   });
 
-  it("adds the idempotency ledger table with the (session_id, idempotency_key) UNIQUE, member-only RLS", () => {
+  it("adds a PROVENANCE ledger (source+target+practitioner+hash+fingerprint), member-only RLS, no browser DML", () => {
+    expect(SQL).toMatch(/create table if not exists public\.session_copy_operations/);
+    for (const col of [
+      "target_session_id",
+      "source_session_id",
+      "created_by_practitioner_id",
+      "request_hash",
+      "source_fingerprint",
+      "copied_block_count",
+    ]) {
+      expect(CODE).toMatch(new RegExp(`\\b${col}\\b`));
+    }
+    // Idempotency is scoped to the TARGET session + key.
     expect(SQL).toMatch(
-      /create table if not exists public\.session_copy_operations/,
+      /constraint session_copy_operations_idem_uniq unique \(target_session_id, idempotency_key\)/,
     );
-    expect(SQL).toMatch(
-      /constraint session_copy_operations_idem_uniq unique \(session_id, idempotency_key\)/,
-    );
-    expect(SQL).toMatch(
-      /alter table public\.session_copy_operations enable row level security/,
-    );
-    // Member SELECT only; NO browser insert/update/delete policy (writes only via
-    // the SECURITY DEFINER RPC).
+    // Same-studio composite FKs for BOTH source and target.
+    expect(SQL).toMatch(/foreign key \(studio_id, target_session_id\)[\s\S]{0,80}references public\.sessions \(studio_id, id\)/);
+    expect(SQL).toMatch(/foreign key \(studio_id, source_session_id\)[\s\S]{0,80}references public\.sessions \(studio_id, id\)/);
+    // No clinical payload column on the ledger.
+    expect(CODE).not.toMatch(/\bspecs\b\s+jsonb/);
+    // RLS: member SELECT only; anon revoked; no browser insert/update/delete.
+    expect(SQL).toMatch(/enable row level security/);
     expect(SQL).toMatch(/for select to authenticated/i);
     expect(SQL).not.toMatch(/for insert to authenticated/i);
     expect(SQL).not.toMatch(/for update to authenticated/i);
     expect(SQL).not.toMatch(/for delete/i);
     expect(SQL).toMatch(/revoke all on public\.session_copy_operations from anon/);
+    // created_by stores the PRACTITIONER, not auth.uid().
+    expect(CODE).not.toMatch(/created_by_practitioner_id[^\n]*auth\.uid/);
   });
 
-  it("the copy RPC is SECURITY DEFINER, member-gated, idempotent, and setup-only", () => {
-    expect(SQL).toMatch(
-      /create or replace function public\.copy_session_setup/,
-    );
+  it("the copy RPC is service_role-ONLY (browser cannot call it directly)", () => {
+    expect(SQL).toMatch(/create or replace function public\.copy_session_setup/);
     expect(SQL).toMatch(/security definer/);
-    expect(SQL).toMatch(/set search_path = pg_catalog, pg_temp/);
-    // Authorization + lineage.
-    expect(SQL).toMatch(/is_studio_member\(p_studio_id\)/);
-    expect(SQL).toMatch(/from public\.sessions[\s\S]{0,120}deleted_at is null/);
-    // Idempotency: prior batch returns its ids (no new rows).
-    expect(SQL).toMatch(/idempotent_replay/);
+    expect(SQL).toMatch(/set search_path = ''/);
+    // Grant model: revoked from authenticated + anon; granted to service_role ONLY.
     expect(SQL).toMatch(
-      /session_id = p_session_id and idempotency_key = p_idempotency_key/,
+      /revoke all on function public\.copy_session_setup\(uuid, uuid, uuid, jsonb, text, text, uuid\) from public, anon, authenticated/,
     );
-    // Least-privilege grants.
     expect(SQL).toMatch(
-      /revoke all on function public\.copy_session_setup\(uuid, uuid, jsonb, text\) from public, anon/,
+      /grant execute on function public\.copy_session_setup\(uuid, uuid, uuid, jsonb, text, text, uuid\) to service_role;/,
     );
-    expect(SQL).toMatch(/grant execute on function public\.copy_session_setup.*to authenticated, service_role/);
+    // NOT granted to authenticated.
+    expect(SQL).not.toMatch(/grant execute on function public\.copy_session_setup[^\n]*authenticated/);
   });
 
-  it("SETUP-ONLY: the block + entry INSERT column lists carry NO outcome columns", () => {
-    // The two INSERT statements (block, entry) must not name any outcome column.
+  it("enforces authorization + session-wide serialization + source authority + stale detection", () => {
+    // Practitioner-based membership check (service_role bypasses RLS, so no auth.uid()).
+    expect(CODE).toMatch(/from public\.practitioners[\s\S]{0,120}active = true/);
+    // TARGET row lock serializes all commits for one target (key-independent).
+    expect(CODE).toMatch(/from public\.sessions[\s\S]{0,200}for update/i);
+    // Target must be an empty electrolysis draft.
+    expect(CODE).toMatch(/record_status/);
+    expect(CODE).toMatch(/electrolysis/);
+    expect(CODE).toMatch(/from public\.session_blocks[\s\S]{0,120}deleted_at is null/);
+    expect(CODE).toMatch(/from public\.electrolysis_entries[\s\S]{0,120}deleted_at is null/);
+    // SOURCE is server-derived (not browser-chosen) + fingerprint verified.
+    expect(CODE).toMatch(/_whole_session_copy_source_id\(p_studio_id, p_target_session_id\)/);
+    expect(CODE).toMatch(/_whole_session_copy_fingerprint\(/);
+    expect(CODE).toMatch(/p_expected_source_fingerprint/);
+    // Stable custom SQLSTATEs the app maps to safe messages.
+    for (const code of ["HN001", "HN002", "HN003", "HN004", "HN005", "HN006", "HN007"]) {
+      expect(CODE).toMatch(new RegExp(`errcode = '${code}'`));
+    }
+  });
+
+  it("SETUP-ONLY: the block + entry INSERT lists carry NO outcome columns and NO minutes_performed", () => {
     for (const outcome of [
       "comments",
       "observation_chips",
@@ -87,16 +114,32 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     ]) {
       expect(CODE).not.toMatch(new RegExp(`\\b${outcome}\\b`));
     }
+    // P1-5: minutes are never written by the copy (not in any INSERT, not in the fingerprint).
+    expect(CODE).not.toMatch(/\bminutes_performed\b/);
+  });
+
+  it("has a member-gated preview descriptor (authenticated) + a PRIVATE fingerprint helper", () => {
+    expect(SQL).toMatch(/create or replace function public\.whole_session_copy_source_descriptor/);
+    expect(CODE).toMatch(/is_studio_member\(p_studio_id\)/);
+    expect(SQL).toMatch(
+      /grant execute on function public\.whole_session_copy_source_descriptor\(uuid, uuid\) to authenticated, service_role/,
+    );
+    // Core helpers are private (revoked from authenticated).
+    expect(SQL).toMatch(
+      /revoke all on function public\._whole_session_copy_fingerprint\(uuid\) from public, anon, authenticated/,
+    );
+    expect(SQL).toMatch(
+      /revoke all on function public\._whole_session_copy_source_id\(uuid, uuid\) from public, anon, authenticated/,
+    );
   });
 
   it("is additive: no ALTER/DROP of existing tables, no backfill, no change to the 0129/0155/0156 block RPCs", () => {
     expect(CODE).not.toMatch(/alter table public\.session_blocks/i);
     expect(CODE).not.toMatch(/alter table public\.electrolysis_entries/i);
+    expect(CODE).not.toMatch(/alter table public\.sessions/i);
     expect(CODE).not.toMatch(/drop /i);
-    // Only the NEW copy RPC is (re)created — not the existing block/area RPCs.
     expect(CODE).not.toMatch(/create or replace function public\.create_session_block_with_areas/);
     expect(CODE).not.toMatch(/create or replace function public\.update_session_block_with_areas/);
-    // No bulk backfill UPDATE.
     expect(CODE).not.toMatch(/update public\.(session_blocks|electrolysis_entries)/i);
   });
 

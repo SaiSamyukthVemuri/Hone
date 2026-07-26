@@ -2,53 +2,96 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { assertSessionForClient } from "@/lib/sessions/session-lineage";
-import type {
-  CopySourceBlock,
-  WholeSessionCopySpec,
-} from "@/lib/sessions/whole-session-copy";
+import {
+  assertSessionForClient,
+  SessionLineageError,
+} from "@/lib/sessions/session-lineage";
+import type { CopySourceBlock } from "@/lib/sessions/whole-session-copy";
+import {
+  normalizeWholeSessionCopy,
+  type WholeSessionCopyDraftInput,
+} from "@/lib/sessions/whole-session-copy-normalize";
 
 // Whole-session "Copy areas and settings" (migration 0157).
 //
-// getWholeSessionCopySourceAction: READ-ONLY. Loads the previous session's
-// blocks (+ structured areas + first-entry setup readings) so the client can
-// render an EPHEMERAL preview. It writes nothing.
+// getWholeSessionCopySourceAction: READ-ONLY. Asks the DB for the SERVER-derived
+// canonical previous session (whole_session_copy_source_descriptor) + its
+// fingerprint, then loads that source's blocks so the client can render an
+// EPHEMERAL preview. The browser never chooses which session is the source.
 //
-// commitWholeSessionCopyAction: the single explicit write. Calls the atomic,
-// idempotent copy_session_setup RPC once; every safety property (setup-only,
-// same-studio, all-or-nothing, at-most-once) is enforced in the RPC.
+// commitWholeSessionCopyAction: the single explicit write. It (1) re-checks
+// auth + session lineage, (2) canonically NORMALIZES the reviewed draft
+// server-side (rejecting any forged area/laterality/mode/probe/numeric), then
+// (3) calls the service-role-only copy_session_setup RPC, passing a
+// server-derived practitioner id and the preview's source fingerprint. The RPC
+// is the single writer and independently enforces every source/target invariant.
+// RPC errors are mapped to fixed, non-leaky messages.
+
+const GENERIC_ERROR = "Couldn't copy right now. Please try again.";
+const LINEAGE_ERROR = "That session couldn't be found.";
 
 export type WholeSessionCopySourceResult =
-  | { ok: true; source: CopySourceBlock[] }
+  | {
+      ok: true;
+      eligible: boolean;
+      source: CopySourceBlock[];
+      sourceSessionId: string | null;
+      sourceFingerprint: string | null;
+    }
   | { ok: false; error: string };
 
 export async function getWholeSessionCopySourceAction(input: {
   clientId: string;
   sessionId: string;
-  previousSessionId: string;
 }): Promise<WholeSessionCopySourceResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot copy sessions." };
   }
-  // Both the destination (today) and the source (previous) session must belong
-  // to this client + studio — RLS + these lineage checks together.
-  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
-  await assertSessionForClient(studio.id, input.clientId, input.previousSessionId);
+  try {
+    // The destination (today) session must belong to this client + studio.
+    await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) return { ok: false, error: LINEAGE_ERROR };
+    throw e;
+  }
 
   const supabase = await createClient();
+
+  // SERVER-authoritative source: the DB derives the canonical eligible previous
+  // session and returns its fingerprint. The browser gets neither choice nor
+  // authority over which session is copied.
+  const { data: descriptor, error: descErr } = await supabase.rpc(
+    "whole_session_copy_source_descriptor",
+    { p_studio_id: studio.id, p_target_session_id: input.sessionId },
+  );
+  if (descErr) return { ok: false, error: GENERIC_ERROR };
+
+  const desc = (descriptor ?? {}) as {
+    eligible?: boolean;
+    source_session_id?: string;
+    source_fingerprint?: string;
+  };
+  if (!desc.eligible || !desc.source_session_id) {
+    return { ok: true, eligible: false, source: [], sourceSessionId: null, sourceFingerprint: null };
+  }
+  const sourceSessionId = desc.source_session_id;
+
   const { data: blocks, error: blockErr } = await supabase
     .from("session_blocks")
     .select(
       "id, sort_order, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, primary_area, side, custom_area_detail",
     )
     .eq("studio_id", studio.id)
-    .eq("session_id", input.previousSessionId)
+    .eq("session_id", sourceSessionId)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
-  if (blockErr) return { ok: false, error: blockErr.message };
-  if (!blocks || blocks.length === 0) return { ok: true, source: [] };
+  if (blockErr) return { ok: false, error: GENERIC_ERROR };
+  if (!blocks || blocks.length === 0) {
+    return { ok: true, eligible: false, source: [], sourceSessionId: null, sourceFingerprint: null };
+  }
 
   const blockIds = blocks.map((b) => b.id as string);
   const [{ data: areas }, { data: entries }] = await Promise.all([
@@ -127,46 +170,94 @@ export async function getWholeSessionCopySourceAction(input: {
       areas: areasByBlock.get(b.id as string) ?? [],
     };
   });
-  return { ok: true, source };
+  return {
+    ok: true,
+    eligible: true,
+    source,
+    sourceSessionId,
+    sourceFingerprint: desc.source_fingerprint ?? null,
+  };
 }
 
 export type WholeSessionCopyCommitResult =
-  | { ok: true; createdBlockIds: string[]; idempotentReplay: boolean }
+  | { ok: true; createdBlockIds: string[]; copiedBlockCount: number; idempotentReplay: boolean }
   | { ok: false; error: string };
+
+// Map the RPC's stable custom SQLSTATEs (class 'HN') to fixed, non-leaky
+// messages. Any other code (or a driver error) becomes a generic message. Raw
+// Postgres/Supabase text, SQLSTATE, UUIDs and constraint names never leak.
+function safeCommitError(code: string | undefined): string {
+  switch (code) {
+    case "HN001":
+      return "You don't have permission to do that.";
+    case "HN002":
+      return "This chart can't be prefilled — it isn't an editable electrolysis session.";
+    case "HN003":
+      return "Today's chart is no longer empty. Reload the page and try again.";
+    case "HN004":
+      return "There's no previous session to copy from.";
+    case "HN005":
+      return "The previous visit changed. Reload the preview and try again.";
+    case "HN006":
+      return "This copy couldn't be repeated safely. Reload the preview and try again.";
+    case "HN007":
+      return "A copied area or setting is invalid. Reload the preview and try again.";
+    default:
+      return GENERIC_ERROR;
+  }
+}
 
 export async function commitWholeSessionCopyAction(input: {
   clientId: string;
   sessionId: string;
-  specs: WholeSessionCopySpec[];
+  drafts: WholeSessionCopyDraftInput[];
   idempotencyKey: string;
+  sourceSessionId: string | null;
+  sourceFingerprint: string | null;
 }): Promise<WholeSessionCopyCommitResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
-
-  if (!input.specs || input.specs.length === 0) {
-    return { ok: false, error: "Nothing to copy." };
+  try {
+    await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) return { ok: false, error: LINEAGE_ERROR };
+    throw e;
   }
+
   if (!input.idempotencyKey || input.idempotencyKey.trim() === "") {
-    return { ok: false, error: "Missing copy key." };
+    return { ok: false, error: "Reload the preview and try again." };
+  }
+  if (!input.sourceFingerprint) {
+    return { ok: false, error: "Reload the preview and try again." };
   }
 
-  const supabase = await createClient();
-  // The RPC is the ONLY writer: atomic (all N blocks+areas+entries in one txn),
-  // idempotent (at-most-once per idempotency key), and setup-only by its own
-  // INSERT allow-list. Studio scoping + lineage are re-checked inside it.
-  const { data, error } = await supabase.rpc("copy_session_setup", {
+  // Canonical server-side validation of the browser draft BEFORE any DB write.
+  const normalized = normalizeWholeSessionCopy(input.drafts);
+  if (!normalized.ok) return { ok: false, error: normalized.error };
+
+  // The RPC is the single writer, callable ONLY by service_role. We pass a
+  // server-derived practitioner id + the preview's source fingerprint; the RPC
+  // re-derives the canonical source, re-checks target eligibility/emptiness
+  // under a row lock, verifies the fingerprint, and is atomic + idempotent.
+  const admin = createAdminClient(); // scope: server-derived studio + getCurrentPractitionerWithStudio
+  const { data, error } = await admin.rpc("copy_session_setup", {
     p_studio_id: studio.id,
-    p_session_id: input.sessionId,
-    p_specs: input.specs,
+    p_target_session_id: input.sessionId,
+    p_practitioner_id: practitioner.id,
+    p_specs: normalized.specs,
     p_idempotency_key: input.idempotencyKey,
+    p_expected_source_fingerprint: input.sourceFingerprint,
+    p_expected_source_session_id: input.sourceSessionId,
   });
-  if (error) return { ok: false, error: `Copy failed: ${error.message}` };
+  if (error) {
+    return { ok: false, error: safeCommitError((error as { code?: string }).code) };
+  }
 
   const result = (data ?? {}) as {
     created_block_ids?: string[];
+    copied_block_count?: number;
     idempotent_replay?: boolean;
   };
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
@@ -174,6 +265,7 @@ export async function commitWholeSessionCopyAction(input: {
   return {
     ok: true,
     createdBlockIds: result.created_block_ids ?? [],
+    copiedBlockCount: result.copied_block_count ?? 0,
     idempotentReplay: Boolean(result.idempotent_replay),
   };
 }

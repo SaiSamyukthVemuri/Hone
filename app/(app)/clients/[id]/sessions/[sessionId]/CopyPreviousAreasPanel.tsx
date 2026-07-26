@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   buildCopyDrafts,
-  draftToCopySpec,
+  draftToCopyInput,
   type CopyAreaDraft,
 } from "@/lib/sessions/whole-session-copy";
 import {
@@ -16,42 +16,46 @@ import {
 //
 // SAFETY: the preview is EPHEMERAL — it lives only in this component's state.
 // Building, refreshing, cancelling, or removing a draft card performs NO
-// clinical write (no blocks, areas, entries, operations, audit or metric rows).
-// Only the single explicit "Add these areas to today's chart" action writes,
-// via the atomic + idempotent copy_session_setup RPC. The idempotency key is
-// generated once per preview build, so a double-submit is an at-most-once no-op.
+// clinical write. Only the single explicit "Add these areas to today's chart"
+// action writes, via the atomic + idempotent copy_session_setup RPC.
+//
+// The SOURCE session and its fingerprint are SERVER-derived (returned by the
+// read action); the browser only echoes them back at commit so the server can
+// reject a stale preview. The idempotency key is minted once per preview build,
+// so a double-submit is an at-most-once no-op. minutes_performed is never copied
+// — today's minutes start blank and reflect only what is recorded today.
 
 type Phase = "idle" | "preview";
 
 export function CopyPreviousAreasPanel({
   clientId,
   sessionId,
-  previousSessionId,
 }: {
   clientId: string;
   sessionId: string;
-  previousSessionId: string;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
   const [drafts, setDrafts] = useState<CopyAreaDraft[]>([]);
   const [idempotencyKey, setIdempotencyKey] = useState<string>("");
+  const [sourceSessionId, setSourceSessionId] = useState<string | null>(null);
+  const [sourceFingerprint, setSourceFingerprint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoad] = useTransition();
   const [committing, startCommit] = useTransition();
 
-  // Build (or refresh) the preview from the previous session. READ-ONLY: no
+  // Build (or refresh) the preview from the server-derived source. READ-ONLY: no
   // clinical rows are created. A fresh idempotency key is minted per build.
   function buildPreview() {
     setError(null);
     startLoad(async () => {
-      const res = await getWholeSessionCopySourceAction({
-        clientId,
-        sessionId,
-        previousSessionId,
-      });
+      const res = await getWholeSessionCopySourceAction({ clientId, sessionId });
       if (!res.ok) {
         setError(res.error);
+        return;
+      }
+      if (!res.eligible) {
+        setError("There's nothing from a previous visit to copy here.");
         return;
       }
       const built = buildCopyDrafts(res.source);
@@ -60,6 +64,8 @@ export function CopyPreviousAreasPanel({
         return;
       }
       setDrafts(built);
+      setSourceSessionId(res.sourceSessionId);
+      setSourceFingerprint(res.sourceFingerprint);
       setIdempotencyKey(crypto.randomUUID());
       setPhase("preview");
     });
@@ -72,11 +78,14 @@ export function CopyPreviousAreasPanel({
   function cancel() {
     setDrafts([]);
     setIdempotencyKey("");
+    setSourceSessionId(null);
+    setSourceFingerprint(null);
     setError(null);
     setPhase("idle");
   }
 
-  // The ONE explicit write. Sends the reviewed, setup-only specs to the RPC.
+  // The ONE explicit write. Sends the reviewed, setup-only draft (validated
+  // server-side) plus the server's source id + fingerprint.
   function commit() {
     if (drafts.length === 0) return;
     setError(null);
@@ -84,8 +93,10 @@ export function CopyPreviousAreasPanel({
       const res = await commitWholeSessionCopyAction({
         clientId,
         sessionId,
-        specs: drafts.map(draftToCopySpec),
+        drafts: drafts.map(draftToCopyInput),
         idempotencyKey,
+        sourceSessionId,
+        sourceFingerprint,
       });
       if (!res.ok) {
         setError(res.error);
@@ -102,7 +113,7 @@ export function CopyPreviousAreasPanel({
         <span className="font-medium">Copy areas &amp; settings from last session</span>
         <span className="text-neutral-600 dark:text-neutral-400">
           Review each area first — nothing is added to today&apos;s chart until you
-          confirm.
+          confirm. Machine settings are copied; today&apos;s minutes start blank.
         </span>
         <button
           type="button"
@@ -131,8 +142,9 @@ export function CopyPreviousAreasPanel({
         <span className="font-medium">Preview — copy from last session</span>
         <span className="text-neutral-600 dark:text-neutral-400">
           {drafts.length} area{drafts.length === 1 ? "" : "s"} ready. This is a
-          preview only — nothing is saved yet. Remove any you don&apos;t want,
-          then confirm.
+          preview only — nothing is saved yet. Machine settings copy over;
+          today&apos;s minutes start blank. Remove any you don&apos;t want, then
+          confirm.
         </span>
       </div>
 
@@ -148,11 +160,11 @@ export function CopyPreviousAreasPanel({
                   )
                   .join(", ")
               : (d.primaryArea ?? "Area");
+          // Machine SETUP only (no minutes — minutes are never copied).
           const setupBits = [
             d.setup.mode,
             d.setup.machineFrequency,
             d.setup.energyLevel ? `EL ${d.setup.energyLevel}` : "",
-            d.setup.minutes ? `${d.setup.minutes} min` : "",
           ].filter(Boolean);
           return (
             <li

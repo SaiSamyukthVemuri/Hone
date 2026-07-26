@@ -543,11 +543,7 @@ export default async function SessionDetailPage({
         blockData.blocks.length === 0 &&
         previousSessionAny &&
         previousSessionHasAreas && (
-          <CopyPreviousAreasPanel
-            clientId={id}
-            sessionId={session.id}
-            previousSessionId={previousSessionAny.id as string}
-          />
+          <CopyPreviousAreasPanel clientId={id} sessionId={session.id} />
         )}
 
       {/* Migration 0126: consultation + skin/hair analysis context during

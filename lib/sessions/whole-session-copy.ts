@@ -17,6 +17,11 @@ import {
   type SetupSourceEntry,
   type TreatmentSetupDraftPatch,
 } from "./treatment-setup-snapshot";
+import { legacySideToLaterality } from "./block-areas";
+import { ELECTROLYSIS_MODES } from "@/lib/constants";
+import type { WholeSessionCopyDraftInput } from "./whole-session-copy-normalize";
+
+const COPYABLE_MODES = new Set(ELECTROLYSIS_MODES.map((m) => m.value));
 
 export type CopySourceArea = { area: string; laterality: string };
 
@@ -56,99 +61,72 @@ export type CopyAreaDraft = {
   probe: CopySourceProbe;
 };
 
-// Build the ephemeral preview from the previous session's blocks. Blocks with no
-// treated area are skipped (nothing to copy). Pure — no I/O.
+// Build the ephemeral preview from the previous session's blocks. Only blocks
+// that are actually COPYABLE become cards, so one un-copyable source block can
+// never poison the whole batch at commit:
+//   * a legacy block with a primary_area but no structured areas gets a
+//     synthesized area (primary_area + the laterality of its legacy side), so it
+//     copies like any other;
+//   * a block with no resolvable area, or no valid electrolysis mode, has no
+//     reusable setup to copy and is skipped.
+// Pure — no I/O.
 export function buildCopyDrafts(
   source: readonly CopySourceBlock[],
 ): CopyAreaDraft[] {
   const drafts: CopyAreaDraft[] = [];
   for (let i = 0; i < source.length; i++) {
     const b = source[i];
-    const hasArea =
-      (b.areas && b.areas.length > 0) || (b.primary_area ?? "").trim() !== "";
-    if (!hasArea) continue;
+    let areas = b.areas.map((a) => ({ area: a.area, laterality: a.laterality }));
+    if (areas.length === 0 && (b.primary_area ?? "").trim() !== "") {
+      // Legacy single-area block: reconstruct a structured area so it copies.
+      areas = [{ area: b.primary_area!.trim(), laterality: legacySideToLaterality(b.side) }];
+    }
+    if (areas.length === 0) continue; // nothing to copy
+    const setup = buildTreatmentSetupDraftPatch(
+      b.block,
+      firstLiveEntry(b.firstEntry ? [b.firstEntry] : []),
+    );
+    if (!COPYABLE_MODES.has(setup.mode as "thermo" | "galv" | "blend")) continue; // no reusable setup
     drafts.push({
       key: b.blockId || String(i),
       primaryArea: b.primary_area,
       side: b.side,
       customAreaDetail: b.custom_area_detail,
-      areas: b.areas.map((a) => ({ area: a.area, laterality: a.laterality })),
-      setup: buildTreatmentSetupDraftPatch(
-        b.block,
-        firstLiveEntry(b.firstEntry ? [b.firstEntry] : []),
-      ),
+      areas,
+      setup,
       probe: b.probe,
     });
   }
   return drafts;
 }
 
-// The RPC payload for ONE reviewed draft. SETUP-only: block setup + area + entry
-// SETUP readings. No outcome key is ever emitted here (and the RPC ignores any
-// that somehow appears).
-export type WholeSessionCopySpec = {
-  block: Record<string, unknown>;
-  areas: { area: string; laterality: string; display_order: number }[];
-  entry: Record<string, unknown> | null;
-};
-
-function num(s: string | null | undefined): number | null {
-  const t = (s ?? "").trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
-function str(s: string | null | undefined): string | null {
-  const t = (s ?? "").trim();
-  return t === "" ? null : t;
-}
-
-export function draftToCopySpec(d: CopyAreaDraft): WholeSessionCopySpec {
+// Turn a reviewed (possibly edited) draft card into the NARROW input the server
+// normalizer validates. This carries ONLY editable areas + machine/probe setup
+// strings — never the decomposed probe columns (the server re-derives those from
+// the probe_key), never minutes_performed (not copied), and never an outcome.
+// All authority (probe decomposition, primary_area/side, numeric ranges, mode
+// gating) lives server-side in normalizeWholeSessionCopy.
+export function draftToCopyInput(d: CopyAreaDraft): WholeSessionCopyDraftInput {
   const s = d.setup;
-  const mode = str(s.mode);
-  // s is already mode-gated by buildTreatmentSetupDraftPatch (galvanic cleared
-  // apilus/energy; thermo cleared galvanic; single pulse cleared delay), so we
-  // read its values straight through.
-  const block: Record<string, unknown> = {
-    mode,
-    apilus_modality: str(s.apilusModality),
-    energy_level: num(s.energyLevel),
-    minutes_performed: num(s.minutes),
-    machine_frequency: str(s.machineFrequency),
-    probe_key: str(s.probeKey),
-    probe_brand: d.probe.probe_brand,
-    probe_material: d.probe.probe_material,
-    probe_piece_type: d.probe.probe_piece_type,
-    probe_shank: d.probe.probe_shank,
-    probe_size_value: d.probe.probe_size_value,
-    probe_length: d.probe.probe_length,
-    probe_label: d.probe.probe_label,
-    primary_area: str(d.primaryArea),
-    side: str(d.side),
-    custom_area_detail: str(d.customAreaDetail),
+  return {
+    areas: d.areas
+      .filter((a) => (a.area ?? "").trim() !== "")
+      .map((a) => ({ area: a.area, laterality: a.laterality })),
+    customAreaDetail: d.customAreaDetail,
+    setup: {
+      mode: s.mode,
+      apilusModality: s.apilusModality,
+      energyLevel: s.energyLevel,
+      probeKey: s.probeKey,
+      machineFrequency: s.machineFrequency,
+      thermolysisIntensityPercent: s.thermolysisIntensityPercent,
+      thermolysisDurationSeconds: s.thermolysisDurationSeconds,
+      galvanicMa: s.galvanicMa,
+      galvanicDurationSeconds: s.galvanicDurationSeconds,
+      galvanicIntensityPercent: s.galvanicIntensityPercent,
+      unitsOfLye: s.unitsOfLye,
+      pulseCount: s.pulseCount,
+      pulseDelay: s.pulseDelay,
+    },
   };
-  const areas = d.areas
-    .filter((a) => (a.area ?? "").trim() !== "")
-    .map((a, i) => ({ area: a.area, laterality: a.laterality, display_order: i }));
-  const primaryAreaName = areas[0]?.area ?? str(d.primaryArea);
-  const entry: Record<string, unknown> | null = primaryAreaName
-    ? {
-        area: primaryAreaName,
-        areas: areas.length ? areas.map((a) => a.area) : [primaryAreaName],
-        mode,
-        apilus_modality: str(s.apilusModality),
-        energy_level: num(s.energyLevel),
-        minutes_performed: num(s.minutes),
-        machine_frequency: str(s.machineFrequency),
-        thermolysis_intensity_percent: num(s.thermolysisIntensityPercent),
-        thermolysis_duration_seconds: num(s.thermolysisDurationSeconds),
-        galvanic_ma: num(s.galvanicMa),
-        galvanic_duration_seconds: num(s.galvanicDurationSeconds),
-        galvanic_intensity_percent: num(s.galvanicIntensityPercent),
-        units_of_lye: num(s.unitsOfLye),
-        pulse_count: num(s.pulseCount),
-        pulse_delay_seconds: num(s.pulseDelay),
-      }
-    : null;
-  return { block, areas, entry };
 }
