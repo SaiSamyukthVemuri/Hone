@@ -1106,7 +1106,7 @@ export async function getSavedBlockSetup(
   const blocks = await sql<Record<string, unknown>>(
     `select id, primary_area, mode, energy_level, minutes_performed, machine_frequency,
             probe_key, tolerance_rating, reaction_type, reaction_notes,
-            caution_for_next_session, caution_note, numbing_status,
+            caution_for_next_session, caution_note, numbing_status, numbing_notes,
             probe_lot_number, probe_lot_confirmed
        from public.session_blocks
       where session_id = $1 and deleted_at is null

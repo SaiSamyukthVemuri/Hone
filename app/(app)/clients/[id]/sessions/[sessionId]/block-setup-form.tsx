@@ -20,7 +20,7 @@
 // actions already accept every field used here — no action behavior
 // change.
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
   COMMON_COMMENTS,
@@ -220,6 +220,10 @@ type Draft = {
   // PR #279 (migration 0095). numbingStatus is "" (Not recorded), "none", or
   // "used". probeLotConfirmed records that the practitioner confirmed the lot.
   numbingStatus: string;
+  // 0156: optional free-text numbing note. Held in draft even while the status
+  // is toggled away from "used" (so toggling back restores it); the server
+  // stores it only when the saved status is "used".
+  numbingNotes: string;
   probeLotConfirmed: boolean;
   // Migration 0155: the linked sterile-inventory item id when the lot was chosen
   // from inventory; null = manual/unlinked. The saved probe_lot_number is still
@@ -256,6 +260,7 @@ const EMPTY: Draft = {
   cautionForNextSession: false,
   cautionNote: "",
   numbingStatus: "",
+  numbingNotes: "",
   probeLotConfirmed: false,
   probeInventoryItemId: null,
 };
@@ -359,6 +364,7 @@ function initialDraft(
     cautionNote: block.caution_note ?? "",
     // PR #279 (migration 0095): round-trip numbing + lot confirmation.
     numbingStatus: block.numbing_status ?? "",
+    numbingNotes: block.numbing_notes ?? "",
     probeLotConfirmed: block.probe_lot_confirmed ?? false,
     probeInventoryItemId: block.probe_inventory_item_id ?? null,
   };
@@ -400,6 +406,9 @@ export function BlockSetupForm({
   // practitioner knows what was copied and from where.
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // 0156: stable id so the numbing-notes helper text is programmatically
+  // connected to the textarea via aria-describedby.
+  const numbingNotesHelpId = useId();
   // Treatment-area picker is collapsed to a compact summary when an area is
   // already selected (e.g. seeded from the plan, or in edit mode); the full
   // region-grouped picker only expands when there's no area yet or the
@@ -641,6 +650,10 @@ export function BlockSetupForm({
       cautionNote: draft.cautionNote.trim() || null,
       // PR #279: numbing record ("" -> Not recorded -> null in the action).
       numbingStatus: draft.numbingStatus || null,
+      // 0156: optional numbing note. Always sent; the server keeps it only when
+      // the saved status is "used" (else stores NULL). Held in draft across
+      // status toggles so a mistaken toggle doesn't lose typed text.
+      numbingNotes: draft.numbingNotes,
     };
 
     const readings = {
@@ -1249,6 +1262,32 @@ export function BlockSetupForm({
             );
           })}
         </div>
+        {/* 0156: ONE optional free-text note, revealed ONLY when numbing was
+            used. Factual — no dosing/timing/medical instructions. The draft
+            value is retained across status toggles (so toggling back to "used"
+            restores it); the server discards it unless the saved status is
+            "used". Label wraps the textarea (accessible name) and the helper is
+            connected via aria-describedby; full-width so it never overflows at
+            390px; vertically resizable. */}
+        {draft.numbingStatus === "used" && (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Numbing notes (optional)
+            </span>
+            <textarea
+              rows={3}
+              value={draft.numbingNotes}
+              onChange={(e) => update("numbingNotes", e.target.value)}
+              data-testid="numbing-notes"
+              aria-describedby={numbingNotesHelpId}
+              placeholder="Record the product or any relevant details"
+              className="w-full min-h-[5rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+            <span id={numbingNotesHelpId} className="text-xs text-neutral-500">
+              Record the product or any relevant details.
+            </span>
+          </label>
+        )}
       </div>
 
       {/* Client tolerance (PR #279): label-based comfort scale. The CONTROL is

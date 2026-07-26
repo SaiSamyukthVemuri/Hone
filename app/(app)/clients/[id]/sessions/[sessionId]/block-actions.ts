@@ -19,6 +19,7 @@ import {
   isNumbingStatus,
   isReactionType,
   isToleranceRating,
+  normalizeNumbingNotes,
   type NumbingStatus,
   type ReactionType,
 } from "@/lib/sessions/clinical-response";
@@ -69,6 +70,9 @@ type ClinicalResponseInput = {
   // PR #279: whether the client used numbing (factual record). "" / null /
   // undefined -> Not recorded (NULL).
   numbingStatus?: string | null;
+  // 0156: optional free-text numbing note. Kept ONLY when numbingStatus ===
+  // 'used'; trimmed; blank -> NULL. Never used to infer the status.
+  numbingNotes?: string | null;
 };
 
 type ClinicalResponseColumns = {
@@ -78,6 +82,7 @@ type ClinicalResponseColumns = {
   caution_for_next_session: boolean;
   caution_note: string | null;
   numbing_status: NumbingStatus | null;
+  numbing_notes: string | null;
 };
 
 function normalizeClinicalResponse(
@@ -103,6 +108,11 @@ function normalizeClinicalResponse(
   if (numbing !== null && !isNumbingStatus(numbing)) {
     return { ok: false, error: "Pick a numbing option from the list." };
   }
+  // 0156: the optional numbing note is preserved ONLY when numbing was actually
+  // used; trimmed, blank/whitespace -> NULL (shared pure helper). Status 'none'
+  // or NULL/not-recorded stores NULL — a note without "used" is discarded, never
+  // used to infer that numbing was used, and no placeholder is ever fabricated.
+  const numbingNotes = normalizeNumbingNotes(numbing, input.numbingNotes);
   return {
     ok: true,
     columns: {
@@ -112,6 +122,7 @@ function normalizeClinicalResponse(
       caution_for_next_session: cautionFlag,
       caution_note: cautionNote,
       numbing_status: numbing,
+      numbing_notes: numbingNotes,
     },
   };
 }
@@ -894,6 +905,8 @@ export type CreateAreaWithEntryInput = {
   // confirmed for this treatment. Both optional; defaults are Not recorded /
   // not confirmed.
   numbingStatus?: string | null;
+  // 0156: optional free-text numbing note (kept only when status is 'used').
+  numbingNotes?: string | null;
   probeLotConfirmed?: boolean;
 };
 
@@ -1154,6 +1167,8 @@ export type UpdateAreaWithEntryInput = {
   // PR #279 (migration 0095): numbing record + probe-lot confirmation. The edit
   // form seeds these from the block row and always sends them back.
   numbingStatus?: string | null;
+  // 0156: optional free-text numbing note (kept only when status is 'used').
+  numbingNotes?: string | null;
   probeLotConfirmed?: boolean;
 };
 

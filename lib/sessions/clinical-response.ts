@@ -93,6 +93,37 @@ export function numbingStatusLabel(value: NumbingStatus): string {
   return NUMBING_LABELS[value];
 }
 
+// 0156: pure normalization for the optional numbing note (server contract).
+// The note is preserved ONLY when numbing was actually used; it is trimmed and a
+// blank/whitespace-only value becomes NULL. Any non-'used' status (including
+// 'none', not-recorded/NULL, or an invalid value) yields NULL — a note is never
+// stored without "used", never fabricated, and never used to infer the status.
+export function normalizeNumbingNotes(
+  status: unknown,
+  notes: string | null | undefined,
+): string | null {
+  if (status !== "used") return null;
+  return (notes ?? "").trim() || null;
+}
+
+// 0156: single shared presenter for the numbing line on every read surface
+// (treatment-area card, and any future session/last-visit/print surface) so the
+// status label + optional note can never drift between them. Returns null when
+// there is nothing to show (status not recorded). The note is shown ONLY when
+// the status is 'used' AND a non-empty note exists — never for 'none' or a
+// legacy/not-recorded row, and a note is never displayed without "used".
+export function numbingDisplay(
+  status: unknown,
+  notes: string | null | undefined,
+): { label: string; note: string | null } | null {
+  if (!isNumbingStatus(status)) return null;
+  const trimmed = (notes ?? "").trim();
+  return {
+    label: numbingStatusLabel(status),
+    note: status === "used" && trimmed !== "" ? trimmed : null,
+  };
+}
+
 // The three charting choices (NULL stored as the "Not recorded" default).
 export const NUMBING_OPTIONS: ReadonlyArray<{
   value: NumbingStatus | "";

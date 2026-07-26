@@ -112,6 +112,8 @@ const CRITICAL_COLUMNS = [
   // Migration 0155: durable inventory-backed probe-lot linkage.
   ["session_blocks", "probe_inventory_item_id"],
   ["record_keeping_sterile_items", "probe_key"],
+  // Migration 0156: conditional numbing notes.
+  ["session_blocks", "numbing_notes"],
   ["session_blocks", "tolerance_rating"],
   ["session_blocks", "reaction_type"],
   ["session_blocks", "reaction_notes"],
