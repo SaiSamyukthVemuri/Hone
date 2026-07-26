@@ -812,7 +812,7 @@ export function BlockSetupForm({
               <input
                 type="number"
                 inputMode="decimal"
-                step="0.01"
+                step="0.001"
                 min={0}
                 value={draft.thermolysisDurationSeconds}
                 onChange={(e) =>
@@ -914,7 +914,7 @@ export function BlockSetupForm({
             <input
               type="number"
               inputMode="decimal"
-              step="0.1"
+              step="0.01"
               min={0}
               value={draft.galvanicMa}
               onChange={(e) => update("galvanicMa", e.target.value)}

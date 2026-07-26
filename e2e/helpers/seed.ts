@@ -1104,7 +1104,7 @@ export async function getSavedBlockSetup(
   sessionId: string,
 ): Promise<Record<string, unknown> | null> {
   const blocks = await sql<Record<string, unknown>>(
-    `select id, primary_area, mode, energy_level, minutes_performed, machine_frequency,
+    `select id, primary_area, mode, apilus_modality, energy_level, minutes_performed, machine_frequency,
             probe_key, tolerance_rating, reaction_type, reaction_notes,
             caution_for_next_session, caution_note, numbing_status, numbing_notes,
             probe_lot_number, probe_lot_confirmed
@@ -1117,13 +1117,24 @@ export async function getSavedBlockSetup(
   const block = blocks[0];
   const entries = await sql<Record<string, unknown>>(
     `select thermolysis_intensity_percent, thermolysis_duration_seconds,
+            galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye,
             pulse_count, pulse_delay_seconds, hairs_treated, comments, observation_chips
        from public.electrolysis_entries
       where block_id = $1 and deleted_at is null
       order by created_at asc limit 1`,
     [block.id],
   );
-  return { ...block, entry: entries[0] ?? null };
+  // ALL live entries for the block (for Add-another-pass round-trip assertions).
+  const allEntries = await sql<Record<string, unknown>>(
+    `select thermolysis_intensity_percent, thermolysis_duration_seconds,
+            galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye,
+            pulse_count, pulse_delay_seconds
+       from public.electrolysis_entries
+      where block_id = $1 and deleted_at is null
+      order by created_at asc`,
+    [block.id],
+  );
+  return { ...block, entry: entries[0] ?? null, entries: allEntries };
 }
 
 // Seed a saved thermolysis settings block (+ its primary entry with mode-gated

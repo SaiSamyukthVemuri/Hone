@@ -22,7 +22,6 @@ import {
 } from "@/lib/sessions/clinical-response";
 import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
-import { CLIENT_RESPONSE_HEADING } from "@/lib/sessions/charting-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
@@ -370,17 +369,25 @@ function BlockSection({
             );
           })()}
 
-          {/* Charting unification: reactions now show as chips in the entries
-              above (one unified "Treatment observations & skin response"
-              concept). This block-level line carries tolerance, any legacy
-              per-area response note, and a legacy reaction_type ONLY when its
-              label is not already shown as a chip (so a migrated record never
-              double-shows the reaction). */}
+          {/* Charting unification: reactions are ONE unified findings concept —
+              new/migrated reactions render as chips in the entries above. There is
+              NO "Client / skin response" reaction section. This block level shows
+              only: (a) Client tolerance (its own concept), and (b) LEGACY, clearly
+              labeled, un-migrated data — a legacy reaction_type not yet captured as
+              a chip, and a legacy per-area response note — so old records stay
+              intact and truthful without recreating a second reaction group or
+              double-showing a migrated reaction. */}
+          {block.tolerance_rating != null && (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              <span className="text-neutral-500">Client tolerance: </span>
+              {toleranceLabel(block.tolerance_rating)}
+            </p>
+          )}
           {(() => {
             const chipReactionLabels = new Set(
-              block.electrolysis_entries.flatMap((e) =>
-                reactionLabelsFromChips(e.observation_chips),
-              ).map((l) => l.toLowerCase()),
+              block.electrolysis_entries
+                .flatMap((e) => reactionLabelsFromChips(e.observation_chips))
+                .map((l) => l.toLowerCase()),
             );
             const legacyReaction =
               isReactionType(block.reaction_type) &&
@@ -389,22 +396,14 @@ function BlockSection({
               )
                 ? reactionTypeLabel(block.reaction_type)
                 : null;
-            if (
-              block.tolerance_rating == null &&
-              !legacyReaction &&
-              !block.reaction_notes
-            ) {
-              return null;
-            }
+            if (!legacyReaction && !block.reaction_notes) return null;
             return (
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                <span className="text-neutral-500">{CLIENT_RESPONSE_HEADING}: </span>
+              <p className="text-sm text-neutral-500">
                 {[
-                  block.tolerance_rating != null
-                    ? `Tolerance: ${toleranceLabel(block.tolerance_rating)}`
+                  legacyReaction ? `Legacy skin response: ${legacyReaction}` : null,
+                  block.reaction_notes
+                    ? `Legacy response note: ${block.reaction_notes}`
                     : null,
-                  legacyReaction,
-                  block.reaction_notes,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

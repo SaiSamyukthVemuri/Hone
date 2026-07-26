@@ -103,11 +103,11 @@ describe("form input + parser accept fractional seconds", () => {
     "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
   );
 
-  it("thermolysis duration input uses step='0.01'", () => {
+  it("thermolysis duration input uses step='0.001' (PicoBlend precision, e.g. 0.733s)", () => {
     // Anchor on the surrounding context so we are scoring the
     // thermolysis input, not the galvanic / pulse-count inputs.
     expect(FORM).toMatch(
-      /Thermolysis duration \(s\)[\s\S]{0,800}?step="0\.01"/,
+      /Thermolysis duration \(s\)[\s\S]{0,800}?step="0\.001"/,
     );
   });
 

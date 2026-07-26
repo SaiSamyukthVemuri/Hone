@@ -94,9 +94,11 @@ export function ElectrolysisEntryRow({
   if (entry.galvanic_duration_seconds != null) {
     galvanicParts.push(`${entry.galvanic_duration_seconds}s`);
   }
-  if (entry.galvanic_intensity_percent != null) {
-    galvanicParts.push(`${entry.galvanic_intensity_percent}%`);
-  }
+  // Galvanic intensity % is a DEPRECATED reading (Chloe / PicoBlend): it is no
+  // longer shown as a current galvanic percentage in clinical display. Historical
+  // values remain in the DB and in the raw data export (see the rollout runbook's
+  // display policy); they are intentionally omitted from this practitioner-facing
+  // line so they can't be read as a current setting.
   if (entry.units_of_lye != null) galvanicParts.push(`${entry.units_of_lye} UL`);
 
   const isThermoish = entry.mode === "thermo" || entry.mode === "blend";

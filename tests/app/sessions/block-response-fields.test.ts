@@ -145,16 +145,19 @@ describe("block form: optional capture, round-trip on edit", () => {
 
 describe("blocks view: old null records render without clutter", () => {
   it("response lines are gated on recorded values", () => {
-    // Charting unification: the block-level response line now folds a legacy
-    // reaction_type into `legacyReaction` (shown only when its label is not already
-    // a chip), so the gate reads tolerance/legacyReaction/reaction_notes and
-    // returns null when none are recorded — old all-null records still render
-    // nothing (no clutter). Same three signals, just reaction via legacyReaction.
+    // Charting unification: tolerance is its OWN concept, gated on a recorded
+    // value (Client tolerance line), and the LEGACY-labeled line (un-migrated
+    // reaction_type not already a chip, and/or legacy reaction_notes) returns null
+    // when neither is present — old all-null records still render nothing.
+    expect(VIEW).toMatch(/\{block\.tolerance_rating != null && \(/);
+    expect(VIEW).toMatch(/Client tolerance: /);
     expect(VIEW).toMatch(
-      /if \(\s*\n?\s*block\.tolerance_rating == null &&\s*\n?\s*!legacyReaction &&\s*\n?\s*!block\.reaction_notes\s*\n?\s*\) \{\s*\n?\s*return null;/,
+      /if \(!legacyReaction && !block\.reaction_notes\) return null;/,
     );
-    // legacyReaction is derived from the recorded reaction_type value.
+    // legacyReaction is derived from the recorded reaction_type value and only
+    // shown when not already a chip (no double-show of a migrated reaction).
     expect(VIEW).toMatch(/isReactionType\(block\.reaction_type\)/);
+    expect(VIEW).toMatch(/Legacy skin response: /);
     // The caution line is unchanged: still gated on a recorded caution flag/note.
     expect(VIEW).toMatch(
       /\{\(block\.caution_for_next_session \|\| block\.caution_note\) && \(/,

@@ -18,8 +18,8 @@ import {
 } from "@/lib/observation-chips";
 import { SelectedObservations } from "@/components/selected-observations";
 import {
-  TREATMENT_OBSERVATIONS_HEADING,
-  TREATMENT_OBSERVATIONS_HELPER,
+  OBSERVATIONS_RESPONSE_HEADING,
+  OBSERVATIONS_RESPONSE_HELPER,
   ADDITIONAL_NOTES_HEADING,
   ADDITIONAL_NOTES_HELPER,
 } from "@/lib/sessions/charting-labels";
@@ -229,8 +229,8 @@ export function SimplifiedEntryForm({
               <span className="text-sm font-medium">Thermolysis duration (s)</span>
               <input
                 type="number"
-                inputMode="numeric"
-                step="1"
+                inputMode="decimal"
+                step="0.001"
                 min={0}
                 value={draft.thermolysisDurationSeconds}
                 onChange={(e) =>
@@ -239,6 +239,65 @@ export function SimplifiedEntryForm({
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
+          </div>
+          {/* Pulse count is a THERMOLYSIS concept (Chloe): inside the thermolysis
+              section, labeled "Thermolysis pulse count". Shown for thermolysis +
+              blend; pure galvanic has none. */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Thermolysis pulse count</span>
+            <div className="flex items-stretch gap-2">
+              <button
+                type="button"
+                onClick={() => bumpPulse(-1)}
+                aria-label="Decrease thermolysis pulse count"
+                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={PULSE_COUNT_MIN}
+                max={PULSE_COUNT_MAX}
+                value={draft.pulse_count}
+                onChange={(e) => update("pulse_count", e.target.value)}
+                className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+              <button
+                type="button"
+                onClick={() => bumpPulse(1)}
+                aria-label="Increase thermolysis pulse count"
+                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                +
+              </button>
+              <span className="self-center text-xs text-neutral-500">
+                Pulses per hair (1 to {PULSE_COUNT_MAX}).
+              </span>
+            </div>
+            {Number(draft.pulse_count) > 1 && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Pulse delay</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min={PULSE_DELAY_MIN}
+                    max={PULSE_DELAY_MAX}
+                    value={draft.pulse_delay}
+                    onChange={(e) => update("pulse_delay", e.target.value)}
+                    aria-label="Pulse delay in seconds"
+                    className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                  />
+                  <span className="text-sm text-neutral-500">seconds</span>
+                </div>
+                <span className="text-xs text-neutral-500">
+                  Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
+                  {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -256,7 +315,7 @@ export function SimplifiedEntryForm({
               <input
                 type="number"
                 inputMode="decimal"
-                step="0.1"
+                step="0.01"
                 min={0}
                 value={draft.galvanicMa}
                 onChange={(e) => update("galvanicMa", e.target.value)}
@@ -296,65 +355,6 @@ export function SimplifiedEntryForm({
         </div>
       )}
 
-      {block.mode !== "galv" && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Pulse count</span>
-          <div className="flex items-stretch gap-2">
-            <button
-              type="button"
-              onClick={() => bumpPulse(-1)}
-              aria-label="Decrease pulse count"
-              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              −
-            </button>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={PULSE_COUNT_MIN}
-              max={PULSE_COUNT_MAX}
-              value={draft.pulse_count}
-              onChange={(e) => update("pulse_count", e.target.value)}
-              className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-            <button
-              type="button"
-              onClick={() => bumpPulse(1)}
-              aria-label="Increase pulse count"
-              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              +
-            </button>
-            <span className="self-center text-xs text-neutral-500">
-              Pulses per hair (1 to {PULSE_COUNT_MAX}).
-            </span>
-          </div>
-          {Number(draft.pulse_count) > 1 && (
-            <div className="mt-2 flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Pulse delay</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  min={PULSE_DELAY_MIN}
-                  max={PULSE_DELAY_MAX}
-                  value={draft.pulse_delay}
-                  onChange={(e) => update("pulse_delay", e.target.value)}
-                  aria-label="Pulse delay in seconds"
-                  className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-                />
-                <span className="text-sm text-neutral-500">seconds</span>
-              </div>
-              <span className="text-xs text-neutral-500">
-                Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
-                {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
       <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
         <span className="text-sm font-medium">Hairs treated</span>
         <input
@@ -389,10 +389,10 @@ export function SimplifiedEntryForm({
         )}
         <div>
           <span className="text-sm font-medium">
-            {TREATMENT_OBSERVATIONS_HEADING}
+            {OBSERVATIONS_RESPONSE_HEADING}
           </span>
           <p className="text-xs text-neutral-500">
-            {TREATMENT_OBSERVATIONS_HELPER}
+            {OBSERVATIONS_RESPONSE_HELPER}
           </p>
         </div>
         {/* Chip-loading fix: observation chips are STRUCTURED multi-select
@@ -428,12 +428,12 @@ export function SimplifiedEntryForm({
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium">{ADDITIONAL_NOTES_HEADING}</span>
           <textarea
-            rows={5}
+            rows={8}
             value={draft.comments}
             onChange={(e) => update("comments", e.target.value)}
             data-testid="additional-notes"
-            placeholder="Add any details not covered by the observations above"
-            className="w-full min-h-[7rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            placeholder="Add any details not covered by the findings above"
+            className="w-full min-h-[12rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
           <span className="text-xs text-neutral-500">
             {ADDITIONAL_NOTES_HELPER}

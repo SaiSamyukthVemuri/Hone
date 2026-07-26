@@ -108,12 +108,11 @@ describe("B. one unified observations & skin response box (charting unification)
 });
 
 describe("C. larger, resizable Additional notes (multiline, no restrictive cap, no overflow)", () => {
-  // Charting correction enlarged the BlockSetupForm notes to rows=8 / min-h-12rem;
-  // the SimplifiedEntryForm keeps the earlier rows=5 / min-h-7rem. Both remain a
-  // large, resizable, full-width, uncapped multiline box.
+  // Charting correction enlarged BOTH active forms' notes to rows=8 / min-h-12rem
+  // (large, resizable, full-width, uncapped multiline).
   for (const [name, src, rows, minH] of [
     ["BlockSetupForm", FORM, 8, "12rem"],
-    ["SimplifiedEntryForm", SIMPLE, 5, "7rem"],
+    ["SimplifiedEntryForm", SIMPLE, 8, "12rem"],
   ] as const) {
     it(`(#9/#10) ${name} Additional notes is taller (rows=${rows}/min-h-[${minH}]), vertically resizable, full-width, uncapped`, () => {
       // Order-independent: inspect a window around the notes textarea.
@@ -142,14 +141,18 @@ describe("D. consistency + single-source terminology (BlockSetupForm ≡ Simplif
       expect(src).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
       expect(src).toMatch(/\{ADDITIONAL_NOTES_HEADING\}/);
     }
-    // Charting unification: BlockSetupForm uses the merged
-    // "Treatment observations & skin response" heading; SimplifiedEntryForm keeps
-    // the observations heading — both from the shared module.
+    // Charting unification: BOTH active forms use the SAME merged
+    // "Treatment observations & skin response" heading from the shared module.
     expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
-    expect(SIMPLE).toMatch(/\{TREATMENT_OBSERVATIONS_HEADING\}/);
-    // The saved-record display uses the same response terminology from the module.
-    expect(VIEW).toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
-    expect(VIEW).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
+    expect(SIMPLE).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
+    expect(FORM).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
+    expect(SIMPLE).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
+    // The saved-record display no longer presents the old split "Client / skin
+    // response" reaction section; it shows tolerance as its own concept and any
+    // legacy reaction/note clearly labeled as legacy.
+    expect(VIEW).not.toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
+    expect(VIEW).toMatch(/Client tolerance:/);
+    expect(VIEW).toMatch(/Legacy skin response:/);
   });
 
   it("the shared module keeps observations multi-select vs response single-select factual", () => {

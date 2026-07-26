@@ -26,6 +26,27 @@
   preserved. The block form still hydrates + round-trips the stored value on
   edit, so editing a legacy galvanic entry never wipes it. New/edited records set
   no active value (the input is gone). The simplified entry form is create-only.
+  **Display policy (Policy A — omit from clinical display, keep in raw data):**
+  the deprecated reading is NO LONGER shown as a current galvanic `%` in any
+  practitioner-facing clinical surface (removed from the entry-row Galvanic line;
+  it was not shown in clinical summaries, previews, or print). It **remains in the
+  raw data export** (`settings/data` CSV keeps the `galvanic_intensity_percent`
+  column) for record integrity/history. No backfill, no null-out, no dropped
+  column. (Rationale: it is no longer a current concept; showing an unlabeled
+  historical `%` beside current readings would read as a live setting.)
+
+## Saved-record unified presentation
+
+The saved-record view presents reactions as ONE unified findings concept:
+- New/migrated reactions render as **chips** in the entries (alongside observation
+  chips) — no separate reaction section.
+- **Client tolerance** stays its own clearly-labeled line.
+- Un-migrated legacy data is shown **explicitly labeled as legacy**: a legacy
+  `reaction_type` not yet captured as a chip renders as `Legacy skin response: X`
+  (deduped — never shown when the same reaction is already a chip, so a migrated
+  record never double-shows), and a legacy `reaction_notes` renders as
+  `Legacy response note: …`. The old split "Client / skin response" reaction
+  section is gone. Existing history stays intact.
 - **Legacy free-text `comments`**: a comment token equal to a reaction word is
   **not** promoted to a coded reaction chip (no string-guessing); it stays as
   free-text, exactly as before.
