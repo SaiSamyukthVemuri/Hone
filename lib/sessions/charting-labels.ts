@@ -15,6 +15,14 @@ export const CLIENT_RESPONSE_HEADING = "Client / skin response";
 export const CLIENT_RESPONSE_HELPER =
   "How the client's skin reacted during or right after treatment. Choose one.";
 
+// Charting UNIFICATION (Chloe): the two groups above are merged into ONE
+// multi-select box. observation_chips is the canonical multi-select store; a
+// legacy reaction_type is folded into it. This is the heading/helper for that box.
+export const OBSERVATIONS_RESPONSE_HEADING =
+  "Treatment observations & skin response";
+export const OBSERVATIONS_RESPONSE_HELPER =
+  "What you saw and how the skin responded — follicle, skin, hair, and reaction. Tap all that apply.";
+
 export const ADDITIONAL_NOTES_HEADING = "Additional notes";
 export const ADDITIONAL_NOTES_HELPER =
   "Anything the observations above don't cover. Multiple lines are fine.";

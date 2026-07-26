@@ -1,9 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import {
-  isReactionType,
-  reactionTypeLabel,
-  type ReactionType,
-} from "@/lib/sessions/clinical-response";
+import { type ReactionType } from "@/lib/sessions/clinical-response";
+import { notableReactionLabel } from "@/lib/sessions/reaction-unified";
 
 // PR #214: "Clients needing attention" for the Dashboard's Action
 // needed section. Recorded-history surfacing, never medical advice:
@@ -51,6 +48,11 @@ export type AttentionBlockInput = {
   caution_note: string | null;
   reaction_type: string | null;
   tolerance_rating: number | null;
+  // Charting unification: reactions may live as chips in the block's live
+  // entries' observation_chips (canonical going forward) as well as the legacy
+  // reaction_type. Carry ALL live entries' observation_chips so the notable-
+  // reaction rule reads the unified representation. Empty for legacy-only rows.
+  observation_chips_list?: ReadonlyArray<unknown>;
 };
 
 export type ClientNeedingAttention = {
@@ -120,13 +122,14 @@ export function buildClientsNeedingAttention(
     if (!acc.latestChartedSeen && sessionBlocks.length > 0) {
       acc.latestChartedSeen = true;
       for (const b of sessionBlocks) {
-        if (
-          !acc.notableReactionLabel &&
-          b.reaction_type &&
-          isReactionType(b.reaction_type) &&
-          (NOTABLE_REACTIONS as readonly string[]).includes(b.reaction_type)
-        ) {
-          acc.notableReactionLabel = reactionTypeLabel(b.reaction_type);
+        if (!acc.notableReactionLabel) {
+          // Unified: notable reaction from legacy reaction_type OR reaction chips
+          // in the block's live entries' observation_chips.
+          const label = notableReactionLabel(
+            b.reaction_type,
+            b.observation_chips_list ?? [],
+          );
+          if (label) acc.notableReactionLabel = label;
         }
         if (acc.latestToleranceRating == null && b.tolerance_rating != null) {
           acc.latestToleranceRating = b.tolerance_rating;
@@ -230,8 +233,11 @@ export async function getClientsNeedingAttention(
     sessions.length > 0
       ? await supabase
           .from("session_blocks")
+          // Set-based, studio-scoped, one query: block fields + the block's live
+          // entries' observation_chips embedded (PostgREST join, NOT N+1) so the
+          // unified notable-reaction rule can read reaction chips too.
           .select(
-            "session_id, caution_for_next_session, caution_note, reaction_type, tolerance_rating",
+            "session_id, caution_for_next_session, caution_note, reaction_type, tolerance_rating, electrolysis_entries(observation_chips, deleted_at)",
           )
           .eq("studio_id", studioId)
           .in(
@@ -239,11 +245,31 @@ export async function getClientsNeedingAttention(
             sessions.map((s) => s.id),
           )
           .is("deleted_at", null)
-      : { data: [] as AttentionBlockInput[] };
+      : { data: [] };
 
-  return buildClientsNeedingAttention(
-    sessions,
-    (blockRows ?? []) as AttentionBlockInput[],
-    { limit: 5, scanCapped: (sessionRows ?? []).length >= SCAN_CAP },
-  );
+  type RawBlock = {
+    session_id: string;
+    caution_for_next_session: boolean;
+    caution_note: string | null;
+    reaction_type: string | null;
+    tolerance_rating: number | null;
+    electrolysis_entries?:
+      | ReadonlyArray<{ observation_chips: unknown; deleted_at: string | null }>
+      | null;
+  };
+  const blocks: AttentionBlockInput[] = ((blockRows ?? []) as RawBlock[]).map((b) => ({
+    session_id: b.session_id,
+    caution_for_next_session: b.caution_for_next_session,
+    caution_note: b.caution_note,
+    reaction_type: b.reaction_type,
+    tolerance_rating: b.tolerance_rating,
+    observation_chips_list: (b.electrolysis_entries ?? [])
+      .filter((e) => e.deleted_at == null)
+      .map((e) => e.observation_chips),
+  }));
+
+  return buildClientsNeedingAttention(sessions, blocks, {
+    limit: 5,
+    scanCapped: (sessionRows ?? []).length >= SCAN_CAP,
+  });
 }

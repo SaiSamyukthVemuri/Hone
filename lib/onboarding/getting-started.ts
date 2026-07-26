@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getActiveServices } from "@/lib/booking/queries";
+import { hasAnyReaction } from "@/lib/sessions/reaction-unified";
 
 // PR #215: Getting Started / onboarding checklist. A practical setup
 // and readiness checklist (not a product tour): auto-detected status
@@ -379,8 +380,11 @@ export async function getGettingStartedSignals(
       .eq("stripe_livemode", inferStripeLivemode()),
     supabase
       .from("session_blocks")
+      // Charting unification: reactions may live as chips in the block's live
+      // entries' observation_chips; embed them so the completeness check reads
+      // the unified representation.
       .select(
-        "machine_frequency, probe_label, probe_key, probe_lot_number, reaction_type, tolerance_rating",
+        "machine_frequency, probe_label, probe_key, probe_lot_number, reaction_type, tolerance_rating, electrolysis_entries(observation_chips, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
@@ -401,6 +405,9 @@ export async function getGettingStartedSignals(
     probe_lot_number: string | null;
     reaction_type: string | null;
     tolerance_rating: number | null;
+    electrolysis_entries?:
+      | Array<{ observation_chips: unknown; deleted_at: string | null }>
+      | null;
   }>;
   const notes = (noteRows ?? []) as Array<{
     next_session_note: string | null;
@@ -419,7 +426,13 @@ export async function getGettingStartedSignals(
     hasProbe: blocks.some((b) => !!b.probe_label || !!b.probe_key),
     hasProbeLot: blocks.some((b) => !!b.probe_lot_number?.trim()),
     hasReactionOrTolerance: blocks.some(
-      (b) => !!b.reaction_type || b.tolerance_rating != null,
+      (b) =>
+        hasAnyReaction(
+          b.reaction_type,
+          (b.electrolysis_entries ?? [])
+            .filter((e) => e.deleted_at == null)
+            .map((e) => e.observation_chips),
+        ) || b.tolerance_rating != null,
     ),
     hasNextVisitNote: notes.some((n) => !!n.next_session_note?.trim()),
     sterileItems: sterile.count ?? 0,

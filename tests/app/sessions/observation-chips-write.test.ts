@@ -31,7 +31,7 @@ describe("addElectrolysisEntryAction persists + verifies structured chips", () =
 describe("SimplifiedEntryForm uses STRUCTURED chips, not legacy append-to-comments", () => {
   const src = read("app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form.tsx");
   it("toggles structured chips (selectable + deselectable) instead of appendComment", () => {
-    expect(src).toMatch(/toggleChip\(draft\.observationChips/);
+    expect(src).toMatch(/toggleFindingChip\(draft\.observationChips/);
     expect(src).toMatch(/isChipSelected\(draft\.observationChips/);
     expect(src).toMatch(/aria-pressed=\{selected\}/);
     expect(src).not.toMatch(/appendComment/); // legacy behavior removed
@@ -52,14 +52,16 @@ describe("SimplifiedEntryForm uses STRUCTURED chips, not legacy append-to-commen
 
 describe("block-setup-form preloads legacy chips as SELECTED controls (Chloe's edit surface)", () => {
   const src = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
-  it("seeds observationChips via the shared resolveDisplayChips contract (structured OR legacy-from-comments)", () => {
+  it("seeds observationChips via the shared resolveDisplayChips contract (structured OR legacy-from-comments), folding a legacy reaction in", () => {
     expect(src).toMatch(/resolveDisplayChips\(firstEntry\?\.observation_chips, firstEntry\?\.comments\)/);
-    expect(src).toMatch(/observationChips: hydrated\.chips/);
+    // Charting unification: the seed folds a legacy reaction_type into the chips
+    // (shown as selected), still non-destructively.
+    expect(src).toMatch(/observationChips: mergeReactionIntoChips\(hydrated\.chips, block\.reaction_type\)/);
     expect(src).toMatch(/comments: hydrated\.freeText/);
   });
   it("renders each chip as a toggle that reflects selection (aria-pressed) + persists on save", () => {
     expect(src).toMatch(/isChipSelected\(draft\.observationChips/);
-    expect(src).toMatch(/toggleChip\(draft\.observationChips/);
+    expect(src).toMatch(/toggleFindingChip\(draft\.observationChips/);
     expect(src).toMatch(/aria-pressed=\{selected\}/);
     // The block save action already persists observation_chips (updateTreatmentAreaWithEntryAction).
     expect(src).toMatch(/observationChips: draft\.observationChips/);

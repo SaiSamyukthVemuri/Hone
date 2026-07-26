@@ -336,7 +336,7 @@ export default async function ClientCheatSheetPage({
     const { data: recentBlocks } = await supabaseForSummary
       .from("session_blocks")
       .select(
-        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -348,14 +348,27 @@ export default async function ClientCheatSheetPage({
     // Migration 0128: attach structured areas so the Last treatment / Watch-plan
     // summaries render EVERY treated area + laterality, not just primary_area.
     const summaryBlockRows = (recentBlocks ?? []) as Array<
-      ClinicalSummaryBlock & { id: string; session_id: string }
+      ClinicalSummaryBlock & {
+        id: string;
+        session_id: string;
+        electrolysis_entries?:
+          | Array<{ observation_chips: unknown; deleted_at: string | null }>
+          | null;
+      }
     >;
     await attachStructuredAreas(summaryBlockRows, studio.id);
     const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
     for (const block of summaryBlockRows) {
       const sessionId = block.session_id;
       const list = blocksBySession.get(sessionId) ?? [];
-      list.push(block);
+      // Charting unification: carry live entries' observation_chips so the
+      // reaction line reads the unified representation.
+      list.push({
+        ...block,
+        observation_chips_list: (block.electrolysis_entries ?? [])
+          .filter((e) => e.deleted_at == null)
+          .map((e) => e.observation_chips),
+      });
       blocksBySession.set(sessionId, list);
     }
     lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
@@ -417,7 +430,7 @@ export default async function ClientCheatSheetPage({
     const { data: intelBlocks } = await supabaseForIntel
       .from("session_blocks")
       .select(
-        "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, deleted_at)",
+        "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .in(
@@ -429,10 +442,14 @@ export default async function ClientCheatSheetPage({
     // credits EVERY treated area (a Cheeks + Sideburns block appears under both),
     // not only the legacy primary_area.
     const intelBlockRows = (intelBlocks ?? []) as Array<
-      Omit<IntelligenceBlockInput, "entry_hairs"> & {
+      Omit<IntelligenceBlockInput, "entry_hairs" | "observation_chips_list"> & {
         id: string;
         electrolysis_entries:
-          | Array<{ hairs_treated: number | null; deleted_at: string | null }>
+          | Array<{
+              hairs_treated: number | null;
+              observation_chips: unknown;
+              deleted_at: string | null;
+            }>
           | null;
       }
     >;
@@ -445,6 +462,11 @@ export default async function ClientCheatSheetPage({
         entry_hairs: (b.electrolysis_entries ?? [])
           .filter((e) => !e.deleted_at)
           .map((e) => e.hairs_treated),
+        // Charting unification: the block's live entries' observation_chips feed
+        // the unified reaction summaries.
+        observation_chips_list: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.observation_chips),
       })),
     });
   }

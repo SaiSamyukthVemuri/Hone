@@ -113,11 +113,18 @@ describe("block form: optional capture, round-trip on edit", () => {
     expect(responseSection).not.toMatch(/required/);
   });
 
-  it("reaction chips are built from the shared REACTION_TYPES vocabulary", () => {
-    expect(FORM).toMatch(/REACTION_TYPES\.map\(\(r\) => \(/);
-    expect(FORM).toMatch(
-      /from "@\/lib\/sessions\/clinical-response"/,
-    );
+  it("reaction labels are folded into the merged observation-chip vocabulary from the shared modules", () => {
+    // Charting unification: reactions are no longer a separate REACTION_TYPES.map
+    // single-select row. The unified box renders MERGED_OBSERVATION_CHIPS, which
+    // is the observation presets PLUS the shared reaction labels.
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    expect(FORM).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(FORM).toMatch(/from "@\/lib\/observation-chips"/);
+    // A legacy reaction_type is still preserved via the shared clinical-response
+    // vocabulary (isReactionType / reactionTypeLabel), imported from that module.
+    expect(FORM).toMatch(/from "@\/lib\/sessions\/clinical-response"/);
+    expect(FORM).toMatch(/isReactionType\(draft\.reactionType\)/);
+    expect(FORM).toMatch(/reactionTypeLabel\(draft\.reactionType as ReactionType\)/);
   });
 
   it("edit mode initializes the draft from the stored block (round-trip)", () => {
@@ -138,9 +145,20 @@ describe("block form: optional capture, round-trip on edit", () => {
 
 describe("blocks view: old null records render without clutter", () => {
   it("response lines are gated on recorded values", () => {
+    // Charting unification: tolerance is its OWN concept, gated on a recorded
+    // value (Client tolerance line), and the LEGACY-labeled line (un-migrated
+    // reaction_type not already a chip, and/or legacy reaction_notes) returns null
+    // when neither is present — old all-null records still render nothing.
+    expect(VIEW).toMatch(/\{block\.tolerance_rating != null && \(/);
+    expect(VIEW).toMatch(/Client tolerance: /);
     expect(VIEW).toMatch(
-      /\{\(block\.tolerance_rating != null \|\|\s*\n?\s*block\.reaction_type \|\|\s*\n?\s*block\.reaction_notes\) && \(/,
+      /if \(!legacyReaction && !block\.reaction_notes\) return null;/,
     );
+    // legacyReaction is derived from the recorded reaction_type value and only
+    // shown when not already a chip (no double-show of a migrated reaction).
+    expect(VIEW).toMatch(/isReactionType\(block\.reaction_type\)/);
+    expect(VIEW).toMatch(/Legacy skin response: /);
+    // The caution line is unchanged: still gated on a recorded caution flag/note.
     expect(VIEW).toMatch(
       /\{\(block\.caution_for_next_session \|\| block\.caution_note\) && \(/,
     );

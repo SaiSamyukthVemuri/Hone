@@ -33,29 +33,37 @@ describe("2. Last Session carries cautions + next-visit context", () => {
 });
 
 describe("3. charting order + chips", () => {
-  it("order: readings ... Client tolerance -> Treatment observations (PR #199: area-level For next visit is gone)", () => {
+  it("order: readings ... Client tolerance -> Treatment observations & skin response (PR #199: area-level For next visit is gone)", () => {
     const tol = FORM.indexOf(">Client tolerance<");
-    // Charting polish: the heading is rendered from a shared constant now.
-    const obs = FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}");
+    // Charting unification: the two former groups are ONE merged box, whose
+    // heading is rendered from a shared constant.
+    const obs = FORM.indexOf("{OBSERVATIONS_RESPONSE_HEADING}");
     expect(tol).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(tol);
     // PR #199: the per-area "For next visit" section was consolidated
     // into the single session-level note.
     expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });
-  it("no reaction <select> remains; reactions are single-select chips in the Client/skin response group", () => {
+  it("no reaction <select> remains; reactions are merged chips in the unified observations & skin response box", () => {
+    // No single-select reaction dropdown anywhere.
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);
-    // Charting polish: reaction chips now live in their OWN headed group,
-    // distinct from the multi-select observations above.
-    const responseBlock = FORM.slice(FORM.indexOf("{CLIENT_RESPONSE_HEADING}"));
-    expect(responseBlock).toMatch(/REACTION_TYPES\.map/);
-    expect(responseBlock).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
-    // The observations group above does NOT contain the reaction chips.
-    const obsGroup = FORM.slice(
-      FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}"),
-      FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
+    // Charting unification: the former separate "Client / skin response" group is
+    // gone. There is ONE merged box, titled via the unified heading, rendering
+    // MERGED_OBSERVATION_CHIPS (observation presets + reaction labels) as
+    // multi-select toggles on observationChips.
+    expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
+    expect(FORM).not.toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
+    const box = FORM.slice(FORM.indexOf("{OBSERVATIONS_RESPONSE_HEADING}"));
+    expect(box).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(box).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
+    expect(box).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
+    // The reaction is no longer a separate single-select row.
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    // A legacy reaction_type is preserved on save ONLY while its label chip stays
+    // selected (never invented from chips), never a separate single-select field.
+    expect(FORM).toMatch(
+      /isChipSelected\([\s\S]{0,60}reactionTypeLabel\(draft\.reactionType as ReactionType\)/,
     );
-    expect(obsGroup).not.toMatch(/REACTION_TYPES\.map/);
   });
   it("legacy reaction notes stay visible; tolerance rating remains", () => {
     expect(FORM).toMatch(/\{draft\.reactionNotes\.trim\(\) !== "" && \(/);

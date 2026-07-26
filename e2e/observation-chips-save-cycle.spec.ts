@@ -93,8 +93,10 @@ test("block-setup-form EDIT: legacy chips preload SELECTED; add + remove persist
       await expect(chip(page, c)).toHaveAttribute("aria-pressed", "true", { timeout: T });
     }
     // The non-chip token stays in the free-text note (not double-shown as a chip).
+    // Charting unification renamed the notes placeholder ("observations" ->
+    // "findings") since the chip box now merges observations + reactions.
     await expect(
-      page.getByPlaceholder("Add any details not covered by the observations above"),
+      page.getByPlaceholder("Add any details not covered by the findings above"),
     ).toHaveValue(/tender near jaw/);
     // Chip confidence: the "Selected observations" summary lists the selected
     // observations (the paired canonical label for the legacy edema value).

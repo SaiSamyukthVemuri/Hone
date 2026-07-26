@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
   type BlockArea,
@@ -108,7 +109,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     supabase
       .from("session_blocks")
       .select(
-        "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label",
+        "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type",
       )
       .eq("studio_id", studio.id),
     // Appointments (read-only). Studio-scoped. cancellation_token and the
@@ -320,6 +321,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     probe_size_value: string | null;
     probe_length: string | null;
     probe_label: string | null;
+    reaction_type: string | null;
   };
   const blocksById = new Map<string, BlockExportRow>();
   for (const b of (blocksRes.data ?? []) as BlockExportRow[]) {
@@ -363,11 +365,14 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     return {
       ...e,
       areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
-      // Migration 0108: flatten structured observation chips to a
-      // semicolon-separated string (CSV's own delimiter is a comma).
-      observation_chips: Array.isArray(e.observation_chips)
-        ? (e.observation_chips as string[]).join("; ")
-        : "",
+      // Migration 0108 + charting unification: flatten the UNIFIED findings —
+      // observation chips PLUS a folded legacy reaction_type from the entry's
+      // block — to a semicolon-separated string (CSV's own delimiter is a comma),
+      // so the export presents the reaction as one concept.
+      observation_chips: mergeReactionIntoChips(
+        e.observation_chips,
+        b?.reaction_type ?? null,
+      ).join("; "),
       block_primary_area: b?.primary_area ?? null,
       block_side: b?.side ?? null,
       // Migration 0128: the full ordered multi-area label ("Left cheek; Right

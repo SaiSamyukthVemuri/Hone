@@ -35,6 +35,41 @@ export function reactionTypeLabel(value: ReactionType): string {
   return REACTION_LABELS[value];
 }
 
+// Charting unification (Chloe): "Client / skin response" is merged into the ONE
+// "Treatment observations & skin response" multi-select box. The reaction values
+// become canonical observation chips (stored in observation_chips going forward),
+// so these are their display labels in chip order, and the reverse map lets us
+// read a legacy reaction_type back as its chip label + recognize a chip as a
+// reaction. The DB reaction_type column + its data are preserved; new charting
+// simply represents the reaction as a chip in observation_chips.
+export const REACTION_CHIP_LABELS: ReadonlyArray<string> = REACTION_TYPES.map(
+  (t) => REACTION_LABELS[t],
+);
+
+const LABEL_TO_REACTION = new Map<string, ReactionType>(
+  REACTION_TYPES.map((t) => [REACTION_LABELS[t].toLowerCase(), t]),
+);
+
+// True iff a chip label is one of the merged reaction labels.
+export function isReactionChipLabel(label: string): boolean {
+  return LABEL_TO_REACTION.has(label.trim().toLowerCase());
+}
+
+// Map a reaction chip label back to its enum value (for legacy interop), or null.
+export function reactionTypeForLabel(label: string): ReactionType | null {
+  return LABEL_TO_REACTION.get(label.trim().toLowerCase()) ?? null;
+}
+
+// The clinically NOTABLE reactions, as chip LABELS (mirrors the enum set used by
+// the "Clients needing attention" dashboard). "none"/"mild_redness"/"other" are
+// intentionally not notable.
+export const NOTABLE_REACTION_LABELS: ReadonlyArray<string> = [
+  "moderate_redness",
+  "swelling",
+  "sensitivity",
+  "irritation",
+].map((t) => REACTION_LABELS[t as ReactionType]);
+
 export const TOLERANCE_MIN = 1;
 export const TOLERANCE_MAX = 5;
 

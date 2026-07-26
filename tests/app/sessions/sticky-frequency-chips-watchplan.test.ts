@@ -111,35 +111,42 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
 // 2. Reaction chips get plus signs
 // ---------------------------------------------------------------------------
 
-describe("reaction/response chips match the observation chips", () => {
-  // Charting polish: observations (multi-select) and the client/skin response
-  // (single-select) are now two separate headed groups. Anchor each region on
-  // its shared-constant heading.
-  const obsRegion = FORM.slice(
-    FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}"),
-    FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
-  );
-  const responseRegion = FORM.slice(
-    FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
+describe("merged observation & reaction chips render consistently", () => {
+  // Charting unification: observations and the client/skin response are now ONE
+  // merged multi-select box. Reaction labels are part of MERGED_OBSERVATION_CHIPS,
+  // so they render exactly like observation chips. Anchor on the unified box.
+  const box = FORM.slice(
+    FORM.indexOf("{OBSERVATIONS_RESPONSE_HEADING}"),
     FORM.indexOf("save-treatment-area"),
   );
 
-  it("reaction chips render with a leading +", () => {
-    expect(responseRegion).toMatch(/\+ \{reactionTypeLabel\(r\)\}/);
-    // PR #279: observation chips are toggles now — unselected still shows a
-    // leading + (the template `+ ${c}`), selected shows the bare label.
-    expect(obsRegion).toMatch(/\+ \$\{c\}/);
+  it("every merged chip (including reaction labels) renders with a leading + when unselected", () => {
+    // Unselected chips show `+ ${c}`; selected show the bare label. This applies to
+    // the whole merged vocabulary (observation presets + reaction labels).
+    expect(box).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(box).toMatch(/selected \? c : `\+ \$\{c\}`/);
+    // The old separate single-select reaction row (`+ {reactionTypeLabel(r)}`) is gone.
+    expect(FORM).not.toMatch(/\+ \{reactionTypeLabel\(r\)\}/);
   });
 
-  it("no plain non-plus reaction label remains in the chip list", () => {
-    expect(responseRegion).not.toMatch(/>\s*\{reactionTypeLabel\(r\)\}/);
+  it("no bare reaction chip renders outside the unified multi-select box", () => {
+    // No standalone REACTION_TYPES chip row remains.
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    expect(FORM).not.toMatch(/reactionTypeLabel\(r\)/);
   });
 
-  it("selection behavior is unchanged: single-select toggle on reaction_type", () => {
-    expect(responseRegion).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
-    expect(responseRegion).toMatch(
+  it("selection is a MULTI-select toggle on observationChips (reaction folded in), not single-select on reaction_type", () => {
+    // Reactions toggle exactly like observation chips, via observationChips.
+    expect(box).toMatch(/aria-pressed=\{selected\}/);
+    expect(box).toMatch(
+      /update\("observationChips", toggleFindingChip\(draft\.observationChips, c\)\)/,
+    );
+    // The old single-select reaction toggle is gone.
+    expect(FORM).not.toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
+    expect(FORM).not.toMatch(
       /update\("reactionType", draft\.reactionType === r \? "" : r\)/,
     );
+    // No reaction <select> dropdown either.
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);
   });
 });

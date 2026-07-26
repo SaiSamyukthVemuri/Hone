@@ -33,12 +33,16 @@ export type SessionMode = "thermo" | "galv" | "blend";
 // row (mode-gated). Named here so the form draft stays in lockstep with this
 // module, and so the future whole-session draft workflow can reuse the same
 // field set. (No copy RPC exists yet; this is not a live RPC allowlist.)
+// NOTE: galvanic_intensity_percent is DELIBERATELY absent. It is a retired
+// active input (Chloe / PicoBlend): new entries never store it and no current
+// form edits it, so it is not reusable setup and must never be copied into a new
+// draft. Historical stored values are preserved untouched server-side; they are
+// simply not part of the reusable-setup contract.
 export const ENTRY_SETUP_FIELDS = [
   "thermolysis_intensity_percent",
   "thermolysis_duration_seconds",
   "galvanic_ma",
   "galvanic_duration_seconds",
-  "galvanic_intensity_percent",
   "units_of_lye",
   "pulse_count",
   "pulse_delay_seconds",
@@ -71,6 +75,9 @@ export type SetupSourceBlock = {
   probe_key: string | null;
 };
 
+// galvanic_intensity_percent is intentionally NOT part of the source contract:
+// it is never read for a copy (retired input). A richer DB row that still
+// carries the column satisfies this shape structurally.
 export type SetupSourceEntry = {
   created_at: string;
   deleted_at: string | null;
@@ -79,7 +86,6 @@ export type SetupSourceEntry = {
   thermolysis_duration_seconds: number | null;
   galvanic_ma: number | null;
   galvanic_duration_seconds: number | null;
-  galvanic_intensity_percent: number | null;
   units_of_lye: number | null;
   pulse_count: number | null;
   pulse_delay_seconds: number | null;
@@ -99,7 +105,8 @@ export type TreatmentSetupDraftPatch = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  galvanicIntensityPercent: string;
+  // galvanicIntensityPercent is intentionally absent — a retired input is never
+  // copied into a new draft (see ENTRY_SETUP_FIELDS).
   unitsOfLye: string;
   pulseCount: string;
   pulseDelay: string;
@@ -157,7 +164,8 @@ export function buildTreatmentSetupDraftPatch(
       : "",
     galvanicMa: wantGalv ? s(firstEntry?.galvanic_ma) : "",
     galvanicDurationSeconds: wantGalv ? s(firstEntry?.galvanic_duration_seconds) : "",
-    galvanicIntensityPercent: wantGalv ? s(firstEntry?.galvanic_intensity_percent) : "",
+    // galvanic_intensity_percent is retired: never copied, even from a historical
+    // source that still carries a value. New entries always store NULL server-side.
     unitsOfLye: wantGalv ? s(firstEntry?.units_of_lye) : "",
     pulseCount: s(pulseCount),
     pulseDelay,

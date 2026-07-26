@@ -95,6 +95,11 @@ type BlockRow = ClinicalSummaryBlock & {
   session_id: string;
   machine_frequency: string | null;
   probe_lot_number: string | null;
+  // Charting unification: the block's live entries' observation_chips, for the
+  // unified reaction summaries.
+  electrolysis_entries?:
+    | Array<{ observation_chips: unknown; deleted_at: string | null }>
+    | null;
 };
 
 export async function getBeforeTodayPreviews(
@@ -124,7 +129,7 @@ export async function getBeforeTodayPreviews(
       ? supabase
           .from("session_blocks")
           .select(
-            "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+            "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
           )
           .eq("studio_id", studioId)
           .in("session_id", sessionIds)
@@ -217,14 +222,27 @@ export async function getBeforeTodayPreviews(
     );
     const intelligence = buildTreatmentIntelligence({
       sessionsNewestFirst: clientSessions,
-      blocks: allClientBlocks.map((b) => ({ ...b, entry_hairs: [] })),
+      blocks: allClientBlocks.map((b) => ({
+        ...b,
+        entry_hairs: [],
+        observation_chips_list: (b.electrolysis_entries ?? [])
+          .filter((e) => e.deleted_at == null)
+          .map((e) => e.observation_chips),
+      })),
     });
     const lastBlocks = lastTreatment
       ? (clientBlockMap.get(lastTreatment.id) ?? [])
       : [];
     const lastSummary = lastTreatment
       ? buildLastSessionSummary({
-          blocks: lastBlocks,
+          // Charting unification: feed live entries' observation_chips so the
+          // reaction line reads the unified representation.
+          blocks: lastBlocks.map((b) => ({
+            ...b,
+            observation_chips_list: (b.electrolysis_entries ?? [])
+              .filter((e) => e.deleted_at == null)
+              .map((e) => e.observation_chips),
+          })),
           nextSessionNote: lastTreatment.next_session_note ?? null,
         })
       : null;
