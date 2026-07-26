@@ -1153,6 +1153,10 @@ export type SessionBlock = {
   // but unconfirmed); legacy rows default to false. Allowlist + default live in
   // the 0095 CHECK + lib/sessions/clinical-response.ts.
   numbing_status: NumbingStatus | null;
+  // Migration 0156: optional free-text numbing note. NULL for every legacy row
+  // and whenever numbing_status is not 'used' (app-normalized: trimmed, blank ->
+  // NULL). Never inferred from other clinical text.
+  numbing_notes: string | null;
   probe_lot_confirmed: boolean;
   // Migration 0155: durable, same-studio link to the sterile-inventory record
   // (record_keeping_sterile_items) this lot was chosen from. NULL = manual /

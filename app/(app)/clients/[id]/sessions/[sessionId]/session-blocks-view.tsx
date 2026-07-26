@@ -15,9 +15,8 @@ import type {
 } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import {
-  isNumbingStatus,
   isReactionType,
-  numbingStatusLabel,
+  numbingDisplay,
   reactionTypeLabel,
   toleranceLabel,
 } from "@/lib/sessions/clinical-response";
@@ -348,13 +347,27 @@ function BlockSection({
             </p>
           )}
 
-          {/* PR #279 (migration 0095): numbing record. Only renders when set;
-              legacy rows (numbing_status NULL = Not recorded) show nothing. */}
-          {isNumbingStatus(block.numbing_status) && (
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {numbingStatusLabel(block.numbing_status)}
-            </p>
-          )}
+          {/* PR #279 (migration 0095) + 0156: numbing record via the shared
+              presenter. Only renders when set; legacy rows (numbing_status NULL =
+              Not recorded) show nothing. The optional note shows beneath the
+              label ONLY when numbing was used and a note exists. */}
+          {(() => {
+            const numbing = numbingDisplay(
+              block.numbing_status,
+              block.numbing_notes,
+            );
+            if (!numbing) return null;
+            return (
+              <div className="text-sm text-neutral-600 dark:text-neutral-400">
+                <p>{numbing.label}</p>
+                {numbing.note && (
+                  <p className="whitespace-pre-wrap text-neutral-500">
+                    Numbing notes: {numbing.note}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* PR #190 (migration 0082): structured client response.
               Lines render only when recorded; legacy blocks show

@@ -34,8 +34,10 @@ describe("item 1: numbing control + persistence", () => {
     expect(ACTIONS).toMatch(/numbing_status: numbing/);
     expect(ACTIONS).toMatch(/isNumbingStatus/);
   });
-  it("the saved record shows the numbing line", () => {
-    expect(VIEW).toMatch(/numbingStatusLabel\(block\.numbing_status\)/);
+  it("the saved record shows the numbing line via the shared presenter (0156)", () => {
+    // Charting: the numbing status + optional note now render through the shared
+    // numbingDisplay() presenter (so the label + note can't drift across surfaces).
+    expect(VIEW).toMatch(/numbingDisplay\(\s*block\.numbing_status,\s*block\.numbing_notes/);
   });
 });
 
