@@ -18,7 +18,7 @@ const EXPORT = read("app/(app)/settings/data/actions.ts");
 describe("block-setup-form — chips are STRUCTURAL state, not derived from text", () => {
   it("chip buttons read/write observationChips via the structured helpers", () => {
     expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
-    expect(FORM).toMatch(/toggleChip\(draft\.observationChips, c\)/);
+    expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
     // The old string/token approach must be gone from this form.
     expect(FORM).not.toMatch(/isCommentSelected|toggleComment/);
   });
@@ -27,12 +27,15 @@ describe("block-setup-form — chips are STRUCTURAL state, not derived from text
     expect(FORM).toMatch(/value=\{draft\.comments\}/); // textarea = free-text only
     expect(FORM).toMatch(/observationChips: draft\.observationChips/); // in save payload
   });
-  it("edit-load hydrates legacy chip-in-comments records non-destructively (via resolveDisplayChips)", () => {
+  it("edit-load hydrates legacy chip-in-comments records non-destructively (via resolveDisplayChips), folding a legacy reaction into the chips", () => {
     // Chip-loading fix: seeding routes through the shared, tested resolveDisplayChips
     // contract (structured chips OR legacy chips hydrated from comments).
     expect(FORM).toMatch(/resolveDisplayChips\(firstEntry\?\.observation_chips, firstEntry\?\.comments\)/);
     expect(FORM).toMatch(/comments: hydrated\.freeText/);
-    expect(FORM).toMatch(/observationChips: hydrated\.chips/);
+    // Charting unification: observationChips is seeded from the hydrated chips AND a
+    // legacy reaction_type folded in (shown as a selected chip) — still never
+    // destructive to the stored row.
+    expect(FORM).toMatch(/observationChips: mergeReactionIntoChips\(hydrated\.chips, block\.reaction_type\)/);
   });
 });
 
@@ -67,9 +70,16 @@ describe("entry-row — chips render as their own pills; legacy rows unaffected"
 });
 
 describe("data export — record-keeping includes structured chips", () => {
-  it("selects, flattens, and columns observation_chips (comments still exported separately)", () => {
+  it("selects, flattens (unified with a folded reaction), and columns observation_chips (comments still exported separately)", () => {
     expect(EXPORT).toMatch(/comments, observation_chips, created_at/); // in the SELECT
-    expect(EXPORT).toMatch(/observation_chips: Array\.isArray\(e\.observation_chips\)/); // flattened
+    // Charting unification: the export flattens the UNIFIED findings — the entry's
+    // observation_chips PLUS a folded legacy reaction_type from its block — joined
+    // for CSV (semicolons, since CSV's delimiter is a comma). Still structured, not
+    // free-text.
+    expect(EXPORT).toMatch(
+      /observation_chips: mergeReactionIntoChips\(\s*\n?\s*e\.observation_chips,\s*\n?\s*b\?\.reaction_type \?\? null,?\s*\n?\s*\)\.join\("; "\)/,
+    );
+    expect(EXPORT).toMatch(/from "@\/lib\/observation-chips"/); // uses the shared merge contract
     expect(EXPORT).toMatch(/"observation_chips",/); // CSV header
     expect(EXPORT).toMatch(/structured observation chips/); // README copy
   });

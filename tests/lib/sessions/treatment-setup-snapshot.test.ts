@@ -24,7 +24,6 @@ const entry = (over: Partial<SetupSourceEntry> = {}): SetupSourceEntry => ({
   thermolysis_duration_seconds: 0.12,
   galvanic_ma: 0.5,
   galvanic_duration_seconds: 8,
-  galvanic_intensity_percent: 40,
   units_of_lye: 25,
   pulse_count: 3,
   pulse_delay_seconds: 0.4,
@@ -71,20 +70,29 @@ describe("thermolysis source", () => {
   it("clears galvanic + units of lye (invalid for thermolysis)", () => {
     expect(p.galvanicMa).toBe("");
     expect(p.galvanicDurationSeconds).toBe("");
-    expect(p.galvanicIntensityPercent).toBe("");
     expect(p.unitsOfLye).toBe("");
   });
 });
 
 describe("galvanic source", () => {
   const p = buildTreatmentSetupDraftPatch(block({ mode: "galv" }), entry({ mode: "galv" }));
-  it("copies mA, galvanic duration/intensity, units of lye, pulse", () => {
+  it("copies mA, galvanic duration, units of lye, pulse (reusable galvanic setup)", () => {
     expect(p.mode).toBe("galv");
     expect(p.galvanicMa).toBe("0.5");
     expect(p.galvanicDurationSeconds).toBe("8");
-    expect(p.galvanicIntensityPercent).toBe("40");
     expect(p.unitsOfLye).toBe("25");
     expect(p.pulseCount).toBe("3");
+  });
+  it("NEVER copies galvanic intensity — retired reading, not in the patch at all", () => {
+    // Even from a source whose row still carries a legacy value, the patch has no
+    // galvanicIntensityPercent key, so copy-settings can never resurrect it into a
+    // new draft. (A richer source row is allowed; it's simply ignored.)
+    const withLegacy = buildTreatmentSetupDraftPatch(
+      block({ mode: "galv" }),
+      { ...entry({ mode: "galv" }), galvanic_intensity_percent: 42 } as never,
+    );
+    expect(Object.keys(withLegacy)).not.toContain("galvanicIntensityPercent");
+    expect("galvanicIntensityPercent" in p).toBe(false);
   });
   it("clears thermolysis readings AND apilus modality + energy (galvanic carries neither)", () => {
     expect(p.thermolysisIntensityPercent).toBe("");
@@ -123,6 +131,8 @@ describe("outcome fields are structurally absent from the patch", () => {
     const p = buildTreatmentSetupDraftPatch(block(), entry());
     const keys = Object.keys(p);
     for (const forbidden of [
+      // Retired reading: never a copyable setup key.
+      "galvanicIntensityPercent",
       "hairsTreated",
       "comments",
       "observationChips",

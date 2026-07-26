@@ -55,7 +55,8 @@ function nullableNumber(value: FormDataEntryValue | null): number | null {
 }
 
 // Non-negative numeric (fractional ok). Out-of-range / invalid → null, matching
-// the lenient pickInteger pattern. Used for galvanic_ma and units_of_lye.
+// the lenient pickInteger pattern. Used for galvanic_ma, units_of_lye, and
+// thermolysis_duration_seconds (all sub-integer readings, e.g. PicoBlend 0.733s).
 function nonNegNumber(value: FormDataEntryValue | null): number | null {
   const n = nullableNumber(value);
   return n != null && n >= 0 ? n : null;
@@ -277,17 +278,20 @@ export async function addElectrolysisEntryAction(
   const galvanicDurationSeconds = wantGalv
     ? pickInteger(formData.get("galvanic_duration_seconds"), { min: 0 })
     : null;
-  const galvanicIntensityPercent = wantGalv
-    ? pickInteger(formData.get("galvanic_intensity_percent"), { min: 0, max: 100 })
-    : null;
+  // galvanic_intensity_percent is a RETIRED reading: the "add another pass" form
+  // no longer sends it and this action deliberately does NOT read it, so a forged
+  // form field can never land. New rows always store NULL (see the insert below).
   const thermolysisIntensityPercent = wantThermo
     ? pickInteger(formData.get("thermolysis_intensity_percent"), {
         min: 0,
         max: 100,
       })
     : null;
+  // Thermolysis duration is fractional (e.g. PicoBlend 0.733s) — parse as a
+  // decimal, NOT pickInteger, or 0.733 would silently truncate to 0. Matches the
+  // block form's write path and the numeric DB column.
   const thermolysisDurationSeconds = wantThermo
-    ? pickInteger(formData.get("thermolysis_duration_seconds"), { min: 0 })
+    ? nonNegNumber(formData.get("thermolysis_duration_seconds"))
     : null;
   const unitsOfLye = wantGalv ? nonNegNumber(formData.get("units_of_lye")) : null;
 
@@ -350,7 +354,8 @@ export async function addElectrolysisEntryAction(
       hairs_treated: hairsTreated,
       galvanic_ma: galvanicMa,
       galvanic_duration_seconds: galvanicDurationSeconds,
-      galvanic_intensity_percent: galvanicIntensityPercent,
+      // Retired reading: a NEW entry always stores NULL (server-authoritative).
+      galvanic_intensity_percent: null,
       thermolysis_intensity_percent: thermolysisIntensityPercent,
       thermolysis_duration_seconds: thermolysisDurationSeconds,
       units_of_lye: unitsOfLye,

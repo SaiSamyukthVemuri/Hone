@@ -117,7 +117,10 @@ describe("read paths exclude voided passes (not counted as active anywhere)", ()
   });
 
   it("Treatment Intelligence + dashboard preview do not count voided-pass hairs", () => {
-    expect(CLIENT_PAGE).toMatch(/electrolysis_entries\(hairs_treated, deleted_at\)/);
+    // Charting unification: the Treatment Intelligence block query now ALSO embeds
+    // observation_chips (to read the unified findings), but STILL embeds deleted_at
+    // and filters voided passes so their hairs are never counted.
+    expect(CLIENT_PAGE).toMatch(/electrolysis_entries\(hairs_treated, observation_chips, deleted_at\)/);
     expect(CLIENT_PAGE).toMatch(/\.filter\(\(e\) => !e\.deleted_at\)/);
     expect(PREVIEWS).toMatch(/electrolysis_entries\(hairs_treated, deleted_at\), laser_entries\(id, deleted_at\)/);
     expect(PREVIEWS).toMatch(/\.filter\(\s*\(e\) => !e\.deleted_at/);
