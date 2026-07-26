@@ -15,18 +15,14 @@ const CODE = SQL.split("\n")
   .join("\n");
 
 describe("0156 — conditional numbing notes (repo migration-max tripwire)", () => {
-  it("is present, 0155 precedes it, and it is the repo migration max (nothing 0157+)", () => {
+  it("is present, 0155 precedes it, exactly one 0156, nothing 0158+ (repo max pin now lives in the 0157 test)", () => {
     expect(FILE).toMatch(/^0156_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0155_"))).toBe(true);
-    // Collision guard: exactly ONE 0156 migration, and nothing beyond it.
+    // Collision guard: exactly ONE 0156 migration. The absolute repo-max pin
+    // moved to the 0157 test (0157 = whole-session copy setup now follows).
     expect(files.filter((f) => /^0156_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(5[7-9]|[6-9]\d)_/.test(f))).toEqual([]);
-    const nums = files
-      .filter((f) => /^\d{4}_.*\.sql$/.test(f))
-      .map((f) => parseInt(f.slice(0, 4), 10))
-      .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(156);
+    expect(files.filter((f) => /^01(5[8-9]|[6-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("adds ONE nullable text column, no default, no NOT NULL, no backfill", () => {

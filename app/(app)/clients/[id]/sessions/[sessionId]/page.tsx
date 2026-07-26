@@ -48,7 +48,7 @@ import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
 import { NextVisitNoteForm } from "./NextVisitNoteForm";
-import { CopyPreviousAreasButton } from "./CopyPreviousAreasButton";
+import { CopyPreviousAreasPanel } from "./CopyPreviousAreasPanel";
 import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
 import {
@@ -532,16 +532,23 @@ export default async function SessionDetailPage({
         />
       </div>
 
-      {/* PR #194 → temporarily contained: the whole-session copy is paused
-          (see CopyPreviousAreasButton). Shown only where the control used to
-          appear — an empty electrolysis chart with a previous session that has
-          areas — so the practitioner sees why the one-tap copy is missing. */}
+      {/* Migration 0157: whole-session "Copy areas and settings" — draft-model
+          replacement for the paused one-tap copy. The preview is EPHEMERAL
+          (component memory only); nothing is written until the practitioner
+          explicitly confirms. Shown only on an empty electrolysis chart with a
+          previous session that has areas. */}
       {!isFinalized &&
         session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
         previousSessionAny &&
-        previousSessionHasAreas && <CopyPreviousAreasButton />}
+        previousSessionHasAreas && (
+          <CopyPreviousAreasPanel
+            clientId={id}
+            sessionId={session.id}
+            previousSessionId={previousSessionAny.id as string}
+          />
+        )}
 
       {/* Migration 0126: consultation + skin/hair analysis context during
           charting. Collapsible so it never crowds the charting flow; the

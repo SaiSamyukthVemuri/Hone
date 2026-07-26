@@ -1086,6 +1086,57 @@ export async function seedE2eDraftElectrolysisSession(
 
 // Count the live settings blocks on a session — used to prove the in-form copy
 // persists NOTHING until the practitioner explicitly saves.
+// 0157 whole-session copy: a client with a PREVIOUS session that has one saved
+// treatment area (block + area + setup entry), plus an EMPTY today session. The
+// copy panel renders on today's chart (empty + a prior session with areas).
+export async function seedE2eClientWithPreviousAreas(
+  seed: E2eSeed,
+): Promise<{ clientId: string; todaySessionId: string; previousSessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const previousSessionId = randomUUID();
+  const todaySessionId = randomUUID();
+  const blockId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Copy Client ${seed.runId}-${uniq}`, `e2e-copy-${seed.runId}-${uniq}@harness.local`],
+  );
+  // Previous session (older started_at) with one saved area + setup.
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-01-01T10:00:00Z')`,
+    [previousSessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level, minutes_performed, machine_frequency)
+     values ($1,$2,$3,1,'Chin','left','blend',10,15,'13.56 MHz')`,
+    [blockId, seed.studioId, previousSessionId],
+  );
+  await sql(
+    `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
+     values ($1,$2,$3,'Chin','left',0)`,
+    [randomUUID(), seed.studioId, blockId],
+  );
+  await sql(
+    `insert into public.electrolysis_entries (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds)
+     values ($1,$2,$3,'Chin',array['Chin']::text[],'blend',10,15,'13.56 MHz',40,3)`,
+    [randomUUID(), previousSessionId, blockId],
+  );
+  // Today's session (newer started_at), empty.
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-06-01T10:00:00Z')`,
+    [todaySessionId, seed.studioId, clientId, prac.id],
+  );
+  return { clientId, todaySessionId, previousSessionId };
+}
+
 export async function getSessionBlockCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
     `select count(*)::int as n from public.session_blocks
