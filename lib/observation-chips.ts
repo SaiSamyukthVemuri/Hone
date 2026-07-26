@@ -1,19 +1,48 @@
 import { COMMON_COMMENTS } from "@/lib/constants";
+import {
+  REACTION_CHIP_LABELS,
+  isReactionType,
+  isReactionChipLabel,
+  reactionTypeLabel,
+  type ReactionType,
+} from "@/lib/sessions/clinical-response";
+
+// "No visible reaction" label (the non-reaction reaction).
+const NO_REACTION_LABEL = reactionTypeLabel("none");
 
 // Structured treatment-observation chips (Chloe charting reliability).
 //
-// Chips are the studio-static preset list (COMMON_COMMENTS). Going forward they
-// are stored STRUCTURALLY in electrolysis_entries.observation_chips as an array
-// of these exact canonical labels; free-text notes stay in `comments`. These
-// helpers replace the old string/token approach (lib/comments.ts) for chips —
-// selection is now explicit state, never re-derived from free text, so a
-// selected chip can no longer silently disappear.
+// Charting UNIFICATION (Chloe): "Treatment observations" and "Client / skin
+// response" are now ONE multi-select box, "Treatment observations & skin
+// response". The chip vocabulary is therefore the observation presets
+// (COMMON_COMMENTS) PLUS the legacy reaction labels (REACTION_CHIP_LABELS), all
+// stored STRUCTURALLY in electrolysis_entries.observation_chips as an array of
+// these exact canonical labels; free-text notes stay in `comments`. observation_
+// chips is the canonical multi-select representation going forward; a legacy
+// session_blocks.reaction_type is folded into this set on load/display and the
+// value is preserved (never silently lost).
 //
 // Pure + client-safe (no I/O). Canonical labels (not opaque ids) are stored so
-// the value stays human-readable and matches what legacy `comments` already
-// contain, which makes non-destructive per-record migration trivial.
+// the value stays human-readable and matches what legacy `comments`/reaction_type
+// already contain, which makes non-destructive per-record migration trivial.
 
-export const OBSERVATION_CHIPS: ReadonlyArray<string> = COMMON_COMMENTS;
+// The full merged chip list shown in the ONE unified box (observation presets
+// first, then the reaction labels), deduped in order.
+export const MERGED_OBSERVATION_CHIPS: ReadonlyArray<string> = (() => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const c of [...COMMON_COMMENTS, ...REACTION_CHIP_LABELS]) {
+    const k = c.trim().toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(c);
+    }
+  }
+  return out;
+})();
+
+// Back-compat alias — now the merged vocabulary (reaction labels are valid chips).
+export const OBSERVATION_CHIPS: ReadonlyArray<string> = MERGED_OBSERVATION_CHIPS;
 
 const CANONICAL = new Map<string, string>(
   OBSERVATION_CHIPS.map((c) => [c.trim().toLowerCase(), c]),
@@ -161,6 +190,25 @@ export function toggleChip(chips: readonly string[], chip: string): string[] {
     : [...chips, canon];
 }
 
+// Toggle a chip in the UNIFIED findings box, preventing clinically contradictory
+// reaction combinations (Chloe): selecting "No visible reaction" removes every
+// other reaction chip, and selecting any real reaction removes "No visible
+// reaction". Ordinary observation chips toggle freely and are never affected;
+// multiple REAL reactions may coexist. Deselecting never triggers exclusivity.
+export function toggleFindingChip(chips: readonly string[], chip: string): string[] {
+  const next = toggleChip(chips, chip);
+  // Only enforce on SELECT of a reaction chip.
+  if (!isChipSelected(next, chip) || !isReactionChipLabel(chip)) return next;
+  const isNone = chip.trim().toLowerCase() === NO_REACTION_LABEL.toLowerCase();
+  return next.filter((c) => {
+    if (!isReactionChipLabel(c)) return true; // keep all observation chips
+    const cIsNone = c.trim().toLowerCase() === NO_REACTION_LABEL.toLowerCase();
+    // Selecting "No visible reaction" → keep only it among reactions.
+    // Selecting a real reaction → drop "No visible reaction".
+    return isNone ? cIsNone || c === chip : !cIsNone;
+  });
+}
+
 // Split a LEGACY `comments` string (chips + free-text mixed as comma tokens)
 // into structured chips + the remaining free-text, WITHOUT losing anything.
 // Used ONLY to present a legacy record (observation_chips empty) in the new
@@ -169,6 +217,25 @@ export function toggleChip(chips: readonly string[], chip: string): string[] {
 // casing); every other token is preserved verbatim as free-text, rejoined with
 // the same ", " separator and in original order. This is the non-destructive,
 // per-record migration path (no bulk backfill).
+// UNIFIED representation (charting unification). Given a stored entry's
+// observation_chips and its block's legacy reaction_type, return the single
+// merged chip set: the normalized observation chips PLUS the reaction's label
+// (folded in) if the legacy reaction_type is set and not already present. This is
+// the ONE contract for hydrating the unified box on load, rendering the saved
+// record, exporting, and driving reaction-aware surfaces — so old (reaction_type)
+// and new (chip-in-observation_chips) records read identically. Never mutates.
+export function mergeReactionIntoChips(
+  observationChips: unknown,
+  reactionType: string | null | undefined,
+): string[] {
+  const chips = normalizeChips(observationChips);
+  if (reactionType && isReactionType(reactionType)) {
+    const label = reactionTypeLabel(reactionType as ReactionType);
+    if (!isChipSelected(chips, label)) chips.push(label);
+  }
+  return chips;
+}
+
 export function hydrateLegacyChips(comments: string | null | undefined): {
   chips: string[];
   freeText: string;
@@ -180,7 +247,12 @@ export function hydrateLegacyChips(comments: string | null | undefined): {
   for (const tok of tokens) {
     if (tok.length === 0) continue;
     const canon = canonicalFor(tok);
-    if (canon) {
+    // Promote a legacy comment token to a chip ONLY if it is a canonical
+    // OBSERVATION chip. Reaction labels are intentionally NOT promoted here: a
+    // free-text comment that happens to equal a reaction word must not be
+    // string-guessed into a coded reaction (which would spuriously flag safety
+    // surfaces). It stays as free-text, exactly as before unification.
+    if (canon && !isReactionChipLabel(canon)) {
       if (!seen.has(canon)) {
         seen.add(canon);
         chips.push(canon);

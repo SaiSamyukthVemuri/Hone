@@ -18,7 +18,7 @@ const SUMMARY = read("components/last-session-summary.tsx");
 const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
 
 describe("charting field order (Chloe's exact flow)", () => {
-  it("Area -> Frequency -> Probe -> Mode -> Modality -> Readings -> Pulse -> Hairs -> Minutes", () => {
+  it("Area -> Frequency -> Probe -> Mode -> Modality -> Readings -> Hairs -> Minutes", () => {
     const anchors = [
       // Migration 0128: the single-area section is now the multi-area editor,
       // still first (areas treated with these settings), before machine settings.
@@ -28,7 +28,6 @@ describe("charting field order (Chloe's exact flow)", () => {
       '>Mode</span>',
       '>Modality</span>',
       '>Treatment readings</span>',
-      '>Pulse count</span>',
       '>Hairs treated</span>',
       '>Minutes performed (optional)</span>',
     ];
@@ -38,6 +37,31 @@ describe("charting field order (Chloe's exact flow)", () => {
       expect(idx, anchor).toBeGreaterThan(prev);
       prev = idx;
     }
+  });
+
+  it("Thermolysis pulse count renders within Treatment readings, after intensity and before Hairs treated", () => {
+    // Charting correction: the pulse control moved INTO the thermolysis section
+    // (the `thermoSection` const, defined above the return), labeled "Thermolysis
+    // pulse count", and is placed via {thermoSection} inside Treatment readings —
+    // so at RENDER it sits after the readings heading and before Hairs treated.
+    const readingsIdx = FORM.indexOf(">Treatment readings</span>");
+    const hairsIdx = FORM.indexOf(">Hairs treated</span>");
+    expect(readingsIdx).toBeGreaterThan(-1);
+    expect(hairsIdx).toBeGreaterThan(readingsIdx);
+    // thermoSection is placed (rendered) between the readings heading and hairs.
+    const thermoPlacementIdx = FORM.indexOf("{thermoSection}", readingsIdx);
+    expect(thermoPlacementIdx).toBeGreaterThan(readingsIdx);
+    expect(thermoPlacementIdx).toBeLessThan(hairsIdx);
+    // Within the thermolysis section, pulse count follows the intensity reading and
+    // carries the thermolysis label.
+    const thermoBlock = FORM.slice(
+      FORM.indexOf("const thermoSection ="),
+      FORM.indexOf("const galvSection ="),
+    );
+    expect(thermoBlock).toMatch(/>Thermolysis pulse count<\/span>/);
+    expect(thermoBlock.indexOf("Thermolysis intensity %")).toBeLessThan(
+      thermoBlock.indexOf(">Thermolysis pulse count</span>"),
+    );
   });
 
   it("sticky machine frequency from PR #203 still seeds the draft", () => {

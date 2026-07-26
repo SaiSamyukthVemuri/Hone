@@ -113,11 +113,18 @@ describe("block form: optional capture, round-trip on edit", () => {
     expect(responseSection).not.toMatch(/required/);
   });
 
-  it("reaction chips are built from the shared REACTION_TYPES vocabulary", () => {
-    expect(FORM).toMatch(/REACTION_TYPES\.map\(\(r\) => \(/);
-    expect(FORM).toMatch(
-      /from "@\/lib\/sessions\/clinical-response"/,
-    );
+  it("reaction labels are folded into the merged observation-chip vocabulary from the shared modules", () => {
+    // Charting unification: reactions are no longer a separate REACTION_TYPES.map
+    // single-select row. The unified box renders MERGED_OBSERVATION_CHIPS, which
+    // is the observation presets PLUS the shared reaction labels.
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    expect(FORM).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(FORM).toMatch(/from "@\/lib\/observation-chips"/);
+    // A legacy reaction_type is still preserved via the shared clinical-response
+    // vocabulary (isReactionType / reactionTypeLabel), imported from that module.
+    expect(FORM).toMatch(/from "@\/lib\/sessions\/clinical-response"/);
+    expect(FORM).toMatch(/isReactionType\(draft\.reactionType\)/);
+    expect(FORM).toMatch(/reactionTypeLabel\(draft\.reactionType as ReactionType\)/);
   });
 
   it("edit mode initializes the draft from the stored block (round-trip)", () => {
@@ -138,9 +145,17 @@ describe("block form: optional capture, round-trip on edit", () => {
 
 describe("blocks view: old null records render without clutter", () => {
   it("response lines are gated on recorded values", () => {
+    // Charting unification: the block-level response line now folds a legacy
+    // reaction_type into `legacyReaction` (shown only when its label is not already
+    // a chip), so the gate reads tolerance/legacyReaction/reaction_notes and
+    // returns null when none are recorded — old all-null records still render
+    // nothing (no clutter). Same three signals, just reaction via legacyReaction.
     expect(VIEW).toMatch(
-      /\{\(block\.tolerance_rating != null \|\|\s*\n?\s*block\.reaction_type \|\|\s*\n?\s*block\.reaction_notes\) && \(/,
+      /if \(\s*\n?\s*block\.tolerance_rating == null &&\s*\n?\s*!legacyReaction &&\s*\n?\s*!block\.reaction_notes\s*\n?\s*\) \{\s*\n?\s*return null;/,
     );
+    // legacyReaction is derived from the recorded reaction_type value.
+    expect(VIEW).toMatch(/isReactionType\(block\.reaction_type\)/);
+    // The caution line is unchanged: still gated on a recorded caution flag/note.
     expect(VIEW).toMatch(
       /\{\(block\.caution_for_next_session \|\| block\.caution_note\) && \(/,
     );

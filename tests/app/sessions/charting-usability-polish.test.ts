@@ -51,38 +51,39 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
   });
 });
 
-describe("B. distinguish the two chip groups (no data-model change)", () => {
-  it("(#6) observations and response are SEPARATE headed groups, distinct draft fields", () => {
-    // Two distinct headings from the shared module.
-    expect(FORM).toMatch(/\{TREATMENT_OBSERVATIONS_HEADING\}/);
-    expect(FORM).toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
-    // Distinct helpers.
-    expect(FORM).toMatch(/\{TREATMENT_OBSERVATIONS_HELPER\}/);
-    expect(FORM).toMatch(/\{CLIENT_RESPONSE_HELPER\}/);
-    // Observations = MULTI-select on observationChips; response = SINGLE-select
-    // on reactionType. Separate draft keys, separate writes.
-    expect(FORM).toMatch(/toggleChip\(draft\.observationChips, c\)/);
-    expect(FORM).toMatch(/update\("reactionType", draft\.reactionType === r \? "" : r\)/);
+describe("B. one unified observations & skin response box (charting unification)", () => {
+  it("(#6) observations and skin response are ONE merged multi-select box", () => {
+    // Charting unification: the two former groups are now a single box, titled via
+    // OBSERVATIONS_RESPONSE_HEADING, rendering the merged chip vocabulary.
+    expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
+    expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HELPER\}/);
+    // The old two-group headings/helpers are gone from this form.
+    expect(FORM).not.toMatch(/\{TREATMENT_OBSERVATIONS_HEADING\}/);
+    expect(FORM).not.toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
+    expect(FORM).not.toMatch(/\{TREATMENT_OBSERVATIONS_HELPER\}/);
+    expect(FORM).not.toMatch(/\{CLIENT_RESPONSE_HELPER\}/);
+    // The unified box is MULTI-select over the merged vocabulary, on observationChips.
+    expect(FORM).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
+    expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
+    // No separate single-select reaction row remains.
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    expect(FORM).not.toMatch(/update\("reactionType", draft\.reactionType === r \? "" : r\)/);
     // The Selected observations summary is retained.
     expect(FORM).toMatch(/<SelectedObservations chips=\{draft\.observationChips\}/);
   });
 
-  it("(#7) reaction chips live in the response group; observation chips do not overlap it", () => {
-    const obsGroup = FORM.slice(
-      FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}"),
-      FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
-    );
-    const responseGroup = FORM.slice(FORM.indexOf("{CLIENT_RESPONSE_HEADING}"));
-    // reaction chips only in the response group.
-    expect(responseGroup).toMatch(/REACTION_TYPES\.map/);
-    expect(obsGroup).not.toMatch(/REACTION_TYPES\.map/);
-    // observation chips only in the observations group.
-    expect(obsGroup).toMatch(/COMMON_COMMENTS\.map/);
-    expect(responseGroup).not.toMatch(/COMMON_COMMENTS\.map/);
-    // The observation toggle references ONLY observationChips; the reaction
-    // toggle references ONLY reactionType (no field infers the other).
-    expect(FORM).toMatch(/update\("observationChips", toggleChip\(draft\.observationChips, c\)\)/);
+  it("(#7) the merged vocabulary is the single chip source (presets + reaction labels), no split lists", () => {
+    // The unified box renders exactly one chip list from MERGED_OBSERVATION_CHIPS.
+    expect(FORM.match(/MERGED_OBSERVATION_CHIPS\.map/g)?.length).toBe(1);
+    // The form no longer builds two separate lists (COMMON_COMMENTS / REACTION_TYPES).
+    expect(FORM).not.toMatch(/COMMON_COMMENTS\.map/);
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    // The single toggle references ONLY observationChips (the merged store); no
+    // field toggles reactionType directly (a legacy reaction is folded in on load).
+    expect(FORM).toMatch(/update\("observationChips", toggleFindingChip\(draft\.observationChips, c\)\)/);
     expect(FORM).not.toMatch(/toggleChip\([^)]*reactionType/);
+    expect(FORM).not.toMatch(/update\("reactionType",/);
   });
 
   it("(#8) legacy reaction notes are preserved (render-if-present + round-trip)", () => {
@@ -90,26 +91,38 @@ describe("B. distinguish the two chip groups (no data-model change)", () => {
     expect(FORM).toMatch(/reactionNotes: draft\.reactionNotes\.trim\(\) \|\| null/);
   });
 
-  it("the payload keeps the two fields independent (no merge, no inference)", () => {
-    // Both fields are sent as their own keys; neither is derived from the other.
+  it("the payload folds reaction into the chips but never invents/loses a reaction_type", () => {
+    // observationChips is the single multi-select store sent on save.
     expect(FORM).toMatch(/observationChips: draft\.observationChips/);
-    expect(FORM).toMatch(/reactionType: draft\.reactionType \|\| null/);
+    // Charting unification: reaction_type is no longer a blindly round-tripped
+    // separate field (`reactionType: draft.reactionType || null`). It is preserved
+    // ONLY while its label chip stays selected, else null — never invented from chips.
+    expect(FORM).not.toMatch(/reactionType: draft\.reactionType \|\| null/);
+    expect(FORM).toMatch(/reactionType:\s*\n?\s*draft\.reactionType &&/);
+    expect(FORM).toMatch(/isReactionType\(draft\.reactionType\) &&/);
+    expect(FORM).toMatch(
+      /isChipSelected\([\s\S]{0,60}reactionTypeLabel\(draft\.reactionType as ReactionType\)/,
+    );
+    expect(FORM).toMatch(/\? draft\.reactionType\s*\n?\s*: null/);
   });
 });
 
 describe("C. larger, resizable Additional notes (multiline, no restrictive cap, no overflow)", () => {
-  for (const [name, src] of [
-    ["BlockSetupForm", FORM],
-    ["SimplifiedEntryForm", SIMPLE],
+  // Charting correction enlarged the BlockSetupForm notes to rows=8 / min-h-12rem;
+  // the SimplifiedEntryForm keeps the earlier rows=5 / min-h-7rem. Both remain a
+  // large, resizable, full-width, uncapped multiline box.
+  for (const [name, src, rows, minH] of [
+    ["BlockSetupForm", FORM, 8, "12rem"],
+    ["SimplifiedEntryForm", SIMPLE, 5, "7rem"],
   ] as const) {
-    it(`(#9/#10) ${name} Additional notes is taller, vertically resizable, full-width, uncapped`, () => {
+    it(`(#9/#10) ${name} Additional notes is taller (rows=${rows}/min-h-[${minH}]), vertically resizable, full-width, uncapped`, () => {
       // Order-independent: inspect a window around the notes textarea.
       const idx = src.indexOf('data-testid="additional-notes"');
       expect(idx).toBeGreaterThan(-1);
       const region = src.slice(Math.max(0, idx - 300), idx + 400);
-      // Bigger useful default height + min height.
-      expect(region).toMatch(/rows=\{5\}/);
-      expect(region).toMatch(/min-h-\[7rem\]/);
+      // Bigger useful default height + min height (per-form; block form is larger).
+      expect(region).toMatch(new RegExp(`rows=\\{${rows}\\}`));
+      expect(region).toMatch(new RegExp(`min-h-\\[${minH}\\]`));
       // Safe vertical resize.
       expect(region).toMatch(/resize-y/);
       // Full-width so it can't overflow the 390px viewport.
@@ -123,12 +136,18 @@ describe("C. larger, resizable Additional notes (multiline, no restrictive cap, 
 
 describe("D. consistency + single-source terminology (BlockSetupForm ≡ SimplifiedEntryForm ≡ saved display)", () => {
   it("(#11) both active charting forms use the shared label module", () => {
+    // Both forms import terminology from the single-source module (no hard-coded
+    // heading strings).
     for (const src of [FORM, SIMPLE]) {
       expect(src).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
-      expect(src).toMatch(/\{TREATMENT_OBSERVATIONS_HEADING\}/);
       expect(src).toMatch(/\{ADDITIONAL_NOTES_HEADING\}/);
     }
-    // The saved-record display uses the same response terminology.
+    // Charting unification: BlockSetupForm uses the merged
+    // "Treatment observations & skin response" heading; SimplifiedEntryForm keeps
+    // the observations heading — both from the shared module.
+    expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
+    expect(SIMPLE).toMatch(/\{TREATMENT_OBSERVATIONS_HEADING\}/);
+    // The saved-record display uses the same response terminology from the module.
     expect(VIEW).toMatch(/\{CLIENT_RESPONSE_HEADING\}/);
     expect(VIEW).toMatch(/from "@\/lib\/sessions\/charting-labels"/);
   });

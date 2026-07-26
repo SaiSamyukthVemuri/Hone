@@ -70,7 +70,7 @@ export default async function NewSessionPage({
     const { data: prevBlocks } = await supabase
       .from("session_blocks")
       .select(
-        "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+        "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
       )
       .eq("studio_id", studio.id)
       .eq("session_id", prevSession.id)
@@ -79,11 +79,23 @@ export default async function NewSessionPage({
     // Migration 0128: attach structured areas so the previous-session summary
     // renders every treated area + laterality, not only the legacy primary_area.
     const prevBlockRows = (prevBlocks ?? []) as Array<
-      ClinicalSummaryBlock & { id: string }
+      ClinicalSummaryBlock & {
+        id: string;
+        electrolysis_entries?:
+          | Array<{ observation_chips: unknown; deleted_at: string | null }>
+          | null;
+      }
     >;
     await attachStructuredAreas(prevBlockRows, studio.id);
     previousSummary = buildLastSessionSummary({
-      blocks: prevBlockRows,
+      // Charting unification: feed the block's live entries' observation_chips so
+      // the reaction line reads the unified representation.
+      blocks: prevBlockRows.map((b) => ({
+        ...b,
+        observation_chips_list: (b.electrolysis_entries ?? [])
+          .filter((e) => e.deleted_at == null)
+          .map((e) => e.observation_chips),
+      })),
       nextSessionNote: prevSession.next_session_note,
     });
     previousMeta = {

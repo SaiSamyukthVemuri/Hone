@@ -11,8 +11,12 @@ import { loginAsOwner } from "./helpers/flows";
 // width. Proves the three narrow behaviours end to end:
 //   A. a zero-block session starts on the compact CTA (form not auto-open);
 //      opening then cancelling writes NO block; saving writes exactly ONE.
-//   B. Treatment observations (multi-select) and Client/skin response
-//      (single-select) persist INDEPENDENTLY.
+//   B. Charting UNIFICATION: the form has ONE merged "Treatment observations &
+//      skin response" multi-select box (observation presets PLUS the former
+//      reaction labels). Every selection — including a reaction chip — persists
+//      to observation_chips as a MULTI-select; a fresh record never writes the
+//      legacy single-select reaction_type. On reload each pick shows as a
+//      pressed chip.
 //   C. Additional notes accepts multiline content that round-trips exactly,
 //      with no horizontal overflow at 390px.
 // DB rows are ground truth.
@@ -32,7 +36,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   ).toBeLessThanOrEqual(clientW);
 }
 
-test("collapse CTA, no-write open/cancel, one-block save, independent chip groups, multiline notes @390px", async ({
+test("collapse CTA, no-write open/cancel, one-block save, merged observation+reaction chips, multiline notes @390px", async ({
   page,
 }) => {
   const seed = await seedE2eStudio();
@@ -61,19 +65,27 @@ test("collapse CTA, no-write open/cancel, one-block save, independent chip group
     expect(await getSessionBlockCount(sessionId)).toBe(0);
   });
 
-  await test.step("A3/B/C: open, fill both chip groups + multiline notes, save → exactly ONE block", async () => {
+  await test.step("A3/B/C: open, fill the ONE merged chip box (observation + reaction) + multiline notes, save → exactly ONE block", async () => {
     await page.getByTestId("add-settings-block-cta").click();
     await expect(
       page.getByText(/Areas treated with these settings/i),
     ).toBeVisible({ timeout: T });
     await page.getByRole("button", { name: "Chin", exact: true }).click();
 
-    // Treatment observations = MULTI-select: pick two distinct chips.
+    // Charting unification: ONE merged box. Assert the merged heading is present
+    // and the OLD separate "Client / skin response" heading is gone from the FORM.
+    await expect(
+      page.getByText("Treatment observations & skin response"),
+    ).toBeVisible();
+    await expect(page.getByText("Client / skin response")).toHaveCount(0);
+
+    // The merged box is MULTI-select. Pick two observation chips AND a reaction
+    // chip — all three are toggles in the SAME list, all writing observation_chips.
     await page.getByTestId("obs-chip-Dehydrated follicles").click();
     await page.getByTestId("obs-chip-Coarse hair").click();
-
-    // Client/skin response = SINGLE-select: pick one reaction.
-    await page.getByRole("button", { name: "+ Mild redness", exact: true }).click();
+    // The former reaction is now a multi-select chip in the merged list (stable
+    // testid regardless of its selected/"+" label).
+    await page.getByTestId("obs-chip-Mild redness").click();
 
     // Additional notes: multiline free text.
     await page
@@ -86,41 +98,47 @@ test("collapse CTA, no-write open/cancel, one-block save, independent chip group
     await expect.poll(() => getSessionBlockCount(sessionId), { timeout: T }).toBe(1);
   });
 
-  await test.step("reload + DB: the two chip groups persisted INDEPENDENTLY; notes round-trip exactly", async () => {
+  await test.step("reload + DB: all three picks (incl. the reaction) persist to observation_chips; reaction_type stays NULL; notes round-trip exactly", async () => {
     const saved = await getSavedBlockSetup(sessionId);
-    // Observations (multi-select) persisted to the entry's observation_chips.
+    // Every selection — the two observations AND the reaction — is captured in the
+    // ONE canonical multi-select store (observation_chips).
     const chips = (saved?.entry as { observation_chips?: string[] } | null)
       ?.observation_chips;
-    expect(Array.isArray(chips) ? chips.length : 0).toBe(2);
+    expect(Array.isArray(chips) ? chips.length : 0).toBe(3);
     expect(chips).toContain("Dehydrated follicles");
     expect(chips).toContain("Coarse hair");
-    // Client/skin response (single-select) persisted to the block's reaction_type
-    // — a SEPARATE field, unaffected by the observation selections.
-    expect(saved?.reaction_type).toBe("mild_redness");
+    expect(chips).toContain("Mild redness");
+    // A fresh record NEVER writes the legacy single-select reaction_type — the
+    // reaction lives entirely in observation_chips now.
+    expect(saved?.reaction_type).toBeNull();
     // Additional notes round-trips exactly (tolerate CRLF normalization).
     const comments = (saved?.entry as { comments?: string } | null)?.comments ?? "";
     expect(comments.replace(/\r\n/g, "\n")).toBe("line one\nline two\nline three");
   });
 
-  await test.step("edit the saved block: values reload; Cancel does not mutate it", async () => {
+  await test.step("edit the saved block: all three chips reload PRESSED (multi-select); Cancel does not mutate it", async () => {
     await page.goto(url);
     await page.getByTestId(/^edit-area-/).first().click();
     await expect(page.getByTestId("additional-notes")).toHaveValue(
       /line one\s+line two\s+line three/,
       { timeout: T },
     );
-    // The saved reaction chip shows pressed (single-select state reloaded). The
-    // label always renders with a leading "+", pressed or not.
-    await expect(
-      page.getByRole("button", { name: "+ Mild redness", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
-    // Cancel → no mutation.
+    // Multi-select reload: every pick — the two observations AND the reaction —
+    // comes back as a PRESSED chip in the merged list (a selected chip renders its
+    // bare label without the leading "+", so assert via the stable testid).
+    for (const label of ["Dehydrated follicles", "Coarse hair", "Mild redness"]) {
+      await expect(
+        page.getByTestId(`obs-chip-${label}`),
+      ).toHaveAttribute("aria-pressed", "true", { timeout: T });
+    }
+    // Cancel → no mutation: reaction still captured as a chip, reaction_type NULL.
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     const after = await getSavedBlockSetup(sessionId);
-    expect(after?.reaction_type).toBe("mild_redness");
-    expect(
-      ((after?.entry as { observation_chips?: string[] } | null)
-        ?.observation_chips ?? []).length,
-    ).toBe(2);
+    expect(after?.reaction_type).toBeNull();
+    const afterChips =
+      (after?.entry as { observation_chips?: string[] } | null)
+        ?.observation_chips ?? [];
+    expect(afterChips.length).toBe(3);
+    expect(afterChips).toContain("Mild redness");
   });
 });

@@ -80,8 +80,8 @@ describe("thermolysis input order in block-setup-form.tsx", () => {
   });
 });
 
-describe("pulse count renders AFTER the thermolysis block (Duration -> Intensity -> Pulse count)", () => {
-  it("Pulse count label appears after the second thermolysis input", () => {
+describe("pulse count renders AFTER the thermolysis readings (Duration -> Intensity -> Pulse count)", () => {
+  it("Thermolysis pulse count label appears after the second thermolysis input", () => {
     // The two literal label strings ("Thermolysis duration",
     // "Thermolysis intensity") also appear inside the validation
     // array (label: "Thermolysis duration" / "Thermolysis
@@ -91,24 +91,41 @@ describe("pulse count renders AFTER the thermolysis block (Duration -> Intensity
     // the offsets around.
     const formDurationIdx = SOURCE.indexOf("Thermolysis duration (s)");
     const formIntensityIdx = SOURCE.indexOf("Thermolysis intensity %");
-    const pulseIdx = SOURCE.indexOf(">Pulse count<");
+    // Charting correction: the pulse control moved INTO the thermolysis section
+    // and is now labeled "Thermolysis pulse count" (it is a thermolysis concept).
+    // It still renders after duration + intensity.
+    const pulseIdx = SOURCE.indexOf(">Thermolysis pulse count<");
     expect(formDurationIdx).toBeGreaterThan(-1);
     expect(formIntensityIdx).toBeGreaterThan(-1);
     expect(pulseIdx).toBeGreaterThan(-1);
     expect(formDurationIdx).toBeLessThan(formIntensityIdx);
     expect(formIntensityIdx).toBeLessThan(pulseIdx);
+    // The old generic "Pulse count" label is gone (renamed to the thermolysis one).
+    expect(SOURCE.indexOf(">Pulse count<")).toBe(-1);
   });
 
-  it("Pulse count is still gated on mode !== 'galv' (thermolysis concept)", () => {
-    // The comment block PR #162 added inside the thermo branch also
-    // mentions `mode !== "galv"`, so we look for the actual JSX
-    // gate `{mode !== "galv" && (`.
-    expect(SOURCE).toMatch(/\{mode !== "galv" && \(/);
-    // And the Pulse count span lives inside that gated block.
-    const gateIdx = SOURCE.indexOf('{mode !== "galv" && (');
-    const pulseIdx = SOURCE.indexOf(">Pulse count<");
-    expect(gateIdx).toBeGreaterThan(-1);
-    expect(pulseIdx).toBeGreaterThan(gateIdx);
+  it("Thermolysis pulse count is a thermolysis concept (renders inside the thermolysis section, thermo/blend only)", () => {
+    // Charting correction: pulse now lives inside thermoSection, which renders
+    // only for thermolysis + blend (`mode === "thermo" || mode === "blend"`); pure
+    // galvanic has no pulse. This is the clinical equivalent of the old
+    // `mode !== "galv"` gate, but scoped to the thermolysis section.
+    const thermoOpenIdx = SOURCE.indexOf("const thermoSection =");
+    const galvOpenIdx = SOURCE.indexOf("const galvSection =");
+    expect(thermoOpenIdx).toBeGreaterThan(-1);
+    expect(galvOpenIdx).toBeGreaterThan(thermoOpenIdx);
+    const thermoBlock = SOURCE.slice(thermoOpenIdx, galvOpenIdx);
+    // The section is gated on thermo/blend.
+    expect(thermoBlock).toMatch(/mode === "thermo" \|\| mode === "blend"/);
+    // The pulse-count control lives inside that section.
+    expect(thermoBlock).toMatch(/>Thermolysis pulse count</);
+    // It is NOT rendered in the galvanic section (pure galvanic has no pulse).
+    const galvBlock = SOURCE.slice(
+      galvOpenIdx,
+      SOURCE.indexOf("\n  return (", galvOpenIdx),
+    );
+    expect(galvBlock).not.toMatch(/pulse count/i);
+    // The old standalone `mode !== "galv"` pulse gate is gone.
+    expect(SOURCE).not.toMatch(/\{mode !== "galv" && \(/);
   });
 });
 

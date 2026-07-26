@@ -172,10 +172,11 @@ describe("4. back navigation returns to the Sessions tab", () => {
 });
 
 describe("7. bucketed charting form", () => {
-  it("PR #199 order: tolerance, then observations; next visit moved to the session level", () => {
+  it("PR #199 order: tolerance, then observations & skin response; next visit moved to the session level", () => {
     const resp = FORM.indexOf("Client tolerance");
-    // Charting polish: heading rendered from the shared constant.
-    const obs = FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}");
+    // Charting unification: the observations heading is now the merged
+    // "Treatment observations & skin response" box heading (shared constant).
+    const obs = FORM.indexOf("{OBSERVATIONS_RESPONSE_HEADING}");
     expect(resp).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(resp);
     // PR #199: the per-area For next visit bucket is gone; the
@@ -184,12 +185,14 @@ describe("7. bucketed charting form", () => {
   });
 
   it("each bucket explains its purpose", () => {
-    // Charting polish: the observations helper now lives in the shared module
-    // (referenced by the form) and still explains what was seen.
-    expect(FORM).toMatch(/\{TREATMENT_OBSERVATIONS_HELPER\}/);
+    // Charting unification: the merged observations & skin response box uses ONE
+    // helper (from the shared module) explaining both what was seen AND how the
+    // skin responded.
+    expect(FORM).toMatch(/\{OBSERVATIONS_RESPONSE_HELPER\}/);
+    expect(LABELS).toMatch(/What you saw and how the skin responded/);
+    // The shared module still defines the original per-concept helpers (used by the
+    // saved-record display + the simplified form), so their wording is preserved.
     expect(LABELS).toMatch(/What you saw during treatment/);
-    // The client/skin response group has its own distinct helper.
-    expect(FORM).toMatch(/\{CLIENT_RESPONSE_HELPER\}/);
     expect(LABELS).toMatch(/How the client's skin reacted/);
     // PR #279: tolerance bucket explainer is now the question prompt.
     expect(FORM).toMatch(/Optional\. How did the client tolerate this area\?/);

@@ -23,7 +23,6 @@
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
-  COMMON_COMMENTS,
   ELECTROLYSIS_MODES,
   MACHINE_FREQUENCIES,
   PULSE_COUNT_DEFAULT,
@@ -65,21 +64,22 @@ import type {
 } from "@/lib/types/database";
 import {
   isChipSelected,
-  toggleChip,
+  toggleFindingChip,
   resolveDisplayChips,
+  mergeReactionIntoChips,
+  MERGED_OBSERVATION_CHIPS,
 } from "@/lib/observation-chips";
 import { SelectedObservations } from "@/components/selected-observations";
 import {
   NUMBING_OPTIONS,
-  REACTION_TYPES,
   TOLERANCE_OPTIONS,
+  isReactionType,
   reactionTypeLabel,
+  type ReactionType,
 } from "@/lib/sessions/clinical-response";
 import {
-  TREATMENT_OBSERVATIONS_HEADING,
-  TREATMENT_OBSERVATIONS_HELPER,
-  CLIENT_RESPONSE_HEADING,
-  CLIENT_RESPONSE_HELPER,
+  OBSERVATIONS_RESPONSE_HEADING,
+  OBSERVATIONS_RESPONSE_HELPER,
   ADDITIONAL_NOTES_HEADING,
   ADDITIONAL_NOTES_HELPER,
 } from "@/lib/sessions/charting-labels";
@@ -353,11 +353,19 @@ function initialDraft(
         ? String(firstEntry.hairs_treated)
         : "",
     comments: hydrated.freeText,
-    observationChips: hydrated.chips,
+    // Charting unification: fold a legacy reaction_type into the ONE merged chip
+    // selection (shown as a selected chip). On save it migrates into
+    // observation_chips and reaction_type is cleared — the value is preserved,
+    // never a separate row.
+    observationChips: mergeReactionIntoChips(hydrated.chips, block.reaction_type),
     // PR #190: round-trip the stored response so an edit save that
     // never touches the section preserves it unchanged.
     toleranceRating:
       block.tolerance_rating != null ? String(block.tolerance_rating) : "",
+    // Keep the ORIGINAL legacy reaction_type so save can preserve it while its
+    // equivalent chip stays selected, and clear it ONLY if the practitioner
+    // deselects that reaction. Its label is folded into observationChips above
+    // for display. Never edited directly.
     reactionType: block.reaction_type ?? "",
     reactionNotes: block.reaction_notes ?? "",
     cautionForNextSession: block.caution_for_next_session ?? false,
@@ -644,7 +652,21 @@ export function BlockSetupForm({
       toleranceRating: draft.toleranceRating
         ? parseInt(draft.toleranceRating, 10)
         : null,
-      reactionType: draft.reactionType || null,
+      // Charting unification: the reaction is captured in the merged
+      // observation_chips selection. PRESERVE a historical reaction_type while
+      // its equivalent chip is still selected (so an unrelated edit never erases
+      // it); clear it ONLY when the practitioner explicitly deselects that
+      // reaction. Never invent/collapse a reaction_type from chips — a new
+      // record keeps reaction_type NULL and lives entirely in observation_chips.
+      reactionType:
+        draft.reactionType &&
+        isReactionType(draft.reactionType) &&
+        isChipSelected(
+          draft.observationChips,
+          reactionTypeLabel(draft.reactionType as ReactionType),
+        )
+          ? draft.reactionType
+          : null,
       reactionNotes: draft.reactionNotes.trim() || null,
       cautionForNextSession: draft.cautionForNextSession,
       cautionNote: draft.cautionNote.trim() || null,
@@ -816,6 +838,65 @@ export function BlockSetupForm({
             />
           </label>
         </div>
+        {/* Pulse count is a THERMOLYSIS concept (Chloe): it lives inside the
+            thermolysis section and is labeled "Thermolysis pulse count". Shown
+            for thermolysis + blend (this section); pure galvanic has none. */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Thermolysis pulse count</span>
+          <div className="flex items-stretch gap-2">
+            <button
+              type="button"
+              onClick={() => bumpPulse(-1)}
+              aria-label="Decrease thermolysis pulse count"
+              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              −
+            </button>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={PULSE_COUNT_MIN}
+              max={PULSE_COUNT_MAX}
+              value={draft.pulseCount}
+              onChange={(e) => update("pulseCount", e.target.value)}
+              className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+            <button
+              type="button"
+              onClick={() => bumpPulse(1)}
+              aria-label="Increase thermolysis pulse count"
+              className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              +
+            </button>
+            <span className="self-center text-xs text-neutral-500">
+              Pulses per hair (1 to {PULSE_COUNT_MAX}).
+            </span>
+          </div>
+          {Number(draft.pulseCount) > 1 && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Pulse delay</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={PULSE_DELAY_MIN}
+                  max={PULSE_DELAY_MAX}
+                  value={draft.pulseDelay}
+                  onChange={(e) => update("pulseDelay", e.target.value)}
+                  aria-label="Pulse delay in seconds"
+                  className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                />
+                <span className="text-sm text-neutral-500">seconds</span>
+              </div>
+              <span className="text-xs text-neutral-500">
+                Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
+                {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     ) : null;
 
@@ -854,23 +935,11 @@ export function BlockSetupForm({
               className={READING_INPUT_CLS}
             />
           </label>
-          {!isOmniblend && (
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Galvanic intensity %</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                step="1"
-                min={0}
-                max={100}
-                value={draft.galvanicIntensityPercent}
-                onChange={(e) =>
-                  update("galvanicIntensityPercent", e.target.value)
-                }
-                className={READING_INPUT_CLS}
-              />
-            </label>
-          )}
+          {/* Galvanic intensity % is removed as an ACTIVE input (Chloe / PicoBlend
+              feedback). Historical values are preserved: draft.galvanicIntensityPercent
+              is still hydrated from the stored entry and round-tripped on save, so
+              editing a legacy galvanic entry never wipes its recorded intensity;
+              new entries simply leave it blank (NULL). No migration. */}
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Units of lye (UL)</span>
             <input
@@ -1144,67 +1213,6 @@ export function BlockSetupForm({
           </>
         )}
 
-        {/* Pulse count is a thermolysis concept — shown for thermolysis,
-            blend, and when no mode is chosen yet; hidden for galvanic. */}
-        {mode !== "galv" && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Pulse count</span>
-            <div className="flex items-stretch gap-2">
-              <button
-                type="button"
-                onClick={() => bumpPulse(-1)}
-                aria-label="Decrease pulse count"
-                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
-                −
-              </button>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={PULSE_COUNT_MIN}
-                max={PULSE_COUNT_MAX}
-                value={draft.pulseCount}
-                onChange={(e) => update("pulseCount", e.target.value)}
-                className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-              <button
-                type="button"
-                onClick={() => bumpPulse(1)}
-                aria-label="Increase pulse count"
-                className="rounded-md border border-neutral-300 px-4 text-lg font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
-                +
-              </button>
-              <span className="self-center text-xs text-neutral-500">
-                Pulses per hair (1 to {PULSE_COUNT_MAX}).
-              </span>
-            </div>
-            {Number(draft.pulseCount) > 1 && (
-              <div className="mt-2 flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Pulse delay</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    min={PULSE_DELAY_MIN}
-                    max={PULSE_DELAY_MAX}
-                    value={draft.pulseDelay}
-                    onChange={(e) => update("pulseDelay", e.target.value)}
-                    aria-label="Pulse delay in seconds"
-                    className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-                  />
-                  <span className="text-sm text-neutral-500">seconds</span>
-                </div>
-                <span className="text-xs text-neutral-500">
-                  Time between high-frequency pulses ({PULSE_DELAY_MIN} to{" "}
-                  {PULSE_DELAY_MAX}s; default {PULSE_DELAY_DEFAULT}).
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
         <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
           <span className="text-sm font-medium">Hairs treated</span>
           <input
@@ -1326,26 +1334,24 @@ export function BlockSetupForm({
         </div>
       </div>
 
-      {/* GROUP A — Treatment observations (what the practitioner SAW:
-          follicle/skin/hair). MULTI-select observation_chips + the Additional
-          notes free-text. Kept clearly DISTINCT from the Client/skin response
-          group below (how the client reacted). No stored field changes — this is
-          terminology + layout only. */}
+      {/* UNIFIED (Chloe): "Treatment observations & skin response" is ONE box —
+          a single MERGED multi-select chip list (observation presets + the former
+          reaction labels). Everything is stored in observation_chips (the
+          canonical multi column). A legacy session_blocks.reaction_type is folded
+          into this selection on load (shown as a selected chip) and migrated into
+          observation_chips on save — the value is preserved, never a separate
+          single-select row. Multiple findings may be selected together. */}
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
           <span className="text-sm font-medium">
-            {TREATMENT_OBSERVATIONS_HEADING}
+            {OBSERVATIONS_RESPONSE_HEADING}
           </span>
           <p className="text-xs text-neutral-500">
-            {TREATMENT_OBSERVATIONS_HELPER}
+            {OBSERVATIONS_RESPONSE_HELPER}
           </p>
         </div>
-        {/* PR #279 (Chloe mobile feedback): observation chips are multi-select
-            TOGGLES — tap to select (pressed), tap again to deselect. They persist
-            to observation_chips (NOT the notes), so a chip can never be lost by
-            editing text. */}
         <div className="flex flex-wrap gap-2">
-          {COMMON_COMMENTS.map((c) => {
+          {MERGED_OBSERVATION_CHIPS.map((c) => {
             const selected = isChipSelected(draft.observationChips, c);
             return (
               <button
@@ -1354,7 +1360,7 @@ export function BlockSetupForm({
                 data-testid={`obs-chip-${c}`}
                 aria-pressed={selected}
                 onClick={() =>
-                  update("observationChips", toggleChip(draft.observationChips, c))
+                  update("observationChips", toggleFindingChip(draft.observationChips, c))
                 }
                 className={
                   selected
@@ -1367,71 +1373,39 @@ export function BlockSetupForm({
             );
           })}
         </div>
-        {/* Chip confidence (Chloe): show exactly which observations are selected
-            and will be saved, adjacent to the chips, so a tap visibly "takes". */}
+        {/* Chip confidence (Chloe): show exactly which findings are selected and
+            will be saved, adjacent to the chips, so a tap visibly "takes". */}
         <SelectedObservations chips={draft.observationChips} />
-        {/* Additional notes = free-text for the OBSERVATIONS group (migration
-            0108: free-text only; the structured chips above are separate state).
-            Charting polish: larger default height + vertical resize, full-width
-            so it never overflows at 390px; multiline is preserved verbatim. */}
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            {ADDITIONAL_NOTES_HEADING}
-          </span>
-          <textarea
-            rows={5}
-            value={draft.comments}
-            onChange={(e) => update("comments", e.target.value)}
-            data-testid="additional-notes"
-            placeholder="Add any details not covered by the observations above"
-            className="w-full min-h-[7rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
-          <span className="text-xs text-neutral-500">
-            {ADDITIONAL_NOTES_HELPER}
-          </span>
-        </label>
-      </div>
-
-      {/* GROUP B — Client / skin response (how the client's skin REACTED).
-          SINGLE-select reaction_type toggle — tap again to clear; picking one
-          (e.g. "No visible reaction") replaces any other. Separate heading +
-          helper so it is never confused with the multi-select observations
-          above. The legacy per-area response note (reaction_notes) stays here,
-          rendered only when one already exists so old data is preserved. */}
-      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <div>
-          <span className="text-sm font-medium">{CLIENT_RESPONSE_HEADING}</span>
-          <p className="text-xs text-neutral-500">{CLIENT_RESPONSE_HELPER}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {REACTION_TYPES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={draft.reactionType === r}
-              onClick={() =>
-                update("reactionType", draft.reactionType === r ? "" : r)
-              }
-              className={
-                draft.reactionType === r
-                  ? "rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900"
-                  : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-              }
-            >
-              {/* PR #203: leading + so these read as the same kind of
-                  addable chip as the observations above. */}
-              + {reactionTypeLabel(r)}
-            </button>
-          ))}
-        </div>
+        {/* Legacy per-area response note (reaction_notes): preserved + editable
+            only when one already exists, so old data is never lost. */}
         {draft.reactionNotes.trim() !== "" && (
           <textarea
             rows={2}
             value={draft.reactionNotes}
             onChange={(e) => update("reactionNotes", e.target.value)}
+            aria-label="Legacy response note"
             className="w-full resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         )}
+        {/* Additional notes — one large free-text box directly beneath the merged
+            chip list. ~8 rows, >=12rem, full-width + vertically resizable, safe at
+            390px; multiline preserved verbatim. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            {ADDITIONAL_NOTES_HEADING}
+          </span>
+          <textarea
+            rows={8}
+            value={draft.comments}
+            onChange={(e) => update("comments", e.target.value)}
+            data-testid="additional-notes"
+            placeholder="Add any details not covered by the findings above"
+            className="w-full min-h-[12rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-xs text-neutral-500">
+            {ADDITIONAL_NOTES_HELPER}
+          </span>
+        </label>
       </div>
 
       {/* PR #199 (Chloe iPad retest): the per-area next-visit and

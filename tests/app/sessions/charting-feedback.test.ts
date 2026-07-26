@@ -117,11 +117,20 @@ describe("item 5: OmniBlend reading layout", () => {
     expect(FORM).toMatch(/const isOmniblend = draft\.apilusModality === "Omniblend"/);
     expect(FORM).toMatch(/isOmniblend \? \(\s*<>\s*\{galvSection\}\s*\{thermoSection\}/);
   });
-  it("hides thermolysis duration and galvanic intensity for OmniBlend", () => {
-    // both fields are guarded by !isOmniblend
-    expect((FORM.match(/\{!isOmniblend && \(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect(FORM).toMatch(/!isOmniblend && \([\s\S]*Thermolysis duration/);
-    expect(FORM).toMatch(/!isOmniblend && \([\s\S]*Galvanic intensity/);
+  it("hides thermolysis duration for OmniBlend; galvanic intensity is no longer a visible input at all", () => {
+    // OmniBlend has no thermolysis duration — still gated behind !isOmniblend.
+    expect(FORM).toMatch(/\{!isOmniblend && \(/);
+    expect(FORM).toMatch(/!isOmniblend && \([\s\S]{0,400}Thermolysis duration/);
+    // Charting correction: the galvanic intensity % INPUT was removed for EVERY
+    // mode (not merely hidden for OmniBlend), so there is no rendered
+    // "Galvanic intensity %" field/label.
+    expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
+    // Its stored value is still round-tripped on edit (never wiped): hydrated from
+    // the entry and sent in the save payload.
+    expect(FORM).toMatch(
+      /galvanicIntensityPercent:\s*\n?\s*firstEntry\?\.galvanic_intensity_percent != null/,
+    );
+    expect(FORM).toMatch(/galvanicIntensityPercent: gInt\.value/);
   });
   it("does not change other modalities (no apilus_modality gating beyond OmniBlend)", () => {
     const matches = FORM.match(/draft\.apilusModality === "[A-Za-z]+"/g) ?? [];
@@ -149,12 +158,25 @@ describe("item 7: observation chips toggle (structural, migration 0108)", () => 
     // Migration 0108: chips are explicit structured state, not re-derived from
     // the free-text `comments` string — so a selected chip can never silently
     // drop. See tests/app/sessions/observation-chips-structured.test.ts.
-    expect(FORM).toMatch(/toggleChip\(draft\.observationChips, c\)/);
+    expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
     expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
     expect(FORM).not.toMatch(/appendComment\(/);
     expect(FORM).not.toMatch(/toggleComment\(|isCommentSelected\(/);
   });
-  it("reaction chips are single-select toggles (No visible reaction handled)", () => {
-    expect(FORM).toMatch(/draft\.reactionType === r \? "" : r/);
+  it("reaction labels are merged multi-select chips, not a separate single-select row", () => {
+    // Charting unification: the reaction is no longer a single-select toggle
+    // (`draft.reactionType === r ? "" : r`). Reaction labels are part of the
+    // merged multi-select chip vocabulary and toggle exactly like observation
+    // chips (via observationChips).
+    expect(FORM).not.toMatch(/draft\.reactionType === r \? "" : r/);
+    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
+    expect(FORM).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
+    expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
+    // A legacy reaction_type is preserved ONLY while its label chip stays selected
+    // (never invented from chips); otherwise it saves as null.
+    expect(FORM).toMatch(
+      /isChipSelected\([\s\S]{0,60}reactionTypeLabel\(draft\.reactionType as ReactionType\)/,
+    );
+    expect(FORM).toMatch(/\? draft\.reactionType\s*\n?\s*: null/);
   });
 });

@@ -321,7 +321,7 @@ export default async function AppointmentDetailPage({
       const { data: lastBlocks } = await supabase
         .from("session_blocks")
         .select(
-          "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note",
+          "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
         )
         .eq("studio_id", studio.id)
         .eq("session_id", lastSession.id)
@@ -330,11 +330,23 @@ export default async function AppointmentDetailPage({
       // Migration 0128: attach structured areas so the appointment-card summary
       // shows every treated area + laterality, not only the legacy primary_area.
       const lastBlockRows = (lastBlocks ?? []) as Array<
-        ClinicalSummaryBlock & { id: string }
+        ClinicalSummaryBlock & {
+          id: string;
+          electrolysis_entries?:
+            | Array<{ observation_chips: unknown; deleted_at: string | null }>
+            | null;
+        }
       >;
       await attachStructuredAreas(lastBlockRows, studio.id);
       lastSessionSummary = buildLastSessionSummary({
-        blocks: lastBlockRows,
+        // Charting unification: feed live entries' observation_chips so the
+        // reaction line reads the unified representation.
+        blocks: lastBlockRows.map((b) => ({
+          ...b,
+          observation_chips_list: (b.electrolysis_entries ?? [])
+            .filter((e) => e.deleted_at == null)
+            .map((e) => e.observation_chips),
+        })),
         nextSessionNote: lastSession.next_session_note,
       });
     }

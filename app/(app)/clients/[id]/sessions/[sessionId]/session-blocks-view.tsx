@@ -20,6 +20,7 @@ import {
   reactionTypeLabel,
   toleranceLabel,
 } from "@/lib/sessions/clinical-response";
+import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { CLIENT_RESPONSE_HEADING } from "@/lib/sessions/charting-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
@@ -369,30 +370,47 @@ function BlockSection({
             );
           })()}
 
-          {/* PR #190 (migration 0082): structured client response.
-              Lines render only when recorded; legacy blocks show
-              nothing here. */}
-          {(block.tolerance_rating != null ||
-            block.reaction_type ||
-            block.reaction_notes) && (
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {/* Charting polish: label the grouped client response with the
-                  same terminology the entry forms use, so observations vs
-                  response read consistently across form and saved record. */}
-              <span className="text-neutral-500">{CLIENT_RESPONSE_HEADING}: </span>
-              {[
-                block.tolerance_rating != null
-                  ? `Tolerance: ${toleranceLabel(block.tolerance_rating)}`
-                  : null,
-                isReactionType(block.reaction_type)
-                  ? reactionTypeLabel(block.reaction_type)
-                  : null,
-                block.reaction_notes,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
+          {/* Charting unification: reactions now show as chips in the entries
+              above (one unified "Treatment observations & skin response"
+              concept). This block-level line carries tolerance, any legacy
+              per-area response note, and a legacy reaction_type ONLY when its
+              label is not already shown as a chip (so a migrated record never
+              double-shows the reaction). */}
+          {(() => {
+            const chipReactionLabels = new Set(
+              block.electrolysis_entries.flatMap((e) =>
+                reactionLabelsFromChips(e.observation_chips),
+              ).map((l) => l.toLowerCase()),
+            );
+            const legacyReaction =
+              isReactionType(block.reaction_type) &&
+              !chipReactionLabels.has(
+                reactionTypeLabel(block.reaction_type).toLowerCase(),
+              )
+                ? reactionTypeLabel(block.reaction_type)
+                : null;
+            if (
+              block.tolerance_rating == null &&
+              !legacyReaction &&
+              !block.reaction_notes
+            ) {
+              return null;
+            }
+            return (
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                <span className="text-neutral-500">{CLIENT_RESPONSE_HEADING}: </span>
+                {[
+                  block.tolerance_rating != null
+                    ? `Tolerance: ${toleranceLabel(block.tolerance_rating)}`
+                    : null,
+                  legacyReaction,
+                  block.reaction_notes,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            );
+          })()}
           {(block.caution_for_next_session || block.caution_note) && (
             <p className="text-sm text-amber-700 dark:text-amber-400">
               Caution for next session

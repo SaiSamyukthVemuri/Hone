@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import {
   AREAS,
-  COMMON_COMMENTS,
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
   PULSE_COUNT_MIN,
@@ -12,7 +11,11 @@ import {
   PULSE_DELAY_MAX,
 } from "@/lib/constants";
 import type { SessionBlock } from "@/lib/types/database";
-import { isChipSelected, toggleChip } from "@/lib/observation-chips";
+import {
+  isChipSelected,
+  toggleFindingChip,
+  MERGED_OBSERVATION_CHIPS,
+} from "@/lib/observation-chips";
 import { SelectedObservations } from "@/components/selected-observations";
 import {
   TREATMENT_OBSERVATIONS_HEADING,
@@ -274,21 +277,9 @@ export function SimplifiedEntryForm({
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Galvanic intensity %</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                step="1"
-                min={0}
-                max={100}
-                value={draft.galvanicIntensityPercent}
-                onChange={(e) =>
-                  update("galvanicIntensityPercent", e.target.value)
-                }
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
+            {/* Galvanic intensity % removed as an active input (Chloe / PicoBlend).
+                This form is create-only, so there is no historical value to
+                round-trip; new entries leave it NULL. No migration. */}
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">Units of lye (UL)</span>
               <input
@@ -409,7 +400,7 @@ export function SimplifiedEntryForm({
             persist to observation_chips (not the notes), so they render as pills
             and reload after refresh. Free-text notes are the separate box below. */}
         <div className="flex flex-wrap gap-2">
-          {COMMON_COMMENTS.map((c) => {
+          {MERGED_OBSERVATION_CHIPS.map((c) => {
             const selected = isChipSelected(draft.observationChips, c);
             return (
               <button
@@ -418,7 +409,7 @@ export function SimplifiedEntryForm({
                 data-testid={`obs-chip-${c}`}
                 aria-pressed={selected}
                 onClick={() =>
-                  update("observationChips", toggleChip(draft.observationChips, c))
+                  update("observationChips", toggleFindingChip(draft.observationChips, c))
                 }
                 className={
                   selected

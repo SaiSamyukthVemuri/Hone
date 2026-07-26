@@ -1,9 +1,5 @@
 import { apilusModalityLabel } from "@/lib/constants";
-import {
-  isReactionType,
-  reactionTypeLabel,
-  type ReactionType,
-} from "@/lib/sessions/clinical-response";
+import { unifiedReactionLabels } from "@/lib/sessions/reaction-unified";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 
 // PR #210: Client Treatment Intelligence Summary. Pure builder that
@@ -57,6 +53,11 @@ export type IntelligenceBlockInput = {
   minutes_performed: number | null;
   tolerance_rating: number | null;
   reaction_type: string | null;
+  // Charting unification: reactions may live as chips in the block's live
+  // entries' observation_chips (canonical going forward) as well as legacy
+  // reaction_type. Carry ALL live entries' observation_chips so reaction
+  // summaries read the unified representation. Optional for legacy-only inputs.
+  observation_chips_list?: ReadonlyArray<unknown>;
   caution_for_next_session: boolean;
   caution_note: string | null;
   entry_hairs: ReadonlyArray<number | null>;
@@ -149,28 +150,40 @@ function modeLabelFor(block: IntelligenceBlockInput): string | null {
   return null;
 }
 
-// Most frequent non-empty reaction; ties prefer the most RECENT
-// occurrence (inputs must be ordered oldest -> newest).
+// The UNIFIED reaction labels for a block (legacy reaction_type + reaction chips
+// in its live entries' observation_chips), retaining every reaction.
+function blockReactionLabels(b: IntelligenceBlockInput): string[] {
+  return unifiedReactionLabels(b.reaction_type, b.observation_chips_list ?? []);
+}
+
+// Most frequent reaction LABEL across blocks; ties prefer the most RECENT
+// occurrence (inputs must be ordered oldest -> newest). Each block may carry
+// several reaction labels — ALL are counted (retain all), never collapsed.
 function commonReaction(
-  reactionsOldestFirst: ReadonlyArray<string | null>,
+  perBlockLabelsOldestFirst: ReadonlyArray<ReadonlyArray<string>>,
 ): string | null {
-  const counts = new Map<ReactionType, { count: number; lastIndex: number }>();
-  reactionsOldestFirst.forEach((r, i) => {
-    if (!r || !isReactionType(r)) return;
-    const cur = counts.get(r) ?? { count: 0, lastIndex: -1 };
-    counts.set(r, { count: cur.count + 1, lastIndex: i });
+  const counts = new Map<
+    string,
+    { count: number; lastIndex: number; label: string }
+  >();
+  perBlockLabelsOldestFirst.forEach((labels, i) => {
+    for (const l of labels) {
+      const key = l.toLowerCase();
+      const cur = counts.get(key) ?? { count: 0, lastIndex: -1, label: l };
+      counts.set(key, { count: cur.count + 1, lastIndex: i, label: l });
+    }
   });
-  let top: ReactionType | null = null;
+  let top: string | null = null;
   let topCount = 0;
   let topLast = -1;
-  for (const [r, { count, lastIndex }] of counts) {
+  for (const { count, lastIndex, label } of counts.values()) {
     if (count > topCount || (count === topCount && lastIndex > topLast)) {
-      top = r;
+      top = label;
       topCount = count;
       topLast = lastIndex;
     }
   }
-  return top ? reactionTypeLabel(top) : null;
+  return top;
 }
 
 export function buildTreatmentIntelligence(input: {
@@ -253,7 +266,7 @@ export function buildTreatmentIntelligence(input: {
     minutes: number;
     hairs: number;
     dates: string[];
-    reactionsOldestFirst: Array<string | null>;
+    reactionsOldestFirst: Array<ReadonlyArray<string>>;
     latest: IntelligenceBlockInput;
     latestWatchNote: string | null;
   };
@@ -283,7 +296,7 @@ export function buildTreatmentIntelligence(input: {
       acc.minutes += positive(b.minutes_performed);
       for (const h of b.entry_hairs) acc.hairs += positive(h);
       acc.dates.push(date);
-      acc.reactionsOldestFirst.push(b.reaction_type);
+      acc.reactionsOldestFirst.push(blockReactionLabels(b));
       acc.latest = b;
       if (b.caution_for_next_session || b.caution_note?.trim()) {
         acc.latestWatchNote = b.caution_note?.trim() || "Previously noted";
@@ -318,14 +331,16 @@ export function buildTreatmentIntelligence(input: {
     .sort((x, y) => (x.lastTreated < y.lastTreated ? 1 : -1));
 
   // Client-level reaction / tolerance / watch / plan.
-  const allReactionsOldestFirst = blocksOldestFirst.map((b) => b.reaction_type);
+  const allReactionsOldestFirst = blocksOldestFirst.map((b) =>
+    blockReactionLabels(b),
+  );
   let latestReactionLabel: string | null = null;
   let latestToleranceRating: number | null = null;
   let latestWatchNote: string | null = null;
   for (const b of blocksOldestFirst) {
-    if (b.reaction_type && isReactionType(b.reaction_type)) {
-      latestReactionLabel = reactionTypeLabel(b.reaction_type);
-    }
+    const labels = blockReactionLabels(b);
+    // Retain ALL reactions from the latest block that has any.
+    if (labels.length > 0) latestReactionLabel = labels.join(", ");
     if (b.tolerance_rating != null) {
       latestToleranceRating = b.tolerance_rating;
     }

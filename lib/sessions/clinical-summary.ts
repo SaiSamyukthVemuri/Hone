@@ -1,11 +1,8 @@
 import type { SessionBlock, SessionBlockArea } from "@/lib/types/database";
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import { apilusModalityLabel } from "@/lib/constants";
-import {
-  isReactionType,
-  reactionTypeLabel,
-  toleranceLabel,
-} from "@/lib/sessions/clinical-response";
+import { toleranceLabel } from "@/lib/sessions/clinical-response";
+import { unifiedReactionLabels } from "@/lib/sessions/reaction-unified";
 
 // PR #190 introduced this helper; PR #191 reshaped it after Chloe's
 // practitioner smoke: a first-area-only compact line made multi-area
@@ -42,6 +39,10 @@ export type ClinicalSummaryBlock = Pick<
   // primary_area + side. Optional so callers that have not been updated still
   // compile and fall back to legacy.
   structured_areas?: ReadonlyArray<SessionBlockArea> | null;
+  // Charting unification: the block's live entries' observation_chips, so the
+  // reaction line reads the unified representation. Optional; legacy-only when
+  // absent.
+  observation_chips_list?: ReadonlyArray<unknown>;
 };
 
 // One treatment area's at-a-glance memory. Practitioner-facing
@@ -108,13 +109,19 @@ function settingsLine(block: ClinicalSummaryBlock): string | null {
 }
 
 function reactionLine(block: ClinicalSummaryBlock): string | null {
-  if (!isReactionType(block.reaction_type)) {
-    // A note without a coded reaction still carries memory.
-    const noteOnly = trimmedOrNull(block.reaction_notes);
-    return noteOnly && noteOnly.length <= 140 ? noteOnly : null;
-  }
-  const label = reactionTypeLabel(block.reaction_type);
+  // Charting unification: the reaction(s) come from the unified representation —
+  // legacy reaction_type AND reaction chips in the block's live entries'
+  // observation_chips. Retain ALL reactions, joined.
+  const labels = unifiedReactionLabels(
+    block.reaction_type,
+    block.observation_chips_list ?? [],
+  );
   const note = trimmedOrNull(block.reaction_notes);
+  if (labels.length === 0) {
+    // A note without a coded reaction still carries memory.
+    return note && note.length <= 140 ? note : null;
+  }
+  const label = labels.join(", ");
   if (note && note.length <= 140) return `${label}. ${note}`;
   return label;
 }
