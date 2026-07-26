@@ -715,7 +715,10 @@ export type EntryReadingsInput = {
   observationChips?: string[] | null;
   galvanicMa?: number | null;
   galvanicDurationSeconds?: number | null;
-  galvanicIntensityPercent?: number | null;
+  // galvanic_intensity_percent is a RETIRED reading: no current form supplies it,
+  // it is deliberately NOT an input here, and any forged value is ignored. New
+  // rows always store NULL; historical rows are preserved by omitting the column
+  // from updates (see structuredReadingColumns + the create/update write paths).
   thermolysisIntensityPercent?: number | null;
   thermolysisDurationSeconds?: number | null;
   unitsOfLye?: number | null;
@@ -747,7 +750,6 @@ function readingsPresent(r: EntryReadingsInput): boolean {
     r.hairsTreated != null ||
     r.galvanicMa != null ||
     r.galvanicDurationSeconds != null ||
-    r.galvanicIntensityPercent != null ||
     r.thermolysisIntensityPercent != null ||
     r.thermolysisDurationSeconds != null ||
     r.unitsOfLye != null ||
@@ -787,7 +789,6 @@ function validateReadings(
     }
   }
   const percent: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.galvanicIntensityPercent, "Galvanic intensity"],
     [r.thermolysisIntensityPercent, "Thermolysis intensity"],
   ];
   for (const [v, label] of percent) {
@@ -812,13 +813,19 @@ function validateReadings(
 // outside the mode is stored as null so a thermolysis entry never carries
 // stray galvanic numbers (and vice versa), regardless of leftover draft
 // state in the form.
+// NOTE: galvanic_intensity_percent is intentionally NOT emitted here. It is a
+// retired reading. Omitting it from this column set means:
+//   - on an UPDATE of an existing entry, the column is left out of the patch, so
+//     a historical stored value is preserved untouched (never wiped, never
+//     round-tripped through a browser-controlled field);
+//   - on an INSERT of a NEW entry, the create paths set it explicitly to NULL
+//     (server-authoritative), so no forged value can land.
 function structuredReadingColumns(
   mode: SessionMode | null,
   r: EntryReadingsInput,
 ): {
   galvanic_ma: number | null;
   galvanic_duration_seconds: number | null;
-  galvanic_intensity_percent: number | null;
   thermolysis_intensity_percent: number | null;
   thermolysis_duration_seconds: number | null;
   units_of_lye: number | null;
@@ -829,9 +836,6 @@ function structuredReadingColumns(
     galvanic_ma: wantGalv ? (r.galvanicMa ?? null) : null,
     galvanic_duration_seconds: wantGalv
       ? (r.galvanicDurationSeconds ?? null)
-      : null,
-    galvanic_intensity_percent: wantGalv
-      ? (r.galvanicIntensityPercent ?? null)
       : null,
     thermolysis_intensity_percent: wantThermo
       ? (r.thermolysisIntensityPercent ?? null)
@@ -1090,6 +1094,9 @@ export async function createTreatmentAreaWithEntryAction(
         comments: normalizedComments(readings),
         observation_chips: normalizedChips(readings),
         ...structuredReadingColumns((input.mode ?? null) as SessionMode | null, readings),
+        // Retired reading: a NEW entry always stores NULL (server-authoritative,
+        // ignores any forged client value).
+        galvanic_intensity_percent: null,
         ...snap,
       });
     if (entryErr) {
@@ -1409,6 +1416,9 @@ export async function updateTreatmentAreaWithEntryAction(
           (input.mode ?? null) as SessionMode | null,
           readings,
         ),
+        // Retired reading: a NEW entry always stores NULL (server-authoritative,
+        // ignores any forged client value).
+        galvanic_intensity_percent: null,
         ...snap,
       });
     if (entryErr) {

@@ -62,11 +62,24 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
     expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
     expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
   });
-  it("but block-setup-form still ROUND-TRIPS galvanic_intensity_percent (hydrate + save), so an edit never wipes history", () => {
-    // hydrated from the stored entry...
-    expect(FORM).toMatch(/galvanicIntensityPercent:\s*[\s\S]{0,80}galvanic_intensity_percent/);
-    // ...and re-submitted on save.
-    expect(FORM).toMatch(/galvanicIntensityPercent: gInt\.value/);
+  it("neither form hydrates or sends galvanic_intensity_percent — history is preserved SERVER-SIDE, not via a browser round-trip", () => {
+    // Final amendment: galvanic intensity is a RETIRED reading. The form no longer
+    // hydrates it into the draft nor sends it on save (no hidden browser-controlled
+    // clinical field). Preservation is server-authoritative: the update path omits
+    // the column (historical value untouched) and inserts force NULL.
+    expect(FORM).not.toMatch(/galvanicIntensityPercent/);
+    expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/galvanicIntensityPercent/);
+    // The write helper no longer emits galvanic_intensity_percent (so UPDATE omits
+    // it → preserved), while both create inserts set it explicitly to NULL.
+    const BLOCK_ACTIONS = read(`${BASE}/block-actions.ts`);
+    expect(BLOCK_ACTIONS).not.toMatch(/galvanic_intensity_percent:\s*wantGalv/);
+    expect(
+      (BLOCK_ACTIONS.match(/galvanic_intensity_percent:\s*null/g) ?? []).length,
+    ).toBe(2);
+    // The add-another-pass action also forces NULL and never reads a forged field.
+    const ACTIONS = read(`${BASE}/actions.ts`);
+    expect(ACTIONS).toMatch(/galvanic_intensity_percent:\s*null/);
+    expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
   });
   it("reaction_type is PRESERVED while its chip stays selected and cleared ONLY when removed (never invented)", () => {
     // Save payload: keep draft.reactionType only if its label chip is still selected, else null.

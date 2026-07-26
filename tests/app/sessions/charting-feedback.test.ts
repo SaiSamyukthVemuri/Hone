@@ -125,21 +125,23 @@ describe("item 5: OmniBlend reading layout", () => {
     // mode (not merely hidden for OmniBlend), so there is no rendered
     // "Galvanic intensity %" field/label.
     expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
-    // Its stored value is still round-tripped on edit (never wiped): hydrated from
-    // the entry and sent in the save payload.
-    expect(FORM).toMatch(
-      /galvanicIntensityPercent:\s*\n?\s*firstEntry\?\.galvanic_intensity_percent != null/,
-    );
-    expect(FORM).toMatch(/galvanicIntensityPercent: gInt\.value/);
+    // Final amendment: galvanic intensity is a RETIRED reading — the form no longer
+    // hydrates it or sends it in the save payload (no browser round-trip of a
+    // clinical value). Historical values are preserved SERVER-SIDE (the update
+    // omits the column). So neither the hydrate nor the payload key exists here.
+    expect(FORM).not.toMatch(/galvanicIntensityPercent/);
   });
   it("does not change other modalities (no apilus_modality gating beyond OmniBlend)", () => {
     const matches = FORM.match(/draft\.apilusModality === "[A-Za-z]+"/g) ?? [];
     expect(matches).toEqual(['draft.apilusModality === "Omniblend"']);
   });
-  it("switching to OmniBlend clears any typed thermolysis-duration / galvanic-intensity (no hidden persisted reading)", () => {
+  it("switching to OmniBlend clears any typed thermolysis-duration (no hidden persisted reading)", () => {
+    // Galvanic intensity is retired everywhere, so only thermolysis duration is
+    // cleared on the OmniBlend switch (no galvanicIntensityPercent key remains).
     expect(FORM).toMatch(
-      /next === "Omniblend"\s*\?\s*\{ thermolysisDurationSeconds: "", galvanicIntensityPercent: "" \}/,
+      /next === "Omniblend"\s*\?\s*\{ thermolysisDurationSeconds: "" \}/,
     );
+    expect(FORM).not.toMatch(/galvanicIntensityPercent: ""/);
   });
 });
 

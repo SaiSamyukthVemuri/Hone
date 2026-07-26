@@ -162,18 +162,14 @@ async function runPrimaryFormRoundTrip(page: Page): Promise<void> {
 
   // Thermolysis reading line: intensity %, duration, and pulse count.
   //
-  // FINDING (display precision, not data loss): the thermolysis duration is
-  // stored in the DB at FULL precision — 0.733 — as asserted above. The
-  // practitioner-facing summary line, however, routes the duration through
-  // formatSeconds (PR #165), which rounds to 2 decimal places, so it renders
-  // "0.73 seconds" rather than "0.733 seconds". The stored clinical value and
-  // the raw export keep 0.733; only this readability-oriented summary rounds.
-  // The DB round-trip (the load-bearing clinical guarantee) is exact; this
-  // assertion therefore matches what the UI actually shows.
+  // The practitioner-facing summary shows the EXACT stored duration: 0.733 is
+  // stored (asserted above) AND displayed as "0.733 seconds" — formatSeconds now
+  // preserves 3-decimal thermolysis precision, so it must NOT render the lossy
+  // "0.73 seconds". This is the clinical-truthfulness guarantee for PicoBlend.
   const thermoLine = page.getByText("Thermolysis:", { exact: true }).locator("xpath=..");
   await expect(thermoLine).toContainText("7%");
-  await expect(thermoLine).toContainText("0.73 seconds");
-  await expect(thermoLine).not.toContainText("0.733 seconds");
+  await expect(thermoLine).toContainText("0.733 seconds");
+  await expect(thermoLine).not.toContainText("0.73 seconds");
   await expect(thermoLine).toContainText("4 pulses");
 }
 

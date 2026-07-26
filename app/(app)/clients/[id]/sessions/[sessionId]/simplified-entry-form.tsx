@@ -49,7 +49,8 @@ type Draft = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  galvanicIntensityPercent: string;
+  // galvanic_intensity_percent is a retired reading — this create-only form does
+  // not capture or send it; the server always stores NULL on new entries.
   unitsOfLye: string;
   pulse_count: string;
   pulse_delay: string;
@@ -68,7 +69,6 @@ function emptyDraft(): Draft {
     thermolysisDurationSeconds: "",
     galvanicMa: "",
     galvanicDurationSeconds: "",
-    galvanicIntensityPercent: "",
     unitsOfLye: "",
     pulse_count: String(PULSE_COUNT_DEFAULT),
     pulse_delay: String(PULSE_DELAY_DEFAULT),
@@ -143,7 +143,7 @@ export function SimplifiedEntryForm({
     fd.set("thermolysis_duration_seconds", draft.thermolysisDurationSeconds);
     fd.set("galvanic_ma", draft.galvanicMa);
     fd.set("galvanic_duration_seconds", draft.galvanicDurationSeconds);
-    fd.set("galvanic_intensity_percent", draft.galvanicIntensityPercent);
+    // galvanic_intensity_percent is retired: not sent (the server stores NULL).
     fd.set("units_of_lye", draft.unitsOfLye);
     fd.set("pulse_count", draft.pulse_count);
     fd.set("pulse_delay_seconds", draft.pulse_delay);

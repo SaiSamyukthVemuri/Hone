@@ -84,13 +84,15 @@ describe("2. copy settings: full, area-aware, never the response", () => {
       "thermolysisDurationSeconds",
       "galvanicMa",
       "galvanicDurationSeconds",
-      "galvanicIntensityPercent",
       "unitsOfLye",
       "pulseCount",
       "pulseDelay",
     ]) {
       expect(SNAPSHOT).toContain(`${field}:`);
     }
+    // Final amendment: galvanic intensity is a RETIRED reading — it is NOT a
+    // copyable setup key, so the snapshot must not emit it as a patch field.
+    expect(SNAPSHOT).not.toMatch(/galvanicIntensityPercent:/);
   });
 
   it("does NOT copy the area identity or any response field", () => {

@@ -199,7 +199,9 @@ type Draft = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  galvanicIntensityPercent: string;
+  // galvanic_intensity_percent is a retired reading — no longer captured, edited,
+  // hydrated, or sent by this form. Historical values are preserved server-side
+  // (the update omits the column); new entries always store NULL.
   unitsOfLye: string;
   pulseCount: string;
   pulseDelay: string;
@@ -247,7 +249,6 @@ const EMPTY: Draft = {
   thermolysisDurationSeconds: "",
   galvanicMa: "",
   galvanicDurationSeconds: "",
-  galvanicIntensityPercent: "",
   unitsOfLye: "",
   pulseCount: String(PULSE_COUNT_DEFAULT),
   pulseDelay: String(PULSE_DELAY_DEFAULT),
@@ -334,10 +335,9 @@ function initialDraft(
       firstEntry?.galvanic_duration_seconds != null
         ? String(firstEntry.galvanic_duration_seconds)
         : "",
-    galvanicIntensityPercent:
-      firstEntry?.galvanic_intensity_percent != null
-        ? String(firstEntry.galvanic_intensity_percent)
-        : "",
+    // galvanic_intensity_percent is retired: NOT hydrated into the draft. The
+    // stored historical value stays untouched in the DB (the update omits the
+    // column), so editing a legacy galvanic entry preserves it server-side.
     unitsOfLye:
       firstEntry?.units_of_lye != null ? String(firstEntry.units_of_lye) : "",
     pulseCount:
@@ -615,13 +615,7 @@ export function BlockSetupForm({
       label: "Galvanic duration",
     });
     if (!gDur.ok) return setError(gDur.error);
-    const gInt = parseOptionalNumber(draft.galvanicIntensityPercent, {
-      int: true,
-      min: 0,
-      max: 100,
-      label: "Galvanic intensity",
-    });
-    if (!gInt.ok) return setError(gInt.error);
+    // galvanic_intensity_percent is retired: not parsed, not validated, not sent.
     const ul = parseOptionalNumber(draft.unitsOfLye, {
       min: 0,
       label: "Units of lye",
@@ -683,7 +677,6 @@ export function BlockSetupForm({
       thermolysisDurationSeconds: tDur.value,
       galvanicMa: gMa.value,
       galvanicDurationSeconds: gDur.value,
-      galvanicIntensityPercent: gInt.value,
       unitsOfLye: ul.value,
       pulseCount,
       pulseDelaySeconds,
@@ -935,11 +928,11 @@ export function BlockSetupForm({
               className={READING_INPUT_CLS}
             />
           </label>
-          {/* Galvanic intensity % is removed as an ACTIVE input (Chloe / PicoBlend
-              feedback). Historical values are preserved: draft.galvanicIntensityPercent
-              is still hydrated from the stored entry and round-tripped on save, so
-              editing a legacy galvanic entry never wipes its recorded intensity;
-              new entries simply leave it blank (NULL). No migration. */}
+          {/* Galvanic intensity % is a RETIRED input (Chloe / PicoBlend feedback).
+              It is no longer captured, hydrated, or sent by this form. Historical
+              values are preserved SERVER-SIDE: the update path omits the column, so
+              editing a legacy galvanic entry never touches its recorded intensity;
+              new entries always store NULL. No migration, no backfill. */}
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Units of lye (UL)</span>
             <input
@@ -1152,13 +1145,14 @@ export function BlockSetupForm({
               setDraft((d) => ({
                 ...d,
                 apilusModality: next,
-                // PR #279: OmniBlend has no thermolysis duration / galvanic
-                // intensity. Clear any value typed under a different modality so
-                // a NEW OmniBlend record can't persist a now-hidden reading.
-                // (Editing an existing OmniBlend record seeds from the saved
-                // entry and fires no onChange, so its history is preserved.)
+                // PR #279: OmniBlend has no thermolysis duration. Clear any value
+                // typed under a different modality so a NEW OmniBlend record can't
+                // persist a now-hidden reading. (Editing an existing OmniBlend
+                // record seeds from the saved entry and fires no onChange, so its
+                // history is preserved.) Galvanic intensity is retired everywhere,
+                // so there is nothing to clear for it here.
                 ...(next === "Omniblend"
-                  ? { thermolysisDurationSeconds: "", galvanicIntensityPercent: "" }
+                  ? { thermolysisDurationSeconds: "" }
                   : {}),
               }));
             }}

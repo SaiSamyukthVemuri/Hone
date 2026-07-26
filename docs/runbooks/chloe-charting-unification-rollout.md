@@ -23,9 +23,20 @@
   single value is **never guessed** from multiple selected reactions. New records
   keep `reaction_type` NULL and represent reactions as chips.
 - **`galvanic_intensity_percent`**: the column and all historical values are
-  preserved. The block form still hydrates + round-trips the stored value on
-  edit, so editing a legacy galvanic entry never wipes it. New/edited records set
-  no active value (the input is gone). The simplified entry form is create-only.
+  preserved. **Server-authoritative write policy (final amendment):** the field
+  is a fully RETIRED reading. No current form captures, hydrates, or sends it, and
+  it is NOT part of the in-form "Copy settings" reusable contract (never copied,
+  even from a source that still carries a value). The server is authoritative:
+  - **Every NEW entry stores `NULL`** — `createTreatmentAreaWithEntryAction`, the
+    `addElectrolysisEntryAction` "add another pass" path, and the "first entry
+    absent" branch of `updateTreatmentAreaWithEntryAction` all set it explicitly to
+    `null` and ignore any browser-supplied / forged value (verified end-to-end,
+    including a forged request carrying `42`).
+  - **Existing historical rows are preserved by OMISSION** — the shared reading
+    column helper no longer emits `galvanic_intensity_percent`, so an UPDATE leaves
+    the stored value untouched (never wiped, never round-tripped through a hidden
+    browser-controlled field). Editing an unrelated field on a legacy galvanic
+    entry keeps its recorded intensity exactly.
   **Display policy (Policy A — omit from clinical display, keep in raw data):**
   the deprecated reading is NO LONGER shown as a current galvanic `%` in any
   practitioner-facing clinical surface (removed from the entry-row Galvanic line;
@@ -34,6 +45,11 @@
   column) for record integrity/history. No backfill, no null-out, no dropped
   column. (Rationale: it is no longer a current concept; showing an unlabeled
   historical `%` beside current readings would read as a live setting.)
+- **Thermolysis duration display precision**: `formatSeconds` preserves the exact
+  stored value to 3 decimal places, so Chloe's PicoBlend `0.733s` displays as
+  "0.733 seconds" (never a lossy "0.73 seconds"). Trailing zeros are still
+  trimmed; there is no float-formatting noise. DB storage + raw export were always
+  exact; this closes the display gap.
 
 ## Saved-record unified presentation
 

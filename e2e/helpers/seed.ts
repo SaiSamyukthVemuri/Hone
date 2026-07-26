@@ -1190,6 +1190,118 @@ export async function seedE2eChartedThermolysisBlock(
   return { blockId };
 }
 
+// Seed a saved BLEND settings block (+ its primary entry) that carries a LEGACY
+// galvanic_intensity_percent value, so tests can prove: (a) the in-form "Copy
+// settings" control never resurrects that retired field into a new draft, and
+// (b) an unrelated edit of this block preserves the stored value server-side.
+// Outcomes are left blank — this is a settings/history source, not an outcome.
+export async function seedE2eChartedBlendBlockWithGalvanicIntensity(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: {
+    primaryArea: string;
+    apilusModality?: string;
+    energyLevel: number;
+    machineFrequency: string;
+    thermolysisIntensityPercent: number;
+    thermolysisDurationSeconds: number;
+    galvanicMa: number;
+    galvanicDurationSeconds: number;
+    unitsOfLye: number;
+    galvanicIntensityPercent: number;
+    pulseCount: number;
+  },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, mode, apilus_modality,
+        energy_level, minutes_performed, machine_frequency, probe_key)
+     values ($1,$2,$3,1,$4,'blend',$5,$6,12,$7,'sterex-stainless-steel-two-piece-f2-short')`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea,
+      opts.apilusModality ?? "Picoblend",
+      opts.energyLevel,
+      opts.machineFrequency,
+    ],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, mode, apilus_modality, energy_level,
+        minutes_performed, machine_frequency, thermolysis_intensity_percent,
+        thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds,
+        galvanic_intensity_percent, units_of_lye, pulse_count, pulse_delay_seconds)
+     values ($1,$2,$3,$4,'blend',$5,$6,12,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    [
+      randomUUID(),
+      sessionId,
+      blockId,
+      opts.primaryArea,
+      opts.apilusModality ?? "Picoblend",
+      opts.energyLevel,
+      opts.machineFrequency,
+      opts.thermolysisIntensityPercent,
+      opts.thermolysisDurationSeconds,
+      opts.galvanicMa,
+      opts.galvanicDurationSeconds,
+      opts.galvanicIntensityPercent,
+      opts.unitsOfLye,
+      opts.pulseCount,
+      opts.pulseCount > 1 ? 0.4 : null,
+    ],
+  );
+  return { blockId };
+}
+
+// Seed a BARE settings block (mode set, NO electrolysis_entries row) so a test
+// can drive the block EDIT form down the "first entry absent" branch of the
+// update-area action (which INSERTS the first entry). Used to prove that branch
+// stores galvanic_intensity_percent = NULL for a brand-new row.
+export async function seedE2eBareBlock(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: { mode?: string } = {},
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, mode)
+     values ($1,$2,$3,1,$4)`,
+    [blockId, seed.studioId, sessionId, opts.mode ?? "blend"],
+  );
+  return { blockId };
+}
+
+// Read a SPECIFIC block's primary (earliest live) entry — DB ground truth for a
+// block a test edits in place (getSavedBlockSetup reads the NEWEST block, so it
+// can't target a pre-seeded source once a second block exists).
+export async function getBlockPrimaryEntry(
+  blockId: string,
+): Promise<Record<string, unknown> | null> {
+  const rows = await sql<Record<string, unknown>>(
+    `select galvanic_intensity_percent, galvanic_ma, galvanic_duration_seconds,
+            units_of_lye, thermolysis_intensity_percent, thermolysis_duration_seconds,
+            pulse_count, comments
+       from public.electrolysis_entries
+      where block_id = $1 and deleted_at is null
+      order by created_at asc limit 1`,
+    [blockId],
+  );
+  return rows[0] ?? null;
+}
+
+// Count a specific block's live entries (to detect the first-entry-absent INSERT).
+export async function getBlockEntryCount(blockId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int as n from public.electrolysis_entries
+      where block_id = $1 and deleted_at is null`,
+    [blockId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 // Seed a probe row in the studio's sterilization inventory
 // (record_keeping_sterile_items) so the charting probe-lot selector has an
 // ACTIVE (or expired) candidate. expiryDate null = never expires.

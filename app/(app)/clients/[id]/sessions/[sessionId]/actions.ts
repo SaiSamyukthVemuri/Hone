@@ -278,9 +278,9 @@ export async function addElectrolysisEntryAction(
   const galvanicDurationSeconds = wantGalv
     ? pickInteger(formData.get("galvanic_duration_seconds"), { min: 0 })
     : null;
-  const galvanicIntensityPercent = wantGalv
-    ? pickInteger(formData.get("galvanic_intensity_percent"), { min: 0, max: 100 })
-    : null;
+  // galvanic_intensity_percent is a RETIRED reading: the "add another pass" form
+  // no longer sends it and this action deliberately does NOT read it, so a forged
+  // form field can never land. New rows always store NULL (see the insert below).
   const thermolysisIntensityPercent = wantThermo
     ? pickInteger(formData.get("thermolysis_intensity_percent"), {
         min: 0,
@@ -354,7 +354,8 @@ export async function addElectrolysisEntryAction(
       hairs_treated: hairsTreated,
       galvanic_ma: galvanicMa,
       galvanic_duration_seconds: galvanicDurationSeconds,
-      galvanic_intensity_percent: galvanicIntensityPercent,
+      // Retired reading: a NEW entry always stores NULL (server-authoritative).
+      galvanic_intensity_percent: null,
       thermolysis_intensity_percent: thermolysisIntensityPercent,
       thermolysis_duration_seconds: thermolysisDurationSeconds,
       units_of_lye: unitsOfLye,

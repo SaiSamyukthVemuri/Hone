@@ -14,6 +14,15 @@ describe("formatSeconds returns practitioner-facing duration labels", () => {
     expect(formatSeconds(0.25)).toBe("0.25 seconds");
   });
 
+  it("shows the EXACT stored 3-decimal thermolysis duration (Chloe's PicoBlend 0.733s)", () => {
+    // The load-bearing clinical guarantee: a stored 0.733 must display as
+    // "0.733 seconds" — never a lossily rounded "0.73 seconds".
+    expect(formatSeconds(0.733)).toBe("0.733 seconds");
+    expect(formatSeconds(0.15)).toBe("0.15 seconds");
+    expect(formatSeconds(0.2)).toBe("0.2 seconds");
+    expect(formatSeconds(1)).toBe("1 second");
+  });
+
   it("uses 'second' (singular) only when the value rounds to exactly 1", () => {
     expect(formatSeconds(1)).toBe("1 second");
   });
@@ -25,17 +34,22 @@ describe("formatSeconds returns practitioner-facing duration labels", () => {
     expect(formatSeconds(2.5)).toBe("2.5 seconds");
   });
 
-  it("trims trailing zeros (0.20 -> '0.2', 1.00 -> '1')", () => {
-    // The Math.round(value * 100) / 100 trick + String() coerce
-    // both produce a clean fraction.
+  it("trims trailing zeros (0.730 -> '0.73', 0.20 -> '0.2', 1.00 -> '1')", () => {
+    // The Math.round(value * 1000) / 1000 trick + String() coerce both produce
+    // a clean fraction with no trailing zeros.
+    expect(formatSeconds(0.73)).toBe("0.73 seconds");
     expect(formatSeconds(0.2)).toBe("0.2 seconds");
     expect(formatSeconds(1.0)).toBe("1 second");
     expect(formatSeconds(2.0)).toBe("2 seconds");
   });
 
-  it("rounds to two decimal places (not three+)", () => {
-    expect(formatSeconds(0.155)).toBe("0.16 seconds");
-    expect(formatSeconds(0.1234)).toBe("0.12 seconds");
+  it("preserves up to three decimal places and rounds only at the 4th (no float noise)", () => {
+    // 3 decimals are kept exactly; a 4th-decimal input rounds to 3.
+    expect(formatSeconds(0.155)).toBe("0.155 seconds");
+    expect(formatSeconds(0.733)).toBe("0.733 seconds");
+    expect(formatSeconds(0.1234)).toBe("0.123 seconds");
+    // No 0.150000000... / 0.7330000001 float-formatting surprises.
+    expect(formatSeconds(0.1 + 0.05)).toBe("0.15 seconds");
   });
 
   it("returns null for null / undefined / non-finite", () => {
