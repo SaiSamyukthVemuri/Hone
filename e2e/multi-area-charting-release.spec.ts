@@ -51,8 +51,10 @@ test("multi-area + probe lot: save, display everywhere, edit-down, conflict, leg
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   };
 
-  await test.step("form auto-opens; add Cheeks + Sideburns", async () => {
+  await test.step("open the compact CTA; add Cheeks + Sideburns", async () => {
     await openCharting();
+    // Charting polish: explicit open (form no longer auto-renders).
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
       timeout: T,
     });

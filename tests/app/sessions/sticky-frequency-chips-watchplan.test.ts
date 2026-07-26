@@ -112,25 +112,32 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
 // ---------------------------------------------------------------------------
 
 describe("reaction/response chips match the observation chips", () => {
+  // Charting polish: observations (multi-select) and the client/skin response
+  // (single-select) are now two separate headed groups. Anchor each region on
+  // its shared-constant heading.
   const obsRegion = FORM.slice(
-    FORM.indexOf(">Treatment observations<"),
-    FORM.indexOf('placeholder="Tap a chip or type a note"'),
+    FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}"),
+    FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
+  );
+  const responseRegion = FORM.slice(
+    FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
+    FORM.indexOf("save-treatment-area"),
   );
 
   it("reaction chips render with a leading +", () => {
-    expect(obsRegion).toMatch(/\+ \{reactionTypeLabel\(r\)\}/);
+    expect(responseRegion).toMatch(/\+ \{reactionTypeLabel\(r\)\}/);
     // PR #279: observation chips are toggles now — unselected still shows a
     // leading + (the template `+ ${c}`), selected shows the bare label.
     expect(obsRegion).toMatch(/\+ \$\{c\}/);
   });
 
   it("no plain non-plus reaction label remains in the chip list", () => {
-    expect(obsRegion).not.toMatch(/>\s*\{reactionTypeLabel\(r\)\}/);
+    expect(responseRegion).not.toMatch(/>\s*\{reactionTypeLabel\(r\)\}/);
   });
 
   it("selection behavior is unchanged: single-select toggle on reaction_type", () => {
-    expect(obsRegion).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
-    expect(obsRegion).toMatch(
+    expect(responseRegion).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
+    expect(responseRegion).toMatch(
       /update\("reactionType", draft\.reactionType === r \? "" : r\)/,
     );
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);

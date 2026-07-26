@@ -75,6 +75,14 @@ import {
   TOLERANCE_OPTIONS,
   reactionTypeLabel,
 } from "@/lib/sessions/clinical-response";
+import {
+  TREATMENT_OBSERVATIONS_HEADING,
+  TREATMENT_OBSERVATIONS_HELPER,
+  CLIENT_RESPONSE_HEADING,
+  CLIENT_RESPONSE_HELPER,
+  ADDITIONAL_NOTES_HEADING,
+  ADDITIONAL_NOTES_HELPER,
+} from "@/lib/sessions/charting-labels";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
@@ -1279,24 +1287,24 @@ export function BlockSetupForm({
         </div>
       </div>
 
-      {/* Treatment observations (PR #191 bucket A): what the
-          practitioner SAW during treatment: follicle/skin/hair
-          characteristics. Quick-tap chips + free text, same controls
-          as the add-another-pass form. Distinct from the client/skin
-          response bucket below (how the client reacted) and the
-          for-next-visit bucket (what to do differently). */}
+      {/* GROUP A — Treatment observations (what the practitioner SAW:
+          follicle/skin/hair). MULTI-select observation_chips + the Additional
+          notes free-text. Kept clearly DISTINCT from the Client/skin response
+          group below (how the client reacted). No stored field changes — this is
+          terminology + layout only. */}
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
-          <span className="text-sm font-medium">Treatment observations</span>
+          <span className="text-sm font-medium">
+            {TREATMENT_OBSERVATIONS_HEADING}
+          </span>
           <p className="text-xs text-neutral-500">
-            What you saw during treatment, including how the skin and client responded.
+            {TREATMENT_OBSERVATIONS_HELPER}
           </p>
         </div>
-        {/* PR #279 (Chloe mobile feedback): observation chips are TOGGLES — tap
-            to add the phrase to the notes, tap again to remove it. Selected
-            chips show pressed and their text appears in the notes box below;
-            manually typed text is preserved. (Was append-only, which could not
-            be unselected.) */}
+        {/* PR #279 (Chloe mobile feedback): observation chips are multi-select
+            TOGGLES — tap to select (pressed), tap again to deselect. They persist
+            to observation_chips (NOT the notes), so a chip can never be lost by
+            editing text. */}
         <div className="flex flex-wrap gap-2">
           {COMMON_COMMENTS.map((c) => {
             const selected = isChipSelected(draft.observationChips, c);
@@ -1323,11 +1331,39 @@ export function BlockSetupForm({
         {/* Chip confidence (Chloe): show exactly which observations are selected
             and will be saved, adjacent to the chips, so a tap visibly "takes". */}
         <SelectedObservations chips={draft.observationChips} />
-        {/* PR #198/#279: skin/client response options as chips. Single-select
-            toggle on the reaction_type field — tap again to clear, and picking
-            one (e.g. "No visible reaction") replaces any other (deliberate
-            conflict handling). The choice is saved as the block's reaction and
-            shows in the saved record. */}
+        {/* Additional notes = free-text for the OBSERVATIONS group (migration
+            0108: free-text only; the structured chips above are separate state).
+            Charting polish: larger default height + vertical resize, full-width
+            so it never overflows at 390px; multiline is preserved verbatim. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            {ADDITIONAL_NOTES_HEADING}
+          </span>
+          <textarea
+            rows={5}
+            value={draft.comments}
+            onChange={(e) => update("comments", e.target.value)}
+            data-testid="additional-notes"
+            placeholder="Add any details not covered by the observations above"
+            className="w-full min-h-[7rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-xs text-neutral-500">
+            {ADDITIONAL_NOTES_HELPER}
+          </span>
+        </label>
+      </div>
+
+      {/* GROUP B — Client / skin response (how the client's skin REACTED).
+          SINGLE-select reaction_type toggle — tap again to clear; picking one
+          (e.g. "No visible reaction") replaces any other. Separate heading +
+          helper so it is never confused with the multi-select observations
+          above. The legacy per-area response note (reaction_notes) stays here,
+          rendered only when one already exists so old data is preserved. */}
+      <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+        <div>
+          <span className="text-sm font-medium">{CLIENT_RESPONSE_HEADING}</span>
+          <p className="text-xs text-neutral-500">{CLIENT_RESPONSE_HELPER}</p>
+        </div>
         <div className="flex flex-wrap gap-2">
           {REACTION_TYPES.map((r) => (
             <button
@@ -1344,41 +1380,19 @@ export function BlockSetupForm({
               }
             >
               {/* PR #203: leading + so these read as the same kind of
-                  addable observation chip as the row above. */}
+                  addable chip as the observations above. */}
               + {reactionTypeLabel(r)}
             </button>
           ))}
         </div>
-        {/* PR #197: ONE free-text box per area (Treatment
-            observations). This response-notes textarea only renders
-            when a saved note already exists, so legacy data stays
-            visible and editable without asking for the same note
-            twice. */}
         {draft.reactionNotes.trim() !== "" && (
           <textarea
             rows={2}
             value={draft.reactionNotes}
             onChange={(e) => update("reactionNotes", e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-full resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         )}
-        {/* Migration 0108: this box is now free-text ONLY. Selected chips are
-            structured state (the pressed pills above + the summary stay visible
-            regardless of what's typed here), so a chip can no longer be lost by
-            editing text. Labelled "Additional notes" so it reads as distinct from
-            the structured observations. */}
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Additional notes
-          </span>
-          <textarea
-            rows={2}
-            value={draft.comments}
-            onChange={(e) => update("comments", e.target.value)}
-            placeholder="Add any details not covered by the observations above"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
-        </label>
       </div>
 
       {/* PR #199 (Chloe iPad retest): the per-area next-visit and

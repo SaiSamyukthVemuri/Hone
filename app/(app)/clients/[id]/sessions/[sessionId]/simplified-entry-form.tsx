@@ -14,6 +14,12 @@ import {
 import type { SessionBlock } from "@/lib/types/database";
 import { isChipSelected, toggleChip } from "@/lib/observation-chips";
 import { SelectedObservations } from "@/components/selected-observations";
+import {
+  TREATMENT_OBSERVATIONS_HEADING,
+  TREATMENT_OBSERVATIONS_HELPER,
+  ADDITIONAL_NOTES_HEADING,
+  ADDITIONAL_NOTES_HELPER,
+} from "@/lib/sessions/charting-labels";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
@@ -390,11 +396,18 @@ export function SimplifiedEntryForm({
             </div>
           </div>
         )}
-        <span className="text-sm font-medium">Observations</span>
-        {/* Chip-loading fix: observation chips are STRUCTURED TOGGLES — tap to
-            select (shows pressed), tap again to deselect. They persist to
-            observation_chips (not the notes), so they render as pills and reload
-            after refresh. Free-text notes are the separate box below. */}
+        <div>
+          <span className="text-sm font-medium">
+            {TREATMENT_OBSERVATIONS_HEADING}
+          </span>
+          <p className="text-xs text-neutral-500">
+            {TREATMENT_OBSERVATIONS_HELPER}
+          </p>
+        </div>
+        {/* Chip-loading fix: observation chips are STRUCTURED multi-select
+            TOGGLES — tap to select (shows pressed), tap again to deselect. They
+            persist to observation_chips (not the notes), so they render as pills
+            and reload after refresh. Free-text notes are the separate box below. */}
         <div className="flex flex-wrap gap-2">
           {COMMON_COMMENTS.map((c) => {
             const selected = isChipSelected(draft.observationChips, c);
@@ -421,14 +434,20 @@ export function SimplifiedEntryForm({
         {/* Chip confidence (Chloe): the selected observations read-out sits
             between the chips and the free-text note, so a tap visibly "takes". */}
         <SelectedObservations chips={draft.observationChips} />
-        <span className="text-sm font-medium">Additional notes</span>
-        <textarea
-          rows={2}
-          value={draft.comments}
-          onChange={(e) => update("comments", e.target.value)}
-          placeholder="Add any details not covered by the observations above"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">{ADDITIONAL_NOTES_HEADING}</span>
+          <textarea
+            rows={5}
+            value={draft.comments}
+            onChange={(e) => update("comments", e.target.value)}
+            data-testid="additional-notes"
+            placeholder="Add any details not covered by the observations above"
+            className="w-full min-h-[7rem] resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <span className="text-xs text-neutral-500">
+            {ADDITIONAL_NOTES_HELPER}
+          </span>
+        </label>
       </div>
 
       {error && (

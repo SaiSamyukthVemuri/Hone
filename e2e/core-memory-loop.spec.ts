@@ -124,6 +124,9 @@ test("core memory loop: booking to next-appointment memory", async ({
     // reaction chip. (Per-area caution inputs were deliberately
     // retired; the session-level "For next visit" note below is the
     // caution/watch mechanism.)
+    // Charting polish: the settings form no longer auto-opens — a zero-block
+    // session starts on the compact CTA, so open it explicitly first.
+    await page.getByTestId("add-settings-block-cta").click({ timeout: 20_000 });
     await expect(
       page.getByRole("heading", { name: /add settings block/i }),
     ).toBeVisible({ timeout: 20_000 });

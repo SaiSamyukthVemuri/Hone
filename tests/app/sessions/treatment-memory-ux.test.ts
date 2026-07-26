@@ -14,6 +14,9 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const FORM = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
 );
+// Charting polish: heading/helper copy lives in a shared single-source module
+// used by every charting form + the saved-record display.
+const LABELS = read("lib/sessions/charting-labels.ts");
 const SNAPSHOT = read("lib/sessions/treatment-setup-snapshot.ts");
 const BLOCKS_VIEW = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
@@ -171,7 +174,8 @@ describe("4. back navigation returns to the Sessions tab", () => {
 describe("7. bucketed charting form", () => {
   it("PR #199 order: tolerance, then observations; next visit moved to the session level", () => {
     const resp = FORM.indexOf("Client tolerance");
-    const obs = FORM.indexOf(">Treatment observations<");
+    // Charting polish: heading rendered from the shared constant.
+    const obs = FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}");
     expect(resp).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(resp);
     // PR #199: the per-area For next visit bucket is gone; the
@@ -180,7 +184,13 @@ describe("7. bucketed charting form", () => {
   });
 
   it("each bucket explains its purpose", () => {
-    expect(FORM).toMatch(/What you saw during treatment/);
+    // Charting polish: the observations helper now lives in the shared module
+    // (referenced by the form) and still explains what was seen.
+    expect(FORM).toMatch(/\{TREATMENT_OBSERVATIONS_HELPER\}/);
+    expect(LABELS).toMatch(/What you saw during treatment/);
+    // The client/skin response group has its own distinct helper.
+    expect(FORM).toMatch(/\{CLIENT_RESPONSE_HELPER\}/);
+    expect(LABELS).toMatch(/How the client's skin reacted/);
     // PR #279: tolerance bucket explainer is now the question prompt.
     expect(FORM).toMatch(/Optional\. How did the client tolerate this area\?/);
     // PR #199: the per-area For next visit bucket is consolidated into

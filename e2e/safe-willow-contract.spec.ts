@@ -115,6 +115,9 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     sessionId = page.url().match(/\/sessions\/([0-9a-f-]{36})/)?.[1] ?? "";
     expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
 
+    // Charting polish: open the collapsed settings form explicitly (a zero-block
+    // session now starts on the compact CTA instead of auto-opening the form).
+    await page.getByTestId("add-settings-block-cta").click({ timeout: 20_000 });
     await expect(
       page.getByRole("heading", { name: /add settings block/i }),
     ).toBeVisible({ timeout: 20_000 });

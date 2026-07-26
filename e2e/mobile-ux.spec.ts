@@ -426,6 +426,10 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     sessionPath = new URL(page.url()).pathname;
     await expectNoPageOverflow(page, "charting page");
 
+    // Charting polish: the settings form no longer auto-opens — open the
+    // compact CTA before reaching for the in-form controls.
+    await page.getByTestId("add-settings-block-cta").click({ timeout: 20_000 });
+
     // Every charting control the workflow needs is reachable.
     const controls: Array<[ReturnType<typeof page.locator>, string]> = [
       [page.getByRole("button", { name: "Chin", exact: true }), "treatment area"],
