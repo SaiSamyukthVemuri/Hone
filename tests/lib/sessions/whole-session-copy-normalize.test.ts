@@ -189,6 +189,19 @@ describe("normalizeWholeSessionCopy — forgery / invalid values are REJECTED (n
     const many = Array.from({ length: 51 }, () => draft());
     expect(normalizeWholeSessionCopy(many).ok).toBe(false);
   });
+  it("accepts both canonical machine frequencies and rejects anything else", () => {
+    expect(normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, machineFrequency: "13.56 MHz" } })]).ok).toBe(true);
+    expect(normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, machineFrequency: "27.12 MHz" } })]).ok).toBe(true);
+    // blank clears (allowed)
+    const blank = normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, machineFrequency: "" } })]);
+    expect(blank.ok).toBe(true);
+    if (blank.ok) expect(blank.specs[0].block.machine_frequency).toBeNull();
+    // invalid / case / forged (padding is trimmed, so only genuinely non-canonical values reject)
+    for (const bad of ["13.56", "13.56 mhz", "13.56MHz", "40.68 MHz", "x".repeat(50)]) {
+      expect(normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, machineFrequency: bad } })]).ok).toBe(false);
+    }
+  });
+
   it("never leaks raw internals in the error message", () => {
     const r = normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, mode: "laser" } })]);
     expect(r.ok).toBe(false);

@@ -25,6 +25,7 @@
 import {
   ELECTROLYSIS_MODES,
   APILUS_MODALITIES_BY_MODE,
+  MACHINE_FREQUENCIES,
   PULSE_COUNT_MIN,
   PULSE_COUNT_MAX,
   PULSE_DELAY_MIN,
@@ -75,7 +76,7 @@ export type WholeSessionCopyNormalizeResult =
   | { ok: false; error: string };
 
 const MODE_VALUES = new Set(ELECTROLYSIS_MODES.map((m) => m.value));
-const MACHINE_FREQUENCY_MAX = 40;
+const MACHINE_FREQUENCY_VALUES = new Set<string>(MACHINE_FREQUENCIES);
 const CUSTOM_DETAIL_MAX = 60; // matches session_blocks_custom_area_detail_length_check (0039)
 const ENERGY_LEVEL_MAX = 100_000; // well above any real dial setting; guards the int4 entry column
 const MAX_DRAFTS = 50;
@@ -187,7 +188,12 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
       ? numInRange(s.pulseDelay, PULSE_DELAY_MIN, PULSE_DELAY_MAX)
       : null;
 
-  const machineFrequency = trimOrNull(s.machineFrequency, MACHINE_FREQUENCY_MAX);
+  // Machine frequency: canonical allowlist (blank clears; anything else rejects).
+  const mfRaw = (s.machineFrequency ?? "").trim();
+  const machineFrequency = mfRaw === "" ? null : mfRaw;
+  if (machineFrequency !== null && !MACHINE_FREQUENCY_VALUES.has(machineFrequency)) {
+    throw new CopyValidationError(INVALID);
+  }
   const customAreaDetail = trimOrNull(d.customAreaDetail, CUSTOM_DETAIL_MAX);
 
   // Areas + server-derived primary_area/side (never trust browser primary/side).

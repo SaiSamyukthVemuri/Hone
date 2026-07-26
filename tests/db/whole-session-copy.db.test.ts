@@ -166,7 +166,9 @@ async function callCopy(opts: {
       JSON.stringify(opts.specs),
       opts.key,
       opts.fp,
-      opts.sourceId ?? null,
+      // source id is REQUIRED; default to a dummy non-null when a test doesn't
+      // care (e.g. it expects an earlier rejection like HN004).
+      opts.sourceId ?? randomUUID(),
     ],
   );
   return r.rows[0].result as {
@@ -324,14 +326,11 @@ describe("copy_session_setup — source authority & stale detection", () => {
     await expect(callCopy({ target, specs: validSpec(), key: "k-areachg", fp, sourceId: source })).rejects.toMatchObject({ code: "HN005" });
   });
 
-  it("fails closed (zero rows) when the source became ineligible after preview (all areas removed)", async () => {
+  it("fails closed (zero rows) when the source became ineligible after preview (source deleted)", async () => {
     const { source, target, fp } = await seedPair();
-    await adminQuery(
-      "delete from public.session_block_areas where session_block_id in (select id from public.session_blocks where session_id=$1)",
-      [source],
-    );
-    // No eligible source now → HN004; either way, ZERO destination rows.
-    await expect(callCopy({ target, specs: validSpec(), key: "k-areadel", fp, sourceId: source })).rejects.toMatchObject({ code: "HN004" });
+    await adminQuery("update public.sessions set deleted_at = now() where id=$1", [source]);
+    // No eligible source now → HN004; ZERO destination rows.
+    await expect(callCopy({ target, specs: validSpec(), key: "k-srcdel", fp, sourceId: source })).rejects.toMatchObject({ code: "HN004" });
     const n = (await adminQuery("select count(*)::int n from public.session_blocks where session_id=$1", [target])).rows[0].n;
     expect(n).toBe(0);
   });
@@ -481,5 +480,79 @@ describe("whole_session_copy_source_descriptor — member-gated preview", () => 
     await expect(
       asUser(b.userId, (q) => q("select public.whole_session_copy_source_descriptor($1,$2)", [a.studioId, target])),
     ).rejects.toMatchObject({ code: "HN001" });
+  });
+});
+
+describe("source resolver — void exclusion", () => {
+  it("skips a VOID newer session and selects the older valid source", async () => {
+    const clientId = await freshClient();
+    const older = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
+    await seedSourceWithBlock(a, older);
+    // Seed the block while draft, THEN void (the 0119 guard blocks writes to void).
+    const voidNewer = await seedSession(a, { startedAt: "2026-03-01T10:00:00Z", clientId });
+    await seedSourceWithBlock(a, voidNewer);
+    await adminQuery("update public.sessions set record_status='void' where id=$1", [voidNewer]);
+    const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
+    expect(await canonicalSourceId(target)).toBe(older);
+  });
+
+  it("reports no source when the only prior session is VOID", async () => {
+    const clientId = await freshClient();
+    const voided = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
+    await seedSourceWithBlock(a, voided);
+    await adminQuery("update public.sessions set record_status='void' where id=$1", [voided]);
+    const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
+    expect(await canonicalSourceId(target)).toBeNull();
+  });
+
+  it("commit fails closed (HN004) if the source is voided after preview", async () => {
+    const { source, target, fp } = await seedPair();
+    await adminQuery("update public.sessions set record_status='void' where id=$1", [source]);
+    await expect(callCopy({ target, specs: validSpec(), key: "k-void", fp, sourceId: source })).rejects.toMatchObject({ code: "HN004" });
+    const n = (await adminQuery("select count(*)::int n from public.session_blocks where session_id=$1", [target])).rows[0].n;
+    expect(n).toBe(0);
+  });
+});
+
+describe("source resolver — legacy-only sessions + copyability", () => {
+  it("selects a legacy-only source (primary_area, no structured areas) with a valid mode", async () => {
+    const clientId = await freshClient();
+    const legacy = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
+    // Block with a legacy primary_area but NO session_block_areas row + a mode.
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level)
+       values ($1,$2,$3,1,'Chin','left','blend',10)`,
+      [randomUUID(), a.studioId, legacy],
+    );
+    const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
+    expect(await canonicalSourceId(target)).toBe(legacy);
+  });
+
+  it("does NOT select a session whose only block has no copyable mode (and it can't mask an older valid source)", async () => {
+    const clientId = await freshClient();
+    const older = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
+    await seedSourceWithBlock(a, older); // valid blend block
+    const modeless = await seedSession(a, { startedAt: "2026-03-01T10:00:00Z", clientId });
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, mode)
+       values ($1,$2,$3,1,'Chin',null)`,
+      [randomUUID(), a.studioId, modeless],
+    );
+    const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
+    // The newer mode-less session is not copyable → the older valid source wins.
+    expect(await canonicalSourceId(target)).toBe(older);
+  });
+});
+
+describe("canonical-source parity", () => {
+  it("the preview descriptor and the resolver return the SAME source id", async () => {
+    const { source, target } = await seedPair();
+    const desc = (
+      await asUser(a.userId, (q) =>
+        q("select public.whole_session_copy_source_descriptor($1,$2) as d", [a.studioId, target]),
+      )
+    ).rows[0].d as { source_session_id: string };
+    expect(desc.source_session_id).toBe(source);
+    expect(await canonicalSourceId(target)).toBe(source);
   });
 });

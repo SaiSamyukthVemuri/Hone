@@ -44,18 +44,21 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(SQL).toMatch(
       /constraint session_copy_operations_idem_uniq unique \(target_session_id, idempotency_key\)/,
     );
-    // Same-studio composite FKs for BOTH source and target.
+    // Same-studio composite FKs for source, target, AND the committing practitioner.
     expect(SQL).toMatch(/foreign key \(studio_id, target_session_id\)[\s\S]{0,80}references public\.sessions \(studio_id, id\)/);
     expect(SQL).toMatch(/foreign key \(studio_id, source_session_id\)[\s\S]{0,80}references public\.sessions \(studio_id, id\)/);
+    expect(SQL).toMatch(/foreign key \(created_by_practitioner_id, studio_id\)[\s\S]{0,80}references public\.practitioners \(id, studio_id\)/);
     // No clinical payload column on the ledger.
     expect(CODE).not.toMatch(/\bspecs\b\s+jsonb/);
-    // RLS: member SELECT only; anon revoked; no browser insert/update/delete.
+    // RLS: member SELECT only; EXPLICIT browser DML revoke + SELECT grant.
     expect(SQL).toMatch(/enable row level security/);
     expect(SQL).toMatch(/for select to authenticated/i);
     expect(SQL).not.toMatch(/for insert to authenticated/i);
     expect(SQL).not.toMatch(/for update to authenticated/i);
     expect(SQL).not.toMatch(/for delete/i);
     expect(SQL).toMatch(/revoke all on public\.session_copy_operations from anon/);
+    expect(SQL).toMatch(/revoke insert, update, delete on public\.session_copy_operations from authenticated/);
+    expect(SQL).toMatch(/grant select on public\.session_copy_operations to authenticated/);
     // created_by stores the PRACTITIONER, not auth.uid().
     expect(CODE).not.toMatch(/created_by_practitioner_id[^\n]*auth\.uid/);
   });
@@ -89,10 +92,32 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(CODE).toMatch(/_whole_session_copy_source_id\(p_studio_id, p_target_session_id\)/);
     expect(CODE).toMatch(/_whole_session_copy_fingerprint\(/);
     expect(CODE).toMatch(/p_expected_source_fingerprint/);
+    // The source id is REQUIRED (no default) and must match the derived source.
+    expect(CODE).not.toMatch(/p_expected_source_session_id\s+uuid\s+default/);
+    expect(CODE).toMatch(/p_expected_source_session_id is null/);
+    expect(CODE).toMatch(/p_expected_source_session_id <> v_source/);
+    // SOURCE is pinned against concurrent edits: session + blocks + areas + entries
+    // are locked FOR UPDATE, and the source is re-derived after the session lock.
+    expect(CODE).toMatch(/from public\.sessions where id = v_source for update/);
+    expect(CODE).toMatch(/from public\.session_blocks sb[\s\S]{0,200}for update/);
+    expect(CODE).toMatch(/from public\.session_block_areas sba[\s\S]{0,260}for update/);
+    expect(CODE).toMatch(/from public\.electrolysis_entries se[\s\S]{0,200}for update/);
+    // Request hash is SHA-256 (pgcrypto) over target + source id + fingerprint + specs.
+    expect(CODE).toMatch(/extensions\.digest\([\s\S]{0,200}'sha256'\)/);
+    expect(CODE).not.toMatch(/v_req_hash\s*:=\s*md5\(/);
+    expect(CODE).toMatch(/p_expected_source_session_id::text/);
     // Stable custom SQLSTATEs the app maps to safe messages.
     for (const code of ["HN001", "HN002", "HN003", "HN004", "HN005", "HN006", "HN007"]) {
       expect(CODE).toMatch(new RegExp(`errcode = '${code}'`));
     }
+  });
+
+  it("the source resolver excludes VOID sessions and accepts legacy-only blocks", () => {
+    // Void excluded (draft + finalized still valid historical sources).
+    expect(CODE).toMatch(/record_status is distinct from 'void'/);
+    // Copyable = (structured area OR nonblank legacy primary_area) AND a valid mode.
+    expect(CODE).toMatch(/coalesce\(btrim\(b\.primary_area\), ''\) <> ''/);
+    expect(CODE).toMatch(/in \('thermo', 'galv', 'blend'\)/);
   });
 
   it("SETUP-ONLY: the block + entry INSERT lists carry NO outcome columns and NO minutes_performed", () => {

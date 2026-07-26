@@ -15,6 +15,7 @@ const BASE = "app/(app)/clients/[id]/sessions/[sessionId]";
 const PANEL = read(`${BASE}/CopyPreviousAreasPanel.tsx`);
 const ACTIONS = read(`${BASE}/whole-session-copy-actions.ts`);
 const PAGE = read(`${BASE}/page.tsx`);
+const CARD = read("components/copy-draft-card.tsx");
 
 describe("preview is EPHEMERAL — building/refreshing/removing/cancelling writes nothing", () => {
   it("build uses the READ-ONLY source action + the pure builder; source is not browser-chosen", () => {
@@ -49,9 +50,32 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(PANEL).toMatch(/sourceSessionId,\s*\n?\s*sourceFingerprint,/);
   });
 
-  it("the card shows machine setup but NOT minutes (minutes are never copied)", () => {
-    // The card's setup line must not surface a minutes value.
-    expect(PANEL).not.toMatch(/d\.setup\.minutes/);
+  it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler — no writes", () => {
+    expect(PANEL).toMatch(/<CopyDraftCard/);
+    expect(PANEL).toMatch(/function updateDraft\(next: CopyAreaDraft\)[\s\S]{0,120}setDrafts\(\(d\) => d\.map/);
+    // updateDraft is pure state; it never calls a server action.
+    const upd = PANEL.slice(PANEL.indexOf("function updateDraft"), PANEL.indexOf("function cancel"));
+    expect(upd).not.toMatch(/commitWholeSessionCopyAction|getWholeSessionCopySourceAction/);
+  });
+
+  it("the editable card reuses SHARED widgets and never edits minutes", () => {
+    // Reuses the shared area editor + probe picker + shared constants/gating.
+    expect(CARD).toMatch(/from "@\/components\/multi-area-editor"/);
+    expect(CARD).toMatch(/from "@\/components\/probe-picker"/);
+    expect(CARD).toMatch(/from "@\/lib\/sessions\/mode-sections"/);
+    expect(CARD).toMatch(/from "@\/lib\/constants"/);
+    // No minutes editor anywhere in the card (a comment may mention the policy,
+    // but there is no minutes field, testid, or setup key).
+    expect(CARD).not.toMatch(/\.minutes\b/);
+    expect(CARD).not.toMatch(/data-testid=[^>]*minute/i);
+    expect(CARD).not.toMatch(/minutes_performed/);
+    // All edits go through onChange (component state) — the card imports no server action.
+    expect(CARD).not.toMatch(/whole-session-copy-actions|use server|\.rpc\(/);
+  });
+
+  it("displays the source visit date so the practitioner knows which visit is copied", () => {
+    expect(PANEL).toMatch(/data-testid="copy-previous-source-date"/);
+    expect(PANEL).toMatch(/setSourceStartedAt\(res\.sourceStartedAt\)/);
   });
 });
 
@@ -70,6 +94,10 @@ describe("server actions — read-only descriptor source; service-role RPC is th
     // Destination lineage asserted; no browser previousSessionId param.
     expect(fn).toMatch(/assertSessionForClient\(studio\.id, input\.clientId, input\.sessionId\)/);
     expect(ACTIONS).not.toMatch(/previousSessionId/);
+    // Consistency: the descriptor is re-checked after loading source rows so the
+    // preview never returns rows from a different revision than the fingerprint.
+    expect((fn.match(/whole_session_copy_source_descriptor/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(fn).toMatch(/being updated. Please try again/i);
   });
 
   it("commitWholeSessionCopyAction validates canonically, then writes ONLY via the service-role RPC", () => {
@@ -82,6 +110,8 @@ describe("server actions — read-only descriptor source; service-role RPC is th
     // Server-derived practitioner id + source fingerprint are passed (not trusted from the browser).
     expect(fn).toMatch(/p_practitioner_id: practitioner\.id/);
     expect(fn).toMatch(/p_expected_source_fingerprint: input\.sourceFingerprint/);
+    // Source identity is REQUIRED before any write.
+    expect(fn).toMatch(/if \(!input\.sourceSessionId \|\| !input\.sourceFingerprint\)/);
     // No direct table writes.
     expect(fn).not.toMatch(/\.from\("session_blocks"\)[\s\S]{0,60}\.insert/);
     expect(fn).toMatch(/assertSessionForClient\(studio\.id, input\.clientId, input\.sessionId\)/);
@@ -110,5 +140,12 @@ describe("wiring", () => {
     expect(PAGE).toMatch(/<CopyPreviousAreasPanel clientId=\{id\} sessionId=\{session\.id\} \/>/);
     expect(PAGE).toMatch(/import \{ CopyPreviousAreasPanel \}/);
     expect(PAGE).not.toMatch(/<CopyPreviousAreasButton/);
+  });
+
+  it("the page gates the panel on the CANONICAL descriptor — not a separate previous-session query", () => {
+    expect(PAGE).toMatch(/whole_session_copy_source_descriptor/);
+    expect(PAGE).toMatch(/canCopyFromPrevious/);
+    // The old independent "latest previous session" gate is gone.
+    expect(PAGE).not.toMatch(/previousSessionAny|previousSessionHasAreas/);
   });
 });

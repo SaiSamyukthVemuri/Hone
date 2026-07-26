@@ -39,6 +39,7 @@ export type WholeSessionCopySourceResult =
       source: CopySourceBlock[];
       sourceSessionId: string | null;
       sourceFingerprint: string | null;
+      sourceStartedAt: string | null;
     }
   | { ok: false; error: string };
 
@@ -73,9 +74,17 @@ export async function getWholeSessionCopySourceAction(input: {
     eligible?: boolean;
     source_session_id?: string;
     source_fingerprint?: string;
+    source_started_at?: string;
   };
   if (!desc.eligible || !desc.source_session_id) {
-    return { ok: true, eligible: false, source: [], sourceSessionId: null, sourceFingerprint: null };
+    return {
+      ok: true,
+      eligible: false,
+      source: [],
+      sourceSessionId: null,
+      sourceFingerprint: null,
+      sourceStartedAt: null,
+    };
   }
   const sourceSessionId = desc.source_session_id;
 
@@ -90,7 +99,14 @@ export async function getWholeSessionCopySourceAction(input: {
     .order("sort_order", { ascending: true });
   if (blockErr) return { ok: false, error: GENERIC_ERROR };
   if (!blocks || blocks.length === 0) {
-    return { ok: true, eligible: false, source: [], sourceSessionId: null, sourceFingerprint: null };
+    return {
+      ok: true,
+      eligible: false,
+      source: [],
+      sourceSessionId: null,
+      sourceFingerprint: null,
+      sourceStartedAt: null,
+    };
   }
 
   const blockIds = blocks.map((b) => b.id as string);
@@ -107,7 +123,10 @@ export async function getWholeSessionCopySourceAction(input: {
       )
       .in("block_id", blockIds)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true }),
+      // Match the SQL fingerprint's earliest-entry tiebreak (created_at, id) so a
+      // preview never seeds from a different entry than the fingerprint captured.
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
   ]);
 
   const areasByBlock = new Map<string, { area: string; laterality: string }[]>();
@@ -170,12 +189,36 @@ export async function getWholeSessionCopySourceAction(input: {
       areas: areasByBlock.get(b.id as string) ?? [],
     };
   });
+
+  // Consistency: the source rows above were read in separate queries after the
+  // descriptor. Re-request the descriptor and confirm the source id + fingerprint
+  // are unchanged, so the preview never returns rows from a different revision
+  // than the fingerprint the practitioner will commit against.
+  const { data: descriptor2, error: descErr2 } = await supabase.rpc(
+    "whole_session_copy_source_descriptor",
+    { p_studio_id: studio.id, p_target_session_id: input.sessionId },
+  );
+  if (descErr2) return { ok: false, error: GENERIC_ERROR };
+  const desc2 = (descriptor2 ?? {}) as {
+    eligible?: boolean;
+    source_session_id?: string;
+    source_fingerprint?: string;
+  };
+  if (
+    !desc2.eligible ||
+    desc2.source_session_id !== sourceSessionId ||
+    desc2.source_fingerprint !== desc.source_fingerprint
+  ) {
+    return { ok: false, error: "The previous visit is being updated. Please try again." };
+  }
+
   return {
     ok: true,
     eligible: true,
     source,
     sourceSessionId,
     sourceFingerprint: desc.source_fingerprint ?? null,
+    sourceStartedAt: desc.source_started_at ?? null,
   };
 }
 
@@ -229,7 +272,8 @@ export async function commitWholeSessionCopyAction(input: {
   if (!input.idempotencyKey || input.idempotencyKey.trim() === "") {
     return { ok: false, error: "Reload the preview and try again." };
   }
-  if (!input.sourceFingerprint) {
+  // Source identity + fingerprint are REQUIRED — reject before any write.
+  if (!input.sourceSessionId || !input.sourceFingerprint) {
     return { ok: false, error: "Reload the preview and try again." };
   }
 

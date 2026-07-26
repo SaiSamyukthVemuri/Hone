@@ -29,13 +29,28 @@ Applying it early changes no existing table, column, index, policy, grant, or th
   (never a browser-supplied id). The RPC independently re-verifies the
   practitioner is an active member.
 - **Source is server-authoritative**: the RPC derives the canonical eligible
-  previous session itself; a browser value cannot redirect it.
+  previous session itself (`_whole_session_copy_source_id`); a browser value
+  cannot redirect it, and the browser's expected source id must match. VOID
+  source sessions are excluded (draft + finalized remain valid); a legacy block
+  (nonblank `primary_area`, no structured area) is copyable. The SAME descriptor
+  gates the page panel and the commit, so page and commit never disagree.
 - **Target is verified under a row lock** (`FOR UPDATE`): same studio,
   electrolysis, draft (not finalized/void), not deleted, and EMPTY. The lock
   serializes every copy for one target regardless of the idempotency key, so two
   races cannot both create a batch.
+- **Source is pinned against concurrent edits**: after deriving the source the
+  RPC locks the source session + all its active blocks/areas/entries `FOR UPDATE`
+  (deterministic order → no deadlocks); those locks also block phantom child
+  INSERTs via FK `FOR KEY SHARE` conflicts. The fingerprint is then computed
+  under the locks.
 - **Stale source is fail-closed**: the RPC recomputes the source fingerprint in
-  the transaction and rejects if it changed since the preview — zero rows.
+  the transaction and rejects if it changed since the preview — zero rows. The
+  read path also re-checks the descriptor after loading source rows so a preview
+  never returns rows from a different revision than its fingerprint.
+- **Preview is EPHEMERAL + editable**: cards can be edited (areas, laterality,
+  mode, probe, readings) entirely in component state — zero writes until the one
+  explicit commit. The request hash is SHA-256 over target + source id + source
+  fingerprint + specs.
 - **Setup-only, no performed minutes**: outcomes are never copied, and
   `minutes_performed` is deliberately excluded so today's metrics never report
   minutes that have not occurred.

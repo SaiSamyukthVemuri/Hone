@@ -1114,8 +1114,10 @@ export async function seedE2eClientWithPreviousAreas(
     [previousSessionId, seed.studioId, clientId, prac.id],
   );
   await sql(
-    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level, minutes_performed, machine_frequency)
-     values ($1,$2,$3,1,'Chin','left','blend',10,15,'13.56 MHz')`,
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level, minutes_performed, machine_frequency,
+       probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label)
+     values ($1,$2,$3,1,'Chin','left','blend',10,15,'13.56 MHz',
+       'sterex-gold-two-piece-f3-short','Sterex','Gold','Two-piece','F','3','Short','Sterex · Gold · Two-piece · F3 Short')`,
     [blockId, seed.studioId, previousSessionId],
   );
   await sql(
@@ -1407,6 +1409,51 @@ export async function getFirstBlockMinutes(sessionId: string): Promise<number | 
     [sessionId],
   );
   return rows[0]?.minutes_performed ?? null;
+}
+
+// First block row of a session (for asserting copied setup values).
+export async function getFirstBlockRow(sessionId: string): Promise<{
+  mode: string | null;
+  energy_level: number | null;
+  probe_key: string | null;
+  minutes_performed: number | null;
+  primary_area: string | null;
+} | null> {
+  const rows = await sql<{
+    mode: string | null;
+    energy_level: number | null;
+    probe_key: string | null;
+    minutes_performed: number | null;
+    primary_area: string | null;
+  }>(
+    `select mode, energy_level, probe_key, minutes_performed, primary_area
+       from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+// First entry row of a session's first block (for asserting copied readings).
+export async function getFirstEntryRow(sessionId: string): Promise<{
+  mode: string | null;
+  galvanic_ma: number | null;
+  thermolysis_intensity_percent: number | null;
+} | null> {
+  const rows = await sql<{
+    mode: string | null;
+    galvanic_ma: number | null;
+    thermolysis_intensity_percent: number | null;
+  }>(
+    `select e.mode, e.galvanic_ma, e.thermolysis_intensity_percent
+       from public.electrolysis_entries e
+       join public.session_blocks b on b.id = e.block_id
+      where b.session_id = $1 and b.deleted_at is null and e.deleted_at is null
+      order by b.sort_order, e.created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
 }
 
 // Mutate the source session so its fingerprint changes (stale-preview test).

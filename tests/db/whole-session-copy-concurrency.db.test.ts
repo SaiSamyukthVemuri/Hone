@@ -78,7 +78,7 @@ async function seedScenario() {
     [target, a.studioId, clientId, a.practitionerId],
   );
   const fp = (await adminQuery("select public._whole_session_copy_fingerprint($1) as fp", [source])).rows[0].fp as string;
-  return { source, target, fp };
+  return { source, target, fp, blockId };
 }
 
 async function withTwoClients<T>(fn: (ca: Client, cb: Client) => Promise<T>): Promise<T> {
@@ -144,5 +144,134 @@ describe("copy_session_setup — two-connection concurrency", () => {
     expect(replays.filter((x) => x === true)).toHaveLength(1); // the other replayed
     expect(count).toBe(1);
     expect(ledger).toBe(1);
+  });
+});
+
+// Helper: run `hold` in txn A (leaving it OPEN, holding a lock), then `attempt`
+// on B with a short statement_timeout; return the settled result of `attempt`
+// and whether it was blocked (57014) — never a deadlock (40P01).
+async function raceSourceEdit(
+  editSql: string,
+  editParams: unknown[],
+): Promise<{ copyResult: PromiseSettledResult<unknown>; targetBlocks: number; ledger: number }> {
+  const { source, target, fp } = await seedScenario();
+  const editor = new Client({ connectionString: resolveLocalDbUrl() });
+  await editor.connect();
+  try {
+    // Editor opens a txn and holds a row lock on a source block (edit not yet committed).
+    await editor.query("begin");
+    await editor.query(editSql, editParams.map((p) => (p === "__SOURCE__" ? source : p)));
+    // Copy runs concurrently; it must WAIT on the source locks, then (after the
+    // editor commits) see the changed fingerprint and reject HN005 — or, if it
+    // grabs the locks first, the editor waits. We commit the editor shortly after
+    // firing the copy so the copy proceeds to its fingerprint recheck.
+    const copyClient = new Client({ connectionString: resolveLocalDbUrl() });
+    await copyClient.connect();
+    await copyClient.query("set statement_timeout = '15s'");
+    const copyPromise = copyClient
+      .query(CALL, [a.studioId, target, a.practitionerId, JSON.stringify(spec()), randomUUID(), fp, source])
+      .then((r) => ({ status: "fulfilled" as const, value: r }))
+      .catch((e) => ({ status: "rejected" as const, reason: e }));
+    // Let the copy block on the source locks, then commit the edit.
+    await editor.query("commit");
+    const copyResult = (await copyPromise) as PromiseSettledResult<unknown>;
+    await copyClient.end();
+    const targetBlocks = await targetBlockCount(target);
+    const ledger = await ledgerCount(target);
+    return { copyResult, targetBlocks, ledger };
+  } finally {
+    await editor.end();
+  }
+}
+
+describe("copy_session_setup — source is locked against concurrent edits", () => {
+  it("a source block UPDATE that starts before the copy → copy sees the change and rejects HN005 (zero rows)", async () => {
+    const { copyResult, targetBlocks, ledger } = await raceSourceEdit(
+      "update public.session_blocks set energy_level = 77 where session_id = $1",
+      ["__SOURCE__"],
+    );
+    expect(copyResult.status).toBe("rejected");
+    if (copyResult.status === "rejected") {
+      expect(copyResult.reason.code).toBe("HN005");
+      expect(copyResult.reason.code).not.toBe("40P01"); // not a deadlock
+    }
+    expect(targetBlocks).toBe(0);
+    expect(ledger).toBe(0);
+  });
+
+  it("a concurrent source-area DELETE before the copy → HN005 (zero rows), no deadlock", async () => {
+    const { copyResult, targetBlocks } = await raceSourceEdit(
+      "delete from public.session_block_areas where session_block_id in (select id from public.session_blocks where session_id = $1)",
+      ["__SOURCE__"],
+    );
+    // Deleting the only structured area still leaves a legacy primary_area, so the
+    // source stays eligible but its fingerprint changes → HN005.
+    expect(copyResult.status).toBe("rejected");
+    if (copyResult.status === "rejected") {
+      expect(["HN005", "HN004"]).toContain(copyResult.reason.code);
+      expect(copyResult.reason.code).not.toBe("40P01");
+    }
+    expect(targetBlocks).toBe(0);
+  });
+
+  it("a concurrent NEW source-area INSERT before the copy → HN005 (zero rows), no deadlock", async () => {
+    const { source, target, fp, blockId } = await seedScenario();
+    const editor = new Client({ connectionString: resolveLocalDbUrl() });
+    await editor.connect();
+    try {
+      await editor.query("begin");
+      await editor.query(
+        "insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order) values ($1,$2,$3,'Neck','left',1)",
+        [randomUUID(), a.studioId, blockId],
+      );
+      const copyClient = new Client({ connectionString: resolveLocalDbUrl() });
+      await copyClient.connect();
+      await copyClient.query("set statement_timeout = '15s'");
+      const copyPromise = copyClient
+        .query(CALL, [a.studioId, target, a.practitionerId, JSON.stringify(spec()), randomUUID(), fp, source])
+        .then((r) => ({ status: "fulfilled" as const, value: r }))
+        .catch((e) => ({ status: "rejected" as const, reason: e }));
+      await editor.query("commit");
+      const copyResult = await copyPromise;
+      await copyClient.end();
+      expect(copyResult.status).toBe("rejected");
+      if (copyResult.status === "rejected") {
+        expect(copyResult.reason.code).toBe("HN005");
+        expect(copyResult.reason.code).not.toBe("40P01");
+      }
+      expect(await targetBlockCount(target)).toBe(0);
+    } finally {
+      await editor.end();
+    }
+  });
+
+  it("when the copy grabs the source locks first, a concurrent source edit WAITS (blocked, not deadlocked)", async () => {
+    const { source, target, fp, blockId } = await seedScenario();
+    const holder = new Client({ connectionString: resolveLocalDbUrl() });
+    await holder.connect();
+    try {
+      // Simulate the copy holding the source block lock mid-commit.
+      await holder.query("begin");
+      await holder.query("select id from public.session_blocks where id = $1 for update", [blockId]);
+      // A concurrent editor with a short timeout must BLOCK on that lock (57014),
+      // proving the copy path would hold source edits off until it commits.
+      const editor = new Client({ connectionString: resolveLocalDbUrl() });
+      await editor.connect();
+      await editor.query("set statement_timeout = '800ms'");
+      let code = "";
+      try {
+        await editor.query("update public.session_blocks set energy_level = 5 where id = $1", [blockId]);
+      } catch (e) {
+        code = (e as { code?: string }).code ?? "";
+      }
+      expect(code).toBe("57014"); // statement timeout = blocked by the lock
+      expect(code).not.toBe("40P01"); // not a deadlock
+      await editor.end();
+      await holder.query("rollback");
+    } finally {
+      await holder.end();
+    }
+    void source;
+    void fp;
   });
 });

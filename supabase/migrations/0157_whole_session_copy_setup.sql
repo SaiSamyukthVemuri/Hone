@@ -70,7 +70,7 @@ create table if not exists public.session_copy_operations (
   studio_id                  uuid not null references public.studios(id) on delete cascade,
   target_session_id          uuid not null,
   source_session_id          uuid not null,
-  created_by_practitioner_id uuid not null references public.practitioners(id) on delete restrict,
+  created_by_practitioner_id uuid not null,
   idempotency_key            text not null,
   request_hash               text not null,
   source_fingerprint         text not null,
@@ -83,6 +83,12 @@ create table if not exists public.session_copy_operations (
   constraint session_copy_operations_source_same_studio_fk
     foreign key (studio_id, source_session_id)
     references public.sessions (studio_id, id) on delete cascade,
+  -- Same-studio composite FK for the committing practitioner (practitioners has
+  -- unique (id, studio_id) from 0032), so a row can never attribute a copy to a
+  -- practitioner from another studio.
+  constraint session_copy_operations_practitioner_same_studio_fk
+    foreign key (created_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict,
   constraint session_copy_operations_idem_uniq unique (target_session_id, idempotency_key),
   constraint session_copy_operations_idem_len check (char_length(idempotency_key) between 1 and 200),
   constraint session_copy_operations_count_nonneg check (copied_block_count >= 0)
@@ -94,12 +100,16 @@ comment on table public.session_copy_operations is
 alter table public.session_copy_operations enable row level security;
 
 -- Members may READ their own studio's copy-operation rows. Rows are WRITTEN only
--- by the service-role RPC (no browser insert/update/delete policy).
+-- by the service-role RPC (no browser insert/update/delete policy). Grants are
+-- explicit (not left to Supabase defaults): SELECT for authenticated, and no
+-- INSERT/UPDATE/DELETE for the browser roles.
 create policy "session_copy_operations: members select"
   on public.session_copy_operations for select to authenticated
   using (public.is_studio_member(studio_id));
 
 revoke all on public.session_copy_operations from anon;
+revoke insert, update, delete on public.session_copy_operations from authenticated;
+grant select on public.session_copy_operations to authenticated;
 
 -- ===========================================================================
 -- B. Core source fingerprint (private). A deterministic hash of the EXACT
@@ -220,6 +230,13 @@ begin
     return null;
   end if;
 
+  -- The latest eligible prior ELECTROLYSIS session for this client that is not
+  -- deleted and not VOID (draft + finalized are both valid historical sources —
+  -- finalization may be disabled for a studio). A voided newer session is skipped
+  -- so it can never mask an older valid source. A session is eligible only if it
+  -- has >=1 active block that is COPYABLE: it has a resolvable area (>=1
+  -- structured area OR a nonblank legacy primary_area) AND a valid electrolysis
+  -- mode (on the block, or on its earliest live entry) — matching buildCopyDrafts.
   select ps.id
     into v_source
     from public.sessions ps
@@ -228,15 +245,22 @@ begin
      and ps.id <> p_target_session_id
      and ps.deleted_at is null
      and ps.modality = 'electrolysis'
+     and ps.record_status is distinct from 'void'
      and ps.started_at < coalesce(v_started, now())
      and exists (
        select 1 from public.session_blocks b
         where b.session_id = ps.id
           and b.deleted_at is null
-          and exists (
-            select 1 from public.session_block_areas a
-             where a.session_block_id = b.id
+          and (
+            exists (select 1 from public.session_block_areas a where a.session_block_id = b.id)
+            or coalesce(btrim(b.primary_area), '') <> ''
           )
+          and coalesce(
+                b.mode,
+                (select e.mode from public.electrolysis_entries e
+                  where e.block_id = b.id and e.deleted_at is null
+                  order by e.created_at, e.id limit 1)
+              ) in ('thermo', 'galv', 'blend')
      )
    order by ps.started_at desc, ps.id desc
    limit 1;
@@ -329,7 +353,7 @@ create or replace function public.copy_session_setup(
   p_specs                       jsonb,
   p_idempotency_key             text,
   p_expected_source_fingerprint text,
-  p_expected_source_session_id  uuid default null
+  p_expected_source_session_id  uuid
 )
 returns jsonb
 language plpgsql
@@ -344,6 +368,7 @@ declare
   v_blocks       integer;
   v_entries      integer;
   v_source       uuid;
+  v_source2      uuid;
   v_fp           text;
   v_req_hash     text;
   v_prior_ids    uuid[];
@@ -363,8 +388,11 @@ begin
     raise exception 'not authorized' using errcode = 'HN001';
   end if;
 
-  -- 2. Input shape (defense in depth — the action already validated).
-  if p_idempotency_key is null or char_length(trim(p_idempotency_key)) = 0 then
+  -- 2. Input shape (defense in depth). The source identity + fingerprint are
+  --    REQUIRED — a commit cannot proceed without the preview's source.
+  if p_idempotency_key is null or char_length(trim(p_idempotency_key)) = 0
+     or p_expected_source_session_id is null
+     or p_expected_source_fingerprint is null then
     raise exception 'invalid request' using errcode = 'HN007';
   end if;
   if jsonb_typeof(coalesce(p_specs, 'null'::jsonb)) is distinct from 'array'
@@ -373,18 +401,19 @@ begin
     raise exception 'invalid request' using errcode = 'HN007';
   end if;
 
-  v_req_hash := md5(
+  -- Request hash over the BROWSER-provided request (target + source identity +
+  -- source fingerprint + specs), SHA-256 via pgcrypto. Stable per preview so a
+  -- genuine retry matches; a different payload or source does not.
+  v_req_hash := encode(extensions.digest(
     p_target_session_id::text || '|' ||
-    coalesce(p_expected_source_fingerprint, '') || '|' ||
-    p_specs::text
-  );
+    p_expected_source_session_id::text || '|' ||
+    p_expected_source_fingerprint || '|' ||
+    p_specs::text, 'sha256'), 'hex');
 
-  -- 3. Lock the TARGET session row. This serializes every copy commit for one
-  --    target independently of the idempotency key, so two different-key
-  --    requests cannot both create a batch (the second sees a non-empty target).
-  --    Correctness relies on READ COMMITTED (PostgREST's default): after the lock
-  --    is released the loser's emptiness recount (step 5) takes a fresh snapshot
-  --    and sees the winner's rows. Do NOT run this RPC under REPEATABLE READ.
+  -- 3. Lock the TARGET session row (serializes all copies for one target,
+  --    key-independent). Correctness relies on READ COMMITTED (PostgREST default):
+  --    after the lock releases, the loser's emptiness recount takes a fresh
+  --    snapshot and sees the winner's rows. Do NOT run under REPEATABLE READ.
   select s.client_id, s.started_at, s.modality, s.record_status
     into v_client, v_started, v_modality, v_status
     from public.sessions s
@@ -397,8 +426,8 @@ begin
   end if;
 
   -- 4. Idempotency: an already-committed batch (same key) short-circuits BEFORE
-  --    the emptiness check. Same key + same request → replay the original result;
-  --    same key + different payload/source → reject as ambiguous.
+  --    the emptiness/source work. Same request → replay; different payload/source
+  --    (different hash) → reject as ambiguous.
   select created_block_ids, request_hash
     into v_prior_ids, v_prior_hash
     from public.session_copy_operations
@@ -429,20 +458,44 @@ begin
     raise exception 'target not empty' using errcode = 'HN003';
   end if;
 
-  -- 6. Source is server-authoritative: derive the canonical eligible previous
-  --    session; a browser-supplied source that disagrees is treated as stale.
+  -- 6. Derive the canonical source (server-authoritative); the browser's id must
+  --    match it exactly.
   v_source := public._whole_session_copy_source_id(p_studio_id, p_target_session_id);
   if v_source is null then
     raise exception 'no eligible source' using errcode = 'HN004';
   end if;
-  if p_expected_source_session_id is not null and p_expected_source_session_id <> v_source then
+  if p_expected_source_session_id <> v_source then
     raise exception 'source changed' using errcode = 'HN005';
   end if;
 
-  -- 7. Stale-source guard: recompute the fingerprint under this txn and reject
-  --    if the source changed since the preview was built.
+  -- 6b. Pin the SOURCE against concurrent edits for the rest of the txn, in a
+  --     deterministic order (session → blocks → areas → entries, by id) to avoid
+  --     deadlocks. FOR UPDATE on the session + block rows also blocks concurrent
+  --     child INSERTs (their FK validation needs FOR KEY SHARE, which conflicts),
+  --     so no phantom block/area/entry can be attached mid-commit. Re-derive after
+  --     the session lock; reject if the canonical source changed.
+  perform 1 from public.sessions where id = v_source for update;
+  v_source2 := public._whole_session_copy_source_id(p_studio_id, p_target_session_id);
+  if v_source2 is distinct from v_source then
+    raise exception 'source changed' using errcode = 'HN005';
+  end if;
+  -- Aliases sb/sba/se avoid colliding with the declared rowtype vars b/e.
+  perform sb.id from public.session_blocks sb
+    where sb.session_id = v_source and sb.deleted_at is null
+    order by sb.id for update;
+  perform sba.id from public.session_block_areas sba
+    where sba.session_block_id in (
+      select sb.id from public.session_blocks sb
+       where sb.session_id = v_source and sb.deleted_at is null)
+    order by sba.id for update;
+  perform se.id from public.electrolysis_entries se
+    where se.session_id = v_source and se.deleted_at is null
+    order by se.id for update;
+
+  -- 7. Now that the source is pinned, compute the fingerprint and reject if it
+  --    differs from the one the preview was built on (zero rows on mismatch).
   v_fp := public._whole_session_copy_fingerprint(v_source);
-  if p_expected_source_fingerprint is null or v_fp is distinct from p_expected_source_fingerprint then
+  if v_fp is distinct from p_expected_source_fingerprint then
     raise exception 'source changed' using errcode = 'HN005';
   end if;
 

@@ -270,30 +270,18 @@ export default async function SessionDetailPage({
   const fromLastVisit =
     previousWithNote?.next_session_note?.trim() || null;
 
-  // PR #194: the latest previous session regardless of note, for the
-  // copy-areas-from-last-session affordance on an empty chart. The
-  // button only renders when that session actually HAS saved
-  // treatment areas (review condition): a head-count read decides.
-  const { data: previousSessionAny } = await supabaseForNote
-    .from("sessions")
-    .select("id")
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    .lt("started_at", session.started_at)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  let previousSessionHasAreas = false;
-  if (previousSessionAny) {
-    const { count } = await supabaseForNote
-      .from("session_blocks")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studio.id)
-      .eq("session_id", previousSessionAny.id)
-      .is("deleted_at", null);
-    previousSessionHasAreas = (count ?? 0) > 0;
-  }
+  // Whole-session copy (0157): the ONE canonical authority for whether an
+  // eligible previous session exists is whole_session_copy_source_descriptor —
+  // the SAME function the commit RPC derives its source from. We gate the panel
+  // on it (not a separate "latest previous session" query), so page gating and
+  // commit can never disagree about which session is the source.
+  const { data: copyDescriptor } = await supabaseForNote.rpc(
+    "whole_session_copy_source_descriptor",
+    { p_studio_id: studio.id, p_target_session_id: session.id },
+  );
+  const canCopyFromPrevious = Boolean(
+    (copyDescriptor as { eligible?: boolean } | null)?.eligible,
+  );
 
   const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
@@ -532,17 +520,17 @@ export default async function SessionDetailPage({
         />
       </div>
 
-      {/* Migration 0157: whole-session "Copy areas and settings" — draft-model
-          replacement for the paused one-tap copy. The preview is EPHEMERAL
-          (component memory only); nothing is written until the practitioner
-          explicitly confirms. Shown only on an empty electrolysis chart with a
-          previous session that has areas. */}
+      {/* Migration 0157: whole-session "Copy areas and settings" — editable
+          draft-model replacement for the paused one-tap copy. The preview is
+          EPHEMERAL (component memory only); nothing is written until the
+          practitioner explicitly confirms. Shown only on an empty editable
+          electrolysis chart when the canonical source descriptor reports an
+          eligible previous session (same authority the commit RPC uses). */}
       {!isFinalized &&
         session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
-        previousSessionAny &&
-        previousSessionHasAreas && (
+        canCopyFromPrevious && (
           <CopyPreviousAreasPanel clientId={id} sessionId={session.id} />
         )}
 

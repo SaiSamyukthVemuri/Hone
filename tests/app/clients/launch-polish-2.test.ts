@@ -110,14 +110,15 @@ describe("5. whole-session copy is TEMPORARILY CONTAINED (zero writes)", () => {
     expect(COPY_BUTTON).not.toMatch(/lost|deleted|removed your/i);
   });
 
-  it("the draft-model copy panel (0157) renders only on an empty electrolysis chart with a previous session that HAS areas", () => {
-    // Migration 0157 replaced the paused one-tap copy with the ephemeral
-    // preview panel (CopyPreviousAreasPanel), gated on the same conditions.
+  it("the draft-model copy panel (0157) renders only on an empty electrolysis chart with a canonical eligible source", () => {
+    // Migration 0157 replaced the paused one-tap copy with the ephemeral editable
+    // preview panel (CopyPreviousAreasPanel), gated on the CANONICAL source
+    // descriptor (same authority the commit RPC derives its source from).
     expect(SESSION_PAGE).toMatch(
-      /blockData\.blocks\.length === 0 &&\s*\n?\s*previousSessionAny &&\s*\n?\s*previousSessionHasAreas && \(/,
+      /blockData\.blocks\.length === 0 &&\s*\n?\s*canCopyFromPrevious && \(/,
     );
     expect(SESSION_PAGE).toMatch(/<CopyPreviousAreasPanel/);
-    expect(SESSION_PAGE).toMatch(/previousSessionHasAreas = \(count \?\? 0\) > 0;/);
+    expect(SESSION_PAGE).toMatch(/whole_session_copy_source_descriptor/);
   });
 });
 

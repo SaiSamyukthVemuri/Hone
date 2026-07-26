@@ -7,10 +7,22 @@ import {
   draftToCopyInput,
   type CopyAreaDraft,
 } from "@/lib/sessions/whole-session-copy";
+import { CopyDraftCard } from "@/components/copy-draft-card";
 import {
   getWholeSessionCopySourceAction,
   commitWholeSessionCopyAction,
 } from "./whole-session-copy-actions";
+
+function formatVisitDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 // Whole-session "Copy areas and settings from last session" (migration 0157).
 //
@@ -40,6 +52,7 @@ export function CopyPreviousAreasPanel({
   const [idempotencyKey, setIdempotencyKey] = useState<string>("");
   const [sourceSessionId, setSourceSessionId] = useState<string | null>(null);
   const [sourceFingerprint, setSourceFingerprint] = useState<string | null>(null);
+  const [sourceStartedAt, setSourceStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoad] = useTransition();
   const [committing, startCommit] = useTransition();
@@ -66,6 +79,7 @@ export function CopyPreviousAreasPanel({
       setDrafts(built);
       setSourceSessionId(res.sourceSessionId);
       setSourceFingerprint(res.sourceFingerprint);
+      setSourceStartedAt(res.sourceStartedAt);
       setIdempotencyKey(crypto.randomUUID());
       setPhase("preview");
     });
@@ -75,11 +89,15 @@ export function CopyPreviousAreasPanel({
   function removeDraft(key: string) {
     setDrafts((d) => d.filter((x) => x.key !== key));
   }
+  function updateDraft(next: CopyAreaDraft) {
+    setDrafts((d) => d.map((x) => (x.key === next.key ? next : x)));
+  }
   function cancel() {
     setDrafts([]);
     setIdempotencyKey("");
     setSourceSessionId(null);
     setSourceFingerprint(null);
+    setSourceStartedAt(null);
     setError(null);
     setPhase("idle");
   }
@@ -140,57 +158,28 @@ export function CopyPreviousAreasPanel({
     >
       <div className="flex flex-col gap-1">
         <span className="font-medium">Preview — copy from last session</span>
+        {formatVisitDate(sourceStartedAt) && (
+          <span className="text-xs text-neutral-500" data-testid="copy-previous-source-date">
+            From the visit on {formatVisitDate(sourceStartedAt)}
+          </span>
+        )}
         <span className="text-neutral-600 dark:text-neutral-400">
           {drafts.length} area{drafts.length === 1 ? "" : "s"} ready. This is a
-          preview only — nothing is saved yet. Machine settings copy over;
-          today&apos;s minutes start blank. Remove any you don&apos;t want, then
-          confirm.
+          preview only — nothing is saved yet. Edit anything below; machine
+          settings copy over, but today&apos;s minutes start blank. Remove any you
+          don&apos;t want, then confirm.
         </span>
       </div>
 
-      <ul className="flex flex-col gap-2">
-        {drafts.map((d) => {
-          const areaLabel =
-            d.areas.length > 0
-              ? d.areas
-                  .map((a) =>
-                    a.laterality && a.laterality !== "not_applicable"
-                      ? `${a.laterality} ${a.area}`
-                      : a.area,
-                  )
-                  .join(", ")
-              : (d.primaryArea ?? "Area");
-          // Machine SETUP only (no minutes — minutes are never copied).
-          const setupBits = [
-            d.setup.mode,
-            d.setup.machineFrequency,
-            d.setup.energyLevel ? `EL ${d.setup.energyLevel}` : "",
-          ].filter(Boolean);
-          return (
-            <li
-              key={d.key}
-              data-testid={`copy-draft-${d.key}`}
-              className="flex items-start justify-between gap-3 rounded-md border border-neutral-200 px-3 py-2 dark:border-neutral-800"
-            >
-              <div className="flex flex-col gap-0.5">
-                <span className="font-medium">{areaLabel}</span>
-                {setupBits.length > 0 && (
-                  <span className="text-xs text-neutral-500">
-                    {setupBits.join(" · ")}
-                  </span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => removeDraft(d.key)}
-                data-testid={`copy-draft-remove-${d.key}`}
-                className="shrink-0 rounded-md border border-neutral-300 px-2 py-1 text-xs hover:border-neutral-500 dark:border-neutral-700"
-              >
-                Remove
-              </button>
-            </li>
-          );
-        })}
+      <ul className="flex flex-col gap-3">
+        {drafts.map((d) => (
+          <CopyDraftCard
+            key={d.key}
+            draft={d}
+            onChange={updateDraft}
+            onRemove={() => removeDraft(d.key)}
+          />
+        ))}
       </ul>
 
       {error && (

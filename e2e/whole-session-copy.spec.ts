@@ -5,6 +5,8 @@ import {
   getSessionBlockCount,
   getSessionBlockAreas,
   getFirstBlockMinutes,
+  getFirstBlockRow,
+  getFirstEntryRow,
   bumpSourceBlockEnergy,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -83,6 +85,59 @@ test("removing a draft card before commit copies only what remains @390px", asyn
   await expect(page.getByTestId(/^copy-draft-/)).toHaveCount(0);
   await expect(page.getByTestId("copy-previous-commit")).toBeDisabled();
   expect(await getSessionBlockCount(todaySessionId)).toBe(0);
+});
+
+test("editing cards writes nothing until commit; only the EDITED values persist; minutes blank @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId, todaySessionId } = await seedE2eClientWithPreviousAreas(seed);
+  await loginAsOwner(page, seed);
+  await page.goto(`/clients/${clientId}/sessions/${todaySessionId}`);
+
+  await page.getByTestId("copy-previous-preview").click();
+  const card = page.getByTestId(/^copy-draft-[0-9a-f-]+$/).first();
+  await expect(card).toBeVisible({ timeout: T });
+
+  await test.step("edit laterality → Right (source was left)", async () => {
+    await card.getByRole("button", { name: "Right", exact: true }).click();
+    expect(await getSessionBlockCount(todaySessionId)).toBe(0); // still no writes
+  });
+
+  await test.step("edit mode → Galvanic (source was blend; clears energy/thermolysis)", async () => {
+    await card.getByRole("button", { name: "Galvanic", exact: true }).click();
+    expect(await getSessionBlockCount(todaySessionId)).toBe(0);
+  });
+
+  await test.step("edit a galvanic reading", async () => {
+    const ma = card.getByLabel("Galvanic mA");
+    await ma.fill("0.3");
+    expect(await getSessionBlockCount(todaySessionId)).toBe(0);
+  });
+
+  await test.step("clear the probe (source had one)", async () => {
+    // The collapsed probe summary shows Change + Clear; clear it directly.
+    await card.getByRole("button", { name: "Clear", exact: true }).click();
+    expect(await getSessionBlockCount(todaySessionId)).toBe(0); // STILL zero writes
+  });
+
+  await test.step("commit → only the edited values persist; originals do not; minutes blank", async () => {
+    await page.getByTestId("copy-previous-commit").click();
+    await expect.poll(() => getSessionBlockCount(todaySessionId), { timeout: T }).toBe(1);
+    // Edited area laterality persisted.
+    await expect
+      .poll(async () => (await getSessionBlockAreas(todaySessionId)).join(","), { timeout: T })
+      .toBe("Chin|right");
+    const block = await getFirstBlockRow(todaySessionId);
+    const entry = await getFirstEntryRow(todaySessionId);
+    expect(block?.mode).toBe("galv"); // edited mode
+    expect(block?.probe_key).toBeNull(); // probe cleared (original probe did NOT persist)
+    expect(block?.minutes_performed).toBeNull(); // minutes never copied
+    expect(block?.energy_level).toBeNull(); // galvanic cleared the original energy (10)
+    expect(entry?.mode).toBe("galv");
+    expect(Number(entry?.galvanic_ma)).toBe(0.3); // edited reading
+    expect(entry?.thermolysis_intensity_percent).toBeNull(); // original thermo (40) did NOT persist
+  });
 });
 
 test("a STALE preview fails closed with a safe message and zero writes @390px", async ({
