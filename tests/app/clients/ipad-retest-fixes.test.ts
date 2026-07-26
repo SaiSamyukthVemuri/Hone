@@ -35,18 +35,27 @@ describe("2. Last Session carries cautions + next-visit context", () => {
 describe("3. charting order + chips", () => {
   it("order: readings ... Client tolerance -> Treatment observations (PR #199: area-level For next visit is gone)", () => {
     const tol = FORM.indexOf(">Client tolerance<");
-    const obs = FORM.indexOf(">Treatment observations<");
+    // Charting polish: the heading is rendered from a shared constant now.
+    const obs = FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}");
     expect(tol).toBeGreaterThan(-1);
     expect(obs).toBeGreaterThan(tol);
     // PR #199: the per-area "For next visit" section was consolidated
     // into the single session-level note.
     expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });
-  it("no reaction <select> remains; reactions are chips in observations", () => {
+  it("no reaction <select> remains; reactions are single-select chips in the Client/skin response group", () => {
     expect(FORM).not.toMatch(/<select[\s\S]{0,200}reactionType/);
-    const obsBlock = FORM.slice(FORM.indexOf("skin/client response options as chips"));
-    expect(obsBlock).toMatch(/REACTION_TYPES\.map/);
-    expect(obsBlock).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
+    // Charting polish: reaction chips now live in their OWN headed group,
+    // distinct from the multi-select observations above.
+    const responseBlock = FORM.slice(FORM.indexOf("{CLIENT_RESPONSE_HEADING}"));
+    expect(responseBlock).toMatch(/REACTION_TYPES\.map/);
+    expect(responseBlock).toMatch(/aria-pressed=\{draft\.reactionType === r\}/);
+    // The observations group above does NOT contain the reaction chips.
+    const obsGroup = FORM.slice(
+      FORM.indexOf("{TREATMENT_OBSERVATIONS_HEADING}"),
+      FORM.indexOf("{CLIENT_RESPONSE_HEADING}"),
+    );
+    expect(obsGroup).not.toMatch(/REACTION_TYPES\.map/);
   });
   it("legacy reaction notes stay visible; tolerance rating remains", () => {
     expect(FORM).toMatch(/\{draft\.reactionNotes\.trim\(\) !== "" && \(/);

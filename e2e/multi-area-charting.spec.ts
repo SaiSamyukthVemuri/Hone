@@ -21,7 +21,9 @@ test("one settings block treats multiple areas with independent laterality", asy
 
   const openForm = async () => {
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
-    // No blocks yet → the "Add settings block" form is open on load.
+    // Charting polish: the form no longer auto-opens — a zero-block session
+    // shows the compact CTA, and opening is an explicit tap.
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({ timeout: T });
   };
 

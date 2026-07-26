@@ -37,8 +37,8 @@ describe("3. Last session shows per-area settings (shared component)", () => {
 
 describe("4. one free-text box in charting", () => {
   it("Treatment observations appears once; tolerance remains (PR #199: per-area for-next-visit is gone)", () => {
-    // One rendered heading (the other mentions are a comment + helper copy).
-    expect(FORM.match(/>Treatment observations</g)?.length).toBe(1);
+    // One rendered heading (from the shared constant; charting polish).
+    expect(FORM.match(/\{TREATMENT_OBSERVATIONS_HEADING\}/g)?.length).toBe(1);
     expect(FORM).toMatch(/Client tolerance/);
     expect(FORM.indexOf(">For next visit<")).toBe(-1);
   });

@@ -64,6 +64,8 @@ test("inventory-backed probe lot: auto-fill active, confirm, save, edit+reload p
 
   await test.step("add an area + select the F3 probe → its sole ACTIVE lot auto-fills, linked, UNconfirmed", async () => {
     await openCharting();
+    // Charting polish: explicit open (form no longer auto-renders).
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await expect(
       page.getByText(/Areas treated with these settings/i),
     ).toBeVisible({ timeout: T });
@@ -141,6 +143,7 @@ test("#7/#18 a later inventory lot correction never rewrites a charted block's f
   await loginAsOwner(page, seed);
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
   await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
     timeout: T,
   });
@@ -196,6 +199,7 @@ test("#3 inventory probe RECLASSIFICATION never blocks an unrelated historical e
   await loginAsOwner(page, seed);
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
   await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
     timeout: T,
   });
@@ -263,6 +267,7 @@ test("manual probe-lot entry stays available and is never inventory-linked (#6/#
   await loginAsOwner(page, seed);
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
   await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
     timeout: T,
   });

@@ -22,6 +22,7 @@ import {
   toleranceLabel,
 } from "@/lib/sessions/clinical-response";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
+import { CLIENT_RESPONSE_HEADING } from "@/lib/sessions/charting-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
@@ -113,10 +114,12 @@ export function SessionBlocksView({
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
 }: Props) {
-  // First empty treatment-area editor: when a session has no areas yet,
-  // open the editor immediately so logging starts without an extra click.
-  // No DB row is created until the practitioner saves.
-  const [adding, setAdding] = useState(blocks.length === 0);
+  // Charting-usability polish (Chloe): the long settings form no longer
+  // auto-renders. A session with zero saved blocks starts on a COMPACT "Add
+  // settings block" CTA; opening the form is an explicit tap and Cancel returns
+  // to the compact state. Opening or cancelling creates NO database row — the
+  // block is written only when the practitioner saves (existing create action).
+  const [adding, setAdding] = useState(false);
   const previousBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
 
   return (
@@ -175,9 +178,12 @@ export function SessionBlocksView({
         <button
           type="button"
           onClick={() => setAdding(true)}
+          data-testid="add-settings-block-cta"
           className="self-start rounded-md border border-dashed border-neutral-300 px-4 py-3 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
         >
-          + Add settings block
+          {blocks.length === 0
+            ? "+ Add settings block to start charting"
+            : "+ Add settings block"}
         </button>
       )}
     </div>
@@ -357,6 +363,10 @@ function BlockSection({
             block.reaction_type ||
             block.reaction_notes) && (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {/* Charting polish: label the grouped client response with the
+                  same terminology the entry forms use, so observations vs
+                  response read consistently across form and saved record. */}
+              <span className="text-neutral-500">{CLIENT_RESPONSE_HEADING}: </span>
               {[
                 block.tolerance_rating != null
                   ? `Tolerance: ${toleranceLabel(block.tolerance_rating)}`
