@@ -50,15 +50,24 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(SQL).toMatch(/foreign key \(created_by_practitioner_id, studio_id\)[\s\S]{0,80}references public\.practitioners \(id, studio_id\)/);
     // No clinical payload column on the ledger.
     expect(CODE).not.toMatch(/\bspecs\b\s+jsonb/);
-    // RLS: member SELECT only; EXPLICIT browser DML revoke + SELECT grant.
+    // RLS: member SELECT only; EXPLICIT least-privilege grants.
     expect(SQL).toMatch(/enable row level security/);
     expect(SQL).toMatch(/for select to authenticated/i);
     expect(SQL).not.toMatch(/for insert to authenticated/i);
     expect(SQL).not.toMatch(/for update to authenticated/i);
     expect(SQL).not.toMatch(/for delete/i);
-    expect(SQL).toMatch(/revoke all on public\.session_copy_operations from anon/);
-    expect(SQL).toMatch(/revoke insert, update, delete on public\.session_copy_operations from authenticated/);
-    expect(SQL).toMatch(/grant select on public\.session_copy_operations to authenticated/);
+    // COMPLETE least-privilege posture (P1 privilege hardening): revoke ALL table
+    // privileges from the browser roles (covers TRUNCATE/REFERENCES/TRIGGER, which
+    // RLS does NOT protect — not just DML), then grant back ONLY SELECT to
+    // authenticated. A partial `revoke insert, update, delete` is insufficient.
+    expect(CODE).toMatch(
+      /revoke all on table public\.session_copy_operations\s+from public, anon, authenticated/,
+    );
+    expect(CODE).toMatch(
+      /grant select on table public\.session_copy_operations\s+to authenticated/,
+    );
+    // The old incomplete DML-only revoke must be gone.
+    expect(CODE).not.toMatch(/revoke insert, update, delete on public\.session_copy_operations/);
     // created_by stores the PRACTITIONER, not auth.uid().
     expect(CODE).not.toMatch(/created_by_practitioner_id[^\n]*auth\.uid/);
   });

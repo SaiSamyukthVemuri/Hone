@@ -633,3 +633,69 @@ describe("canonical-source parity", () => {
     expect(await canonicalSourceId(target)).toBe(source);
   });
 });
+
+// P1 privilege hardening: the session_copy_operations provenance ledger must have
+// an EXPLICIT least-privilege posture on a FRESH DB. RLS does NOT protect TRUNCATE,
+// so table-privilege verification (has_table_privilege) is required — source-string
+// tests are not sufficient. Written only by the service-role security-definer RPC.
+describe("session_copy_operations ledger — least-privilege table grants", () => {
+  const PRIVS = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"] as const;
+  const TABLE = "public.session_copy_operations";
+
+  async function hasPriv(role: string, priv: string): Promise<boolean> {
+    const r = await adminQuery("select has_table_privilege($1,$2,$3) as ok", [role, TABLE, priv]);
+    return r.rows[0].ok as boolean;
+  }
+
+  it("anon has NO table privilege of any kind (SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER = false)", async () => {
+    for (const p of PRIVS) {
+      expect(await hasPriv("anon", p), `anon ${p}`).toBe(false);
+    }
+  });
+
+  it("authenticated has SELECT only; every other table privilege is false (incl. TRUNCATE/REFERENCES/TRIGGER)", async () => {
+    expect(await hasPriv("authenticated", "SELECT")).toBe(true);
+    for (const p of PRIVS.filter((p) => p !== "SELECT")) {
+      expect(await hasPriv("authenticated", p), `authenticated ${p}`).toBe(false);
+    }
+  });
+
+  it("service_role retains write access (its ONLY write path is the security-definer RPC); the RPC owner can append the ledger", async () => {
+    // service_role is a trusted server-only role, never assumable by a browser. It
+    // is deliberately NOT revoked (the copy RPC runs as owner and appends the ledger).
+    expect(await hasPriv("service_role", "INSERT")).toBe(true);
+  });
+
+  it("an authenticated session CANNOT TRUNCATE the ledger, and an existing row survives the attempt", async () => {
+    // Seed a genuine ledger row via a real copy commit.
+    const { source, target, fp } = await seedPair();
+    await callCopy({ target, specs: validSpec(), key: "k-trunc-denial", fp, sourceId: source });
+    const before = (
+      await adminQuery("select count(*)::int n from public.session_copy_operations where target_session_id=$1", [target])
+    ).rows[0].n;
+    expect(before).toBe(1);
+
+    // Attempt TRUNCATE as the authenticated role — must be denied.
+    await expect(
+      asRole("authenticated", (q) => q("truncate table public.session_copy_operations")),
+    ).rejects.toThrow(/permission denied|must be owner/i);
+
+    // The ledger row is untouched.
+    const after = (
+      await adminQuery("select count(*)::int n from public.session_copy_operations where target_session_id=$1", [target])
+    ).rows[0].n;
+    expect(after).toBe(1);
+  });
+
+  it("copy_session_setup executes for service_role ONLY; the descriptor for authenticated (never anon)", async () => {
+    const rpcSig = "public.copy_session_setup(uuid, uuid, uuid, jsonb, text, text, uuid)";
+    const descSig = "public.whole_session_copy_source_descriptor(uuid, uuid)";
+    const exec = async (role: string, sig: string) =>
+      (await adminQuery("select has_function_privilege($1,$2,'EXECUTE') as ok", [role, sig])).rows[0].ok as boolean;
+    expect(await exec("service_role", rpcSig)).toBe(true);
+    expect(await exec("authenticated", rpcSig)).toBe(false);
+    expect(await exec("anon", rpcSig)).toBe(false);
+    expect(await exec("authenticated", descSig)).toBe(true);
+    expect(await exec("anon", descSig)).toBe(false);
+  });
+});

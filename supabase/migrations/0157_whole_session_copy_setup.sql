@@ -100,16 +100,23 @@ comment on table public.session_copy_operations is
 alter table public.session_copy_operations enable row level security;
 
 -- Members may READ their own studio's copy-operation rows. Rows are WRITTEN only
--- by the service-role RPC (no browser insert/update/delete policy). Grants are
--- explicit (not left to Supabase defaults): SELECT for authenticated, and no
--- INSERT/UPDATE/DELETE for the browser roles.
+-- by the service-role security-definer RPC (no browser insert/update/delete
+-- policy). Grants are EXPLICIT and least-privilege (never left to Supabase
+-- defaults): revoke EVERY table privilege from the browser roles first — this
+-- covers not just INSERT/UPDATE/DELETE but also TRUNCATE, REFERENCES, and TRIGGER
+-- (none of which RLS protects) — then grant back ONLY SELECT to authenticated.
+-- The table OWNER and service_role are deliberately NOT revoked here: the
+-- SECURITY DEFINER copy_session_setup RPC runs as the owner and must remain able
+-- to append the ledger, and service_role's write path is only ever through that RPC.
 create policy "session_copy_operations: members select"
   on public.session_copy_operations for select to authenticated
   using (public.is_studio_member(studio_id));
 
-revoke all on public.session_copy_operations from anon;
-revoke insert, update, delete on public.session_copy_operations from authenticated;
-grant select on public.session_copy_operations to authenticated;
+revoke all on table public.session_copy_operations
+  from public, anon, authenticated;
+
+grant select on table public.session_copy_operations
+  to authenticated;
 
 -- ===========================================================================
 -- B. Core source fingerprint (private). A deterministic hash of the EXACT
