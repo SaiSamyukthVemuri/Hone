@@ -162,13 +162,24 @@ summary.
      record's own block out. **Reproduced during review as `service_role`: a signed record's area
      count went 2 → 4 with `record_status`, `record_version`, `current_snapshot_id` and the signed
      `content_hash` all byte-identical.**
+   - **soft-delete** — flip `deleted_at` on the parent block. Every read surface filters
+     `deleted_at is null` (`getSessionBlocks`, the Before Today preview, the studio data export and
+     `build_session_snapshot` itself), so the areas vanish from the chart, history and export
+     without a row being deleted. **Reproduced during review as plain `authenticated` on a direct
+     connection: a signed record's live areas went from three to one, `content_hash` unchanged.**
+     The 0123 RPC path was already closed; this closes the raw `UPDATE`.
 
    0119 permits both after the status round-trip in item 3, because its child-table branches
    compare only `record_status`. This guard keys on the append-only snapshot instead. It is inert
    for every legitimate flow: a snapshot-carrying session cannot be deleted at all (the snapshot FK
-   is `RESTRICT`), a finalized record's blocks are already frozen by 0119, ordinary charting
-   `UPDATE`s never touch `session_id`, and soft-delete (`soft_delete_session_area`, 0123) is an
-   `UPDATE` that leaves `session_id` alone.
+   is `RESTRICT`), a finalized record's blocks are already frozen by 0119, and ordinary charting
+   `UPDATE`s touch neither `session_id` nor `deleted_at`. Soft-deleting a block on a
+   **never-signed** draft — the product's actual removal path, `soft_delete_session_area` (0123) —
+   still works exactly as before.
+
+   All three legs, and the area guard's own freeze, share ONE definition of "has ever been signed"
+   (`session_has_been_signed`: `finalized_at`, `current_snapshot_id`, or an append-only snapshot
+   row). An asymmetry between the two guards would itself be a hole.
 8. **The 0128 studio-derive trigger is widened** to `before insert or update of session_block_id,
    studio_id`. It previously fired only on a `session_block_id` change, so an UPDATE touching
    **only** `studio_id` escaped the anti-spoof derivation and left a row whose denormalized
@@ -196,8 +207,8 @@ summary.
   unguarded; they share a root cause with **L19** in `known-limitations.md` and are out of scope
   here.
 - The containment claim is therefore precise: **no role reachable from the application — `anon`,
-  `authenticated`, or `service_role` — can add, change, reorder, move, reparent, delete or erase a
-  finalized (or ever-signed) record's structured areas.** The freeze keys on the append-only
+  `authenticated`, or `service_role` — can add, change, reorder, move, reparent, soft-delete,
+  delete or erase a finalized (or ever-signed) record's structured areas.** The freeze keys on the append-only
   snapshot, so a `record_status` round-trip through the 0120 permit does not reopen any of those
   routes. It does **not** claim tamper-*evidence*: the signed `content_hash` still does not cover
   these rows, so a change made by the table owner, a future migration or a restore would leave the

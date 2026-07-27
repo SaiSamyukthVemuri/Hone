@@ -561,6 +561,66 @@ describe("A. direct authenticated table access", () => {
     ).toBe(hashBefore);
   });
 
+  it("a status round-trip cannot SOFT-DELETE the parent block of a signed record", async () => {
+    // REVIEW FINDING, reproduced as plain `authenticated`: every read surface
+    // filters `deleted_at is null` — getSessionBlocks, the Before Today preview,
+    // the studio data export and build_session_snapshot itself — so flipping
+    // deleted_at on a signed record's block makes its authoritative areas vanish
+    // from the chart, history and export without deleting a single row. The 0123
+    // RPC path was already closed; this is the raw UPDATE.
+    const { sessionId, blockId } = await seedCharted(a);
+    await finalizeForReal(a, sessionId);
+
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await c.query("select set_config('hone.correction_session_id', $1, true)", [sessionId]);
+      await expect(
+        c.query("update public.session_blocks set deleted_at = now() where id=$1", [blockId]),
+      ).rejects.toThrow(/finalized and signed/i);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+    // The trusted removal RPC is refused too (0123 already did this; keep it pinned).
+    await expect(
+      userQuery(a.userId, "select * from public.soft_delete_session_area($1,$2,$3)", [
+        sessionId,
+        blockId,
+        "removing this area for a test reason",
+      ]),
+    ).rejects.toThrow();
+    const live = await adminQuery(
+      "select count(*)::int n from public.session_blocks where id=$1 and deleted_at is null",
+      [blockId],
+    );
+    expect(live.rows[0].n).toBe(1);
+    expect(await areaSnapshot(blockId)).toHaveLength(2);
+  });
+
+  it("soft-deleting a NEVER-SIGNED draft's block still works (0123 path intact)", async () => {
+    const { sessionId, blockId } = await seedCharted(a);
+    await adminQuery(
+      "insert into public.electrolysis_entries (id, session_id, area, block_id) values ($1,$2,'Chin',$3)",
+      [randomUUID(), sessionId, blockId],
+    );
+    await userQuery(a.userId, "select * from public.soft_delete_session_area($1,$2,$3)", [
+      sessionId,
+      blockId,
+      "removing this area for a test reason",
+    ]);
+    const row = await adminQuery(
+      "select deleted_at is not null as gone from public.session_blocks where id=$1",
+      [blockId],
+    );
+    expect(row.rows[0].gone).toBe(true);
+  });
+
   it("ordinary charting UPDATEs on session_blocks are untouched by that guard", async () => {
     // The reparent guard must only bite on a genuine session_id move.
     const { sessionId, blockId } = await seedCharted(a);

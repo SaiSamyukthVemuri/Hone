@@ -169,9 +169,7 @@ describe("0158 — finalized-parent guard trigger on public.session_block_areas"
     for (const name of ["assert_session_chartable", "assert_structured_area_parent_mutable"]) {
       const body = fn(name);
       expect(body, name).toMatch(/v_final is not null or v_snap is not null/);
-      expect(body, name).toMatch(
-        /exists \(select 1 from public\.clinical_record_snapshots cs\s+where cs\.session_id = p_session_id\)/,
-      );
+      expect(body, name).toMatch(/public\.session_has_been_signed\(p_session_id\)/);
       expect(body, name).toMatch(/finalized and signed/i);
       expect(body, name).toMatch(/s\.finalized_at, s\.current_snapshot_id/);
     }
@@ -319,7 +317,7 @@ describe("0158 — least privilege on public.session_block_areas", () => {
   it("is replayable on a fresh database (idempotent drop-if-exists / create-or-replace, grants re-asserted)", () => {
     expect(CODE).toMatch(/drop trigger if exists/);
     expect(CODE.match(/drop policy if exists/g) ?? []).toHaveLength(2);
-    expect(CODE.match(/create or replace function/g) ?? []).toHaveLength(6);
+    expect(CODE.match(/create or replace function/g) ?? []).toHaveLength(7);
   });
 });
 
@@ -464,12 +462,15 @@ describe("0158 — ZERO data operations", () => {
     // clinical_record_snapshots IS referenced — but only as a read-only EXISTS
     // probe inside the two lifecycle asserts (the once-finalized-always-frozen
     // check). It is never written, and the 0119 snapshot builder is untouched.
+    // clinical_record_snapshots is referenced only as a read-only EXISTS probe, and
+    // only inside the single shared session_has_been_signed helper.
     const snapshotRefs = CODE.match(/clinical_record_snapshots/g) ?? [];
-    expect(snapshotRefs).toHaveLength(5);
+    expect(snapshotRefs).toHaveLength(2);
+    expect(fn("session_has_been_signed")).toMatch(
+      /exists \(select 1 from public\.clinical_record_snapshots cs/,
+    );
     for (const name of ["assert_session_chartable", "assert_structured_area_parent_mutable"]) {
-      expect(fn(name), name).toMatch(
-        /exists \(select 1 from public\.clinical_record_snapshots cs/,
-      );
+      expect(fn(name), name).not.toMatch(/clinical_record_snapshots/);
     }
     expect(CODE).not.toMatch(/insert into public\.clinical_record_snapshots/);
     expect(CODE).not.toMatch(/update public\.clinical_record_snapshots/);
@@ -505,11 +506,12 @@ describe("0158 — ZERO data operations", () => {
 });
 
 describe("0158 — every object it creates is schema-qualified", () => {
-  it("creates exactly the six expected functions, all public.-qualified", () => {
+  it("creates exactly the seven expected functions, all public.-qualified", () => {
     const created = [...CODE.matchAll(/create (?:or replace )?function\s+([\w.]+)\s*\(/gi)].map(
       (m) => m[1],
     );
     expect(created).toEqual([
+      "public.session_has_been_signed",
       "public.assert_session_chartable",
       "public.assert_structured_area_parent_mutable",
       "public.guard_finalized_structured_area_write",
@@ -532,18 +534,17 @@ describe("0158 — every object it creates is schema-qualified", () => {
     expect(body).toMatch(/security definer/);
     expect(body).toMatch(/set search_path = ''/);
     // DELETE: the old parent.
-    expect(body).toMatch(
-      /exists \(select 1 from public\.clinical_record_snapshots cs\s+where cs\.session_id = old\.session_id\)/,
-    );
+    expect(body).toMatch(/public\.session_has_been_signed\(old\.session_id\)/);
     // UPDATE: only a genuine move, and BOTH endpoints are checked.
     expect(body).toMatch(/new\.session_id is distinct from old\.session_id/);
     expect(body).toMatch(
-      /where cs\.session_id in \(old\.session_id, new\.session_id\)/,
+      /public\.session_has_been_signed\(old\.session_id\)\s*\n?\s*or public\.session_has_been_signed\(new\.session_id\)/,
     );
+    // UPDATE: the soft-delete erase route. Every read filters `deleted_at is null`,
+    // so flipping it hides a signed record's areas without deleting a row.
+    expect(body).toMatch(/new\.deleted_at is distinct from old\.deleted_at/);
     // INSERT: the new parent.
-    expect(body).toMatch(
-      /exists \(select 1 from public\.clinical_record_snapshots cs\s+where cs\.session_id = new\.session_id\)/,
-    );
+    expect(body).toMatch(/public\.session_has_been_signed\(new\.session_id\)/);
     expect(body).toMatch(/finalized and signed/i);
     // Keyed on the signed artifact, NOT on record_status — that is the whole point.
     expect(body).not.toMatch(/record_status/);
@@ -558,6 +559,30 @@ describe("0158 — every object it creates is schema-qualified", () => {
     expect(CODE).toMatch(
       /drop trigger if exists session_blocks_guard_signed_delete on public\.session_blocks;/,
     );
+  });
+
+  it("both guards share ONE definition of \"has ever been signed\"", () => {
+    // An asymmetry here is a hole: the area guard could consider a record frozen
+    // while the block guard let its blocks be deleted out from under it.
+    const helper = fn("session_has_been_signed");
+    expect(helper).toMatch(/security definer/);
+    expect(helper).toMatch(/set search_path = ''/);
+    expect(helper).toMatch(/stable/);
+    expect(helper).toMatch(/s\.finalized_at is not null or s\.current_snapshot_id is not null/);
+    expect(helper).toMatch(/exists \(select 1 from public\.clinical_record_snapshots cs/);
+    // Never keyed on record_status, which the 0120 permit can round-trip.
+    expect(helper).not.toMatch(/record_status/);
+    expect(CODE).toMatch(
+      /revoke all on function public\.session_has_been_signed\(uuid\) from public, anon, authenticated, service_role;/,
+    );
+    // Used by BOTH guards, and the snapshot table is never written by this file.
+    for (const name of [
+      "assert_session_chartable",
+      "assert_structured_area_parent_mutable",
+      "guard_signed_record_block_write",
+    ]) {
+      expect(fn(name), name).toMatch(/public\.session_has_been_signed\(/);
+    }
   });
 
   it("bounds the apply with a lock_timeout instead of stalling live reads", () => {

@@ -82,6 +82,10 @@
 --          own block out). REPRODUCED as service_role: a signed record's area count
 --          went 2 -> 4 with record_status, record_version, current_snapshot_id and
 --          content_hash all byte-identical.
+--        * SOFT-DELETE — flip deleted_at on the parent block. Every read surface
+--          filters `deleted_at is null`, so the areas vanish from the chart, history
+--          and export without a row being deleted. REPRODUCED as plain authenticated:
+--          a signed record's live areas went from three to one, hash unchanged.
 --      0119 permits both after the status round-trip in (3), because its child-table
 --      branches compare only sessions.record_status. This guard keys on the
 --      append-only snapshot instead. Inert for every legitimate flow.
@@ -127,6 +131,31 @@
 -- it is fully replayable (every create is OR REPLACE, every drop IF EXISTS) and
 -- performs zero data operations, so a failed attempt leaves nothing behind.
 set local lock_timeout = '5s';
+
+-- ONE definition of "has ever been signed", shared by the area guard and the block
+-- guard so the two can never disagree about it. finalized_at and current_snapshot_id
+-- are the fast legs; the snapshot-row probe is the tamper-resistant one, because
+-- clinical_record_snapshots is append-only for every role (0119) and so cannot be
+-- edited away to reopen a write window.
+create or replace function public.session_has_been_signed(p_session_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (select s.finalized_at is not null or s.current_snapshot_id is not null
+       from public.sessions s where s.id = p_session_id),
+    false)
+  or exists (select 1 from public.clinical_record_snapshots cs
+              where cs.session_id = p_session_id);
+$$;
+
+comment on function public.session_has_been_signed(uuid) is
+  '0158: true when the encounter has EVER been finalized and signed — finalized_at, current_snapshot_id, or an append-only clinical_record_snapshots row. Deliberately NOT keyed on record_status, which the 0120 correction permit can round-trip.';
+
+revoke all on function public.session_has_been_signed(uuid) from public, anon, authenticated, service_role;
 
 -- ===========================================================================
 -- 1. Shared server-side authority check for structured-area writes.
@@ -211,8 +240,7 @@ begin
   -- reopen the window. Nothing legitimate regresses — the product has no
   -- un-finalize path, and a session with a snapshot is never chartable again.
   if v_final is not null or v_snap is not null
-     or exists (select 1 from public.clinical_record_snapshots cs
-                 where cs.session_id = p_session_id) then
+     or public.session_has_been_signed(p_session_id) then
     raise exception
       'This clinical record has been finalized and signed. Its treatment areas are permanently frozen (structured-area corrections are a later phase).'
       using errcode = 'check_violation';
@@ -271,8 +299,7 @@ begin
   -- existence probe is the tamper-resistant leg: clinical_record_snapshots is
   -- append-only for every role (0119), so the evidence cannot be edited away.
   if v_final is not null or v_snap is not null
-     or exists (select 1 from public.clinical_record_snapshots cs
-                 where cs.session_id = p_session_id) then
+     or public.session_has_been_signed(p_session_id) then
     raise exception
       'This clinical record has been finalized and signed. Its treatment areas are permanently frozen (structured-area corrections are a later phase).'
       using errcode = 'check_violation';
@@ -405,12 +432,11 @@ set search_path = ''
 as $$
 declare
   v_msg constant text :=
-    'This clinical record has been finalized and signed. Its treatment areas cannot be added, moved or deleted (structured-area corrections are a later phase).';
+    'This clinical record has been finalized and signed. Its treatment areas cannot be added, moved, removed or deleted (structured-area corrections are a later phase).';
 begin
   if tg_op = 'DELETE' then
     -- Closes the CASCADE-ERASE route: deleting the block deletes its areas.
-    if exists (select 1 from public.clinical_record_snapshots cs
-                where cs.session_id = old.session_id) then
+    if public.session_has_been_signed(old.session_id) then
       raise exception '%', v_msg using errcode = 'check_violation';
     end if;
     return old;
@@ -425,17 +451,31 @@ begin
     -- byte-identical. Only a genuine move is checked, so ordinary charting UPDATEs
     -- (which never touch session_id) are untouched.
     if new.session_id is distinct from old.session_id then
-      if exists (select 1 from public.clinical_record_snapshots cs
-                  where cs.session_id in (old.session_id, new.session_id)) then
+      if public.session_has_been_signed(old.session_id)
+         or public.session_has_been_signed(new.session_id) then
         raise exception '%', v_msg using errcode = 'check_violation';
       end if;
+    end if;
+
+    -- Closes the SOFT-DELETE ERASE route. Every read surface filters
+    -- `deleted_at is null` — getSessionBlocks, the Before Today preview, the data
+    -- export and build_session_snapshot itself — so flipping deleted_at on a signed
+    -- record's block makes its authoritative areas disappear from the chart, the
+    -- history and the export without deleting a single row. REPRODUCED as plain
+    -- `authenticated` on a direct connection with the 0120 permit set: a signed
+    -- record's live areas went from three to one, content_hash byte-identical. The
+    -- 0123 RPC path was already closed; this closes the raw UPDATE. Restoring a
+    -- previously soft-deleted block is blocked for the same reason (it would ADD
+    -- areas), so the test is on any change, not just on the null -> not-null edge.
+    if new.deleted_at is distinct from old.deleted_at
+       and public.session_has_been_signed(old.session_id) then
+      raise exception '%', v_msg using errcode = 'check_violation';
     end if;
     return new;
   end if;
 
   -- INSERT: no new settings block may be attached to a record that has been signed.
-  if exists (select 1 from public.clinical_record_snapshots cs
-              where cs.session_id = new.session_id) then
+  if public.session_has_been_signed(new.session_id) then
     raise exception '%', v_msg using errcode = 'check_violation';
   end if;
   return new;
@@ -507,8 +547,8 @@ grant select, insert, update, delete on table public.session_block_areas to serv
 --
 -- The containment claim is therefore precise: no ROLE REACHABLE FROM THE
 -- APPLICATION — anon, authenticated, or service_role — can add, change, reorder,
--- move, reparent, delete or erase the structured areas of a finalized (or
--- ever-signed) record. The freeze keys on the append-only snapshot, so a
+-- move, reparent, soft-delete, delete or erase the structured areas of a finalized
+-- (or ever-signed) record. The freeze keys on the append-only snapshot, so a
 -- record_status round-trip through the 0120 permit reopens none of those routes.
 -- It does NOT claim tamper-EVIDENCE: the signed content_hash still does not cover
 -- these rows, so a change made by the table owner, a future migration or a restore
