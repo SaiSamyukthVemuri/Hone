@@ -203,6 +203,30 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | **This is the next substantive engineering/governance work after documentation reconciliation.** |
 | **Blocks** | **Broader launch.** |
 
+## L18 — Finalized structured treatment areas are contained, but not signed and not correctable
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-27 |
+| **Impact** | `public.session_block_areas` (0128) is the **authoritative** structured treatment-area + per-area laterality record — `lib/sessions/block-areas.ts` prefers it over the legacy `session_blocks.primary_area`/`side` projection. It shipped outside every clinical-integrity mechanism: no 0119 finalized-write guard, `authenticated` holding every table privilege including `TRUNCATE`, no representation in `build_session_snapshot`, and no 0120 correction applier. Migration 0158 **contains** this (finalized-parent trigger for all roles, browser DML revoked, SELECT-only policy, hardened charting RPCs). Containment is **not** tamper-evidence: the signed `content_hash` still does not cover structured areas, and a mis-recorded area on a finalized record cannot be corrected — only frozen. |
+| **Evidence** | Verified read-only against production 2026-07-27 at migration max 0157: `clinical_finalization_enabled` and `clinical_corrections_enabled` **false on all 5 studios**; 72 sessions (71 draft, **1 finalized**, on a non-Willow test studio, finalized 2026-07-11T00:42:12Z, **zero** structured-area rows, 1 `original` snapshot); `session_block_areas` = **8 rows across 8 blocks in 1 studio (Willow)**, created 2026-07-21…2026-07-26; **0** structured-area rows created after their parent session's `finalized_at`; 0 amendments; 0 `clinical_audit_events`. **Caveat — the table has no `updated_at`, no `deleted_at` and no history table, so the absence of post-finalization *created* rows does NOT prove that no UPDATE or DELETE ever occurred.** That gap is not retroactively reconstructible. |
+| **Current mitigation** | **NOT YET APPLIED.** Migration 0158 exists in the repo only — production migration max is 0157 and applying 0158 needs its own explicit migration-only authorization. Until it is applied the defect is live and unmitigated at the database level. What *does* limit exposure today: both clinical flags are false on every studio, so nothing can newly become finalized through the product, and the one existing finalized record has zero structured-area rows. 0158 itself is containment only — schema/privilege, **zero data operations**, no backfill, no snapshot regeneration, no flag change. |
+| **Owner** | Sam |
+| **Next gate** | **Snapshot v2 + structured-area corrections** — (a) serialize `session_block_areas` into `build_session_snapshot` under a NEW `canonicalization_version` / schema id so existing v1 hashes stay valid and reproducible; (b) add a structured-area correction applier plus the matching narrow session-scoped permit; (c) resolve the already-present 0120 inconsistency where `_apply_block_correction` can correct the legacy `primary_area`/`side` projection on a finalized record while the authoritative rows stay unchanged — a correction the read contract then silently overrides; (d) decide and document the legacy rule for records finalized before v2. See [../runbooks/0158-finalized-structured-area-containment.md](../runbooks/0158-finalized-structured-area-containment.md) §8. |
+| **Blocks** | Neither today — clinical finalization is dormant on every studio. But it is a **HARD BLOCKER on enabling `clinical_finalization_enabled` for any studio, Willow included**, until snapshot v2 ships. |
+
+## L19 — `anon` holds full DML on `public.session_blocks` (out of scope, unaddressed)
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-27 |
+| **Impact** | The role `anon` currently holds `SELECT`, `INSERT`, `UPDATE`, `DELETE` **and `TRUNCATE`** on `public.session_blocks` — a core clinical table; `authenticated` holds the same set. A second consequence surfaced during the 0158 review: because `authenticated` can `UPDATE public.session_blocks` directly, a studio member can move a block — and with it the whole authoritative structured-area set — from one **draft** record to another, including one belonging to a different client, without ever writing `session_block_areas`. The 0119 guard blocks either endpoint being finalized, so no finalized record is affected, but the draft-to-draft move is unguarded and 0158 does not close it. Row-level operations are still filtered by the table's studio-member RLS policies, which an anonymous JWT cannot satisfy (`is_studio_member` resolves through `auth.uid()`). **`TRUNCATE` is not an RLS-checked operation at all**, so no policy is consulted for it; the grant is the only thing standing between an anon-key holder and emptying the table. This is the same class of defect 0157 closed for `session_copy_operations` and 0158 closes for `session_block_areas`. |
+| **Evidence** | Observed during the 0158 P0 investigation, read-only against production 2026-07-27 at migration max 0157. Almost certainly a Supabase `ALTER DEFAULT PRIVILEGES` grant that was never revoked — the same root cause migration 0130 had to fix for two charting RPCs. |
+| **Current mitigation** | **None applied.** No exploit or loss is claimed or evidenced; this is a standing privilege exposure, not an incident. |
+| **Owner** | Sam |
+| **Next gate** | A separate, explicitly authorized migration: `revoke all on public.session_blocks from anon`, then re-grant only what is genuinely required (expected: nothing — no anon surface reads session blocks). **This requires its own authorization and its own review; it is deliberately NOT addressed by the 0158 containment PR**, which is scoped to `session_block_areas` alone. The same sweep should re-audit every clinical table's `anon` privilege set rather than fixing one table at a time. |
+| **Blocks** | Neither today — but it should be closed before the deep audit signs off on the clinical surface. |
+
 ---
 
 ## Explicitly *not* claimed

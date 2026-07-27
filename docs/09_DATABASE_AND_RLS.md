@@ -77,8 +77,8 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
   clinical/client-history tables non-hard-deletable by normal authenticated members.
   0115 went further and *dropped* the residual entry DELETE policies and revoked
   `truncate, delete` from `anon, authenticated`.
-- **SELECT-only with every other privilege revoked.** `session_copy_operations` (0157) — see
-  the next section.
+- **SELECT-only with every other privilege revoked.** `session_copy_operations` (0157) and
+  `session_block_areas` (0128, narrowed by 0158) — see the next section.
 
 ### RLS is not the same thing as a table privilege
 
@@ -113,6 +113,56 @@ Verified in production (`has_table_privilege`, 2026-07-27):
 Without the `revoke all`, a Supabase default grant would have left `authenticated` holding
 `TRUNCATE` — and **RLS would not have stopped it**. Apply the same reasoning to every new
 audit, ledger or append-only table.
+
+### `session_block_areas` — the same fix applied to an existing clinical table (0128 → 0158)
+
+`public.session_block_areas` (0128) is the **authoritative** structured treatment-area +
+per-area laterality record: `lib/sessions/block-areas.ts` prefers those rows over the legacy
+`session_blocks.primary_area`/`side` projection whenever any exist. 0128 nonetheless left it
+with a single `FOR ALL` member policy and — verified in production — `authenticated` holding
+**every** table privilege (SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER), and with
+no 0119 finalized-write guard attached. **Migration 0158** changes the following about
+this table (**migration-first; not applied at the time of writing — production max is 0157**):
+
+- **Privileges** — `revoke all … from public, anon, authenticated`, then `grant select` back to
+  `authenticated`. `service_role` keeps SELECT/INSERT/UPDATE/DELETE but **loses
+  TRUNCATE/REFERENCES/TRIGGER**: `TRUNCATE` is statement-level, fires no `BEFORE ROW` trigger
+  and consults no policy, so leaving it would have let one statement empty a finalized record's
+  authoritative areas with every signed field byte-identical.
+- **Policy** — the 0128 `FOR ALL` policy is replaced by a SELECT-only
+  `session_block_areas_member_select`, same `is_studio_member(studio_id)` predicate. Reads are
+  unchanged; a future accidental re-grant cannot silently reopen direct DML.
+- **Trigger** — `session_block_areas_guard_finalized`, `BEFORE INSERT OR UPDATE OR DELETE FOR
+  EACH ROW`, running `guard_finalized_structured_area_write()`. It resolves the parent block →
+  session server-side, checks **both** the old and new parent on UPDATE (covering reassignment
+  and reorder), locks the parent session `FOR NO KEY UPDATE`, and rejects a finalized/void
+  parent **for every application-reachable role including `service_role`**. There is
+  deliberately **no** correction-context bypass — structured areas have no correction applier
+  yet, so a permit would be a hole (contrast the 0120 GUC permit described below).
+- **Once finalized, always frozen** — the guard rejects on the finalization *evidence*
+  (`finalized_at`, `current_snapshot_id`, an existing signed snapshot), not only on the current
+  `record_status`. Without that, the 0120 GUC permit would let a direct-connection caller flip a
+  finalized session back to `draft`, rewrite the areas and flip it back, leaving `record_version`
+  and the signed `content_hash` untouched. `clinical_record_snapshots` is append-only for every
+  role, so the evidence cannot be edited away.
+- **Lock mode** — `FOR NO KEY UPDATE`, not `FOR UPDATE`. It still conflicts with the `FOR UPDATE`
+  that `finalize_session` / `correct_finalized_session` / `copy_session_setup` take (so a write
+  and a finalization cannot interleave) but is compatible with the `FOR KEY SHARE` a child-row
+  insert takes on its parent. `soft_delete_session_area` (0123) locks a `session_blocks` row
+  first and only then inserts its `session_audit` row; with `FOR UPDATE` the two deployed
+  charting actions deadlock (`40P01`, reproduced during review).
+- **Anti-spoof** — the 0128 studio-derive trigger is widened to
+  `before insert or update of session_block_id, studio_id`, closing a re-tenanting gap where a
+  `studio_id`-only UPDATE escaped the derivation.
+- **Write path** — unchanged in shape, now the only one: every write goes through
+  `create_session_block_with_areas` / `update_session_block_with_areas` (0129) or
+  `copy_session_setup` (0157), all `SECURITY DEFINER`. The application contains **zero** direct
+  writes to this table, which is why revoking browser DML is deploy-neutral.
+
+**0158 contains mutation; it does not make finalized structured areas tamper-evident** — they
+are still absent from the signed snapshot and still not correctable. See
+[docs/runbooks/0158-finalized-structured-area-containment.md](./runbooks/0158-finalized-structured-area-containment.md)
+and [known-limitations.md](./production/known-limitations.md) (L18).
 
 ## SECURITY DEFINER RPC rules
 
@@ -159,10 +209,16 @@ alone is **not** sufficient. Always revoke from `anon` explicitly.
     is **excluded** from the fingerprint and written as a literal `NULL` at the destination.
   - **Target serialization + idempotency** — `(target_session_id, idempotency_key)` is UNIQUE
     on `session_copy_operations`, so a retry or double-submit is an at-most-once no-op.
-- **Atomic charting writes (0129, hardened by 0130)** — `create_session_block_with_areas` /
+- **Atomic charting writes (0129, hardened by 0130 and 0158)** — `create_session_block_with_areas` /
   `update_session_block_with_areas`: `is_studio_member` gate, allow-listed
   `jsonb_populate_record`, `SELECT … FOR UPDATE` row lock, `stale_block_version` optimistic
-  concurrency, delete+insert area replacement in one transaction.
+  concurrency, delete+insert area replacement in one transaction. 0158 keeps both signatures,
+  the allow-listed column set and the concurrency contract identical, and adds one preamble
+  call — `assert_session_chartable(p_session_id, p_studio_id)` — which locks the parent
+  encounter **before** the block lock, derives tenancy from the stored session row, and rejects
+  a finalized/void/soft-deleted record. That fixes the global lock order at
+  **`sessions` → `session_blocks` → `session_block_areas`** (the order `copy_session_setup`
+  already uses), so no deadlock cycle exists across the charting and copy paths.
 - **Clinical finalization + corrections (0119/0120)** — `finalize_session`,
   `correct_finalized_session`, `amend_finalized_session_with_image`. The correction path uses
   the codebase's **only** narrow bypass: a transaction-local, session-scoped GUC
