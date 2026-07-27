@@ -465,7 +465,7 @@ describe("0158 — ZERO data operations", () => {
     // probe inside the two lifecycle asserts (the once-finalized-always-frozen
     // check). It is never written, and the 0119 snapshot builder is untouched.
     const snapshotRefs = CODE.match(/clinical_record_snapshots/g) ?? [];
-    expect(snapshotRefs).toHaveLength(3);
+    expect(snapshotRefs).toHaveLength(5);
     for (const name of ["assert_session_chartable", "assert_structured_area_parent_mutable"]) {
       expect(fn(name), name).toMatch(
         /exists \(select 1 from public\.clinical_record_snapshots cs/,
@@ -513,38 +513,50 @@ describe("0158 — every object it creates is schema-qualified", () => {
       "public.assert_session_chartable",
       "public.assert_structured_area_parent_mutable",
       "public.guard_finalized_structured_area_write",
-      "public.guard_signed_record_block_delete",
+      "public.guard_signed_record_block_write",
       "public.create_session_block_with_areas",
       "public.update_session_block_with_areas",
     ]);
     for (const name of created) expect(name, name).toMatch(/^public\./);
   });
 
-  it("closes the FK-cascade erase route with a BEFORE DELETE guard on session_blocks", () => {
-    // The area guard cannot police the cascade: by the time it runs the parent
-    // block — the only route to the session — is gone. 0119's child-table DELETE
-    // branch tests only sessions.record_status, so a status round-trip through the
-    // 0120 permit could delete the block and erase a signed record's areas beneath
-    // the guard. This trigger refuses to delete a block whose session has EVER been
-    // signed, whatever record_status currently says.
-    const body = fn("guard_signed_record_block_delete");
+  it("closes the ERASE and REPARENT routes with a guard on the PARENT table", () => {
+    // Two routes change a signed record's areas WITHOUT writing session_block_areas,
+    // so the area guard cannot see either: hard-deleting the parent block (the areas
+    // follow by FK cascade, and by then there is no session left to resolve), and
+    // reparenting a block — with its whole area set — into or out of the record.
+    // 0119 permits both after a record_status round-trip through the 0120 permit,
+    // because its child-table branches compare only record_status. This guard keys
+    // on the append-only snapshot instead.
+    const body = fn("guard_signed_record_block_write");
     expect(body).toMatch(/security definer/);
     expect(body).toMatch(/set search_path = ''/);
+    // DELETE: the old parent.
     expect(body).toMatch(
       /exists \(select 1 from public\.clinical_record_snapshots cs\s+where cs\.session_id = old\.session_id\)/,
+    );
+    // UPDATE: only a genuine move, and BOTH endpoints are checked.
+    expect(body).toMatch(/new\.session_id is distinct from old\.session_id/);
+    expect(body).toMatch(
+      /where cs\.session_id in \(old\.session_id, new\.session_id\)/,
+    );
+    // INSERT: the new parent.
+    expect(body).toMatch(
+      /exists \(select 1 from public\.clinical_record_snapshots cs\s+where cs\.session_id = new\.session_id\)/,
     );
     expect(body).toMatch(/finalized and signed/i);
     // Keyed on the signed artifact, NOT on record_status — that is the whole point.
     expect(body).not.toMatch(/record_status/);
     expect(CODE).toMatch(
-      /drop trigger if exists session_blocks_guard_signed_delete on public\.session_blocks;/,
+      /drop trigger if exists session_blocks_guard_signed_write on public\.session_blocks;/,
     );
     expect(CODE).toMatch(
-      /create trigger session_blocks_guard_signed_delete\s+before delete on public\.session_blocks\s+for each row execute function public\.guard_signed_record_block_delete\(\);/,
+      /create trigger session_blocks_guard_signed_write\s+before insert or update or delete on public\.session_blocks\s+for each row execute function public\.guard_signed_record_block_write\(\);/,
     );
-    // DELETE only: it must not interfere with ordinary charting writes.
-    expect(stmt("create trigger session_blocks_guard_signed_delete")).not.toMatch(
-      /insert|update/i,
+    // The interim DELETE-only trigger name is dropped, so a replay from either
+    // revision converges on one guard rather than leaving two.
+    expect(CODE).toMatch(
+      /drop trigger if exists session_blocks_guard_signed_delete on public\.session_blocks;/,
     );
   });
 

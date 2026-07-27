@@ -72,14 +72,19 @@
 --      the resulting concurrency are covered by tests
 --      (tests/db/finalized-structured-area-containment.db.test.ts): area-write-first
 --      vs finalize-first, and area-save vs area-removal (the 0123 lock sequence).
---   6. A narrow BEFORE DELETE guard on public.session_blocks refuses to hard-delete
---      a block whose session has EVER been signed. Without it the FK ON DELETE
---      CASCADE path would remain open: 0119's child-table DELETE branch tests only
---      sessions.record_status, so the same status round-trip described in (3) could
---      delete the parent block and erase a signed record's areas by cascade — below
---      the area guard, which by then has no session left to resolve. Inert for every
---      legitimate flow (a snapshot-carrying session cannot be deleted at all: the
---      snapshot FK is RESTRICT).
+--   6. A narrow guard on public.session_blocks (INSERT / reparent-UPDATE / DELETE)
+--      refuses to touch a block when either endpoint session has EVER been signed.
+--      Two routes change a finalized record's structured areas WITHOUT writing a
+--      single session_block_areas row, so the area guard never fires on them:
+--        * ERASE — hard-delete the parent block; the areas go with it by FK cascade,
+--          and by the time the area trigger runs there is no session left to resolve.
+--        * REPARENT — move a block carrying areas into the signed record (or move its
+--          own block out). REPRODUCED as service_role: a signed record's area count
+--          went 2 -> 4 with record_status, record_version, current_snapshot_id and
+--          content_hash all byte-identical.
+--      0119 permits both after the status round-trip in (3), because its child-table
+--      branches compare only sessions.record_status. This guard keys on the
+--      append-only snapshot instead. Inert for every legitimate flow.
 --   7. The 0128 studio-derive trigger is widened to fire on an UPDATE of studio_id
 --      as well as session_block_id, closing a re-tenanting gap (a studio_id-only
 --      UPDATE previously escaped the anti-spoof derivation).
@@ -216,7 +221,7 @@ end;
 $$;
 
 comment on function public.assert_session_chartable(uuid, uuid) is
-  '0158: locks the parent encounter FOR UPDATE (the same lock finalize_session takes) and asserts it is a non-deleted DRAFT owned by the given studio. Server-authoritative: tenancy comes from the stored row. Called by the structured-area guard trigger and by the charting RPCs.';
+  '0158: locks the parent encounter FOR NO KEY UPDATE — conflicting with the FOR UPDATE finalize_session takes, but compatible with a child insert''s FOR KEY SHARE — and asserts it is a non-deleted, never-signed DRAFT owned by the given studio. Server-authoritative: tenancy comes from the stored row. Called by the structured-area guard trigger and by the charting RPCs.';
 
 revoke all on function public.assert_session_chartable(uuid, uuid) from public, anon, authenticated, service_role;
 
@@ -281,7 +286,7 @@ end;
 $$;
 
 comment on function public.assert_structured_area_parent_mutable(uuid, boolean) is
-  '0158: locks the parent encounter FOR UPDATE and rejects the write when it is finalized or void (and, unless p_allow_deleted, when it is soft-deleted). No correction-context bypass exists: structured areas have no correction representation yet.';
+  '0158: locks the parent encounter FOR NO KEY UPDATE (see assert_session_chartable) and rejects the write when it is finalized, void, or has ever been signed (and, unless p_allow_deleted, when it is soft-deleted). No correction-context bypass exists: structured areas have no correction representation yet.';
 
 revoke all on function public.assert_structured_area_parent_mutable(uuid, boolean)
   from public, anon, authenticated, service_role;
@@ -371,47 +376,80 @@ create trigger session_block_areas_guard_finalized
   before insert or update or delete on public.session_block_areas
   for each row execute function public.guard_finalized_structured_area_write();
 
--- Close the cascade-erase route into the same defect. The structured-area guard
--- above cannot police the FK ON DELETE CASCADE path, because by the time it runs
--- the parent block — and with it the only route to the session — is already gone.
--- 0119's session_blocks DELETE branch does not close it either: that branch tests
--- ONLY sessions.record_status, and the "has a snapshot" test lives exclusively on
--- its `sessions` branch. So a caller who flips record_status back to 'draft'
--- through the 0120 permit could hard-delete the parent block and erase a signed
--- record's authoritative areas by cascade.
+-- Close the two routes that change a finalized record's structured areas WITHOUT
+-- writing a single session_block_areas row, which the area guard above therefore
+-- cannot see:
+--   * ERASE  — hard-delete the parent block; the areas follow by FK cascade, and by
+--              the time the area trigger fires the only route to the session is gone.
+--   * REPARENT — move a block (and its whole area set) into the signed record, or
+--              move the signed record's own block out.
+-- 0119 does not close either: its child-table DELETE and UPDATE branches compare
+-- only sessions.record_status, and the "has a snapshot" test lives exclusively on
+-- its `sessions` branch — so both are permitted after the record_status round-trip
+-- described above. The reparent was REPRODUCED as service_role during review: a
+-- signed record's authoritative area count went 2 -> 4 with record_status,
+-- record_version, current_snapshot_id and content_hash all byte-identical.
 --
--- This narrow BEFORE DELETE guard refuses to hard-delete any session_blocks row
--- whose session has EVER been signed, whatever record_status currently says. It is
--- INERT for every legitimate flow: clinical_record_snapshots_session_fk is
--- RESTRICT, so a session carrying a snapshot cannot be deleted at all, and its
--- blocks are already frozen by 0119 while record_status is finalized/void. It bites
--- only in the tampered state this migration exists to make impossible. Soft-delete
--- (the product's actual removal path, soft_delete_session_area / 0123) is an UPDATE
--- and is unaffected.
-create or replace function public.guard_signed_record_block_delete()
+-- This guard keys on the APPEND-ONLY snapshot instead of record_status, so a status
+-- round-trip buys nothing. It is INERT for every legitimate flow:
+-- clinical_record_snapshots_session_fk is RESTRICT (a snapshot-carrying session
+-- cannot be deleted at all), blocks of a finalized/void record are already frozen by
+-- 0119, and ordinary charting UPDATEs never touch session_id. Soft-delete — the
+-- product's actual removal path (soft_delete_session_area, 0123) — is an UPDATE that
+-- leaves session_id alone and is unaffected.
+create or replace function public.guard_signed_record_block_write()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_msg constant text :=
+    'This clinical record has been finalized and signed. Its treatment areas cannot be added, moved or deleted (structured-area corrections are a later phase).';
 begin
-  if exists (select 1 from public.clinical_record_snapshots cs
-              where cs.session_id = old.session_id) then
-    raise exception
-      'This clinical record has been finalized and signed. Its treatment areas cannot be deleted (structured-area corrections are a later phase).'
-      using errcode = 'check_violation';
+  if tg_op = 'DELETE' then
+    -- Closes the CASCADE-ERASE route: deleting the block deletes its areas.
+    if exists (select 1 from public.clinical_record_snapshots cs
+                where cs.session_id = old.session_id) then
+      raise exception '%', v_msg using errcode = 'check_violation';
+    end if;
+    return old;
   end if;
-  return old;
+
+  if tg_op = 'UPDATE' then
+    -- Closes the REPARENT route. Moving a block carries its whole structured-area
+    -- set with it, and writes NO session_block_areas row — so the area guard never
+    -- fires. 0119's child UPDATE branch only compares record_status at the two
+    -- endpoints, which the 0120 permit can round-trip to 'draft'; reproduced as
+    -- service_role, a signed record's area count went 2 -> 4 with its content_hash
+    -- byte-identical. Only a genuine move is checked, so ordinary charting UPDATEs
+    -- (which never touch session_id) are untouched.
+    if new.session_id is distinct from old.session_id then
+      if exists (select 1 from public.clinical_record_snapshots cs
+                  where cs.session_id in (old.session_id, new.session_id)) then
+        raise exception '%', v_msg using errcode = 'check_violation';
+      end if;
+    end if;
+    return new;
+  end if;
+
+  -- INSERT: no new settings block may be attached to a record that has been signed.
+  if exists (select 1 from public.clinical_record_snapshots cs
+              where cs.session_id = new.session_id) then
+    raise exception '%', v_msg using errcode = 'check_violation';
+  end if;
+  return new;
 end;
 $$;
 
-comment on function public.guard_signed_record_block_delete() is
-  '0158: refuses to hard-delete a session_blocks row whose session has ever been signed, closing the FK ON DELETE CASCADE route by which a status round-trip could otherwise erase a finalized record''s structured treatment areas. Inert for every legitimate flow.';
+comment on function public.guard_signed_record_block_write() is
+  '0158: refuses to insert, reparent or hard-delete a session_blocks row when either endpoint session has EVER been signed. Closes the two routes that change a finalized record''s structured treatment areas WITHOUT writing session_block_areas — the ON DELETE CASCADE erase and the block reparent — both of which the 0119 guard permits after a record_status round-trip through the 0120 correction permit. Keyed on the append-only snapshot, not on record_status. Inert for every legitimate flow.';
 
 drop trigger if exists session_blocks_guard_signed_delete on public.session_blocks;
-create trigger session_blocks_guard_signed_delete
-  before delete on public.session_blocks
-  for each row execute function public.guard_signed_record_block_delete();
+drop trigger if exists session_blocks_guard_signed_write on public.session_blocks;
+create trigger session_blocks_guard_signed_write
+  before insert or update or delete on public.session_blocks
+  for each row execute function public.guard_signed_record_block_write();
 
 -- Close a gap in the 0128 anti-spoof trigger while we are here. It was declared
 -- `before insert or update OF session_block_id`, so an UPDATE that touched ONLY
@@ -468,8 +506,13 @@ grant select, insert, update, delete on table public.session_block_areas to serv
 -- migration can close — owner access IS the migration channel.
 --
 -- The containment claim is therefore precise: no ROLE REACHABLE FROM THE
--- APPLICATION — anon, authenticated, or service_role — can alter a finalized
--- record's structured areas by any means.
+-- APPLICATION — anon, authenticated, or service_role — can add, change, reorder,
+-- move, reparent, delete or erase the structured areas of a finalized (or
+-- ever-signed) record. The freeze keys on the append-only snapshot, so a
+-- record_status round-trip through the 0120 permit reopens none of those routes.
+-- It does NOT claim tamper-EVIDENCE: the signed content_hash still does not cover
+-- these rows, so a change made by the table owner, a future migration or a restore
+-- would leave the snapshot unchanged. That is snapshot v2.
 
 -- Narrow the 0128 `FOR ALL` policy to SELECT. Writes are already privilege-denied
 -- for browser roles; making the policy read-only means a future accidental

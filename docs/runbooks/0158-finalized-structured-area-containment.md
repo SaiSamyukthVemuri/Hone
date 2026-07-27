@@ -122,7 +122,8 @@ summary.
    block → session **server-side** from the row, checks **both the old and the new parent on
    UPDATE** (so block reassignment *and* `display_order` reorder are covered), and tolerates
    exactly one path: the FK `ON DELETE CASCADE` cleanup where the parent block is already
-   gone — which the 0119 delete guards prove can only descend from a non-finalized encounter.
+   gone — which item 7 below (not 0119) makes safe. 0119's child-table branches compare only
+   `record_status`, so they would *not* have made it safe on their own.
    Triggers are not bypassed by `service_role` and there is **no correction-context bypass**:
    the 0120 GUC permit is deliberately not honoured here, because structured areas have no
    correction representation yet, so a bypass would be a hole rather than a feature.
@@ -151,7 +152,24 @@ summary.
    **`sessions` → `session_blocks` → `session_block_areas`** — the order `copy_session_setup`
    (0157) already uses. As a side effect the `max(sort_order)+1` computation in the create RPC
    can no longer race.
-6. **The 0128 studio-derive trigger is widened** to `before insert or update of session_block_id,
+7. **`session_blocks_guard_signed_write`** — a companion guard on the PARENT table, covering
+   `INSERT`, a reparenting `UPDATE` and `DELETE`. Two routes change a finalized record's
+   authoritative areas **without writing a single `session_block_areas` row**, so the area guard
+   above cannot see either:
+   - **erase** — hard-delete the parent block; the areas follow by FK cascade, and by the time
+     the area trigger fires there is no session left to resolve;
+   - **reparent** — move a block (with its whole area set) into the signed record, or move the
+     record's own block out. **Reproduced during review as `service_role`: a signed record's area
+     count went 2 → 4 with `record_status`, `record_version`, `current_snapshot_id` and the signed
+     `content_hash` all byte-identical.**
+
+   0119 permits both after the status round-trip in item 3, because its child-table branches
+   compare only `record_status`. This guard keys on the append-only snapshot instead. It is inert
+   for every legitimate flow: a snapshot-carrying session cannot be deleted at all (the snapshot FK
+   is `RESTRICT`), a finalized record's blocks are already frozen by 0119, ordinary charting
+   `UPDATE`s never touch `session_id`, and soft-delete (`soft_delete_session_area`, 0123) is an
+   `UPDATE` that leaves `session_id` alone.
+8. **The 0128 studio-derive trigger is widened** to `before insert or update of session_block_id,
    studio_id`. It previously fired only on a `session_block_id` change, so an UPDATE touching
    **only** `studio_id` escaped the anti-spoof derivation and left a row whose denormalized
    `studio_id` disagreed with its parent — readable by the wrong studio through the
@@ -170,14 +188,20 @@ summary.
   trigger, and it would make a logical restore (`pg_restore --disable-triggers`) of a finalized
   record's area rows fail. This residual is true of every trigger-enforced guarantee in the
   schema (0115, 0119, 0120, 0157); owner access *is* the migration channel.
-- **A block can still be moved between two draft records** by a direct `UPDATE` on
+- **A block can still be moved between two never-signed draft records** by a direct `UPDATE` on
   `public.session_blocks` — carrying its whole structured-area set with it — because
-  `authenticated` holds DML on *that* table. Both endpoints must be drafts (the 0119 guard
-  blocks a finalized endpoint), so no finalized record is affected. It shares a root cause with
-  **L19** in `known-limitations.md` and is out of scope here.
+  `authenticated` holds DML on *that* table. Item 7 above blocks the move whenever **either**
+  endpoint has ever been signed (keyed on the snapshot, so a `record_status` round-trip does not
+  help), so no signed record can gain or lose areas this way. Draft-to-draft moves remain
+  unguarded; they share a root cause with **L19** in `known-limitations.md` and are out of scope
+  here.
 - The containment claim is therefore precise: **no role reachable from the application — `anon`,
-  `authenticated`, or `service_role` — can alter a finalized record's structured areas by any
-  means.**
+  `authenticated`, or `service_role` — can add, change, reorder, move, reparent, delete or erase a
+  finalized (or ever-signed) record's structured areas.** The freeze keys on the append-only
+  snapshot, so a `record_status` round-trip through the 0120 permit does not reopen any of those
+  routes. It does **not** claim tamper-*evidence*: the signed `content_hash` still does not cover
+  these rows, so a change made by the table owner, a future migration or a restore would leave the
+  snapshot unchanged. That is snapshot v2 (§8).
 
 ### What 0158 deliberately does NOT do
 
@@ -371,12 +395,14 @@ supabase db query --linked "
 select version, count(*) from supabase_migrations.schema_migrations
  where version >= '0157' group by version order by version;"
 
-# The guard trigger exists, is a row trigger, and covers INSERT + UPDATE + DELETE.
+# Both guard triggers exist, are row triggers, and cover INSERT + UPDATE + DELETE.
+# tgtype must have bits 1 (ROW), 2 (BEFORE), 4 (INSERT), 8 (DELETE), 16 (UPDATE) = 31.
 supabase db query --linked "
-select t.tgname, p.proname, t.tgtype
+select t.tgrelid::regclass as tbl, t.tgname, p.proname, t.tgtype, t.tgenabled
   from pg_trigger t join pg_proc p on p.oid = t.tgfoid
- where t.tgrelid = 'public.session_block_areas'::regclass and not t.tgisinternal
- order by t.tgname;"
+ where t.tgrelid in ('public.session_block_areas'::regclass, 'public.session_blocks'::regclass)
+   and not t.tgisinternal
+ order by tbl, t.tgname;"
 
 # The two assert helpers and the guard function exist, are SECURITY DEFINER,
 # and pin search_path (proconfig must show search_path="").
@@ -385,7 +411,7 @@ select p.proname, p.prosecdef, p.proconfig
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
    and p.proname in ('assert_session_chartable','assert_structured_area_parent_mutable',
-                     'guard_finalized_structured_area_write')
+                     'guard_finalized_structured_area_write','guard_signed_record_block_write')
  order by p.proname;"
 
 # The assert helpers are executable by NOBODY (not even service_role) — they are
@@ -546,7 +572,7 @@ areas are frozen, but they are not signed and not correctable.**
 | Scenario | Position |
 |---|---|
 | **Application rollback** | Not applicable — there is no application change. The documentation PR is code-free. |
-| **Reverting 0158 (a hand-written down-migration)** | Would restore the P0. It would re-grant browser DML on the authoritative area table, restore the `FOR ALL` policy, drop the finalized-parent trigger, and revert the charting RPCs to their unlocked 0155/0156 preamble. **Do not do this as a reflex.** Prefer a forward corrective migration, as 0074 corrected 0073. |
+| **Reverting 0158 (a hand-written down-migration)** | Would restore the P0. It would re-grant browser DML on the authoritative area table (including `TRUNCATE`), restore the `FOR ALL` policy, drop **both** guard triggers (`session_block_areas_guard_finalized` and `session_blocks_guard_signed_write`), restore `service_role`'s `TRUNCATE`, narrow the 0128 studio-derive trigger back to `session_block_id` only, and revert the charting RPCs to their unlocked 0155/0156 preamble — reopening the erase and reparent routes as well as the direct-DML one. **Do not do this as a reflex.** Prefer a forward corrective migration, as 0074 corrected 0073. |
 | **What a revert would restore** | Exactly the pre-0158 schema/privilege/policy/trigger posture, and nothing else. |
 | **What a revert would NOT restore** | Nothing — because 0158 destroys nothing. It performs **zero data operations**: no row is written, deleted, backfilled or rewritten, no snapshot is regenerated, no `record_status` or `record_version` changes, no flag changes. There is therefore **no data to restore** and no lost state to recover. |
 | **Forward-compatibility of the old app** | Unaffected either way. The deployed app never writes this table directly (§4), so both applying and reverting 0158 are invisible to it apart from the freeze on finalized records. |

@@ -490,6 +490,106 @@ describe("A. direct authenticated table access", () => {
     expect(await areaSnapshot(blockId)).toHaveLength(2);
   });
 
+  it("a status round-trip cannot REPARENT a block into (or out of) a signed record", async () => {
+    // REVIEW FINDING, reproduced: moving a block carries its whole structured-area
+    // set and writes NO session_block_areas row, so the area guard never fires;
+    // 0119's child UPDATE branch compares only record_status at the two endpoints,
+    // which the 0120 permit round-trips to 'draft'. Before the fix a signed
+    // record's area count went 2 -> 4 with its content_hash byte-identical.
+    const { sessionId: signedId, blockId: signedBlock } = await seedCharted(a);
+    await finalizeForReal(a, signedId);
+    const donor = await seedCharted(a); // a draft block carrying two areas
+    const hashBefore = (
+      await adminQuery(
+        "select content_hash from public.clinical_record_snapshots where session_id=$1",
+        [signedId],
+      )
+    ).rows[0].content_hash as string;
+
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("select set_config('hone.correction_session_id', $1, true)", [signedId]);
+      await c.query("update public.sessions set record_status='draft' where id=$1", [signedId]);
+      // …move the donor block INTO the signed record.
+      await c.query("savepoint r1");
+      await expect(
+        c.query("update public.session_blocks set session_id=$2 where id=$1", [
+          donor.blockId,
+          signedId,
+        ]),
+      ).rejects.toThrow(/finalized and signed/i);
+      await c.query("rollback to savepoint r1");
+      // …and move the signed record's own block OUT.
+      await c.query("savepoint r2");
+      await expect(
+        c.query("update public.session_blocks set session_id=$2 where id=$1", [
+          signedBlock,
+          donor.sessionId,
+        ]),
+      ).rejects.toThrow(/finalized and signed/i);
+      await c.query("rollback to savepoint r2");
+      // …and attach a brand-new block to it.
+      await c.query("savepoint r3");
+      await expect(
+        c.query(
+          "insert into public.session_blocks (id, studio_id, session_id, sort_order) values ($1,$2,$3,9)",
+          [randomUUID(), a.studioId, signedId],
+        ),
+      ).rejects.toThrow(/finalized and signed/i);
+      await c.query("rollback to savepoint r3");
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+
+    const after = await adminQuery(
+      `select count(*)::int n from public.session_block_areas a
+         join public.session_blocks b on b.id = a.session_block_id
+        where b.session_id = $1`,
+      [signedId],
+    );
+    expect(after.rows[0].n).toBe(2);
+    expect(
+      (
+        await adminQuery(
+          "select content_hash from public.clinical_record_snapshots where session_id=$1",
+          [signedId],
+        )
+      ).rows[0].content_hash,
+    ).toBe(hashBefore);
+  });
+
+  it("ordinary charting UPDATEs on session_blocks are untouched by that guard", async () => {
+    // The reparent guard must only bite on a genuine session_id move.
+    const { sessionId, blockId } = await seedCharted(a);
+    await userQuery(a.userId, UPDATE_RPC, [
+      a.studioId,
+      sessionId,
+      blockId,
+      JSON.stringify({ mode: "blend", energy_level: 14 }),
+      AREAS([{ area: "Chin", laterality: "left" }]),
+      null,
+    ]);
+    const row = await adminQuery(
+      "select mode, energy_level from public.session_blocks where id=$1",
+      [blockId],
+    );
+    expect(row.rows[0].mode).toBe("blend");
+    // …and a block still moves freely between two never-signed drafts.
+    const other = await seedSession(a);
+    await adminQuery("update public.session_blocks set session_id=$2 where id=$1", [
+      blockId,
+      other.sessionId,
+    ]);
+    expect(
+      (
+        await adminQuery("select session_id from public.session_blocks where id=$1", [blockId])
+      ).rows[0].session_id,
+    ).toBe(other.sessionId);
+  });
+
   it("the FK cascade cleanup path still works for a draft (delete is not wedged)", async () => {
     const { sessionId, blockId } = await seedCharted(a);
     await adminQuery("delete from public.session_blocks where id=$1", [blockId]);

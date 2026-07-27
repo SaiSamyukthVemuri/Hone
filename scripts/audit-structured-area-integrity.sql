@@ -170,6 +170,22 @@ trg as (
    where t.tgrelid = (select rel from tgt)
      and not t.tgisinternal
 ),
+-- The area guard cannot see the two routes that change a signed record's areas
+-- without writing this table (block ERASE by cascade, and block REPARENT). Those
+-- are closed by a guard on session_blocks, so the containment is only in place if
+-- BOTH triggers exist.
+block_trg as (
+  select count(*) filter (
+           where t.tgname = 'session_blocks_guard_signed_write'
+             and t.tgenabled in ('O', 'A')
+             and (t.tgtype & 1) <> 0 and (t.tgtype & 2) <> 0
+             and (t.tgtype & 4) <> 0 and (t.tgtype & 8) <> 0 and (t.tgtype & 16) <> 0
+             and f.prosecdef) as n_ok
+    from pg_catalog.pg_trigger t
+    join pg_catalog.pg_proc f on f.oid = t.tgfoid
+   where t.tgrelid = to_regclass('public.session_blocks')
+     and not t.tgisinternal
+),
 -- tgtype bits: 1=ROW, 2=BEFORE, 4=INSERT, 8=DELETE, 16=UPDATE, 32=TRUNCATE.
 guard_trg as (
   select count(*)                                        as n_present,
@@ -187,15 +203,17 @@ guard_trg as (
 fn_spec (fsort, fn_sig, required_token, token_label) as (
   values
     (1, 'public.assert_session_chartable(uuid,uuid)',
-        'for update', 'takes the sessions FOR UPDATE lock'),
+        'for no key update;', 'takes the sessions FOR NO KEY UPDATE lock'),
     (2, 'public.assert_structured_area_parent_mutable(uuid,boolean)',
-        'for update', 'takes the sessions FOR UPDATE lock'),
+        'for no key update;', 'takes the sessions FOR NO KEY UPDATE lock'),
     (3, 'public.guard_finalized_structured_area_write()',
         'assert_structured_area_parent_mutable', 'delegates to the lifecycle assertion'),
     (4, 'public.create_session_block_with_areas(uuid,uuid,jsonb,jsonb)',
         'assert_session_chartable', 'calls the chartable gate first'),
     (5, 'public.update_session_block_with_areas(uuid,uuid,uuid,jsonb,jsonb,timestamptz)',
-        'assert_session_chartable', 'calls the chartable gate first')
+        'assert_session_chartable', 'calls the chartable gate first'),
+    (6, 'public.guard_signed_record_block_write()',
+        'clinical_record_snapshots', 'keys on the append-only snapshot, not record_status')
 ),
 fn_state as (
   select s.fsort, s.fn_sig, s.required_token, s.token_label,
@@ -203,7 +221,13 @@ fn_state as (
          p.prosecdef,
          coalesce(array_to_string(p.proconfig, ' '), '(none)') as proconfig,
          case when p.oid is null then null
-              else position(s.required_token in lower(pg_catalog.pg_get_functiondef(p.oid))) > 0
+              -- Match on EXECUTABLE text only. The bodies explain their own lock
+              -- choice in comments, so a naive substring search would PASS on the
+              -- prose alone — a vacuous check in a file that promises fail-closed.
+              else position(
+                     s.required_token in
+                     lower(regexp_replace(pg_catalog.pg_get_functiondef(p.oid),
+                                          '--[^\n]*', '', 'g'))) > 0
          end as has_token
     from fn_spec s
     left join pg_catalog.pg_proc p on p.oid = to_regprocedure(s.fn_sig)::oid
@@ -504,6 +528,16 @@ from (
                 (g.n_present = 1)::text, (g.n_enabled = 1)::text,
                 (g.n_full_coverage = 1)::text, (g.n_security_definer = 1)::text)
     from guard_trg g
+
+  union all
+  select 4.05::numeric,
+         '4',
+         'Signed-record guard on the PARENT table',
+         'session_blocks_guard_signed_write',
+         case when b.n_ok = 1 then 'PASS' else 'FAIL' end,
+         format('present, enabled, BEFORE ROW INSERT+UPDATE+DELETE and SECURITY DEFINER=%s — closes the block ERASE (FK cascade) and REPARENT routes, which change a signed record''s areas WITHOUT writing session_block_areas and are therefore invisible to the guard above',
+                (b.n_ok = 1)::text)
+    from block_trg b
 
   union all
   select 4.10 + (row_number() over (order by t.tgname))::numeric / 1000,
