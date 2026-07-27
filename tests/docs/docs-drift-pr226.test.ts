@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // PR #226. Post-hardening docs drift pins. After PRs #217-#225 a
@@ -85,7 +85,34 @@ describe("DB/RLS and types coverage acknowledged", () => {
       /Full Supabase-local DB integration coverage, an RLS policy suite, and browser E2E coverage are NOT yet built/,
     );
     expect(OVERVIEW).toMatch(/db-integration/);
-    expect(OVERVIEW).toMatch(/Browser E2E coverage is the piece still NOT built/);
+  });
+
+  // SUPERSEDED PIN (2026-07-27). This test previously required docs/00 to say
+  //   "Browser E2E coverage is the piece still NOT built"
+  // That is false at the production SHA: playwright.config.ts exists, 45 specs
+  // live under e2e/, and .github/workflows/ci.yml runs them as the dedicated
+  // `browser-e2e` job (plus a separate `payment-browser-e2e` lane). The guard
+  // was forcing a false sentence to stay in the canonical product overview.
+  it("docs/00 states browser E2E is shipped, not missing", () => {
+    expect(OVERVIEW).not.toMatch(/Browser E2E coverage is the piece still NOT built/);
+    expect(OVERVIEW).not.toMatch(/browser E2E remains deferred/i);
+    expect(OVERVIEW).toMatch(/browser E2E/i);
+    expect(OVERVIEW).toMatch(/playwright/i);
+    // Manual smoke stays complementary — synthetic E2E does not replace real
+    // provider sends, real Stripe Elements, or real webhook delivery.
+    expect(OVERVIEW).toMatch(/manual smoke/i);
+  });
+
+  it("the browser E2E infrastructure the docs claim actually exists", () => {
+    expect(existsSync(path.resolve(__dirname, "../..", "playwright.config.ts"))).toBe(true);
+    const specs = readdirSync(path.resolve(__dirname, "../..", "e2e")).filter((f) =>
+      f.endsWith(".spec.ts"),
+    );
+    expect(specs.length).toBeGreaterThan(0);
+    // CI actually runs it — a config on disk is not coverage.
+    const ci = read(".github/workflows/ci.yml");
+    expect(ci).toMatch(/^\s{2}browser-e2e:/m);
+    expect(ci).toMatch(/npm run test:e2e/);
   });
 
   it("docs/03 reflects the DB lane and the pinned CLI grants-parity rule", () => {

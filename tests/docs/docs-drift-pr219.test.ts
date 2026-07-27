@@ -31,10 +31,50 @@ describe("docs/00: payment claims match the shipped state", () => {
     );
   });
 
-  it("livemode CHECK claim names the canonical ledger, not only the legacy table", () => {
+  // SUPERSEDED PIN (2026-07-27). This test previously required docs/00 to state
+  // that the canonical `payment_charge_attempts` ledger "has a DB CHECK" pinning
+  // `stripe_livemode = false`. That constraint NO LONGER EXISTS: migration
+  // 0101_live_payment_charge_attempts_db_readiness.sql drops
+  // `payment_charge_attempts_livemode_false_check` and replaces it with
+  // `payment_charge_attempts_live_requires_account_check`
+  // (stripe_livemode = false OR stripe_account_id is not null), which does NOT
+  // prevent live rows. Verified in production 2026-07-27 via pg_constraint: the
+  // only remaining livemode CHECK is on the LEGACY `manual_fee_charge_attempts`
+  // table, and the canonical ledger holds 8 rows with stripe_livemode = true.
+  // The guard kept enforcing a falsehood, so it is replaced below with pins on
+  // the verified present state.
+  it("names 0101 as having dropped the canonical ledger's livemode-false CHECK", () => {
     expect(OVERVIEW).toMatch(
+      /DB CHECK that pinned `stripe_livemode = false` on the canonical `payment_charge_attempts` ledger was \*\*dropped by migration 0101\*\*/,
+    );
+    // The stale affirmative claim must not come back.
+    expect(OVERVIEW).not.toMatch(
       /canonical `payment_charge_attempts` ledger \(and the legacy, read-only `manual_fee_charge_attempts` table\) has a DB CHECK/,
     );
+  });
+
+  it("states live rows are supported for approved studios, with evidence", () => {
+    expect(OVERVIEW).toMatch(/live payments ARE built and in use/i);
+    expect(OVERVIEW).toMatch(/enabled for two approved studios/i);
+    // Evidence, not just an assertion of enablement.
+    expect(OVERVIEW).toMatch(/6 succeeded live-mode charges/i);
+  });
+
+  it("keeps the legacy manual_fee_charge_attempts table test-mode-only", () => {
+    expect(OVERVIEW).toMatch(
+      /only the legacy, read-only `manual_fee_charge_attempts` table still carries one/,
+    );
+  });
+
+  it("keeps live manual no-show / late-cancel fees hard-held server-side", () => {
+    expect(OVERVIEW).toMatch(
+      /live manual no-show \/ late-cancel fees \(\*\*server-side hard hold\*\* — only `session_payment` charges live\)/,
+    );
+  });
+
+  it("still refuses to claim broad self-serve live payments are ready", () => {
+    expect(OVERVIEW).toMatch(/broad self-serve live payments \(a new studio starts in test mode\)/i);
+    expect(OVERVIEW).toMatch(/broad self-serve live payments are not ready/i);
   });
 
   it("the Soon list no longer defers things that already shipped", () => {
@@ -94,9 +134,37 @@ describe("docs/18: legacy fee executor is no longer presented as runtime", () =>
     expect(AUDIT).toMatch(/still exist in prod with zero runtime references/);
   });
 
-  it("still does NOT claim live payments are enabled or unblocked", () => {
-    expect(AUDIT).toMatch(/NOT READY FOR LIVE PAYMENTS/);
-    expect(AUDIT).toMatch(/Live payments remain disabled/);
+  // SUPERSEDED PIN (2026-07-27). This test previously read
+  //   expect(AUDIT).toMatch(/NOT READY FOR LIVE PAYMENTS/);
+  //   expect(AUDIT).toMatch(/Live payments remain disabled/);
+  // Both strings are still present in docs/18 — but they are the DATED
+  // 2026-06-10 audit verdict, not current state. As written, the guard let a
+  // historical verdict silently satisfy a test whose name asserted it was the
+  // present posture. Live owner-run session payments are now enabled for
+  // approved studios and production-exercised (Willow Electrolysis: 6 succeeded
+  // live-mode charges, most recent 2026-07-26). The guard is therefore rewritten
+  // to require the document to DISTINGUISH the two, rather than to require the
+  // stale claim to exist unqualified.
+  it("distinguishes its dated historical verdict from today's supervised-live posture", () => {
+    // The historical verdict may remain — but only explicitly marked as historical.
+    expect(AUDIT).toMatch(
+      /\*\*Verdict \(2026-06-10 — HISTORICAL; superseded[^)]*\): NOT READY FOR LIVE PAYMENTS\.\*\*/,
+    );
+    // A bare, unqualified present-tense verdict line must not exist.
+    expect(AUDIT).not.toMatch(/^\*\*Verdict: NOT READY FOR LIVE PAYMENTS\.\*\*/m);
+    // The document must state the superseding current posture somewhere.
+    expect(AUDIT).toMatch(/supervised live session payments are live for approved studios/i);
+  });
+
+  it("marks its live-mode gate section as superseded rather than current", () => {
+    // §2 documented the pre-live three-guard stack, including the CHECK 0101 dropped.
+    expect(AUDIT).toMatch(/## 2\. Live-mode gates .*NOW SUPERSEDED/);
+    // The correction wraps across blockquote lines, so match tolerantly.
+    expect(AUDIT).toMatch(
+      /migration \*\*0101\*\* dropped[\s>]*`payment_charge_attempts_livemode_false_check`/,
+    );
+    // …and it must say the canonical ledger now holds live rows.
+    expect(AUDIT).toMatch(/8 rows with `stripe_livemode=true`/);
   });
 });
 

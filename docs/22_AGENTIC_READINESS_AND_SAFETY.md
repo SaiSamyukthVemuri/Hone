@@ -7,7 +7,7 @@ This is the plan a future contributor (human or AI) reads first before writing a
 Read alongside:
 - `docs/03_SECURITY_AND_PRIVACY.md` (RLS model, token surfaces, sensitive data)
 - `docs/09_DATABASE_AND_RLS.md` (studio-scoped access, exposure-incident owner tier)
-- `docs/16_LIVE_PAYMENTS_READINESS.md` and `docs/18_LIVE_PAYMENTS_AUDIT.md` (payments stay off)
+- `docs/16_LIVE_PAYMENTS_READINESS.md` and `docs/18_LIVE_PAYMENTS_AUDIT.md` (controlled live-payment posture and payment safety boundaries)
 - `docs/14_AI_HANDOFF.md` (non-negotiables a future AI must keep)
 
 ## Why Hone should become agentic, and why carefully
@@ -213,4 +213,4 @@ The agentic capability inherits, and may not weaken, Hone's existing security mo
 
 This document changes no runtime behavior. It adds no AI runtime, no model call, no endpoint, no migration, no schema, no RLS change, and no payment capability. It is a plan and a set of constraints. The first capability it could justify is the Daily Prep Brief V1, which would be its own PR, built read-and-draft only, under every rule above.
 
-**Superseded (2026-07-27): controlled live payment enablement COMPLETED.** Live owner-run session payments are enabled for two approved studios and exercised in production. Live manual no-show / late-cancel fees remain on a server-side hard hold.
+**Superseded (2026-07-27): controlled live payment enablement COMPLETED.** Live owner-run session payments are **enabled for approved studios** only (two today) and have been **production-exercised** — Willow Electrolysis has 6 succeeded live-mode charges, most recent 2026-07-26. **Broad self-serve live payments remain not ready**: a new studio starts in test mode and is enabled per-studio only after supervised onboarding and approval. Live manual no-show / late-cancel fees remain on a server-side hard hold. **None of this relaxes the agentic rule: no agent path creates, captures, or refunds a payment, in any mode, and explicit human control remains mandatory.**
