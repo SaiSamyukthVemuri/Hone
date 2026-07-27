@@ -1923,6 +1923,17 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 
 ## Backlog
 
+> **⚠️ POINT-IN-TIME LIST — reconcile against
+> [known-limitations.md](./production/known-limitations.md) before acting.** These priority
+> tables carry no per-row dates and have been edited in place over many PRs, so several rows
+> describe a pre-live world. In particular: **live charging HAS happened** (Willow: 6 succeeded
+> live-mode charges through 2026-07-26), receipts and refunds are **deployed live** (though
+> `stripe_refunds` holds **0 production rows**), live webhook events are **processed** for
+> approved studios rather than "hard-ignored", and the automated-test/CI row understates
+> current coverage (unit + DB/RLS + 4 Playwright lanes). The canonical residual-gap list is
+> **[known-limitations.md](./production/known-limitations.md)**; treat that as authoritative
+> and these tables as historical intent.
+
 ### P0 (block live mode or pilot expansion)
 
 | Item | Notes |
