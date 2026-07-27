@@ -33,14 +33,6 @@ import {
   PULSE_DELAY_MAX,
   apilusModalityLabel,
 } from "@/lib/constants";
-import {
-  PROBE_BRANDS,
-  findProbeOptionByKey,
-  getMaterialsForBrand,
-  getProbeOptionsFor,
-  type ProbeBrand,
-  type ProbeMaterial,
-} from "@/lib/probes";
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import { ProbeLotSelect } from "@/components/probe-lot-select";
 import {
@@ -89,6 +81,9 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { ProbePicker } from "@/components/probe-picker";
+import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
+import { resolveModeSections } from "@/lib/sessions/mode-sections";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -97,9 +92,6 @@ import {
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
-
-const READING_INPUT_CLS =
-  "rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950";
 
 // Parses an optional numeric reading with range checks. Empty → null.
 // Mirrors the server-side validation; the action re-validates regardless.
@@ -772,7 +764,9 @@ export function BlockSetupForm({
   }
 
   const mode = draft.mode;
-  const showModality = mode === "thermo" || mode === "blend";
+  // Shared UI mode-gating (same helper the whole-session copy editor uses).
+  const modeSections = resolveModeSections(mode);
+  const showModality = modeSections.showModality;
   const modalityOptions =
     mode === "thermo"
       ? APILUS_MODALITIES_BY_MODE.thermo
@@ -789,7 +783,7 @@ export function BlockSetupForm({
   const isOmniblend = draft.apilusModality === "Omniblend";
 
   const thermoSection =
-    mode === "thermo" || mode === "blend" ? (
+    modeSections.showThermo ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -894,7 +888,7 @@ export function BlockSetupForm({
     ) : null;
 
   const galvSection =
-    mode === "galv" || mode === "blend" ? (
+    modeSections.showGalv ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -1436,158 +1430,6 @@ export function BlockSetupForm({
           Cancel
         </button>
       </div>
-    </div>
-  );
-}
-
-// Cascading probe picker (Session Logging Phase B). Brand → material →
-// valid option chips. Only combinations present in the lib/probes.ts
-// catalog are ever offered, so impossible probes can't be selected. The
-// value is a single catalog key (or "" for none); the server re-validates
-// it. Probe is optional — leaving it blank is fine.
-const CHIP_BASE =
-  "rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-50";
-const CHIP_OFF =
-  "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300";
-const CHIP_ON =
-  "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900";
-
-function ProbePicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (key: string) => void;
-}) {
-  const selected = findProbeOptionByKey(value);
-
-  // Drill-down state. Seeded from the selected option so "Change" reopens
-  // on the right brand/material. Editing is true while the practitioner is
-  // actively choosing (no selection yet, or they tapped "Change").
-  const [editing, setEditing] = useState(!selected);
-  const [brand, setBrand] = useState<ProbeBrand | "">(selected?.brand ?? "");
-  const [material, setMaterial] = useState<ProbeMaterial | "">(
-    selected?.material ?? "",
-  );
-
-  // Collapsed summary once a probe is chosen.
-  if (selected && !editing) {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
-          {selected.displayLabel}
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            setBrand(selected.brand);
-            setMaterial(selected.material);
-            setEditing(true);
-          }}
-          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          Change
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onChange("");
-            setBrand("");
-            setMaterial("");
-            setEditing(true);
-          }}
-          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          Clear
-        </button>
-      </div>
-    );
-  }
-
-  const materials = brand ? getMaterialsForBrand(brand) : [];
-  const options = brand && material ? getProbeOptionsFor(brand, material) : [];
-
-  return (
-    <div className="flex flex-col gap-3 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
-      {/* Brand */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Brand
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {PROBE_BRANDS.map((b) => (
-            <button
-              key={b}
-              type="button"
-              aria-pressed={brand === b}
-              onClick={() => {
-                setBrand(b);
-                setMaterial("");
-              }}
-              className={`${CHIP_BASE} ${brand === b ? CHIP_ON : CHIP_OFF}`}
-            >
-              {b}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Material / type family */}
-      {brand && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Material
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {materials.map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={material === m}
-                onClick={() => setMaterial(m)}
-                className={`${CHIP_BASE} ${material === m ? CHIP_ON : CHIP_OFF}`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Valid options */}
-      {brand && material && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Probe
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {options.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                aria-pressed={value === o.key}
-                onClick={() => {
-                  onChange(o.key);
-                  setEditing(false);
-                }}
-                className={`${CHIP_BASE} ${value === o.key ? CHIP_ON : CHIP_OFF}`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {selected && (
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          className="self-start text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          Done
-        </button>
-      )}
     </div>
   );
 }

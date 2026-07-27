@@ -152,7 +152,11 @@ describe("mobile charting comfort (PR #235)", () => {
 
   it("side chips are comfortable touch targets", () => {
     const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
-    expect(FORM).toMatch(/rounded-full border px-3 py-1\.5 text-xs/);
+    // The shared chip base (used by the probe picker + the whole-session copy
+    // editor, extracted from this form) keeps the comfortable px-3 py-1.5 size.
+    const CHIP_STYLES = read("lib/sessions/charting-input-styles.ts");
+    expect(CHIP_STYLES).toMatch(/rounded-full border px-3 py-1\.5 text-xs/);
+    // The form itself must never use the cramped size.
     expect(FORM).not.toMatch(/rounded-full border px-2\.5 py-1 text-xs/);
   });
 

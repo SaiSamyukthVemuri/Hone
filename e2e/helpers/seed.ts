@@ -1086,6 +1086,59 @@ export async function seedE2eDraftElectrolysisSession(
 
 // Count the live settings blocks on a session — used to prove the in-form copy
 // persists NOTHING until the practitioner explicitly saves.
+// 0157 whole-session copy: a client with a PREVIOUS session that has one saved
+// treatment area (block + area + setup entry), plus an EMPTY today session. The
+// copy panel renders on today's chart (empty + a prior session with areas).
+export async function seedE2eClientWithPreviousAreas(
+  seed: E2eSeed,
+): Promise<{ clientId: string; todaySessionId: string; previousSessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const previousSessionId = randomUUID();
+  const todaySessionId = randomUUID();
+  const blockId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Copy Client ${seed.runId}-${uniq}`, `e2e-copy-${seed.runId}-${uniq}@harness.local`],
+  );
+  // Previous session (older started_at) with one saved area + setup.
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-01-01T10:00:00Z')`,
+    [previousSessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level, minutes_performed, machine_frequency,
+       probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label)
+     values ($1,$2,$3,1,'Chin','left','blend',10,15,'13.56 MHz',
+       'sterex-gold-two-piece-f3-short','Sterex','Gold','Two-piece','F','3','Short','Sterex · Gold · Two-piece · F3 Short')`,
+    [blockId, seed.studioId, previousSessionId],
+  );
+  await sql(
+    `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
+     values ($1,$2,$3,'Chin','left',0)`,
+    [randomUUID(), seed.studioId, blockId],
+  );
+  await sql(
+    `insert into public.electrolysis_entries (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds)
+     values ($1,$2,$3,'Chin',array['Chin']::text[],'blend',10,15,'13.56 MHz',40,3)`,
+    [randomUUID(), previousSessionId, blockId],
+  );
+  // Today's session (newer started_at), empty.
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-06-01T10:00:00Z')`,
+    [todaySessionId, seed.studioId, clientId, prac.id],
+  );
+  return { clientId, todaySessionId, previousSessionId };
+}
+
 export async function getSessionBlockCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
     `select count(*)::int as n from public.session_blocks
@@ -1469,6 +1522,72 @@ export async function bumpSessionBlockUpdatedAt(sessionId: string): Promise<void
 
 // Read a session's structured block areas (migration 0128) for e2e ground truth.
 // Returns "<area>|<laterality>" strings ordered by block + display_order.
+// First block's minutes_performed for a session (null when unset). 0157 must
+// leave copied blocks' minutes NULL (they are never copied).
+export async function getFirstBlockMinutes(sessionId: string): Promise<number | null> {
+  const rows = await sql<{ minutes_performed: number | null }>(
+    `select minutes_performed from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0]?.minutes_performed ?? null;
+}
+
+// First block row of a session (for asserting copied setup values).
+export async function getFirstBlockRow(sessionId: string): Promise<{
+  mode: string | null;
+  energy_level: number | null;
+  probe_key: string | null;
+  minutes_performed: number | null;
+  primary_area: string | null;
+} | null> {
+  const rows = await sql<{
+    mode: string | null;
+    energy_level: number | null;
+    probe_key: string | null;
+    minutes_performed: number | null;
+    primary_area: string | null;
+  }>(
+    `select mode, energy_level, probe_key, minutes_performed, primary_area
+       from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+// First entry row of a session's first block (for asserting copied readings).
+export async function getFirstEntryRow(sessionId: string): Promise<{
+  mode: string | null;
+  galvanic_ma: number | null;
+  thermolysis_intensity_percent: number | null;
+} | null> {
+  const rows = await sql<{
+    mode: string | null;
+    galvanic_ma: number | null;
+    thermolysis_intensity_percent: number | null;
+  }>(
+    `select e.mode, e.galvanic_ma, e.thermolysis_intensity_percent
+       from public.electrolysis_entries e
+       join public.session_blocks b on b.id = e.block_id
+      where b.session_id = $1 and b.deleted_at is null and e.deleted_at is null
+      order by b.sort_order, e.created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+// Mutate the source session so its fingerprint changes (stale-preview test).
+export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
+  await sql(
+    `update public.session_blocks set energy_level = coalesce(energy_level,0) + 1
+      where session_id = $1 and deleted_at is null`,
+    [sessionId],
+  );
+}
+
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
   const rows = await sql<{ area: string; laterality: string }>(
     `select a.area, a.laterality

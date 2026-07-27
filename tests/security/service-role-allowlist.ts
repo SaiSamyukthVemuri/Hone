@@ -38,6 +38,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts",
+    purpose: "Whole-session 'Copy areas & settings' commit (0157) — the single writer for a reviewed batch.",
+    why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and asserts session lineage before calling copy_session_setup (service_role-only, revoked from authenticated so the browser cannot call it directly); it passes the server-derived studio.id + practitioner.id (never a browser-supplied id), and the RPC independently re-checks membership + source/target invariants.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/api/google-calendar/oauth/callback/route.ts",
     purpose: "Google Calendar Phase A OAuth callback (authenticated, browser-called with the session).",
     why: "After auth.getUser() + single-use state consumption, the practitioner is re-checked and the connection persisted scoped to the state-bound studio/practitioner/user; every admin query filters those ids.",
