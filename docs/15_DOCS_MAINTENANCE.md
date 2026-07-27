@@ -133,7 +133,7 @@ The docs MUST NOT say any of:
   the current baseline.**
 - **"Receipts are sent."** ✅ The session-payment receipt email exists and is live.
 - "Google Calendar sync exists." (Currently false. Read-only ICS feed only.)
-- "Comprehensive automated coverage exists." (Currently false. Minimal Vitest guard/regression tests and GitHub Actions CI exist as of PR #154; full Supabase-local DB integration, RLS policy coverage, and browser E2E remain manual.)
+- **[SUPERSEDED 2026-07-27]** ~~"Comprehensive automated coverage exists."~~ — coverage is now substantial and this ban no longer applies as written: the Vitest unit suite, the Supabase-local DB/RLS integration lane, the generated-types drift check, and **browser E2E** (`playwright.config.ts` plus 45 specs under `e2e/`, run as the `browser-e2e` CI job alongside `payment-browser-e2e`, `mobile-completion-e2e` and `google-browser-e2e`) all exist. **What is still true and worth saying:** coverage is not exhaustive — the E2E lanes are Chromium-only and deliberately exclude real provider sends (Resend/Twilio), real Stripe Elements and real webhook delivery, so manual smoke (docs/12) remains complementary. Say that, rather than claiming either "comprehensive" or "minimal".
 - "Hone is at hone.studio." (Stale. The production domain is `hone.care`.)
 
 Use the cautious forms instead:
@@ -142,7 +142,7 @@ Use the cautious forms instead:
 - "Refunds and receipts are deferred."
 - "Electronic signatures are evidence-friendly; enforceability depends on lawyer-reviewed wording."
 - "Calendar feed is a read-only ICS subscription. Two-way Google Calendar sync is backlog."
-- "Minimal automated guard/regression tests and GitHub Actions CI exist (PR #154). Full DB integration, RLS policy, and browser E2E coverage are deferred."
+- **[SUPERSEDED 2026-07-27 — do not copy this form.]** "Minimal automated guard/regression tests and GitHub Actions CI exist (PR #154). Full DB integration, RLS policy, and browser E2E coverage are deferred."
 
 ## How to document deferred work
 

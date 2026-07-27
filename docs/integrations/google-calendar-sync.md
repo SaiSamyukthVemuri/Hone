@@ -50,7 +50,7 @@ DORMANT`.** Deployed is not enabled. Read the distinction precisely.
 | B2.3-a — intent-gated enqueue + claim boundary (0125, PR #412) | merged | applied | ✅ | — no intent-eligible studio | ✅ **1 outbox row** |
 | B2.4 — dual-destination + destination-derived scope (0131, PR #424) | merged | applied | ✅ | destination validated on the test studio | ✅ one app-created calendar |
 | B2.3-b — reconciliation sweep + heartbeat + route (PR #426) | merged | *no migration* | ✅ | **scheduled** `0 9 * * *`, CRON_SECRET-protected | runs daily, finds 0 eligible studios |
-| B2.3-c1 — event-operation layer + transition RPC (0132, PR #428) | merged | **applied** | ✅ | worker off | ❌ |
+| B2.3-c1 — event-operation layer + transition RPC (0132, PR #428) | merged | **applied** | ✅ | worker off | ✅ **its operations map executed the one real `event.create` on 2026-07-18**, then returned to dormant |
 | B2.3-c2 — authenticated worker-drain route (PR #429) | merged | *no migration* | ✅ | **scheduled** `30 9 * * *`; worker flag off | runs daily, claim RPC returns 0 rows |
 | B2.3-c3 — cron schedule registration (PR #430) | merged | *no migration* | ✅ | **3 daily crons registered in `vercel.json`**; **registration did NOT activate sync** | ❌ |
 | Inbound busy import / two-way edits | **designed only** | — | **not built** | — | ❌ |
@@ -831,7 +831,7 @@ Google Cloud console setup of the two destination scopes.
 > destination-derived scope** phase. **B2.3-c** is the future **outbound worker** phase.
 > Do **not** call the future worker "B2.4 worker". The register sequence is non-numeric
 > because B2.4 landed before B2.3-b/B2.3-c to finalize destination + scope semantics.
-> B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant; B2.3-c is next.
+> B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant. **CORRECTION (2026-07-27): B2.3-c is NOT "next" — c1 (migration 0132, applied), c2 (PR #429) and c3 (PR #430) are all built, merged and deployed, and were exercised once under control on 2026-07-18.** Only inbound-busy import and true two-way sync remain unbuilt.
 
 > **[SUPERSEDED — written pre-merge] B2.3-c1 implementation status — AUTHORED IN A PR, DORMANT, NOT YET DEPLOYED.**
 > **Current truth: migration `0132` IS hosted-applied, PR #428's modules ARE deployed at the

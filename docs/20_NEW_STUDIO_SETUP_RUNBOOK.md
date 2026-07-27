@@ -166,7 +166,7 @@ Cleanup, WITHOUT violating the clinical delete hardening (0087: clients/sessions
 ## 6. Known limitations (accepted for Studio #2)
 
 - Setup is operator-driven: the two writes are either the approved SQL inserts below or the operator-only New Studio Wizard (PR #254, `/admin/studios/new`) that performs the same two writes; in-app configuration (services/availability/booking/consent) stays manual. No public self-serve studio creation.
-- No browser E2E; verification above is manual plus the CI DB/RLS lane.
+- **Browser E2E DOES exist for this flow** (corrected 2026-07-27): `e2e/new-studio-wizard.spec.ts` covers the operator-only wizard gate and studio creation, and `e2e/onboarding.spec.ts` covers the owner onboarding path. Verification above is manual **in addition to** the CI DB/RLS lane and the `browser-e2e` Playwright lane.
 - New studio starts test-mode (card-on-file only if explicitly scoped); the legal/accounting + Stripe onboarding checklist (docs/18 section 16) apply before THIS studio goes live. Live owner-run session payments are already live for approved studios; going live is per-studio and supervised.
 - No Hone billing automation (nobody is charged for using Hone; that whole area is future).
 - Existing-client booking identity hardening and public appointment token hardening remain deferred backlog items (docs/13).

@@ -1,8 +1,11 @@
 # Google Calendar owner connection — operator setup checklist
 
-Phase B1 (owner connection + integration status) is **code-complete and dormant**.
-The Settings → Integrations → Google Calendar surface exists, but the connect flow
-**fails closed** until the operator provisions the values below. **No hosted Google
+Phase A/B1 (owner connection + integration status) is **deployed and dormant**.
+**CORRECTION (2026-07-27): the Google Cloud client, consent screen and env values WERE
+subsequently provisioned** — a controlled connection exists on the test studio (see §6), so
+the "connect flow fails closed until the operator provisions the values below" framing is
+historical. The checklist below remains the record of what had to be provisioned, and is
+still the procedure for provisioning any FUTURE environment or studio. **No hosted Google
 Cloud or Vercel change is performed by this PR** — this is a manual checklist for a
 later, deliberate enablement. Do **not** enable any `google_calendar_*` sync flag,
 the worker, or connect a real account as part of this checklist.
