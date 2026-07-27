@@ -23,11 +23,13 @@ to Phase A's current charting contract:
   "Thermolysis pulse count" (inside the thermolysis section), and has no galvanic
   intensity field. Chloe's exact `0.74 mA` / `0.733 s` round-trip through
   descriptor → preview → normalizer → RPC → destination DB unchanged.
-- **Migration 0157 remains UNAPPLIED in production** (prod migration max stays
-  **0156**). 0157 was updated **in place** (no 0158). This PR stays **DRAFT** and the
-  migration-first order below is still mandatory.
+- ~~**Migration 0157 remains UNAPPLIED in production** (prod migration max stays **0156**).~~
+  **SUPERSEDED — 0157 was APPLIED 2026-07-27T02:01:29Z and PR #478 MERGED at 13:12:34Z
+  (merge `96b28d6`); production migration max is now 0157.** 0157 was updated **in place**
+  (no 0158). See the **CLOSEOUT** section at the end of this file.
 
-Migration authorization for 0157 is still required and has NOT been granted.
+~~Migration authorization for 0157 is still required and has NOT been granted.~~
+**Superseded — authorization was granted and the migration-first apply was executed.**
 
 ## Why DB-first (NOT app-first)
 

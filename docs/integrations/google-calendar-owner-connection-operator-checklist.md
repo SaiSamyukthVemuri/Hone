@@ -158,7 +158,7 @@ The exact callback URL is derived server-side as
 - Do **not** set `google_calendar_outbound_sync_enabled` (or inbound/two-way).
 - Do **not** enable `calendar_sync_control.worker_enabled`.
 - Do **not** connect Willow's real account (blocked on Google app verification).
-- Do **not** register the cron / start the worker.
+- Do **not** start the worker or enable any studio sync flag. *(Note: the crons are ALREADY registered — `vercel.json` schedules `/api/cron/calendar-reconcile` at `0 9 * * *` and `/api/cron/calendar-sync` at `30 9 * * *` since PR #430. They run daily and find no work. Dormancy is held by the flags, not by the absence of a schedule, so there is no cron left to "not register".)*
 
 ## 5. Verifying dormancy after setup
 
@@ -166,7 +166,7 @@ After provisioning + connecting a **test** account only:
 
 - `calendar_connections` has the connected row; `calendar_connection_secrets` holds
   the encrypted refresh token (never plaintext; unreadable by any browser role).
-- `calendar_sync_outbox` and `calendar_event_links` remain **empty**.
+- `calendar_sync_outbox` and `calendar_event_links` each hold **exactly ONE row** — the single controlled `event.create` validation of 2026-07-18 (outbox `status='done'`; link `sync_status='synced'`). *(Earlier revisions of this check said "remain empty"; expect one row each, not zero. More than one row is the signal worth investigating.)*
 - All `google_calendar_*` studio flags and `worker_enabled` remain **OFF**.
 - No Google event was created/updated/deleted (the connection reads calendar
   metadata only).

@@ -6,6 +6,16 @@ Hone is multi-tenant per studio. The unit of isolation is `studio_id`.
 
 - Every studio-scoped table carries a `studio_id` column.
 - Every studio-scoped table has RLS enabled.
+> **This section describes the COMMON pattern, not a universal invariant.** Several tables
+> deliberately deviate — default-deny with no browser policy at all (`calendar_sync_outbox`,
+> `calendar_connection_secrets`, `google_oauth_states`, `admin_action_events`), append-only
+> clinical artifacts frozen for **all** roles including `service_role`, an owner-only read tier
+> for `record_keeping_exposure_incidents`, and SELECT-only-with-everything-else-revoked for the
+> 0157 `session_copy_operations` ledger. **RLS also does not govern TRUNCATE, REFERENCES or
+> TRIGGER** — those need explicit table-privilege revocation. Full list and rationale:
+> [09_DATABASE_AND_RLS.md](./09_DATABASE_AND_RLS.md) "Deliberate exceptions" and
+> "RLS is not the same thing as a table privilege".
+
 - The default SELECT policy on those tables is `using (public.is_studio_member(studio_id))`. The helper is `SECURITY DEFINER` and reads from `public.practitioners` to check that the calling auth user is an active practitioner in the row's studio.
 - INSERT / UPDATE / DELETE policies are stricter and table-specific. Most are owner-only or service-role-only.
 - Cross-studio data sharing does not exist. The same email can be a client of two studios; each studio gets its own `clients` row.
@@ -114,7 +124,7 @@ Globally:
 What this baseline is **not**:
 - Not a nonce-based CSP. A future PR may convert `'unsafe-inline'` to per-request nonces.
 - Not a report-only path. A future PR may add `Content-Security-Policy-Report-Only` with a report endpoint before tightening further.
-- Not a Sentry-aware policy. CSP sources for Sentry are explicitly excluded; they will be added in the Sentry-install PR if that ships.
+- **CSP + Sentry (updated 2026-07-27):** Sentry HAS since shipped, so "they will be added in the Sentry-install PR if that ships" is superseded. Sentry is configured to use the same-origin `/monitoring` **tunnel** specifically so no third-party Sentry ingest domain needs to be added to the CSP. **Verify the deployed CSP against the tunnel configuration before assuming either way** — this was not re-verified in the 2026-07-27 documentation reconciliation.
 
 ## 3. Portal session model
 
@@ -178,7 +188,7 @@ This is the honest list. Do not hide gaps.
 | Receipts / charge notice email | **Built in test mode (PR #175)** for session payments on `payment_charge_attempts`: a receipt email is sent on a successful test charge. Still open for live: content/legal review of the template and a charge notice for the legacy manual-fee path. |
 | Refunds / disputes | **Refunds built in test mode (PR #178)**: full-amount, reason-agnostic refunds on `payment_charge_attempts`; the dormant 0032 refund tables remain unused. **Disputes are alert-only (PR #179)**: `charge.dispute.created` fires a critical ops_alert; no automated dispute response exists. |
 | Practitioner-recovery card-add path | **Deferred.** `client_payment_methods.added_via` allows `practitioner` but no UI exists for that yet. |
-| Two-practitioner studio support | **Not exercised.** Code paths are written studio-scoped, not owner-scoped, but the only pilot is single-practitioner. |
+| Two-practitioner studio support | **NOW EXERCISED (corrected 2026-07-27).** Willow Electrolysis has **2 practitioners**, and there are **6 across 5 studios** — the single-practitioner premise below is superseded, so the owner-only exposure-incident tier now has real effect. *(Historical note:)* Code paths are written studio-scoped, not owner-scoped, and at the time of writing the only pilot was single-practitioner. |
 
 > **Clinical delete posture (PR #217, migration 0087):** core clinical/client-history tables (clients, sessions, session_blocks, photos, probe_lots, client_intake_forms, client_tags, treatment_goals, client_personal_notes) are no longer hard-deletable by normal authenticated studio members; the app archives or soft-deletes instead, and treatment memory is preserved because it is the product moat. DELETE remains, explicitly per-command, only where a reviewed UI affordance exists (electrolysis_entries, laser_entries, treatment_plan_stages, client_pricing). Record Keeping logbooks and audit events were already non-deletable (PR #205/#206). Future deletion needs should use archive/correction workflows. **CORRECTION (2026-07-27): the DB/RLS integration harness SHIPPED (PR #220)** — 94 `.db.test.ts` suites run in the `db-integration` CI job against the full migration chain applied from scratch. The earlier "still an open follow-up" framing is superseded. Coverage also includes static SQL tests plus a production catalog audit.
 

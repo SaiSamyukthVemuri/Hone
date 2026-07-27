@@ -1,13 +1,13 @@
 # 06 Payments and Stripe
 
-> **Status note (reconciled — supersedes stale detail below).** The **single** canonical charge executor is `lib/billing/session-payment-charge.ts` (`runSessionPaymentCharge`), which handles session payments **and** the late-cancellation / no-show **fee** charges on the canonical `payment_charge_attempts` ledger. The legacy `lib/billing/manual-fee-charge.ts` executor was **deleted in PR #218**; fee unification onto `payment_charge_attempts` is **complete (PR #196, migration 0083)**. `scripts/check-stripe-gates.mjs` pins **exactly one** `paymentIntents.create` (`session-payment-charge.ts`) and **one** `refunds.create` (`lib/billing/payment-refund.ts`); `charges.create` / `checkout.sessions` are **0**. Payment-outcome zero-row detection was added in PR #263. **Supervised live owner-run session payments are LIVE for approved studios** (Willow + Sam's controlled studio; live Connect + charges + refunds + webhooks proven; live/test isolation live; Stripe gates 15 PASS). Still **off / held:** public booking card collection, deposits / packages / partial payments, and live manual no-show / late-cancel fees (hard-held); broad self-serve live payments are not ready. Sections below that still describe a separate `manual_fee_charge_attempts` runtime as the active charge path, or that say "live payments remain disabled / enablement has not started," are **retained as historical / point-in-time design detail (superseded 2026-07-08)**; where they conflict with this note, **this note is authoritative** (canonical: [docs/production/current-state.md](./production/current-state.md)).
+> **Status note (reconciled — supersedes stale detail below).** The **single** canonical charge executor is `lib/billing/session-payment-charge.ts` (`runSessionPaymentCharge`), which handles session payments **and** the late-cancellation / no-show **fee** charges on the canonical `payment_charge_attempts` ledger. The legacy `lib/billing/manual-fee-charge.ts` executor was **deleted in PR #218**; fee unification onto `payment_charge_attempts` is **complete (PR #196, migration 0083)**. `scripts/check-stripe-gates.mjs` pins **exactly one** `paymentIntents.create` (`session-payment-charge.ts`) and **one** `refunds.create` (`lib/billing/payment-refund.ts`); `charges.create` / `checkout.sessions` are **0**. Payment-outcome zero-row detection was added in PR #263. **Supervised live owner-run session payments are LIVE for approved studios** (Willow + Sam's controlled studio; live Connect + charges + webhooks proven; refunds deployed but with **zero production rows on this baseline** (`stripe_refunds` = 0); disputes alert-only and never exercised; live/test isolation live; Stripe gates 15 PASS). Still **off / held:** public booking card collection, deposits / packages / partial payments, and live manual no-show / late-cancel fees (hard-held); broad self-serve live payments are not ready. Sections below that still describe a separate `manual_fee_charge_attempts` runtime as the active charge path, or that say "live payments remain disabled / enablement has not started," are **retained as historical / point-in-time design detail (superseded 2026-07-08)**; where they conflict with this note, **this note is authoritative** (canonical: [docs/production/current-state.md](./production/current-state.md)).
 
 ## 1. Current payment status
 
 | Capability | State |
 |---|---|
-| Stripe Connect Express onboarding | **Production**, test mode |
-| Card-on-file via SetupIntent on connected account | **Production**, test mode |
+| Stripe Connect Express onboarding | **Production — live + test**, mode-scoped (0103). Willow Electrolysis and the controlled test studio both hold enabled **live** accounts (charges + payouts) |
+| Card-on-file via SetupIntent on connected account | **Production — live + test**, with live/test isolation (8 stored payment methods) |
 | Test-mode cancellation/no-show fee charge | **Production**, test mode — **unified onto `payment_charge_attempts`** (PR #196, migration 0083); the legacy `manual_fee_charge_attempts` runtime was removed in PR #218 (historical rows readable only) |
 | Test-mode session payment charge end-to-end (prepare, run, status UX, completion-to-billing handoff) | **Production**, test mode on `payment_charge_attempts` (PRs #171-#174, #180, #181) |
 | Receipts (session-payment test receipt email) | **Production**, test mode (PR #175); manual-fee charge notice still not built |
@@ -34,7 +34,9 @@ Studios onboard via **Stripe Connect Express**. Each studio gets a connected acc
 - Card-on-file is for future-use charging by the studio. The PaymentMethod must live on the connected account so the later PaymentIntent has access.
 - Customers (`client_stripe_customers`) are per-`(client, studio, account, livemode)`.
 
-## 3. Live-mode guards — CURRENT STATE (verified 2026-07-27)
+## 3. Live-mode guards
+
+**CURRENT STATE — verified 2026-07-27.**
 
 > **⚠️ The three-guard "live mode is blocked" model described below is HISTORICAL.** It was
 > the pre-live posture. **Live payments are enabled and in use.** The guards were deliberately
@@ -502,6 +504,13 @@ The session-payment occurrence (PR #173) sits behind the equivalent stack on `pa
 **Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 1** occurrence in the single allowlisted file above (`lib/billing/session-payment-charge.ts`); it is a legitimate test-mode path and deleting it would break session-payment + fee charging. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
 
 ## 9. Live charging requirements
+
+**⚠️ HISTORICAL (pre-live).**
+
+> This was the pre-live requirements list. **Live session payments were subsequently enabled**
+> through the controlled sequence in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md), and Willow
+> Electrolysis has **6 succeeded live-mode charges** (most recent 2026-07-26). Read this section
+> as the record of what was required, not as an open checklist.
 
 When a live-mode PR is opened (it is not opened today), it must do all of the following. Cherry-picking is not safe.
 

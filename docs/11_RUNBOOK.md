@@ -120,18 +120,25 @@ supabase db query --linked "
   select studio_id, stripe_livemode, stripe_charges_enabled, stripe_payouts_enabled
   from public.studio_payment_settings;
 "
-# Expect: stripe_livemode=false for every row.
+# Expect (post-live): BOTH a live-mode (stripe_livemode=true) and a test-mode row for
+#   Willow Electrolysis AND for the controlled test studio — 4 rows, all
+#   stripe_account_status='enabled'. The live rows have charges+payouts enabled.
+#   Rows for any OTHER studio in live mode WOULD be the alarm.
 
 # Confirm no live-mode charge attempt exists (canonical ledger + legacy table).
 supabase db query --linked "
   select (select count(*) from public.payment_charge_attempts where stripe_livemode = true)
        + (select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true);
 "
-# Expect: 0.
+# Expect (post-live): 8 from payment_charge_attempts (6 Willow + 2 the controlled test
+#   studio, all 'succeeded') and 0 from manual_fee_charge_attempts — the legacy table still
+#   carries CHECK (stripe_livemode = false), so a live row there IS an alarm.
+#   NOTE: payment_charge_attempts_livemode_false_check no longer exists (dropped by 0101).
 
-# Confirm STRIPE_ALLOW_LIVE_MODE is not "true" in production.
+# Confirm STRIPE_ALLOW_LIVE_MODE in production.
 # Check the Vercel dashboard: Project -> Settings -> Environment Variables.
-# Expect: STRIPE_ALLOW_LIVE_MODE absent OR explicitly "false".
+# Expect: STRIPE_ALLOW_LIVE_MODE = "true" in Production (live mode is enabled for approved
+#   studios). Preview and Development MUST still be test-mode.
 
 # Confirm the Stripe gate script still passes.
 npm run check:stripe-gates

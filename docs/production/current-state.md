@@ -28,7 +28,7 @@ not a PR diary — per-capability evidence lives in
 | **Last runtime-bearing application HEAD** | **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** — the PR #478 merge (whole-session copy). This is the baseline for every claim in this document. |
 | **Last runtime-bearing Vercel Production deployment** | `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb` — status **Ready**, target production, built from `96b28d6…` on branch `claude/build-hone-saas-hOex7`, aliased to `hone.care` and `www.hone.care`. |
 | **Production migration max** | **0157** — hosted `0157` == repo `0157`, 157 migrations applied, each exactly once, **no `0158`+**. |
-| **Production Supabase project** | The single production project, referenced by `supabase/.temp/project-ref` on the linked workstation. Verify with `supabase migration list --linked` before trusting any number here. No credentials or refs are recorded in documentation. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
 | **Health** | `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**. All non-5xx. `ops_alerts` unresolved: **0**. |
 | **Customer / studio posture** | **One live studio with real clients: Willow Electrolysis** (2 practitioners, 24 clients, 75 appointments). Plus one controlled test studio used for validation, and three empty studios. Five studios total. |
 | **Next operational gate** | **Chloe's human acceptance testing** of the Phase A charting correction and whole-session copy — then the **deep production / security / code audit**. |
@@ -210,6 +210,10 @@ a provider token, and configuring one is an enablement step, not a default.
   *This corrects earlier documentation that described both tables as empty.*
 - **Every outbound / inbound-busy / two-way sync flag is `false` on every studio.** No worker
   is draining the queue, and no studio is intent-eligible.
+- **The calendar cron routes ARE registered and DO run daily** — `vercel.json` schedules
+  `/api/cron/calendar-reconcile` at `0 9 * * *` and `/api/cron/calendar-sync` at `30 9 * * *`.
+  They authenticate, find zero eligible studios and zero claimable jobs, and exit having done
+  nothing. **Dormancy comes from the flags being off, not from the absence of a schedule.**
 - Inbound busy import and two-way edits are **designed, not built**.
 
 Deployed ≠ enabled. Each of the following needs **separate authorization**: connecting

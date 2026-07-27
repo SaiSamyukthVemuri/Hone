@@ -40,8 +40,9 @@ Also: [release changelog](./docs/production/release-changelog.md) ·
 - **Held:** live manual no-show/late-cancel fees · public-booking card collection · public
   practitioner selection and assignment.
 - **Deferred by product decision (2026-07-27):** the direct new-client consultation booking route.
-- **Next:** Chloe's acceptance testing, then the **deep production / security / code audit**
-  (not yet performed against this baseline).
+- **Next:** the **deep production / security / code audit** (not yet performed against this
+  baseline). Chloe's acceptance testing is also outstanding but is **independent** — it does
+  not block the audit.
 
 | Surface | State |
 |---|---|
@@ -57,7 +58,7 @@ Also: [release changelog](./docs/production/release-changelog.md) ·
 | Owner-run **session payment** charge (PaymentIntent off-session; canonical `session-payment-charge.ts` executor / `payment_charge_attempts` ledger, PR #196) | **Production — supervised live for approved studios** (Willow + Sam's controlled studio; live charges + webhooks proven). A new studio starts test-mode and is enabled per-studio after supervised onboarding; **broad self-serve live payments are not ready** |
 | Manual cancellation / no-show fee charge | **Test mode works; live is HARD-HELD server-side** (`lib/billing/live-charge-reason-allowlist.ts`) — only `session_payment` charges live; enabling live manual fees needs a dedicated PR + approval |
 | Receipts (session-payment receipt email) | **Production** — live + test (PR #175) |
-| Refunds (full-amount, `payment_charge_attempts`) | **Production** — **live refunds proven** for approved studios + test (PR #178) |
+| Refunds (full-amount, `payment_charge_attempts`) | **Deployed; NOT production-exercised on this baseline** — `stripe_refunds` = **0 rows**. The path was proven in earlier controlled testing (PR #178); there is no current-baseline production refund |
 | Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
 | Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
 | SMS (Twilio) | **Implemented, pilot scale**, disabled by default per studio toggle + per-client consent. Broad-SaaS SMS (A2P/10DLC, sender strategy, rate-limiting) not built |
@@ -119,7 +120,7 @@ GitHub Actions runs the same set on every PR and every push to the default branc
 |---|---|
 | Vercel | Hosting (Next.js 15 App Router, Node 24 runtime) |
 | Supabase | Postgres + Auth (magic link) + Storage |
-| Stripe | Connect Express onboarding, card-on-file (SetupIntent), test-mode manual fee charging |
+| Stripe | Connect Express onboarding, card-on-file (SetupIntent), **live owner-run session-payment charging for approved studios**, test-mode manual fee charging |
 | Resend | Transactional email |
 | Twilio | SMS confirmations and reminders (off by default; consent-gated) |
 | Upstash Redis | Rate-limit token bucket for public surfaces (optional; fails open) |
@@ -152,14 +153,14 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 | [docs/11_RUNBOOK.md](./docs/11_RUNBOOK.md) | Operators | Post-deploy checks, SQL recipes, incident handling |
 | [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md) | Operators + reviewers | The smoke-test catalogue |
 | [docs/13_BACKLOG_AND_DECISIONS.md](./docs/13_BACKLOG_AND_DECISIONS.md) | Anyone | Decision log + ranked backlog |
-| [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | Read-this-first for any AI continuing the work |
+| [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | **Historical** dated chronology. Read the canonical production set first (see Status); come here only when you need the order events happened |
 | [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) | Maintainers | When to update which doc |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributors | Branching, PR discipline, review expectations |
 | [.github/pull_request_template.md](./.github/pull_request_template.md) | Every PR | Required checklist (PR #147) |
 
 ## Warnings
 
-- **Live payments are enabled ONLY for approved studios, supervised.** Supervised live owner-run **session payments** are live for approved studios (Willow + Sam's controlled studio) — live Connect onboarding, charges, refunds, and webhooks proven; live/test isolation live. **Do not enable live payments for a new/unapproved studio** outside the supervised onboarding + approval process. Still off/held product-wide: **public booking card collection** (off), **deposits / packages / partial payments** (not built), **live manual no-show / late-cancel fees** (hard-held server-side — only `session_payment` charges live). **Broad self-serve live-payment rollout is not complete.** See [docs/production/current-state.md](./docs/production/current-state.md) for the canonical posture.
+- **Live payments are enabled ONLY for approved studios, supervised.** Supervised live owner-run **session payments** are live for approved studios (Willow + Sam's controlled studio) — live Connect onboarding, charges and webhooks proven (**live refunds have never been exercised in production — `stripe_refunds` = 0 rows**); live/test isolation live. **Do not enable live payments for a new/unapproved studio** outside the supervised onboarding + approval process. Still off/held product-wide: **public booking card collection** (off), **deposits / packages / partial payments** (not built), **live manual no-show / late-cancel fees** (hard-held server-side — only `session_payment` charges live). **Broad self-serve live-payment rollout is not complete.** See [docs/production/current-state.md](./docs/production/current-state.md) for the canonical posture.
 - **Do not enable auto-charge.** No automatic, background, batch, or public-triggered charge path exists. Charging is one manual practitioner click on a `ready` attempt. Anything different is a new design that needs review.
 - **Do not bypass RLS or security review.** Every public route, token route, RPC grant, and `SECURITY DEFINER` function in this repo was chosen carefully. See [docs/03](./docs/03_SECURITY_AND_PRIVACY.md) before changing.
 - **Do not expose tokenized routes to analytics.** PR #142 removed Vercel Analytics from `/portal/verify/[token]`, `/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/calendar-feed/[token]` structurally. Adding analytics to those subtrees re-leaks the token to a third party.

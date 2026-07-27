@@ -35,6 +35,13 @@ that time — it is now 0157**; 84 appointments / 42 confirmed with **zero** NUL
 `practitioner_id`; all 3 synthetic studios have 1 active practitioner; Willow = studio-wide,
 unaffected). No production write, migration, or flag change was made to produce this note.
 
+> *(Scope note added 2026-07-27: where this document says the capacity flag is false for
+> every production studio, that is now true of **every studio except the controlled test
+> tenant** — Willow included. The public-booking flag `practitioner_capacity_booking_enabled`
+> IS false everywhere. Stop-conditions and "do not merge / do not apply" directives below are
+> the assessment made at authoring time: PR A #457 and PR B #458 were subsequently merged and
+> 0134–0139 are applied; PR C — public practitioner assignment — remains not begun.)*
+>
 > **Prime directive for every design choice below:** while
 > `practitioner_capacity_enabled = false` (all production studios, incl. Willow), the
 > observable behaviour of availability and double-booking must be **byte-for-byte the

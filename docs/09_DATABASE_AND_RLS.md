@@ -118,7 +118,7 @@ audit, ledger or append-only table.
 
 | Rule | Why |
 |---|---|
-| `language plpgsql` + `set search_path = pg_catalog, pg_temp` | Prevents search-path injection. Required in every RPC body. |
+| Pin the search path in every RPC body — either `set search_path = pg_catalog, pg_temp` (the long-standing form) **or** `set search_path = ""` with every reference fully schema-qualified (the stricter form used by 0157's four functions) | Prevents search-path injection. **Pinning is mandatory; the exact form is not.** Verified 2026-07-27: all 139 `SECURITY DEFINER` functions in `public` have a pinned search path, 0 lack one. |
 | Returns a typed `table(…)` or scalar; never raw row | Lets the caller branch on the result code without trusting the row shape. |
 | `revoke execute … from public, anon, authenticated; grant execute … to service_role;` | Default surface is closed. |
 | Argument list is fully typed; never `… variadic anyelement` or similar | Concrete signatures are auditable. |
@@ -247,7 +247,7 @@ Use this list every time before opening a migration PR.
 - [ ] RLS enabled on every new table.
 - [ ] SELECT policy uses `is_studio_member(studio_id)` unless deliberately wider.
 - [ ] No anon / authenticated INSERT / UPDATE / DELETE grants unless deliberate and reviewed.
-- [ ] SECURITY DEFINER functions set `search_path = pg_catalog, pg_temp`.
+- [ ] SECURITY DEFINER functions pin the search path — `set search_path = pg_catalog, pg_temp`, **or** `set search_path = ""` with every reference fully schema-qualified (as 0157 does). Never leave it unpinned.
 - [ ] Grants minimal: `revoke execute … from public, anon, authenticated; grant execute … to service_role`.
 - [ ] If the column will be referenced by app code, the migration is applied to prod BEFORE the code PR merges.
 - [ ] TypeScript types updated in `lib/types/database.ts` for any added column the app reads.
@@ -268,7 +268,7 @@ Use this list every time before opening a migration PR.
 - **What it verifies (v1):** cross-studio isolation (clients, sessions, session_blocks, exposure incidents, audit events); record-keeping audit immutability (member INSERT throws RLS violation; UPDATE/DELETE affect zero rows) and trigger behavior (created/updated events, `changed_fields`, actor resolution via `auth.uid()`, no event on a no-op update); the migration 0087 clinical delete posture (nine protected tables: member DELETE affects zero rows; four intentionally deletable tables: member DELETE works, stranger DELETE does not); the double-booking exclusion constraint (overlap raises `23P01`, back-to-back allowed, cancelled rows do not block, the buffer trigger extends the blocked range); and the claim RPCs (`claim_email_send` wins exactly once; `claim_session_payment_charge_attempt` refuses non-ready rows and foreign practitioners, claims a ready row exactly once, second call sees `already_pending`).
 - **How to run it locally:** `supabase db start && supabase db reset --local && npm run test:db` (needs Docker; the Supabase CLI is on brew). The unit lane (`npm test` / `npm run ci`) excludes `tests/db/` and never needs a database.
 - **Safety:** the harness (`tests/db/helpers/harness.ts`) refuses any connection string whose host is not localhost and any URL matching hosted-database patterns (supabase.co/.com, pooler, amazonaws, ...). It reads no env var except `HONE_LOCAL_DB_URL` and never touches production. CI runs it as the separate `db-integration` job with no secrets and no `--linked` anywhere. Guardrails are pinned in the unit lane (`tests/scripts/db-harness-guardrails.test.ts`).
-- **Still open after v1:** portal/anon token-route policies, storage policies, and browser E2E. The generated-types drift check shipped in PR #221 (next section).
+- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 45 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
 
 ## Generated types drift check (PR #221)
 

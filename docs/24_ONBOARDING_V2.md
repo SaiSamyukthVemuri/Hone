@@ -57,8 +57,8 @@ welcome email, no celebration). Pinned by
 
 | # | Adds | Hosted-applied? |
 |---|---|---|
-| 0140 `studio_onboarding` | flag + `public.studio_onboarding` state table (RLS member-read/owner-write, guard trigger) | **No** (repo-only) |
-| 0141 `onboarding_invitation_reconciliation` | reconcile (authenticated) + `admin_accept` (service-role) + read RPCs + welcome-email claim + centralized policy versions; makes `handle_new_user` a no-op | **No** (repo-only) |
+| 0140 `studio_onboarding` | flag + `public.studio_onboarding` state table (RLS member-read/owner-write, guard trigger) | **Yes — applied to production** |
+| 0141 `onboarding_invitation_reconciliation` | reconcile (authenticated) + `admin_accept` (service-role) + read RPCs + welcome-email claim + centralized policy versions; makes `handle_new_user` a no-op | **Yes — applied to production** |
 
 Both are additive, single-transaction. Required cross-PR apply order (do not
 merge/apply out of order):
