@@ -168,7 +168,7 @@ What the row carries vs leaves null:
 | `charged_at` | **null** (future execution PR) |
 | `failed_at` | **null** (future execution PR) |
 
-The prepare card explicitly does NOT render any "Pay now" or "Charge card" affordance. The disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."` Three structural dormancy guards remain intact (key gate / code gate / DB CHECK) plus a fourth from PR #171 (`payment_charge_attempts_livemode_false_check`). The legacy `manual_fee_charge_attempts` runtime is byte-for-byte untouched.
+The prepare card explicitly does NOT render any "Pay now" or "Charge card" affordance. The disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."` Three structural dormancy guards remained intact at that time (key gate / code gate / DB CHECK) plus a fourth from PR #171 (`payment_charge_attempts_livemode_false_check`). *(Historical: 0101 later dropped that CHECK; live session payments are now enabled — see §3.)* The legacy `manual_fee_charge_attempts` runtime is byte-for-byte untouched.
 
 ```
 client opens /portal -> "Add card" entry
@@ -223,7 +223,7 @@ After a `succeeded` row exists on `public.payment_charge_attempts` (PR #173 char
 
 Triple dormancy guard (mirrors PR #173 charge path):
 1. `inferStripeLivemode()` short-circuit at function entry. Live env → `outcome:"live_mode_blocked"` before any DB / Stripe call.
-2. Row-level CHECK `payment_charge_attempts_livemode_false_check` (the charge attempt row itself cannot be live-mode).
+2. Row-level CHECK `payment_charge_attempts_livemode_false_check` (the charge attempt row itself cannot be live-mode). *(Historical — 0101 dropped this CHECK; live rows are now permitted and 8 exist.)*
 3. Conditional UPDATE claim predicate: `status='succeeded' AND stripe_livemode=false AND (refund_status IS NULL OR refund_status='failed')`. The claim is the only place that flips null/failed → `pending_stripe`.
 
 Idempotency:
@@ -491,15 +491,25 @@ paymentIntents.create:
       UPDATE, idempotency key stamp in one transaction)
     - deterministic idempotency key
     - connected-account context { stripeAccount }
-    - inferStripeLivemode() test-mode gate
-    - payment_charge_attempts_livemode_false_check DB CHECK
+    - inferStripeLivemode() mode-aware gate
+    - live charge-reason allow-list (live mode permits session_payment ONLY)
+      -- lib/billing/live-charge-reason-allowlist.ts, enforced at prepare AND execute
 
   (The legacy lib/billing/manual-fee-charge.ts call site was deleted in
   PR #218.) Any new paymentIntents.create occurrence is high-risk and
   must be explicitly reviewed.
 ```
 
-The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, livemode inference gate, and the `payment_charge_attempts_livemode_false_check` DB CHECK.
+The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, and the livemode inference gate.
+
+> **⚠️ CORRECTION (2026-07-27):** earlier revisions of this list ended with "and the
+> `payment_charge_attempts_livemode_false_check` DB CHECK". **That constraint no longer
+> exists** — migration `0101` **dropped** it (line 38) and replaced it with
+> `payment_charge_attempts_live_requires_account_check` (`stripe_livemode = false OR
+> stripe_account_id is not null`), which does **not** prevent live rows. The canonical ledger
+> holds 8 rows with `stripe_livemode = true`. The gate that is actually load-bearing in live
+> mode today is the **charge-reason allow-list**
+> (`lib/billing/live-charge-reason-allowlist.ts`) — see §3.
 
 **Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 1** occurrence in the single allowlisted file above (`lib/billing/session-payment-charge.ts`); it is a legitimate test-mode path and deleting it would break session-payment + fee charging. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
 
@@ -520,7 +530,7 @@ When a live-mode PR is opened (it is not opened today), it must do all of the fo
 4. **Webhook handlers** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Status: built reason-agnostic for `payment_charge_attempts` (PR #179, metadata-matched, claimed via `claim_stripe_event`); live events are hard-ignored at handler entry. Remaining for live: deliberately relax the livemode guard. (Fee unification is already done — fees ride `payment_charge_attempts` since PR #196 and inherit this reconciliation; the legacy `manual_fee_charge_attempts` runtime was removed in PR #218.)
 5. **Strengthen pending reconciliation.** Replace the "trust Stripe idempotency within 60 minutes" path with `paymentIntents.search` by metadata before any retry. The Stripe idempotency window is 24 hours; live mode must never depend on that being long enough.
 6. **Manual smoke against a live test charge** with refund.
-7. **Deliberately replace `payment_charge_attempts_livemode_false_check`** (the canonical ledger CHECK) with the live-mode equivalent. The migration must be reviewed.
+7. ~~**Deliberately replace `payment_charge_attempts_livemode_false_check`**~~ — **DONE.** Migration `0101` dropped that CHECK and replaced it with `payment_charge_attempts_live_requires_account_check`.
 8. **Never enable auto-charge** in the same PR as live mode. Manual click stays manual.
 
 ## 10. Do-not-do section
