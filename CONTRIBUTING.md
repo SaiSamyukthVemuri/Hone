@@ -98,7 +98,7 @@ Reviewers should block a behavior-changing PR that leaves docs stale.
   - `charges.create`: must be zero.
   - `checkout.sessions`: must be zero unless explicit Checkout PR.
   - `set_studio_require_card_on_file`: must be zero unless explicit card-required booking PR.
-  - `STRIPE_ALLOW_LIVE_MODE=true`: exactly one occurrence, inside the error message in `lib/stripe/server.ts`; must never appear as a code path that flips the flag. Live payments remain disabled.
+  - `STRIPE_ALLOW_LIVE_MODE=true`: exactly one occurrence, inside the error message in `lib/stripe/server.ts`; must never appear as a code path that flips the flag. *(Note: the trailing "live payments remain disabled" in earlier revisions is superseded — live payments ARE enabled for approved studios, so never adding a flag-flipping code path matters more, not less.)*
 - No raw card / CVC / `client_secret` in any new code.
 - No automatic, batch, background, or public-triggered charge.
 

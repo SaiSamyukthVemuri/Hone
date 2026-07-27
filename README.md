@@ -6,12 +6,43 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
-> **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0124** as of 2026-07-12 = Google Calendar Phase B1 dormant outbound-sync schema/queue foundation, PR #407, applied migration-first + merged + deployed **DORMANT** — schema live but inert: no worker, no enqueue path, no Google event write, all Google sync flags OFF, Willow not connected. Also live-but-dormant: Clinical Record Phase 1 finalization (0119, PR #399) + Phase 2 corrections/amendments backend (0120, PR #400), both clinical flags OFF and the corrections **customer workflow parked**) ·
-> [migration ledger](./docs/production/migration-ledger.md) ·
-> [release changelog](./docs/production/release-changelog.md) ·
-> [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
-> summary; when it and current-state disagree, current-state + the live verifier win.
+> **Reconciled 2026-07-27.** Production migration max **0157**; last runtime-bearing
+> application HEAD **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** (PR #478 merge, whole-session
+> copy), serving `hone.care`. One live studio with real clients: **Willow Electrolysis**.
+>
+> This table is a **summary**. When it and the canonical documents disagree, the canonical
+> documents plus the live verifier win. **No capability is "live" merely because a table,
+> migration, component, route or flag exists** — read the status words precisely.
+
+### Read these in order
+
+| # | Document | What it gives you |
+|---|---|---|
+| 1 | **[docs/production/current-state.md](./docs/production/current-state.md)** | The canonical concise snapshot of what Hone is today |
+| 2 | [docs/production/capability-register.md](./docs/production/capability-register.md) | Per-capability status matrix with direct evidence |
+| 3 | [docs/production/known-limitations.md](./docs/production/known-limitations.md) | Verified residual limitations, with owner and next gate |
+| 4 | [docs/production/migration-ledger.md](./docs/production/migration-ledger.md) | Migration facts, apply order, 0157 detail |
+| 5 | Domain + runbook docs | Deeper architecture and operating detail (map below) |
+| 6 | [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | **Historical** dated chronology — read only when you need the order events happened |
+
+Also: [release changelog](./docs/production/release-changelog.md) ·
+[migration-first runbook](./docs/runbooks/migration-first-process.md).
+
+### Current posture at a glance
+
+- **Deployed, enabled, human acceptance PENDING:** the Phase A charting correction (unified
+  *Treatment observations & skin response* box, galvanic-intensity retirement, exact
+  `0.733 seconds` display, *Thermolysis pulse count* relabel) and whole-session copy.
+- **Deployed but never production-exercised:** whole-session copy — the provenance ledger holds
+  **0 rows**; no real copy has ever been performed.
+- **Dormant:** all Google Calendar sync (Willow is **not** connected; every sync flag off) and
+  clinical finalization/corrections (both flags off on every studio).
+- **Held:** live manual no-show/late-cancel fees · public-booking card collection · public
+  practitioner selection and assignment.
+- **Deferred by product decision (2026-07-27):** the direct new-client consultation booking route.
+- **Next:** the **deep production / security / code audit** (not yet performed against this
+  baseline). Chloe's acceptance testing is also outstanding but is **independent** — it does
+  not block the audit.
 
 | Surface | State |
 |---|---|
@@ -27,7 +58,7 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Owner-run **session payment** charge (PaymentIntent off-session; canonical `session-payment-charge.ts` executor / `payment_charge_attempts` ledger, PR #196) | **Production — supervised live for approved studios** (Willow + Sam's controlled studio; live charges + webhooks proven). A new studio starts test-mode and is enabled per-studio after supervised onboarding; **broad self-serve live payments are not ready** |
 | Manual cancellation / no-show fee charge | **Test mode works; live is HARD-HELD server-side** (`lib/billing/live-charge-reason-allowlist.ts`) — only `session_payment` charges live; enabling live manual fees needs a dedicated PR + approval |
 | Receipts (session-payment receipt email) | **Production** — live + test (PR #175) |
-| Refunds (full-amount, `payment_charge_attempts`) | **Production** — **live refunds proven** for approved studios + test (PR #178) |
+| Refunds (full-amount, `payment_charge_attempts`) | **Deployed; NOT production-exercised on this baseline** — `stripe_refunds` = **0 rows**. The path was proven in earlier controlled testing (PR #178); there is no current-baseline production refund |
 | Dispute handling | **Alert-only**: `charge.dispute.created` fires a critical ops_alert (PR #179); no automated response |
 | Automatic charging, batch charging, public charge flow | **Not built and not planned for this phase** |
 | SMS (Twilio) | **Implemented, pilot scale**, disabled by default per studio toggle + per-client consent. Broad-SaaS SMS (A2P/10DLC, sender strategy, rate-limiting) not built |
@@ -42,7 +73,12 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Client portal access events + practitioner status card | **Production** (PR #370, migration 0111; append-only, no token/PII) |
 | Public booking previous/next availability navigation | **Production** (PR #371; client-side) |
 | Public booking horizon 1–12 months | **Production** (PR #372, migration 0112; default 3, existing studios unchanged) |
-| Google Calendar sync | **Foundation deployed, DORMANT — no sync active.** Phase A connection/OAuth foundation (0121/0122, PR #404) + Phase B1 outbound-sync schema/queue (`calendar_event_links`, `calendar_sync_outbox`, service-role claim/result RPCs; 0124, PR #407) are deployed. **No worker, no enqueue path, no Google event write, no inbound busy, no availability change.** All Google sync flags OFF; one controlled Phase A connection (Sam's studio) exists; Willow not connected. Outbound/inbound/two-way sync = design intent, not shipped |
+| Google Calendar sync | **Deployed, production-exercised ONCE, currently DORMANT — no sync active.** Phases A/B1/B2.3-a/B2.4/B2.3-b/c1/c2/c3 are all merged and deployed. **Exactly one real Google event has ever been created** (2026-07-18, on the controlled test studio); the outbox and event-link tables each hold that one row. **Every outbound / inbound-busy / two-way flag is OFF on every studio; no worker is draining the queue; Willow is not connected.** Inbound busy and two-way edits are designed, not built |
+| Charting: unified *Treatment observations & skin response*, galvanic-intensity retirement, exact `0.733 s` thermolysis display, *Thermolysis pulse count* (PR #479) | **Deployed + enabled — Chloe's human acceptance PENDING.** Code-only, no migration. Galvanic-intensity **history is preserved**; only new writes and ordinary display drop it (`galvanic_ma` / `galvanic_duration_seconds` remain active) |
+| Whole-session copy — "Copy areas & settings from last session" (PR #478, migration 0157) | **DB applied + deployed + enabled — but NOT production-exercised** (`session_copy_operations` = 0 rows) and **Chloe's human acceptance PENDING**. Editable ephemeral preview, zero writes before an explicit commit, one atomic commit, source locking, idempotency + provenance ledger. Minutes and outcomes are never copied; galvanic intensity is forced to a literal NULL |
+| Practitioner capacity / multi-practitioner | **Deployed; enabled on the controlled test studio ONLY.** `practitioner_capacity_enabled` is **false at Willow**, and `practitioner_capacity_booking_enabled` (public assignment) is **false on every studio**. Schema and code existing is not launch readiness |
+| Clinical record finalization + corrections | **Deployed but DORMANT** — both flags OFF for all studios. Phase 1 was production-exercised **once** on the controlled test studio; Willow has 0 finalized records. Phase 2 has **never** been exercised and its customer workflow is **parked** |
+| Direct new-client consultation booking route | **Deferred by product decision (2026-07-27)** — not built, not a launch blocker, not the next task |
 | Intake builder, admin/support dashboard | **Backlog** |
 
 ## Who Hone is for
@@ -76,7 +112,7 @@ Or the shortcut that chains the first five:
 npm run ci
 ```
 
-GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154), plus a separate `db-integration` job (PR #220/#221) that applies the FULL migration chain from scratch to a local Supabase Postgres, runs the DB/RLS behavior tests (`npm run test:db`: cross-studio isolation, audit immutability + triggers, clinical delete posture, double-booking constraint, claim RPCs, exposure owner tier), and runs the generated types drift check (`npm run check:db-types`), and a separate `browser-e2e` job (PR #227) that runs the Playwright core-memory-loop spec against a local production build and the full local Supabase stack (`npm run test:e2e` locally). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
+GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154), plus a separate `db-integration` job (PR #220/#221) that applies the FULL migration chain from scratch to a local Supabase Postgres, runs the DB/RLS behavior tests (`npm run test:db`: cross-studio isolation, audit immutability + triggers, clinical delete posture, double-booking constraint, claim RPCs, exposure owner tier), and runs the generated types drift check (`npm run check:db-types`), and a separate `browser-e2e` job (PR #227) that runs the Playwright suite — **45 specs under `e2e/`** — against a local production build and the full local Supabase stack, plus `payment-browser-e2e`, `mobile-completion-e2e` and `google-browser-e2e` lanes (`npm run test:e2e` locally). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
 
 ## Required services
 
@@ -84,7 +120,7 @@ GitHub Actions runs the same set on every PR and every push to the default branc
 |---|---|
 | Vercel | Hosting (Next.js 15 App Router, Node 24 runtime) |
 | Supabase | Postgres + Auth (magic link) + Storage |
-| Stripe | Connect Express onboarding, card-on-file (SetupIntent), test-mode manual fee charging |
+| Stripe | Connect Express onboarding, card-on-file (SetupIntent), **live owner-run session-payment charging for approved studios**, test-mode manual fee charging |
 | Resend | Transactional email |
 | Twilio | SMS confirmations and reminders (off by default; consent-gated) |
 | Upstash Redis | Rate-limit token bucket for public surfaces (optional; fails open) |
@@ -94,8 +130,15 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 
 ## Documentation map
 
+**Start with the canonical production set** — see "Read these in order" under
+[Status](#status) above:
+
 | File | Audience | Topic |
 |---|---|---|
+| [docs/production/current-state.md](./docs/production/current-state.md) | **Everyone — read first** | Canonical snapshot of what Hone is today |
+| [docs/production/capability-register.md](./docs/production/capability-register.md) | Engineers, auditors, operators, investors | Per-capability status matrix with evidence |
+| [docs/production/known-limitations.md](./docs/production/known-limitations.md) | Reviewers, operators | Verified residual limitations, owners, next gates |
+| [docs/production/migration-ledger.md](./docs/production/migration-ledger.md) | Developers, auditors | Migration facts and applied status |
 | [docs/00_PRODUCT_OVERVIEW.md](./docs/00_PRODUCT_OVERVIEW.md) | Anyone | What Hone is and is not |
 | [docs/01_ARCHITECTURE.md](./docs/01_ARCHITECTURE.md) | Developers | Next.js + Supabase + Stripe shape |
 | [docs/02_DOMAIN_MODEL.md](./docs/02_DOMAIN_MODEL.md) | Developers | Studios, clients, appointments, the rest |
@@ -110,14 +153,21 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 | [docs/11_RUNBOOK.md](./docs/11_RUNBOOK.md) | Operators | Post-deploy checks, SQL recipes, incident handling |
 | [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md) | Operators + reviewers | The smoke-test catalogue |
 | [docs/13_BACKLOG_AND_DECISIONS.md](./docs/13_BACKLOG_AND_DECISIONS.md) | Anyone | Decision log + ranked backlog |
-| [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | Read-this-first for any AI continuing the work |
+| [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | **Historical** dated chronology. Read the canonical production set first (see Status); come here only when you need the order events happened |
+| [docs/16_LIVE_PAYMENTS_READINESS.md](./docs/16_LIVE_PAYMENTS_READINESS.md) | Payment reviewers, operators | Verified payment posture + the controlled live-enablement runbook that was executed |
+| [docs/18_LIVE_PAYMENTS_AUDIT.md](./docs/18_LIVE_PAYMENTS_AUDIT.md) | Payment reviewers | **Historical** pre-live audit (2026-06-10) |
+| [docs/20_NEW_STUDIO_SETUP_RUNBOOK.md](./docs/20_NEW_STUDIO_SETUP_RUNBOOK.md) | Operators | Internal checklist for provisioning a new studio |
+| [docs/22_AGENTIC_READINESS_AND_SAFETY.md](./docs/22_AGENTIC_READINESS_AND_SAFETY.md) | Anyone building AI/agentic features | **Read before any agentic work** — hard prohibitions, excluded surfaces, human-confirmation rules |
+| [docs/24_ONBOARDING_V2.md](./docs/24_ONBOARDING_V2.md) | Developers + operators | Guided first-run studio onboarding (flag-gated) |
+| [docs/integrations/google-calendar-sync.md](./docs/integrations/google-calendar-sync.md) | Developers | Google Calendar architecture + verified runtime status |
+| [docs/runbooks/](./docs/runbooks/) | Operators | Per-rollout procedures **and their dated closeouts** — `migration-first-process.md`, `0155-…`, `0156-…`, `0157-whole-session-copy-rollout.md`, `chloe-charting-unification-rollout.md` |
 | [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) | Maintainers | When to update which doc |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributors | Branching, PR discipline, review expectations |
 | [.github/pull_request_template.md](./.github/pull_request_template.md) | Every PR | Required checklist (PR #147) |
 
 ## Warnings
 
-- **Live payments are enabled ONLY for approved studios, supervised.** Supervised live owner-run **session payments** are live for approved studios (Willow + Sam's controlled studio) — live Connect onboarding, charges, refunds, and webhooks proven; live/test isolation live. **Do not enable live payments for a new/unapproved studio** outside the supervised onboarding + approval process. Still off/held product-wide: **public booking card collection** (off), **deposits / packages / partial payments** (not built), **live manual no-show / late-cancel fees** (hard-held server-side — only `session_payment` charges live). **Broad self-serve live-payment rollout is not complete.** See [docs/production/current-state.md](./docs/production/current-state.md) for the canonical posture.
+- **Live payments are enabled ONLY for approved studios, supervised.** Supervised live owner-run **session payments** are live for approved studios (Willow + Sam's controlled studio) — live Connect onboarding, charges and webhooks proven (**live refunds have never been exercised in production — `stripe_refunds` = 0 rows**); live/test isolation live. **Do not enable live payments for a new/unapproved studio** outside the supervised onboarding + approval process. Still off/held product-wide: **public booking card collection** (off), **deposits / packages / partial payments** (not built), **live manual no-show / late-cancel fees** (hard-held server-side — only `session_payment` charges live). **Broad self-serve live-payment rollout is not complete.** See [docs/production/current-state.md](./docs/production/current-state.md) for the canonical posture.
 - **Do not enable auto-charge.** No automatic, background, batch, or public-triggered charge path exists. Charging is one manual practitioner click on a `ready` attempt. Anything different is a new design that needs review.
 - **Do not bypass RLS or security review.** Every public route, token route, RPC grant, and `SECURITY DEFINER` function in this repo was chosen carefully. See [docs/03](./docs/03_SECURITY_AND_PRIVACY.md) before changing.
 - **Do not expose tokenized routes to analytics.** PR #142 removed Vercel Analytics from `/portal/verify/[token]`, `/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/calendar-feed/[token]` structurally. Adding analytics to those subtrees re-leaks the token to a third party.

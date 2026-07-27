@@ -1,12 +1,24 @@
 # 10 Deployment and environment
 
-> **⚠️ Point-in-time notes below are superseded (2026-07-08).** Production migration max is
-> **0112** (all migrations applied — any "migration 00xx NOT yet applied to production" note
-> below, e.g. for 0093, is historical; 0093/0094/0107 are applied). **Supervised live
-> owner-run session payments are live for approved studios** (public booking card collection,
-> deposits/packages/partial, and live manual fees remain off/held; broad self-serve not
-> ready) — any "live payments remain disabled" aside below is historical. Canonical current
-> state: [docs/production/current-state.md](./production/current-state.md).
+> **⚠️ Point-in-time notes below are superseded. Reconciled 2026-07-27.**
+>
+> - **Production migration max is `0157`** (hosted == repo; 157 applied, each exactly once, no
+>   `0158`+). **Every** "migration 00xx NOT yet applied to production" / "pending production
+>   migration" note below is **historical** — there is no pending migration.
+> - **Do not trust any hardcoded migration number in this document.** Derive it from
+>   `supabase/migrations/` and `supabase migration list --linked`.
+> - **Live owner-run session payments are ENABLED and in use** for two approved studios —
+>   Willow Electrolysis has **6 succeeded live-mode charges**, most recent 2026-07-26. Any
+>   "live payments remain disabled" or "live mode is structurally blocked" aside below is
+>   **false**. Still off/held: public-booking card collection (off and unwired),
+>   deposits/packages/partial payments (not built), live manual no-show / late-cancel fees
+>   (server-side hard hold). Broad self-serve live payments are **not ready**.
+> - **Runtime-bearing application HEAD:** `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`;
+>   Vercel production deployment `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb` serving `hone.care`.
+>
+> Canonical current state: [docs/production/current-state.md](./production/current-state.md) ·
+> [capability-register.md](./production/capability-register.md) ·
+> [known-limitations.md](./production/known-limitations.md).
 
 ## Hosts and domains
 
@@ -26,9 +38,13 @@
   - `http://localhost:3000/auth/callback` (dev).
   - `https://hone.care/auth/callback` (prod).
 
-## Pending production migration: 0095 (PR #279, charting numbing + probe-lot confirm)
+## [HISTORICAL] Pending production migration: 0095 (PR #279, charting numbing + probe-lot confirm)
 
-- Migration **0095** (`session_blocks.numbing_status` + `probe_lot_confirmed`) is in-tree and CI-verified but **NOT applied to production** until explicitly approved.
+> **⚠️ COMPLETED LONG AGO — retained as an example of the migration-first ordering rationale.**
+> **0095 is applied in production** (hosted max is 0157). There is no pending migration. Read
+> this section for the *ordering reasoning*, not for its status.
+
+- Migration **0095** (`session_blocks.numbing_status` + `probe_lot_confirmed`) was in-tree and CI-verified but **not yet applied to production** *at the time this was written*.
 - **Ordering matters (different from 0094):** the PR #279 app **writes** these two columns on every charting save, so the columns must exist in prod **before** the new app serves traffic. 0095 is **additive and backward-compatible** — the *current* (pre-#279) app never references the new columns, so 0095 is safe to apply to prod **ahead of merging #279**. **Recommended sequence: apply 0095 to prod first (approved), then merge PR #279.** Merging #279 before 0095 is applied would make charting saves fail in prod (writing to a non-existent column).
 - Apply path (when approved): run the read-only preflight in the migration header (both counts 0 before apply) → `supabase db push --linked` for 0095 only → read-only verify both columns + the `session_blocks_numbing_status_check` exist. Legacy rows read as Not recorded / not confirmed.
 
@@ -48,7 +64,7 @@
 - Connected-account webhook endpoint: `https://hone.care/api/stripe/webhook`. **Use the connected-account webhook, not the platform webhook.** Earlier confusion between the two caused signature-mismatch failures; the consolidated connected-account webhook is the only correct configuration today.
 - Events to enable on the webhook: `account.updated`, `capability.updated`, `setup_intent.succeeded`, `setup_intent.setup_failed`. Other events are received and recorded with `ignoredInPhase1: true` summary.
 - API version pinned to `2026-04-22.dahlia` in `lib/stripe/server.ts:STRIPE_API_VERSION`.
-- **Live mode is structurally blocked** (`STRIPE_ALLOW_LIVE_MODE` unset / `false` in production). The full readiness review and go/no-go checklist live in [docs/16](./16_LIVE_PAYMENTS_READINESS.md) (PR #168); the **ordered enablement sequence — env flip LAST, after the DB CHECK / claim RPC / runtime guards / webhook are each relaxed** — is [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297). **Flipping `STRIPE_ALLOW_LIVE_MODE=true` alone is NOT enough** and will not enable live charging. Until every box is checked, do not flip it and do not rotate keys to `sk_live_*`. See also [docs/06 §3](./06_PAYMENTS_AND_STRIPE.md#3-live-mode-guards).
+- **Live mode is ENABLED in production** for approved studios (`STRIPE_ALLOW_LIVE_MODE=true`). Willow Electrolysis has **6 succeeded live-mode charges**, most recent 2026-07-26. The earlier "structurally blocked" statement is superseded. **Vercel Preview / Development MUST still use `sk_test_*`.** The full readiness review and go/no-go checklist live in [docs/16](./16_LIVE_PAYMENTS_READINESS.md) (PR #168); the **ordered enablement sequence — env flip LAST, after the DB CHECK / claim RPC / runtime guards / webhook are each relaxed** — is [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297). **The env flip was the LAST step of that sequence and it has been executed** — as proven by 6 succeeded live-mode charges on Willow through 2026-07-26. *(Historical, pre-enablement: "flipping `STRIPE_ALLOW_LIVE_MODE=true` alone is NOT enough … until every box is checked, do not flip it" was correct before the sequence completed.)* **Do not roll the flag back, rotate production keys, or onboard an ADDITIONAL studio to live mode without owner approval** — per-studio live enablement remains a supervised decision, and Preview / Development must stay `sk_test_*`. See also [docs/06 §3](./06_PAYMENTS_AND_STRIPE.md#3-live-mode-guards).
   - **Payment manual-review queue (PR #290):** the read-only admin page `/admin/payments/manual-review` is **operator-only** (the existing `ADMIN_EMAILS` / `isAdmin` gate — no new env var, no migration) and read-only (no Stripe call, no payment mutation). It surfaces stuck `pending_stripe` attempts + unresolved critical payment alerts for review; it does **not** enable live payments. Reconciliation steps live in docs/16 §17 / docs/11.
   - **Controlled-enablement + reconciliation runbook (PR #282):** the authoritative pre/during/post first-live-payment checklist, the read-only reconciliation SQL queries, and the **rollback plan** live in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md#17-payment-reconciliation--controlled-live-payment-readiness-runbook-pr-282). **Rollback if anything looks wrong: set `STRIPE_ALLOW_LIVE_MODE` back to unset/`false`, revert any `sk_live_*` key to `sk_test_*`, pause the charging path, then inspect the admin Ops alerts page + the Stripe dashboard and document the outcome.** PR #282 is readiness/reconciliation only — it does **not** enable live payments or change any Stripe key/env.
 
@@ -146,7 +162,7 @@ What the headers depend on for correctness:
 
 - **Test vs live keys.** Vercel Preview and Development environments **MUST** use `sk_test_*` regardless of `STRIPE_ALLOW_LIVE_MODE`. The key-gate enforces this and throws if a live key is presented in those environments.
 - **Webhook secret.** The signing secret in `STRIPE_WEBHOOK_SECRET` must match the connected-account webhook (not the platform webhook). A mismatch causes every webhook to return 400 and Stripe will retry until the operator fixes it.
-- **Live-mode opt-in.** `STRIPE_ALLOW_LIVE_MODE=true` is the only way `sk_live_*` is accepted. The current production deployment leaves this unset; a live-mode PR is the only place that flips it, and only with the [docs/06 §9](./06_PAYMENTS_AND_STRIPE.md#9-live-charging-requirements) checklist satisfied.
+- **Live-mode opt-in.** `STRIPE_ALLOW_LIVE_MODE=true` is the only way `sk_live_*` is accepted. **Production sets it** — the earlier "the current production deployment leaves this unset" statement is superseded, as proven by 6 succeeded live-mode charges on Willow Electrolysis. It was flipped through the controlled enablement sequence in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md) — **the env flip was the LAST step of that sequence and it has been executed.** *(Historical, pre-enablement: flipping the flag alone was never sufficient; the DB CHECK, claim RPC and webhook work had to land first. That ordering is now complete.)* Enabling live payments for an **additional** studio is still a per-studio supervised-onboarding decision, not an env change. **Vercel Preview and Development MUST still use `sk_test_*` regardless of the flag** — the key gate enforces this.
 - **Stripe-write source gate.** `scripts/check-stripe-gates.mjs` (run in CI + by `scripts/verify-production.mjs`) is a **source-gate/read-only** inventory of every Stripe mutating call: money movement stays **1/1/0/0**, the six non-money writes (`customers.create`, `setupIntents.create`, `accounts.create`, `accountLinks.create`, `accounts.createLoginLink`, browser `confirmSetup`) are exactly-count pinned to their one file each, and any **unknown/unclassified** Stripe write hard-fails. It changes no runtime behavior. Full inventory: [docs/06 §3b](./06_PAYMENTS_AND_STRIPE.md#3b-complete-stripe-write-source-inventory-pr-309).
 
 ## Deployment verification (per-PR)
@@ -168,4 +184,4 @@ Before enabling live payments or broadening sensitive-data use, run the **operat
 node --env-file=.env.local scripts/verify-production.mjs
 ```
 
-It proves remote production matches the repo's required state — migration max **0099** + the 0093/0097/0098/0099 effects, private treatment-image bucket, RLS on the critical tables, zero unresolved critical payment ops alerts, Stripe gates 1/1/0/0, and a fresh reminder heartbeat — printing only PASS/FAIL/INCOMPLETE (no secrets/PII) and exiting non-zero if anything is unverified. It performs **no writes, no migration, no cron, no email, no Stripe writes**, and is **not** a CI gate or a live-payment enablement step. Full runbook + the remaining manual dashboard checks: [docs/16 §17.13](./16_LIVE_PAYMENTS_READINESS.md#1713-read-only-production-verification-pr-308).
+It proves remote production matches the repo's required state — migration max **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" here is stale) + the 0093/0097/0098/0099 effects, private treatment-image bucket, RLS on the critical tables, zero unresolved critical payment ops alerts, Stripe gates 1/1/0/0, and a fresh reminder heartbeat — printing only PASS/FAIL/INCOMPLETE (no secrets/PII) and exiting non-zero if anything is unverified. It performs **no writes, no migration, no cron, no email, no Stripe writes**, and is **not** a CI gate or a live-payment enablement step. Full runbook + the remaining manual dashboard checks: [docs/16 §17.13](./16_LIVE_PAYMENTS_READINESS.md#1713-read-only-production-verification-pr-308).

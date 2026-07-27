@@ -52,7 +52,7 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 
 ### Thermolysis duration (PR #165, migration 0071)
 
-`electrolysis_entries.thermolysis_duration_seconds` is `numeric` (was `integer` in migration 0042). A thermolysis flash is often a fraction of a second; Chloe logged values like `0.15` and saw the read view collapse to `0 seconds` because the integer column was truncating at insert. The widened column carries decimals losslessly; the form input uses `step="0.01"` + `inputMode="decimal"`, and the entry-row display routes through `lib/sessions/format-seconds.ts:formatSeconds` which yields `"0.15 seconds"` / `"1 second"` / `"2 seconds"`. Galvanic duration stays integer (Chloe did not flag it); intensity-percent fields stay integer (they are 0–100 percentages).
+`electrolysis_entries.thermolysis_duration_seconds` is `numeric` (was `integer` in migration 0042). A thermolysis flash is often a fraction of a second; Chloe logged values like `0.15` and saw the read view collapse to `0 seconds` because the integer column was truncating at insert. The widened column carries decimals losslessly; the form input uses `step="0.01"` + `inputMode="decimal"`, and the entry-row display routes through `lib/sessions/format-seconds.ts:formatSeconds` which yields `"0.15 seconds"` / `"1 second"` / `"2 seconds"`. Galvanic duration stays integer (Chloe did not flag it); intensity-percent fields stay integer (they are 0–100 percentages) — **but note `galvanic_intensity_percent` is a RETIRED reading as of PR #479: no form supplies it, the write path never emits it, and new rows carry NULL. Historical values are preserved (the column was not dropped). `galvanic_ma` and `galvanic_duration_seconds` remain active**.
 
 ### Session block side label (PR #162)
 
@@ -121,7 +121,9 @@ Business events for the practitioner workflow. **Separate from `ops_alerts`** (P
 ### Studio payment settings (`studio_payment_settings`, migration 0032)
 - One row per studio with `stripe_account_id`, `stripe_account_status` ∈ `pending / restricted / enabled / rejected`, `stripe_charges_enabled`, `stripe_payouts_enabled`, `stripe_onboarding_completed_at`, `require_card_on_file` (defaults `false`; never flipped in any current code path), `default_charge_currency = 'cad'`, `stripe_livemode`.
 
-### Session payment model (PR #169 product model; PR #172 prepare flow shipped, test-mode only)
+### Session payment model (PR #169 product model; PR #172 prepare flow) — **NOW LIVE, not test-mode only**
+
+> **Updated 2026-07-27:** session payments run in **live mode** for approved studios. Willow Electrolysis has **6 succeeded live-mode charges**, most recent 2026-07-26. The "test-mode only" framing below is historical.
 - **Canonical charge reasons** (the only three the system supports): `session_payment` (client received treatment), `late_cancellation_fee` (client cancelled inside policy window), `no_show_fee` (client did not attend).
 - **One charge primitive** parameterized by `charge_reason`. The proven `runManualFeeCharge` pattern (claim/lock + deterministic idempotency key + Stripe PaymentIntent on connected account + persisted attempt row + webhook reconciliation + ops_alert) is the contract every future charge path follows. `late_cancellation_fee` and `no_show_fee` already use it in test mode (PR #146); `session_payment` will reuse it.
 - **Charge AFTER the session, not at booking.** Electrolysis final pricing varies by actual treatment time, area, practitioner judgement, discounts, and corrections. The booking price is a quote; the charge happens when the practitioner confirms the final amount at session end. Upfront-checkout is a different product and is out of v1 scope.

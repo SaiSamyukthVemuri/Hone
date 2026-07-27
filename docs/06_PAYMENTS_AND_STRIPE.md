@@ -1,23 +1,23 @@
 # 06 Payments and Stripe
 
-> **Status note (reconciled — supersedes stale detail below).** The **single** canonical charge executor is `lib/billing/session-payment-charge.ts` (`runSessionPaymentCharge`), which handles session payments **and** the late-cancellation / no-show **fee** charges on the canonical `payment_charge_attempts` ledger. The legacy `lib/billing/manual-fee-charge.ts` executor was **deleted in PR #218**; fee unification onto `payment_charge_attempts` is **complete (PR #196, migration 0083)**. `scripts/check-stripe-gates.mjs` pins **exactly one** `paymentIntents.create` (`session-payment-charge.ts`) and **one** `refunds.create` (`lib/billing/payment-refund.ts`); `charges.create` / `checkout.sessions` are **0**. Payment-outcome zero-row detection was added in PR #263. **Supervised live owner-run session payments are LIVE for approved studios** (Willow + Sam's controlled studio; live Connect + charges + refunds + webhooks proven; live/test isolation live; Stripe gates 15 PASS). Still **off / held:** public booking card collection, deposits / packages / partial payments, and live manual no-show / late-cancel fees (hard-held); broad self-serve live payments are not ready. Sections below that still describe a separate `manual_fee_charge_attempts` runtime as the active charge path, or that say "live payments remain disabled / enablement has not started," are **retained as historical / point-in-time design detail (superseded 2026-07-08)**; where they conflict with this note, **this note is authoritative** (canonical: [docs/production/current-state.md](./production/current-state.md)).
+> **Status note (reconciled — supersedes stale detail below).** The **single** canonical charge executor is `lib/billing/session-payment-charge.ts` (`runSessionPaymentCharge`), which handles session payments **and** the late-cancellation / no-show **fee** charges on the canonical `payment_charge_attempts` ledger. The legacy `lib/billing/manual-fee-charge.ts` executor was **deleted in PR #218**; fee unification onto `payment_charge_attempts` is **complete (PR #196, migration 0083)**. `scripts/check-stripe-gates.mjs` pins **exactly one** `paymentIntents.create` (`session-payment-charge.ts`) and **one** `refunds.create` (`lib/billing/payment-refund.ts`); `charges.create` / `checkout.sessions` are **0**. Payment-outcome zero-row detection was added in PR #263. **Supervised live owner-run session payments are LIVE for approved studios** (Willow + Sam's controlled studio; live Connect + charges + webhooks proven; refunds deployed but with **zero production rows on this baseline** (`stripe_refunds` = 0); disputes alert-only and never exercised; live/test isolation live; Stripe gates 15 PASS). Still **off / held:** public booking card collection, deposits / packages / partial payments, and live manual no-show / late-cancel fees (hard-held); broad self-serve live payments are not ready. Sections below that still describe a separate `manual_fee_charge_attempts` runtime as the active charge path, or that say "live payments remain disabled / enablement has not started," are **retained as historical / point-in-time design detail (superseded 2026-07-08)**; where they conflict with this note, **this note is authoritative** (canonical: [docs/production/current-state.md](./production/current-state.md)).
 
 ## 1. Current payment status
 
 | Capability | State |
 |---|---|
-| Stripe Connect Express onboarding | **Production**, test mode |
-| Card-on-file via SetupIntent on connected account | **Production**, test mode |
+| Stripe Connect Express onboarding | **Production — live + test**, mode-scoped (0103). Willow Electrolysis and the controlled test studio both hold enabled **live** accounts (charges + payouts) |
+| Card-on-file via SetupIntent on connected account | **Production — live + test**, with live/test isolation (8 stored payment methods) |
 | Test-mode cancellation/no-show fee charge | **Production**, test mode — **unified onto `payment_charge_attempts`** (PR #196, migration 0083); the legacy `manual_fee_charge_attempts` runtime was removed in PR #218 (historical rows readable only) |
 | Test-mode session payment charge end-to-end (prepare, run, status UX, completion-to-billing handoff) | **Production**, test mode on `payment_charge_attempts` (PRs #171-#174, #180, #181) |
-| Receipts (session-payment test receipt email) | **Production**, test mode (PR #175); manual-fee charge notice still not built |
+| Receipts (session-payment receipt email) | **Production — live + test** (PR #175); live receipts have been issued for approved studios. Manual-fee charge notice still not built |
 | Refunds (full-amount, reason-agnostic, `payment_charge_attempts`) | **Production**, test mode (PR #178) |
-| Webhook reconciliation for `payment_charge_attempts` | **Production**, test mode (PR #179); live events hard-ignored at handler entry |
+| Webhook reconciliation for `payment_charge_attempts` | **Production — live + test** (PR #179). *(Corrected 2026-07-27: "live events hard-ignored at handler entry" is superseded — `shouldIgnoreLiveModeEvent` is now a MODE-MISMATCH guard, ignoring events whose mode differs from the runtime, not all live events. Live webhooks are processed for approved studios.)* |
 | Dispute handling | **Alert-only** (PR #179: `charge.dispute.created` fires a critical ops_alert); no automated response |
 | Automatic charging | **Not built** |
 | Batch charging | **Not built** |
 | Public booking card-required flow | **Schema present (migration 0032), code dormant** |
-| Live mode | **Blocked** by three independent guards (see §3) |
+| Live mode | **ENABLED for approved studios and in active use** — see §3. **Willow Electrolysis has 6 succeeded live-mode charges, most recent 2026-07-26.** The pre-live "blocked by three guards" posture below is **historical** |
 
 ## 2. Stripe Connect model
 
@@ -36,11 +36,40 @@ Studios onboard via **Stripe Connect Express**. Each studio gets a connected acc
 
 ## 3. Live-mode guards
 
-Three independent guards stack. All three must be deliberately altered for live charging. **The full ordered enablement sequence (every guard + DB CHECK + claim RPC + webhook + env, in order — env flip last) is the source of truth in [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only); a CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`) keeps them intact. Live payments remain disabled.**
+**CURRENT STATE — verified 2026-07-27.**
 
-1. **Key gate.** `lib/stripe/server.ts:assertStripeKeyAllowed` refuses any `sk_live_*` secret unless `STRIPE_ALLOW_LIVE_MODE=true`. Vercel Preview / Development MUST use `sk_test_*` regardless of the flag.
-2. **Code gate.** `inferStripeLivemode()` short-circuits the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments + fees) to `live_mode_blocked` before any Stripe call when the env is live. (The legacy `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
-3. **DB CHECK.** `payment_charge_attempts_livemode_false_check` pins `stripe_livemode=false` on the canonical `payment_charge_attempts` ledger (session-payment and fee charges). A row cannot persist `true` until a deliberate migration drops or replaces the constraint.
+> **⚠️ The three-guard "live mode is blocked" model described below is HISTORICAL.** It was
+> the pre-live posture. **Live payments are enabled and in use.** The guards were deliberately
+> altered through the controlled enablement sequence in
+> [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only),
+> which is the record of how it was done.
+
+**What is actually true now:**
+
+1. **Key gate — still present, now satisfied.** `lib/stripe/server.ts:assertStripeKeyAllowed`
+   still refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`. Production sets it.
+   **Vercel Preview / Development MUST still use `sk_test_*` regardless of the flag.**
+2. **Code gate — no longer a block.** `inferStripeLivemode()` now drives *mode-aware*
+   behaviour rather than a `live_mode_blocked` short-circuit for session payments. (The legacy
+   `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
+3. **DB CHECK — the constraint on the canonical ledger NO LONGER EXISTS.** Migration **0101**
+   dropped `payment_charge_attempts_livemode_false_check`. Verified in production 2026-07-27
+   via `pg_constraint`: the **only** remaining livemode CHECK is
+   `manual_fee_charge_attempts_livemode_false_check` — `CHECK ((stripe_livemode = false))` —
+   on the **legacy, read-only** manual-fee table. The canonical `payment_charge_attempts`
+   ledger holds **8 rows with `stripe_livemode = true`** (6 Willow, 2 the controlled test
+   studio), which is only possible because the constraint is gone.
+
+   **Do not state that a DB CHECK prevents live rows on `payment_charge_attempts`.** It does
+   not, and has not since 0101.
+
+**The guard that IS still load-bearing today** is the **live charge-reason allow-list**:
+`lib/billing/live-charge-reason-allowlist.ts` blocks every non-`session_payment` reason in
+live mode, enforced at **both** prepare and execute. That is why live manual no-show and
+late-cancellation fees remain **held** while live session payments flow.
+
+Canonical posture: [docs/16 header](./16_LIVE_PAYMENTS_READINESS.md) ·
+[capability-register.md §7](./production/capability-register.md).
 
 ## 3b. Complete Stripe-write source inventory (PR #309)
 
@@ -139,7 +168,7 @@ What the row carries vs leaves null:
 | `charged_at` | **null** (future execution PR) |
 | `failed_at` | **null** (future execution PR) |
 
-The prepare card explicitly does NOT render any "Pay now" or "Charge card" affordance. The disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."` Three structural dormancy guards remain intact (key gate / code gate / DB CHECK) plus a fourth from PR #171 (`payment_charge_attempts_livemode_false_check`). The legacy `manual_fee_charge_attempts` runtime is byte-for-byte untouched.
+The prepare card explicitly does NOT render any "Pay now" or "Charge card" affordance. The disclaimer reads `"This prepares a test-mode payment record. It does not charge the client."` Three structural dormancy guards remained intact at that time (key gate / code gate / DB CHECK) plus a fourth from PR #171 (`payment_charge_attempts_livemode_false_check`). *(Historical: 0101 later dropped that CHECK; live session payments are now enabled — see §3.)* The legacy `manual_fee_charge_attempts` runtime is byte-for-byte untouched.
 
 ```
 client opens /portal -> "Add card" entry
@@ -194,7 +223,7 @@ After a `succeeded` row exists on `public.payment_charge_attempts` (PR #173 char
 
 Triple dormancy guard (mirrors PR #173 charge path):
 1. `inferStripeLivemode()` short-circuit at function entry. Live env → `outcome:"live_mode_blocked"` before any DB / Stripe call.
-2. Row-level CHECK `payment_charge_attempts_livemode_false_check` (the charge attempt row itself cannot be live-mode).
+2. Row-level CHECK `payment_charge_attempts_livemode_false_check` (the charge attempt row itself cannot be live-mode). *(Historical — 0101 dropped this CHECK; live rows are now permitted and 8 exist.)*
 3. Conditional UPDATE claim predicate: `status='succeeded' AND stripe_livemode=false AND (refund_status IS NULL OR refund_status='failed')`. The claim is the only place that flips null/failed → `pending_stripe`.
 
 Idempotency:
@@ -297,9 +326,9 @@ PR #281 makes success authoritative without a migration, a new public status, or
 
 ### Reconciliation + live-payment readiness (PR #282)
 
-PR #282 is **readiness + reconciliation only — NOT live-payment enablement.** It adds the authoritative post-#281 **reconciliation + controlled live-payment runbook** in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md#17-payment-reconciliation--controlled-live-payment-readiness-runbook-pr-282): a Before/During/After first-live-payment checklist, the forbidden actions (no `STRIPE_ALLOW_LIVE_MODE=true`, no live keys, no live charges, no broad card-required flows), a rollback plan, and a set of **read-only (SELECT-only) reconciliation SQL queries** over `payment_charge_attempts`, `ops_alerts`, and `stripe_events` (stuck `pending_stripe`; Stripe-PI-present-but-local-not-succeeded; the #281 `session_payment_succeeded_write_*` criticals; refund-review alerts; unprocessed/unmapped webhook events; recent payment criticals). Operators already see these alerts on the admin **Ops alerts** page (`/admin/ops-alerts`). **No migration, no runtime/behavior change, no new UI, no executable prod-connecting script.** **Live payments remain disabled; controlled live-payment enablement has not started.**
+PR #282 is **readiness + reconciliation only — NOT live-payment enablement.** It adds the authoritative post-#281 **reconciliation + controlled live-payment runbook** in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md#17-payment-reconciliation--controlled-live-payment-readiness-runbook-pr-282): a Before/During/After first-live-payment checklist, the forbidden actions (no `STRIPE_ALLOW_LIVE_MODE=true`, no live keys, no live charges, no broad card-required flows), a rollback plan, and a set of **read-only (SELECT-only) reconciliation SQL queries** over `payment_charge_attempts`, `ops_alerts`, and `stripe_events` (stuck `pending_stripe`; Stripe-PI-present-but-local-not-succeeded; the #281 `session_payment_succeeded_write_*` criticals; refund-review alerts; unprocessed/unmapped webhook events; recent payment criticals). Operators already see these alerts on the admin **Ops alerts** page (`/admin/ops-alerts`). **No migration, no runtime/behavior change, no new UI, no executable prod-connecting script.** **[HISTORICAL — as of PR #282] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — enablement completed; see §1 and §3.)*
 
-App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
+App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **[HISTORICAL — as of PR #282] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — enablement completed; see §1 and §3.)* Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
 
 ### Payment manual-review queue (PR #290)
 
@@ -462,19 +491,36 @@ paymentIntents.create:
       UPDATE, idempotency key stamp in one transaction)
     - deterministic idempotency key
     - connected-account context { stripeAccount }
-    - inferStripeLivemode() test-mode gate
-    - payment_charge_attempts_livemode_false_check DB CHECK
+    - inferStripeLivemode() mode-aware gate
+    - live charge-reason allow-list (live mode permits session_payment ONLY)
+      -- lib/billing/live-charge-reason-allowlist.ts, enforced at prepare AND execute
 
   (The legacy lib/billing/manual-fee-charge.ts call site was deleted in
   PR #218.) Any new paymentIntents.create occurrence is high-risk and
   must be explicitly reviewed.
 ```
 
-The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, livemode inference gate, and the `payment_charge_attempts_livemode_false_check` DB CHECK.
+The session-payment occurrence (PR #173) sits behind the equivalent stack on `payment_charge_attempts`: practitioner auth, eligibility recheck, atomic claim RPC, deterministic idempotency key, `{ stripeAccount }` context, and the livemode inference gate.
+
+> **⚠️ CORRECTION (2026-07-27):** earlier revisions of this list ended with "and the
+> `payment_charge_attempts_livemode_false_check` DB CHECK". **That constraint no longer
+> exists** — migration `0101` **dropped** it (line 38) and replaced it with
+> `payment_charge_attempts_live_requires_account_check` (`stripe_livemode = false OR
+> stripe_account_id is not null`), which does **not** prevent live rows. The canonical ledger
+> holds 8 rows with `stripe_livemode = true`. The gate that is actually load-bearing in live
+> mode today is the **charge-reason allow-list**
+> (`lib/billing/live-charge-reason-allowlist.ts`) — see §3.
 
 **Do not say** `paymentIntents.create` should be zero. `scripts/check-stripe-gates.mjs` pins **exactly 1** occurrence in the single allowlisted file above (`lib/billing/session-payment-charge.ts`); it is a legitimate test-mode path and deleting it would break session-payment + fee charging. `refunds.create` is pinned at exactly 1 (`lib/billing/payment-refund.ts`, PR #178); `charges.create` and `checkout.sessions` at 0; `STRIPE_ALLOW_LIVE_MODE=true` appears only as the error-message string in `lib/stripe/server.ts`.
 
 ## 9. Live charging requirements
+
+**⚠️ HISTORICAL (pre-live).**
+
+> This was the pre-live requirements list. **Live session payments were subsequently enabled**
+> through the controlled sequence in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md), and Willow
+> Electrolysis has **6 succeeded live-mode charges** (most recent 2026-07-26). Read this section
+> as the record of what was required, not as an open checklist.
 
 When a live-mode PR is opened (it is not opened today), it must do all of the following. Cherry-picking is not safe.
 
@@ -484,7 +530,7 @@ When a live-mode PR is opened (it is not opened today), it must do all of the fo
 4. **Webhook handlers** for `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`. Status: built reason-agnostic for `payment_charge_attempts` (PR #179, metadata-matched, claimed via `claim_stripe_event`); live events are hard-ignored at handler entry. Remaining for live: deliberately relax the livemode guard. (Fee unification is already done — fees ride `payment_charge_attempts` since PR #196 and inherit this reconciliation; the legacy `manual_fee_charge_attempts` runtime was removed in PR #218.)
 5. **Strengthen pending reconciliation.** Replace the "trust Stripe idempotency within 60 minutes" path with `paymentIntents.search` by metadata before any retry. The Stripe idempotency window is 24 hours; live mode must never depend on that being long enough.
 6. **Manual smoke against a live test charge** with refund.
-7. **Deliberately replace `payment_charge_attempts_livemode_false_check`** (the canonical ledger CHECK) with the live-mode equivalent. The migration must be reviewed.
+7. ~~**Deliberately replace `payment_charge_attempts_livemode_false_check`**~~ — **DONE.** Migration `0101` dropped that CHECK and replaced it with `payment_charge_attempts_live_requires_account_check`.
 8. **Never enable auto-charge** in the same PR as live mode. Manual click stays manual.
 
 ## 10. Do-not-do section

@@ -1,13 +1,84 @@
 # 13 Backlog and decisions
 
-> **⚠️ HISTORICAL PER-PR LOG.** This is a dated decision log; **each entry reflects the state
-> at its own date** and is retained verbatim as history — it is NOT maintained as current
-> state. In particular, entries dated before 2026-07-08 that say "live payments remain
-> disabled / not started / production stays at 010x" are **point-in-time** and are superseded:
-> the current payment posture is **supervised live owner-run session payments live for
-> approved studios** (public booking card collection, deposits/packages/partial, and live
-> manual fees remain off/held; broad self-serve not ready), and production migration max is
-> **0112**. Canonical current state: [docs/production/current-state.md](./production/current-state.md).
+> **⚠️ HISTORICAL PER-PR LOG.** Below the "Active decisions and queue" section, this is a
+> dated decision log; **each entry reflects the state at its own date** and is retained
+> verbatim as history — it is NOT maintained as current state. Entries saying "live payments
+> remain disabled / not started", "production stays at 010x", "migration max 0112", "0157
+> pending" or "PR #478 is a draft" are **point-in-time and superseded**.
+>
+> **Canonical current state:** [docs/production/current-state.md](./production/current-state.md) ·
+> [capability-register.md](./production/capability-register.md) ·
+> [known-limitations.md](./production/known-limitations.md) ·
+> [migration-ledger.md](./production/migration-ledger.md).
+> Current production migration max is **0157**; the runtime-bearing application HEAD is
+> **`96b28d6…`**.
+
+---
+
+## Active decisions and queue (2026-07-27)
+
+This section **is** maintained as current. Everything under "Decision log" below is history.
+
+### Willow direct new-client consultation booking route — `Deferred by product decision`
+
+**Decision (2026-07-27): DEFERRED.** A dedicated direct booking route for new-client
+consultations is **not built**, is **not a launch blocker**, and is **not the next engineering
+task**. It must not be described as currently built or live anywhere in the documentation.
+
+*Why:* existing public booking plus operator-side booking cover current pilot volume, and the
+deep audit is the higher-value next investment. *Alternative considered:* building it before
+the audit — rejected, because it would add unaudited surface area to a clinical system that
+has not yet had a comprehensive security review. *Owner:* Sam (product). *Revisit:* no date
+scheduled; this is a product decision, not an engineering blocker.
+
+### Chloe's human acceptance testing — `Pending`
+
+**Status (2026-07-27): OUTSTANDING.** Engineering deployment of the Phase A charting
+correction (PR #479) and whole-session copy (PR #478 + migration 0157) is **complete**. Chloe's
+on-device acceptance is **not**.
+
+Outstanding acceptance items: the unified *Treatment observations & skin response* box;
+galvanic intensity being absent from new charting; `0.733` displaying as `0.733 seconds`; the
+*Thermolysis pulse count* label and placement; the larger *Additional notes* field; **one real
+whole-session copy** (none has ever been performed — the provenance ledger holds 0 rows);
+conditional numbing notes (0156); and inventory-backed probe-lot linkage (0155).
+
+**Do not imply that no Chloe work remains.** Acceptance may happen separately and later, and
+it does not block the audit. *Owner:* Chloe. See
+[known-limitations.md](./production/known-limitations.md) L1 and L2.
+
+### Production documentation reconciliation — `Active`
+
+**Status (2026-07-27): IN PROGRESS** on branch `docs/production-reconciliation-2026-07-27`,
+cut from the runtime-bearing head `96b28d6…`. Rebuilds `current-state.md`,
+`migration-ledger.md` and `09_DATABASE_AND_RLS.md` against verified production evidence, adds
+`capability-register.md` and `known-limitations.md`, and closes out both rollout runbooks.
+Documentation-only: no runtime code, migration, database type, flag, provider or production
+change. *Owner:* Sam.
+
+### Deep skeptical production / security / code audit — `Next`
+
+**Status (2026-07-27): NOT STARTED.** This is the **next substantive engineering and
+governance work** after the documentation reconciliation. It has not been performed against
+the current baseline (`96b28d6…`, migration max 0157).
+
+Passing tests and passing gates are **not** evidence of security. Per-PR adversarial reviews,
+`check-stripe-gates`, the DB/RLS integration lane, the types-drift check and
+`verify-production.mjs` each prove specific behaviours; none of them substitutes for an audit.
+*Owner:* Sam.
+
+### Broader second-studio and multi-practitioner rollout — `Held`
+
+**Status (2026-07-27): HELD.** Only **after** the deep audit and **explicit authorization**.
+
+Schema and code existing is not launch readiness. Today `practitioner_capacity_enabled` is
+true only on the controlled test studio and **false at Willow**, and
+`practitioner_capacity_booking_enabled` — the public-booking kill switch — is **false on every
+studio**. Note also that flipping capacity ON→OFF is **not** a truthful instant rollback once
+parallel appointments exist (see the 0136 migration header). *Owner:* Sam. See
+[known-limitations.md](./production/known-limitations.md) L7 and L17.
+
+---
 
 ## Decision log
 
@@ -481,7 +552,7 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 ### Agentic readiness and safety plan (PR #240, docs-only)
 
-**Decision (2026-06-12):** with the post-hardening and mobile pilot polish sequence complete through PR #239, the next strategic direction is to make Hone agentic, but safely. The goal is an operating memory system for electrologists that can prepare, flag, summarize, and draft from recorded treatment history, NOT a generic chatbot and NOT a system that decides anything clinical, sends anything, or moves money. **This PR is docs/design only: no AI runtime, no model call, no endpoint, no migration, no schema, no RLS change, no payment capability is added.** It adds `docs/22_AGENTIC_READINESS_AND_SAFETY.md`, which fixes the rules any future agentic build must satisfy before a line of agentic code is written: the product principle (assistant not decider; draft not send; flag not diagnose; summarize recorded history, do not invent; prepare the practitioner, do not prescribe; require human confirmation before any external action; never silently mutate clinical history; never auto-charge; never auto-message clients); the safe read surfaces (today's appointments, client basics, Before Today, Treatment Intelligence, session blocks, treatment-area history, probe/lot, tolerance/reaction/caution, next-session notes, missing-record reminders, intake status, already-visible record gaps); the excluded sensitive surfaces (exposure incident details and audit payloads, payment internals, Stripe ids, raw appointment tokens, raw calendar feed tokens, auth/session data, unscoped audit JSON, anything cross-studio or outside RLS), mirroring the Global Search V1 exclusions (PR #232) and the exposure-incident owner tier (PR #222, migration 0088); the hard prohibitions (no treatment-setting recommendations as medical advice, no safe/unsafe claims, no diagnosis, no causation, no silent clinical mutation, no deletes, no auto-send, no auto-charge, no unconfirmed appointment create/change, no exposure detail exposure to non-owners); per-action human confirmation rules; the safe-wording vocabulary; the first three future workflows (Daily Prep Brief V1, Missing Records / Follow-up Assistant, Draft-only Client Message Assistant); and the audit + RLS posture (same studio-scoped access, no service-role broad search, no cross-studio memory, no public AI endpoints, exposure incidents stay owner-tiered, payments stay off). **The agentic roadmap therefore starts with a safety plan, not a runtime.** The next possible PR after this is Daily Prep Brief V1, built read-and-draft only under every rule in docs/22. Docs-only PR; pinned by tests/docs/agentic-readiness.test.ts. Live payments remain disabled.
+**Decision (2026-06-12):** with the post-hardening and mobile pilot polish sequence complete through PR #239, the next strategic direction is to make Hone agentic, but safely. The goal is an operating memory system for electrologists that can prepare, flag, summarize, and draft from recorded treatment history, NOT a generic chatbot and NOT a system that decides anything clinical, sends anything, or moves money. **This PR is docs/design only: no AI runtime, no model call, no endpoint, no migration, no schema, no RLS change, no payment capability is added.** It adds `docs/22_AGENTIC_READINESS_AND_SAFETY.md`, which fixes the rules any future agentic build must satisfy before a line of agentic code is written: the product principle (assistant not decider; draft not send; flag not diagnose; summarize recorded history, do not invent; prepare the practitioner, do not prescribe; require human confirmation before any external action; never silently mutate clinical history; never auto-charge; never auto-message clients); the safe read surfaces (today's appointments, client basics, Before Today, Treatment Intelligence, session blocks, treatment-area history, probe/lot, tolerance/reaction/caution, next-session notes, missing-record reminders, intake status, already-visible record gaps); the excluded sensitive surfaces (exposure incident details and audit payloads, payment internals, Stripe ids, raw appointment tokens, raw calendar feed tokens, auth/session data, unscoped audit JSON, anything cross-studio or outside RLS), mirroring the Global Search V1 exclusions (PR #232) and the exposure-incident owner tier (PR #222, migration 0088); the hard prohibitions (no treatment-setting recommendations as medical advice, no safe/unsafe claims, no diagnosis, no causation, no silent clinical mutation, no deletes, no auto-send, no auto-charge, no unconfirmed appointment create/change, no exposure detail exposure to non-owners); per-action human confirmation rules; the safe-wording vocabulary; the first three future workflows (Daily Prep Brief V1, Missing Records / Follow-up Assistant, Draft-only Client Message Assistant); and the audit + RLS posture (same studio-scoped access, no service-role broad search, no cross-studio memory, no public AI endpoints, exposure incidents stay owner-tiered, payments stay off *(historical as of 2026-06-12; the current posture is controlled live payments for approved studios — see the Active decisions section at the top of this file)*). **The agentic roadmap therefore starts with a safety plan, not a runtime.** The next possible PR after this is Daily Prep Brief V1, built read-and-draft only under every rule in docs/22. Docs-only PR; pinned by tests/docs/agentic-readiness.test.ts. Live payments remain disabled.
 
 ### Chloe pilot feedback cleanup (PR #238, no migration)
 
@@ -1153,7 +1224,7 @@ Every column nullable. All CHECK constraints use DROP+ADD so the migration is re
 
 ### Exactly one `paymentIntents.create` is allowed today (PR #146)
 
-**Decision:** `paymentIntents.create` is permitted exactly once, in `lib/billing/manual-fee-charge.ts`, behind every protection in [docs/06 §7](./06_PAYMENTS_AND_STRIPE.md#7-test-mode-manual-fee-charge-pr-146).
+**Decision:** `paymentIntents.create` is permitted exactly once, in `lib/billing/manual-fee-charge.ts`, behind every protection in [docs/06 §7](./06_PAYMENTS_AND_STRIPE.md#7-test-mode-cancellationno-show-fee-charge-pr-146-unified-pr-196218).
 
 **Why:** Anyone adding a second occurrence is taking on the full charge-safety budget (claim RPC, idempotency, evidence recheck, lineage recheck, test-mode gate). Treating it as zero would invite the legitimate test-mode call to be deleted by mistake.
 
@@ -1852,6 +1923,17 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 
 ## Backlog
 
+> **⚠️ POINT-IN-TIME LIST — reconcile against
+> [known-limitations.md](./production/known-limitations.md) before acting.** These priority
+> tables carry no per-row dates and have been edited in place over many PRs, so several rows
+> describe a pre-live world. In particular: **live charging HAS happened** (Willow: 6 succeeded
+> live-mode charges through 2026-07-26), receipts and refunds are **deployed live** (though
+> `stripe_refunds` holds **0 production rows**), live webhook events are **processed** for
+> approved studios rather than "hard-ignored", and the automated-test/CI row understates
+> current coverage (unit + DB/RLS + 4 Playwright lanes). The canonical residual-gap list is
+> **[known-limitations.md](./production/known-limitations.md)**; treat that as authoritative
+> and these tables as historical intent.
+
 ### P0 (block live mode or pilot expansion)
 
 | Item | Notes |
@@ -1862,7 +1944,7 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 | Webhook handlers (`payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.*`) | **Built for `payment_charge_attempts` in test mode (PR #179)**; live events hard-ignored at handler entry. Still open: deliberate live enablement; the legacy `manual_fee_charge_attempts` runtime has no reconciliation. |
 | Late cancellation/no-show fee charging on `payment_charge_attempts` + `manual_fee_charge_attempts` unification or retirement | Still open. PR #171 marked the manual-fee table as the TEMPORARY runtime; live fee charging must move onto the canonical ledger first. |
 | Stripe metadata search before pending retry | Required before any live charging. The current 60-minute reconciliation window trusts Stripe idempotency replay; live mode must not. |
-| Live runbook + dispute-response runbook + Willow live Stripe onboarding + supervised first live charge | Still open; see docs/16 checklists. |
+| Live runbook + dispute-response runbook + Willow live Stripe onboarding + supervised first live charge | **Mostly DONE (2026-07-27).** Willow's live Stripe onboarding completed and the supervised first live charge happened — she has **6 succeeded live-mode charges**, most recent 2026-07-26; the live runbook (docs/16 §17) was executed. **Still open: the dispute-response runbook** — no dispute has ever occurred (`stripe_disputes` = 0 rows) and there is no automated response, only a critical ops alert. |
 | Hashed `practitioners.calendar_feed_token` | **PARTIALLY RESOLVED by PR #182 (phase 1).** Migration 0079 added `calendar_feed_token_hash` + backfilled existing rows; the runtime feed route now looks up by SHA-256 hash. The raw column is kept for rollout compatibility because the settings UI still renders the URL from it on page render. **Phase 2 status: Not started. A parked WIP commit exists locally. Do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. Renumber the old parked PR/migration labels before using.** |
 | Email reminder outbox/claim discipline | **Resolved (PR #189, migration 0080).** `claim_email_send` / `record_email_result` mirror the SMS claim pair; the reminder cron claims before every send. |
 | Automated test suite + CI | **Built**: Vitest unit suite + GitHub Actions on every PR (typecheck, lint, build, test, safety gates), the **Supabase-local DB/RLS integration suite** (PR #220, `npm run test:db`) + generated-types drift check (PR #221), and **browser E2E** (PR #227 core memory loop + later specs). Still open: portal/anon token-route policy tests + storage-policy DB tests (deferred from PR #220); the manual smoke (docs/12) remains the final production gate. |
@@ -1881,7 +1963,7 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 
 | Item | Notes |
 |---|---|
-| Google Calendar two-way sync | Currently read-only ICS feed. |
+| Google Calendar **inbound-busy import + true two-way sync** | **Only these two are unbuilt (2026-07-27).** The connection/OAuth foundation, outbound queue, event-operation layer, worker-drain route and cron registration are all built, deployed and were exercised once under control (one real event, 2026-07-18). The system is **dormant**, not missing — every sync flag is off and Willow is not connected. A read-only ICS feed also exists. |
 | Intake builder | Chloe authors intake fields from the UI. |
 | Two-pilot studios | Exercise multi-studio service-role boundaries with a second pilot. |
 | Self-serve onboarding | Studio + owner creation via UI rather than SQL. |

@@ -5,9 +5,28 @@ resumable dashboard wizard → pinned setup-progress card → celebration, plus 
 admin invite/onboarding status view and an existing-account invitation
 reconciliation path.
 
-**Status:** built behind a per-studio flag, **default OFF**. Migrations
-0140–0141 are **repo-only** (not hosted-applied). Nothing is enabled for any
-production studio; Willow is untouched. See PR #459.
+**Status (verified 2026-07-27):**
+
+- **Migrations 0140–0141 are APPLIED to production.** *(An earlier revision of this line said
+  they were "repo-only (not hosted-applied)" — that is superseded. The production migration
+  max is 0157.)*
+- PR #459 is **merged and deployed**.
+- The feature remains behind a per-studio flag, **default OFF**.
+- **`onboarding_v2_enabled` is `true` on the controlled test studio only** — it is `false` on
+  **Willow Electrolysis** and on every other studio. *(An earlier revision said "nothing is
+  enabled for any production studio"; one controlled tenant now has it on. Willow remains
+  untouched, which was and is the important guarantee.)*
+- Production evidence: 1 `studio_onboarding` row; 11 `pending_invitations`.
+- **Nudges and analytics remain deferred** — not built.
+- 0141's guarantee holds and matters: `handle_new_user()` is a NO-OP, so **nothing fabricates
+  consent and no membership activates merely because an Auth user was created**.
+
+Self-serve studio creation is **not built** — new studios are provisioned through
+[docs/20_NEW_STUDIO_SETUP_RUNBOOK.md](./20_NEW_STUDIO_SETUP_RUNBOOK.md). Practitioner signup
+is **invite-only**.
+
+See [capability-register.md §11](./production/capability-register.md) and
+[known-limitations.md L8](./production/known-limitations.md).
 
 ---
 
@@ -38,8 +57,8 @@ welcome email, no celebration). Pinned by
 
 | # | Adds | Hosted-applied? |
 |---|---|---|
-| 0140 `studio_onboarding` | flag + `public.studio_onboarding` state table (RLS member-read/owner-write, guard trigger) | **No** (repo-only) |
-| 0141 `onboarding_invitation_reconciliation` | reconcile (authenticated) + `admin_accept` (service-role) + read RPCs + welcome-email claim + centralized policy versions; makes `handle_new_user` a no-op | **No** (repo-only) |
+| 0140 `studio_onboarding` | flag + `public.studio_onboarding` state table (RLS member-read/owner-write, guard trigger) | **Yes — applied to production** |
+| 0141 `onboarding_invitation_reconciliation` | reconcile (authenticated) + `admin_accept` (service-role) + read RPCs + welcome-email claim + centralized policy versions; makes `handle_new_user` a no-op | **Yes — applied to production** |
 
 Both are additive, single-transaction. Required cross-PR apply order (do not
 merge/apply out of order):

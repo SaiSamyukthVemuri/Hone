@@ -2,14 +2,23 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
-// PR #240. Docs-only agentic readiness and safety plan. These pins
-// keep the safety-critical content of docs/22 from eroding: the
-// product principle, the excluded sensitive surfaces, the hard
-// prohibitions (no auto-charge, no auto-send, no medical advice, no
-// silent clinical mutation), the human-confirmation rule, and the
-// standing facts (live payments disabled, no AI runtime added). The
-// agentic build is gated on this document; the document is gated on
-// these tests.
+// PR #240, amended 2026-07-27. Docs-only agentic readiness and safety
+// plan. These pins keep the safety-critical content of docs/22 from
+// eroding: the product principle, the excluded sensitive surfaces, the
+// hard prohibitions (no auto-charge, no auto-send, no medical advice, no
+// silent clinical mutation), the human-confirmation rule, and that no AI
+// runtime is added.
+//
+// AMENDMENT (2026-07-27): the standing fact "live payments disabled" is
+// NO LONGER TRUE and must not be pinned. Live owner-run session payments
+// are enabled for approved studios and have been production-exercised
+// (Willow Electrolysis: 6 succeeded live-mode charges, most recent
+// 2026-07-26). That makes the agentic payment prohibition MORE load-
+// bearing, not less: an agent must never create, capture, refund or
+// otherwise operate a payment, and explicit human control is mandatory.
+// Every prohibition below is preserved unchanged; only the stale
+// payments-are-off standing fact is replaced with the controlled-live
+// posture.
 
 function readDoc(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
@@ -32,9 +41,31 @@ describe("docs/22 exists and is a plan, not a runtime", () => {
     expect(PLAN).toMatch(/No model is called anywhere in the product/);
   });
 
-  it("states live payments remain disabled", () => {
-    expect(PLAN).toMatch(/Live payments remain disabled\./);
-    expect(PLAN).toMatch(/Controlled live payment enablement has not started\./);
+  // SUPERSEDED PIN (2026-07-27) — was "states live payments remain disabled",
+  // requiring /Live payments remain disabled\./ and
+  // /Controlled live payment enablement has not started\./. Both are false:
+  // controlled live enablement COMPLETED and live session payments are in use
+  // for approved studios. The guard now pins the true, narrower posture.
+  it("states the controlled live-payment posture accurately", () => {
+    // Enabled — but only for approved studios, never broadly.
+    expect(PLAN).toMatch(/enabled for approved studios/i);
+    expect(PLAN).toMatch(/production-exercised/i);
+    expect(PLAN).toMatch(/broad self-serve/i);
+    expect(PLAN).toMatch(/not ready/i);
+    // The stale standing facts must not return.
+    expect(PLAN).not.toMatch(/Live payments remain disabled\./);
+    expect(PLAN).not.toMatch(/Controlled live payment enablement has not started\./);
+  });
+
+  it("keeps the agentic payment prohibition absolute regardless of live posture", () => {
+    // This is the safety-critical invariant the live posture does NOT relax.
+    expect(PLAN).toMatch(/Never auto-charge/);
+    expect(PLAN).toMatch(/charge a card/);
+    expect(PLAN).toMatch(/create or refund a payment/);
+    expect(PLAN).toMatch(/any payment-related action/);
+    // No agent path may operate a payment, and human control stays mandatory.
+    expect(PLAN).toMatch(/No agent path creates, captures, or refunds a payment/i);
+    expect(PLAN).toMatch(/Require human confirmation before any external action/);
   });
 });
 
@@ -159,6 +190,12 @@ describe("roadmap docs updated", () => {
   it("docs/13 records the decision that the roadmap starts with a safety plan", () => {
     expect(DECISIONS).toMatch(/Agentic readiness and safety plan \(PR #240, docs-only\)/);
     expect(DECISIONS).toMatch(/starts with a safety plan, not a runtime/);
-    expect(DECISIONS).toMatch(/Live payments remain disabled\./);
+    // AMENDED 2026-07-27: this previously also required
+    // /Live payments remain disabled\./ in docs/13. That string still occurs
+    // there, but only inside DATED decision-log entries — it is history, not
+    // current state, so pinning it as a standing fact was wrong. docs/13 must
+    // instead carry a banner that explicitly disarms those dated entries.
+    expect(DECISIONS).toMatch(/point-in-time and superseded/i);
+    expect(DECISIONS).toMatch(/Canonical current state/i);
   });
 });

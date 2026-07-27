@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // PR #226. Post-hardening docs drift pins. After PRs #217-#225 a
@@ -85,7 +85,51 @@ describe("DB/RLS and types coverage acknowledged", () => {
       /Full Supabase-local DB integration coverage, an RLS policy suite, and browser E2E coverage are NOT yet built/,
     );
     expect(OVERVIEW).toMatch(/db-integration/);
-    expect(OVERVIEW).toMatch(/Browser E2E coverage is the piece still NOT built/);
+  });
+
+  // SUPERSEDED PIN (2026-07-27). This test previously required docs/00 to say
+  //   "Browser E2E coverage is the piece still NOT built"
+  // That is false at the production SHA: playwright.config.ts exists, 45 specs
+  // live under e2e/, and .github/workflows/ci.yml runs them as the dedicated
+  // `browser-e2e` job (plus a separate `payment-browser-e2e` lane). The guard
+  // was forcing a false sentence to stay in the canonical product overview.
+  it("docs/00 states browser E2E is shipped, not missing", () => {
+    // Negative pins: the stale claims may not return, in any phrasing.
+    expect(OVERVIEW).not.toMatch(/Browser E2E coverage is the piece still NOT built/);
+    expect(OVERVIEW).not.toMatch(/browser E2E remains deferred/i);
+    expect(OVERVIEW).not.toMatch(/[Nn]o browser E2E/);
+    expect(OVERVIEW).not.toMatch(/browser E2E coverage all required first/i);
+    // AFFIRMATIVE pin — the test name promises a positive claim, so assert one.
+    // A bare /browser E2E/i substring would pass on almost any text and would
+    // not catch drift; pin the actual sentence and the CI job name.
+    expect(OVERVIEW).toMatch(/\*\*Browser E2E is shipped\*\*/);
+    expect(OVERVIEW).toMatch(/`browser-e2e` CI job/);
+    expect(OVERVIEW).toMatch(/`playwright\.config\.ts`/);
+    // Manual smoke stays complementary — synthetic E2E does not replace real
+    // provider sends, real Stripe Elements, or real webhook delivery.
+    expect(OVERVIEW).toMatch(
+      /\*\*Manual smoke \(docs\/12\) remains\s+complementary and is not replaced by synthetic E2E\*\*/,
+    );
+  });
+
+  it("the browser E2E infrastructure the docs claim actually exists", () => {
+    expect(existsSync(path.resolve(__dirname, "../..", "playwright.config.ts"))).toBe(true);
+    const specs = readdirSync(path.resolve(__dirname, "../..", "e2e")).filter((f) =>
+      f.endsWith(".spec.ts"),
+    );
+    // Pin the EXACT count the docs advertise, not a floor. If a spec is added or
+    // removed, every doc quoting the number must be updated in the same PR.
+    expect(specs.length).toBeGreaterThan(0);
+    const claimed = new RegExp(`${specs.length} specs under`);
+    expect(OVERVIEW).toMatch(claimed);
+    expect(SECURITY).toMatch(claimed);
+    // CI actually runs it — a config on disk is not coverage.
+    const ci = read(".github/workflows/ci.yml");
+    expect(ci).toMatch(/^\s{2}browser-e2e:/m);
+    expect(ci).toMatch(/npm run test:e2e/);
+    // The default lane really does run the whole suite, not one spec.
+    expect(read("package.json")).toMatch(/"test:e2e":\s*"playwright test"/);
+    expect(read("playwright.config.ts")).toMatch(/testDir:\s*"\.\/e2e"/);
   });
 
   it("docs/03 reflects the DB lane and the pinned CLI grants-parity rule", () => {

@@ -1,21 +1,56 @@
 # 16 Live payments readiness
 
-> **⚠️ CURRENT POSTURE (2026-07-08).** This document is the **historical pre-live readiness
-> review + the controlled live-enablement runbook**. **Supervised live owner-run session
-> payments are now LIVE for approved studios** (Willow + Sam's controlled studio): live Stripe
-> Connect onboarding, live charges, live refunds, and live webhook processing are proven;
-> live/test card + attempt isolation is live; Stripe gates **15 PASS**. Still **OFF / held:**
-> public booking card collection, deposits / packages / partial payments, and live manual
-> no-show / late-cancel fees (hard-held server-side). **Broad self-serve live payments are not
-> ready.** The "Status (PR #201)" / "NOT READY FOR LIVE PAYMENTS" notes below, the blocker
-> tables, and **any "live payments remain disabled / not ready / not active / has not started"
-> statement anywhere in this document** are the **historical pre-live record** (2026-06-08 →
-> 06-12) and are retained as history; the "Controlled live enablement" runbook (§17) is the
-> go-live procedure that was used.
+## VERIFIED PAYMENT POSTURE — 2026-07-27
+
+Direct production evidence, read-only. Distinguish these dimensions carefully; they are not
+the same claim.
+
+| Dimension | Verified state |
+|---|---|
+| **Live-capable** | ✅ Yes. Mode-scoped Stripe Connect (0103) with live/test isolation for settings, cards and attempts. |
+| **Controlled live-payment proof** | ✅ Yes, and **ongoing**. **12 charge attempts exist, all `succeeded`.** |
+| **Willow Electrolysis Connect readiness** | ✅ **Live-mode account, `stripe_account_status='enabled'`, `charges_enabled=true`, `payouts_enabled=true`.** |
+| **Willow live production exercise** | ✅ **6 succeeded LIVE-mode charges, most recent 2026-07-26.** Willow is genuinely taking live payments. |
+| Controlled test studio | ✅ Live account enabled; 2 succeeded live charges (most recent 2026-07-05). |
+| Test-mode charges | 3 on Willow (incl. one `late_cancellation_fee` and one `no_show_fee`), 1 on the test studio. |
+| **Public-booking card collection** | ❌ **OFF and unwired.** `require_card_on_file` is **false on every studio**; `pending_booking_payment_sessions` = **0 rows**. A Stripe gate proves the `set_studio_require_card_on_file` path has zero runtime occurrences. |
+| **Portal card storage (card-on-file)** | ✅ In use — 8 `client_payment_methods`, 9 `client_stripe_customers`. |
+| **Session payments** | ✅ Live and exercised — this is the only charge reason permitted in live mode. |
+| **Manual-fee hold** | 🔒 **HELD.** `lib/billing/live-charge-reason-allowlist.ts` blocks every non-`session_payment` reason in live mode, at both prepare and execute. The 2 fee charges that exist are **test-mode only**. |
+| **Refunds** | Deployed; **0 rows in `stripe_refunds`** on this baseline. The path was proven in earlier controlled testing, but there is no current-baseline production refund. |
+| **Disputes** | **Alert-only.** `stripe_disputes` = **0 rows** — none has ever occurred. `charge.dispute.created` raises a critical ops alert; there is no automated response. |
+| **Deposits / packages / partial payments** | ❌ **Not built.** No schema, no code. |
+| **Broad self-service readiness** | ❌ **Not ready.** A new studio starts in test mode and is enabled per-studio only after supervised onboarding + approval. |
+| Currency / fees | `default_charge_currency = 'cad'` on all rows; `stripe_application_fee_bps` is NULL (no platform fee taken). |
+| Automatic / batch / public-triggered charging | ❌ **Not built and not planned.** Charging is one manual practitioner click on a `ready` attempt. |
+
+Supporting counts: `stripe_events` 123 · `stripe_account_provisioning_attempts` 9 ·
+`appointment_payments`, `stripe_charge_attempts`, `stripe_payment_audit`, `payment_consents`
+all **0 rows** (the canonical ledger is `payment_charge_attempts`).
+
+**Do not claim Willow is merely "ready" for payments** — she is past readiness and is
+transacting in live mode. Equally, **do not extrapolate that to broad launch**: two approved
+studios under supervision is not self-serve readiness.
+
+Canonical cross-references:
+[current-state.md §7](./production/current-state.md) ·
+[capability-register.md §7](./production/capability-register.md) ·
+[known-limitations.md L4/L5](./production/known-limitations.md).
+
+---
+
+> **⚠️ EVERYTHING BELOW IS HISTORICAL.** This document is the **pre-live readiness review plus
+> the controlled live-enablement runbook that was used**. The "Status (PR #201)" and "NOT READY
+> FOR LIVE PAYMENTS" notes, the blocker tables, and **any "live payments remain disabled / not
+> ready / not active / has not started" statement anywhere below** are the **historical
+> pre-live record** (2026-06-08 → 06-12), retained as history and superseded by the verified
+> table above. The "Controlled live enablement" runbook (§17) is the go-live procedure that was
+> actually executed.
+>
 > Migration-max references in this doc (e.g. "0105") are **historical**. **Do not hardcode the
-> production migration max in this runbook** — it goes stale on every migration. Derive the
-> expected max from: `ls supabase/migrations | tail` → `supabase migration list --linked` →
-> `scripts/verify-production.mjs`. The canonical current value is tracked in
+> production migration max in this runbook** — it goes stale on every migration. Derive it
+> from: `ls supabase/migrations | tail` → `supabase migration list --linked` →
+> `scripts/verify-production.mjs`. The canonical current value (**0157**) is tracked in
 > [docs/production/current-state.md](./production/current-state.md) and
 > [docs/production/migration-ledger.md](./production/migration-ledger.md); process in
 > [docs/runbooks/migration-first-process.md](./runbooks/migration-first-process.md).
@@ -1051,7 +1086,7 @@ Sequence rule: session_payment can flip to live ONLY after PR #170 to PR #173 + 
 
 ### 12.14 Readiness conclusion update
 
-The §1 conclusion stands: **NOT READY FOR LIVE PAYMENTS** for any reason.
+**[HISTORICAL — 2026-06-10]** The §1 conclusion stood at that date: **NOT READY FOR LIVE PAYMENTS** for any reason. *(Superseded — see the VERIFIED PAYMENT POSTURE table at the top of this document; live session payments are enabled for approved studios and production-exercised.)*
 
 Refined:
 
@@ -1086,8 +1121,8 @@ The Stripe gates remain intact. The only artifacts of this PR are the new sectio
 ### 17.1 Current status
 
 - **UPDATE (2026-07-05, post-live-proof): production is now LIVE-CAPABLE and live billing has been PROVEN on a controlled test studio** (two live charges + live receipts + a full live refund, reconciled via the live webhook; prod DB migration max = 0112; payment mode isolation + state-driven messaging landed in PRs #332–#339). `STRIPE_ALLOW_LIVE_MODE=true` with an `sk_live_` key is set in Vercel Production. **Willow still requires her own live onboarding + supervised first charge; public booking card collection is off; manual fees remain a supervised hold.** See the **"Current production state (post-live-proof)"** callout under §17.13 for the authoritative current-state summary. The two bullets immediately below are the **historical** pre-flip snapshot (2026-07-02), kept for the enablement record.
-- **(historical — 2026-07-02) Enablement-sequence progress: live payments remain DISABLED, but the codebase is now DB-, runtime-, and copy-ready.** Completed: **PR A / #322** — migration `0101` (live-payment DB readiness), **merged AND applied to production** (prod migration max = `0101`); **PR B / #323** — runtime/webhook/receipt guards relaxed to the **env-gated model** (`inferStripeLivemode()`), so the money paths are **live-CAPABLE but inert** while the env is test; the safety-lock (`live-mode-disabled`/`-blockers`/`-gate-prep`) was **repointed** to assert the env-gated model; **copy fast-follow / #324** — internal practitioner/fee-card + settings copy neutralized so nothing reads false in live. Live is off **solely because the env is test** (`STRIPE_ALLOW_LIVE_MODE` unset, `sk_test_`). **The finalized operator runbook for the actual env flip + first live charge is [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) — that is the authoritative "how to turn it on" procedure; §17.12 remains the code-side prep ledger.**
-- **(historical — 2026-07-02) Live payments were DISABLED at the time of this snapshot.** `STRIPE_ALLOW_LIVE_MODE` was unset / `false` in production; the env/key gate (`lib/stripe/server.ts`) rejects an `sk_live_` key unless the flag is `"true"`; the Stripe gates pass (15 PASS). *(Superseded by the 2026-07-05 UPDATE above — production is now live-capable.)* **The ordered, consolidated "how to turn it on" checklist is [§17.12](#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297) + the finalized [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge-operator-runbook-pr-c) runbook — flipping the env flag alone is NOT enough.** A CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`, PR #297, repointed in #323) fails if any dormancy gate is relaxed without a deliberate change.
+- **(historical — 2026-07-02) Enablement-sequence progress: live payments remain DISABLED, but the codebase is now DB-, runtime-, and copy-ready.** Completed: **PR A / #322** — migration `0101` (live-payment DB readiness), **merged AND applied to production** (prod migration max = `0101`); **PR B / #323** — runtime/webhook/receipt guards relaxed to the **env-gated model** (`inferStripeLivemode()`), so the money paths are **live-CAPABLE but inert** while the env is test; the safety-lock (`live-mode-disabled`/`-blockers`/`-gate-prep`) was **repointed** to assert the env-gated model; **copy fast-follow / #324** — internal practitioner/fee-card + settings copy neutralized so nothing reads false in live. Live is off **solely because the env is test** (`STRIPE_ALLOW_LIVE_MODE` unset, `sk_test_`). **The finalized operator runbook for the actual env flip + first live charge is [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge--operator-runbook-pr-c) — that is the authoritative "how to turn it on" procedure; §17.12 remains the code-side prep ledger.**
+- **(historical — 2026-07-02) Live payments were DISABLED at the time of this snapshot.** `STRIPE_ALLOW_LIVE_MODE` was unset / `false` in production; the env/key gate (`lib/stripe/server.ts`) rejects an `sk_live_` key unless the flag is `"true"`; the Stripe gates pass (15 PASS). *(Superseded by the 2026-07-05 UPDATE above — production is now live-capable.)* **The ordered, consolidated "how to turn it on" checklist is [§17.12](#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only) (PR #297) + the finalized [§17.14](#1714-controlled-live-payment-env-flip--first-live-charge--operator-runbook-pr-c) runbook — flipping the env flag alone is NOT enough.** A CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`, PR #297, repointed in #323) fails if any dormancy gate is relaxed without a deliberate change.
 - **PR #281 (payment success persistence) is COMPLETE and authoritative.** A normal `succeeded` outcome now requires **Stripe success AND a proven Hone ledger write**. If Stripe succeeds but Hone cannot persist the success (DB error or zero-row update), the charge path returns `needs_manual_review` (never a clean success) and a **critical** ops alert fires (`session_payment_succeeded_write_failed` / `session_payment_succeeded_write_zero_rows`). See docs/06 §4d.
 - **PR #310 (payment FAILURE persistence) makes the failed-outcome path symmetric.** If Stripe returns a **failed/non-success** outcome and Hone cannot persist the local `failed` state, the DB-error branch now fires a **critical** `session_payment_failed_write_failed` (previously stderr-only, no alert) and the zero-row branch is **promoted warning → critical** `session_payment_failed_write_zero_rows` — so failure-persistence failures are now as observable as success-persistence failures and surface in the critical `/admin/payments/manual-review` queue (existing `session_payment_` prefix). Alerting/observability only — no payment behavior change, no new Stripe calls, no migration. See docs/06 §4d.
 - **Webhook reconciliation remains the eventual-consistency backstop.** The `payment_intent.succeeded` handler (`lib/billing/payment-webhook-reconciliation.ts`, PR #179) reconciles a `ready|pending_stripe` row to `succeeded`, so a transient #281 DB-error split self-heals even though the synchronous result was honestly indeterminate.
@@ -1246,7 +1281,7 @@ If anything looks wrong at any point during or after a controlled live payment:
 - Does NOT add a migration, a new DB table/column/RLS/RPC, or a new admin UI.
 - Does NOT add an executable script that connects to production. The reconciliation checks are read-only SQL snippets the operator runs deliberately.
 
-The only artifacts of PR #282 are this section + the documentation updates + the guardrail test (`tests/docs/payment-reconciliation-readiness.test.ts`) that pins these claims. **Live payments remain disabled; controlled live-payment enablement has not started.**
+The only artifacts of PR #282 are this section + the documentation updates + the guardrail test (`tests/docs/payment-reconciliation-readiness.test.ts`) that pins these claims. **[HISTORICAL — as of PR #290, 2026-06-30] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded: enablement completed; live session payments are in use for approved studios — see the VERIFIED PAYMENT POSTURE table at the top of this document.)*
 
 ### 17.11 Manual-review queue surface (PR #290)
 
@@ -1257,7 +1292,7 @@ The §17.7 read-only reconciliation checks now have an **in-app, admin-only, rea
 
 Access is the existing `ADMIN_EMAILS` / `isAdmin` operator gate (the `/admin` layout redirects non-admins; the page re-checks and `notFound()`s) and reads via the service-role client (so `studio_id`-NULL alerts are visible). It displays only safe fields (studio name + ids, `client_id`/`session_id`/`appointment_id` **ids — no client names**, amount/currency, Hone status, `charge_reason`, `failure_code`, the non-secret PaymentIntent id, a live/test-mode flag, the alert event/severity, and the **redacted** alert message) plus the conservative next-step from this runbook.
 
-**It is strictly READ-ONLY.** There is **no** resolve / retry / refund / repair action on this page — resolution stays on `/admin/ops-alerts` (the queue links there), and any actual reconciliation follows §17 (review the PaymentIntent in Stripe, compare with the Hone attempt, do **not** retry/refund blindly). No Stripe API call, no payment-attempt mutation, no migration. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/app/admin/payment-manual-review.test.ts`.
+**It is strictly READ-ONLY.** There is **no** resolve / retry / refund / repair action on this page — resolution stays on `/admin/ops-alerts` (the queue links there), and any actual reconciliation follows §17 (review the PaymentIntent in Stripe, compare with the Hone attempt, do **not** retry/refund blindly). No Stripe API call, no payment-attempt mutation, no migration. **[HISTORICAL — as of PR #297] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — the sequence in this very section was subsequently executed; live session payments are enabled for approved studios.)* Pinned by `tests/app/admin/payment-manual-review.test.ts`.
 
 ### 17.12 Controlled enablement sequence — the ordered checklist (PR #297, prep only)
 

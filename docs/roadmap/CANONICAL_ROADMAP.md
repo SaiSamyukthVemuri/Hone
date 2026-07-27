@@ -80,7 +80,7 @@ Refresh this roadmap:
 
 - Production branch: `claude/build-hone-saas-hOex7`.
 - Production source baseline at adoption: `325b124724760615fd2e55242a85f94cbea0d17c`.
-- Repository/hosted migration max expected: `0133`; no `0134`.
+- Repository/hosted migration max: **`0157`** (both). *(This line previously read "expected: `0133`; no `0134`" — superseded; 0134–0157 all exist in-tree and are all applied in production.)*
 - Marketing PR #439 is open, unmerged, and has progressed to a broad public-site implementation. It must finish exact-head review, resolve review threads, pass all gates, merge, deploy, and receive live verification before the marketing overhaul is considered complete.
 - Once PR #439 ships, freeze major marketing redesign. Future marketing work should be correctness, support content, measured SEO growth, and product-proof updates rather than repeated visual rebuilds.
 

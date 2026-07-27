@@ -112,3 +112,69 @@ the old reaction-driven surfaces until re-deployed. **No data is lost** — the
 reaction remains in `observation_chips`; only the old code doesn't read it.
 Prefer rolling forward (fix + redeploy) over a rollback if new-code records
 already exist. There is no schema/data migration in either direction.
+
+---
+
+# CLOSEOUT — executed 2026-07-26
+
+**The procedure above is retained unchanged.** It remains the auditable record of what was
+planned and why, and is useful for incident review. This section records what actually
+happened.
+
+| Field | Result |
+|---|---|
+| **Migration apply** | **None — this rollout was code-only.** No migration was added or applied. The production migration max was unchanged by this work. |
+| **Application merge** | **PR #479 MERGED 2026-07-26T23:27:30Z**, merge commit `3cabdcaa9e196afc45db63e98eb8ca72ef0a5051`, base `claude/build-hone-saas-hOex7`, reviewed head `910fb8be…`. |
+| **Vercel deployment** | Deployed to production on merge. That deployment has since been **superseded** by PR #478's deployment (`dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb`), but this code remains live because #478 was built on top of `3cabdca`. |
+| **Final application SHA** | The Phase A code is live inside **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`**, the current runtime-bearing HEAD. |
+| **Final migration max** | **0157** — advanced later, by the separate whole-session-copy rollout. Phase A itself moved it by zero. |
+| **Review** | 3 review rounds (round 2 fixed a P0 `parseInt` truncation; round 3 fixed in-form copy galvanic exclusion, the server write policy, and exact display). A 5-lens adversarial review closed with **0 P0 / 0 P1**. |
+
+## Verification results (verified 2026-07-27 at the current baseline)
+
+Confirmed directly in the deployed source at the production SHA:
+
+- `lib/sessions/charting-labels.ts` exports the unified heading constant
+  `"Treatment observations & skin response"`.
+- `block-setup-form.tsx` renders it as **one** box; `lib/observation-chips.ts` documents the
+  two former concepts as now being a single multi-select.
+- Legacy `session_blocks.reaction_type` is **folded into** the unified set on load/display
+  (`lib/observation-chips.ts`), so historical rows still surface.
+- Reaction-driven analytics read the unified representation
+  (`lib/dashboard/clients-needing-attention.ts`).
+- `galvanic_intensity_percent` is **retired**: `block-actions.ts` documents it as "a RETIRED
+  reading: no current form supplies it" and "intentionally NOT emitted here".
+  **`galvanic_ma` and `galvanic_duration_seconds` remain active readings.**
+- `lib/sessions/format-seconds.ts` renders `0.733` as **`0.733 seconds`** and explicitly
+  documents "never a lossily rounded 0.73 for a stored 0.733".
+- `"Thermolysis pulse count"` appears with matching aria-labels in **both**
+  `block-setup-form.tsx` and `simplified-entry-form.tsx`, inside the thermolysis section.
+
+## Zero-data-operation posture
+
+**No data operation was performed by this rollout.**
+
+- No migration, therefore no DDL and no backfill.
+- **Galvanic intensity history was preserved, not deleted.** The column was not dropped and
+  no existing row was rewritten. Retirement is enforced on the *write* path: new rows carry
+  NULL and forged specs are ignored. Historical values remain readable.
+- No feature flag was created or changed.
+- No Google Calendar, Stripe, or provider state was touched.
+
+## Rollback posture
+
+Unchanged from the plan above: because the change is **code-only**, rollback is a straight
+code revert with **no migration to undo and no data to restore**.
+
+The **rollback data caveat still applies**: records created or edited while the new code is
+live may store reactions as chips in `observation_chips` with `reaction_type` NULL. Old code
+reads `reaction_type` only, so a reaction captured *solely* as a chip would not surface on the
+old reaction-driven surfaces until the new code is redeployed. **No data is lost.** Prefer
+rolling forward over rolling back once new-code records exist.
+
+## Human acceptance
+
+**PENDING.** Chloe has **not** yet performed on-device acceptance of the unified box, the
+galvanic-intensity retirement, the exact `0.733 seconds` display, the *Thermolysis pulse
+count* label, or the larger *Additional notes* field. Engineering deployment is complete;
+acceptance is not. See [../production/known-limitations.md](../production/known-limitations.md) (L1).

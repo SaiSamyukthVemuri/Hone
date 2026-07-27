@@ -1,16 +1,32 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-09 there are 113 migrations in `supabase/migrations/` (latest `0113_admin_action_events.sql`), and production migration max = 0113 (all applied).** The canonical, regularly-reconciled ledger is [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state summary is [docs/production/current-state.md](./production/current-state.md). Always re-check the highest file in `supabase/migrations/` and `supabase migration list --linked` before trusting any count or applied-status number in a doc.
+Hone uses Supabase Postgres. **As of 2026-07-27 there are 157 migrations in
+`supabase/migrations/` (latest `0157_whole_session_copy_setup.sql`), and the production
+migration max = 0157 — hosted == repo, all applied, each exactly once, with no `0158`+.**
+The canonical, regularly-reconciled ledger is
+[docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
+summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
+the highest file in `supabase/migrations/` and `supabase migration list --linked` before
+trusting any count or applied-status number in a doc.
 
 Most migrations are **additive** and **idempotent** (`drop … if exists` before `add …`); a few are deliberately destructive security-hardening migrations — notably **0091 (PR #264) drops the raw `appointments.cancellation_token` column** and two dead compatibility RPCs after the hash-at-rest cutover (0090/PR #260).
 
-> **Correction (2026-07-08):** earlier revisions of this section stated "96 migrations, latest 0096, 0096 not yet applied." That is superseded — production is at **0112**, and 0093 / 0094 / 0095 / 0096 / 0107 are all **applied**. The per-migration prose table below remains historical through ~0092; migrations 0093–0112 are enumerated in the migration ledger linked above. See the "Recent tail (0093–0112)" note appended to this doc.
+> **Historical note.** Earlier revisions of this section stated, at various dates, "96
+> migrations, 0096 not yet applied", "production is at 0112", and "production migration max =
+> 0113". All of those are **superseded** — the production max is **0157**. The per-migration
+> prose table below remains historical through ~0092; everything from 0093 onward is
+> enumerated in the migration ledger linked above. Dated statements elsewhere in the docs are
+> point-in-time history, not current state.
 
-**Treatment image storage trust boundary (0093, PR #276):** `treatment_images` objects are **service-role only** — 0093 drops the authenticated `storage.objects` select/insert policies for `treatment-images`, so normal members never touch storage objects directly; all upload/sign/archive goes through the server actions (service-role, after a studio-ownership re-check + a path validator). The metadata table adds CHECK constraints binding `storage_bucket = 'treatment-images'` and `storage_path` to `<studio_id>/<client_id>/<file>.<jpg|jpeg|png|webp>` (the row's own ids), a "block requires session" CHECK, and a BEFORE INSERT OR UPDATE trigger (`enforce_treatment_image_integrity`) that (a) enforces client∈studio / session∈studio+client / block∈session+studio and (b) freezes the identity columns (bucket/path/studio/client/session/block) after insert — archive only flips `deleted_at`/`deleted_by`. **0093 must not be applied to production until explicitly approved after merge.** (As of this note, 0093 IS applied in production.) **PR #277 (treatment image content validation + EXIF stripping) is app-layer only — NO schema change and NO migration**; it adds server-side `sharp` decode/re-encode in the upload action and does not touch `treatment_images` columns, RLS, constraints, or triggers. **PR #284 (attach photo to session/block at upload) is also app-layer only — NO schema change and NO migration**: it populates the already-existing nullable `session_id` / `session_block_id` columns (0092) with ids it validates server-side (session ∈ studio+client; block ∈ its session + studio, session derived from the block), backstopped by the existing 0093 `enforce_treatment_image_integrity` trigger. No new column/constraint/trigger/RLS; the DB lane is unchanged — `tests/db/treatment-image-hardening.db.test.ts` already proves the trigger rejects every cross-tenant/mismatched parent (cross-studio client/session, block-from-another-session, block-without-session), and a valid session+block insert passes. **PR #287 (treatment image archive scope + zero-row handling) is also app-layer only — NO schema change and NO migration**: 0092/0093 protect storage/path/identity integrity (and prevent re-pointing a row), but neither scopes an *archive action* by the route client — a same-studio `deleted_at` flip on another client's row is a legitimate update at the DB layer. The fix lives entirely in `archiveTreatmentImageAction`, which now scopes the conditional UPDATE by `id + studio_id + client_id + deleted_at IS NULL` and confirms exactly one row changed via `.select("id")` (zero rows → generic "Treatment photo not found.", not success). No new column/constraint/trigger/RLS; the DB lane is unchanged. **PR #292 (treatment image upload pre/post-buffer size hardening) is also app-layer only — NO schema change and NO migration**: it adds two defense-in-depth byte-length guards in `uploadTreatmentImageAction` (re-validate the actual buffered length before the Sharp sanitizer; cap the sanitized output length before the storage upload), both reusing the single-source `TREATMENT_IMAGE_MAX_BYTES`. No `treatment_images` column/constraint/trigger/RLS change, no storage/bucket/signing/sanitizer change; the DB lane is unchanged.
+**Treatment image storage trust boundary (0093, PR #276):** `treatment_images` objects are **service-role only** — 0093 drops the authenticated `storage.objects` select/insert policies for `treatment-images`, so normal members never touch storage objects directly; all upload/sign/archive goes through the server actions (service-role, after a studio-ownership re-check + a path validator). The metadata table adds CHECK constraints binding `storage_bucket = 'treatment-images'` and `storage_path` to `<studio_id>/<client_id>/<file>.<jpg|jpeg|png|webp>` (the row's own ids), a "block requires session" CHECK, and a BEFORE INSERT OR UPDATE trigger (`enforce_treatment_image_integrity`) that (a) enforces client∈studio / session∈studio+client / block∈session+studio and (b) freezes the identity columns (bucket/path/studio/client/session/block) after insert — archive only flips `deleted_at`/`deleted_by`. **0093 is applied in production** (the "must not be applied until explicitly approved after merge" gating in earlier revisions of this note was a pre-apply instruction and is now historical). **PR #277 (treatment image content validation + EXIF stripping) is app-layer only — NO schema change and NO migration**; it adds server-side `sharp` decode/re-encode in the upload action and does not touch `treatment_images` columns, RLS, constraints, or triggers. **PR #284 (attach photo to session/block at upload) is also app-layer only — NO schema change and NO migration**: it populates the already-existing nullable `session_id` / `session_block_id` columns (0092) with ids it validates server-side (session ∈ studio+client; block ∈ its session + studio, session derived from the block), backstopped by the existing 0093 `enforce_treatment_image_integrity` trigger. No new column/constraint/trigger/RLS; the DB lane is unchanged — `tests/db/treatment-image-hardening.db.test.ts` already proves the trigger rejects every cross-tenant/mismatched parent (cross-studio client/session, block-from-another-session, block-without-session), and a valid session+block insert passes. **PR #287 (treatment image archive scope + zero-row handling) is also app-layer only — NO schema change and NO migration**: 0092/0093 protect storage/path/identity integrity (and prevent re-pointing a row), but neither scopes an *archive action* by the route client — a same-studio `deleted_at` flip on another client's row is a legitimate update at the DB layer. The fix lives entirely in `archiveTreatmentImageAction`, which now scopes the conditional UPDATE by `id + studio_id + client_id + deleted_at IS NULL` and confirms exactly one row changed via `.select("id")` (zero rows → generic "Treatment photo not found.", not success). No new column/constraint/trigger/RLS; the DB lane is unchanged. **PR #292 (treatment image upload pre/post-buffer size hardening) is also app-layer only — NO schema change and NO migration**: it adds two defense-in-depth byte-length guards in `uploadTreatmentImageAction` (re-validate the actual buffered length before the Sharp sanitizer; cap the sanitized output length before the storage upload), both reusing the single-source `TREATMENT_IMAGE_MAX_BYTES`. No `treatment_images` column/constraint/trigger/RLS change, no storage/bucket/signing/sanitizer change; the DB lane is unchanged.
 
 ## Migration discipline
 
-- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration number is one above the current repo max — see the [migration ledger](./production/migration-ledger.md) (current max **0112**, so the next is `0113`).
+- File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
+  number is one above the current repo max — see the
+  [migration ledger](./production/migration-ledger.md). **Current max `0157`, so the next is
+  `0158`.** Do not hardcode this number anywhere it can go stale: derive it from
+  `supabase/migrations/` (as `scripts/verify-production.mjs` does).
 
 **Tenant consistency constraints (0094, PR #278 — APPLIED to production 2026-07; the "not yet applied" note below is superseded).** Sensitive clinical/import child tables now prove their parent rows are same-studio via **composite foreign keys** (the same pattern the payment subsystem already used): `sessions`→clients`(studio_id,client_id)` + appointments`(studio_id,appointment_id)`, `session_blocks`→sessions`(studio_id,session_id)`, `client_intake_forms`/`treatment_plans`→clients`(studio_id,client_id)`, `imported_treatment_memories`→clients + import_batches`(studio_id,…)`, and `electrolysis_entries`→session_blocks`(session_id,block_id)` (its block must belong to its own session). New parent unique keys: `sessions(studio_id,id)`, `session_blocks(session_id,id)`, `import_batches(studio_id,id)`. **Composite FKs, not triggers** — PG17 column-list `ON DELETE SET NULL (col)` keeps SET-NULL parents from nulling the NOT-NULL `studio_id`. Each composite **replaces** the prior single-column FK (mirroring its ON DELETE; behavior-preserving) so each table pair keeps exactly **one** relationship — two FKs between a pair make PostgREST embedded selects ambiguous. (`electrolysis_entries_session_id_fkey` is kept — different pair.) No RLS weakened. `treatment_images` (0093 trigger) and the payment tables were already enforced and are untouched. **0094 is applied in production (2026-07); the earlier "must not be applied until approved" gating is historical.**
 
@@ -30,7 +46,8 @@ supabase db query --linked "<verification sql>"
 
 ## RLS principles
 
-Every studio-scoped table:
+The **common** pattern for a studio-scoped table is below. It is a default, **not a
+universal invariant** — several tables deliberately deviate (see "Deliberate exceptions").
 
 1. `alter table … enable row level security;`
 2. `drop policy if exists "<name>_member_read" on …; create policy "<name>_member_read" on … for select using (public.is_studio_member(studio_id));`
@@ -42,18 +59,127 @@ Every studio-scoped table:
 
 `public.is_studio_member(studio_id uuid) returns boolean` is `SECURITY DEFINER` and looks at `public.practitioners` for an `active` row matching the calling auth user.
 
+### Deliberate exceptions — do not claim one generic pattern covers everything
+
+- **Default-deny, no policy at all.** `calendar_sync_outbox`, `calendar_connection_secrets`,
+  `google_oauth_states`, `admin_action_events` (0113) have RLS enabled with **no browser
+  policy** plus explicit `REVOKE` — service-role only. `admin_action_events` also has **no
+  foreign keys**, deliberately, so an audit event survives deletion of the row it references.
+- **Append-only.** `client_clinical_notes` (0126/0127), `clinical_record_snapshots` (0119),
+  `clinical_record_amendments` and `clinical_audit_events` (0120),
+  `client_portal_access_events` (0111) and the record-keeping audit tables are SELECT-only to
+  members with writes via trusted paths; UPDATE/DELETE are blocked — for the finalized
+  clinical artifacts, **for all roles including service_role**.
+- **Owner-tier read.** `record_keeping_exposure_incidents` (0088) is owner-only to read and
+  edit (it carries sensitive personal/health detail), while any active member may still file
+  a new incident. The audit table carries a matching owner-only carve-out for exposure rows.
+- **No DELETE policy, ever.** The 0087 clinical delete posture makes nine core
+  clinical/client-history tables non-hard-deletable by normal authenticated members.
+  0115 went further and *dropped* the residual entry DELETE policies and revoked
+  `truncate, delete` from `anon, authenticated`.
+- **SELECT-only with every other privilege revoked.** `session_copy_operations` (0157) — see
+  the next section.
+
+### RLS is not the same thing as a table privilege
+
+This distinction is load-bearing and easy to get wrong.
+
+**Row Level Security filters rows for `SELECT`, `INSERT`, `UPDATE` and `DELETE`. It does not
+govern `TRUNCATE`, `REFERENCES` or `TRIGGER`.** A role holding `TRUNCATE` on a table can empty
+it regardless of how carefully its RLS policies are written, because `TRUNCATE` is not a
+row-level operation and no policy is consulted. `REFERENCES` allows creating a foreign key
+against the table; `TRIGGER` allows attaching a trigger to it.
+
+Therefore an append-only or audit table needs **both** layers:
+
+1. RLS enabled with the narrowest useful policy set, **and**
+2. a table-privilege revocation that removes everything the browser roles must not hold.
+
+The canonical example is the 0157 provenance ledger:
+
+```sql
+revoke all on public.session_copy_operations from public, anon, authenticated;
+grant select on public.session_copy_operations to authenticated;
+```
+
+Verified in production (`has_table_privilege`, 2026-07-27):
+
+| Role | SELECT | INSERT | UPDATE | DELETE | TRUNCATE | REFERENCES | TRIGGER |
+|---|---|---|---|---|---|---|---|
+| `anon` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `authenticated` | ✓ (RLS studio-scoped) | ✗ | ✗ | ✗ | **✗** | **✗** | **✗** |
+| `service_role` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Without the `revoke all`, a Supabase default grant would have left `authenticated` holding
+`TRUNCATE` — and **RLS would not have stopped it**. Apply the same reasoning to every new
+audit, ledger or append-only table.
+
 ## SECURITY DEFINER RPC rules
 
 | Rule | Why |
 |---|---|
-| `language plpgsql` + `set search_path = pg_catalog, pg_temp` | Prevents search-path injection. Required in every RPC body. |
+| Pin the search path in every RPC body — either `set search_path = pg_catalog, pg_temp` (the long-standing form) **or** `set search_path = ""` with every reference fully schema-qualified (the stricter form used by 0157's four functions) | Prevents search-path injection. **Pinning is mandatory; the exact form is not.** Verified 2026-07-27: all 139 `SECURITY DEFINER` functions in `public` have a pinned search path, 0 lack one. |
 | Returns a typed `table(…)` or scalar; never raw row | Lets the caller branch on the result code without trusting the row shape. |
 | `revoke execute … from public, anon, authenticated; grant execute … to service_role;` | Default surface is closed. |
 | Argument list is fully typed; never `… variadic anyelement` or similar | Concrete signatures are auditable. |
 | `for update` row lock before any conditional UPDATE | Concurrency safety for claim-then-act patterns. |
 | Audit row insert in the same transaction as the status flip | A successful state change always has a matching audit record. |
 
-Current SECURITY DEFINER RPCs:
+### SECURITY DEFINER inventory — verified in production 2026-07-27
+
+| Measure | Verified value |
+|---|---|
+| `SECURITY DEFINER` functions in `public` | **139** |
+| …**without** a pinned `search_path` | **0** — every one is pinned |
+| …executable by `authenticated` | 22 |
+| …executable by `anon` | **7** |
+
+The seven `anon`-executable ones are **not business RPCs**. They are RLS predicates and
+trigger functions that must be callable inside the policy/trigger evaluation context:
+`is_studio_member`, `is_studio_owner`, `session_is_visible`, `handle_new_user`,
+`rls_auto_enable`, `enforce_appointment_buffer`, `guard_scoped_recurring_rule_capacity`.
+**No business command RPC is `anon`-executable.** Migration 0130 exists specifically because
+0129 had left a residual `anon` EXECUTE grant on two charting RPCs — Supabase's
+`ALTER DEFAULT PRIVILEGES` grants `anon` EXECUTE at create time, so `revoke … from public`
+alone is **not** sufficient. Always revoke from `anon` explicitly.
+
+### Notable RPC families
+
+- **Whole-session copy (0157)** — `copy_session_setup` is **service-role only** (revoked from
+  both `anon` *and* `authenticated`), invoked solely by the authenticated server action with a
+  server-derived practitioner id; because service_role bypasses RLS, the RPC itself
+  re-verifies active studio membership. `whole_session_copy_source_descriptor` is
+  authenticated + service_role. `_whole_session_copy_fingerprint` and
+  `_whole_session_copy_source_id` are **private helpers** — service_role only. All four use
+  `search_path = ""`.
+  - **Source locking** — the commit carries an expected source session id; the source row is
+    resolved and locked inside the transaction.
+  - **Fingerprinting** — the caller supplies an expected source fingerprint; a source that
+    changed underneath is rejected rather than silently copied. `galvanic_intensity_percent`
+    is **excluded** from the fingerprint and written as a literal `NULL` at the destination.
+  - **Target serialization + idempotency** — `(target_session_id, idempotency_key)` is UNIQUE
+    on `session_copy_operations`, so a retry or double-submit is an at-most-once no-op.
+- **Atomic charting writes (0129, hardened by 0130)** — `create_session_block_with_areas` /
+  `update_session_block_with_areas`: `is_studio_member` gate, allow-listed
+  `jsonb_populate_record`, `SELECT … FOR UPDATE` row lock, `stale_block_version` optimistic
+  concurrency, delete+insert area replacement in one transaction.
+- **Clinical finalization + corrections (0119/0120)** — `finalize_session`,
+  `correct_finalized_session`, `amend_finalized_session_with_image`. The correction path uses
+  the codebase's **only** narrow bypass: a transaction-local, session-scoped GUC
+  (`hone.correction_session_id`) the write-guard honours **only** when it equals that exact
+  row's `session_id`. It is structurally unreachable from PostgREST (a client cannot compose a
+  `SET` plus a frozen-row write in one transaction) and is discarded at COMMIT/ROLLBACK. There
+  is **no** service-role, `auth.uid()` or role-based bypass of the finalized-record guards.
+- **Capacity / booking commands (0142–0150)** — parameter-based authorization: the server
+  action resolves actor and studio server-side and nothing is trusted from the browser.
+  Duration is derived from the **locked, revalidated service row inside the transaction**
+  (0146), never from a caller-supplied value. The canonical lock order is
+  **studios row `FOR UPDATE` → capacity advisory lock** (0138).
+- **Appointment move (0133, superseded internally by 0143–0148)** — optimistic concurrency on
+  the expected `starts_at`/`ends_at`; does not catch `23P01`, so a booking conflict rolls the
+  move back rather than committing a partial change.
+
+Legacy inventory (pre-0075 payment/booking RPCs, retained for reference):
 
 - `claim_stripe_event` (0032); webhook claim.
 - `sync_studio_account_status` (0032); connected-account status sync.
@@ -121,7 +247,7 @@ Use this list every time before opening a migration PR.
 - [ ] RLS enabled on every new table.
 - [ ] SELECT policy uses `is_studio_member(studio_id)` unless deliberately wider.
 - [ ] No anon / authenticated INSERT / UPDATE / DELETE grants unless deliberate and reviewed.
-- [ ] SECURITY DEFINER functions set `search_path = pg_catalog, pg_temp`.
+- [ ] SECURITY DEFINER functions pin the search path — `set search_path = pg_catalog, pg_temp`, **or** `set search_path = ""` with every reference fully schema-qualified (as 0157 does). Never leave it unpinned.
 - [ ] Grants minimal: `revoke execute … from public, anon, authenticated; grant execute … to service_role`.
 - [ ] If the column will be referenced by app code, the migration is applied to prod BEFORE the code PR merges.
 - [ ] TypeScript types updated in `lib/types/database.ts` for any added column the app reads.
@@ -142,7 +268,7 @@ Use this list every time before opening a migration PR.
 - **What it verifies (v1):** cross-studio isolation (clients, sessions, session_blocks, exposure incidents, audit events); record-keeping audit immutability (member INSERT throws RLS violation; UPDATE/DELETE affect zero rows) and trigger behavior (created/updated events, `changed_fields`, actor resolution via `auth.uid()`, no event on a no-op update); the migration 0087 clinical delete posture (nine protected tables: member DELETE affects zero rows; four intentionally deletable tables: member DELETE works, stranger DELETE does not); the double-booking exclusion constraint (overlap raises `23P01`, back-to-back allowed, cancelled rows do not block, the buffer trigger extends the blocked range); and the claim RPCs (`claim_email_send` wins exactly once; `claim_session_payment_charge_attempt` refuses non-ready rows and foreign practitioners, claims a ready row exactly once, second call sees `already_pending`).
 - **How to run it locally:** `supabase db start && supabase db reset --local && npm run test:db` (needs Docker; the Supabase CLI is on brew). The unit lane (`npm test` / `npm run ci`) excludes `tests/db/` and never needs a database.
 - **Safety:** the harness (`tests/db/helpers/harness.ts`) refuses any connection string whose host is not localhost and any URL matching hosted-database patterns (supabase.co/.com, pooler, amazonaws, ...). It reads no env var except `HONE_LOCAL_DB_URL` and never touches production. CI runs it as the separate `db-integration` job with no secrets and no `--linked` anywhere. Guardrails are pinned in the unit lane (`tests/scripts/db-harness-guardrails.test.ts`).
-- **Still open after v1:** portal/anon token-route policies, storage policies, and browser E2E. The generated-types drift check shipped in PR #221 (next section).
+- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 45 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
 
 ## Generated types drift check (PR #221)
 
@@ -158,11 +284,34 @@ Use this list every time before opening a migration PR.
 
 ---
 
-## Recent tail (0093–0112) — added 2026-07-08
+## Recent tail (0093 → 0157)
 
-The historical migration table above stops at ~0092. Migrations 0093–0112 are all **applied
-in production** (prod max = 0113). One-line purposes (full ledger:
-[docs/production/migration-ledger.md](./production/migration-ledger.md)):
+The historical migration table above stops at ~0092. **Everything from 0093 through 0157 is
+applied in production** (prod max = **0157**). Full per-migration purposes and applied status:
+[docs/production/migration-ledger.md](./production/migration-ledger.md).
+
+### Timeline summary 0113 → 0157
+
+| Range | Theme | Posture today |
+|---|---|---|
+| 0114–0118 | Clinical delete/soft-delete hardening, calendar-feed credential hash-only, `session_audit` cross-tenant INSERT hardening, intake terminal-state immutability | Live |
+| 0119–0120 | Clinical Record Phase 1 (finalization boundary) + Phase 2 (corrections & amendments backend) | **Deployed, DORMANT** — both studio flags OFF on every studio; Phase 2 customer workflow **PARKED** |
+| 0121–0122 | Google Calendar Phase A — connection & OAuth foundation | Deployed; connection flag ON for the controlled test studio only |
+| 0123 | Atomic aggregate soft-delete of a wrongly-recorded treatment area | Live |
+| 0124–0125 | Google Calendar B1 outbound schema/queue + B2.3-a intent-gated enqueue | Deployed; **1 outbox row + 1 event link** from a single controlled validation |
+| 0126–0127 | Append-only `client_clinical_notes` + its RLS fix | **Live, all studios, no flag** |
+| 0128–0130 | Session-block areas, atomic multi-area/laterality writes, revoke residual `anon` EXECUTE | Live |
+| 0131–0132 | Google Calendar B2.4 dual-destination + B2.3-c1 event-link transitions | Deployed dormant |
+| 0133 | Atomic same-record appointment move | Live |
+| 0134–0139 | Practitioner-capacity foundation, per-practitioner availability, scoped blocks/breaks + lock hardening | Deployed; capacity flag ON for the controlled test studio only, **OFF at Willow**; the public booking flag is **OFF everywhere** |
+| 0140–0141 | Studio onboarding v2 + invitation reconciliation / single authoritative consent | Deployed; onboarding flag ON for the test studio only |
+| 0142–0150 | Atomic internal booking + move/reassign commands, authoritative in-DB duration, shared availability validator, locked schedule writers | Live (gated by the capacity flag) |
+| 0151 | Appointment tenant-consistency composite FKs | Live — closed a real cross-studio reference gap |
+| 0152 | Actual overlap HARD / configured buffer SOFT | Live |
+| 0153–0156 | Per-service calendar colour, notification dedupe key, probe-inventory linkage, conditional numbing notes | Live |
+| **0157** | **Whole-session copy — provenance ledger + 4 SECURITY DEFINER functions** | **Applied + deployed + enabled; 0 ledger rows — never production-exercised** |
+
+### One-line purposes, 0093–0112
 
 - **0093** harden treatment-image storage (service-role-only + path/identity CHECKs + integrity trigger) — **applied**.
 - **0094** tenant-consistency composite FKs (sessions/blocks/intake/imported same-studio) — **applied**.
@@ -180,4 +329,15 @@ in production** (prod max = 0113). One-line purposes (full ledger:
 RLS posture for the new tables: `client_portal_access_events` (0111) has a single studio-member
 SELECT policy and no INSERT/UPDATE/DELETE policy (service-role writes only) + a composite
 same-studio FK; `treatment_images` storage (0092/0093) is service-role-only with an integrity
-trigger. See the migration ledger + [../docs/03_SECURITY_AND_PRIVACY.md](./03_SECURITY_AND_PRIVACY.md).
+trigger. See the [migration ledger](./production/migration-ledger.md) +
+[03_SECURITY_AND_PRIVACY.md](./03_SECURITY_AND_PRIVACY.md).
+
+---
+
+## Where to look next
+
+1. [docs/production/current-state.md](./production/current-state.md) — canonical snapshot.
+2. [docs/production/capability-register.md](./production/capability-register.md) — per-capability status + evidence.
+3. [docs/production/known-limitations.md](./production/known-limitations.md) — verified residual gaps.
+4. [docs/production/migration-ledger.md](./production/migration-ledger.md) — migration facts.
+5. [docs/14_AI_HANDOFF.md](./14_AI_HANDOFF.md) — dated chronology, historical only.

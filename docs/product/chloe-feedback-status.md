@@ -1,9 +1,41 @@
 # Chloe Feedback — Shipped Status
 
-Maps Chloe's (Willow) feedback items to their current status as of 2026-07-09. Status keys:
-**Shipped** (live) · **Default OFF/manual** (live but opt-in) · **Later** (deferred) ·
-**Out of scope** (intentionally not building now). Reconciled against
-[../production/release-changelog.md](../production/release-changelog.md).
+Maps Chloe's (Willow) feedback items to their status. Status keys:
+**Shipped** (deployed + enabled) · **Deployed — acceptance pending** (shipped but Chloe has
+not yet tested it) · **Default OFF/manual** (deployed but opt-in) · **Later** (deferred) ·
+**Deferred by product decision** · **Out of scope**. Reconciled against
+[../production/current-state.md](../production/current-state.md) and
+[../production/capability-register.md](../production/capability-register.md).
+
+> **"Shipped" does not mean "accepted".** Everything in the 2026-07-27 section below is
+> deployed and enabled in production, but **Chloe has not performed on-device acceptance
+> testing of any of it.**
+
+## 2026-07-25 → 2026-07-27 wave — deployed, acceptance PENDING
+
+| Feedback | Status | Where | Notes |
+|---|---|---|---|
+| Treatment observations and skin response should be **one** thing, not two | **Deployed — acceptance pending** | PR #479 (code-only) | One unified *Treatment observations & skin response* multi-select. Reaction-driven analytics consume the unified representation; legacy `reaction_type` is folded in so historical rows still surface |
+| Galvanic intensity is not a setting I use | **Deployed — acceptance pending** | PR #479 | `galvanic_intensity_percent` **retired** from current writes and ordinary display; forged specs ignored. **Historical values preserved — the column was not dropped.** `galvanic_ma` and `galvanic_duration_seconds` remain active readings |
+| Thermolysis duration `0.733` was displaying as `0.73` | **Deployed — acceptance pending** | PR #479 | Exact 3-decimal display: `0.733 seconds`, never a lossily rounded `0.73`. Trailing zeros trimmed |
+| Pulse count belongs with thermolysis | **Deployed — acceptance pending** | PR #479 | Relabeled **Thermolysis pulse count**, moved inside the thermolysis section, in both charting forms |
+| Additional notes box is too small | **Deployed — acceptance pending** | PR #479 | Larger, resizable notes field |
+| Copy areas & settings from the last session | **Deployed — acceptance pending, NEVER USED** | PR #478 + migration 0157 | Editable ephemeral preview, zero writes before an explicit commit, one atomic commit, idempotency + provenance ledger. Minutes and outcomes are **never** copied; galvanic intensity forced to literal NULL. **`session_copy_operations` holds 0 rows — no real copy has ever been performed** |
+| Optional note about numbing when numbing was used | **Deployed — acceptance pending** | PR #477, migration 0156 | Free-text, no length cap; shown and kept **only** when `numbing_status='used'` |
+| Probe lot should link to my actual inventory | **Deployed — acceptance pending** | PR #475, migration 0155 | Durable same-studio pointer into `record_keeping_sterile_items`; no production block carries a link yet |
+| Charting usability polish (collapsed add-block CTA, larger notes) | **Deployed — acceptance pending** | PR #476 (code-only) | Opening or cancelling the add-block form performs **zero writes** |
+| Notification when a client adds or replaces a card | **Shipped** | PR #472, migration 0154 | Idempotent on the mode-scoped SetupIntent |
+| Bullets in Personal Notes | **Shipped** | PR #471 | Plain text, no rich-text/HTML |
+| Create a treatment plan from an appointment | **Shipped** | PR #470 | Deep-links to the existing create form; zero auto-create |
+| Pick my own service colours | **Shipped** | PR #469, migration 0153 | Six approved colours; rose/red reserved for clinical caution |
+| Edit a pinned note in place | **Shipped** | PR #468 | Optimistic concurrency on the original text |
+| 11:30 slot / smart scheduling | **Shipped** | PR #467 | Backward-packed slot anchor + source-aware conflicts |
+| Manual-override booking blocked next to an existing appointment | **Shipped** | PR #465, migration 0152 | Actual overlap stays a **hard** constraint; the configured buffer became **soft** and owner-overridable |
+| **Direct new-client consultation booking route** | **Deferred by product decision (2026-07-27)** | — | Not built, **not a launch blocker**, not the next engineering task |
+
+---
+
+## Earlier waves (status as of 2026-07-09 unless noted)
 
 | Feedback | Status | Where | Notes |
 |---|---|---|---|

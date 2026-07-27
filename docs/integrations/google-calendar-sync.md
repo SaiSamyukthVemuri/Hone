@@ -1,27 +1,88 @@
 # Google Calendar Two-Way Sync — Architecture
 
-Canonical design for Hone's Google Calendar integration across all phases.
-**Deployed today (all dormant): Phase A (connection & OAuth foundation), the Phase
-B1 outbound-sync schema/queue foundation (0124), the B2.3-a enqueue+claim activation
-boundary (0125), the B2.4 dual-destination scope contract (0131), and the B2.3-b
-reconciliation sweep + heartbeat + dead-row alerting + authenticated
-`/api/cron/calendar-reconcile` route (PR #426, migration-free).** Everything that
-actually *moves a Google event* — the drain worker calling Google's event API,
-inbound busy, two-way edits — is design intent, **not shipped**; that outbound
-event-execution work is **B2.3-c** (§3f). When this doc and the code disagree, the
-code + the migration ledger win.
+Canonical design for Hone's Google Calendar integration across all phases. When this doc and
+the code disagree, the code plus
+[the migration ledger](../production/migration-ledger.md) win. Per-phase status with evidence:
+[capability-register.md §9](../production/capability-register.md).
 
-- **Status:** Phase A (migrations 0121/0122), **Phase B1** outbound-sync schema
-  (0124, PR #407), **Phase B2.3-a** enqueue + claim activation boundary (0125), and
-  **Phase B2.4** dual outbound destination + destination-derived event scope (0131)
-  are **all APPLIED to production and DORMANT** (**hosted migration max = 0131**;
-  B2.4 = PR #424 merged + deployed + operator-validated dormant 2026-07-14, see the
-  owner-connection operator checklist §6). **Phase-name note:** the sequence is
-  non-numeric on purpose — **B2.4 landed before B2.3-b/B2.3-c** to finalize the
-  destination + destination-derived scope semantics those phases consume; **B2.4 is,
-  and remains, the completed dual-destination scope phase** (not a future-worker
-  label). Granting a destination permission or creating the empty Hone-owned calendar
-  still enables **no** synchronization.
+---
+
+## VERIFIED RUNTIME STATUS — 2026-07-27
+
+**Overall posture: `DB applied` + `deployed` + `production-exercised once` + `currently
+DORMANT`.** Deployed is not enabled. Read the distinction precisely.
+
+| Question | Verified answer |
+|---|---|
+| Is any synchronization running? | **No.** |
+| Is Willow Electrolysis connected? | **No.** She has never had an event synced. |
+| How many studios are connected? | **One** — the controlled test studio, connected 2026-07-12, `connection_status='connected'`, `destination_mode='dedicated_app_created'`, `is_studio_calendar_owner=true`, `disconnected_at` NULL. |
+| Granted scopes on that connection | `openid`, `userinfo.email`, `userinfo.profile`, **`calendar.app.created`**, `calendar.calendarlist.readonly`. **No `calendar.events.owned`. No broad `calendar.events`.** |
+| Have real Google appointment events ever been created? | **Yes — exactly ONE.** On 2026-07-18, on that same controlled test studio. |
+| `calendar_sync_outbox` | **1 row** — `op_type='event.create'`, `hone_entity_type='appointment'`, `status='done'`, `attempts=1`. |
+| `calendar_event_links` | **1 row** — `sync_status='synced'`, `source_system='hone'`, `last_sync_direction='hone_to_google'`. |
+| `google_calendar_outbound_sync_enabled` | **false on all 5 studios.** |
+| `google_calendar_inbound_busy_enabled` | **false on all 5 studios.** |
+| `google_calendar_two_way_updates_enabled` | **false on all 5 studios.** |
+| `google_calendar_connection_enabled` | **true on the controlled test studio only**; false everywhere else, including Willow. |
+| Is a worker draining the queue? | **No.** The worker flag is off and no studio is intent-eligible, so the enqueue path produces no work. |
+| Are the calendar cron routes scheduled? | **YES — and this surprises people.** `vercel.json` registers three daily crons: `/api/cron/materialize-recurring-breaks` (`0 8 * * *`), `/api/cron/calendar-reconcile` (`0 9 * * *`) and `/api/cron/calendar-sync` (`30 9 * * *`). Both calendar routes **fire daily in production**. |
+| So why is it still dormant? | Because **dormancy comes from the flags, not from the absence of a schedule.** The routes run, authenticate against `CRON_SECRET`, find **zero** intent-eligible studios and **zero** claimable jobs, and exit having done nothing. |
+
+> **Do not describe the calendar cron routes as "not cron-registered" or "unscheduled".**
+> Earlier revisions of this document and the operator checklist said exactly that; it is
+> **false** as of PR #430. They are registered and they execute. What makes the system safe is
+> that every studio's outbound flag is off, so there is no work for them to find.
+
+> **Correction to earlier revisions of this document.** Prior versions stated that
+> `calendar_sync_outbox` and `calendar_event_links` hold **0 rows** and that **no** Google
+> event operation had ever occurred. That was true when written; it is **no longer true**.
+> Each table holds **one row** from the single controlled outbound validation on 2026-07-18.
+> The correct current statement is "exercised exactly once under control, then returned to
+> dormant" — not "never exercised".
+
+### Phase classification
+
+| Phase | Code | DB | Deployed | Enabled | Production exercised |
+|---|---|---|---|---|---|
+| A — connection & OAuth foundation (0121/0122, PR #404) | merged | applied | ✅ | connection flag: **test studio only** | ✅ one connection |
+| B1 — outbound schema + queue (0124, PR #407) | merged | applied | ✅ | — | see B2.3-a |
+| B2.3-a — intent-gated enqueue + claim boundary (0125, PR #412) | merged | applied | ✅ | — no intent-eligible studio | ✅ **1 outbox row** |
+| B2.4 — dual-destination + destination-derived scope (0131, PR #424) | merged | applied | ✅ | destination validated on the test studio | ✅ one app-created calendar |
+| B2.3-b — reconciliation sweep + heartbeat + route (PR #426) | merged | *no migration* | ✅ | **scheduled** `0 9 * * *`, CRON_SECRET-protected | runs daily, finds 0 eligible studios |
+| B2.3-c1 — event-operation layer + transition RPC (0132, PR #428) | merged | **applied** | ✅ | worker off | ✅ **its operations map executed the one real `event.create` on 2026-07-18**, then returned to dormant |
+| B2.3-c2 — authenticated worker-drain route (PR #429) | merged | *no migration* | ✅ | **scheduled** `30 9 * * *`; worker flag off | runs daily, claim RPC returns 0 rows |
+| B2.3-c3 — cron schedule registration (PR #430) | merged | *no migration* | ✅ | **3 daily crons registered in `vercel.json`**; **registration did NOT activate sync** | ❌ |
+| Inbound busy import / two-way edits | **designed only** | — | **not built** | — | ❌ |
+| Willow enablement | — | — | — | **not connected** | ❌ |
+
+**Each of the following needs SEPARATE explicit authorization:** connecting Willow, enabling
+any outbound/inbound/two-way flag on any studio, activating the worker, and beginning
+inbound-busy or two-way work. Granting a destination permission or creating an empty
+Hone-owned calendar enables **no** synchronization.
+
+**Phase-name note:** the sequence is non-numeric on purpose — **B2.4 landed before
+B2.3-b/B2.3-c** to finalize the destination and destination-derived scope semantics those
+phases consume. B2.4 is, and remains, the completed dual-destination scope phase, not a
+future-worker label.
+
+---
+
+## Historical status header (superseded — retained for context)
+
+The paragraph below described the state as of roughly 2026-07-15. It is **point-in-time
+history**; the verified table above supersedes it.
+
+> **Deployed then (all dormant): Phase A (connection & OAuth foundation), the Phase
+> B1 outbound-sync schema/queue foundation (0124), the B2.3-a enqueue+claim activation
+> boundary (0125), the B2.4 dual-destination scope contract (0131), and the B2.3-b
+> reconciliation sweep + heartbeat + dead-row alerting + authenticated
+> `/api/cron/calendar-reconcile` route (PR #426, migration-free).** Everything that
+> actually *moved a Google event* — the drain worker calling Google's event API,
+> inbound busy, two-way edits — was design intent, **not shipped**; that outbound
+> event-execution work was **B2.3-c** (§3f). Hosted migration max at that time = 0131.
+> B2.4 = PR #424 merged + deployed + operator-validated dormant 2026-07-14 (see the
+> owner-connection operator checklist §6).
   **Phase B2.3-b** (reconciliation sweep + heartbeat + dead-row alerting + the
   authenticated `/api/cron/calendar-reconcile` route) is **MERGED (PR #426, merge
   commit `f664f0f`), deployed, and DORMANT — migration-free** (hosted max stays
@@ -448,7 +509,7 @@ soon-to-change one.
 ## 3e. Reconciliation sweep + heartbeat + route (Phase B2.3-b)
 
 B2.3-b ships the enqueue-side recovery net + its observability. It **adds no
-migration** (hosted max stays **0131**), builds **no** new enqueue/queue engine, and
+migration** *(hosted max at that time **0131**; it is now **0157**)*, builds **no** new enqueue/queue engine, and
 **never calls Google, enables the worker, or changes a flag**. It is a bounded
 **drift detector + orchestrator** over the EXISTING repair primitives
 (`repair_bump_appointment_sync_version`, `repair_enqueue_orphan_link_delete`), the
@@ -621,7 +682,7 @@ Behavioural proof: `tests/db/google-calendar-b2-3b-reconcile.db.test.ts`; unit p
   calendar/provider id is trusted (the eligible set is derived server-side). It is
   **NOT** gated on `calendar_sync_control.worker_enabled` — that remains the
   authoritative CLAIM/DISPATCH gate and is not repurposed. The route stays dormant in
-  production because it is not cron-registered, every studio's outbound flag is OFF
+  production because — **correction 2026-07-27: it IS cron-registered (`0 9 * * *` in `vercel.json`) and runs daily; what makes it inert is that** every studio's outbound flag is OFF
   (so the intent gate yields nothing), invocation requires `CRON_SECRET`, and the
   worker is OFF (queued work cannot dispatch). This separation permits a later
   controlled activation: enable intent for one studio, run bounded reconciliation,
@@ -757,15 +818,25 @@ Google Cloud console setup of the two destination scopes.
 
 ---
 
-## 3f. B2.3-c — outbound Google event execution and controlled activation (NEXT — design intent, NOT built)
+## 3f. B2.3-c — outbound Google event execution and controlled activation (BUILT, DEPLOYED, EXERCISED ONCE, DORMANT)
+
+> **⚠️ STATUS CORRECTION (verified 2026-07-27).** This section's original heading read
+> "NEXT — design intent, NOT built". **That is superseded.** B2.3-c1 (migration **0132**,
+> applied), c2 (PR #429) and c3 (PR #430) are all **built, merged and deployed**, and a
+> controlled activation produced **one real Google event on 2026-07-18**. The design detail
+> below is accurate; only its "not built / next phase" framing was stale. See
+> "VERIFIED RUNTIME STATUS" at the top of this document.
 
 > **Phase-name binding.** **B2.4** is, and remains, the completed **dual-destination +
 > destination-derived scope** phase. **B2.3-c** is the future **outbound worker** phase.
 > Do **not** call the future worker "B2.4 worker". The register sequence is non-numeric
 > because B2.4 landed before B2.3-b/B2.3-c to finalize destination + scope semantics.
-> B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant; B2.3-c is next.
+> B2.3-b (reconciliation sweep, §3e) is merged + deployed dormant. **CORRECTION (2026-07-27): B2.3-c is NOT "next" — c1 (migration 0132, applied), c2 (PR #429) and c3 (PR #430) are all built, merged and deployed, and were exercised once under control on 2026-07-18.** Only inbound-busy import and true two-way sync remain unbuilt.
 
-> **B2.3-c1 implementation status — AUTHORED IN A PR, DORMANT, NOT YET DEPLOYED.**
+> **[SUPERSEDED — written pre-merge] B2.3-c1 implementation status — AUTHORED IN A PR, DORMANT, NOT YET DEPLOYED.**
+> **Current truth: migration `0132` IS hosted-applied, PR #428's modules ARE deployed at the
+> production SHA, `/api/cron/calendar-sync` DOES exist, and BOTH calendar crons ARE registered
+> in `vercel.json`. The paragraph below is the pre-merge record.**
 > The event-operation layer below is **implemented** (`lib/google-calendar/sync/`:
 > `event-id.ts`, `serializer.ts`, `stale-fence.ts`, `link-transition-store.ts`,
 > `operations.ts`) plus **migration `0132`** (the transactional
@@ -885,7 +956,7 @@ work; **no real Google call during dormant-deployment validation**.
 > claim RPC + `FOR UPDATE SKIP LOCKED` + claim tokens + lease expiry + the reaper. The token
 > manager and the c1 operations-map invalidator share ONE process access-token cache. **No
 > `pg`, no new environment variable, no migration, no new infrastructure was added.** The
-> route is unscheduled, `worker_enabled` stays false, every studio sync flag stays false,
+> route is unscheduled *(superseded — PR #430 scheduled it at `30 9 * * *`)*, `worker_enabled` stays false, every studio sync flag stays false,
 > and an authorized invocation while dormant claims zero rows, calls Google zero times, and
 > mutates nothing.
 
@@ -997,7 +1068,7 @@ Willow.**
 ### Worker activation prerequisites (before `/api/cron/calendar-sync` executes real ops)
 
 Enforced by the static activation gate (`tests/app/google-calendar/b2-4-worker-activation-gate.test.ts`).
-Do **not** mark complete without direct code + test evidence — **all remain unproven today (worker unbuilt):**
+Do **not** mark complete without direct code + test evidence. *(Correction 2026-07-27: the worker is NOT unbuilt — `app/api/cron/calendar-sync/route.ts` and `lib/google-calendar/sync/worker-runtime.ts` are deployed, and one real event was executed on 2026-07-18. Items below that remain genuinely unproven are the ones never exercised beyond that single controlled run.)* **Historically listed as unproven (worker then unbuilt):**
 1. A stale earlier operation returns `ok_noop_superseded`.
 2. `event.update` against a placeholder link (null `google_event_id`) performs provider create-and-bind.
 3. A successful create persists `google_event_id` to the link.
@@ -1283,7 +1354,7 @@ payloads and makes no Google call; it only re-drives intent through the trigger.
 
 ## 7. Phase register — status + later phases
 
-**Completed, deployed dormant** (hosted migration max **0131**):
+**Completed, deployed dormant** *(hosted migration max is **0157** — the "0131" in earlier revisions of this line was the max at the time B2.4 landed)*:
 - **Phase A** — connection & OAuth foundation (0121/0122, PR #404).
 - **B1** — queue + event-link schema (0124, PR #407): `calendar_event_links` + durable
   `calendar_sync_outbox` + service-role claim/result RPCs; inert (0 rows).
@@ -1293,13 +1364,25 @@ payloads and makes no Google call; it only re-drives intent through the trigger.
 - **B2.4** — dual-destination + destination-derived scope contract (0131, PR #424).
 - **B2.3-b** — reconciliation sweep + heartbeat + dead-row alerting + authenticated
   `/api/cron/calendar-reconcile` route (**PR #426, merge `f664f0f`, migration-free**);
-  deployed + CRON_SECRET-protected, **not scheduled**; see §3e.
+  deployed + CRON_SECRET-protected + **scheduled `0 9 * * *`** *(earlier revisions said "not
+  scheduled" — PR #430 registered it)*; see §3e.
+- **B2.3-c1** — event-operation layer + transition RPC (**0132, applied**, PR #428).
+- **B2.3-c2** — authenticated worker-drain route `/api/cron/calendar-sync` (PR #429),
+  **scheduled `30 9 * * *`**.
+- **B2.3-c3** — cron schedule registration (PR #430): three daily crons in `vercel.json`.
+  **Registration did not activate synchronization.**
 
-**Next — B2.3-c: outbound Google event execution + controlled activation (§3f).** The real
+**B2.3-c is BUILT and was EXERCISED ONCE** *(this paragraph previously read "Next — B2.3-c …
+Google event transport itself is still unbuilt")*. The real
 `event.create`/`update`/`delete` operations, the fixed minimal serializer, the worker-drain
-route `/api/cron/calendar-sync`, the reconciliation + worker cron registrations, and
-controlled Sam-only dedicated-destination activation. **Google event transport itself is
-still unbuilt** — this is where it lands. **For Sam's dedicated path, no new consent or
+route and the cron registrations are all **deployed**, and a controlled activation created
+**one real Google event on 2026-07-18** on the test studio (`calendar_sync_outbox` holds that
+`op_type='event.create'`, `status='done'` row; `calendar_event_links` holds the matching
+`synced` row). **The system then returned to dormant** — worker off, every studio sync flag
+off, Willow unconnected.
+
+**What genuinely remains unbuilt:** inbound busy import and two-way edits, plus any broader
+activation beyond the single controlled test. **For Sam's dedicated path, no new consent or
 reconnect is required** while the connection remains `connected`, the encrypted refresh
 token remains usable, and the exact `calendar.app.created` grant remains present (all
 recorded today — the empty "Hone Appointments" calendar is already provisioned).
@@ -1350,7 +1433,7 @@ current. This is a Phase C concern, not Phase A.
 connection created once, least-privilege, no event scope); the **dual-destination
 dedicated path proven** on Sam (one empty "Hone Appointments" calendar,
 `calendar.app.created` grant, zero events, not ambiguous); **B2.3-b deployed dormant**
-(reconciliation route live + CRON_SECRET-protected + unscheduled). **The next controlled
+(reconciliation route live + CRON_SECRET-protected + **scheduled `0 9 * * *`** — earlier revisions said "unscheduled"). **The next controlled
 subject remains Sam** (B2.3-c dedicated-destination outbound lifecycle, §3f). **Willow
 remains OFF.** Outbound completion (B2.3-c) implies **no** inbound busy and **no** two-way
 edits — those are separate later phases (§7).

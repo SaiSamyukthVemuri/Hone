@@ -229,6 +229,12 @@ describe("supporting docs frame PR #282 as readiness, not enablement", () => {
     const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
     expect(m).not.toBeNull();
     if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(282);
-    expect(HANDOFF).toMatch(/Live payments remain disabled/i);
+    // AMENDED 2026-07-27: this required docs/14 to KEEP the string "Live payments remain
+    // disabled". That is false today (live session payments are enabled for approved
+    // studios and production-exercised), and docs/14 is an append-only historical log whose
+    // dated entries are explicitly disarmed by its banner. Pin the disarming instead of the
+    // stale claim.
+    expect(HANDOFF).toMatch(/HISTORICAL, APPEND-ONLY PER-PR HANDOFF LOG/);
+    expect(HANDOFF).toMatch(/None of them is current state/i);
   });
 });

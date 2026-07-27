@@ -1,16 +1,97 @@
 # 14 AI handoff
 
-> **⚠️ HISTORICAL PER-PR HANDOFF LOG.** This is a large, dated, append-only handoff log; **each
-> entry reflects the state at its own date** and is retained as history — it is NOT the current
-> state. For anything time-sensitive (production migration max, live-payment posture) trust
-> **[docs/production/current-state.md](./production/current-state.md)** + the live verifier, not
-> this log. Current facts (2026-07-09): production migration max **0113**; **supervised live
-> owner-run session payments are live for approved studios** (public booking card collection,
-> deposits/packages/partial, and live manual fees remain off/held; broad self-serve not ready).
-> Pre-2026-07-08 entries below that say "live payments remain disabled" or "production stays at
-> 010x" are point-in-time and superseded.
+> **⚠️ HISTORICAL, APPEND-ONLY PER-PR HANDOFF LOG.**
+>
+> **Every dated entry below reflects the state at its own date and is retained as
+> point-in-time history. None of them is current state** — including the many sections
+> literally headed *"Current production status (as of …)"*. Read that heading as
+> *"production status as it stood when this entry was written"*. Entries saying
+> "production stays at 010x", "prod DB 0102", "live payments remain disabled", "migration max
+> 0113", "0157 pending", or "PR #478 is a draft" are **superseded** and must not be quoted as
+> present-tense fact.
+>
+> **For anything time-sensitive, do not read this file. Read, in order:**
+> 1. **[docs/production/current-state.md](./production/current-state.md)** — canonical snapshot
+> 2. [docs/production/capability-register.md](./production/capability-register.md) — per-capability status + evidence
+> 3. [docs/production/known-limitations.md](./production/known-limitations.md) — verified residual gaps
+> 4. [docs/production/migration-ledger.md](./production/migration-ledger.md) — migration facts
+>
+> Come here only when you need chronology.
+
+## Current production summary (2026-07-27)
+
+This block — and **only** this block — is maintained as current. Everything below it is history.
+
+| Field | Value |
+|---|---|
+| Production branch | `claude/build-hone-saas-hOex7` |
+| Last runtime-bearing application HEAD | **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** (PR #478 merge) |
+| Vercel production deployment | `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb`, Ready, serving `hone.care` |
+| **Production migration max** | **0157** (hosted == repo; no `0158`+) |
+| Health | `hone.care` 200; 0 unresolved `ops_alerts` |
+| Live studio | Willow Electrolysis — live Stripe payments in use (6 succeeded live charges, most recent 2026-07-26) |
+| Google Calendar | **Dormant** — Willow not connected; all sync flags off; exactly one controlled event ever created |
+| Clinical finalization / corrections | **Dormant** — both flags off on every studio |
+| Practitioner capacity | ON for the controlled test studio only; **public booking assignment flag OFF everywhere** |
+| Human acceptance | **PENDING** for the Phase A charting correction and whole-session copy |
+| Next work | Chloe's acceptance testing, then the **deep production / security / code audit** |
 
 **If you are an AI agent continuing work on Hone, read this first.**
+
+---
+
+## 2026-07-27 — Phase A charting correction, whole-session copy, migration 0157
+
+**Runtime-bearing application HEAD: `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`.**
+
+- **PR #479 — Phase A charting correction. MERGED 2026-07-26T23:27:30Z (merge `3cabdca`),
+  deployed.** Code-only, no migration. One unified *Treatment observations & skin response*
+  box replacing the previously separate *Treatment observations* and *Client / skin response*
+  concepts; reaction-driven analytics now consume the unified representation; legacy
+  `session_blocks.reaction_type` is folded in on load/display so historical rows still
+  surface. **Galvanic intensity retired** from current writes and ordinary display —
+  `galvanic_intensity_percent` is no longer supplied by any form, is never emitted by the
+  write path, and is ignored if a forged spec supplies it; **historical values are preserved,
+  the column was not dropped**. (`galvanic_ma` and `galvanic_duration_seconds` remain
+  **active** readings.) Thermolysis duration displays exactly — a stored `0.733` renders as
+  `0.733 seconds`, never `0.73`. Pulse relabeled **Thermolysis pulse count** and moved inside
+  the thermolysis section. Larger *Additional notes* field.
+- **Migration 0157 — APPLIED to production 2026-07-27T02:01:29Z, migration-first**, i.e.
+  *before* PR #478 merged. Additive: one provenance table (`session_copy_operations`) + four
+  `SECURITY DEFINER` functions with `search_path=""`. No backfill; no existing clinical object
+  mutated. Verified privilege posture: `anon` holds **no** privileges on the ledger;
+  `authenticated` holds **SELECT only** (no INSERT/UPDATE/DELETE/**TRUNCATE**/**REFERENCES**/
+  **TRIGGER** — RLS does not protect those three, so the explicit `revoke all` matters); the
+  commit RPC `copy_session_setup` is **service-role only**; the source descriptor is
+  authenticated + service_role; both `_whole_session_copy_*` helpers are private.
+- **PR #478 — whole-session copy. MERGED 2026-07-27T13:12:34Z (merge `96b28d6`), deployed**
+  (Vercel `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb`, aliased to `hone.care`). Editable ephemeral
+  preview; **zero writes before an explicit commit**; one atomic commit; source locking and
+  stale-source rejection; idempotency + provenance ledger; **reusable setup only — minutes and
+  outcomes are never copied**; galvanic intensity forced to a literal `NULL` at the
+  destination and excluded from the source fingerprint.
+- **NOT production-exercised.** `session_copy_operations` holds **0 rows**. Deployment
+  verification was source inspection plus browser testing and **deliberately performed zero
+  copy operations**. Do not call whole-session copy production-exercised because the deploy
+  succeeded.
+- **Chloe's human acceptance testing is PENDING** for both the charting correction and
+  whole-session copy. Engineering deployment is complete; acceptance is not. Do not describe
+  either as accepted, validated by Chloe, or signed off.
+- **The Willow direct new-client consultation booking route is `Deferred by product decision`
+  (2026-07-27).** Not built, not a launch blocker, not the next engineering task. Do not
+  describe it as currently built, live, or imminent.
+- **Production documentation reconciliation is IN PROGRESS** on branch
+  `docs/production-reconciliation-2026-07-27` — rebuilding `current-state.md`,
+  `migration-ledger.md`, `09_DATABASE_AND_RLS.md` and the domain docs against this baseline,
+  and adding `capability-register.md` + `known-limitations.md`.
+- **NEXT: the deep production / security / code audit.** It has **not** been performed against
+  this baseline. Passing tests and passing gates are not evidence of security.
+
+---
+
+# Historical entries — point-in-time only
+
+**Everything from here down is dated history. Do not read any of it as current state.**
 
 ## Current production status (as of the payment_failed livemode-row guard)
 

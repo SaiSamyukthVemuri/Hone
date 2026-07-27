@@ -8,7 +8,7 @@
   - `lib/supabase/admin-server.ts`; service-role. Used by webhook routes, action paths that need to read across RLS for eligibility, and `SECURITY DEFINER` RPCs.
   - Browser client; only used inside `"use client"` components that need real-time or anon reads (rare).
 - **Vercel** hosts the app at `https://hone.care`. Production deploys on push to `claude/build-hone-saas-hOex7`. Each PR gets a preview deploy.
-- **Stripe Connect** Express. Studios onboard via the connected-account flow; cards are saved through SetupIntents on the connected account. Charges (test mode only) are direct charges on the connected account.
+- **Stripe Connect** Express. Studios onboard via the connected-account flow; cards are saved through SetupIntents on the connected account. Charges are direct charges on the connected account. **Live-mode charges have been taken in production** (Willow Electrolysis: 6 succeeded, most recent 2026-07-26) — the earlier "test mode only" qualifier is superseded.
 - **Resend** for transactional email.
 - **Twilio** for SMS (off by default per studio + per client).
 - **Upstash Redis** for rate-limiting public surfaces (fails open if unset).
