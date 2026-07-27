@@ -112,10 +112,10 @@ Canonical posture: [docs/16 header](./16_LIVE_PAYMENTS_READINESS.md) ·
 The "quick dormancy verification" queries below still run, but **expect them to show live
 studios and live attempts** — that is now the correct result, not an alarm.
 
-Quick dormancy verification:
+Payment-state verification *(this block was written as a "dormancy" check; post-enablement it is a **live-state** check — the expectations below are corrected)*:
 
 ```bash
-# Confirm no studio is on live mode.
+# Check which studios are on live mode (post-enablement: some SHOULD be).
 supabase db query --linked "
   select studio_id, stripe_livemode, stripe_charges_enabled, stripe_payouts_enabled
   from public.studio_payment_settings;
@@ -125,7 +125,7 @@ supabase db query --linked "
 #   stripe_account_status='enabled'. The live rows have charges+payouts enabled.
 #   Rows for any OTHER studio in live mode WOULD be the alarm.
 
-# Confirm no live-mode charge attempt exists (canonical ledger + legacy table).
+# Count live-mode charge attempts (canonical ledger + legacy table).
 supabase db query --linked "
   select (select count(*) from public.payment_charge_attempts where stripe_livemode = true)
        + (select count(*) from public.manual_fee_charge_attempts where stripe_livemode = true);
@@ -383,4 +383,4 @@ The DB CHECK enforces that `resolved_at` is set whenever `resolved_by_practition
 
 The Vercel MCP `get_project` does not expose env-var values. To check production env, use the Vercel dashboard:
 
-- Project → Settings → Environment Variables → Production. Confirm `ADMIN_EMAILS`, `NEXT_PUBLIC_APP_ORIGIN=https://hone.care`, `PORTAL_FINGERPRINT_SALT`, `CRON_SECRET`, `STRIPE_SECRET_KEY` (test), `STRIPE_WEBHOOK_SECRET`, `STRIPE_ALLOW_LIVE_MODE=false` (or unset), `RESEND_API_KEY`, Twilio vars if SMS is in use.
+- Project → Settings → Environment Variables → Production. Confirm `ADMIN_EMAILS`, `NEXT_PUBLIC_APP_ORIGIN=https://hone.care`, `PORTAL_FINGERPRINT_SALT`, `CRON_SECRET`, `STRIPE_SECRET_KEY` (**live** in Production — corrected 2026-07-27; Preview/Development MUST be `sk_test_*`), `STRIPE_WEBHOOK_SECRET`, `STRIPE_ALLOW_LIVE_MODE=true` in Production (the earlier "`=false` (or unset)" expectation is superseded — live session payments are enabled for approved studios), `RESEND_API_KEY`, Twilio vars if SMS is in use.

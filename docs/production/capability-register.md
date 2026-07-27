@@ -9,7 +9,8 @@ production; neither document is evidence for the other.
   (PR #478 merge), production migration max **0157**.
 
 Related: [current-state.md](./current-state.md) ·
-[known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md)
+[known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md) ·
+[release-changelog.md](./release-changelog.md)
 
 ---
 
@@ -85,7 +86,7 @@ read the Limitations column.
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Record keeping | Sterile items, disinfectants, exposure incidents + audit | Merged | applied (0085–0088, 0096) | Deployed | Enabled | ✅ 8 `record_keeping_sterile_items` rows | ✅ | production row count | Exposure-incident history is **owner-only** |
-| Record keeping | Overdue-disinfectant "Replace now" alerts (PR #422) | Merged | no migration | Deployed | Enabled | ⚠️ read-time computed; auto-resolves, leaves no row | ✅ | PR #422 | Not separately instrumented by design |
+| Record keeping | Overdue-disinfectant "Replace now" alerts (PR #422) | Merged | no migration | Deployed | Enabled | ⚠️ read-time computed; auto-resolves, leaves no row | ⚠️ unverified — no acceptance record | PR #422 | Not separately instrumented by design |
 | Record keeping | Probe-lot ↔ inventory durable link (0155) | Merged | ✅ 0155 applied | Deployed | Enabled | — no linked block yet | **Pending** | `session_blocks.probe_inventory_item_id` | Legacy `probe_lots` table stays **dormant** |
 
 ## 5. Booking and calendar

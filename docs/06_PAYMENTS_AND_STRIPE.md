@@ -10,9 +10,9 @@
 | Card-on-file via SetupIntent on connected account | **Production — live + test**, with live/test isolation (8 stored payment methods) |
 | Test-mode cancellation/no-show fee charge | **Production**, test mode — **unified onto `payment_charge_attempts`** (PR #196, migration 0083); the legacy `manual_fee_charge_attempts` runtime was removed in PR #218 (historical rows readable only) |
 | Test-mode session payment charge end-to-end (prepare, run, status UX, completion-to-billing handoff) | **Production**, test mode on `payment_charge_attempts` (PRs #171-#174, #180, #181) |
-| Receipts (session-payment test receipt email) | **Production**, test mode (PR #175); manual-fee charge notice still not built |
+| Receipts (session-payment receipt email) | **Production — live + test** (PR #175); live receipts have been issued for approved studios. Manual-fee charge notice still not built |
 | Refunds (full-amount, reason-agnostic, `payment_charge_attempts`) | **Production**, test mode (PR #178) |
-| Webhook reconciliation for `payment_charge_attempts` | **Production**, test mode (PR #179); live events hard-ignored at handler entry |
+| Webhook reconciliation for `payment_charge_attempts` | **Production — live + test** (PR #179). *(Corrected 2026-07-27: "live events hard-ignored at handler entry" is superseded — `shouldIgnoreLiveModeEvent` is now a MODE-MISMATCH guard, ignoring events whose mode differs from the runtime, not all live events. Live webhooks are processed for approved studios.)* |
 | Dispute handling | **Alert-only** (PR #179: `charge.dispute.created` fires a critical ops_alert); no automated response |
 | Automatic charging | **Not built** |
 | Batch charging | **Not built** |
@@ -328,7 +328,7 @@ PR #281 makes success authoritative without a migration, a new public status, or
 
 PR #282 is **readiness + reconciliation only — NOT live-payment enablement.** It adds the authoritative post-#281 **reconciliation + controlled live-payment runbook** in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md#17-payment-reconciliation--controlled-live-payment-readiness-runbook-pr-282): a Before/During/After first-live-payment checklist, the forbidden actions (no `STRIPE_ALLOW_LIVE_MODE=true`, no live keys, no live charges, no broad card-required flows), a rollback plan, and a set of **read-only (SELECT-only) reconciliation SQL queries** over `payment_charge_attempts`, `ops_alerts`, and `stripe_events` (stuck `pending_stripe`; Stripe-PI-present-but-local-not-succeeded; the #281 `session_payment_succeeded_write_*` criticals; refund-review alerts; unprocessed/unmapped webhook events; recent payment criticals). Operators already see these alerts on the admin **Ops alerts** page (`/admin/ops-alerts`). **No migration, no runtime/behavior change, no new UI, no executable prod-connecting script.** **[HISTORICAL — as of PR #282] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — enablement completed; see §1 and §3.)*
 
-App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
+App-layer only — no migration, no schema/env change, no new Stripe call, exactly one `paymentIntents.create` / one `refunds.create` preserved, live-mode block unchanged. **[HISTORICAL — as of PR #282] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — enablement completed; see §1 and §3.)* Pinned by `tests/lib/billing/payment-success-persistence.test.ts` (+ the new DB-error critical-alert assertion in `tests/lib/billing/payment-outcome-zero-row.test.ts`).
 
 ### Payment manual-review queue (PR #290)
 

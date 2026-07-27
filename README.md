@@ -154,6 +154,13 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 | [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md) | Operators + reviewers | The smoke-test catalogue |
 | [docs/13_BACKLOG_AND_DECISIONS.md](./docs/13_BACKLOG_AND_DECISIONS.md) | Anyone | Decision log + ranked backlog |
 | [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | Future AI agents | **Historical** dated chronology. Read the canonical production set first (see Status); come here only when you need the order events happened |
+| [docs/16_LIVE_PAYMENTS_READINESS.md](./docs/16_LIVE_PAYMENTS_READINESS.md) | Payment reviewers, operators | Verified payment posture + the controlled live-enablement runbook that was executed |
+| [docs/18_LIVE_PAYMENTS_AUDIT.md](./docs/18_LIVE_PAYMENTS_AUDIT.md) | Payment reviewers | **Historical** pre-live audit (2026-06-10) |
+| [docs/20_NEW_STUDIO_SETUP_RUNBOOK.md](./docs/20_NEW_STUDIO_SETUP_RUNBOOK.md) | Operators | Internal checklist for provisioning a new studio |
+| [docs/22_AGENTIC_READINESS_AND_SAFETY.md](./docs/22_AGENTIC_READINESS_AND_SAFETY.md) | Anyone building AI/agentic features | **Read before any agentic work** — hard prohibitions, excluded surfaces, human-confirmation rules |
+| [docs/24_ONBOARDING_V2.md](./docs/24_ONBOARDING_V2.md) | Developers + operators | Guided first-run studio onboarding (flag-gated) |
+| [docs/integrations/google-calendar-sync.md](./docs/integrations/google-calendar-sync.md) | Developers | Google Calendar architecture + verified runtime status |
+| [docs/runbooks/](./docs/runbooks/) | Operators | Per-rollout procedures **and their dated closeouts** — `migration-first-process.md`, `0155-…`, `0156-…`, `0157-whole-session-copy-rollout.md`, `chloe-charting-unification-rollout.md` |
 | [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) | Maintainers | When to update which doc |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributors | Branching, PR discipline, review expectations |
 | [.github/pull_request_template.md](./.github/pull_request_template.md) | Every PR | Required checklist (PR #147) |

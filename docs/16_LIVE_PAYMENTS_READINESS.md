@@ -1086,7 +1086,7 @@ Sequence rule: session_payment can flip to live ONLY after PR #170 to PR #173 + 
 
 ### 12.14 Readiness conclusion update
 
-The §1 conclusion stands: **NOT READY FOR LIVE PAYMENTS** for any reason.
+**[HISTORICAL — 2026-06-10]** The §1 conclusion stood at that date: **NOT READY FOR LIVE PAYMENTS** for any reason. *(Superseded — see the VERIFIED PAYMENT POSTURE table at the top of this document; live session payments are enabled for approved studios and production-exercised.)*
 
 Refined:
 
@@ -1292,7 +1292,7 @@ The §17.7 read-only reconciliation checks now have an **in-app, admin-only, rea
 
 Access is the existing `ADMIN_EMAILS` / `isAdmin` operator gate (the `/admin` layout redirects non-admins; the page re-checks and `notFound()`s) and reads via the service-role client (so `studio_id`-NULL alerts are visible). It displays only safe fields (studio name + ids, `client_id`/`session_id`/`appointment_id` **ids — no client names**, amount/currency, Hone status, `charge_reason`, `failure_code`, the non-secret PaymentIntent id, a live/test-mode flag, the alert event/severity, and the **redacted** alert message) plus the conservative next-step from this runbook.
 
-**It is strictly READ-ONLY.** There is **no** resolve / retry / refund / repair action on this page — resolution stays on `/admin/ops-alerts` (the queue links there), and any actual reconciliation follows §17 (review the PaymentIntent in Stripe, compare with the Hone attempt, do **not** retry/refund blindly). No Stripe API call, no payment-attempt mutation, no migration. **Live payments remain disabled; controlled live-payment enablement has not started.** Pinned by `tests/app/admin/payment-manual-review.test.ts`.
+**It is strictly READ-ONLY.** There is **no** resolve / retry / refund / repair action on this page — resolution stays on `/admin/ops-alerts` (the queue links there), and any actual reconciliation follows §17 (review the PaymentIntent in Stripe, compare with the Hone attempt, do **not** retry/refund blindly). No Stripe API call, no payment-attempt mutation, no migration. **[HISTORICAL — as of PR #297] Live payments remain disabled; controlled live-payment enablement has not started.** *(Superseded — the sequence in this very section was subsequently executed; live session payments are enabled for approved studios.)* Pinned by `tests/app/admin/payment-manual-review.test.ts`.
 
 ### 17.12 Controlled enablement sequence — the ordered checklist (PR #297, prep only)
 

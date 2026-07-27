@@ -31,7 +31,7 @@ not a PR diary — per-capability evidence lives in
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
 | **Health** | `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**. All non-5xx. `ops_alerts` unresolved: **0**. |
 | **Customer / studio posture** | **One live studio with real clients: Willow Electrolysis** (2 practitioners, 24 clients, 75 appointments). Plus one controlled test studio used for validation, and three empty studios. Five studios total. |
-| **Next operational gate** | **Chloe's human acceptance testing** of the Phase A charting correction and whole-session copy — then the **deep production / security / code audit**. |
+| **Next operational gate** | The **deep production / security / code audit** (not yet performed against this baseline). **Chloe's human acceptance testing** of the Phase A charting correction and whole-session copy is also outstanding, but it is **independent and does not block the audit** — see §16. |
 
 ### Immediately preceding runtime baseline
 

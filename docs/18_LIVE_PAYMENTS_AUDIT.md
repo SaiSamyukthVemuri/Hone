@@ -4,8 +4,11 @@
 > audit dated 2026-06-10 (production was at migration **0082**). It is retained as a
 > historical record. **Current payment posture:** supervised live owner-run **session**
 > payments are now **LIVE for approved studios** (Willow + Sam's controlled studio) — live
-> Stripe Connect onboarding, live charges, live refunds, and live webhook processing are all
-> proven; live/test card + attempt isolation is live; Stripe gates remain **15 PASS**. Still
+> Stripe Connect onboarding, live charges and live webhook processing are **proven**.
+> **Live refunds are NOT proven** — `stripe_refunds` holds **0 rows**; the refund path is
+> deployed but has no production precedent on this baseline, and no dispute has ever
+> occurred (`stripe_disputes` = 0 rows). Live/test card + attempt isolation is live;
+> Stripe gates remain **15 PASS**. Still
 > **OFF / held:** public booking card collection, deposits / packages / partial payments, and
 > live manual no-show / late-cancel fees (hard-held server-side). **Broad self-serve live
 > payments are not ready.** Canonical current state:

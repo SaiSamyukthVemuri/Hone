@@ -27,8 +27,14 @@ describe("docs/16 readiness doc exists and declares the conclusion", () => {
     expect(exists).toBe(true);
   });
 
-  it("the headline conclusion is NOT READY FOR LIVE PAYMENTS", () => {
+  // AMENDED 2026-07-27: the name asserted a CURRENT conclusion while the string it
+  // pinned is the DATED 2026-06-10 verdict. Live session payments are now enabled for
+  // approved studios and production-exercised. The guard now requires the verdict to be
+  // present AND explicitly marked historical, so it can never again read as current.
+  it("its dated headline verdict is retained but explicitly marked historical", () => {
     expect(READINESS).toMatch(/Status:\s*NOT READY FOR LIVE PAYMENTS/i);
+    expect(READINESS).toMatch(/\[HISTORICAL[^\]]*\]\s*Status: NOT READY FOR LIVE PAYMENTS/i);
+    expect(READINESS).toMatch(/VERIFIED PAYMENT POSTURE/);
   });
 
   it("names PR #168 and the date the audit ran", () => {
@@ -36,7 +42,10 @@ describe("docs/16 readiness doc exists and declares the conclusion", () => {
     expect(READINESS).toMatch(/2026-06-08/);
   });
 
-  it("documents the three independent dormancy guards", () => {
+  // AMENDED 2026-07-27: Guard 3 (the payment_charge_attempts_livemode_false_check DB
+  // CHECK) was DROPPED by migration 0101. This guard now pins the historical three-guard
+  // model as a record of the pre-live posture, not as current mechanism.
+  it("documents the three independent dormancy guards as the historical pre-live model", () => {
     expect(READINESS).toMatch(/Guard 1:.*key gate/i);
     expect(READINESS).toMatch(/Guard 2:.*early return|Guard 2:.*manual fee/i);
     expect(READINESS).toMatch(/Guard 3:.*(CHECK|database)/i);

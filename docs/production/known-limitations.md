@@ -8,7 +8,8 @@ that could not be checked from code, the CLI, or read-only production queries ar
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
 Related: [current-state.md](./current-state.md) ·
-[capability-register.md](./capability-register.md) · [migration-ledger.md](./migration-ledger.md)
+[capability-register.md](./capability-register.md) · [migration-ledger.md](./migration-ledger.md) ·
+[release-changelog.md](./release-changelog.md)
 
 **Blocking legend** — `Willow` = blocks the live pilot studio · `Broader launch` = blocks
 selling to additional studios · `Neither` = accepted, tracked, not blocking today.
