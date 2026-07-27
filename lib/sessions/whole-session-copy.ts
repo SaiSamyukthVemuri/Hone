@@ -123,7 +123,7 @@ export function draftToCopyInput(d: CopyAreaDraft): WholeSessionCopyDraftInput {
       thermolysisDurationSeconds: s.thermolysisDurationSeconds,
       galvanicMa: s.galvanicMa,
       galvanicDurationSeconds: s.galvanicDurationSeconds,
-      galvanicIntensityPercent: s.galvanicIntensityPercent,
+      // galvanic_intensity_percent is a RETIRED reading (Phase A): never copied.
       unitsOfLye: s.unitsOfLye,
       pulseCount: s.pulseCount,
       pulseDelay: s.pulseDelay,

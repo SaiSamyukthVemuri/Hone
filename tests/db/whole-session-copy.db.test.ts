@@ -239,7 +239,7 @@ describe("copy_session_setup — atomic batch create (setup-only, no minutes)", 
 
     const entry = (
       await adminQuery(
-        "select minutes_performed, thermolysis_intensity_percent, units_of_lye, pulse_count, comments, hairs_treated from public.electrolysis_entries where block_id=$1",
+        "select minutes_performed, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_count, comments, hairs_treated from public.electrolysis_entries where block_id=$1",
         [res.created_block_ids[0]],
       )
     ).rows[0];
@@ -249,6 +249,14 @@ describe("copy_session_setup — atomic batch create (setup-only, no minutes)", 
     expect(Number(entry.thermolysis_intensity_percent)).toBe(40);
     expect(Number(entry.units_of_lye)).toBe(30);
     expect(Number(entry.pulse_count)).toBe(2);
+    // Valid reusable galvanic readings copy exactly...
+    expect(Number(entry.galvanic_ma)).toBe(0.1);
+    expect(Number(entry.galvanic_duration_seconds)).toBe(10);
+    // ...but galvanic_intensity_percent is a RETIRED reading (Phase A): the spec
+    // this test passes to the RPC carries galvanic_intensity_percent=50, yet the
+    // RPC forces a literal NULL on insert. This is the forged-spec guarantee:
+    // a value in the payload can NEVER persist into the destination column.
+    expect(entry.galvanic_intensity_percent).toBeNull();
   });
 
   it("records truthful ledger provenance (source, target, practitioner, hash, fingerprint, count)", async () => {
@@ -268,6 +276,75 @@ describe("copy_session_setup — atomic batch create (setup-only, no minutes)", 
     expect(typeof led.request_hash).toBe("string");
     expect(led.request_hash.length).toBeGreaterThan(0);
     expect(led.copied_block_count).toBe(1);
+  });
+});
+
+// Phase B reconciliation: galvanic_intensity_percent is a RETIRED reading (Phase
+// A). Proven on the REAL migrated DB against the copy fingerprint + RPC.
+describe("copy_session_setup — galvanic intensity retired + exact PicoBlend round-trip", () => {
+  it("(8/9) the source fingerprint IGNORES galvanic_intensity_percent but reflects a valid reusable change", async () => {
+    const clientId = await freshClient();
+    const source = await seedSession(a, { startedAt: "2026-02-01T10:00:00Z", clientId });
+    const blockId = await seedSourceWithBlock(a, source);
+    const fp1 = await fingerprintOf(source);
+
+    // Change ONLY the retired field on the source entry → fingerprint UNCHANGED.
+    await adminQuery(
+      "update public.electrolysis_entries set galvanic_intensity_percent = 42 where block_id = $1",
+      [blockId],
+    );
+    expect(await fingerprintOf(source)).toBe(fp1);
+
+    // Change a VALID reusable reading (galvanic mA) → fingerprint CHANGES.
+    await adminQuery(
+      "update public.electrolysis_entries set galvanic_ma = 0.9 where block_id = $1",
+      [blockId],
+    );
+    expect(await fingerprintOf(source)).not.toBe(fp1);
+  });
+
+  it("(5/6/7/10) a spec carrying galvanic_intensity_percent stores NULL; source stays exact; PicoBlend decimals round-trip", async () => {
+    const { source, target, fp } = await seedPair();
+    // A spec with Chloe's EXACT PicoBlend decimals AND a forged retired value.
+    const spec = validSpec();
+    Object.assign((spec[0] as { entry: Record<string, unknown> }).entry, {
+      apilus_modality: "Picoblend",
+      energy_level: 144,
+      galvanic_ma: 0.74,
+      galvanic_duration_seconds: 9,
+      thermolysis_duration_seconds: 0.733,
+      thermolysis_intensity_percent: 7,
+      pulse_count: 4,
+      units_of_lye: 67,
+      galvanic_intensity_percent: 42, // forged: RPC must ignore this
+    });
+    const res = await callCopy({ target, specs: spec, key: "k-picoblend", fp, sourceId: source });
+    const dest = (
+      await adminQuery(
+        "select galvanic_ma, galvanic_duration_seconds, thermolysis_duration_seconds, thermolysis_intensity_percent, pulse_count, units_of_lye, energy_level, galvanic_intensity_percent, minutes_performed from public.electrolysis_entries where block_id=$1",
+        [res.created_block_ids[0]],
+      )
+    ).rows[0];
+    // Exact decimal fidelity through JSON + PostgreSQL insertion.
+    expect(Number(dest.galvanic_ma)).toBe(0.74);
+    expect(Number(dest.galvanic_duration_seconds)).toBe(9);
+    expect(Number(dest.thermolysis_duration_seconds)).toBe(0.733);
+    expect(Number(dest.thermolysis_intensity_percent)).toBe(7);
+    expect(Number(dest.pulse_count)).toBe(4);
+    expect(Number(dest.units_of_lye)).toBe(67);
+    expect(Number(dest.energy_level)).toBe(144);
+    // Retired field forced NULL even though the spec carried 42; minutes blank.
+    expect(dest.galvanic_intensity_percent).toBeNull();
+    expect(dest.minutes_performed).toBeNull();
+
+    // The SOURCE is never touched by a copy — its rows are unchanged.
+    const src = (
+      await adminQuery(
+        "select thermolysis_intensity_percent, galvanic_intensity_percent from public.electrolysis_entries where session_id=$1",
+        [source],
+      )
+    ).rows[0];
+    expect(Number(src.thermolysis_intensity_percent)).toBe(40); // seedSourceWithBlock value
   });
 });
 

@@ -172,7 +172,10 @@ as $$
                     'thermolysis_duration_seconds', e.thermolysis_duration_seconds,
                     'galvanic_ma', e.galvanic_ma,
                     'galvanic_duration_seconds', e.galvanic_duration_seconds,
-                    'galvanic_intensity_percent', e.galvanic_intensity_percent,
+                    -- galvanic_intensity_percent is a RETIRED reading (Phase A):
+                    -- it is NOT reusable setup, so it is excluded from the source
+                    -- fingerprint. A historical change to ONLY that field must not
+                    -- invalidate a preview built on the reusable setup.
                     'units_of_lye', e.units_of_lye,
                     'pulse_count', e.pulse_count,
                     'pulse_delay_seconds', e.pulse_delay_seconds
@@ -542,7 +545,11 @@ begin
         p_target_session_id, v_block_id, e.area, coalesce(e.areas, array[e.area]::text[]),
         e.mode, e.apilus_modality, e.energy_level, e.machine_frequency,
         e.thermolysis_intensity_percent, e.thermolysis_duration_seconds,
-        e.galvanic_ma, e.galvanic_duration_seconds, e.galvanic_intensity_percent,
+        -- galvanic_intensity_percent is a RETIRED reading (Phase A): a NEW copied
+        -- entry ALWAYS stores a literal NULL. The spec never carries it (canonical
+        -- normalization drops it), and this literal makes the RPC authoritative —
+        -- even a forged spec containing galvanic_intensity_percent=42 stores NULL.
+        e.galvanic_ma, e.galvanic_duration_seconds, NULL,
         -- pulse_count is NOT NULL (default single-pulse); coalesce when the
         -- reviewed source had none so the copy matches the column default.
         e.units_of_lye, coalesce(e.pulse_count, 1), e.pulse_delay_seconds

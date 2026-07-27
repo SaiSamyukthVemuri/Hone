@@ -51,7 +51,8 @@ export type WholeSessionCopySetupInput = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  galvanicIntensityPercent: string;
+  // galvanic_intensity_percent is a RETIRED reading (Phase A): not an input, not
+  // normalized, not copied. New destination entries always store NULL.
   unitsOfLye: string;
   pulseCount: string;
   pulseDelay: string;
@@ -179,7 +180,9 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
   const thermDur = wantThermo ? numInRange(s.thermolysisDurationSeconds, 0) : null;
   const galvMa = wantGalv ? numInRange(s.galvanicMa, 0) : null;
   const galvDur = wantGalv ? intInRange(s.galvanicDurationSeconds, 0) : null;
-  const galvInt = wantGalv ? intInRange(s.galvanicIntensityPercent, 0, 100) : null;
+  // galvanic_intensity_percent is RETIRED (Phase A): never parsed from the draft
+  // and never emitted into the spec, so a forged card value can't influence the
+  // destination. The RPC additionally inserts a literal NULL (defense in depth).
   const unitsOfLye = wantGalv ? numInRange(s.unitsOfLye, 0) : null;
 
   const pulseCount = intInRange(s.pulseCount, PULSE_COUNT_MIN, PULSE_COUNT_MAX);
@@ -232,7 +235,8 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
     thermolysis_duration_seconds: thermDur,
     galvanic_ma: galvMa,
     galvanic_duration_seconds: galvDur,
-    galvanic_intensity_percent: galvInt,
+    // galvanic_intensity_percent is deliberately ABSENT from the spec (retired).
+    // The RPC forces a literal NULL on insert regardless of the spec.
     units_of_lye: unitsOfLye,
     pulse_count: pulseCount,
     pulse_delay_seconds: pulseDelay,

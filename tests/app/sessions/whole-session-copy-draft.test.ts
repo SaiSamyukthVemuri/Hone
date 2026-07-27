@@ -149,3 +149,44 @@ describe("wiring", () => {
     expect(PAGE).not.toMatch(/previousSessionAny|previousSessionHasAreas/);
   });
 });
+
+// Phase B reconciliation with the Phase A clinical contract. The editable copy
+// card must match production charting: no galvanic-intensity control, PicoBlend
+// precision steps, and the pulse control labeled + placed like Phase A.
+describe("copy card matches the Phase A charting contract", () => {
+  it("(2) has NO galvanic intensity field/label/testid", () => {
+    expect(CARD).not.toMatch(/Galvanic intensity/);
+    expect(CARD).not.toMatch(/galvanicIntensityPercent/);
+    expect(CARD).not.toMatch(/galv-intensity/);
+  });
+
+  it("(3C) galvanic mA uses step='0.01' and thermolysis duration uses step='0.001' (PicoBlend precision)", () => {
+    expect(CARD).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
+    expect(CARD).toMatch(/Thermolysis duration \(s\)[\s\S]{0,200}?step="0\.001"/);
+  });
+
+  it("(3C) the pulse control is labeled 'Thermolysis pulse count' and sits INSIDE the thermolysis section", () => {
+    expect(CARD).toMatch(/>Thermolysis pulse count</);
+    expect(CARD).not.toMatch(/>Pulse count</); // old standalone label gone
+    // Structurally: the pulse label appears within the thermolysis block
+    // (between showThermo and the galvanic section).
+    const thermo = CARD.indexOf("sections.showThermo");
+    const galv = CARD.indexOf("sections.showGalv");
+    const pulse = CARD.indexOf("Thermolysis pulse count");
+    expect(thermo).toBeGreaterThan(-1);
+    expect(pulse).toBeGreaterThan(thermo);
+    expect(pulse).toBeLessThan(galv);
+  });
+
+  it("(4/11/12) the card renders NO input bound to minutes or any outcome field", () => {
+    // Precise: the card only binds inputs to reusable setup fields (value={s.<x>})
+    // and only mutates via patchSetup. It renders no input for minutes or any
+    // outcome (comments/observations/reaction/tolerance/caution/hairs/numbing).
+    expect(CARD).not.toMatch(
+      /value=\{s\.(minutes|minutesPerformed|comments|observationChips|toleranceRating|reactionType|reactionNotes|cautionNote|cautionForNextSession|hairsTreated|numbingStatus|numbingNotes)\b/,
+    );
+    expect(CARD).not.toMatch(
+      /patchSetup\(\{\s*(minutes|comments|observationChips|toleranceRating|reactionType|cautionNote|hairsTreated|numbingStatus)\b/,
+    );
+  });
+});

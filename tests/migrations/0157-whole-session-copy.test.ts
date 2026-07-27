@@ -143,6 +143,20 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(CODE).not.toMatch(/\bminutes_performed\b/);
   });
 
+  it("Phase B: galvanic_intensity_percent is RETIRED — excluded from the fingerprint and forced NULL on insert", () => {
+    // The retired reading is NEVER derived from the source entry `e` — neither in
+    // the source fingerprint nor in the destination INSERT. (A historical change
+    // to only that field therefore can't invalidate a preview, and a copied entry
+    // can't inherit the value.)
+    expect(CODE).not.toMatch(/e\.galvanic_intensity_percent/);
+    // The destination INSERT forces a LITERAL NULL in the galvanic-intensity slot
+    // (right after galvanic_duration_seconds), so even a forged spec stores NULL.
+    expect(CODE).toMatch(/e\.galvanic_duration_seconds,\s*NULL,/);
+    // The column itself is still referenced (kept in the INSERT column list — the
+    // schema column is preserved, only the copied VALUE is retired).
+    expect(CODE).toMatch(/\bgalvanic_intensity_percent\b/);
+  });
+
   it("has a member-gated preview descriptor (authenticated) + a PRIVATE fingerprint helper", () => {
     expect(SQL).toMatch(/create or replace function public\.whole_session_copy_source_descriptor/);
     expect(CODE).toMatch(/is_studio_member\(p_studio_id\)/);

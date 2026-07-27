@@ -114,8 +114,20 @@ describe("pulse count renders AFTER the thermolysis readings (Duration -> Intens
     expect(thermoOpenIdx).toBeGreaterThan(-1);
     expect(galvOpenIdx).toBeGreaterThan(thermoOpenIdx);
     const thermoBlock = SOURCE.slice(thermoOpenIdx, galvOpenIdx);
-    // The section is gated on thermo/blend.
-    expect(thermoBlock).toMatch(/mode === "thermo" \|\| mode === "blend"/);
+    // The section is gated on thermo/blend — either via the literal condition or
+    // the shared resolveModeSections helper (modeSections.showThermo). After the
+    // Phase B refresh the charting form and the whole-session copy card share the
+    // SAME mode-gating helper, so both forms can never drift.
+    expect(thermoBlock).toMatch(
+      /mode === "thermo" \|\| mode === "blend"|modeSections\.showThermo/,
+    );
+    // ...and that shared helper genuinely means thermo/blend (equivalence proof,
+    // so accepting the helper form does NOT weaken the gate).
+    const MODE_SECTIONS = readFileSync(
+      path.resolve(__dirname, "../../../lib/sessions/mode-sections.ts"),
+      "utf8",
+    );
+    expect(MODE_SECTIONS).toMatch(/showThermo:\s*m === "thermo" \|\| m === "blend"/);
     // The pulse-count control lives inside that section.
     expect(thermoBlock).toMatch(/>Thermolysis pulse count</);
     // It is NOT rendered in the galvanic section (pure galvanic has no pulse).

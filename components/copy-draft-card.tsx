@@ -62,7 +62,7 @@ export function CopyDraftCard({
         thermolysisDurationSeconds: next.showThermo ? draft.setup.thermolysisDurationSeconds : "",
         galvanicMa: next.showGalv ? draft.setup.galvanicMa : "",
         galvanicDurationSeconds: next.showGalv ? draft.setup.galvanicDurationSeconds : "",
-        galvanicIntensityPercent: next.showGalv ? draft.setup.galvanicIntensityPercent : "",
+        // galvanic_intensity_percent is retired — no card field to re-gate.
         unitsOfLye: next.showGalv ? draft.setup.unitsOfLye : "",
       },
     });
@@ -212,7 +212,7 @@ export function CopyDraftCard({
             <input
               type="number"
               inputMode="decimal"
-              step="0.01"
+              step="0.001"
               min={0}
               value={s.thermolysisDurationSeconds}
               onChange={(e) => patchSetup({ thermolysisDurationSeconds: e.target.value })}
@@ -220,6 +220,39 @@ export function CopyDraftCard({
               className={READING_INPUT_CLS}
             />
           </label>
+          {/* Pulse control lives INSIDE the thermolysis section (Phase A): pulse
+              is a thermolysis concept, shown only for thermo/blend. */}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Thermolysis pulse count</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={PULSE_COUNT_MIN}
+              max={PULSE_COUNT_MAX}
+              value={s.pulseCount}
+              onChange={(e) => {
+                const v = e.target.value;
+                // single pulse clears the delay (UI mirror of the data-layer rule)
+                patchSetup({ pulseCount: v, ...(Number(v) > 1 ? {} : { pulseDelay: "" }) });
+              }}
+              data-testid={`copy-draft-${draft.key}-pulse-count`}
+              className={READING_INPUT_CLS}
+            />
+          </label>
+          {showPulseDelay && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Pulse delay (s)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                value={s.pulseDelay}
+                onChange={(e) => patchSetup({ pulseDelay: e.target.value })}
+                data-testid={`copy-draft-${draft.key}-pulse-delay`}
+                className={READING_INPUT_CLS}
+              />
+            </label>
+          )}
         </div>
       )}
 
@@ -231,7 +264,7 @@ export function CopyDraftCard({
             <input
               type="number"
               inputMode="decimal"
-              step="0.1"
+              step="0.01"
               min={0}
               value={s.galvanicMa}
               onChange={(e) => patchSetup({ galvanicMa: e.target.value })}
@@ -251,19 +284,7 @@ export function CopyDraftCard({
               className={READING_INPUT_CLS}
             />
           </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Galvanic intensity %</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={100}
-              value={s.galvanicIntensityPercent}
-              onChange={(e) => patchSetup({ galvanicIntensityPercent: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-galv-intensity`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
+          {/* The galvanic intensity reading is RETIRED (Phase A): no field here. */}
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Units of lye</span>
             <input
@@ -280,40 +301,8 @@ export function CopyDraftCard({
         </div>
       )}
 
-      {/* Pulse count + delay. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Pulse count</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            min={PULSE_COUNT_MIN}
-            max={PULSE_COUNT_MAX}
-            value={s.pulseCount}
-            onChange={(e) => {
-              const v = e.target.value;
-              // single pulse clears the delay (UI mirror of the data-layer rule)
-              patchSetup({ pulseCount: v, ...(Number(v) > 1 ? {} : { pulseDelay: "" }) });
-            }}
-            data-testid={`copy-draft-${draft.key}-pulse-count`}
-            className={READING_INPUT_CLS}
-          />
-        </label>
-        {showPulseDelay && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Pulse delay (s)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              value={s.pulseDelay}
-              onChange={(e) => patchSetup({ pulseDelay: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-pulse-delay`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
-        )}
-      </div>
+      {/* Pulse control moved INSIDE the thermolysis section above (Phase A:
+          pulse is thermolysis-specific, shown only for thermo/blend). */}
 
       {/* Probe — shared ProbePicker (server derives decomposition from the key). */}
       <div className="flex flex-col gap-1.5">

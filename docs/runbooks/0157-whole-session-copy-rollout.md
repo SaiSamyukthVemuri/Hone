@@ -3,6 +3,32 @@
 **Rollout model: MIGRATION-FIRST (DB-first). Application deployment must NOT
 precede the migration.**
 
+## Phase B refresh (reconciled onto the deployed Phase A base)
+
+This PR was refreshed onto production head `3cabdca` (Phase A charting correction,
+**already deployed** to hone.care). The refresh reconciles the whole-session copy
+to Phase A's current charting contract:
+
+- **Galvanic intensity is a RETIRED reading — never copied.** `galvanic_intensity_percent`
+  is removed from every whole-session-copy surface (draft/normalizer types, editable
+  copy card, source-read projection, normalized spec, source fingerprint). Copy still
+  carries valid galvanic mA / duration / units-of-lye / thermolysis readings / pulse.
+  A copied destination entry **always stores `galvanic_intensity_percent = NULL`**:
+  the `copy_session_setup` RPC inserts a **literal NULL** regardless of the spec, so
+  even a forged spec carrying `galvanic_intensity_percent = 42` stores NULL. The
+  source fingerprint **excludes** the field, so a historical change to only that
+  retired value can't invalidate a preview. Historical source rows are untouched.
+- **PicoBlend precision preserved.** The editable copy card uses galvanic mA
+  `step="0.01"` and thermolysis duration `step="0.001"`, labels the pulse control
+  "Thermolysis pulse count" (inside the thermolysis section), and has no galvanic
+  intensity field. Chloe's exact `0.74 mA` / `0.733 s` round-trip through
+  descriptor → preview → normalizer → RPC → destination DB unchanged.
+- **Migration 0157 remains UNAPPLIED in production** (prod migration max stays
+  **0156**). 0157 was updated **in place** (no 0158). This PR stays **DRAFT** and the
+  migration-first order below is still mandatory.
+
+Migration authorization for 0157 is still required and has NOT been granted.
+
 ## Why DB-first (NOT app-first)
 
 The new application code references brand-new database objects that 0157 adds:

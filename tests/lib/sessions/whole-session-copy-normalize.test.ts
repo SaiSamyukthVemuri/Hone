@@ -29,7 +29,6 @@ function draft(over: Partial<WholeSessionCopyDraftInput> = {}): WholeSessionCopy
       thermolysisDurationSeconds: "3",
       galvanicMa: "0.1",
       galvanicDurationSeconds: "10",
-      galvanicIntensityPercent: "50",
       unitsOfLye: "30",
       pulseCount: "2",
       pulseDelay: "0.5",
@@ -207,5 +206,65 @@ describe("normalizeWholeSessionCopy — forgery / invalid values are REJECTED (n
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).not.toMatch(/undefined|null|SQLSTATE|throw|Error:/);
+  });
+});
+
+// Phase B reconciliation: galvanic_intensity_percent is a RETIRED reading (Phase
+// A). The normalizer is the canonical server-side authority — it must never emit
+// it into the spec, even from a forged draft, and must preserve Chloe's exact
+// PicoBlend decimals with zero loss.
+describe("normalizeWholeSessionCopy — galvanic intensity retired + PicoBlend precision", () => {
+  it("(2/3) emits valid galvanic mA/duration/units but NO galvanic_intensity_percent", () => {
+    const r = normalizeWholeSessionCopy([draft()]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const entry = r.specs[0].entry as Record<string, unknown>;
+    // Valid reusable galvanic settings survive.
+    expect(entry.galvanic_ma).toBe(0.1);
+    expect(entry.galvanic_duration_seconds).toBe(10);
+    expect(entry.units_of_lye).toBe(30);
+    // The retired field is deliberately ABSENT from the spec entry.
+    expect(Object.keys(entry)).not.toContain("galvanic_intensity_percent");
+  });
+
+  it("(7) a FORGED draft carrying galvanicIntensityPercent is ignored — never reaches the spec", () => {
+    // The input type has no such field; a forged client casts around it. The
+    // normalizer only reads known fields, so the value can never influence output.
+    const forged = draft();
+    (forged.setup as Record<string, unknown>).galvanicIntensityPercent = "42";
+    const r = normalizeWholeSessionCopy([forged]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const entry = r.specs[0].entry as Record<string, unknown>;
+    expect(Object.keys(entry)).not.toContain("galvanic_intensity_percent");
+    expect(JSON.stringify(r.specs)).not.toContain("42");
+  });
+
+  it("(10) preserves Chloe's EXACT PicoBlend decimals through normalization (0.74 mA, 0.733 s)", () => {
+    const r = normalizeWholeSessionCopy([
+      draft({
+        setup: {
+          ...draft().setup,
+          mode: "blend",
+          galvanicMa: "0.74",
+          galvanicDurationSeconds: "9",
+          thermolysisDurationSeconds: "0.733",
+          thermolysisIntensityPercent: "7",
+          pulseCount: "4",
+          unitsOfLye: "67",
+          energyLevel: "144",
+        },
+      }),
+    ]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const e = r.specs[0].entry as Record<string, unknown>;
+    expect(e.galvanic_ma).toBe(0.74); // exact, no rounding
+    expect(e.galvanic_duration_seconds).toBe(9);
+    expect(e.thermolysis_duration_seconds).toBe(0.733); // exact 3-decimal
+    expect(e.thermolysis_intensity_percent).toBe(7);
+    expect(e.pulse_count).toBe(4);
+    expect(e.units_of_lye).toBe(67);
+    expect(e.galvanic_intensity_percent).toBeUndefined();
   });
 });

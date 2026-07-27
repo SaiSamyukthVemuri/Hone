@@ -42,7 +42,6 @@ function sourceBlock(over: Partial<CopySourceBlock> = {}): CopySourceBlock {
       thermolysis_duration_seconds: 3,
       galvanic_ma: 0.1,
       galvanic_duration_seconds: 10,
-      galvanic_intensity_percent: 50,
       units_of_lye: 30,
       pulse_count: 2,
       pulse_delay_seconds: 1,
@@ -116,7 +115,6 @@ describe("draftToCopyInput — NARROW client→server payload", () => {
         "apilusModality",
         "energyLevel",
         "galvanicDurationSeconds",
-        "galvanicIntensityPercent",
         "galvanicMa",
         "machineFrequency",
         "mode",
@@ -128,6 +126,11 @@ describe("draftToCopyInput — NARROW client→server payload", () => {
         "unitsOfLye",
       ].sort(),
     );
+    // galvanic_intensity_percent is a RETIRED reading (Phase A): it is never a
+    // copyable setup key and must not cross the wire in any form.
+    expect(Object.keys(input.setup)).not.toContain("galvanicIntensityPercent");
+    expect(JSON.stringify(input)).not.toContain("galvanicIntensity");
+    expect(JSON.stringify(input)).not.toContain("galvanic_intensity");
     // Only the probe KEY crosses the wire; decomposition is derived server-side.
     expect(input.setup.probeKey).toBe("sterex-gold-two-piece-f3-short");
     expect(JSON.stringify(input)).not.toContain("probe_brand");

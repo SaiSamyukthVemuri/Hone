@@ -118,8 +118,10 @@ export async function getWholeSessionCopySourceAction(input: {
       .order("display_order", { ascending: true }),
     supabase
       .from("electrolysis_entries")
+      // galvanic_intensity_percent is a RETIRED reading (Phase A): not read for
+      // the copy, so it is not part of the reusable-setup source projection.
       .select(
-        "block_id, created_at, deleted_at, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_count, pulse_delay_seconds",
+        "block_id, created_at, deleted_at, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, pulse_count, pulse_delay_seconds",
       )
       .in("block_id", blockIds)
       .is("deleted_at", null)
@@ -179,8 +181,7 @@ export async function getWholeSessionCopySourceAction(input: {
             galvanic_ma: (fe.galvanic_ma as number | null) ?? null,
             galvanic_duration_seconds:
               (fe.galvanic_duration_seconds as number | null) ?? null,
-            galvanic_intensity_percent:
-              (fe.galvanic_intensity_percent as number | null) ?? null,
+            // galvanic_intensity_percent retired — not part of the copy source.
             units_of_lye: (fe.units_of_lye as number | null) ?? null,
             pulse_count: (fe.pulse_count as number | null) ?? null,
             pulse_delay_seconds: (fe.pulse_delay_seconds as number | null) ?? null,
