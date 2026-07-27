@@ -6,12 +6,34 @@ own-identity charting, client selection or "any available", no same-practitioner
 shared-resource double-booking). **Not multi-location.** Addresses HNE-CAL-001,
 TEN-06, TEN-07 and the Studio-plan up-to-three-practitioners promise.
 
-**Evidence basis:** direct reads of migrations `0001–0133` + booking/slot/action code,
-plus a 6-cluster read-only audit (workflow `wf_643e69e7`, 6 agents, 0 errors), plus
-read-only hosted checks (migration max `0133`; 84 appointments / 42 confirmed with
-**zero** NULL `practitioner_id`; all 3 synthetic studios have 1 active practitioner;
-Willow = studio-wide, unaffected). No production write, migration, or flag change was
-made to produce this note.
+> ## ⚠️ CURRENT DEPLOYMENT STATUS — verified 2026-07-27
+>
+> **This is an architecture note. It describes a design, not a launched capability.**
+> The migrations it specifies (`0134`–`0139`, plus the Part-4 command set `0142`–`0150`) are
+> **applied and deployed**, but enablement is deliberately narrow:
+>
+> | Flag | Value |
+> |---|---|
+> | `practitioner_capacity_enabled` | **true on the controlled test studio ONLY** — **false at Willow Electrolysis** |
+> | `practitioner_capacity_booking_enabled` (public assignment kill switch) | **FALSE on every studio** |
+>
+> **Public booking practitioner selection and assignment is not active anywhere.** Production
+> holds 6 practitioners across 5 studios (2 at Willow), 101 appointments.
+>
+> **Do not read "the schema and code exist" as launch readiness.** Broad multi-practitioner
+> rollout requires the deep production/security/code audit (not yet performed) and explicit
+> authorization. Note also that flipping `practitioner_capacity_enabled` ON→OFF is **not** a
+> truthful instant rollback once a studio has legitimate parallel appointments — that is
+> precisely why 0136 split the booking switch out. See
+> [capability-register.md §10](../production/capability-register.md) and
+> [known-limitations.md L7](../production/known-limitations.md).
+
+**Evidence basis (as researched, 2026-07 — historical):** direct reads of migrations
+`0001–0133` + booking/slot/action code, plus a 6-cluster read-only audit (workflow
+`wf_643e69e7`, 6 agents, 0 errors), plus read-only hosted checks (migration max `0133` **at
+that time — it is now 0157**; 84 appointments / 42 confirmed with **zero** NULL
+`practitioner_id`; all 3 synthetic studios have 1 active practitioner; Willow = studio-wide,
+unaffected). No production write, migration, or flag change was made to produce this note.
 
 > **Prime directive for every design choice below:** while
 > `practitioner_capacity_enabled = false` (all production studios, incl. Willow), the

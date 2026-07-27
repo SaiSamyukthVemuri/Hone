@@ -1,21 +1,56 @@
 # 16 Live payments readiness
 
-> **⚠️ CURRENT POSTURE (2026-07-08).** This document is the **historical pre-live readiness
-> review + the controlled live-enablement runbook**. **Supervised live owner-run session
-> payments are now LIVE for approved studios** (Willow + Sam's controlled studio): live Stripe
-> Connect onboarding, live charges, live refunds, and live webhook processing are proven;
-> live/test card + attempt isolation is live; Stripe gates **15 PASS**. Still **OFF / held:**
-> public booking card collection, deposits / packages / partial payments, and live manual
-> no-show / late-cancel fees (hard-held server-side). **Broad self-serve live payments are not
-> ready.** The "Status (PR #201)" / "NOT READY FOR LIVE PAYMENTS" notes below, the blocker
-> tables, and **any "live payments remain disabled / not ready / not active / has not started"
-> statement anywhere in this document** are the **historical pre-live record** (2026-06-08 →
-> 06-12) and are retained as history; the "Controlled live enablement" runbook (§17) is the
-> go-live procedure that was used.
+## VERIFIED PAYMENT POSTURE — 2026-07-27
+
+Direct production evidence, read-only. Distinguish these dimensions carefully; they are not
+the same claim.
+
+| Dimension | Verified state |
+|---|---|
+| **Live-capable** | ✅ Yes. Mode-scoped Stripe Connect (0103) with live/test isolation for settings, cards and attempts. |
+| **Controlled live-payment proof** | ✅ Yes, and **ongoing**. **12 charge attempts exist, all `succeeded`.** |
+| **Willow Electrolysis Connect readiness** | ✅ **Live-mode account, `stripe_account_status='enabled'`, `charges_enabled=true`, `payouts_enabled=true`.** |
+| **Willow live production exercise** | ✅ **6 succeeded LIVE-mode charges, most recent 2026-07-26.** Willow is genuinely taking live payments. |
+| Controlled test studio | ✅ Live account enabled; 2 succeeded live charges (most recent 2026-07-05). |
+| Test-mode charges | 3 on Willow (incl. one `late_cancellation_fee` and one `no_show_fee`), 1 on the test studio. |
+| **Public-booking card collection** | ❌ **OFF and unwired.** `require_card_on_file` is **false on every studio**; `pending_booking_payment_sessions` = **0 rows**. A Stripe gate proves the `set_studio_require_card_on_file` path has zero runtime occurrences. |
+| **Portal card storage (card-on-file)** | ✅ In use — 8 `client_payment_methods`, 9 `client_stripe_customers`. |
+| **Session payments** | ✅ Live and exercised — this is the only charge reason permitted in live mode. |
+| **Manual-fee hold** | 🔒 **HELD.** `lib/billing/live-charge-reason-allowlist.ts` blocks every non-`session_payment` reason in live mode, at both prepare and execute. The 2 fee charges that exist are **test-mode only**. |
+| **Refunds** | Deployed; **0 rows in `stripe_refunds`** on this baseline. The path was proven in earlier controlled testing, but there is no current-baseline production refund. |
+| **Disputes** | **Alert-only.** `stripe_disputes` = **0 rows** — none has ever occurred. `charge.dispute.created` raises a critical ops alert; there is no automated response. |
+| **Deposits / packages / partial payments** | ❌ **Not built.** No schema, no code. |
+| **Broad self-service readiness** | ❌ **Not ready.** A new studio starts in test mode and is enabled per-studio only after supervised onboarding + approval. |
+| Currency / fees | `default_charge_currency = 'cad'` on all rows; `stripe_application_fee_bps` is NULL (no platform fee taken). |
+| Automatic / batch / public-triggered charging | ❌ **Not built and not planned.** Charging is one manual practitioner click on a `ready` attempt. |
+
+Supporting counts: `stripe_events` 123 · `stripe_account_provisioning_attempts` 9 ·
+`appointment_payments`, `stripe_charge_attempts`, `stripe_payment_audit`, `payment_consents`
+all **0 rows** (the canonical ledger is `payment_charge_attempts`).
+
+**Do not claim Willow is merely "ready" for payments** — she is past readiness and is
+transacting in live mode. Equally, **do not extrapolate that to broad launch**: two approved
+studios under supervision is not self-serve readiness.
+
+Canonical cross-references:
+[current-state.md §7](./production/current-state.md) ·
+[capability-register.md §7](./production/capability-register.md) ·
+[known-limitations.md L4/L5](./production/known-limitations.md).
+
+---
+
+> **⚠️ EVERYTHING BELOW IS HISTORICAL.** This document is the **pre-live readiness review plus
+> the controlled live-enablement runbook that was used**. The "Status (PR #201)" and "NOT READY
+> FOR LIVE PAYMENTS" notes, the blocker tables, and **any "live payments remain disabled / not
+> ready / not active / has not started" statement anywhere below** are the **historical
+> pre-live record** (2026-06-08 → 06-12), retained as history and superseded by the verified
+> table above. The "Controlled live enablement" runbook (§17) is the go-live procedure that was
+> actually executed.
+>
 > Migration-max references in this doc (e.g. "0105") are **historical**. **Do not hardcode the
-> production migration max in this runbook** — it goes stale on every migration. Derive the
-> expected max from: `ls supabase/migrations | tail` → `supabase migration list --linked` →
-> `scripts/verify-production.mjs`. The canonical current value is tracked in
+> production migration max in this runbook** — it goes stale on every migration. Derive it
+> from: `ls supabase/migrations | tail` → `supabase migration list --linked` →
+> `scripts/verify-production.mjs`. The canonical current value (**0157**) is tracked in
 > [docs/production/current-state.md](./production/current-state.md) and
 > [docs/production/migration-ledger.md](./production/migration-ledger.md); process in
 > [docs/runbooks/migration-first-process.md](./runbooks/migration-first-process.md).

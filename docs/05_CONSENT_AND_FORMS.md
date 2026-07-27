@@ -93,7 +93,7 @@ When Chloe later looks at a signed form, she sees **exactly the text the client 
 | `/clients/<id>` (practitioner) | Pinned-notes-style display of latest signatures with the snapshot text expandable. |
 | `/settings/consent` (practitioner) | Template author + signed-history list per template. |
 
-Signed-consent viewer in full is still on the [docs/13 backlog](./13_BACKLOG_AND_DECISIONS.md); the current display is intentionally minimal.
+**CORRECTION (2026-07-27): the signed-consent viewer SHIPPED** (PR #405) — `components/signed-consent-viewer.tsx` exists at the production SHA and practitioners can open the full signed form plus the photo-consent choice. The earlier "still on the backlog" note is superseded; the historical display rationalely minimal.
 
 ## Card authorization specifically
 

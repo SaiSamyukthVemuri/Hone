@@ -134,7 +134,7 @@ Blocked time renders with a warm-tan background (`#F4F1EA`), a calm border (`#C9
 
 Read-only iCal subscription per practitioner.
 
-- `practitioners.calendar_feed_token` is the bearer credential. **Token storage is raw today**; hashing is on the deferred-hardening list ([docs/03](./03_SECURITY_AND_PRIVACY.md) §8).
+- `practitioners.calendar_feed_token_hash` is the bearer credential lookup. **CORRECTION (2026-07-27): storage is HASH-ONLY** — migration **0116 dropped the raw `practitioners.calendar_feed_token` column**; the raw token is surfaced only once at generate/rotate. Existing subscriptions kept working (hash lookup), no reconnect was needed. The earlier "token storage is raw today" note and its deferred-hardening list ([docs/03](./03_SECURITY_AND_PRIVACY.md) §8).
 - 30-day past + all future window.
 - `SUMMARY` is always "Hone appointment" (no service name; lock-screen safe).
 - `DESCRIPTION` includes client name, modality (`Electrolysis / Laser / Consultation`; generic, not the specific service name), a `View in Hone` link to `/calendar/<id>` (which is auth-gated).

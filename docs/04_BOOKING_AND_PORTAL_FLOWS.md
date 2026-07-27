@@ -131,7 +131,7 @@ What Replace does NOT do:
 
 - No card delete. The prior row stays as `status='removed'` with `removed_at` stamped.
 - No charge. No PaymentIntent. No refund. No invoice. No receipt.
-- No live mode. The same `STRIPE_ALLOW_LIVE_MODE=false` posture applies.
+- **Public-booking card collection remains OFF and unwired** (`require_card_on_file` is false on every studio; `pending_booking_payment_sessions` is empty). *(The earlier `STRIPE_ALLOW_LIVE_MODE=false` rationale is superseded — live mode IS enabled platform-wide for approved studios; what keeps card collection off at booking is that the path is simply not wired.)*
 - No practitioner-side card replace UI. `client_payment_methods.added_via` accepts `practitioner` but no UI exists today.
 
 ### Portal layout (PR #136 zones, PR #159 cleanup)

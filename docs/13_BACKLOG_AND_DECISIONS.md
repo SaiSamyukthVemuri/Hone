@@ -1,13 +1,84 @@
 # 13 Backlog and decisions
 
-> **⚠️ HISTORICAL PER-PR LOG.** This is a dated decision log; **each entry reflects the state
-> at its own date** and is retained verbatim as history — it is NOT maintained as current
-> state. In particular, entries dated before 2026-07-08 that say "live payments remain
-> disabled / not started / production stays at 010x" are **point-in-time** and are superseded:
-> the current payment posture is **supervised live owner-run session payments live for
-> approved studios** (public booking card collection, deposits/packages/partial, and live
-> manual fees remain off/held; broad self-serve not ready), and production migration max is
-> **0112**. Canonical current state: [docs/production/current-state.md](./production/current-state.md).
+> **⚠️ HISTORICAL PER-PR LOG.** Below the "Active decisions and queue" section, this is a
+> dated decision log; **each entry reflects the state at its own date** and is retained
+> verbatim as history — it is NOT maintained as current state. Entries saying "live payments
+> remain disabled / not started", "production stays at 010x", "migration max 0112", "0157
+> pending" or "PR #478 is a draft" are **point-in-time and superseded**.
+>
+> **Canonical current state:** [docs/production/current-state.md](./production/current-state.md) ·
+> [capability-register.md](./production/capability-register.md) ·
+> [known-limitations.md](./production/known-limitations.md) ·
+> [migration-ledger.md](./production/migration-ledger.md).
+> Current production migration max is **0157**; the runtime-bearing application HEAD is
+> **`96b28d6…`**.
+
+---
+
+## Active decisions and queue (2026-07-27)
+
+This section **is** maintained as current. Everything under "Decision log" below is history.
+
+### Willow direct new-client consultation booking route — `Deferred by product decision`
+
+**Decision (2026-07-27): DEFERRED.** A dedicated direct booking route for new-client
+consultations is **not built**, is **not a launch blocker**, and is **not the next engineering
+task**. It must not be described as currently built or live anywhere in the documentation.
+
+*Why:* existing public booking plus operator-side booking cover current pilot volume, and the
+deep audit is the higher-value next investment. *Alternative considered:* building it before
+the audit — rejected, because it would add unaudited surface area to a clinical system that
+has not yet had a comprehensive security review. *Owner:* Sam (product). *Revisit:* no date
+scheduled; this is a product decision, not an engineering blocker.
+
+### Chloe's human acceptance testing — `Pending`
+
+**Status (2026-07-27): OUTSTANDING.** Engineering deployment of the Phase A charting
+correction (PR #479) and whole-session copy (PR #478 + migration 0157) is **complete**. Chloe's
+on-device acceptance is **not**.
+
+Outstanding acceptance items: the unified *Treatment observations & skin response* box;
+galvanic intensity being absent from new charting; `0.733` displaying as `0.733 seconds`; the
+*Thermolysis pulse count* label and placement; the larger *Additional notes* field; **one real
+whole-session copy** (none has ever been performed — the provenance ledger holds 0 rows);
+conditional numbing notes (0156); and inventory-backed probe-lot linkage (0155).
+
+**Do not imply that no Chloe work remains.** Acceptance may happen separately and later, and
+it does not block the audit. *Owner:* Chloe. See
+[known-limitations.md](./production/known-limitations.md) L1 and L2.
+
+### Production documentation reconciliation — `Active`
+
+**Status (2026-07-27): IN PROGRESS** on branch `docs/production-reconciliation-2026-07-27`,
+cut from the runtime-bearing head `96b28d6…`. Rebuilds `current-state.md`,
+`migration-ledger.md` and `09_DATABASE_AND_RLS.md` against verified production evidence, adds
+`capability-register.md` and `known-limitations.md`, and closes out both rollout runbooks.
+Documentation-only: no runtime code, migration, database type, flag, provider or production
+change. *Owner:* Sam.
+
+### Deep skeptical production / security / code audit — `Next`
+
+**Status (2026-07-27): NOT STARTED.** This is the **next substantive engineering and
+governance work** after the documentation reconciliation. It has not been performed against
+the current baseline (`96b28d6…`, migration max 0157).
+
+Passing tests and passing gates are **not** evidence of security. Per-PR adversarial reviews,
+`check-stripe-gates`, the DB/RLS integration lane, the types-drift check and
+`verify-production.mjs` each prove specific behaviours; none of them substitutes for an audit.
+*Owner:* Sam.
+
+### Broader second-studio and multi-practitioner rollout — `Held`
+
+**Status (2026-07-27): HELD.** Only **after** the deep audit and **explicit authorization**.
+
+Schema and code existing is not launch readiness. Today `practitioner_capacity_enabled` is
+true only on the controlled test studio and **false at Willow**, and
+`practitioner_capacity_booking_enabled` — the public-booking kill switch — is **false on every
+studio**. Note also that flipping capacity ON→OFF is **not** a truthful instant rollback once
+parallel appointments exist (see the 0136 migration header). *Owner:* Sam. See
+[known-limitations.md](./production/known-limitations.md) L7 and L17.
+
+---
 
 ## Decision log
 

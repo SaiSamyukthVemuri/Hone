@@ -1,8 +1,20 @@
 # Part 4 — multi-practitioner internal scheduling: release-candidate review
 
-PR #460 (`claude/practitioner-capacity-part4-booking`). **DRAFT — not merge-ready.**
-Migrations 0142–0150 are **repo-only** (hosted max stays 0133); both capacity flags
-default **OFF**; Willow untouched; Part 5 (public practitioner selection) deferred.
+> **⚠️ HISTORICAL REVIEW DOCUMENT.** This was the pre-merge release-candidate review. Its
+> status line is **superseded**: PR #460 was subsequently **merged**, and **migrations
+> 0142–0150 are applied in production** (hosted migration max is **0157**, not 0133). The
+> review content below remains useful as the record of what was examined and decided.
+>
+> **What still holds:** both capacity flags default **OFF**;
+> `practitioner_capacity_enabled` is true **only on the controlled test studio** and false at
+> **Willow Electrolysis**; `practitioner_capacity_booking_enabled` (Part 5 / public
+> practitioner selection) is **false on every studio** and remains **deferred**.
+> See [capability-register.md §10](../production/capability-register.md).
+
+PR #460 (`claude/practitioner-capacity-part4-booking`). *(At the time of this review:
+**DRAFT — not merge-ready**; migrations 0142–0150 were **repo-only**, hosted max 0133.)*
+Both capacity flags default **OFF**; Willow untouched; Part 5 (public practitioner
+selection) deferred.
 
 ## 1. Scope delivered
 

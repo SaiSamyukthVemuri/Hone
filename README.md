@@ -6,12 +6,42 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
-> **Canonical, regularly-reconciled state:** [docs/production/current-state.md](./docs/production/current-state.md)
-> (production migration max **0124** as of 2026-07-12 = Google Calendar Phase B1 dormant outbound-sync schema/queue foundation, PR #407, applied migration-first + merged + deployed **DORMANT** — schema live but inert: no worker, no enqueue path, no Google event write, all Google sync flags OFF, Willow not connected. Also live-but-dormant: Clinical Record Phase 1 finalization (0119, PR #399) + Phase 2 corrections/amendments backend (0120, PR #400), both clinical flags OFF and the corrections **customer workflow parked**) ·
-> [migration ledger](./docs/production/migration-ledger.md) ·
-> [release changelog](./docs/production/release-changelog.md) ·
-> [migration-first runbook](./docs/runbooks/migration-first-process.md). This table is a
-> summary; when it and current-state disagree, current-state + the live verifier win.
+> **Reconciled 2026-07-27.** Production migration max **0157**; last runtime-bearing
+> application HEAD **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** (PR #478 merge, whole-session
+> copy), serving `hone.care`. One live studio with real clients: **Willow Electrolysis**.
+>
+> This table is a **summary**. When it and the canonical documents disagree, the canonical
+> documents plus the live verifier win. **No capability is "live" merely because a table,
+> migration, component, route or flag exists** — read the status words precisely.
+
+### Read these in order
+
+| # | Document | What it gives you |
+|---|---|---|
+| 1 | **[docs/production/current-state.md](./docs/production/current-state.md)** | The canonical concise snapshot of what Hone is today |
+| 2 | [docs/production/capability-register.md](./docs/production/capability-register.md) | Per-capability status matrix with direct evidence |
+| 3 | [docs/production/known-limitations.md](./docs/production/known-limitations.md) | Verified residual limitations, with owner and next gate |
+| 4 | [docs/production/migration-ledger.md](./docs/production/migration-ledger.md) | Migration facts, apply order, 0157 detail |
+| 5 | Domain + runbook docs | Deeper architecture and operating detail (map below) |
+| 6 | [docs/14_AI_HANDOFF.md](./docs/14_AI_HANDOFF.md) | **Historical** dated chronology — read only when you need the order events happened |
+
+Also: [release changelog](./docs/production/release-changelog.md) ·
+[migration-first runbook](./docs/runbooks/migration-first-process.md).
+
+### Current posture at a glance
+
+- **Deployed, enabled, human acceptance PENDING:** the Phase A charting correction (unified
+  *Treatment observations & skin response* box, galvanic-intensity retirement, exact
+  `0.733 seconds` display, *Thermolysis pulse count* relabel) and whole-session copy.
+- **Deployed but never production-exercised:** whole-session copy — the provenance ledger holds
+  **0 rows**; no real copy has ever been performed.
+- **Dormant:** all Google Calendar sync (Willow is **not** connected; every sync flag off) and
+  clinical finalization/corrections (both flags off on every studio).
+- **Held:** live manual no-show/late-cancel fees · public-booking card collection · public
+  practitioner selection and assignment.
+- **Deferred by product decision (2026-07-27):** the direct new-client consultation booking route.
+- **Next:** Chloe's acceptance testing, then the **deep production / security / code audit**
+  (not yet performed against this baseline).
 
 | Surface | State |
 |---|---|
@@ -42,7 +72,12 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 | Client portal access events + practitioner status card | **Production** (PR #370, migration 0111; append-only, no token/PII) |
 | Public booking previous/next availability navigation | **Production** (PR #371; client-side) |
 | Public booking horizon 1–12 months | **Production** (PR #372, migration 0112; default 3, existing studios unchanged) |
-| Google Calendar sync | **Foundation deployed, DORMANT — no sync active.** Phase A connection/OAuth foundation (0121/0122, PR #404) + Phase B1 outbound-sync schema/queue (`calendar_event_links`, `calendar_sync_outbox`, service-role claim/result RPCs; 0124, PR #407) are deployed. **No worker, no enqueue path, no Google event write, no inbound busy, no availability change.** All Google sync flags OFF; one controlled Phase A connection (Sam's studio) exists; Willow not connected. Outbound/inbound/two-way sync = design intent, not shipped |
+| Google Calendar sync | **Deployed, production-exercised ONCE, currently DORMANT — no sync active.** Phases A/B1/B2.3-a/B2.4/B2.3-b/c1/c2/c3 are all merged and deployed. **Exactly one real Google event has ever been created** (2026-07-18, on the controlled test studio); the outbox and event-link tables each hold that one row. **Every outbound / inbound-busy / two-way flag is OFF on every studio; no worker is draining the queue; Willow is not connected.** Inbound busy and two-way edits are designed, not built |
+| Charting: unified *Treatment observations & skin response*, galvanic-intensity retirement, exact `0.733 s` thermolysis display, *Thermolysis pulse count* (PR #479) | **Deployed + enabled — Chloe's human acceptance PENDING.** Code-only, no migration. Galvanic-intensity **history is preserved**; only new writes and ordinary display drop it (`galvanic_ma` / `galvanic_duration_seconds` remain active) |
+| Whole-session copy — "Copy areas & settings from last session" (PR #478, migration 0157) | **DB applied + deployed + enabled — but NOT production-exercised** (`session_copy_operations` = 0 rows) and **Chloe's human acceptance PENDING**. Editable ephemeral preview, zero writes before an explicit commit, one atomic commit, source locking, idempotency + provenance ledger. Minutes and outcomes are never copied; galvanic intensity is forced to a literal NULL |
+| Practitioner capacity / multi-practitioner | **Deployed; enabled on the controlled test studio ONLY.** `practitioner_capacity_enabled` is **false at Willow**, and `practitioner_capacity_booking_enabled` (public assignment) is **false on every studio**. Schema and code existing is not launch readiness |
+| Clinical record finalization + corrections | **Deployed but DORMANT** — both flags OFF for all studios. Phase 1 was production-exercised **once** on the controlled test studio; Willow has 0 finalized records. Phase 2 has **never** been exercised and its customer workflow is **parked** |
+| Direct new-client consultation booking route | **Deferred by product decision (2026-07-27)** — not built, not a launch blocker, not the next task |
 | Intake builder, admin/support dashboard | **Backlog** |
 
 ## Who Hone is for
@@ -94,8 +129,15 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 
 ## Documentation map
 
+**Start with the canonical production set** — see "Read these in order" under
+[Status](#status) above:
+
 | File | Audience | Topic |
 |---|---|---|
+| [docs/production/current-state.md](./docs/production/current-state.md) | **Everyone — read first** | Canonical snapshot of what Hone is today |
+| [docs/production/capability-register.md](./docs/production/capability-register.md) | Engineers, auditors, operators, investors | Per-capability status matrix with evidence |
+| [docs/production/known-limitations.md](./docs/production/known-limitations.md) | Reviewers, operators | Verified residual limitations, owners, next gates |
+| [docs/production/migration-ledger.md](./docs/production/migration-ledger.md) | Developers, auditors | Migration facts and applied status |
 | [docs/00_PRODUCT_OVERVIEW.md](./docs/00_PRODUCT_OVERVIEW.md) | Anyone | What Hone is and is not |
 | [docs/01_ARCHITECTURE.md](./docs/01_ARCHITECTURE.md) | Developers | Next.js + Supabase + Stripe shape |
 | [docs/02_DOMAIN_MODEL.md](./docs/02_DOMAIN_MODEL.md) | Developers | Studios, clients, appointments, the rest |

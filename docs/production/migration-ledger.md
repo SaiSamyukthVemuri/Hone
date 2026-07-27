@@ -2,53 +2,100 @@
 
 **Canonical migration ledger.** Regenerate the "applied" column from
 `supabase migration list --linked`; regenerate the max from
-`ls supabase/migrations/ | tail -1`.
+`ls supabase/migrations/ | tail -1`. Verify filenames directly against
+`supabase/migrations` — never reconstruct a migration number or purpose from memory.
 
-- **Hosted (production) migration max = 0132** (`0132_google_calendar_event_link_transitions.sql`).
-- **`0132` (Google Calendar B2.3-c1 event-link transitions) was hosted-applied migration-first on
-  2026-07-16** (SHA-256 `0516776e08b3a52fc6d9e5a54ed601b153e4401d2ef718c18cc7eb834b791abd`; the only
-  pending migration; dry-run confirmed only 0132; `supabase db push --linked`, no reset/repair/raw SQL).
-  Additive + dormant: one transactional service-role-only `calendar_event_link_transition` RPC
-  (bind_confirmed / update_confirmed / mark_deleted / rotate_for_recreate; bind/update reject a
-  missing/empty ETag), plus `CREATE OR REPLACE` of `enqueue_calendar_outbound` (placeholder
-  `last_hone_version=0` + reschedule rebind reset), `enqueue_calendar_outbound_on_delete`
-  (placeholder-aware delete), and `repair_enqueue_orphan_link_delete` (placeholder-aware). It changed
-  **no** existing 0124/0125/0131 file, added no column, and mutated no row. **Read-only post-apply
-  verify PASSED:** hosted max 0132, RPC present + SECURITY DEFINER + service-role-only EXECUTE (anon
-  denied) + closed action set + outbox never transitioned, all sync flags OFF, worker off,
-  `calendar_sync_outbox`/`calendar_event_links` 0 rows, 0 real Google events, appointments/connections/
-  credentials unmodified, 0 unresolved calendar ops-alerts. At the pre-merge validation point PR #428
-  remained unmerged; on merge the c1 event-operation code is deployed dormant (no route/cron/worker).
-- **Applied status:** every migration `0001`–`0132` is applied in production. The recent tail (0117 … 0132) was applied
-  **migration-first** (the migration applied to production + verified *before* the code merge).
-  0116 was the one **code-first** apply — *after* PR #395's hash-only code merged + deployed —
-  because it destructively dropped a column the deployed code wrote. **The 0125 → 0131 tail is a
-  mix of Google Calendar and non-calendar migrations, all applied migration-first:** 0125
-  (Google Calendar B2.3-a enqueue activation boundary, PR #412 — dormant), 0126/0127 (Willow
-  client clinical notes + RLS fix — live), 0128/0129 (Willow session-block areas: multi-area +
-  atomic laterality writes), 0130 (revoke anon EXECUTE on a calendar-charting RPC — hardening),
-  0131 (Google Calendar B2.4 dual-destination + destination-derived scope, PR #424 — dormant).
-- **Google Calendar B2.3-b (PR #426, merge `f664f0f`, deployed 2026-07-15) added NO migration** —
-  the reconciliation sweep + heartbeat + `/api/cron/calendar-reconcile` route are code-only and
-  orchestrate the **existing** 0124/0125 repair primitives, so the hosted max **stays 0131**.
-- **Total migrations in repo: 133** (`0001` … `0133`). **`0133` (practitioner Move
-  appointment — the atomic `practitioner_move_appointment` RPC) is repo-added; its
-  migration-first hosted apply lands during this rollout** (until then hosted max stays 0132).
-- The repo-max is enforced as a test tripwire: the per-migration shape tests
-  `tests/migrations/0131-google-calendar-dual-destination.test.ts` (and the 0125–0130 shape
-  tests) assert the repo contents, and `tests/scripts/verify-production.test.ts` pins the
-  **derived** expected max (no hardcoded literal) — it currently derives **0133**. When a new
-  migration lands, the derived pin moves to the new number automatically.
+Related: [current-state.md](./current-state.md) ·
+[capability-register.md](./capability-register.md) ·
+[known-limitations.md](./known-limitations.md) ·
+[../runbooks/migration-first-process.md](../runbooks/migration-first-process.md)
 
-> **Scope of this v1 ledger.** The recent tail (0089–0131) is enumerated below with a
-> one-line purpose and applied status. Full per-migration narrative for **0001–0088** lives
-> in `docs/09_DATABASE_AND_RLS.md` (migration table + per-range notes) and the per-PR entries
-> in `docs/13_BACKLOG_AND_DECISIONS.md` / `docs/14_AI_HANDOFF.md`. A fully generated
-> 0001–0113 one-line ledger is a documentation follow-up (see current-state "docs follow-up").
+## Current state (verified 2026-07-27)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0157** (`0157_whole_session_copy_setup.sql`) |
+| **Repo migration max** | **0157** — hosted == repo |
+| **Total migrations in repo** | **157** (`0001` … `0157`) |
+| **Total applied in production** | **157**, each applied **exactly once** (0 duplicate versions) |
+| **Migrations at or above `0158`** | **none** |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version through 0157 |
+
+**Every migration `0001`–`0157` is applied in production.** The recent tail was applied
+**migration-first** — the migration applied to production and verified *before* the code
+merge — with two deliberate exceptions noted below.
+
+### Apply-order discipline
+
+- **Migration-first (default).** Apply and verify against production, then merge the code.
+  Required whenever the new application code reads or writes the new object.
+- **Code-first (destructive only).** Used when a migration destructively drops a column the
+  deployed code still writes. **0116** is the one code-first apply in the recent tail — it
+  dropped the raw `practitioners.calendar_feed_token` after PR #395's hash-only code was
+  already live.
+- **App-first batch.** The `0134`→`0151` capacity/onboarding window was applied in one push
+  *after* the final application commit was live, because every new flag defaulted OFF and the
+  code was written to be safe pre-migration.
+
+### Migration classes used in this ledger
+
+- **Migration-first** — applied before its code merged.
+- **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
+- **Dormant migration** — applied and merged, but nothing in production reads or writes it
+  because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0157 — current purpose and status
+
+**`0157_whole_session_copy_setup.sql` — whole-session "Copy areas and settings from last
+session": atomic, idempotent, source-authoritative batch commit + provenance ledger.**
+
+- **Applied to production 2026-07-27T02:01:29Z**, from the whole-session-copy worktree at
+  PR #478 head `1dbca69`. The dry-run showed **only** 0157; the apply was clean with no
+  notices, warnings or errors.
+- **Applied BEFORE PR #478 merged** (13:12:34Z) — migration-first, so the deployed commit
+  path never faced a missing-function window.
+- **Additive.** It adds **one provenance table** and **four functions**. There is **no
+  backfill** and **no mutation of any existing clinical object** — no existing table, column,
+  index, policy or grant was changed.
+- **Provenance table** `public.session_copy_operations` — `(target_session_id,
+  idempotency_key)` UNIQUE, two same-studio composite foreign keys. **0 rows in production**:
+  no real copy has ever been performed.
+- **Verified privilege posture** (`has_table_privilege` / `has_function_privilege`, 2026-07-27):
+
+| Object | anon | authenticated | service_role |
+|---|---|---|---|
+| `session_copy_operations` (table) | **no privileges at all** | **SELECT only** — no INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER | full |
+| `copy_session_setup(...)` — the commit RPC | no EXECUTE | **no EXECUTE** | EXECUTE |
+| `whole_session_copy_source_descriptor(uuid, uuid)` | no EXECUTE | EXECUTE | EXECUTE |
+| `_whole_session_copy_fingerprint(uuid)` — private helper | no EXECUTE | no EXECUTE | EXECUTE |
+| `_whole_session_copy_source_id(uuid, uuid)` — private helper | no EXECUTE | no EXECUTE | EXECUTE |
+
+  All four functions are `SECURITY DEFINER` with `search_path = ""`. The commit RPC is
+  **service-role only** — the browser cannot call it. It is invoked solely by the
+  authenticated Next.js server action, which passes a **server-derived** practitioner id, and
+  the RPC re-verifies active studio membership because service_role bypasses RLS.
+- The authenticated `SELECT`-only grant on the ledger is studio-scoped by RLS. Revoking
+  TRUNCATE / REFERENCES / TRIGGER matters because **RLS does not protect those** — see
+  [../09_DATABASE_AND_RLS.md](../09_DATABASE_AND_RLS.md).
+- The RPC body enforces the product contract: reusable setup only (**minutes and outcomes are
+  never copied**) and `galvanic_intensity_percent` is written as a **literal `NULL`** at the
+  destination, with the source fingerprint excluding it so a forged spec cannot reintroduce it.
+
+### Test tripwire
+
+`tests/scripts/verify-production.test.ts` pins the **derived** expected migration max — it
+reads `supabase/migrations/` at run time rather than hardcoding a literal, so the pin moves
+automatically when a new migration lands. Per-migration shape tests assert repo contents.
+
+> **Scope of this ledger.** The tail from 0089 is enumerated below with a one-line purpose
+> and applied status. Full per-migration narrative for **0001–0088** lives in
+> [../09_DATABASE_AND_RLS.md](../09_DATABASE_AND_RLS.md) and the dated per-PR entries in
+> [../13_BACKLOG_AND_DECISIONS.md](../13_BACKLOG_AND_DECISIONS.md) /
+> [../14_AI_HANDOFF.md](../14_AI_HANDOFF.md).
 
 ---
 
-## Recent tail (0089 → 0133)
+## Recent tail (0089 → 0157)
 
 | # | Filename | Purpose | Applied |
 |---|---|---|---|
@@ -93,16 +140,53 @@
 | **0130** | `0130_revoke_anon_calendar_charting_rpc_execute.sql` | **Hardening — revoke anon EXECUTE on a calendar-charting RPC.** Grant-only tightening (removes an `anon` EXECUTE path); no schema/data change; hardens (does not weaken). Applied **migration-first**. **MERGED + deployed.** | ✅ applied + merged |
 | **0131** | `0131_google_calendar_dual_destination.sql` | **Google Calendar — Phase B2.4: dual-destination + destination-derived scope.** Replaces the broad `calendar.events` model with a destination contract — **dedicated** (`calendar.app.created`, an app-created "Hone Appointments" calendar) vs **existing-owned** (`calendar.events.owned`) — with NULL-safe CHECKs on the connection destination columns. **Additive + DORMANT.** Applied **migration-first** 2026-07-14. **PR #424 MERGED + deployed** (merge `8a25df6`; Vercel prod deploy `h9b58cLZtJ4w3MMrY5WU959w5tDB` success). **Production-exercised once on Sam's controlled studio:** one empty "Hone Appointments" destination calendar created (grants app.created=1 / events.owned=0 / broad=0; **zero events**); all sync flags OFF; Willow not connected. | ✅ applied + merged (dormant) |
 | **0132** | `0132_google_calendar_event_link_transitions.sql` | **Google Calendar — Phase B2.3-c1: event-link transitions.** One transactional service-role-only `calendar_event_link_transition` RPC + placeholder-aware `enqueue_calendar_outbound` refresh. **Additive + DORMANT.** Applied **migration-first** 2026-07-16 (details in the header bullets above). | ✅ applied + merged (dormant) |
-| **0133** | `0133_practitioner_move_appointment.sql` | **Practitioner Move appointment — atomic same-record move.** One SECURITY DEFINER RPC `practitioner_move_appointment` (hardened `search_path`, `service_role`-only EXECUTE, active-practitioner check, `FOR UPDATE` lock, `confirmed + future` gate, **optimistic concurrency** on expected `starts_at`/`ends_at`, duration preserved, one-row `UPDATE`, `moved` audit event; does **not** catch `23P01` so a booking conflict rolls the move back). **Additive** — one function, no column/data change, no trigger/Google/Stripe touch. Drives the shared responsive Move workflow (mobile bottom sheet / tablet+desktop modal). | 🕒 repo-added; migration-first hosted apply pending (this rollout) |
+| **0133** | `0133_practitioner_move_appointment.sql` | **Practitioner Move appointment — atomic same-record move.** One SECURITY DEFINER RPC `practitioner_move_appointment` (hardened `search_path`, `service_role`-only EXECUTE, active-practitioner check, `FOR UPDATE` lock, `confirmed + future` gate, **optimistic concurrency** on expected `starts_at`/`ends_at`, duration preserved, one-row `UPDATE`, `moved` audit event; does **not** catch `23P01` so a booking conflict rolls the move back). **Additive** — one function, no column/data change, no trigger/Google/Stripe touch. | ✅ applied + merged |
+| **0134** | `0134_practitioner_capacity_foundation.sql` | **Practitioner-capacity foundation (PR A).** The additive, **default-OFF** collision/resource-key model that lets a studio run several practitioners in parallel without double-booking a practitioner or a studio-wide resource. Changes **no** booking/assignment behaviour by itself. | ✅ applied + merged (dormant at Willow) |
+| **0135** | `0135_practitioner_availability.sql` | **Per-practitioner availability (PR B).** Adds an optional `practitioner_id` dimension to `studio_availability_default` (weekly) and `studio_availability_overrides` (date-specific). `practitioner_id IS NULL` remains the studio-wide fallback — today's behaviour, unchanged. Additive + default-neutral. | ✅ applied + merged |
+| **0136** | `0136_practitioner_capacity_booking_flag.sql` | **Separate structural capacity from the booking kill-switch.** 0134 conflated the structural model with booking acceptance; once a studio has legitimate parallel appointments, flipping capacity OFF cannot roll back cleanly. Adds `practitioner_capacity_booking_enabled` as the independent public-booking switch. **FALSE on every studio.** | ✅ applied + merged (**held OFF everywhere**) |
+| **0137** | `0137_scoped_blocks_and_breaks.sql` | **Practitioner-scoped timed blocks + recurring breaks.** Optional practitioner scope on one-off timed blocks and recurring break rules/occurrences; full-day blockouts stay studio-wide. Adds the scope-aware reservation synchronizer. | ✅ applied + merged |
+| **0138** | `0138_scoped_sources_lock_and_dormancy.sql` | **Scoped-source lock coverage + lock-then-read.** Corrects five engine defects in 0137: DELETE and blockouts bypassed the capacity advisory lock; fixes the canonical lock order (studios row → advisory) across all four source tables. Hardening. | ✅ applied + merged |
+| **0139** | `0139_scoped_conflict_lookup_and_rule_guard.sql` | **Recurring-rule guard + scoped conflict lookup.** Closes the bypass where toggling a rule from inactive→active with an unchanged inactive practitioner skipped validation. Hardening. | ✅ applied + merged |
+| **0140** | `0140_studio_onboarding.sql` | **First-time studio onboarding (owner onboarding v2).** Additive, **default-OFF** foundation for a guided, resumable first-run experience: welcome email, dashboard wizard, setup-progress card, admin-visible invite/onboarding status. | ✅ applied + merged (enabled on the controlled test studio only) |
+| **0141** | `0141_onboarding_invitation_reconciliation.sql` | **Invitation reconciliation + one authoritative consent.** Provisioning and legal acceptance for invited users (new *and* existing Auth accounts) move to sign-in time with exactly one authoritative acceptance event. `handle_new_user()` becomes a NO-OP: **nothing fabricates consent, and nothing activates a membership merely because an Auth user was created.** | ✅ applied + merged |
+| **0142** | `0142_internal_booking_command.sql` | **Canonical atomic INTERNAL booking command.** Replaces the direct `appointments` INSERT (which self-assigned the caller, took no capacity lock, ignored the booking flag, and had a TOCTOU window) with one reviewed SECURITY DEFINER transaction. Authorization is **parameter-based** — the server action resolves actor + studio server-side; nothing is trusted from the browser. Superseded by the 0146 v2 command and wrapped by 0147. | ✅ applied + merged |
+| **0143** | `0143_move_or_reassign_appointment.sql` | **Atomic MOVE + REASSIGNMENT command.** One same-record transaction that can change an appointment's time, its practitioner, or both, preserving the id and every relationship. Supersedes the time-only 0133 for the internal move surface. | ✅ applied + merged |
+| **0144** | `0144_move_target_integrity_and_legacy_wrapper.sql` | **Move final-target integrity + 0133 legacy wrapper.** 0143 validated the target only on a reassignment, so a time-only move could commit a new interval while retaining a now-inactive or ineligible practitioner. Now the **resulting** practitioner is validated on every capacity-ON move. | ✅ applied + merged |
+| **0145** | `0145_move_preserve_target_race_fix.sql` | **Remove the time-only move stale-target race.** Both the 0133 wrapper and the move action read the current practitioner *before* the locks were taken, so a concurrent reassignment could silently revert the appointment to a stale practitioner. A NULL target now means "preserve the CURRENT practitioner", resolved under lock. | ✅ applied + merged |
+| **0146** | `0146_authoritative_duration_and_availability_validator.sql` | **Authoritative in-DB duration + one shared availability validator.** 0142 trusted a caller-supplied duration — a forged POST could book any length. The v2 command derives duration from the **locked, revalidated service row inside the transaction**; an OWNER-only explicit override (15..360, multiple of 15) is the single sanctioned way to book a non-default length and never bypasses collision/block/break/blockout/pause rules. Security hardening. | ✅ applied + merged |
+| **0147** | `0147_internal_booking_legacy_wrapper.sql` | **Close the old 0142 creation-command bypass.** 0142 remained service_role-executable and still trusted a caller-controlled duration, so a stale deployment or second adapter could bypass every v2 guarantee. The old signature is redefined as a thin wrapper around v2. Security hardening. | ✅ applied + merged |
+| **0148** | `0148_move_reassign_availability_validator.sql` | **Wire the shared availability validator into move/reassign.** A move onto a closed day or outside the practitioner's hours previously committed silently. Every capacity-ON move now runs `validate_appointment_availability` on the final target and resulting interval; the per-resource GiST exclusion remains the final authority on intervals. | ✅ applied + merged |
+| **0149** | `0149_save_weekly_availability_atomic.sql` | **Atomic full-week availability save under the capacity lock.** The weekly save wrote seven independent upserts, so a failure on day 4 left a half-applied week, and it took no capacity lock. `save_weekly_availability` writes all supplied days in one transaction after taking the canonical lock order. | ✅ applied + merged |
+| **0150** | `0150_single_row_schedule_writers_locked.sql` | **Lock the single-row schedule writers.** The single-row availability writers and the practitioner-active writer wrote directly from the browser-role client under no capacity lock, so a schedule edit could interleave with a booking that had already validated the old window. Narrow typed SECURITY DEFINER commands now take the canonical lock order. Hardening. | ✅ applied + merged |
+| **0151** | `0151_appointment_tenant_consistency.sql` | **Appointment tenant-consistency composite FKs (RC hardening).** 0010 created `appointments.client_id / service_id / practitioner_id` as single-column FKs; 0094 hardened the clinical child tables with composite same-studio FKs but **omitted appointments** — so a member could insert an appointment in their own studio referencing another studio's client/service/practitioner. Closes that gap. Security hardening. | ✅ applied + merged |
+| **0152** | `0152_actual_overlap_hard_buffer_soft.sql` | **Actual overlap HARD, configured buffer SOFT.** Fixes the manual-override booking blocker: a close-but-non-overlapping override booking was wrongly rejected by the buffer-expanded GiST exclusion. Actual treatment overlap remains **never bypassable**; the buffer becomes a soft constraint an authenticated internal OWNER override may cross. | ✅ applied + merged (live) |
+| **0153** | `0153_service_calendar_color.sql` | **Explicit per-SERVICE calendar colour.** Replaces the djb2 hash-of-service-id colour derivation (unrelated services collided, reading as "duration-based"). Allowed values only: amber, emerald, teal, sky, indigo, violet — **the rose/red family is deliberately excluded**, reserved for allergy / EpiPen / clinical-caution signals. Additive + forward-only; rewrites no appointment rows. | ✅ applied + merged (live) |
+| **0154** | `0154_practitioner_notifications_dedupe_key.sql` | **Durable external-event dedupe key for `practitioner_notifications`.** The `setup_intent.succeeded` webhook arm writes a studio notification when a client adds or replaces a card. Stripe may re-deliver an event or emit more than one Event for the same SetupIntent, so the key is scoped to the **mode-scoped SetupIntent**, under a partial UNIQUE. Additive nullable column; **no backfill**. | ✅ applied + merged (live) |
+| **0155** | `0155_probe_inventory_chart_linkage.sql` | **Inventory-backed probe-lot linkage.** Makes the charted probe lot a durable, probe-specific, same-studio-safe pointer into `record_keeping_sterile_items` (adds `probe_key` + `session_blocks.probe_inventory_item_id` with a composite same-studio FK, `ON DELETE SET NULL` — pointer-only, frozen snapshot). The legacy `probe_lots` table and `electrolysis_entries.probe_lot_id` stay **dormant** and are neither read nor written. **Nothing is backfilled; no RLS policy added, removed or weakened.** | ✅ applied + merged |
+| **0156** | `0156_conditional_numbing_notes.sql` | **Conditional numbing notes.** One nullable `session_blocks.numbing_notes` text column plus both atomic RPCs taught to carry it. **No default, no backfill, no CHECK/length cap, no RLS/policy/trigger change** — a clinical free-text note has no fixed real-world maximum, and the app already trims/normalizes (kept only when `numbing_status='used'`). Rollout was **migration-first** because the new application reads and writes the column. | ✅ applied + merged (live) |
+| **0157** | `0157_whole_session_copy_setup.sql` | **Whole-session copy — atomic, idempotent, source-authoritative batch commit + provenance ledger.** One table (`session_copy_operations`) + four SECURITY DEFINER functions with `search_path=""`. The preview is ephemeral; exactly one explicit action reaches the server, which calls the service-role-only `copy_session_setup`. **Additive: no backfill, no existing clinical object mutated.** Applied **2026-07-27T02:01:29Z, BEFORE PR #478 merged.** Full purpose + verified privilege matrix in the header section above. **0 ledger rows — never production-exercised.** | ✅ applied + merged (never exercised) |
 
-**Google Calendar B2.3-b (PR #426) added no migration.** The reconciliation sweep + heartbeat +
-dead-row alerting + `/api/cron/calendar-reconcile` route are code-only (they orchestrate the
-existing 0124/0125 repair RPCs + queue-health view). Deployed 2026-07-15 (merge `f664f0f`);
-**hosted migration max stays 0131**; the route is CRON_SECRET-protected but **not cron-registered**;
-worker + all sync flags OFF; no Google call; production dormant.
+### Code-only PRs in this window (the hosted max does **not** move)
+
+These shipped behaviour with **no migration**, so they never advance the migration max:
+
+- **Google Calendar B2.3-b** (PR #426, merge `f664f0f`, 2026-07-15) — reconciliation sweep +
+  heartbeat + dead-row alerting + `/api/cron/calendar-reconcile`, orchestrating the existing
+  0124/0125 repair RPCs. Deployed **dormant**; CRON_SECRET-protected.
+- **Google Calendar B2.3-c2** (PR #429) — authenticated worker-drain route. Deployed dormant.
+- **Google Calendar B2.3-c3** (PR #430) — cron schedule registration. Registration did **not**
+  activate sync; the worker flag stays off.
+- **PR #476** — charting usability polish (collapsed add-block CTA, split chip groups, larger
+  notes).
+- **PR #473 / #474** — safe in-form "Copy settings"; containment of the earlier unsafe
+  whole-session copy (both superseded by 0157 + PR #478).
+- **PR #479 — the Phase A charting correction** (merge `3cabdca`): unified
+  *Treatment observations & skin response* box, galvanic-intensity retirement,
+  *Thermolysis pulse count* relabel, exact `0.733 seconds` display, larger notes.
+  **Code-only — no migration, no data operation, no flag change.**
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
-`docs/13`/`docs/14`; all are applied — production max is now 0132.)
+`docs/13` / `docs/14`; all are applied. Production max is **0157**.)
 
 ---
 
@@ -128,8 +212,21 @@ worker + all sync flags OFF; no Google call; production dormant.
 
 ## Correcting prior stale statements
 
-Earlier docs (e.g. `docs/09`, `docs/14`) contain "0096 not yet applied", "0095 NOT yet
-applied", "0093/0094 must not be applied until approved" language written **before** those
-migrations were applied. **All of 0093, 0094, 0095, 0096, 0107 are applied** (production max is
-now **0132**). Trust this ledger + `supabase migration list --linked`, not the
-historical per-PR prose.
+Historical per-PR prose in `docs/09`, `docs/13` and `docs/14` was written at a point in time
+and contains pending/unapplied language that is now superseded. Those dated entries are
+retained as history; they are **not** current state.
+
+Superseded claims you may still encounter in dated material:
+
+- "0096 not yet applied" / "0095 NOT yet applied" / "0093 / 0094 must not be applied until
+  approved" — **all applied.**
+- "production max is 0112 / 0113 / 0124 / 0132 / 0133" — **the production max is 0157.**
+- "0133 repo-added, hosted apply pending" — **0133 is applied.**
+- "0157 is pending / unapplied / awaiting authorization" — **0157 was applied
+  2026-07-27T02:01:29Z**, before PR #478 merged.
+- "`calendar_sync_outbox` and `calendar_event_links` are 0 rows" — each holds **one row**
+  from the single controlled Google Calendar validation on 2026-07-18. See
+  [capability-register.md](./capability-register.md) §9.
+
+Trust this ledger plus `supabase migration list --linked` — never historical prose, and never
+one document as evidence for another.

@@ -1,5 +1,22 @@
 # Rollout — migration 0155: inventory-backed probe lot linkage (PR #475)
 
+> # ⚠️ CLOSED OUT — migration 0155 is APPLIED and PR #475 is MERGED (2026-07-25)
+>
+> **The procedure below is retained unchanged** as the auditable record of what was planned.
+> Its pre-apply guardrails ("production does not have … until 0155 is applied", "do NOT apply
+> 0155 as part of merging the app PR") describe a **completed** operation and must not be read
+> as current instructions.
+>
+> | Field | Result |
+> |---|---|
+> | Migration | **0155 APPLIED to production 2026-07-25, migration-first** — dry-run showed only 0155 |
+> | Application | **PR #475 MERGED** (merge `b3e044f`) + Vercel production deploy SUCCESS |
+> | Current production migration max | **0157** |
+> | Current runtime-bearing application HEAD | `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d` |
+> | Scope | Additive — durable, probe-specific, same-studio pointer from a charted block into `record_keeping_sterile_items` (`probe_key` + `session_blocks.probe_inventory_item_id`, composite same-studio FK, `ON DELETE SET NULL` — pointer-only). **No backfill; no existing row rewritten; no RLS/policy change.** |
+> | Post-apply verification | PASS — objects present, no backfill, 0 unresolved ops alerts, `hone.care` 200 |
+> | Human acceptance | **PENDING** — Chloe has not yet accepted this on-device. See [../production/known-limitations.md](../production/known-limitations.md) (L1) |
+
 **Rollout model: MIGRATION-FIRST (DB-first). Application deployment must NOT
 precede the migration.**
 

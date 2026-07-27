@@ -56,15 +56,61 @@ If a client reports a magic link that "stopped working":
 - If the email arrived within 60 minutes but the link still shows "this secure link can't be used right now," check (a) whether the token was already consumed by a prior click (the row's `consumed_at` is non-null) and (b) whether the client's row is still `status='active'` (archived clients see the same generic surface). Both are visible in `client_portal_magic_links` (look up by SHA-256 hash of the token from the URL) and `clients`.
 - A NEW magic link request invalidates nothing: prior unconsumed rows remain valid until their `expires_at`. Issuing a fresh link is always safe.
 
-## Live payments are NOT enabled
+## Live payments ARE enabled for approved studios — and real money is moving
 
-Hone's Stripe charge backend is installed but dormant. **No live money has ever moved through Hone.** Three independent guards keep the live-charge path off, documented in [docs/16](./16_LIVE_PAYMENTS_READINESS.md):
+> **⚠️ OPERATOR-CRITICAL CORRECTION (verified 2026-07-27).** Earlier revisions of this section
+> were headed *"Live payments are NOT enabled"* and stated *"No live money has ever moved
+> through Hone."* **Both statements are false and dangerous to act on.** They are retained
+> below only as the historical pre-live record.
 
-- Guard 1 (key gate): `lib/stripe/server.ts` rejects any `sk_live_` Stripe key unless `STRIPE_ALLOW_LIVE_MODE=true` is also set. The flag is unset in production.
-- Guard 2 (code gate): the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` early-returns on any live-mode signal (`inferStripeLivemode` mismatch); the legacy `manual-fee-charge.ts` executor was deleted in PR #218. The claim RPC additionally refuses any row with `stripe_livemode <> false`.
-- Guard 3 (database gate): `CHECK (stripe_livemode = false)` on the canonical `payment_charge_attempts` ledger (0073-era) AND on the legacy, read-only `manual_fee_charge_attempts` table (0065). The database refuses any live-mode write.
+**Current state, verified directly against production:**
 
-Before any live charge is permitted, the current authority is [docs/18 (live payments audit)](./18_LIVE_PAYMENTS_AUDIT.md) section 16: code-side blockers are resolved, the remaining blockers are human (legal/accounting review + the Willow live Stripe checklist), and the status remains **NOT READY FOR LIVE PAYMENTS**. docs/16 stays as the historical checklist source.
+- **Live money HAS moved.** `payment_charge_attempts` holds **8 rows with
+  `stripe_livemode = true`**, all `succeeded`: **6 on Willow Electrolysis (most recent
+  2026-07-26)** and 2 on the controlled test studio (most recent 2026-07-05).
+- **Willow Electrolysis has a live Stripe Connect account** — `stripe_account_status='enabled'`,
+  `charges_enabled=true`, `payouts_enabled=true`. Treat her studio as a **live payment
+  environment** in any incident.
+- **The three-guard model no longer holds.** In particular **Guard 3 does not exist for the
+  canonical ledger**: migration 0101 dropped `payment_charge_attempts_livemode_false_check`.
+  Verified via `pg_constraint` — the only remaining livemode CHECK is
+  `manual_fee_charge_attempts_livemode_false_check` on the **legacy, read-only** manual-fee
+  table. The database does **not** refuse live-mode writes to `payment_charge_attempts`.
+
+**What IS still held, and is the guard that matters operationally:** live charging is
+restricted to `session_payment` only, by `lib/billing/live-charge-reason-allowlist.ts`,
+enforced at both prepare and execute. **Live manual no-show and late-cancellation fees are on
+a server-side hard hold.** The 2 fee charges in production are test-mode.
+
+**Also still off / not built:** public-booking card collection (off and unwired,
+`require_card_on_file` false on every studio); deposits, packages and partial payments (not
+built); broad self-serve live payments (a new studio starts in test mode). **No automatic,
+background, batch or public-triggered charge path exists** — charging is one manual
+practitioner click.
+
+**Zero production refunds and zero disputes exist on this baseline** (`stripe_refunds` and
+`stripe_disputes` are both 0 rows). If you are handling a first-ever refund or dispute,
+proceed carefully — the path is deployed but has no production precedent here.
+
+Canonical posture: [docs/16 header](./16_LIVE_PAYMENTS_READINESS.md) ·
+[capability-register.md §7](./production/capability-register.md) ·
+[known-limitations.md L4/L5](./production/known-limitations.md).
+
+<details>
+<summary><strong>Historical pre-live record (superseded — do not act on this)</strong></summary>
+
+> Hone's Stripe charge backend is installed but dormant. **No live money has ever moved through Hone.** Three independent guards keep the live-charge path off, documented in [docs/16](./16_LIVE_PAYMENTS_READINESS.md):
+>
+> - Guard 1 (key gate): `lib/stripe/server.ts` rejects any `sk_live_` Stripe key unless `STRIPE_ALLOW_LIVE_MODE=true` is also set. The flag is unset in production.
+> - Guard 2 (code gate): the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` early-returns on any live-mode signal (`inferStripeLivemode` mismatch); the legacy `manual-fee-charge.ts` executor was deleted in PR #218. The claim RPC additionally refuses any row with `stripe_livemode <> false`.
+> - Guard 3 (database gate): `CHECK (stripe_livemode = false)` on the canonical `payment_charge_attempts` ledger (0073-era) AND on the legacy, read-only `manual_fee_charge_attempts` table (0065). The database refuses any live-mode write.
+>
+> Before any live charge is permitted, the current authority is [docs/18 (live payments audit)](./18_LIVE_PAYMENTS_AUDIT.md) section 16: code-side blockers are resolved, the remaining blockers are human (legal/accounting review + the Willow live Stripe checklist), and the status remains **NOT READY FOR LIVE PAYMENTS**. docs/16 stays as the historical checklist source.
+
+</details>
+
+The "quick dormancy verification" queries below still run, but **expect them to show live
+studios and live attempts** — that is now the correct result, not an alarm.
 
 Quick dormancy verification:
 

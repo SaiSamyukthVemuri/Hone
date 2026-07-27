@@ -1,11 +1,23 @@
 # 12 Smoke tests
 
-> **⚠️ Payment posture (2026-07-08):** the trailing "live payments remain disabled" note that
-> appears on many smoke entries below is a **historical / point-in-time** aside. Current
-> posture: **supervised live owner-run session payments are live for approved studios** (public
-> booking card collection, deposits/packages/partial, and live manual fees remain off/held;
-> broad self-serve not ready). Canonical current state:
-> [docs/production/current-state.md](./production/current-state.md).
+> **⚠️ Payment posture — the trailing "live payments remain disabled" note that appears on
+> ~29 smoke entries below is a HISTORICAL, point-in-time aside written when each entry was
+> added. It is NOT current.**
+>
+> **Current posture (verified 2026-07-27):** live owner-run **session payments** are live for
+> two approved studios and are genuinely in use — **Willow Electrolysis has 6 succeeded
+> live-mode charges, most recent 2026-07-26.** Still off or held: public-booking card
+> collection (off and unwired), deposits / packages / partial payments (not built), and live
+> manual no-show / late-cancel fees (**hard-held server-side** — only `session_payment` charges
+> live). Broad self-serve live payments are **not ready**.
+>
+> **Other point-in-time asides below may also be stale.** Hardcoded migration numbers in
+> particular go stale on every migration — the current production max is **0157**.
+>
+> Canonical current state:
+> [docs/production/current-state.md](./production/current-state.md) ·
+> [capability-register.md](./production/capability-register.md) ·
+> [known-limitations.md](./production/known-limitations.md).
 
 This is the catalogue of manual smoke tests every operator and reviewer should know how to run. Some can be executed from a curl loop; many require an authenticated practitioner session and a real test appointment and cannot be done from CI or from an AI harness.
 
@@ -849,7 +861,8 @@ Chloe real-charting feedback, charting-only. **Requires migration 0095 applied**
 4. **Energy under Treatment readings (item 4):** the **Energy level (EL)** input renders **under the "Treatment readings" heading** (not near Modality). There is exactly one energy field. Save/reopen: value round-trips.
 5. **OmniBlend (item 5):** pick mode **Blend** + modality **OmniBlend**. Confirm under Treatment readings the **Galvanic** section renders **before Thermolysis**, there is **no Thermolysis duration** field, and **no Galvanic intensity** field. Switch to another blend modality (e.g. PicoBlend) and confirm thermolysis-first + all fields return (other modalities unchanged).
 6. **Tolerance labels (item 6):** the Client tolerance control shows **labels** (Comfortable / Mild discomfort / Moderate discomfort / High discomfort / Needed pause / stopped early), not a raw 1-5 grid. Pick one, save, reopen: the saved record shows "Tolerance: <label>". A legacy numeric value renders as its label.
-7. **Observation chips (item 7, mobile):** on a phone, tap an observation chip (e.g. **Slight edema**) — it appears in the notes box and shows pressed; tap it again — it is removed (unselect works). Tap **No visible reaction** in the response chips — it registers; picking another response replaces it (single-select). Manually typed notes are preserved through chip toggles. No duplicate tokens.
+7. **Treatment observations & skin response (item 7, mobile) — UPDATED for Phase A (PR #479):** the previously separate *Treatment observations* and *Client / skin response* boxes are now **ONE multi-select box headed "Treatment observations & skin response"**. On a phone, tap a chip (e.g. **Slight edema**) — it shows pressed; tap it again — it is removed (unselect works). Tap **No visible reaction** — it registers, and the UI prevents contradictory combinations (it is mutually exclusive with real reactions), but **other chips are multi-select and do NOT replace one another**. Manually typed notes are preserved through chip toggles. No duplicate tokens. Confirm a client with a prior reaction still surfaces on the dashboard *Clients needing attention* card — historical `reaction_type` values are folded into the unified set, so legacy records must still appear.
+   - **Also confirm the rest of Phase A:** there is **no "Galvanic intensity" field anywhere** (it is retired — but **Galvanic mA** and **Galvanic duration** are still present and still work); a thermolysis duration of `0.733` renders as **`0.733 seconds`**, not `0.73`; the pulse control is labeled **"Thermolysis pulse count"** and sits inside the thermolysis section; the **Additional notes** field is the larger, resizable one.
 8. Backstop SQL (optional, after 0095):
    ```sql
    select id, numbing_status, probe_lot_number, probe_lot_confirmed, tolerance_rating
@@ -1123,7 +1136,7 @@ Fixes a P1 overclaim: `sendPostcareEmailAction` used `postcare_email_sent_at` as
 
 ## Read-only production verification smoke (PR #308, no migration)
 
-Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max **0099**; the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
+Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max — **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" in earlier revisions of this entry was exactly the staleness the derivation was introduced to prevent); the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
 
 ## Quick gates a reviewer can run
 

@@ -16,7 +16,7 @@ Hone is an operating memory system for electrologists. Its value is the recorded
 
 The agentic direction is to let Hone do more of that preparation work for the practitioner: assemble the daily brief, surface what is missing, draft the follow-up message, and explain why it surfaced each item, all from recorded fields. The goal is NOT a generic chatbot, and NOT a system that decides anything clinical, sends anything, or moves any money.
 
-The risk is equally clear. This is health-adjacent personal data under per-studio RLS, with an owner-tiered exposure-incident surface, a payments backend that is installed but deliberately dormant, and a single supervised pilot (Chloe at Willow; Laura planned). An agent that oversteps could leak sensitive data across studios, expose owner-only incident details, invent a clinical fact, silently change a record, send a client an unreviewed message, or touch money. None of that is acceptable. This plan exists so the agentic build is additive and supervised from the first commit.
+The risk is equally clear. This is health-adjacent personal data under per-studio RLS, with an owner-tiered exposure-incident surface, a payments backend that is **live for two approved studios and production-exercised** (Willow Electrolysis: 6 succeeded live-mode charges through 2026-07-26) — no longer dormant, so agentic restraint around it matters more, and a single supervised pilot (Chloe at Willow; Laura planned). An agent that oversteps could leak sensitive data across studios, expose owner-only incident details, invent a clinical fact, silently change a record, send a client an unreviewed message, or touch money. None of that is acceptable. This plan exists so the agentic build is additive and supervised from the first commit.
 
 ## Product principle
 
@@ -29,7 +29,7 @@ Hone's agentic direction is bounded by these principles. Every future agentic PR
 - **Prepare the practitioner, do not prescribe treatment.** The agent never tells a practitioner what settings to use or what to do clinically.
 - **Require human confirmation before any external action.** Nothing leaves the studio, changes a record, or touches money without an explicit human confirmation step.
 - **Never silently mutate clinical history.** The agent is not a hidden write path. Treatment memory is the product moat and is preserved (`docs/09`, PR #217 delete posture).
-- **Never auto-charge.** No agent path creates, captures, or refunds a payment. Live payments remain disabled.
+- **Never auto-charge.** No agent path creates, captures, or refunds a payment. *(The prohibition stands and is unconditional. The trailing "live payments remain disabled" in earlier revisions is false — live payments ARE enabled for approved studios, which makes this rule MORE important, not less.)*
 - **Never auto-message clients.** No agent path sends an email or SMS to a client without practitioner approval.
 
 ## What AI can read (safe read surfaces, V1)
@@ -213,4 +213,4 @@ The agentic capability inherits, and may not weaken, Hone's existing security mo
 
 This document changes no runtime behavior. It adds no AI runtime, no model call, no endpoint, no migration, no schema, no RLS change, and no payment capability. It is a plan and a set of constraints. The first capability it could justify is the Daily Prep Brief V1, which would be its own PR, built read-and-draft only, under every rule above.
 
-Live payments remain disabled. Controlled live payment enablement has not started.
+**Superseded (2026-07-27): controlled live payment enablement COMPLETED.** Live owner-run session payments are enabled for two approved studios and exercised in production. Live manual no-show / late-cancel fees remain on a server-side hard hold.

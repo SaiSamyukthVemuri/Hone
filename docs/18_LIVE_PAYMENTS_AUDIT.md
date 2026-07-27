@@ -55,7 +55,21 @@ All on `payment_charge_attempts` unless noted: `stripe_account_id` (also `studio
 
 ---
 
-## 2. Live-mode gates (verified, unchanged)
+## 2. Live-mode gates (verified at the time of this audit — NOW SUPERSEDED)
+
+> **⚠️ HISTORICAL (2026-06-10).** This section documented the pre-live gate stack. It is
+> **no longer current**. Live payments were subsequently enabled through the controlled
+> sequence in [docs/16 §17](./16_LIVE_PAYMENTS_READINESS.md), and **Willow Electrolysis now
+> has 6 succeeded live-mode charges (most recent 2026-07-26)**.
+>
+> The specific claim in item 3 below is **false today**: migration **0101** dropped
+> `payment_charge_attempts_livemode_false_check`. Verified in production 2026-07-27 — the only
+> remaining livemode CHECK is `manual_fee_charge_attempts_livemode_false_check` on the legacy,
+> read-only manual-fee table. The canonical ledger holds **8 rows with `stripe_livemode=true`**,
+> so "structurally unwritable" and "0 live rows ever" no longer hold.
+>
+> Current posture: [docs/16 header](./16_LIVE_PAYMENTS_READINESS.md) ·
+> [production/capability-register.md §7](./production/capability-register.md).
 
 1. **Key gate** `lib/stripe/server.ts:50`: `sk_live_*` throws unless `STRIPE_ALLOW_LIVE_MODE === "true"`; Preview/Dev refuse live keys regardless. The literal `STRIPE_ALLOW_LIVE_MODE=true` appears exactly once in runtime source, inside the error message (gate-pinned).
 2. **Runtime livemode inference**: both charge paths early-return on `inferStripeLivemode()` mismatch; webhook handlers hard-return on `event.livemode === true` (warning ops_alert, no mutation).

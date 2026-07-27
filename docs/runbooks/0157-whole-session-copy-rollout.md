@@ -123,3 +123,81 @@ then confirm a committed copy creates the reviewed blocks. No destructive test.
 - `probe_lots` and `electrolysis_entries.probe_lot_id` stay dormant.
 - Do NOT apply 0157 to production or any remote as part of merging the app PR;
   it is applied in step B under its own authorization.
+
+---
+
+# CLOSEOUT — executed 2026-07-27
+
+**The procedure above is retained unchanged.** It remains the auditable record of what was
+planned and why, and is useful for audit and incident review. This section records what
+actually happened.
+
+| Field | Result |
+|---|---|
+| **Migration apply** | **`0157_whole_session_copy_setup.sql` APPLIED to production 2026-07-27T02:01:29Z**, migration-first — *before* the application PR merged. Applied from the whole-session-copy worktree at PR #478 head `1dbca69`, linked to the production project after an explicit project-ref guard check. The dry-run showed **only** 0157. The apply was clean: **no notices, no warnings, no errors.** |
+| **Application merge** | **PR #478 MERGED 2026-07-27T13:12:34Z**, merge commit `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`, base `claude/build-hone-saas-hOex7`, reviewed head `1dbca69f…`, expected-head-guarded. |
+| **Vercel deployment** | `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb` — status **Ready**, target production, built from `96b28d6…`, aliased to `hone.care` and `www.hone.care`. Created 13:12:37Z, 3 seconds after the merge. |
+| **Final application SHA** | **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** — the current runtime-bearing HEAD. |
+| **Final migration max** | **0157.** Hosted == repo; 157 migrations applied, each exactly once; **no `0158`+**. |
+| **Review** | 5 review rounds. Round 5 closed a P1 on ledger privileges — `session_copy_operations` now has `revoke all from public, anon, authenticated` plus `grant select to authenticated`, closing TRUNCATE / REFERENCES / TRIGGER, which **RLS does not protect**. Final round: 0 P0 / 0 P1. |
+
+## Verification results (re-verified 2026-07-27 at the current baseline)
+
+Every item in step **C** of the procedure above was confirmed directly against production:
+
+- **Migration ledger** advances through `0157`, applied exactly once, nothing beyond it.
+- **`public.session_copy_operations` exists**, with the `(target_session_id,
+  idempotency_key)` UNIQUE and two same-studio composite foreign keys.
+- **Table privilege matrix** (`has_table_privilege`):
+
+  | Role | SELECT | INSERT | UPDATE | DELETE | TRUNCATE | REFERENCES | TRIGGER |
+  |---|---|---|---|---|---|---|---|
+  | `anon` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+  | `authenticated` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+  | `service_role` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+- **`copy_session_setup`** exists, is `SECURITY DEFINER` with `search_path=""`, and EXECUTE is
+  **FALSE for both `anon` AND `authenticated`**, TRUE for `service_role`.
+- **`whole_session_copy_source_descriptor`** EXECUTE is TRUE for `authenticated`, FALSE for
+  `anon`.
+- **`_whole_session_copy_fingerprint` and `_whole_session_copy_source_id`** are not executable
+  by `authenticated` or `anon` — private helpers, service_role only.
+- **No existing table, column, index, policy or grant changed; no backfill.**
+- Health: `hone.care` 200, `/login` 200, `/dashboard` 307 (auth redirect). 0 unresolved
+  `ops_alerts`.
+
+## Zero-data-operation posture
+
+**The deployment verification deliberately performed ZERO copy operations.**
+
+- `session_copy_operations` holds **0 rows**. No real whole-session copy has ever been
+  performed in production.
+- Verification was **source inspection plus browser testing only** — the deployed source was
+  confirmed to contain the zero-write preview, the visit-date and editable/removable cards,
+  the single commit CTA, the service-role RPC call, the authenticated descriptor, the
+  exclusion of galvanic intensity / minutes / outcomes, and the literal-NULL galvanic write.
+- No feature flag, cron, worker, or Google / Stripe / Willow interaction was involved.
+- `probe_lots` and `electrolysis_entries.probe_lot_id` remain **dormant** — neither read nor
+  written.
+
+**Consequence for documentation: whole-session copy is `DB applied + merged + deployed +
+enabled + NOT production exercised`.** It must not be described as production-exercised
+merely because the deployment succeeded.
+
+## Rollback posture
+
+- **Application:** a straight code revert of the merge commit, or redeploying the previous
+  production build.
+- **Migration:** 0157 is **additive** — one table plus four functions, no backfill and no
+  mutation of any existing clinical object. Reverting the application leaves the DB objects
+  in place and **unused**; nothing else reads or writes them. There is therefore no forced
+  migration rollback, and no data to restore.
+- Because the ledger has **0 rows**, a revert at this point cannot orphan or strand any
+  provenance record.
+
+## Human acceptance
+
+**PENDING.** Chloe has not performed a real whole-session copy. The first real copy is the
+outstanding gate — after it, confirm that **exactly one** ledger row appears and that the
+destination records match the reviewed preview. See
+[../production/known-limitations.md](../production/known-limitations.md) (L1, L2).

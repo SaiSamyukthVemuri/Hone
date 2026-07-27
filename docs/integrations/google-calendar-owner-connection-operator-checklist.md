@@ -19,15 +19,31 @@ calendar) still enables NO synchronization** — the worker and all four
 `docs/integrations/google-calendar-sync.md` §3d.
 
 Phase **B2.3-b — reconciliation sweep + heartbeat + route** (PR #426 **MERGED +
-deployed 2026-07-15**, merge `f664f0f`; **dormant, NO migration** — hosted max stays
-0131) adds the enqueue-side recovery net (`/api/cron/calendar-reconcile`,
-`CRON_SECRET`-guarded) that converges appointments mutated while outbound intent was
-unavailable. It is **not** cron-registered, actuates only within intent-eligible
-studios (production has none), never calls Google, and never enables the worker or a
-flag. **No operator action is required for B2.3-b** — no Google Cloud, Vercel, or
-flag change. The outbound event execution + controlled activation is the **next**
-phase, **B2.3-c** (design intent, not built). Design detail:
-`docs/integrations/google-calendar-sync.md` §3e (reconciliation) + §3f (B2.3-c).
+deployed 2026-07-15**, merge `f664f0f`; **NO migration**) adds the enqueue-side recovery net
+(`/api/cron/calendar-reconcile`, `CRON_SECRET`-guarded) that converges appointments mutated
+while outbound intent was unavailable. It actuates only within intent-eligible studios
+(production has **none**), never calls Google, and never enables the worker or a flag.
+**No operator action is required for B2.3-b.**
+
+> **CORRECTIONS (verified 2026-07-27) — two statements in earlier revisions of this paragraph
+> are now false:**
+>
+> 1. **"hosted max stays 0131"** — the hosted production migration max is **0157**.
+> 2. **"It is not cron-registered"** — it **IS** cron-registered. `vercel.json` schedules
+>    `/api/cron/calendar-reconcile` at `0 9 * * *` and `/api/cron/calendar-sync` at
+>    `30 9 * * *`, both daily. They execute in production; they simply find zero
+>    intent-eligible studios and zero claimable jobs and exit having done nothing.
+>    **Dormancy comes from the flags being off, not from the absence of a schedule.**
+> 3. **"B2.3-c … design intent, not built"** — B2.3-c1 (migration **0132**, applied), c2
+>    (PR #429) and c3 (PR #430) are all **built, merged and deployed**. A controlled
+>    activation on the test studio already produced **one real Google event** on 2026-07-18
+>    (`calendar_sync_outbox` and `calendar_event_links` each hold that one row).
+>
+> Current posture: **deployed + production-exercised once + dormant.** Willow remains
+> unconnected and every sync flag is off on every studio. See
+> [google-calendar-sync.md](./google-calendar-sync.md) "VERIFIED RUNTIME STATUS".
+
+Design detail: `docs/integrations/google-calendar-sync.md` §3e (reconciliation) + §3f (B2.3-c).
 
 ## 1. Google Cloud OAuth client (one-time)
 
@@ -236,7 +252,17 @@ IDs / no sensitive studio identifiers):
   homepage/privacy-policy URLs, domain-ownership verification, and app publication/verification
   were **not** pursued in this controlled Testing-mode validation.
 
-## 7. B2.3-c2 worker-drain route — authored, dormant, UNSCHEDULED (open PR)
+## 7. B2.3-c2 worker-drain route — MERGED, deployed, SCHEDULED, still dormant
+
+> **CORRECTION (2026-07-27):** the heading and text of this section previously read
+> "authored, dormant, UNSCHEDULED (open PR)". That is **superseded**. PR #429 is **merged**,
+> the route `app/api/cron/calendar-sync/route.ts` is **deployed**, and PR #430 **scheduled**
+> it at `30 9 * * *` in `vercel.json` — it runs daily in production. It remains **dormant**
+> because the worker flag is off and every studio's outbound flag is off, so
+> `claim_calendar_sync_op` returns zero rows and the route exits without calling Google.
+> The original text below is retained as the point-in-time record.
+
+### Original text (historical)
 
 The authenticated worker-drain route `/api/cron/calendar-sync` was **reviewed + CI-green at PR #429
 head `f9ce6db`** and **becomes deployed dormant when the documentation-only descendant merges**; it

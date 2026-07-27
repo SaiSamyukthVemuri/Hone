@@ -17,7 +17,7 @@
 | Automatic charging | **Not built** |
 | Batch charging | **Not built** |
 | Public booking card-required flow | **Schema present (migration 0032), code dormant** |
-| Live mode | **Blocked** by three independent guards (see §3) |
+| Live mode | **ENABLED for approved studios and in active use** — see §3. **Willow Electrolysis has 6 succeeded live-mode charges, most recent 2026-07-26.** The pre-live "blocked by three guards" posture below is **historical** |
 
 ## 2. Stripe Connect model
 
@@ -34,13 +34,40 @@ Studios onboard via **Stripe Connect Express**. Each studio gets a connected acc
 - Card-on-file is for future-use charging by the studio. The PaymentMethod must live on the connected account so the later PaymentIntent has access.
 - Customers (`client_stripe_customers`) are per-`(client, studio, account, livemode)`.
 
-## 3. Live-mode guards
+## 3. Live-mode guards — CURRENT STATE (verified 2026-07-27)
 
-Three independent guards stack. All three must be deliberately altered for live charging. **The full ordered enablement sequence (every guard + DB CHECK + claim RPC + webhook + env, in order — env flip last) is the source of truth in [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only); a CI safety-lock (`tests/lib/billing/live-mode-disabled.test.ts`) keeps them intact. Live payments remain disabled.**
+> **⚠️ The three-guard "live mode is blocked" model described below is HISTORICAL.** It was
+> the pre-live posture. **Live payments are enabled and in use.** The guards were deliberately
+> altered through the controlled enablement sequence in
+> [docs/16 §17.12](./16_LIVE_PAYMENTS_READINESS.md#1712-controlled-enablement-sequence--the-ordered-checklist-pr-297-prep-only),
+> which is the record of how it was done.
 
-1. **Key gate.** `lib/stripe/server.ts:assertStripeKeyAllowed` refuses any `sk_live_*` secret unless `STRIPE_ALLOW_LIVE_MODE=true`. Vercel Preview / Development MUST use `sk_test_*` regardless of the flag.
-2. **Code gate.** `inferStripeLivemode()` short-circuits the canonical executor `lib/billing/session-payment-charge.ts:runSessionPaymentCharge` (session payments + fees) to `live_mode_blocked` before any Stripe call when the env is live. (The legacy `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
-3. **DB CHECK.** `payment_charge_attempts_livemode_false_check` pins `stripe_livemode=false` on the canonical `payment_charge_attempts` ledger (session-payment and fee charges). A row cannot persist `true` until a deliberate migration drops or replaces the constraint.
+**What is actually true now:**
+
+1. **Key gate — still present, now satisfied.** `lib/stripe/server.ts:assertStripeKeyAllowed`
+   still refuses `sk_live_*` unless `STRIPE_ALLOW_LIVE_MODE=true`. Production sets it.
+   **Vercel Preview / Development MUST still use `sk_test_*` regardless of the flag.**
+2. **Code gate — no longer a block.** `inferStripeLivemode()` now drives *mode-aware*
+   behaviour rather than a `live_mode_blocked` short-circuit for session payments. (The legacy
+   `lib/billing/manual-fee-charge.ts` was deleted in PR #218.)
+3. **DB CHECK — the constraint on the canonical ledger NO LONGER EXISTS.** Migration **0101**
+   dropped `payment_charge_attempts_livemode_false_check`. Verified in production 2026-07-27
+   via `pg_constraint`: the **only** remaining livemode CHECK is
+   `manual_fee_charge_attempts_livemode_false_check` — `CHECK ((stripe_livemode = false))` —
+   on the **legacy, read-only** manual-fee table. The canonical `payment_charge_attempts`
+   ledger holds **8 rows with `stripe_livemode = true`** (6 Willow, 2 the controlled test
+   studio), which is only possible because the constraint is gone.
+
+   **Do not state that a DB CHECK prevents live rows on `payment_charge_attempts`.** It does
+   not, and has not since 0101.
+
+**The guard that IS still load-bearing today** is the **live charge-reason allow-list**:
+`lib/billing/live-charge-reason-allowlist.ts` blocks every non-`session_payment` reason in
+live mode, enforced at **both** prepare and execute. That is why live manual no-show and
+late-cancellation fees remain **held** while live session payments flow.
+
+Canonical posture: [docs/16 header](./16_LIVE_PAYMENTS_READINESS.md) ·
+[capability-register.md §7](./production/capability-register.md).
 
 ## 3b. Complete Stripe-write source inventory (PR #309)
 
