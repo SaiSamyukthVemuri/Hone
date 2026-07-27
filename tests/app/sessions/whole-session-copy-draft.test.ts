@@ -178,6 +178,19 @@ describe("copy card matches the Phase A charting contract", () => {
     expect(pulse).toBeLessThan(galv);
   });
 
+  it("(3C) ports the charting form's OmniBlend rule: no thermolysis duration for OmniBlend", () => {
+    // block-setup-form hides thermolysis duration + clears it for OmniBlend; the
+    // card must mirror this so a reviewed copy can't persist a duration on an
+    // OmniBlend entry (a state the corrected charting new-entry flow prevents).
+    expect(CARD).toMatch(/const isOmniblend = s\.apilusModality === "Omniblend"/);
+    // The duration input is gated on !isOmniblend.
+    expect(CARD).toMatch(/\{!isOmniblend && \(\s*<label[\s\S]{0,200}?Thermolysis duration/);
+    // Switching modality to OmniBlend clears any typed thermolysis duration.
+    expect(CARD).toMatch(
+      /next === "Omniblend"\s*\?\s*\{ thermolysisDurationSeconds: "" \}/,
+    );
+  });
+
   it("(4/11/12) the card renders NO input bound to minutes or any outcome field", () => {
     // Precise: the card only binds inputs to reusable setup fields (value={s.<x>})
     // and only mutates via patchSetup. It renders no input for minutes or any

@@ -42,6 +42,11 @@ export function CopyDraftCard({
   const idp = useId();
   const s = draft.setup;
   const sections = resolveModeSections(s.mode);
+  // Mirror the charting form's modality-level rule (block-setup-form.tsx): OmniBlend
+  // has NO thermolysis duration. Gate the duration input on !isOmniblend and clear
+  // any typed value when the practitioner switches to OmniBlend, so a reviewed copy
+  // card can't persist a thermolysis duration on an OmniBlend entry.
+  const isOmniblend = s.apilusModality === "Omniblend";
 
   function patchSetup(patch: Partial<CopyAreaDraft["setup"]>) {
     onChange({ ...draft, setup: { ...draft.setup, ...patch } });
@@ -164,7 +169,15 @@ export function CopyDraftCard({
             <span className="text-sm font-medium">Apilus modality</span>
             <select
               value={s.apilusModality}
-              onChange={(e) => patchSetup({ apilusModality: e.target.value })}
+              onChange={(e) => {
+                const next = e.target.value;
+                // OmniBlend has no thermolysis duration — clear it on switch so a
+                // now-hidden reading can't be committed (mirrors the charting form).
+                patchSetup({
+                  apilusModality: next,
+                  ...(next === "Omniblend" ? { thermolysisDurationSeconds: "" } : {}),
+                });
+              }}
               data-testid={`copy-draft-${draft.key}-apilus`}
               className={READING_INPUT_CLS}
             >
@@ -207,19 +220,21 @@ export function CopyDraftCard({
               className={READING_INPUT_CLS}
             />
           </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Thermolysis duration (s)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.001"
-              min={0}
-              value={s.thermolysisDurationSeconds}
-              onChange={(e) => patchSetup({ thermolysisDurationSeconds: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-therm-duration`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
+          {!isOmniblend && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Thermolysis duration (s)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                min={0}
+                value={s.thermolysisDurationSeconds}
+                onChange={(e) => patchSetup({ thermolysisDurationSeconds: e.target.value })}
+                data-testid={`copy-draft-${draft.key}-therm-duration`}
+                className={READING_INPUT_CLS}
+              />
+            </label>
+          )}
           {/* Pulse control lives INSIDE the thermolysis section (Phase A): pulse
               is a thermolysis concept, shown only for thermo/blend. */}
           <label className="flex flex-col gap-1.5">
