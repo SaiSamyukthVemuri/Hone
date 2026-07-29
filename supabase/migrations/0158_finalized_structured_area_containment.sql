@@ -105,12 +105,21 @@
 --     studio before that follow-up lands. See
 --     docs/runbooks/0158-finalized-structured-area-containment.md.
 --
--- SAFETY AT APPLY TIME. Production currently has 8 structured-area rows across 8
--- draft blocks in one studio, 1 finalized session (a non-Willow test studio,
--- finalized 2026-07-11, ZERO structured-area rows), and clinical_finalization_enabled
--- = false for all 5 studios. Every guard is therefore inert against existing data,
--- and the deployed application (which never writes this table directly) is
--- unaffected by the grant revocation.
+-- SAFETY AT APPLY TIME. Production is LIVE and charting daily, so treat every number
+-- below as a dated observation, not a standing fact. Re-derive the baseline
+-- immediately before applying — the runbook's pre-apply section has the queries, and
+-- its STOP conditions (not the raw counts) are what actually gate the apply.
+--
+--   as of 2026-07-27: 8 structured-area rows / 8 draft blocks / 1 studio; 72 sessions
+--   as of 2026-07-29: 15 structured-area rows / 1 studio;                 76 sessions
+--
+-- What has held on EVERY observation, and is the property the apply depends on:
+-- exactly 1 finalized session (a non-Willow test studio, finalized 2026-07-11) with
+-- ZERO structured-area rows; ZERO structured-area rows on any non-draft record; ZERO
+-- rows created after a parent's finalized_at; and clinical_finalization_enabled =
+-- clinical_corrections_enabled = false on every studio. Every guard is therefore
+-- inert against existing data, and the deployed application (which never writes this
+-- table directly) is unaffected by the grant revocation.
 --
 -- READ THOSE COUNTS WITH THE RIGHT LIMIT. session_block_areas has no updated_at, no
 -- deleted_at and no history table, so they evidence CURRENT state only. They cannot

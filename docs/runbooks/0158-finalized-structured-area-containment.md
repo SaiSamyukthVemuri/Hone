@@ -59,7 +59,16 @@ not about the defect:
    on the authoritative area table is a full-tenant clinical data-loss primitive that no RLS
    policy was ever going to stop.
 
-## 2. Verified production state (read-only, 2026-07-27, project `alhhybgqdmcdyzpybykj`)
+## 2. Verified production state (read-only, project `alhhybgqdmcdyzpybykj`)
+
+> **These are dated observations of a LIVE system, not standing facts.** Production charts daily:
+> between 2026-07-27 and 2026-07-29 `session_block_areas` went from 8 rows to 15 and sessions from
+> 72 to 76, with no action from anyone working on this PR. **Re-derive the baseline in §5
+> immediately before applying** — the STOP conditions there, not the counts below, are what gate
+> the apply. The invariant rows are what have held on *every* observation and are what make the
+> apply safe.
+
+Observed 2026-07-27 (the reconciliation baseline), re-confirmed 2026-07-29:
 
 | Fact | Verified value |
 |---|---|
@@ -68,8 +77,10 @@ not about the defect:
 | `clinical_corrections_enabled` | **false for all 5 studios** (Willow included) |
 | Sessions | 72 total — **71 draft, 1 finalized**; 59 legacy-origin, 13 native |
 | The single finalized session | Belongs to a **non-Willow test studio**, finalized **2026-07-11T00:42:12Z**, has 1 block and **ZERO** `session_block_areas` rows, and has 1 `original` snapshot |
-| `session_block_areas` | **8 rows**, across **8 distinct blocks**, in **1 studio (Willow)**, created **2026-07-21 … 2026-07-26** |
-| Structured-area rows created after their parent session's `finalized_at` | **0** |
+| `session_block_areas` | **8 rows** / 8 blocks / 1 studio (Willow) on 2026-07-27; **15 rows** / 1 studio on 2026-07-29 — live charting, expect it to have moved again |
+| Structured-area rows on any **non-draft** record | **0** — invariant, holds on every observation |
+| Structured-area rows created after their parent session's `finalized_at` | **0** — invariant, holds on every observation |
+| The single finalized session's snapshot re-derives to its stored `content_hash` | **MATCH** — re-confirmed 2026-07-29 |
 | `clinical_record_amendments` | **0 rows** |
 | `clinical_audit_events` | **0 rows** |
 
