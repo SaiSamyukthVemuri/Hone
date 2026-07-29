@@ -1256,6 +1256,65 @@ describe("E. area write versus finalization (two real connections)", () => {
     });
   });
 
+  it("block DELETE cannot race finalization (the block guard locks the parent too)", async () => {
+    // REVIEW FINDING. session_has_been_signed is a plain read, so without a lock
+    // the block guard is TOCTOU: a DELETE that samples "not signed" a moment before
+    // finalize_session commits its snapshot proceeds anyway, and the signed record
+    // loses the areas its own snapshot recorded — content_hash byte-identical.
+    // The guard takes FOR KEY SHARE, which conflicts with finalization's FOR UPDATE.
+    const studio = await seedStudio("fsac-race");
+    const { sessionId, blockId } = await seedCharted(studio);
+    await adminQuery(
+      "update public.studios set clinical_finalization_enabled = true where id=$1",
+      [studio.studioId],
+    );
+    await adminQuery(
+      "insert into public.electrolysis_entries (id, session_id, area, block_id) values ($1,$2,'Chin',$3)",
+      [randomUUID(), sessionId, blockId],
+    );
+
+    await withClient(async (finalizer) => {
+      await withClient(async (deleter) => {
+        // Finalization takes the session FOR UPDATE and holds it uncommitted.
+        await beginAsUser(finalizer, studio.userId);
+        const finalizerPid = (await finalizer.query("select pg_backend_pid() as pid")).rows[0]
+          .pid as number;
+        await finalizer.query("select * from public.finalize_session($1,$2)", [sessionId, 1]);
+
+        // The block DELETE must WAIT on that lock, not sample a stale answer.
+        await deleter.query("begin");
+        const deleterPid = (await deleter.query("select pg_backend_pid() as pid")).rows[0]
+          .pid as number;
+        const delPromise = deleter
+          .query("delete from public.session_blocks where id=$1", [blockId])
+          .then(() => ({ ok: true as const }))
+          .catch((e) => ({ ok: false as const, error: e as { code?: string; message: string } }));
+
+        let blocked = false;
+        for (let i = 0; i < 100 && !blocked; i++) {
+          const r = await adminQuery(
+            "select pg_blocking_pids($1) @> array[$2::int] as blocked",
+            [deleterPid, finalizerPid],
+          );
+          blocked = r.rows[0].blocked === true;
+          if (!blocked) await new Promise((x) => setTimeout(x, 50));
+        }
+        expect(blocked).toBe(true);
+
+        await finalizer.query("commit");
+        const result = await delPromise;
+        await deleter.query("rollback").catch(() => undefined);
+
+        expect(result.ok).toBe(false);
+        const err = (result as { ok: false; error: { code?: string; message: string } }).error;
+        expect(err.message).toMatch(/finalized and signed/i);
+        expect(err.code).not.toBe("40P01");
+        // The signed record kept its areas.
+        expect(await areaSnapshot(blockId)).toHaveLength(2);
+      });
+    });
+  });
+
   it("area save vs area removal: the 0123 lock sequence does not deadlock", async () => {
     // REGRESSION. soft_delete_session_area (0123) locks a session_blocks row FIRST
     // (`for update of b`) and only later inserts its session_audit row, which needs

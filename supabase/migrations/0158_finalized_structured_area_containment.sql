@@ -434,6 +434,37 @@ declare
   v_msg constant text :=
     'This clinical record has been finalized and signed. Its treatment areas cannot be added, moved, removed or deleted (structured-area corrections are a later phase).';
 begin
+  -- SERIALIZE THE CHECK AGAINST FINALIZATION. session_has_been_signed is a plain
+  -- read, so without a lock this is a TOCTOU race: a block DELETE (or a
+  -- reparent-out) that samples "not signed" a moment before finalize_session
+  -- commits its snapshot proceeds anyway, and a signed record loses the areas its
+  -- own snapshot recorded — with the content_hash byte-identical. The area guard
+  -- already locks; this one must too.
+  --
+  -- FOR KEY SHARE, deliberately, and NOT the FOR NO KEY UPDATE the area guard
+  -- takes. KEY SHARE conflicts with the FOR UPDATE that finalize_session /
+  -- correct_finalized_session / copy_session_setup hold — which is the entire race
+  -- being closed — while remaining COMPATIBLE with FOR NO KEY UPDATE. That matters:
+  -- this trigger fires while its statement already holds a session_blocks row lock,
+  -- so an NKU request here would close a cycle against a charting RPC that holds
+  -- the session NKU and is waiting for that same block (the 40P01 reproduced
+  -- earlier against soft_delete_session_area, 0123). soft_delete_session_area
+  -- already takes FOR KEY SHARE on this row via its session_audit insert, so this
+  -- adds no ordering edge that did not already exist.
+  -- NEW is unassigned in a DELETE trigger and OLD in an INSERT one, so branch
+  -- before touching either. On UPDATE both endpoints are locked in a single
+  -- id-ordered statement, so two concurrent reparents cannot deadlock each other.
+  if tg_op = 'DELETE' then
+    perform 1 from public.sessions where id = old.session_id for key share;
+  elsif tg_op = 'INSERT' then
+    perform 1 from public.sessions where id = new.session_id for key share;
+  else
+    perform 1 from public.sessions
+     where id in (old.session_id, new.session_id)
+     order by id
+     for key share;
+  end if;
+
   if tg_op = 'DELETE' then
     -- Closes the CASCADE-ERASE route: deleting the block deletes its areas.
     if public.session_has_been_signed(old.session_id) then
