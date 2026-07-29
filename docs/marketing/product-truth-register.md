@@ -25,6 +25,7 @@ one controlled test studio (Sam). Sources: read-only inspection of `app/`, `lib/
 | `DORMANT_CONTROLLED` | Dormant / controlled-validation only. Never marketed. |
 | `PLANNED` | Referenced/scaffolded but not built. |
 | `NOT_BUILT` | Not built. |
+| `RETIRED` | **Terminal.** A product decision permanently removed it as a capability and the database enforces that it cannot be enabled. Never marketed, and never as "coming soon" — it is not coming. |
 
 ## Market-decision key
 
@@ -52,6 +53,17 @@ one controlled test studio (Sam). Sources: read-only inspection of `app/`, `lib/
    inferred from the absence of an AI feature. See the Privacy domain note.
 6. Do not publish Chloe's identity, studio, image, quote, or endorsement without her
    explicit approval.
+7. **Clinical-record rule (added 2026-07-29).** Signed / cryptographically finalized clinical
+   records are **RETIRED** — not a Hone capability, and permanently rejected. Therefore: never
+   market *finalize & sign*, *lock the chart*, *immutable / tamper-proof treatment record*,
+   *signed snapshot*, *cryptographic hash of the record*, or a *correction / amendment workflow*.
+   Never present it as coming soon. The truthful story is the opposite and is fully marketable:
+   **treatment records stay editable, and every change is attributed and time-stamped.**
+   *This rule is narrow.* It does **not** touch these existing, still-true claims: append-only
+   **clinical notes** (a correction is a new row), the **record-keeping audit trail**, **session
+   edit history**, **intake terminal immutability**, and **consent record
+   integrity/immutability (SHA-256, no delete)**. Those are unrelated to the retired system and
+   remain marketable exactly as written. See `../decisions/clinical-finalization-retired.md`.
 
 ---
 
@@ -96,8 +108,9 @@ one controlled test studio (Sam). Sources: read-only inspection of `app/`, `lib/
 | Exposure-incident records (owner-scoped) | LIVE_FOR_ALL_ONBOARDED | QUALIFIER | Log blood/body-fluid exposure incidents, with history restricted to the owner. |
 | In-app disinfectant/supply due & overdue flags (read-time) | LIVE_FOR_ALL_ONBOARDED | QUALIFIER | At-a-glance due/overdue flags for replace-by and supply expiry while you work. |
 | Disinfectant proactive reminder (cron/email/SMS) | NOT_BUILT | OMIT | Computed read-time only; no cron/email/SMS. |
-| Clinical finalization / "finalize & sign" (Phase 1) | DEPLOYED_DEFAULT_OFF | OMIT | Flag OFF for all studios; not approved for Willow. |
-| Clinical corrections & amendments + audit ledger (Phase 2) | DORMANT_CONTROLLED | **NEVER** | Parked; no production amendment has ever been created. |
+| Clinical finalization / "finalize & sign" (Phase 1) | RETIRED | **NEVER** | **RETIRED 2026-07-29** — signed/finalized clinical records are not a Hone product capability. Both flags pinned false by DB constraint (migration 0159); no role can enable them. **OMIT everywhere, and never as "coming soon" — it is not coming.** Do not use *finalize*, *sign the chart*, *locked*, *immutable record*, *tamper-proof*, *signed snapshot* or *cryptographic hash* of treatment records in any public copy. See `../decisions/clinical-finalization-retired.md`. |
+| Clinical corrections & amendments + audit ledger (Phase 2) | RETIRED | **NEVER** | **RETIRED 2026-07-29** — no signed-record correction/amendment workflow exists or will; no production amendment was ever created. `clinical_audit_events` is retired with it and is **not** Hone's audit trail. **OMIT everywhere.** |
+| Correcting a charting mistake | LIVE_FOR_ALL_ONBOARDED | MARKET | Fix a mis-charted session by editing it — records stay editable, and every change is captured in the session edit history. (This is the truthful replacement for any "finalize/amend" story. Do not imply signing, locking or immutability.) |
 
 ---
 

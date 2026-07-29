@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
+  seedLegacyRecordStatus,
   adminQuery,
   closePool,
   seedSession,
@@ -140,7 +141,8 @@ describe("soft_delete_session_area — aggregate soft-delete", () => {
   it("rejects removal of a FINALIZED record", async () => {
     const studio = await seedStudio("areaFinal");
     const { sessionId, blockId } = await seedSession(studio);
-    await adminQuery("update public.sessions set record_status = 'finalized' where id = $1", [sessionId]);
+    // 0159 retired the finalized lifecycle; build the legacy state owner-only.
+    await seedLegacyRecordStatus(sessionId, "finalized");
     await expect(
       removeArea(studio.userId, sessionId, blockId, "trying to remove a finalized area"),
     ).rejects.toThrow();

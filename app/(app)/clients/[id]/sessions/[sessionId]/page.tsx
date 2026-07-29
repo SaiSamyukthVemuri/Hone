@@ -18,8 +18,6 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
 import { DoneChartingButton } from "./DoneChartingButton";
-import { FinalizeSessionCard } from "./FinalizeSessionCard";
-import { RecordVersionsPanel } from "./RecordVersionsPanel";
 import {
   resolveSessionPaymentDefault,
   type SessionPaymentDefaultAmount,
@@ -290,93 +288,15 @@ export default async function SessionDetailPage({
       ? ` · ${priorLaserCount} laser session${priorLaserCount === 1 ? "" : "s"} previously`
       : "";
 
-  // Clinical Record — Phase 1. Finalize summary props, only when the studio-scoped
-  // flag is on (otherwise the card is not rendered and no extra query runs).
-  const finalizationEnabled = studio.clinical_finalization_enabled === true;
-  // A finalized (or void) record is read-only regardless of the flag's current
-  // state. Every existing/draft session is false, so behavior is unchanged until a
-  // studio opts in and explicitly finalizes (migration-first safe).
+  // Signed/finalized clinical records are RETIRED (migration 0159): there is no
+  // Finalize control, no signed-correction control, and no studio flag that can
+  // bring them back. `isFinalized` survives for exactly one reason — production
+  // retains ONE legacy finalized session from a controlled non-Willow test studio,
+  // and it must stay visibly read-only and undeletable. Every ordinary session is
+  // 'draft' and fully editable, and the database now refuses any new transition
+  // into 'finalized'/'void'. See docs/decisions/clinical-finalization-retired.md.
   const isFinalized =
     session.record_status === "finalized" || session.record_status === "void";
-  const finalizeAreasCount = blockData?.blocks.length ?? 0;
-  const finalizePassesCount =
-    session.electrolysis_entries.length + session.laser_entries.length;
-  const finalizedByName = session.finalized_by
-    ? (clientData.practitioners.find((p) => p.id === session.finalized_by)
-        ?.display_name ?? null)
-    : null;
-  let finalizePhotosCount = 0;
-  if (finalizationEnabled) {
-    const supabaseForPhotos = await createClient();
-    const { count } = await supabaseForPhotos
-      .from("treatment_images")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studio.id)
-      .eq("session_id", session.id);
-    finalizePhotosCount = count ?? 0;
-  }
-
-  // Clinical Record — Phase 2. Corrections & amendments UI (studio-flag-gated,
-  // native + finalized only). Fetches the version lineage + amendments; the raw
-  // snapshot JSON is never selected/exposed.
-  const correctionsEnabled = studio.clinical_corrections_enabled === true;
-  const showVersionsPanel =
-    correctionsEnabled && isFinalized && session.record_origin === "native";
-  let versionRows: {
-    version_no: number;
-    version_type: "original" | "correction";
-    finalized_at: string;
-    corrected_by_display_name: string | null;
-    correction_reason: string | null;
-    is_current: boolean;
-  }[] = [];
-  let amendmentRows: {
-    id: string;
-    amendment_type: string;
-    reason: string;
-    body: string | null;
-    authored_by_display_name: string | null;
-    authored_at: string;
-    applies_to_version: number | null;
-  }[] = [];
-  if (showVersionsPanel) {
-    const sb = await createClient();
-    const { data: snaps } = await sb
-      .from("clinical_record_snapshots")
-      .select(
-        "id, version_no, version_type, finalized_at, corrected_by_display_name, correction_reason",
-      )
-      .eq("session_id", session.id)
-      .order("version_no", { ascending: true });
-    const versionBySnapshot = new Map<string, number>();
-    versionRows = (snaps ?? []).map((s) => {
-      versionBySnapshot.set(s.id as string, s.version_no as number);
-      return {
-        version_no: s.version_no as number,
-        version_type: s.version_type as "original" | "correction",
-        finalized_at: s.finalized_at as string,
-        corrected_by_display_name: (s.corrected_by_display_name as string | null) ?? null,
-        correction_reason: (s.correction_reason as string | null) ?? null,
-        is_current: s.id === session.current_snapshot_id,
-      };
-    });
-    const { data: amends } = await sb
-      .from("clinical_record_amendments")
-      .select(
-        "id, amendment_type, reason, body, authored_by_display_name, authored_at, applies_to_snapshot_id",
-      )
-      .eq("session_id", session.id)
-      .order("authored_at", { ascending: true });
-    amendmentRows = (amends ?? []).map((a) => ({
-      id: a.id as string,
-      amendment_type: a.amendment_type as string,
-      reason: a.reason as string,
-      body: (a.body as string | null) ?? null,
-      authored_by_display_name: (a.authored_by_display_name as string | null) ?? null,
-      authored_at: a.authored_at as string,
-      applies_to_version: versionBySnapshot.get(a.applies_to_snapshot_id as string) ?? null,
-    }));
-  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -465,18 +385,20 @@ export default async function SessionDetailPage({
         />
       </div>
 
-      {/* Clinical Record — Phase 1: when finalized, the record is read-only.
-          The clinical content below is preserved and shown for reference; edits
-          are blocked at the database. Corrections/amendments are a later phase. */}
+      {/* Retired capability, retained artifact. Signed/finalized records are no
+          longer a Hone capability (migration 0159) and no new session can enter
+          this state. A handful of records were finalized while the old system was
+          being trialled; they stay preserved and read-only at the database. */}
       {isFinalized && (
-        <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-800 dark:bg-emerald-950/30">
-          <span className="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-white">
-            Finalized · read-only
+        <section className="rounded-lg border border-stone-300 bg-stone-50 p-4 text-sm dark:border-stone-700 dark:bg-stone-900/40">
+          <span className="inline-flex items-center rounded-full bg-stone-600 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-white">
+            Archived record · read-only
           </span>
-          <p className="mt-2 text-emerald-900 dark:text-emerald-100">
-            This clinical record is finalized. The treatment recorded below is
-            preserved unchanged; edits are locked. Corrections and amendments (a
-            later phase) will be added without altering the original.
+          <p className="mt-2 text-stone-800 dark:text-stone-200">
+            This is an archived clinical record from an earlier trial of
+            record finalization, which Hone no longer offers. The treatment
+            recorded below is preserved exactly as it was; it cannot be edited or
+            deleted. New sessions are ordinary editable records.
           </p>
         </section>
       )}
@@ -706,47 +628,9 @@ export default async function SessionDetailPage({
         </div>
       </section>
 
-      {/* Clinical Record — Phase 1: finalization boundary, studio-flag-gated.
-          "Done charting" above stays navigation-only; this is the record
-          lifecycle action. Does NOT change treatment-memory reads yet. */}
-      {finalizationEnabled && (
-        <FinalizeSessionCard
-          sessionId={session.id}
-          clientId={id}
-          recordStatus={session.record_status}
-          recordOrigin={session.record_origin}
-          recordVersion={session.record_version}
-          finalizedAt={session.finalized_at}
-          finalizedByName={finalizedByName}
-          snapshotVersion={session.record_status === "finalized" ? 1 : null}
-          areasCount={finalizeAreasCount}
-          passesCount={finalizePassesCount}
-          photosCount={finalizePhotosCount}
-          aftercareExplained={session.aftercare_and_risks_explained_at != null}
-        />
-      )}
-
-      {/* Clinical Record — Phase 2: corrections & amendments (studio-flag-gated,
-          native finalized only). Shows the version lineage + append/correct flows.
-          Never renders for legacy records. */}
-      {showVersionsPanel && (
-        <RecordVersionsPanel
-          sessionId={session.id}
-          clientId={id}
-          recordVersion={session.record_version}
-          currentSnapshotId={session.current_snapshot_id}
-          versions={versionRows}
-          amendments={amendmentRows}
-          sessionFields={{
-            session_notes: session.session_notes,
-            next_session_note: session.next_session_note ?? null,
-            modality: session.modality,
-          }}
-        />
-      )}
-
-      {/* A finalized clinical record cannot be soft-deleted (DB-guarded); the
-          destructive control is withdrawn once finalized. */}
+      {/* An archived (legacy finalized) record cannot be soft-deleted — the DB
+          guard from 0119 still enforces that — so the destructive control is
+          withdrawn for it. Ordinary sessions keep it. */}
       {!isFinalized && (
         <div className="pt-6">
           <DeleteSessionForm sessionId={session.id} clientId={id} />

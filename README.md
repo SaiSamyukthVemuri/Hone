@@ -35,8 +35,14 @@ Also: [release changelog](./docs/production/release-changelog.md) ·
   `0.733 seconds` display, *Thermolysis pulse count* relabel) and whole-session copy.
 - **Deployed but never production-exercised:** whole-session copy — the provenance ledger holds
   **0 rows**; no real copy has ever been performed.
-- **Dormant:** all Google Calendar sync (Willow is **not** connected; every sync flag off) and
-  clinical finalization/corrections (both flags off on every studio).
+- **Dormant:** all Google Calendar sync (Willow is **not** connected; every sync flag off).
+- **RETIRED by product decision (2026-07-29):** signed / finalized clinical records. Hone does
+  **not** offer practitioner-signed snapshots, immutable finalized records, cryptographic
+  clinical-record hashes as a product feature, or a signed-snapshot correction/amendment
+  workflow. Treatment sessions are **ordinary editable operational records**; ordinary audit
+  trails, actor attribution, timestamps and whole-session-copy provenance are all **retained**.
+  Enforced by migration **0159**. See
+  [docs/decisions/clinical-finalization-retired.md](./docs/decisions/clinical-finalization-retired.md).
 - **Held:** live manual no-show/late-cancel fees · public-booking card collection · public
   practitioner selection and assignment.
 - **Deferred by product decision (2026-07-27):** the direct new-client consultation booking route.
@@ -49,7 +55,7 @@ Also: [release changelog](./docs/production/release-changelog.md) ·
 | Public booking, new/existing client, next-available | **Production** |
 | Authenticated practitioner app, calendar, charting, postcare | **Production** |
 | Clinical memory: structured tolerance/reaction/caution per treatment block, next-session notes, last-session context at the point of care | **Production** (PR #190) |
-| Clinical record: finalization boundary (Phase 1, 0119/#399) + corrections/amendments backend (Phase 2, 0120/#400) + amendment-path reliability/observability (#402) | **Deployed but DORMANT** — both flags OFF for all studios; Phase 1 was production-exercised on a controlled test studio; Phase 2 **customer workflow is parked** and not approved for Willow |
+| Clinical record: signed finalization boundary (Phase 1, 0119/#399) + signed corrections/amendments backend (Phase 2, 0120/#400) + amendment-path reliability/observability (#402) | **RETIRED by product decision (2026-07-29, migration 0159)** — not a Hone capability and not coming back. Both flags are now pinned `false` by CHECK constraint, `EXECUTE` on the finalize/correct/amend RPCs is revoked from every runtime role, and no session can enter the `finalized`/`void` lifecycle. Treatment sessions stay **ordinary editable records**. 0119/0120 are kept unreverted so history stays replayable and the one legacy finalized artifact (a controlled non-Willow test studio, 2026-07-11) stays readable and immutable. Reintroduction would need a **new product decision**, not a flag flip |
 | Practitioner signup | **Invite-only during the pilot** (PR #189). Magic-link login creates an account only for emails with a pending team invitation |
 | Client portal (magic-link + session cookie, two-zone UX) | **Production** |
 | Portal messages + replies | **Production** |
@@ -77,7 +83,7 @@ Also: [release changelog](./docs/production/release-changelog.md) ·
 | Charting: unified *Treatment observations & skin response*, galvanic-intensity retirement, exact `0.733 s` thermolysis display, *Thermolysis pulse count* (PR #479) | **Deployed + enabled — Chloe's human acceptance PENDING.** Code-only, no migration. Galvanic-intensity **history is preserved**; only new writes and ordinary display drop it (`galvanic_ma` / `galvanic_duration_seconds` remain active) |
 | Whole-session copy — "Copy areas & settings from last session" (PR #478, migration 0157) | **DB applied + deployed + enabled — but NOT production-exercised** (`session_copy_operations` = 0 rows) and **Chloe's human acceptance PENDING**. Editable ephemeral preview, zero writes before an explicit commit, one atomic commit, source locking, idempotency + provenance ledger. Minutes and outcomes are never copied; galvanic intensity is forced to a literal NULL |
 | Practitioner capacity / multi-practitioner | **Deployed; enabled on the controlled test studio ONLY.** `practitioner_capacity_enabled` is **false at Willow**, and `practitioner_capacity_booking_enabled` (public assignment) is **false on every studio**. Schema and code existing is not launch readiness |
-| Clinical record finalization + corrections | **Deployed but DORMANT** — both flags OFF for all studios. Phase 1 was production-exercised **once** on the controlled test studio; Willow has 0 finalized records. Phase 2 has **never** been exercised and its customer workflow is **parked** |
+| Signed clinical-record finalization + signed corrections | **RETIRED — see [docs/decisions/clinical-finalization-retired.md](./docs/decisions/clinical-finalization-retired.md).** Hone will not offer signed or cryptographically finalized clinical records; practitioners correct a mis-charted session by editing it. Phase 1 was exercised **once** on the controlled test studio (Willow: 0 finalized records); Phase 2 was **never** exercised. Migration 0159 makes the capability unreachable — flags pinned `false`, RPC `EXECUTE` revoked, transition into `finalized`/`void` refused, `INSERT` blocked on the three signed ledgers. Ordinary audit trails, actor attribution, timestamps and whole-session-copy provenance are **retained** |
 | Direct new-client consultation booking route | **Deferred by product decision (2026-07-27)** — not built, not a launch blocker, not the next task |
 | Intake builder, admin/support dashboard | **Backlog** |
 
@@ -112,7 +118,7 @@ Or the shortcut that chains the first five:
 npm run ci
 ```
 
-GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154), plus a separate `db-integration` job (PR #220/#221) that applies the FULL migration chain from scratch to a local Supabase Postgres, runs the DB/RLS behavior tests (`npm run test:db`: cross-studio isolation, audit immutability + triggers, clinical delete posture, double-booking constraint, claim RPCs, exposure owner tier), and runs the generated types drift check (`npm run check:db-types`), and a separate `browser-e2e` job (PR #227) that runs the Playwright suite — **45 specs under `e2e/`** — against a local production build and the full local Supabase stack, plus `payment-browser-e2e`, `mobile-completion-e2e` and `google-browser-e2e` lanes (`npm run test:e2e` locally). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
+GitHub Actions runs the same set on every PR and every push to the default branch (`.github/workflows/ci.yml`, PR #154), plus a separate `db-integration` job (PR #220/#221) that applies the FULL migration chain from scratch to a local Supabase Postgres, runs the DB/RLS behavior tests (`npm run test:db`: cross-studio isolation, audit immutability + triggers, clinical delete posture, double-booking constraint, claim RPCs, exposure owner tier), and runs the generated types drift check (`npm run check:db-types`), and a separate `browser-e2e` job (PR #227) that runs the Playwright suite — **44 specs under `e2e/`** — against a local production build and the full local Supabase stack, plus `payment-browser-e2e`, `mobile-completion-e2e` and `google-browser-e2e` lanes (`npm run test:e2e` locally). CI does not replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md); browser flows, real Resend / Twilio sends, real Stripe Elements, and real webhook delivery still live there.
 
 ## Required services
 

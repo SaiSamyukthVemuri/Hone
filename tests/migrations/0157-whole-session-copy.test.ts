@@ -15,17 +15,14 @@ const CODE = SQL.split("\n")
   .join("\n");
 
 describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
-  it("is present, 0156 precedes it, exactly one 0157, and it is the repo max (nothing 0158+)", () => {
+  it("is present, 0156 precedes it, exactly one 0157, nothing 0160+ (repo max pin now lives in the 0159 test)", () => {
     expect(FILE).toMatch(/^0157_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0156_"))).toBe(true);
     expect(files.filter((f) => /^0157_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(5[8-9]|[6-9]\d)_/.test(f))).toEqual([]);
-    const nums = files
-      .filter((f) => /^\d{4}_.*\.sql$/.test(f))
-      .map((f) => parseInt(f.slice(0, 4), 10))
-      .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(157);
+    expect(files.filter((f) => /^01(6[0-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    // The absolute repo-max pin moved to the 0159 test (0159 = retire signed
+    // clinical records; 0158 is intentionally skipped, see that test).
   });
 
   it("adds a PROVENANCE ledger (source+target+practitioner+hash+fingerprint), member-only RLS, no browser DML", () => {

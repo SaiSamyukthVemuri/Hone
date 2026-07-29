@@ -89,7 +89,7 @@ describe("DB/RLS and types coverage acknowledged", () => {
 
   // SUPERSEDED PIN (2026-07-27). This test previously required docs/00 to say
   //   "Browser E2E coverage is the piece still NOT built"
-  // That is false at the production SHA: playwright.config.ts exists, 45 specs
+  // That is false at the production SHA: playwright.config.ts exists, 44 specs
   // live under e2e/, and .github/workflows/ci.yml runs them as the dedicated
   // `browser-e2e` job (plus a separate `payment-browser-e2e` lane). The guard
   // was forcing a false sentence to stay in the canonical product overview.

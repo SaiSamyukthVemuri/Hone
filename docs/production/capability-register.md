@@ -7,6 +7,11 @@ production; neither document is evidence for the other.
 - **Reconciled:** 2026-07-27
 - **Runtime-bearing baseline:** application HEAD `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`
   (PR #478 merge), production migration max **0157**.
+- **Amended 2026-07-29:** §3 rewritten from *dormant / parked* to **RETIRED** — signed and
+  finalized clinical records are not a Hone product capability. Enforced by migration **0159**
+  (in-tree, **not yet applied**; hosted max is still 0157, and `0158` is intentionally skipped).
+  Production facts re-verified read-only 2026-07-29 and unchanged. Decision record:
+  [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
 
 Related: [current-state.md](./current-state.md) ·
 [known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md) ·
@@ -32,6 +37,7 @@ These dimensions are **independent**. A capability normally holds several at onc
 | `Dormant` | Deployed but structurally unable to act (flag off, no worker, no eligible tenant). |
 | `Held` | Deliberately blocked by a server-side gate pending approval. |
 | `Deferred` | A product decision put it out of scope. Not built, not scheduled. |
+| `Retired` | **Terminal.** A product decision permanently removed it as a capability, and the database enforces that it cannot be enabled. Not dormant (nothing to flip), not held (no approval would unblock it), not deferred (it is not coming back). |
 
 **A capability is never described as "live" merely because a table, migration, component,
 route or flag exists.** The bar for "Production exercised" is a row, a log line, or a
@@ -71,15 +77,24 @@ read the Limitations column.
 | Whole-session copy | **Galvanic intensity forced literal NULL** at the destination | Merged | ✅ enforced in the RPC body | Deployed | Enabled | ❌ | **Pending** | 0157 RPC body; fingerprint excludes it | Forged-spec-safe: the destination insert does not read the client value |
 | Whole-session copy | Commit RPC unreachable from the browser | Merged | ✅ | Deployed | Enabled | n/a | n/a | `copy_session_setup` EXECUTE: anon **false**, authenticated **false**, service_role true | Invoked only by the authenticated server action with a server-derived practitioner id |
 
-## 3. Clinical finalization, corrections and amendments
+## 3. Clinical finalization, corrections and amendments — RETIRED
+
+**Signed / finalized clinical records are RETIRED** by product decision (2026-07-29), enforced by
+migration **0159**. This is `Retired`, not `Dormant` and not `Held`: both studio flags are pinned
+`false` by CHECK constraint, so **no role can enable them** — not a studio owner through the
+`studios: owners update` policy, not `service_role`. Treatment sessions are ordinary, editable
+operational records; practitioners correct mistakes by editing. There is no snapshot v2, and no
+document ever promised one. Reasoning, retained legacy artifact and the reintroduction bar:
+**[../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md)**.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Clinical record | Phase 1 — finalization boundary (0119, PR #399) | Merged | ✅ 0119 applied | Deployed | **Disabled** — `clinical_finalization_enabled` false on **all 5 studios** | ✅ **exactly once**, on the controlled test studio | — not accepted for Willow | 1 `finalized` session + 1 `clinical_record_snapshots` row, both on the test studio; Willow has **0** | Flag off everywhere; **Dormant** |
-| Clinical record | Phase 2 — corrections/amendments backend (0120, PR #400) | Merged | ✅ 0120 applied | Deployed | **Disabled** — `clinical_corrections_enabled` false on all studios | **❌ never** | — | `clinical_record_amendments` = **0 rows**; `clinical_audit_events` = **0 rows** | **Held / PARKED** — the customer workflow is not approved. Backend must be preserved, not weakened |
-| Clinical record | Amendment-path reliability + observability (PR #402) | Merged | no migration | Deployed | n/a | ❌ | — | PR #402 | Dormant with Phase 2 |
-| Clinical record | Append-only clinical notes (`client_clinical_notes`, 0126/0127) | Merged | ✅ applied | Deployed | Enabled — all studios, no flag | ✅ 1 production row | ✅ | `client_clinical_notes` = 1 row | — |
-| Clinical record | Finalized photo **content** immutability | Designed only | — | — | — | — | — | 0119 header: metadata + attachment relationships are locked | **Known limitation** — content-addressed object immutability is a later phase |
+| Clinical record | Phase 1 — finalization boundary (0119, PR #399) | **RETIRED** — practitioner-facing Finalize surface removed | 0119 applied; **0159 retires it** (nothing dropped) | Deployed, unreachable | **RETIRED** — `clinical_finalization_enabled` false on **all 5 studios** and **pinned false** by `studios_clinical_finalization_retired`; `EXECUTE` on `finalize_session` revoked from every runtime role; `sessions_guard_retired_finalization` refuses any transition into `finalized`/`void` | ✅ historically **exactly once**, on the controlled non-Willow test studio (2026-07-11T00:42:12Z) | n/a — never offered to Willow | 1 `finalized` session of 76 + 1 `clinical_record_snapshots` row whose `content_hash` **still re-derives to a MATCH**, both on the test studio; Willow has **0** non-draft sessions; 0 `void` | **RETIRED — no next gate.** The one legacy artifact is retained unchanged, deliberately **not deleted and not regenerated** |
+| Clinical record | Phase 2 — corrections/amendments backend (0120, PR #400) | **RETIRED** — practitioner-facing signed-Correction surface removed | 0120 applied; **0159 retires it** | Deployed, unreachable | **RETIRED** — `clinical_corrections_enabled` false on all studios and **pinned false** by `studios_clinical_corrections_retired`; `EXECUTE` revoked on `correct_finalized_session` / `amend_finalized_session` / `amend_finalized_session_with_image` / `build_session_snapshot`; `INSERT` refused on all three signed-record ledgers | **❌ never** | n/a | `clinical_record_amendments` = **0 rows**; `clinical_audit_events` = **0 rows** | **RETIRED — no next gate.** Backend preserved and **must not be weakened** — not to allow later enablement, but to keep the legacy evidence immutable, keep the retirement fail-closed, and forbid `authenticated` `TRUNCATE`/arbitrary clinical mutation |
+| Clinical record | Amendment-path reliability + observability (PR #402) | **RETIRED with Phase 2** | no migration | Deployed, unreachable | **RETIRED** | ❌ | n/a | PR #402 | The path it instrumented cannot execute |
+| Clinical record | `clinical_audit_events` — **not** the operational audit trail | **RETIRED with Phase 2** | 0120 applied; 0159 blocks `INSERT` | Deployed, immutable | **RETIRED** | ❌ 0 rows | n/a | its CHECK permits only `operation_type in ('correction','amendment')` | Named "audit" but scoped to signed corrections/amendments only. **Ordinary audit is retained and active**: `session_audit`, `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`, `client_portal_access_events` |
+| Clinical record | Append-only clinical notes (`client_clinical_notes`, 0126/0127) | Merged | ✅ applied | Deployed | Enabled — all studios, no flag | ✅ 1 production row | ✅ | `client_clinical_notes` = 1 row | **Unrelated to 0119/0120 and NOT retired.** A correction/revision here is a **new row** (`supersedes_note_id`), never a signed snapshot |
+| Clinical record | Finalized photo **content** immutability | Never built | — | — | — | — | — | 0119 header scope note | **RETIRED, not a later phase** — it was a sub-requirement of a capability Hone no longer offers. The live private-bucket / service-role-only / EXIF / identity-freeze protections are unaffected |
 
 ## 4. Probe inventory and record keeping
 
@@ -186,7 +201,7 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 |---|---|---|---|---|---|---|---|---|---|
 | Photos | Private `treatment-images` bucket, service-role signed URLs, EXIF stripping (0092/0093) | Merged | ✅ applied | Deployed | Enabled | ✅ 3 `treatment_images` rows | ✅ | production row count | Objects are **service-role only**; no public URLs |
 | Photos | Multi-file upload + per-file validation | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #368 | — |
-| Photos | Finalized-record photo **content** immutability | Designed | — | — | — | — | — | 0119 header | **Known limitation** — see §3 |
+| Photos | Finalized-record photo **content** immutability | Never built | — | — | — | — | — | 0119 header | **RETIRED with finalization — see §3.** Not a later phase |
 | Exports | Per-client procedure record pull with filtered print | Merged | — | Deployed | Enabled | ⚠️ not instrumented | ✅ | PR #223 | — |
 
 ## 13. Operations, alerts and observability
@@ -210,10 +225,11 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 |---|---|---|
 | Deployed + enabled + production-exercised + in routine operator use | ~20 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping |
 | Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy, numbing notes, probe-lot linkage |
-| Deployed + **DB applied** + **never production-exercised** | 6 | whole-session copy commit path, clinical corrections/amendments, refunds (current baseline), disputes, public-booking card collection, probe-lot linkage |
-| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 9 | all Google Calendar sync phases, clinical finalization, clinical corrections, capacity on Willow, onboarding v2 on Willow |
+| Deployed + **DB applied** + **never production-exercised** | 5 | whole-session copy commit path, refunds (current baseline), disputes, public-booking card collection, probe-lot linkage |
+| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 7 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
 | **Deferred** by product decision | 1 | direct new-client consultation booking route |
+| **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |
 | **Not built** | 5 | deposits/packages/partial payments, broad self-serve live payments, inbound-busy/two-way calendar, broad-SaaS SMS, self-serve studio creation |
 
 **The single most load-bearing distinction in this register:** whole-session copy and the

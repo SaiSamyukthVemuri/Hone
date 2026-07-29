@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
+  asRole,
   asUser,
   closePool,
   seedSession,
@@ -13,6 +14,14 @@ import { randomUUID } from "node:crypto";
 // areas + per-area laterality under one settings block, against the REAL
 // migrated local DB. Studio-derive anti-spoof, RLS isolation, duplicate
 // prevention, cascade, and CHECK constraints.
+//
+// UPDATED BY 0159. Structured areas are the AUTHORITATIVE clinical area record,
+// so browser roles no longer hold direct DML on the table: `authenticated` keeps
+// studio-scoped SELECT only, and every write goes through the trusted
+// SECURITY DEFINER commands. The trigger/constraint coverage below therefore
+// drives the table through the OWNER connection (adminQuery), which is the only
+// way left to exercise a raw INSERT — the member-facing posture (SELECT yes, direct DML no) is proven in
+// tests/db/clinical-finalization-retired.db.test.ts.
 
 let a: SeededStudio;
 let b: SeededStudio;
@@ -33,56 +42,53 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("create + read (member, same studio)", () => {
+describe("create + read (member reads what the trusted path wrote)", () => {
   it("records multiple areas with different laterality under one block", async () => {
-    await asUser(a.userId, async (q) => {
-      const r1 = await q(INS, [aBlockId, a.studioId, "Cheek", "left", 0]);
-      const r2 = await q(INS, [aBlockId, a.studioId, "Sideburn", "right", 1]);
-      expect(r1.rows[0].studio_id).toBe(a.studioId);
-      expect(r2.rows[0].studio_id).toBe(a.studioId);
-      const all = await q(
+    const r1 = await adminQuery(INS, [aBlockId, a.studioId, "Cheek", "left", 0]);
+    const r2 = await adminQuery(INS, [aBlockId, a.studioId, "Sideburn", "right", 1]);
+    expect(r1.rows[0].studio_id).toBe(a.studioId);
+    expect(r2.rows[0].studio_id).toBe(a.studioId);
+    // The member still SELECTs its own studio's rows (0159 keeps read access).
+    const all = await asUser(a.userId, (q) =>
+      q(
         `select area, laterality from public.session_block_areas
          where session_block_id = $1 order by display_order`,
         [aBlockId],
-      );
-      expect(all.rows).toEqual([
-        { area: "Cheek", laterality: "left" },
-        { area: "Sideburn", laterality: "right" },
-      ]);
-    });
+      ),
+    );
+    expect(all.rows).toEqual([
+      { area: "Cheek", laterality: "left" },
+      { area: "Sideburn", laterality: "right" },
+    ]);
   });
 
   it("allows the same area with a DIFFERENT laterality (left + right cheek)", async () => {
     const { blockId } = await seedSession(a);
-    await asUser(a.userId, async (q) => {
-      await q(INS, [blockId, a.studioId, "Cheek", "left", 0]);
-      await q(INS, [blockId, a.studioId, "Cheek", "right", 1]);
-      const n = await q(
+    await adminQuery(INS, [blockId, a.studioId, "Cheek", "left", 0]);
+    await adminQuery(INS, [blockId, a.studioId, "Cheek", "right", 1]);
+    const n = await asUser(a.userId, (q) =>
+      q(
         `select count(*)::int as n from public.session_block_areas where session_block_id = $1`,
         [blockId],
-      );
-      expect(n.rows[0].n).toBe(2);
-    });
+      ),
+    );
+    expect(n.rows[0].n).toBe(2);
   });
 });
 
 describe("constraints", () => {
   it("rejects a duplicate (area, laterality) pair in one block", async () => {
     const { blockId } = await seedSession(a);
-    await asUser(a.userId, (q) => q(INS, [blockId, a.studioId, "Chin", "bilateral", 0]));
+    await adminQuery(INS, [blockId, a.studioId, "Chin", "bilateral", 0]);
     await expect(
-      asUser(a.userId, (q) => q(INS, [blockId, a.studioId, "Chin", "bilateral", 1])),
+      adminQuery(INS, [blockId, a.studioId, "Chin", "bilateral", 1]),
     ).rejects.toMatchObject({ code: "23505" });
   });
   it("rejects an invalid laterality value", async () => {
-    await expect(
-      asUser(a.userId, (q) => q(INS, [aBlockId, a.studioId, "Neck", "sideways", 0])),
-    ).rejects.toThrow();
+    await expect(adminQuery(INS, [aBlockId, a.studioId, "Neck", "sideways", 0])).rejects.toThrow();
   });
   it("rejects a blank area", async () => {
-    await expect(
-      asUser(a.userId, (q) => q(INS, [aBlockId, a.studioId, "   ", "left", 0])),
-    ).rejects.toThrow();
+    await expect(adminQuery(INS, [aBlockId, a.studioId, "   ", "left", 0])).rejects.toThrow();
   });
 });
 
@@ -97,40 +103,78 @@ describe("tenant isolation + studio-derive", () => {
     });
   });
   it("studio B cannot INSERT an area onto studio A's block", async () => {
+    // Post-0159 the denial lands at the privilege layer (42501) before RLS is
+    // consulted at all — a strictly stronger guarantee than the RLS-only check
+    // this test originally asserted.
     await expect(
       asUser(b.userId, (q) => q(INS, [aBlockId, b.studioId, "Cheek", "left", 0])),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "42501" });
   });
-  it("the studio-derive trigger overrides a spoofed studio_id (admin path)", async () => {
+  it("the studio-derive trigger overrides a spoofed studio_id (owner path)", async () => {
     const r = await adminQuery(INS, [aBlockId, b.studioId /* spoofed */, "Lip", "midline", 0]);
     expect(r.rows[0].studio_id).toBe(a.studioId);
   });
+  it("…and for service_role, the one NON-OWNER role that still holds DML (0159)", async () => {
+    // The derive trigger is SECURITY INVOKER and reads public.session_blocks, so
+    // it behaves differently per role. After 0159 revoked browser DML, service_role
+    // is the only non-owner role that can still exercise it — keep that covered.
+    const r = await asRole("service_role", (q) =>
+      q(INS, [aBlockId, b.studioId /* spoofed */, "Jawline", "right", 0]),
+    );
+    expect(r.rows[0].studio_id).toBe(a.studioId);
+  });
+  it("a studio_id-only UPDATE is re-derived, not honoured (0159 widened the trigger)", async () => {
+    const { blockId } = await seedSession(a);
+    const id = (await adminQuery(INS, [blockId, a.studioId, "Temple", "left", 0])).rows[0]
+      .id as string;
+    await adminQuery("update public.session_block_areas set studio_id=$2 where id=$1", [
+      id,
+      b.studioId,
+    ]);
+    const row = await adminQuery("select studio_id from public.session_block_areas where id=$1", [
+      id,
+    ]);
+    expect(row.rows[0].studio_id).toBe(a.studioId);
+  });
   it("a non-existent block is rejected", async () => {
-    await expect(
-      asUser(a.userId, (q) => q(INS, [randomUUID(), a.studioId, "Cheek", "left", 0])),
-    ).rejects.toThrow();
+    await expect(adminQuery(INS, [randomUUID(), a.studioId, "Cheek", "left", 0])).rejects.toThrow();
   });
 });
 
 describe("editable + cascade", () => {
-  it("a member can update + delete an area (editable, not append-only)", async () => {
+  it("a DRAFT area set stays editable (update + delete) through the trusted path", async () => {
     const { blockId } = await seedSession(a);
-    const id = await asUser(a.userId, async (q) => {
-      const r = await q(INS, [blockId, a.studioId, "Cheek", "left", 0]);
-      return r.rows[0].id as string;
-    });
-    await asUser(a.userId, (q) =>
-      q(`update public.session_block_areas set laterality = 'right' where id = $1`, [id]),
-    );
-    await asUser(a.userId, (q) =>
-      q(`delete from public.session_block_areas where id = $1`, [id]),
-    );
+    const id = (await adminQuery(INS, [blockId, a.studioId, "Cheek", "left", 0])).rows[0]
+      .id as string;
+    await adminQuery(`update public.session_block_areas set laterality = 'right' where id = $1`, [id]);
+    await adminQuery(`delete from public.session_block_areas where id = $1`, [id]);
     const g = await adminQuery(`select count(*)::int as n from public.session_block_areas where id = $1`, [id]);
     expect(g.rows[0].n).toBe(0);
   });
+  it("a member holds NO direct DML on the table (0159)", async () => {
+    const { blockId } = await seedSession(a);
+    const id = (await adminQuery(INS, [blockId, a.studioId, "Cheek", "left", 0])).rows[0]
+      .id as string;
+    await expect(
+      asUser(a.userId, (q) => q(INS, [blockId, a.studioId, "Chin", "bilateral", 1])),
+    ).rejects.toMatchObject({ code: "42501" });
+    await expect(
+      asUser(a.userId, (q) =>
+        q(`update public.session_block_areas set laterality = 'right' where id = $1`, [id]),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    await expect(
+      asUser(a.userId, (q) => q(`delete from public.session_block_areas where id = $1`, [id])),
+    ).rejects.toMatchObject({ code: "42501" });
+    const g = await adminQuery(
+      `select laterality from public.session_block_areas where id = $1`,
+      [id],
+    );
+    expect(g.rows[0].laterality).toBe("left"); // untouched
+  });
   it("deleting the parent block cascades to its areas", async () => {
     const { blockId } = await seedSession(a);
-    await asUser(a.userId, (q) => q(INS, [blockId, a.studioId, "Chin", "bilateral", 0]));
+    await adminQuery(INS, [blockId, a.studioId, "Chin", "bilateral", 0]);
     await adminQuery(`delete from public.session_blocks where id = $1`, [blockId]);
     const g = await adminQuery(
       `select count(*)::int as n from public.session_block_areas where session_block_id = $1`,

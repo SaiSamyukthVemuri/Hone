@@ -7,6 +7,13 @@ Only limitations that were **directly verified** in this reconciliation are list
 that could not be checked from code, the CLI, or read-only production queries are recorded
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
+**Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
+records are now **RETIRED by product decision**, enforced by migration **0159** (in-tree, not yet
+applied — hosted max remains 0157). They are no longer parked, dormant or gated; there is no next
+gate on either. The production facts in both rows were re-verified read-only on 2026-07-29 and
+are unchanged. See
+[../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
+
 Related: [current-state.md](./current-state.md) ·
 [capability-register.md](./capability-register.md) · [migration-ledger.md](./migration-ledger.md) ·
 [release-changelog.md](./release-changelog.md)
@@ -104,27 +111,27 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | Onboarding nudges + analytics remain deferred; broad rollout follows the audit. |
 | **Blocks** | **Broader launch.** |
 
-## L9 — Finalized clinical photo *content* is not immutable
+## L9 — Finalized clinical photo *content* immutability was never built, and is now moot
 
 | Field | Value |
 |---|---|
-| **Impact** | When a clinical record is finalized, photo **metadata and attachment relationships** are frozen, but the underlying stored object is not content-addressed. Byte-level immutability of the image itself is not proven by the current design. |
-| **Evidence** | Stated in the 0119 migration header as an explicit scope note. |
-| **Current mitigation** | `treatment-images` is a private bucket, service-role-only, with path/identity CHECKs and an integrity trigger that freezes identity columns after insert. Archive only flips `deleted_at`. |
+| **Impact** | **None going forward.** The gap only existed inside the finalization boundary, which is retired (L10): no clinical record is ever finalized, so there is no finalized-photo integrity claim to fall short of. Historically: finalization froze photo metadata and attachment relationships but the stored object was never content-addressed. |
+| **Evidence** | Stated in the 0119 migration header as an explicit scope note. Migration 0159 retires the finalization lifecycle entirely (`sessions_guard_retired_finalization`). |
+| **Current mitigation** | Unchanged and unaffected by the retirement: `treatment-images` is a private bucket, service-role-only, with path/identity CHECKs and an integrity trigger that freezes identity columns after insert. Archive only flips `deleted_at`. |
 | **Owner** | Sam |
-| **Next gate** | A later photo-integrity phase. Not scheduled. |
-| **Blocks** | Neither today — clinical finalization itself is dormant (flag off on every studio). |
+| **Next gate** | **None — RETIRED, not scheduled.** Content-addressed object immutability is not a later photo-integrity phase; it was a sub-requirement of a capability Hone no longer offers. See [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md). |
+| **Blocks** | Neither, now or later. |
 
-## L10 — Clinical finalization and corrections are dormant; the corrections workflow is parked
+## L10 — Signed / finalized clinical records are RETIRED
 
 | Field | Value |
 |---|---|
-| **Impact** | The finalization boundary and the corrections/amendments backend are deployed but unreachable. No practitioner can finalize, correct or amend a record today. |
-| **Evidence** | `clinical_finalization_enabled` and `clinical_corrections_enabled` are **false on all 5 studios**. Exactly 1 finalized session + 1 snapshot exist, both on the **controlled test studio**; Willow has 0. `clinical_record_amendments` = 0 rows; `clinical_audit_events` = 0 rows. |
-| **Current mitigation** | Both flags off. The deployed backend — immutable snapshots, version lineage, append-only audit, RLS, and the narrow session-scoped correction permit — is **preserved and must not be weakened**. |
-| **Owner** | Sam |
-| **Next gate** | The Phase 2 customer-facing workflow is **PARKED**: the current generic 3-field correction UX is unsuitable for practitioner rollout. A full-chart correction workspace is not in the active queue. |
-| **Blocks** | Neither today. |
+| **Impact** | **This is a closed product decision, not an open limitation.** Hone does not offer signed or cryptographically finalized clinical records, signed-record corrections, or amendments. Treatment sessions are ordinary, editable operational records and practitioners correct charting mistakes by editing them. No practitioner can finalize, correct or amend a signed record — and none ever will. |
+| **Evidence** | Product decision 2026-07-29, enforced by migration **0159**: both flags pinned `false` by CHECK constraints (no role can set them); `EXECUTE` revoked from every runtime role on `finalize_session` / `correct_finalized_session` / `amend_finalized_session` / `amend_finalized_session_with_image` / `build_session_snapshot`; `sessions.record_status` transitions into `finalized`/`void` refused; `INSERT` refused on all three signed-record ledgers. Verified production state: both flags **false on all 5 studios**; exactly 1 finalized session + 1 snapshot (hash still re-derives) on the **controlled non-Willow test studio**, retained unchanged; Willow has **0** non-draft sessions; `clinical_record_amendments` = 0 rows; `clinical_audit_events` = 0 rows. |
+| **Current mitigation** | Not a mitigation — an enforcement posture. The deployed 0119/0120 backend — immutable snapshots, version lineage, append-only audit, RLS and the narrow session-scoped correction permit — is **preserved and must not be weakened**, **not** so finalization can be enabled later, but because it keeps the one legacy artifact immutable, keeps the retirement fail-closed, and forbids `authenticated` `TRUNCATE` and arbitrary mutation of clinical tables. Ordinary audit trails (`session_audit`, `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`, `client_portal_access_events`), actor attribution, timestamps, treatment-history integrity, whole-session-copy provenance and tenant isolation are all **retained**. `clinical_audit_events` is **not** ordinary audit — it records only signed corrections/amendments and is retired with the rest. |
+| **Owner** | Sam (product) |
+| **Next gate** | **None — RETIRED.** Not parked, not dormant, not held, not in any queue, and not a gate anyone can grant. No snapshot v2 is planned (and no document ever promised one). Reintroduction would need a new explicit product decision, an architecture review, a legal/privacy review, a migration plan and fresh acceptance: [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md). |
+| **Blocks** | Neither, now or later. |
 
 ## L11 — Rate limiters fail OPEN
 
@@ -217,3 +224,8 @@ documentation, because no evidence supports them:
   behaviours, not the absence of vulnerabilities.
 - That any capability is "live" because a table, migration, component, route or flag exists.
 - That Chloe has accepted anything she has not yet tested.
+- That Hone offers signed, cryptographically finalized or immutable clinical records. It does
+  **not** — that capability is retired (L10). Treatment records are ordinary and editable. What
+  Hone does claim is ordinary operational audit: `session_audit`, `record_keeping_audit_events`,
+  `session_copy_operations`, `admin_action_events` and `client_portal_access_events`, with actor
+  attribution and timestamps.

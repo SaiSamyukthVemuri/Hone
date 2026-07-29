@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
+  seedLegacyRecordStatus,
   adminQuery,
   asRole,
   asUser,
@@ -36,20 +37,26 @@ async function seedSession(
   },
 ): Promise<string> {
   const id = randomUUID();
+  // Always INSERT as 'draft': migration 0159 retired the finalized/void lifecycle
+  // and refuses an INSERT that arrives in it. Suites that need the legacy state
+  // reach it through the owner-only helper below.
   await adminQuery(
     `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, record_status, started_at, deleted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+     values ($1,$2,$3,$4,$5,'draft',$6,$7)`,
     [
       id,
       studio.studioId,
       opts.clientId ?? studio.clientId,
       studio.practitionerId,
       opts.modality ?? "electrolysis",
-      opts.status ?? "draft",
       opts.startedAt,
       opts.deletedAt ?? null,
     ],
   );
+  const wanted = opts.status ?? "draft";
+  if (wanted === "finalized" || wanted === "void") {
+    await seedLegacyRecordStatus(id, wanted);
+  }
   return id;
 }
 
@@ -568,7 +575,7 @@ describe("source resolver — void exclusion", () => {
     // Seed the block while draft, THEN void (the 0119 guard blocks writes to void).
     const voidNewer = await seedSession(a, { startedAt: "2026-03-01T10:00:00Z", clientId });
     await seedSourceWithBlock(a, voidNewer);
-    await adminQuery("update public.sessions set record_status='void' where id=$1", [voidNewer]);
+    await seedLegacyRecordStatus(voidNewer, "void"); // 0159: owner-only legacy state
     const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
     expect(await canonicalSourceId(target)).toBe(older);
   });
@@ -577,14 +584,14 @@ describe("source resolver — void exclusion", () => {
     const clientId = await freshClient();
     const voided = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
     await seedSourceWithBlock(a, voided);
-    await adminQuery("update public.sessions set record_status='void' where id=$1", [voided]);
+    await seedLegacyRecordStatus(voided, "void"); // 0159: owner-only legacy state
     const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId });
     expect(await canonicalSourceId(target)).toBeNull();
   });
 
   it("commit fails closed (HN004) if the source is voided after preview", async () => {
     const { source, target, fp } = await seedPair();
-    await adminQuery("update public.sessions set record_status='void' where id=$1", [source]);
+    await seedLegacyRecordStatus(source, "void"); // 0159: owner-only legacy state
     await expect(callCopy({ target, specs: validSpec(), key: "k-void", fp, sourceId: source })).rejects.toMatchObject({ code: "HN004" });
     const n = (await adminQuery("select count(*)::int n from public.session_blocks where session_id=$1", [target])).rows[0].n;
     expect(n).toBe(0);
