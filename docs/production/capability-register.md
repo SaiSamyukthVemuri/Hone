@@ -6,12 +6,20 @@ production; neither document is evidence for the other.
 
 - **Reconciled:** 2026-07-27
 - **Runtime-bearing baseline:** application HEAD `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`
-  (PR #478 merge), production migration max **0157**.
+  (PR #478 merge). Production migration max **0159**.
 - **Amended 2026-07-29:** §3 rewritten from *dormant / parked* to **RETIRED** — signed and
-  finalized clinical records are not a Hone product capability. Enforced by migration **0159**
-  (in-tree, **not yet applied**; hosted max is still 0157, and `0158` is intentionally skipped).
-  Production facts re-verified read-only 2026-07-29 and unchanged. Decision record:
+  finalized clinical records are not a Hone product capability. Decision record:
   [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
+- **Amended 2026-07-30: migration `0159` is APPLIED and verified in production.** The retirement is
+  now **database-enforced**: both studio flags pinned `false` by validated CHECK constraints,
+  `EXECUTE` revoked from every runtime role on all 10 retired functions, `finalized`/`void`
+  transitions refused, `INSERT` refused on all three signed ledgers, and the 0120
+  `hone.correction_session_id` permit removed. `0158` remains intentionally skipped; **`0160` is NOT
+  applied**. **UI/code removal is still pending PR #482's deployment** — the deployed application at
+  `058b8bcb…` retains the dead Finalize/Correction components, but they are flag-gated and both flags
+  are constrained `false`, so they are unreachable. The **one legacy controlled-test artifact** (1
+  finalized session + 1 snapshot, non-Willow) is retained unchanged and its hash still re-derives;
+  **Willow has 0 non-draft sessions**. **Snapshot v2 remains permanently rejected.**
 
 Related: [current-state.md](./current-state.md) ·
 [known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md) ·
@@ -79,8 +87,9 @@ read the Limitations column.
 
 ## 3. Clinical finalization, corrections and amendments — RETIRED
 
-**Signed / finalized clinical records are RETIRED** by product decision (2026-07-29), enforced by
-migration **0159**. This is `Retired`, not `Dormant` and not `Held`: both studio flags are pinned
+**Signed / finalized clinical records are RETIRED** by product decision (2026-07-29), enforced in
+production by migration **0159**, applied and verified 2026-07-30. This is `Retired`, not `Dormant`
+and not `Held`: both studio flags are pinned
 `false` by CHECK constraint, so **no role can enable them** — not a studio owner through the
 `studios: owners update` policy, not `service_role`. Treatment sessions are ordinary, editable
 operational records; practitioners correct mistakes by editing. There is no snapshot v2, and no

@@ -810,3 +810,211 @@ describe("no overcorrection — unrelated capabilities keep their wording", () =
     expect(DB_RLS).toMatch(/`clinical_audit_events` is \*\*not\*\* Hone's operational audit trail/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5. POST-APPLY TRUTH (added 2026-07-30, after migration 0159 was applied).
+//
+// 0159 is APPLIED in production. The documents must say so, must not regress to
+// "not yet applied", and must keep the two distinctions that are easy to blur:
+//   * the DB retirement is live NOW, but the practitioner-facing dead code is
+//     only removed when PR #482 deploys; and
+//   * 0160 is a SEPARATE, UNAPPLIED migration — it must never be described as
+//     already applied, and its lock-timeout defect must stay recorded.
+// ---------------------------------------------------------------------------
+
+const MIGRATION_LEDGER = read("docs/production/migration-ledger.md");
+
+/**
+ * Markdown prose is hard-wrapped and often nested in a blockquote, so a sentence
+ * spans lines as `… did not\n> arm …`. Flatten blockquote markers and runs of
+ * whitespace so an assertion pins the SENTENCE rather than the line breaks —
+ * without weakening it into a bare substring test.
+ */
+function flat(doc: string): string {
+  return doc
+    .split("\n")
+    .map((l) => l.replace(/^\s*>\s?/, ""))
+    .join(" ")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * The ledger's "Correcting prior stale statements" section QUOTES stale phrases
+ * in order to refute them, so a naive stale-phrase scan fires on the correction
+ * itself. Drop that section before scanning; it is asserted separately below.
+ */
+const LEDGER_WITHOUT_CORRECTIONS = MIGRATION_LEDGER.split(
+  /^## Correcting prior stale statements$/m,
+)[0];
+
+describe("post-apply truth — migration 0159 is applied in production", () => {
+  const APPLIED_DOCS = [
+    ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+    ["docs/production/current-state.md", CURRENT_STATE],
+    ["docs/production/capability-register.md", CAPABILITY_REGISTER],
+    ["docs/09_DATABASE_AND_RLS.md", DB_RLS],
+    [DECISION_RECORD_PATH, DECISION],
+  ] as const;
+
+  it("the ledger records the verified apply: date, window and full checksum", () => {
+    expect(MIGRATION_LEDGER).toMatch(/2026-07-30T13:25:39Z/);
+    expect(MIGRATION_LEDGER).toMatch(/13:25:43Z/);
+    expect(
+      MIGRATION_LEDGER,
+      "the ledger must carry the COMPLETE sha256 of the applied 0159 file, not an abbreviation",
+    ).toMatch(/ea39fc360cc75609a92a3686d677486720e9d234c4b70b81a07913c31fb889f8/);
+  });
+
+  it("every current-state document says 0159 is applied, not pending", () => {
+    for (const [name, doc] of APPLIED_DOCS) {
+      expect(doc, `${name} must state that 0159 is APPLIED to production`).toMatch(
+        /0159[^.\n]{0,120}\bapplied\b/i,
+      );
+    }
+  });
+
+  it("no current-state document still claims 0159 is unapplied", () => {
+    // Scoped to sentences that name 0159, so unrelated historical "not yet
+    // applied" prose about 0093/0094/0095/0096 is untouched.
+    const STALE =
+      /0159[^.\n]{0,160}?\b(?:not (?:yet )?applied|unapplied|is pending|awaiting (?:migration|authorization)|needs migration-only)/i;
+    const REVERSE =
+      /\b(?:not (?:yet )?applied|unapplied|awaiting migration-only authorization)[^.\n]{0,80}?0159/i;
+    const SCANNED = APPLIED_DOCS.map(([name, doc]) =>
+      name === "docs/production/migration-ledger.md"
+        ? ([name, LEDGER_WITHOUT_CORRECTIONS] as const)
+        : ([name, doc] as const),
+    );
+    for (const [name, doc] of SCANNED) {
+      expect(doc, `${name} still describes 0159 as unapplied`).not.toMatch(STALE);
+      expect(doc, `${name} still describes 0159 as unapplied`).not.toMatch(REVERSE);
+    }
+  });
+
+  it("the ledger's corrections section explicitly retires the old 0159-pending wording", () => {
+    const corrections = MIGRATION_LEDGER.split(
+      /^## Correcting prior stale statements$/m,
+    )[1];
+    expect(
+      corrections,
+      "the corrections section must list the superseded 0159 claims so a reader who meets " +
+        "them in dated prose knows they are dead",
+    ).toBeTruthy();
+    expect(flat(corrections)).toMatch(
+      /"0159 is in repo but not yet applied"[^—]*—[^.]*\*\*0159 was applied/,
+    );
+  });
+
+  it("the ledger's own hosted-max and repo-max rows both read 0159", () => {
+    // Pinned to the specific rows. An existence check is not enough: the ledger
+    // names 0159 in several places, so a flipped hosted-max row would still find
+    // a match somewhere else in the file.
+    expect(
+      MIGRATION_LEDGER,
+      "the ledger's Hosted (production) migration max row must read 0159",
+    ).toMatch(
+      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0159\*\*/,
+    );
+    expect(MIGRATION_LEDGER, "the ledger's Repo migration max row must read 0159").toMatch(
+      /\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0159\*\*/,
+    );
+    expect(
+      MIGRATION_LEDGER,
+      "no ledger row may still assert a hosted/production migration max of 0157",
+    ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*0157\*\*/);
+  });
+
+  it("production migration max is stated as 0159 where a max is asserted", () => {
+    for (const [name, doc] of [
+      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+      ["docs/production/current-state.md", CURRENT_STATE],
+      ["docs/09_DATABASE_AND_RLS.md", DB_RLS],
+      ["README.md", README],
+      ["docs/roadmap/CANONICAL_ROADMAP.md", ROADMAP],
+    ] as const) {
+      expect(doc, `${name} must assert production migration max 0159`).toMatch(
+        /(?:migration max|max)[^.\n]{0,60}\b0159\b/i,
+      );
+      expect(doc, `${name} must not still assert a production migration max of 0157`).not.toMatch(
+        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}0157\b/i,
+      );
+    }
+  });
+
+  it("0158 stays absent and permanently skipped; 0160 stays unapplied", () => {
+    expect(MIGRATION_LEDGER).toMatch(/0158[^.\n]{0,120}\bskipped\b/i);
+    expect(MIGRATION_LEDGER).toMatch(/\bnever be applied\b/i);
+    expect(MIGRATION_LEDGER, "the ledger must state 0160 is NOT applied").toMatch(
+      /0160[^.\n]{0,80}\bNOT applied\b/,
+    );
+    for (const [name, doc] of APPLIED_DOCS) {
+      expect(doc, `${name} must not claim 0160 was applied`).not.toMatch(
+        /0160[^.\n]{0,60}\b(?:was|is|has been)\s+applied\b/i,
+      );
+    }
+  });
+
+  it("the UI/source cleanup is described as pending PR #482's deployment, not already shipped", () => {
+    expect(
+      CURRENT_STATE,
+      "current-state must not claim the Finalize/Correction surfaces are already removed from " +
+        "the DEPLOYED application — PR #482 has not deployed yet",
+    ).not.toMatch(/Correction controls \| \*\*REMOVED from the application\.\*\*/);
+    expect(CURRENT_STATE).toMatch(/pending[^.\n]{0,80}deploy/i);
+    expect(CAPABILITY_REGISTER).toMatch(/pending PR #482/i);
+  });
+
+  it("the interim UI state is stated truthfully: flag-gated, flags constrained false, RPCs denied", () => {
+    expect(CURRENT_STATE).toMatch(/clinical_finalization_enabled/);
+    expect(
+      CURRENT_STATE,
+      "the interim description must say the controls are unreachable because the flags are " +
+        "pinned false, NOT that practitioners can currently use them",
+    ).toMatch(/does \*\*not\*\* see them|unreachable/i);
+    expect(CURRENT_STATE).toMatch(/EXECUTE is revoked|direct RPC invocation is denied/i);
+  });
+
+  it("the 0120 GUC permit is documented as REMOVED, never as still honoured", () => {
+    expect(DB_RLS).toMatch(/REMOVED by 0159 and is no longer honoured/);
+    expect(DB_RLS).not.toMatch(/the write-guard honours \*\*only\*\* when/);
+    expect(CURRENT_STATE).toMatch(/hone\.correction_session_id[^.\n]{0,80}\*\*removed\*\*/i);
+  });
+
+  it("records the SET LOCAL anomaly and does not imply the apply was atomic", () => {
+    const L = flat(MIGRATION_LEDGER);
+    expect(L).toMatch(/WARNING \(25P01\)/);
+    expect(L).toMatch(/SET LOCAL can only be used in transaction blocks/);
+    expect(L, "the ledger must say the five-second timeout did not arm").toMatch(
+      /five-second lock timeout did not arm/i,
+    );
+    expect(L, "the ledger must state plainly that the apply was NOT atomic").toMatch(
+      /the apply was therefore NOT atomic/,
+    );
+    expect(
+      L,
+      "the ledger must record that completeness was verified section-by-section rather than " +
+        "assumed from rollback",
+    ).toMatch(/independently verified/i);
+  });
+
+  it("forbids rewriting the applied 0159 file, and flags the same defect in unapplied 0160", () => {
+    const L = flat(MIGRATION_LEDGER);
+    expect(L).toMatch(
+      /Do not "fix" the lock-timeout line in `0159` — it is already applied\./,
+    );
+    expect(
+      L,
+      "the ledger must say 0160's identical lock-timeout line has to be corrected before 0160 " +
+        "is authorized",
+    ).toMatch(/same `set local lock_timeout` line in the unapplied `0160` must be corrected/i);
+  });
+
+  it("the applied 0159 file still carries the exact line the ledger's checksum covers", () => {
+    // Pins the applied artifact: if someone edits 0159 to 'fix' the lock timeout,
+    // the recorded checksum silently stops describing the file on disk.
+    expect(
+      MIGRATION,
+      "0159 is APPLIED. Its text must not be edited — amend a NEW migration instead.",
+    ).toMatch(/set local lock_timeout = '5s';/);
+  });
+});

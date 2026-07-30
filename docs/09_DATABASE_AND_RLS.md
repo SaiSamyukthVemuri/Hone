@@ -1,8 +1,9 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-27 there are 157 migrations in
-`supabase/migrations/` (latest `0157_whole_session_copy_setup.sql`), and the production
-migration max = 0157 — hosted == repo, all applied, each exactly once, with no `0158`+.**
+Hone uses Supabase Postgres. **As of 2026-07-30 there are 158 migrations in
+`supabase/migrations/` (latest `0159_retire_signed_clinical_records.sql`), and the production
+migration max = 0159 — hosted == repo, all applied, each exactly once. `0158` is deliberately
+skipped and will never be applied; `0160` is NOT applied.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -186,10 +187,14 @@ alone is **not** sufficient. Always revoke from `anon` explicitly.
   `service_role`**, so nothing that serves a request can invoke them. Signed / cryptographically
   finalized clinical records are not a Hone capability; treatment sessions are ordinary editable
   records. The correction path's narrow bypass — a transaction-local, session-scoped GUC
-  (`hone.correction_session_id`) the write-guard honours **only** when it equals that exact
-  row's `session_id`, structurally unreachable from PostgREST and discarded at COMMIT/ROLLBACK —
-  is documented here as history; there never was, and still is not, a service-role, `auth.uid()`
-  or role-based bypass of the finalized-record guards. Those guards
+  (`hone.correction_session_id`) that the write-guard formerly honoured when it matched the row's
+  own `session_id` — **is REMOVED by 0159 and is no longer honoured at all.** It had to go: once the
+  correction RPCs were `EXECUTE`-revoked, the permit stopped being a guarded escape and became an
+  open one, because `set_config` on a custom placeholder is available to **any** role — reproduced
+  as plain `authenticated` rewriting the frozen legacy record. Verified in production after the
+  0159 apply: `guard_finalized_clinical_write` no longer references the placeholder, or
+  `current_setting` at all. There never was, and still is not, a service-role, `auth.uid()` or
+  role-based bypass of the finalized-record guards. Those guards
   (`guard_finalized_clinical_write` + its five triggers, `guard_snapshot_append_only`,
   `guard_practitioner_finalized_refs`) are deliberately **kept** — their remaining job is to
   protect the one legacy finalized artifact. See the retirement posture below.
@@ -386,15 +391,16 @@ applied in production** (prod max = **0157**). Full per-migration purposes and a
 | 0153–0156 | Per-service calendar colour, notification dedupe key, probe-inventory linkage, conditional numbing notes | Live |
 | **0157** | **Whole-session copy — provenance ledger + 4 SECURITY DEFINER functions** | **Applied + deployed + enabled; 0 ledger rows — never production-exercised** |
 
-**0158 is deliberately skipped**, and **0159 and 0160 are in this repository but NOT yet applied to
-production** (prod max is still **0157**; the number is claimed so two artifacts can never share
-it — DRAFT PR #481 carries a different, superseded 0158 on a branch retained for audit evidence).
+**0158 is deliberately skipped** (the number is claimed so two artifacts can never share it —
+DRAFT PR #481 carries a different, superseded 0158 on a branch retained for audit evidence), and
+**0159 was applied and verified in production on 2026-07-30**, making the signed-record retirement
+**database-enforced**. `0160` is **in this repository (DRAFT PR #483) but NOT applied**.
 
 | # | Theme | Posture |
 |---|---|---|
 | ~~0158~~ | *(skipped — see above)* | Never written to this branch |
-| **0159** | **Retire signed / finalized clinical records + safe clinical-privilege hardening** | **In repo, NOT applied.** Additive and non-destructive: zero data operations, nothing dropped. Flags pinned `false`, retired RPC `EXECUTE` revoked, `finalized`/`void` transitions refused, the three signed ledgers refuse INSERT, `anon` clinical write privileges and `anon`/`authenticated` `TRUNCATE`/`REFERENCES`/`TRIGGER` removed, `session_block_areas` read-only to browser roles. Direct DML on `sessions` / `session_blocks` / `electrolysis_entries` / `laser_entries` / `treatment_images` is **not** revoked — the deployed app still writes those directly; that is the follow-up PR |
-| **0160** | **Immutable clinical lineage** | **In repo, NOT applied; depends on 0159 — apply it second.** Pins the lineage columns immutable on UPDATE only — `sessions(client_id, studio_id)`, `session_blocks(session_id, studio_id)`, `electrolysis_entries(session_id)` strict and `block_id` clearable (its FK is `ON DELETE SET NULL`), `laser_entries(session_id)` — closing same-studio wrong-client / wrong-record re-parenting, which RLS permits because the member predicate still holds after the parent changes. `treatment_images` is deliberately left to 0093, which already does it correctly. Zero data operations, no grant, no policy, no clinical-content column pinned |
+| **0159** | **Retire signed / finalized clinical records + safe clinical-privilege hardening** | **APPLIED to production 2026-07-30** (13:25:39Z–13:25:43Z), verified. Additive and non-destructive: zero data operations, nothing dropped. Flags pinned `false`, retired RPC `EXECUTE` revoked, `finalized`/`void` transitions refused, the three signed ledgers refuse INSERT, `anon` clinical write privileges and `anon`/`authenticated` `TRUNCATE`/`REFERENCES`/`TRIGGER` removed, `session_block_areas` read-only to browser roles. Direct DML on `sessions` / `session_blocks` / `electrolysis_entries` / `laser_entries` / `treatment_images` is **not** revoked — the deployed app still writes those directly; that is the follow-up PR |
+| **0160** | **Immutable clinical lineage** | **In repo (DRAFT PR #483), NOT applied.** 0159 is already applied in production, so 0160 is the next migration. Pins the lineage columns immutable on UPDATE only — `sessions(client_id, studio_id)`, `session_blocks(session_id, studio_id)`, `electrolysis_entries(session_id)` strict and `block_id` clearable (its FK is `ON DELETE SET NULL`), `laser_entries(session_id)` — closing same-studio wrong-client / wrong-record re-parenting, which RLS permits because the member predicate still holds after the parent changes. `treatment_images` is deliberately left to 0093, which already does it correctly. Zero data operations, no grant, no policy, no clinical-content column pinned |
 
 ### One-line purposes, 0093–0112
 
