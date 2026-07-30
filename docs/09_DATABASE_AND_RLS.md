@@ -386,7 +386,7 @@ applied in production** (prod max = **0157**). Full per-migration purposes and a
 | 0153–0156 | Per-service calendar colour, notification dedupe key, probe-inventory linkage, conditional numbing notes | Live |
 | **0157** | **Whole-session copy — provenance ledger + 4 SECURITY DEFINER functions** | **Applied + deployed + enabled; 0 ledger rows — never production-exercised** |
 
-**0158 is deliberately skipped**, and **0159 is in this repository but NOT yet applied to
+**0158 is deliberately skipped**, and **0159 and 0160 are in this repository but NOT yet applied to
 production** (prod max is still **0157**; the number is claimed so two artifacts can never share
 it — DRAFT PR #481 carries a different, superseded 0158 on a branch retained for audit evidence).
 
@@ -394,6 +394,7 @@ it — DRAFT PR #481 carries a different, superseded 0158 on a branch retained f
 |---|---|---|
 | ~~0158~~ | *(skipped — see above)* | Never written to this branch |
 | **0159** | **Retire signed / finalized clinical records + safe clinical-privilege hardening** | **In repo, NOT applied.** Additive and non-destructive: zero data operations, nothing dropped. Flags pinned `false`, retired RPC `EXECUTE` revoked, `finalized`/`void` transitions refused, the three signed ledgers refuse INSERT, `anon` clinical write privileges and `anon`/`authenticated` `TRUNCATE`/`REFERENCES`/`TRIGGER` removed, `session_block_areas` read-only to browser roles. Direct DML on `sessions` / `session_blocks` / `electrolysis_entries` / `laser_entries` / `treatment_images` is **not** revoked — the deployed app still writes those directly; that is the follow-up PR |
+| **0160** | **Immutable clinical lineage** | **In repo, NOT applied; depends on 0159 — apply it second.** Pins the lineage columns immutable on UPDATE only — `sessions(client_id, studio_id)`, `session_blocks(session_id, studio_id)`, `electrolysis_entries(session_id)` strict and `block_id` clearable (its FK is `ON DELETE SET NULL`), `laser_entries(session_id)` — closing same-studio wrong-client / wrong-record re-parenting, which RLS permits because the member predicate still holds after the parent changes. `treatment_images` is deliberately left to 0093, which already does it correctly. Zero data operations, no grant, no policy, no clinical-content column pinned |
 
 ### One-line purposes, 0093–0112
 

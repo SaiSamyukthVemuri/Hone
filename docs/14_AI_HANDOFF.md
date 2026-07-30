@@ -27,7 +27,7 @@ This block — and **only** this block — is maintained as current. Everything 
 | Production branch | `claude/build-hone-saas-hOex7` |
 | Last runtime-bearing application HEAD | **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** (PR #478 merge) |
 | Vercel production deployment | `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb`, Ready, serving `hone.care` |
-| **Production migration max** | **0157** applied. The repo now also carries **0159** (signed-clinical-record retirement) — **written, tested, NOT yet applied**; `0158` is deliberately skipped (DRAFT PR #481 holds a different, superseded 0158 on a branch retained for audit evidence) |
+| **Production migration max** | **0157** applied. The repo now also carries **0159** (signed-clinical-record retirement) and **0160** (immutable clinical lineage; depends on 0159, apply after it) — both **written, tested, NOT yet applied**; `0158` is deliberately skipped (DRAFT PR #481 holds a different, superseded 0158 on a branch retained for audit evidence) |
 | Health | `hone.care` 200; 0 unresolved `ops_alerts` |
 | Live studio | Willow Electrolysis — live Stripe payments in use (6 succeeded live charges, most recent 2026-07-26) |
 | Google Calendar | **Dormant** — Willow not connected; all sync flags off; exactly one controlled event ever created |

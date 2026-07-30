@@ -45,6 +45,25 @@ describe("0160 — immutable clinical lineage (repo migration-max tripwire)", ()
   it("states its dependency on 0159 explicitly", () => {
     expect(SQL).toMatch(/DEPENDS ON: migration 0159/i);
   });
+
+  it("the current docs state the repo max, so a new migration cannot silently desync them", () => {
+    // Review finding: 0160 originally shipped with zero doc changes, leaving three
+    // "maintained as current" documents asserting the repo max was 0159 — so an
+    // operator preparing the apply would have expected one file and met two.
+    const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    for (const f of [
+      "docs/production/current-state.md",
+      "docs/14_AI_HANDOFF.md",
+      "docs/09_DATABASE_AND_RLS.md",
+    ]) {
+      const doc = read(f);
+      expect(doc, `${f} names 0160`).toMatch(/0160/);
+      // …and still says neither is applied.
+      expect(doc, `${f} says unapplied`).toMatch(/(?:NOT (?:yet )?applied|neither applied|unapplied)/i);
+    }
+    // The apply order must be stated somewhere current.
+    expect(read("docs/09_DATABASE_AND_RLS.md")).toMatch(/depends on 0159/i);
+  });
 });
 
 describe("0160 — the guards", () => {
