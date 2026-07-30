@@ -2,29 +2,34 @@
 
 Gates are independent of severity. Every gate used is defined.
 
-| Gate | Definition | Total | Open/partial | P1 | P2 | P3 |
-|---|---|---|---|---|---|---|
-| **WILLOW_NOW** | Affects Willow on the live build today. | 9 | 9 | 4 | 5 | 0 |
-| **BEFORE_STUDIO_2** | Must close before an unrelated second studio is onboarded. | 9 | 9 | 5 | 2 | 2 |
-| **BEFORE_THREE_STUDIOS** | Must close before a third studio. | 7 | 7 | 0 | 4 | 3 |
-| **BEFORE_TEN_STUDIOS** | Must close before ten studios. | 19 | 19 | 0 | 8 | 11 |
-| **BEFORE_PUBLIC_SELF_SERVICE** | Must close before anyone can sign up without supervision. | 7 | 6 | 0 | 2 | 5 |
-| **BEFORE_50_STUDIOS** | Must close before fifty studios. | 1 | 1 | 0 | 0 | 1 |
-| **POST_GA** | May follow general availability. | 2 | 1 | 0 | 0 | 2 |
-| **NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION** | Out of scope by an explicit product decision. | 6 | 0 | 0 | 0 | 6 |
+> **Counting convention (used identically in every report):** a finding is **open/partial** when its
+> status is `OPEN` or `PARTIALLY_FIXED`. `EVIDENCE_LIMITATION` is counted in its own column, never as
+> open. `CHLOE-002` is the only such row.
+
+| Gate | Definition | Total | Open/partial | Evidence-limited | P1 | P2 | P3 |
+|---|---|---|---|---|---|---|---|
+| **WILLOW_NOW** | Affects Willow on the live build today. | 10 | 9 | 1 | 5 | 5 | 0 |
+| **BEFORE_STUDIO_2** | Must close before an unrelated second studio is onboarded. | 9 | 9 | 0 | 5 | 2 | 2 |
+| **BEFORE_THREE_STUDIOS** | Must close before a third studio. | 7 | 7 | 0 | 0 | 4 | 3 |
+| **BEFORE_TEN_STUDIOS** | Must close before ten studios. | 19 | 19 | 0 | 0 | 8 | 11 |
+| **BEFORE_PUBLIC_SELF_SERVICE** | Must close before anyone can sign up without supervision. | 6 | 5 | 0 | 0 | 1 | 5 |
+| **BEFORE_50_STUDIOS** | Must close before fifty studios. | 1 | 1 | 0 | 0 | 0 | 1 |
+| **POST_GA** | May follow general availability. | 1 | 1 | 0 | 0 | 0 | 1 |
+| **NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION** | Out of scope by an explicit product decision. | 6 | 0 | 0 | 0 | 0 | 6 |
+| **NONE_CLOSED** | Closed on evidence — carries no forward gate. | 1 | 0 | 0 | 0 | 0 | 1 |
 
 ## Open blockers per gate
 
-### WILLOW_NOW — 9 open
+### WILLOW_NOW — 9 open/partial + 1 evidence-limited
 
 **Live-reachable defects (7)**
 
-- `F-CLIN-004` **P2** OPEN — "Mark reviewed" accepts an unsubmitted (in_progress) intake and any intake in the studio — one UI click creates a false clinical-review signal and pe…
+- `F-CLIN-004` **P1** OPEN — "Mark reviewed" accepts an unsubmitted (in_progress) intake and any intake in the studio — one UI click creates a false clinical-review signal and pe…
 - `F-PRIV-001` **P1** OPEN — Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens)
+- `F-RET-001` **P2** OPEN — Published 30-day / 90-day retention and deletion commitments have no implementing code: no purge job, no hard-delete path, no legal hold, no cross-sy…
 - `F-COMP-001` **P1** OPEN — The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-East-1
-- `N-DOC-001` **P1** OPEN — Public terms page claims a subscription and refund lifecycle the product does not have
+- `N-DOC-001` **P1** OPEN — Public terms and pricing pages claim a subscription, payment-processing and refund lifecycle the product does not have
 - `CHLOE-001` **P1** OPEN — Typing a custom treatment area commits one partial area row per keystroke
-- `CHLOE-002` **P2** EVIDENCE_LIMITATION — Checkout amount does not reliably default from the booked service, and the internal note is believed mandatory
 - `CHLOE-004` **P2** OPEN — Dashboard truncates the remember-note and the latest-settings summary
 
 **Not reachable today / unbuilt capability (2)**
@@ -32,7 +37,7 @@ Gates are independent of severity. Every gate used is defined.
 - `F-OPS-004` **P2** OPEN — No backup, restore-drill, RPO/RTO, on-call or incident-command evidence exists for a production system already holding real clinical data
 - `F-TEST-003` **P2** OPEN — Mobile lane is Chromium emulating an iPhone, not WebKit/iOS Safari, and no accessibility or physical-device acceptance evidence exists
 
-### BEFORE_STUDIO_2 — 9 open
+### BEFORE_STUDIO_2 — 9 open/partial
 
 **Live-reachable defects (8)**
 
@@ -49,7 +54,7 @@ Gates are independent of severity. Every gate used is defined.
 
 - `F-DOC-001` **P3** PARTIALLY_FIXED — Documentation asserts production facts it cannot prove, and the canonical register self-contradicts on whether migration 0160 is applied
 
-### BEFORE_THREE_STUDIOS — 7 open
+### BEFORE_THREE_STUDIOS — 7 open/partial
 
 **Live-reachable defects (4)**
 
@@ -64,7 +69,7 @@ Gates are independent of severity. Every gate used is defined.
 - `L19a` **P2** OPEN — Broad default table privileges: TRUNCATE granted to anon and authenticated on 64 of 86 tables
 - `L20` **P3** OPEN — service_role retains TRIGGER on the guarded clinical tables; owner can set session_replication_role
 
-### BEFORE_TEN_STUDIOS — 19 open
+### BEFORE_TEN_STUDIOS — 19 open/partial
 
 **Live-reachable defects (13)**
 
@@ -91,12 +96,11 @@ Gates are independent of severity. Every gate used is defined.
 - `F-GCAL-002` **P3** OPEN — Google refresh-token crypto has no previous-key slot: any key-version change forces reconnect_required on every connected practitioner
 - `F-ONB-002` **P3** OPEN — Onboarding v2 wizard's requiredComplete covers only service + availability + public bookability; the wizard is flag-gated OFF and its copy claims boo…
 
-### BEFORE_PUBLIC_SELF_SERVICE — 6 open
+### BEFORE_PUBLIC_SELF_SERVICE — 5 open/partial
 
-**Live-reachable defects (5)**
+**Live-reachable defects (4)**
 
 - `F-PRIV-002` **P3** OPEN — Public-booking audit row duplicates the raw client email and free-text booking notes into appointment_audit.details
-- `F-RET-001` **P2** OPEN — Published 30-day / 90-day retention and deletion commitments have no implementing code: no purge job, no hard-delete path, no legal hold, no cross-sy…
 - `F-OPS-001` **P3** OPEN — Public rate limiting deliberately fails open on limiter/provider failure (missing-config sub-case now closed by a production build gate)
 - `F-PUBLIC-001` **P3** OPEN — Public booking is non-transactional: a client INSERT (and an existing-client SMS-consent UPDATE) commit before the appointment INSERT, so a failed bo…
 - `F-PUBLIC-002` **P2** OPEN — Public booking reuses an existing client from an unverified email, permitting nuisance bookings attributed to a real client and an existing-client en…
@@ -105,13 +109,13 @@ Gates are independent of severity. Every gate used is defined.
 
 - `F-TEST-002` **P3** OPEN — Public-booking-versus-schedule-mutation concurrency regression is still missing (the finalizer-versus-child-write half is moot after the 0159 retirem…
 
-### BEFORE_50_STUDIOS — 1 open
+### BEFORE_50_STUDIOS — 1 open/partial
 
 **Live-reachable defects (1)**
 
 - `F-OPS-002` **P3** OPEN — Twilio STOP handling scans every phone-bearing client across all studios in one service-role process
 
-### POST_GA — 1 open
+### POST_GA — 1 open/partial
 
 **Not reachable today / unbuilt capability (1)**
 

@@ -185,5 +185,5 @@
       "note": "33 defects found in pass 1; all dispositioned in REVIEW_CLOSURE_REGISTER.md."
     }
   ],
-  "pass": "corrected pass 2 (2026-07-30)"
+  "pass": "corrected pass 3 (2026-07-30) — pass 2 was independently re-reviewed at head 7566a9c8, which raised 25 further defects including 12 pass-1 items whose recorded closure was false; all 25 are corrected and dispositioned in REVIEW_CLOSURE_REGISTER.md"
 }

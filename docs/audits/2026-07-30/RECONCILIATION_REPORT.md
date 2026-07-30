@@ -33,12 +33,14 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 | Severity | Original (Jul 27) | Current OPEN | Partial | Deployed/Verified | Retired/Superseded | Not-a-launch-req | False positive | Status=EVIDENCE_LIMITATION |
 |---|---|---|---|---|---|---|---|---|
 | P0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| P1 | 14 | 8 | 1 | 0 | 0 | 0 | 0 | 0 |
-| P2 | 31 | 17 | 3 | 0 | 0 | 0 | 0 | 1 |
+| P1 | 14 | 9 | 1 | 0 | 0 | 0 | 0 | 0 |
+| P2 | 31 | 16 | 3 | 0 | 0 | 0 | 0 | 1 |
 | P3 | 2 | 19 | 3 | 1 | 3 | 4 | 0 | 0 |
 | **Total** | **48** | **44** | **7** | **1** | **3** | **4** | **0** | **1** |
 
-> The last column counts findings whose **status** is `EVIDENCE_LIMITATION`. Separately,
+> **Counting convention, used identically in every report:** a finding is **open/partial** when its
+> status is `OPEN` or `PARTIALLY_FIXED`. `EVIDENCE_LIMITATION` is never counted as open; it has its
+> own column. The last column counts findings whose **status** is `EVIDENCE_LIMITATION`. Separately,
 > **51 of 60** findings record something in `missing_evidence` — a "0" in that column never means
 > "no finding rests on unverified evidence". See [EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md).
 
@@ -48,30 +50,33 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 
 **Zero current P0 confirmed.** Evidence in [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md).
 
-## C. Current P1s (9)
+## C. Current P1s (10)
 
 | ID | Title | Exposure | Gate | Train | PR |
 |---|---|---|---|---|---|
-| `F-SEC-002` | Any authenticated studio member can create, retime, re-status or delete appointments by direct PostgREST DML, bypassing the owner gates, du… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T4 | PR-11 |
-| `F-PAY-001` | Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and exec… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T7 | PR-02 |
-| `F-PRIV-001` | Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens) | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T9 | PR-05 |
-| `F-DATA-001` | Owner ZIP export omits most tenant-owned data (intake, consent, clinical notes, images, payments, portal, numbing/inventory fields) while t… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10 | PR-16, PR-17 |
-| `F-IMPORT-001` | Quick Import commits clients and treatment memories in separate statements; a memory-insert failure strands clients permanently with no ide… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10 | PR-13 |
-| `F-COMP-001` | The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-E… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T11 | PR-04 |
-| `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T3 | PR-04 |
-| `N-DOC-001` | Public terms page claims a subscription and refund lifecycle the product does not have | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
-| `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-charting | PR-03 |
+| `F-CLIN-004` | "Mark reviewed" accepts an unsubmitted (in_progress) intake and any intake in the studio — one UI click creates a false clinical-review sig… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T5-intake | PR-06 |
+| `F-SEC-002` | Any authenticated studio member can create, retime, re-status or delete appointments by direct PostgREST DML, bypassing the owner gates, du… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T8-schedule | PR-16 |
+| `F-PAY-001` | Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and exec… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T2-payment | PR-03 |
+| `F-PRIV-001` | Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens) | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T4-privacy | PR-05 |
+| `F-DATA-001` | Owner ZIP export omits most tenant-owned data (intake, consent, clinical notes, images, payments, portal, numbing/inventory fields) while t… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T0-copy | PR-02, PR-22 |
+| `F-IMPORT-001` | Quick Import commits clients and treatment memories in separate statements; a memory-insert failure strands clients permanently with no ide… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10-data | PR-20 |
+| `F-COMP-001` | The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-E… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
+| `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T6-identity | PR-08 |
+| `N-DOC-001` | Public terms and pricing pages claim a subscription, payment-processing and refund lifecycle the product does not have | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
+| `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T3-charting | PR-04 |
 
-Three of these did not exist as P1s in the first pass: **`F-PAY-001`** was raised from P2 (live money,
-no server-side amount authority), **`N-DOC-001`** was split out of a row that had been closed, and
-**`CHLOE-001`** is new from the studio-owner report.
+Four of these did not exist as P1s in the first pass: **`F-PAY-001`** was raised from P2 (live money,
+no server-side amount authority), **`N-DOC-001`** was split out of a row that had been closed,
+**`F-CLIN-004`** was raised in pass 2 (the P2 basis — practitioner-initiated and reversible — did not
+distinguish it from P1s held at P1 on identical grounds), and **`CHLOE-001`** is new from the
+studio-owner report.
 
 ## D. P2 and P3 disposition summary
 
-| Severity | Count | Open/partial | With a PR | Closed/not-required |
-|---|---|---|---|---|
-| P2 | 21 | 21 | 18 | 0 |
-| P3 | 30 | 22 | 11 | 8 |
+| Severity | Count | Open/partial | Evidence-limited | With a PR | Closed/not-required |
+|---|---|---|---|---|---|
+| P2 | 20 | 19 | 1 | 20 | 0 |
+| P3 | 30 | 22 | 0 | 12 | 8 |
 
 Full tables in [P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md).
 
@@ -94,11 +99,11 @@ dependencies.
 
 | Limitation | Canonical | Severity | Status | Reachable | Gate | Train |
 |---|---|---|---|---|---|---|
-| `L18` | `HN-051` | P2 | OPEN | true | BEFORE_TEN_STUDIOS | T2 |
-| `L19a` | `HN-052` | P2 | OPEN | false | BEFORE_THREE_STUDIOS | T1 |
-| `L19b` | `HN-053` | P2 | OPEN | true | BEFORE_THREE_STUDIOS | T3 |
-| `L20` | `HN-054` | P3 | OPEN | false | BEFORE_THREE_STUDIOS | T1 |
-| `L21` | `HN-055` | P3 | OPEN | false | POST_GA | T11 |
+| `L18` | `HN-051` | P2 | OPEN | true | BEFORE_TEN_STUDIOS | T7-clinical-dml |
+| `L19a` | `HN-052` | P2 | OPEN | false | BEFORE_THREE_STUDIOS | T1-privilege |
+| `L19b` | `HN-053` | P2 | OPEN | true | BEFORE_THREE_STUDIOS | T1-privilege |
+| `L20` | `HN-054` | P3 | OPEN | false | BEFORE_THREE_STUDIOS | T1-privilege |
+| `L21` | `HN-055` | P3 | OPEN | false | POST_GA | NONE |
 
 **L19(a) is larger than previously documented — 64 of 86 public tables** grant TRUNCATE to both browser
 roles, including `session_audit`, `audit_logs`, `record_keeping_audit_events`, `stripe_events` and 16
@@ -131,5 +136,7 @@ carried into explicit columns.
 - Nothing classified from a title, PR title, commit message, documentation claim, source-string test,
   or the existence of a function or table.
 - Every non-open verdict in pass 1 was adversarially challenged; two were overturned.
-- Pass 2 corrected all 33 self-review defects — see
-  [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md).
+- Pass 1's self-review raised 33 defects; pass 2's independent re-review raised a further 25 against
+  the corrected head, including several pass-1 items that had been recorded as corrected but were not.
+  Both sets are dispositioned in [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md), which is
+  authoritative over the status column of any earlier review artifact.

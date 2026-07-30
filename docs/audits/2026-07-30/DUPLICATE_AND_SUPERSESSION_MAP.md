@@ -12,17 +12,37 @@
 
 ## What "preserved" means here, precisely
 
-Each source register's own fields are carried into **explicit columns** — `source_evidence`,
-`source_failure_scenario`, `source_affected`, `source_prerequisites`, `source_test_limitations`,
-`source_acceptance_criteria`, `source_recommended_fix`, `source_rollout_considerations`,
-`source_production_evidence` and `source_recorded_disposition`. **There is no undocumented
-`a | b | c` packing**; where a source had several related fields (personas / tenants / workflows) they
-are joined into `source_affected` with a ` / ` separator and that is the only joined column.
+Every source register's own fields are carried into **explicit, individually-named columns** — one
+audit column per source column. The CSV header is **generated from the source-row shape**, so a source
+column cannot be silently dropped by a hand-maintained list.
 
-The July-10 register's **Acceptance criteria** and **Recommended remediation** are carried for all 40
-rows (previously dropped). The July-18 register's **classification** is carried for all 34 rows as
-`source_recorded_disposition`: **5 DEPLOYED**, **10 OPEN**, **16 PARTIALLY FIXED**, **3 PRODUCTION VERIFIED** — so the
-**8 rows that register already recorded as closed remain visible**.
+- **July-27 audit (48):** evidence, failure scenario, affected, prerequisites, test limitations,
+  acceptance criteria, recommended fix, rollout considerations.
+- **July-18 register (34):** `source_evidence`, `source_production_evidence`,
+  `source_acceptance_criteria`, `source_recommended_fix`, `source_recorded_disposition`,
+  `source_classification_rationale`, `source_willow_impact`, `source_cross_tenant_impact`,
+  `source_provider_impact`, `source_category`, `source_data_migration_required`,
+  `source_required_regression_tests`, `source_rollback`, and the five status columns kept **separate**:
+  `source_code_status`, `source_migration_status`, `source_deployment_status`, `source_enabled_status`,
+  `source_exercised_status`.
+- **July-10 register (40):** `source_evidence`, `source_acceptance_criteria`, `source_recommended_fix`,
+  `source_recorded_disposition`, `source_risk_at_stake`, `source_business_impact`, `source_confidence`,
+  `source_existing_controls`, `source_why_controls_insufficient`,
+  `source_required_regression_tests`, `source_reproduction`.
+
+**Corrections made in pass 2.** The first pass packed the five July-18 status columns into
+`source_rollout_considerations` under an undocumented `key=value;` convention, dropped seven source
+columns outright — July-18 `willow_impact` and `rationale` on all 34 rows, July-10
+`Data/money/workflow/trust at risk`, `Business impact` and `Confidence` — and loaded four July-10
+columns into audit columns that mean something different (`Existing controls` under
+`source_production_evidence`, `Required regression tests` under `source_test_limitations`). All three
+defects are fixed: **no packing remains**, **no source column is dropped**, and every column now
+carries what its name says. A test re-reads `docs/roadmap/P1_MASTER_REGISTER_2026-07-18.csv` and fails
+if any non-empty source cell appears in no audit column.
+
+`source_test_limitations`, `source_rollout_considerations`, `source_production_evidence` and
+`source_failure_scenario` are **empty for the registers that have no such column** rather than being
+filled with the nearest-looking field.
 
 ## Register overlap
 
@@ -45,6 +65,6 @@ either clinical flag, and any Finalize/signed-Correction surface.
 
 ## Historical rows not individually re-verified
 
-The 74 July-10/July-18 rows are preserved in full but were **not** individually
-re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
+The 74 July-10/July-18 rows carry **every non-empty cell of their source register** (verified
+programmatically, not asserted) but were **not** individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
 reads `NOT_INDIVIDUALLY_RE_VERIFIED` rather than a fabricated verdict. See `EVIDENCE_LIMITATIONS.md`.
