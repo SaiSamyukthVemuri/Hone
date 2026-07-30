@@ -1,0 +1,168 @@
+{
+  "audit_run": "2026-07-30 exact-production findings reconciliation",
+  "production_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
+  "hosted_migration_max": "0160",
+  "generated_at_utc": "2026-07-30T19:29:18Z",
+  "inputs": [
+    {
+      "name": "Hone_Independent_Audit_2026-07-27.md",
+      "path": "/Users/chloebaca/Downloads/Hone_Independent_Audit_2026-07-27(2).md",
+      "role": "MANDATORY_PRIMARY_AUDIT",
+      "status": "INGESTED",
+      "bytes": 206467,
+      "sha256": "712a9f7acd3e3c0f929206023630b08777af893667177e95ac1c0689d4f82beb",
+      "mtime_utc": "2026-07-30T19:20:28.489Z",
+      "note": "Supplied as Hone_Independent_Audit_2026-07-27(2).md — browser duplicate suffix; SHA-256 matches the expected value byte-for-byte, so identity is proven by checksum not filename. 2585 lines, 48 ### F- headings, severity P0:1/P1:14/P2:31/P3:2 — all gates verified."
+    },
+    {
+      "name": "Hone_Findings_Register_2026-07-10.csv",
+      "path": "/Users/chloebaca/Downloads/Hone_Findings_Register_2026-07-10.csv",
+      "role": "HISTORICAL_REGISTER",
+      "status": "INGESTED",
+      "bytes": 49319,
+      "sha256": "6cb9ad6b5334eea0529fd3935e91deb6c122ec07fe3646b03fd961c8acee6c24",
+      "mtime_utc": "2026-07-10T12:46:45.379Z",
+      "note": "40 data rows, all HNE-* IDs."
+    },
+    {
+      "name": "Hone_Full_Production_Readiness_Audit_2026-07-10.md",
+      "path": "/Users/chloebaca/Downloads/Hone_Full_Production_Readiness_Audit_2026-07-10.md",
+      "role": "HISTORICAL_AUDIT_NARRATIVE",
+      "status": "INGESTED",
+      "bytes": 376330,
+      "sha256": "3355477401a9dd7d3987f09adb7b6d8e69db1d71b9ed7b643b4b27e97866f980",
+      "mtime_utc": "2026-07-10T12:46:37.930Z",
+      "note": null
+    },
+    {
+      "name": "Hone_Findings.csv",
+      "path": "/Users/chloebaca/Downloads/Hone_Findings.csv",
+      "role": "OPTIONAL",
+      "status": "PERMANENTLY_UNAVAILABLE_THIS_RUN",
+      "bytes": null,
+      "sha256": null,
+      "mtime_utc": null,
+      "note": "Searched by exact filename in ~/Downloads, ~/Documents, ~/Desktop, ~/Library/Mobile Documents, /Users/chloebaca/Hone, /Users/chloebaca/Hone-lineage (maxdepth 4). Not found."
+    },
+    {
+      "name": "hone_evidence_excerpt.txt",
+      "path": "/Users/chloebaca/Downloads/hone_evidence_excerpt.txt",
+      "role": "OPTIONAL",
+      "status": "PERMANENTLY_UNAVAILABLE_THIS_RUN",
+      "bytes": null,
+      "sha256": null,
+      "mtime_utc": null,
+      "note": "Same search set as above. Not found."
+    },
+    {
+      "name": "docs/roadmap/P1_RECONCILIATION_REPORT_2026-07-18.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/roadmap/P1_RECONCILIATION_REPORT_2026-07-18.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 71209,
+      "sha256": "935db0ed60f1e1d0c4315a280bd054faeec4e97c15efd50a9af5be5e825fffdc",
+      "mtime_utc": "2026-07-30T19:24:02.050Z",
+      "note": null
+    },
+    {
+      "name": "docs/roadmap/P1_MASTER_REGISTER_2026-07-18.csv",
+      "path": "/Users/chloebaca/Hone-audit/docs/roadmap/P1_MASTER_REGISTER_2026-07-18.csv",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 171480,
+      "sha256": "2e98ef535f924475c64e81bbc18cc75189c262ea3d71bcf4a73614455c37193c",
+      "mtime_utc": "2026-07-30T19:24:02.050Z",
+      "note": null
+    },
+    {
+      "name": "docs/roadmap/CANONICAL_ROADMAP.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/roadmap/CANONICAL_ROADMAP.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 77243,
+      "sha256": "8418d5862b08c134872db6834d4c8ee361921accea2819efc8cb58f0a906c908",
+      "mtime_utc": "2026-07-30T19:24:02.050Z",
+      "note": null
+    },
+    {
+      "name": "docs/roadmap/CAPABILITY_MANIFEST.json",
+      "path": "/Users/chloebaca/Hone-audit/docs/roadmap/CAPABILITY_MANIFEST.json",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 12021,
+      "sha256": "d2861423b7486826060e0b287d8a4bc428f20798010fe5dc273cec1f431f6528",
+      "mtime_utc": "2026-07-30T19:24:02.050Z",
+      "note": null
+    },
+    {
+      "name": "docs/production/current-state.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/production/current-state.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 29691,
+      "sha256": "02afdd6f340bf455a0e372e6e4c2ff86484cbbde67f97f8b53ad10350e40cece",
+      "mtime_utc": "2026-07-30T19:24:02.047Z",
+      "note": null
+    },
+    {
+      "name": "docs/production/capability-register.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/production/capability-register.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 35689,
+      "sha256": "bb16a3b990be2886a4126f69c0b0611c10916b442e42d092d90664da7d1657e7",
+      "mtime_utc": "2026-07-30T19:24:02.047Z",
+      "note": null
+    },
+    {
+      "name": "docs/production/known-limitations.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/production/known-limitations.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 30333,
+      "sha256": "be607db64c334bfa717c9906a4ee1f3d9b58c27aee020f4b46506dc591b2d0ba",
+      "mtime_utc": "2026-07-30T19:24:02.047Z",
+      "note": null
+    },
+    {
+      "name": "docs/production/migration-ledger.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/production/migration-ledger.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 51125,
+      "sha256": "8ab946aa1d7e93c5790acb1dd361b569a91b4985b05611e1ccef03ae79c29c78",
+      "mtime_utc": "2026-07-30T19:24:02.048Z",
+      "note": null
+    },
+    {
+      "name": "docs/decisions/clinical-finalization-retired.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/decisions/clinical-finalization-retired.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 13865,
+      "sha256": "317e20e7d7fbfa732b4969a701d4ca6bfe63c98db47717cc939a48018e6a0406",
+      "mtime_utc": "2026-07-30T19:24:02.044Z",
+      "note": null
+    },
+    {
+      "name": "docs/decisions/pr-481-superseded-by-0159.md",
+      "path": "/Users/chloebaca/Hone-audit/docs/decisions/pr-481-superseded-by-0159.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 8906,
+      "sha256": "ae1fefdfa043b84ae0aa3675f30a2ef327413409a4e94dcd4631697de336a408",
+      "mtime_utc": "2026-07-30T19:24:02.044Z",
+      "note": null
+    },
+    {
+      "name": "README.md",
+      "path": "/Users/chloebaca/Hone-audit/README.md",
+      "role": "REPOSITORY_INPUT_AT_c64366c9",
+      "status": "INGESTED",
+      "bytes": 20360,
+      "sha256": "7f6ded93871d1cfa1ff61aa6867e1bc89b278b5bf47c8dfb0a1176c42d4c487a",
+      "mtime_utc": "2026-07-30T19:24:01.972Z",
+      "note": null
+    }
+  ]
+}
