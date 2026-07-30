@@ -1506,6 +1506,21 @@ export async function getSessionBlockAreas(sessionId: string): Promise<string[]>
   return rows.map((r) => `${r.area}|${r.laterality}`);
 }
 
+// The LEGACY projection persisted alongside the structured rows
+// (session_blocks.primary_area = the first area). The custom-area keystroke
+// defect showed up here as a one-letter fragment, so the hotfix e2e asserts it
+// directly.
+export async function getSessionBlockPrimaryAreas(sessionId: string): Promise<Array<string | null>> {
+  const rows = await sql<{ primary_area: string | null }>(
+    `select primary_area
+       from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by created_at`,
+    [sessionId],
+  );
+  return rows.map((r) => r.primary_area);
+}
+
 // Seed a bare client under the studio (no session). Used by the clinical-notes
 // e2e to exercise the consultation/skin-hair surfaces on the client profile.
 export async function seedE2eClient(seed: E2eSeed): Promise<{ clientId: string }> {
