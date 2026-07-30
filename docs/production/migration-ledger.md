@@ -23,7 +23,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Total migrations in repo** | **159** (`0001` … `0157`, `0159`, `0160` — **no `0158`**) |
 | **Total applied in production** | **159**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
-| **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its *source* merge (PR #483) is the only thing still pending. |
+| **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
 | **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **No `0161` exists.** |
 
