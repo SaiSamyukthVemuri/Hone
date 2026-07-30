@@ -1,9 +1,9 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-30 there are 158 migrations in
-`supabase/migrations/` (latest `0159_retire_signed_clinical_records.sql`), and the production
-migration max = 0159 — hosted == repo, all applied, each exactly once. `0158` is deliberately
-skipped and will never be applied; `0160` is NOT applied.**
+Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0160
+(`0160_immutable_clinical_lineage.sql`) — 159 applied, each exactly once, `0159` immediately
+preceding `0160`. `0158` is deliberately skipped and will never be applied. Repository max and
+hosted max are both 0160.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -14,7 +14,8 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 > **Historical note.** Earlier revisions of this section stated, at various dates, "96
 > migrations, 0096 not yet applied", "production is at 0112", and "production migration max =
-> 0113". All of those are **superseded** — the production max is **0157**. The per-migration
+> 0113", "the production max is 0157". All of those are **superseded** — the production max is
+> **0160**. The per-migration
 > prose table below remains historical through ~0092; everything from 0093 onward is
 > enumerated in the migration ledger linked above. Dated statements elsewhere in the docs are
 > point-in-time history, not current state.
@@ -25,8 +26,9 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current max `0157`, so the next is
-  `0158`.** Do not hardcode this number anywhere it can go stale: derive it from
+  [migration ledger](./production/migration-ledger.md). **Current max `0160`, so the next is
+  `0161`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
+  anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
 
 **Tenant consistency constraints (0094, PR #278 — APPLIED to production 2026-07; the "not yet applied" note below is superseded).** Sensitive clinical/import child tables now prove their parent rows are same-studio via **composite foreign keys** (the same pattern the payment subsystem already used): `sessions`→clients`(studio_id,client_id)` + appointments`(studio_id,appointment_id)`, `session_blocks`→sessions`(studio_id,session_id)`, `client_intake_forms`/`treatment_plans`→clients`(studio_id,client_id)`, `imported_treatment_memories`→clients + import_batches`(studio_id,…)`, and `electrolysis_entries`→session_blocks`(session_id,block_id)` (its block must belong to its own session). New parent unique keys: `sessions(studio_id,id)`, `session_blocks(session_id,id)`, `import_batches(studio_id,id)`. **Composite FKs, not triggers** — PG17 column-list `ON DELETE SET NULL (col)` keeps SET-NULL parents from nulling the NOT-NULL `studio_id`. Each composite **replaces** the prior single-column FK (mirroring its ON DELETE; behavior-preserving) so each table pair keeps exactly **one** relationship — two FKs between a pair make PostgREST embedded selects ambiguous. (`electrolysis_entries_session_id_fkey` is kept — different pair.) No RLS weakened. `treatment_images` (0093 trigger) and the payment tables were already enforced and are untouched. **0094 is applied in production (2026-07); the earlier "must not be applied until approved" gating is historical.**
@@ -393,13 +395,14 @@ applied in production** (prod max = **0157**). Full per-migration purposes and a
 
 **0158 is deliberately skipped** (the number is claimed so two artifacts can never share it —
 DRAFT PR #481 carries a different, superseded 0158 on a branch retained for audit evidence), and
-**0159 was applied and verified in production on 2026-07-30**, making the signed-record retirement
-**database-enforced**. `0160` is **not applied**.
+**both `0159` and `0160` were applied and verified in production on 2026-07-30** — the signed-record
+retirement and the clinical-lineage protection are each **database-enforced**.
 
 | # | Theme | Posture |
 |---|---|---|
 | ~~0158~~ | *(skipped — see above)* | Never written to this branch |
 | **0159** | **Retire signed / finalized clinical records + safe clinical-privilege hardening** | **APPLIED to production 2026-07-30** (13:25:39Z–13:25:43Z), verified. Additive and non-destructive: zero data operations, nothing dropped. Flags pinned `false`, retired RPC `EXECUTE` revoked, `finalized`/`void` transitions refused, the three signed ledgers refuse INSERT, `anon` clinical write privileges and `anon`/`authenticated` `TRUNCATE`/`REFERENCES`/`TRIGGER` removed, `session_block_areas` read-only to browser roles. Direct DML on `sessions` / `session_blocks` / `electrolysis_entries` / `laser_entries` / `treatment_images` is **not** revoked — the deployed app still writes those directly; that is the follow-up PR |
+| **0160** | **Immutable clinical lineage** | **APPLIED to production 2026-07-30** (17:52:48Z–17:52:51Z), verified; sha256 `e56a1ee7…6094d4`. Ran inside its own explicit `begin;`/`commit;` so the lock timeout armed — no 25P01, no 55P03. Pins the lineage columns immutable on UPDATE only — `sessions(client_id, studio_id)`, `session_blocks(session_id, studio_id)`, `electrolysis_entries(session_id)` strict and `block_id` clearable (its FK is `ON DELETE SET NULL`), `laser_entries(session_id)` — closing same-studio wrong-client / wrong-record re-parenting, which RLS permits because the member predicate still holds after the parent changes. `treatment_images` is deliberately left to 0093, which already does it correctly. Zero data operations, no grant, no policy, no clinical-content column pinned |
 
 ### One-line purposes, 0093–0112
 

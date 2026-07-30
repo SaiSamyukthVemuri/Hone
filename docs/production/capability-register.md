@@ -6,7 +6,7 @@ production; neither document is evidence for the other.
 
 - **Reconciled:** 2026-07-27
 - **Runtime-bearing baseline:** application HEAD `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`
-  (PR #478 merge). Production migration max **0159**.
+  (PR #478 merge; superseded at runtime by the PR #482 merge `d77d4434`). Production migration max **0160**.
 - **Amended 2026-07-29:** §3 rewritten from *dormant / parked* to **RETIRED** — signed and
   finalized clinical records are not a Hone product capability. Decision record:
   [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
@@ -14,12 +14,19 @@ production; neither document is evidence for the other.
   now **database-enforced**: both studio flags pinned `false` by validated CHECK constraints,
   `EXECUTE` revoked from every runtime role on all 10 retired functions, `finalized`/`void`
   transitions refused, `INSERT` refused on all three signed ledgers, and the 0120
-  `hone.correction_session_id` permit removed. `0158` remains intentionally skipped; **`0160` is NOT
-  applied**. **UI/code removal is still pending PR #482's deployment** — the deployed application at
+  `hone.correction_session_id` permit removed. `0158` remains intentionally skipped. **UI/code removal is still pending PR #482's deployment** — the deployed application at
   `058b8bcb…` retains the dead Finalize/Correction components, but they are flag-gated and both flags
   are constrained `false`, so they are unreachable. The **one legacy controlled-test artifact** (1
   finalized session + 1 snapshot, non-Willow) is retained unchanged and its hash still re-derives;
   **Willow has 0 non-draft sessions**. **Snapshot v2 remains permanently rejected.**
+- **Amended 2026-07-30 (second entry): migration `0160` is APPLIED and verified in production.** The
+  same-studio wrong-client / wrong-encounter re-parenting defect is now **database-enforced, deployed
+  and production-verified** — see [current-state.md](./current-state.md) §3b. It pins record *identity*
+  only (`sessions.client_id`/`studio_id`, `session_blocks.session_id`/`studio_id`,
+  `electrolysis_entries.session_id`, `electrolysis_entries.block_id` clearable only to NULL,
+  `laser_entries.session_id`); **ordinary charting stays fully editable** and no signed-record
+  capability returned. It closed **no** other clinical write risk — L18, L19, L20 and L21 all remain
+  open. Repository and hosted migration max are both `0160`.
 
 Related: [current-state.md](./current-state.md) ·
 [known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md) ·
