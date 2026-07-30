@@ -16,8 +16,17 @@ const QUERIES = read("lib/supabase/queries.ts");
 
 describe("MultiAreaEditor behaviour", () => {
   it("adding an area APPENDS (never replaces prior selections) + dedupes", () => {
-    expect(EDITOR).toMatch(/onChange\(\[\.\.\.value, \{ area, laterality: "not_applicable" \}\]\)/);
-    expect(EDITOR).toMatch(/const exists = value\.some/);
+    // Chloe custom-area keystroke hotfix: the append + the case-insensitive
+    // duplicate guard moved into the shared, unit-tested commit rule
+    // (lib/sessions/area-input.ts, tests/lib/area-input.test.ts). The editor
+    // adopts whatever that rule returns.
+    const AREA_INPUT = read("lib/sessions/area-input.ts");
+    expect(EDITOR).toMatch(/commitAreaToSet\(value,/);
+    expect(EDITOR).toMatch(/onChange\(\[\.\.\.result\.value\]\)/);
+    expect(AREA_INPUT).toMatch(
+      /return \{ status: "added", value: \[\.\.\.value, \{ area, laterality \}\], area \};/,
+    );
+    expect(AREA_INPUT).toMatch(/value\.some\(\(a\) => a\.area\.trim\(\)\.toLowerCase\(\) === key\)/);
   });
   it("supports per-area laterality, remove, and apply-to-all", () => {
     expect(EDITOR).toMatch(/function setLaterality/);
