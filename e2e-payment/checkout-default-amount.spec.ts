@@ -1,0 +1,309 @@
+import { test, expect, type Page } from "@playwright/test";
+import { loginAsOwner } from "../e2e/helpers/flows";
+import {
+  seedEligiblePaymentWithLogin,
+  cleanupPaymentScenario,
+  adminQuery,
+  closePool,
+  type PaymentSeed,
+} from "./helpers/payment-fixture";
+import { modalOf } from "./helpers/checkout-flow";
+
+// ===========================================================================
+// Checkout default amount + optional internal note (Chloe production feedback)
+// ===========================================================================
+//
+// REPRODUCED REGRESSION. Migration 0151 replaced the single-column
+// appointments.service_id FK with a composite (service_id, studio_id) FK.
+// PostgREST resolves an `alias:<fk_column>(...)` embed hint only against a
+// SINGLE-column FK, so the session-detail page's
+// `services:service_id(name, price_cents)` started returning
+// HTTP 400 / PGRST200 on every load. The page discarded the error, the booked
+// service resolved to null, and the amount field was ALWAYS blank on session
+// detail — while quick checkout, which already used the bare-table
+// `service:services(...)` form, kept working. That is exactly "the amount does
+// not RELIABLY populate": it depended on which surface you opened.
+//
+// These specs are the end-to-end proof that never existed: no unit, DB or
+// browser test had ever booked a PRICED service and asserted the prefill. The
+// historical fixture books no service at all, so the only prefill any test saw
+// came from the sessions.price_paid_cents fallback.
+//
+// They also pin that the internal note is OPTIONAL on BOTH payment surfaces and
+// that a blank note persists as NULL — the belief that it is mandatory comes
+// from the separate manual no-show FEE card, which genuinely requires one.
+//
+// Local-only lane: guarded fake Stripe, sk_test_dummy, no real provider egress.
+// Nothing here prepares or executes a charge; it only reads the prepare form.
+
+const SERVICE_NAME_PREFIX = "Checkout Default";
+const SERVICE_PRICE_CENTS = 14500; // $145.00
+const CUSTOM_PRICE_CENTS = 11000; // $110.00
+
+const amountField = (scope: Page | ReturnType<typeof modalOf>) =>
+  scope.getByLabel("Amount in Canadian dollars");
+const noteField = (scope: Page | ReturnType<typeof modalOf>) =>
+  scope.getByPlaceholder(/note explaining the session payment/i);
+
+async function openSessionDetail(page: Page, seed: PaymentSeed) {
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  await expect(page.getByLabel("Session payment")).toBeVisible({ timeout: 20_000 });
+}
+
+// ---------------------------------------------------------------------------
+// 1. Priced booked service → BOTH surfaces default to the service price.
+// ---------------------------------------------------------------------------
+test.describe("priced booked service", () => {
+  let seed: PaymentSeed;
+
+  test.beforeAll(async () => {
+    seed = await seedEligiblePaymentWithLogin({
+      label: "default-priced",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Priced`, priceCents: SERVICE_PRICE_CENTS },
+    });
+    // Remove the historical session-price fallback so the ONLY thing that can
+    // populate the field is the booked-service default under test.
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [
+      seed.sessionId,
+    ]);
+  });
+
+  test.afterAll(async () => {
+    await cleanupPaymentScenario(seed.studioId);
+    await closePool();
+  });
+
+  test("session detail prefills from the booked service and names the source", async ({
+    page,
+  }) => {
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+
+    // THE regression assertion. Pre-fix this field is empty on this surface.
+    await expect(amountField(page)).toHaveValue("145.00");
+    await expect(page.getByText(/Booked service: Checkout Default Priced/)).toBeVisible();
+    await expect(page.getByText("Defaulted from booked service.")).toBeVisible();
+    await expect(page.getByText("You can adjust before preparing.")).toBeVisible();
+    // The "no price configured" state must NOT appear when a price resolved.
+    await expect(page.getByTestId("session-payment-no-default-amount")).toHaveCount(0);
+  });
+
+  test("the amount stays editable", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    const amount = amountField(page);
+    await expect(amount).not.toHaveAttribute("readonly", /.*/);
+    await expect(amount).toBeEditable();
+    await amount.fill("99.50");
+    await expect(amount).toHaveValue("99.50");
+  });
+
+  test("quick checkout prefills identically — the two surfaces agree", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await page.getByTestId("checkout-button").first().click();
+    const modal = modalOf(page);
+    await expect(modal).toBeVisible({ timeout: 20_000 });
+    await expect(amountField(modal)).toHaveValue("145.00");
+    await expect(modal.getByText(/Booked service: Checkout Default Priced/)).toBeVisible();
+  });
+
+  test("reopening quick checkout re-applies the default (no stale blank)", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await page.getByTestId("checkout-button").first().click();
+    let modal = modalOf(page);
+    await expect(amountField(modal)).toHaveValue("145.00");
+    await amountField(modal).fill("1.00");
+    await modal.getByTestId("quick-checkout-close").click();
+    await expect(modal).toHaveCount(0);
+    await page.getByTestId("checkout-button").first().click();
+    modal = modalOf(page);
+    await expect(amountField(modal)).toHaveValue("145.00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. Custom client pricing wins; future-dated custom pricing does not.
+// ---------------------------------------------------------------------------
+test.describe("custom client pricing precedence", () => {
+  let seed: PaymentSeed;
+
+  test.beforeAll(async () => {
+    seed = await seedEligiblePaymentWithLogin({
+      label: "default-custom",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Custom`, priceCents: SERVICE_PRICE_CENTS },
+      clientPricing: [
+        {
+          serviceName: `${SERVICE_NAME_PREFIX} Custom`,
+          priceCents: CUSTOM_PRICE_CENTS,
+          effectiveFrom: "2020-01-01",
+          notes: "Long-standing package rate",
+        },
+        // Future-dated: must be ignored today.
+        {
+          serviceName: `${SERVICE_NAME_PREFIX} Custom`,
+          priceCents: 25000,
+          effectiveFrom: "2099-01-01",
+        },
+      ],
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [
+      seed.sessionId,
+    ]);
+  });
+
+  test.afterAll(async () => {
+    await cleanupPaymentScenario(seed.studioId);
+    await closePool();
+  });
+
+  test("the current custom price wins over the menu price, and says so", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    await expect(amountField(page)).toHaveValue("110.00");
+    await expect(page.getByText("Defaulted from this client's custom pricing.")).toBeVisible();
+    await expect(page.getByText(/Custom pricing reminder: Long-standing package rate/)).toBeVisible();
+    // The future-dated 250.00 row must NOT win.
+    await expect(amountField(page)).not.toHaveValue("250.00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Nothing resolvable → say so plainly instead of implying it auto-filled.
+// ---------------------------------------------------------------------------
+test.describe("no resolvable price", () => {
+  test.afterAll(async () => {
+    await closePool();
+  });
+
+  test("booked service with NO price says no price is configured", async ({ page }) => {
+    const seed = await seedEligiblePaymentWithLogin({
+      label: "default-unpriced",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Unpriced`, priceCents: null },
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [
+      seed.sessionId,
+    ]);
+    try {
+      await loginAsOwner(page, seed);
+      await openSessionDetail(page, seed);
+      await expect(amountField(page)).toHaveValue("");
+      await expect(page.getByTestId("session-payment-no-default-amount")).toContainText(
+        "No price is configured for this booked service.",
+      );
+      // No fabricated service label when nothing resolved.
+      await expect(page.getByText(/Defaulted from/)).toHaveCount(0);
+    } finally {
+      await cleanupPaymentScenario(seed.studioId);
+    }
+  });
+
+  test("appointment with NULL service_id says the same thing", async ({ page }) => {
+    // No bookedService knob → the historical fixture shape: service_id NULL.
+    const seed = await seedEligiblePaymentWithLogin({ label: "default-noservice" });
+    expect(seed.scenario.serviceId).toBeNull();
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [
+      seed.sessionId,
+    ]);
+    try {
+      await loginAsOwner(page, seed);
+      await openSessionDetail(page, seed);
+      await expect(amountField(page)).toHaveValue("");
+      await expect(page.getByTestId("session-payment-no-default-amount")).toBeVisible();
+    } finally {
+      await cleanupPaymentScenario(seed.studioId);
+    }
+  });
+
+  test("a service renamed after booking falls back to the menu price, not the stale custom row", async ({
+    page,
+  }) => {
+    const seed = await seedEligiblePaymentWithLogin({
+      label: "default-renamed",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Renamed`, priceCents: SERVICE_PRICE_CENTS },
+      // Custom pricing is matched by service NAME; this row names the OLD name.
+      clientPricing: [
+        {
+          serviceName: `${SERVICE_NAME_PREFIX} Old Name`,
+          priceCents: CUSTOM_PRICE_CENTS,
+          effectiveFrom: "2020-01-01",
+        },
+      ],
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [
+      seed.sessionId,
+    ]);
+    try {
+      await loginAsOwner(page, seed);
+      await openSessionDetail(page, seed);
+      // Documents the KNOWN name-matching limitation: the negotiated rate is
+      // silently dropped and the menu price is used. The label is honest about
+      // which source won, so the practitioner can see it.
+      await expect(amountField(page)).toHaveValue("145.00");
+      await expect(page.getByText("Defaulted from booked service.")).toBeVisible();
+    } finally {
+      await cleanupPaymentScenario(seed.studioId);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Internal note is OPTIONAL on both surfaces, and blank persists as NULL.
+// ---------------------------------------------------------------------------
+test.describe("internal note is optional everywhere", () => {
+  let seed: PaymentSeed;
+
+  test.beforeAll(async () => {
+    seed = await seedEligiblePaymentWithLogin({
+      label: "note-optional",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Note`, priceCents: SERVICE_PRICE_CENTS },
+    });
+  });
+
+  test.afterAll(async () => {
+    await cleanupPaymentScenario(seed.studioId);
+    await closePool();
+  });
+
+  test("session detail: note is labelled optional and carries no required attribute", async ({
+    page,
+  }) => {
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    await expect(page.getByText("Internal note (optional)")).toBeVisible();
+    const note = noteField(page);
+    await expect(note).toHaveJSProperty("required", false);
+  });
+
+  test("quick checkout: same optional note", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await page.getByTestId("checkout-button").first().click();
+    const modal = modalOf(page);
+    await expect(modal).toBeVisible({ timeout: 20_000 });
+    await expect(modal.getByText("Internal note (optional)")).toBeVisible();
+    await expect(noteField(modal)).toHaveJSProperty("required", false);
+  });
+
+  test("preparing with a BLANK note succeeds and persists NULL", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    await expect(noteField(page)).toHaveValue("");
+    await page.getByRole("button", { name: /prepare session payment/i }).click();
+    await expect(page.getByText(/session payment prepared/i)).toBeVisible({ timeout: 20_000 });
+
+    const rows = await adminQuery(
+      `select internal_note, amount_cents
+         from public.payment_charge_attempts
+        where session_id = $1
+        order by created_at desc limit 1`,
+      [seed.sessionId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    // Blank note persists as NULL — never an auto-generated placeholder.
+    expect(rows.rows[0].internal_note).toBeNull();
+    // The prepared amount is the booked-service default that populated the form.
+    expect(Number(rows.rows[0].amount_cents)).toBe(SERVICE_PRICE_CENTS);
+  });
+});

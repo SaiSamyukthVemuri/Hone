@@ -221,8 +221,12 @@ describe("resolveSessionPaymentDefault", () => {
 describe("Session payment prepare form wiring", () => {
   it("the session page resolves the default from appointment + custom pricing and passes it down", () => {
     expect(SESSION_PAGE).toMatch(/resolveSessionPaymentDefault\(\{/);
+    // BARE-TABLE embed. The old `services:service_id(...)` column hint stopped
+    // resolving when migration 0151 replaced the single-column FK with a
+    // composite one (PGRST200), so the default was always null here. See
+    // tests/app/tenant-consistency-embeds.test.ts for the permanent ban.
     expect(SESSION_PAGE).toMatch(
-      /services:service_id\(name, price_cents\)/,
+      /service:services\(name, price_cents\)/,
     );
     expect(SESSION_PAGE).toMatch(/from\("client_pricing"\)/);
     expect(SESSION_PAGE).toMatch(/defaultAmount=\{sessionPaymentDefault\}/);
