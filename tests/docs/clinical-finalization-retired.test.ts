@@ -954,24 +954,40 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     }
   });
 
-  it("the UI/source cleanup is described as pending PR #482's deployment, not already shipped", () => {
+  it("the UI/source cleanup is described as SHIPPED, now that #482 has merged and deployed", () => {
+    // Superseded 2026-07-30. This guard previously asserted the opposite — that the
+    // cleanup was still *pending* — which was correct while #482 was unmerged. #482
+    // merged at d77d4434 and deployed successfully, so the pending wording became the
+    // false claim and this guard now pins the reverse.
     expect(
       CURRENT_STATE,
-      "current-state must not claim the Finalize/Correction surfaces are already removed from " +
-        "the DEPLOYED application — PR #482 has not deployed yet",
-    ).not.toMatch(/Correction controls \| \*\*REMOVED from the application\.\*\*/);
-    expect(CURRENT_STATE).toMatch(/pending[^.\n]{0,80}deploy/i);
-    expect(CAPABILITY_REGISTER).toMatch(/pending PR #482/i);
+      "current-state must now say the Finalize/Correction surfaces are REMOVED — #482 merged " +
+        "and deployed, so 'pending deployment' is no longer true",
+    ).toMatch(/Correction controls \| \*\*REMOVED — both from the database and from the deployed source\.\*\*/);
+    expect(
+      CURRENT_STATE,
+      "current-state must cite the merge SHA as the evidence that the source removal shipped",
+    ).toMatch(/d77d44346addd98f4829f757531011bc7ca0c0d1/);
+    expect(
+      CURRENT_STATE,
+      "current-state must not still describe the source removal as pending a deployment",
+    ).not.toMatch(/source removal pending/i);
   });
 
-  it("the interim UI state is stated truthfully: flag-gated, flags constrained false, RPCs denied", () => {
+  it("states both halves of the removal: flags pinned false AND the source deleted", () => {
     expect(CURRENT_STATE).toMatch(/clinical_finalization_enabled/);
     expect(
       CURRENT_STATE,
-      "the interim description must say the controls are unreachable because the flags are " +
-        "pinned false, NOT that practitioners can currently use them",
-    ).toMatch(/does \*\*not\*\* see them|unreachable/i);
-    expect(CURRENT_STATE).toMatch(/EXECUTE is revoked|direct RPC invocation is denied/i);
+      "the DB half must still be stated — flags pinned false by validated CHECK and EXECUTE revoked",
+    ).toMatch(/validated CHECK constraint and revoked `EXECUTE` from every runtime role/);
+    expect(
+      CURRENT_STATE,
+      "the source half must name the four deleted files so a reader can verify the claim",
+    ).toMatch(/FinalizeSessionCard[\s\S]{0,160}RecordVersionsPanel/);
+    expect(
+      CURRENT_STATE,
+      "and must state plainly that no such surface exists in the running application",
+    ).toMatch(/no Finalize or signed-Correction surface in the running application/i);
   });
 
   it("the 0120 GUC permit is documented as REMOVED, never as still honoured", () => {
@@ -1004,9 +1020,13 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
     expect(
       L,
-      "the ledger must say 0160's identical lock-timeout line has to be corrected before 0160 " +
-        "is authorized",
-    ).toMatch(/same `set local lock_timeout` line in the unapplied `0160` must be corrected/i);
+      "the ledger must record that 0160's identical lock-timeout line HAS BEEN corrected — it was, " +
+        "in PR #483, so demanding the correction as future work is now the false claim",
+    ).toMatch(/same `set local lock_timeout` line in `0160` HAS BEEN CORRECTED/);
+    expect(
+      L,
+      "…and must still say 0160 is unapplied and unauthorized, which the correction does not change",
+    ).toMatch(/`0160` remains \*\*unapplied and unauthorized\*\*/);
   });
 
   it("the applied 0159 file still carries the exact line the ledger's checksum covers", () => {

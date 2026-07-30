@@ -213,6 +213,32 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | **This is the next substantive engineering/governance work after documentation reconciliation.** |
 | **Blocks** | **Broader launch.** |
 
+## L20 — `service_role` retains `TRIGGER` on the clinical tables, so 0160's guards are not tamper-proof against it
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (surfaced by the PR #483 / migration 0160 adversarial review) |
+| **Impact** | Migration 0160 enforces record lineage entirely with `BEFORE UPDATE` triggers, but Supabase's default `grant all` leaves `TRIGGER` on `public.sessions`, `public.session_blocks`, `public.electrolysis_entries` and `public.laser_entries` for `service_role` (`anon` and `authenticated` correctly do **not** hold it). `CREATE TRIGGER` needs only the `TRIGGER` privilege plus `EXECUTE` on the function — not ownership — and `BEFORE ROW` triggers fire in **alphabetical name order**. So a DDL-capable `service_role` session could attach a trigger sorting after `sessions_immutable_lineage`, let the guard approve an unchanged `NEW`, and then overwrite the lineage column. Separately, the table owner can set `session_replication_role = 'replica'`, which silently disables all five guards. |
+| **Evidence** | `has_table_privilege('service_role', …, 'TRIGGER')` = true on all four tables; the bypass was reproduced verbatim on a CI-parity database in a rolled-back transaction, using a helper function created in `pg_temp` (`service_role` cannot `CREATE FUNCTION` in `public`). The `session_replication_role` bypass was likewise reproduced as the table owner. |
+| **Reachability** | **Not reachable from the browser or from the application.** `service_role` is `NOLOGIN`; the only path to it is PostgREST via `authenticator`, which issues DML and RPC calls only — never DDL. A scan of `pg_proc` found **zero** `SECURITY DEFINER` functions granted to `anon`/`authenticated`/`service_role` that execute caller-controlled dynamic SQL. `session_replication_role` requires superuser or the table owner. |
+| **Current mitigation** | None beyond the above. This is a **defence-in-depth** gap, not an exploitable hole: it presumes an attacker who already has DDL against the production database, at which point they could simply `DROP TRIGGER`. |
+| **Owner** | Sam |
+| **Next gate** | Fold `revoke trigger on public.sessions, public.session_blocks, public.electrolysis_entries, public.laser_entries from service_role` into the same separately-authorized, repo-wide privilege sweep that L19(a) already requires — the two share a root cause (Supabase's default grants) and should be verified together rather than piecemeal in a lineage migration. |
+| **Blocks** | Neither today. It does **not** block migration 0160, whose guards are effective against every role reachable from the application. |
+
+## L21 — hard-deleting a session in the SAME transaction that created a block-attached treatment image fails
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (surfaced by the PR #483 review; **pre-existing, and proven migration-0160-neutral**) |
+| **Impact** | Deleting a `sessions` row raises `23503` against `treatment_images_session_block_id_fkey` when a `treatment_images` row carrying **both** `session_id` and `session_block_id` was inserted by the *same* transaction. Two independent `ON DELETE SET NULL` paths fire on `treatment_images` (its own `session_id` FK, and the `session_blocks` cascade); PostgreSQL skips the FK re-check on a key-preserving UPDATE only when the old row was not inserted by the current transaction, so for a same-transaction row the `session_id` SET NULL is forced to re-verify the block FK after the cascade has already removed the block. |
+| **Evidence** | Reproduced on a CI-parity database, then independently re-reproduced from scratch by a second reviewer. Proven **not** caused by 0160: the failure is byte-identical with all five 0160 triggers dropped, and again with *every* trigger on `treatment_images` dropped. A control with `session_block_id` NULL deletes cleanly, isolating the two-SET-NULL interaction. In autocommit — rows committed in earlier transactions — the delete succeeds, which is why `tests/db/treatment-image-hardening.db.test.ts` passes today. |
+| **Reachability** | **Unreachable from the application.** No `DELETE` or `ALL` RLS policy exists on `sessions`, `session_blocks` or `treatment_images`, and RLS is enabled on the parents, so the raw `DELETE` grant held by `authenticated` affects zero rows. Nothing in `app/`, `lib/` or `components/` hard-deletes sessions or blocks. |
+| **Current mitigation** | None needed today. Recorded so a future admin or right-to-erasure routine that wraps seed-and-delete in one transaction is not surprised by it. |
+| **Owner** | Sam |
+| **Next gate** | Only if an in-transaction hard-delete path is ever built. The fix would be to null `session_block_id` before deleting the parent, or to delete the image rows first. |
+| **Blocks** | Nothing. Explicitly **not** a blocker for migration 0160. |
+
 ## L19 — `TRUNCATE` is still granted broadly outside the clinical tables, and two session links are not same-client validated
 
 | Field | Value |

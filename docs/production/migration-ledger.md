@@ -95,8 +95,11 @@ policy, and the 0128 studio-derive trigger widened to `session_block_id, studio_
 >
 > **Do not "fix" the lock-timeout line in `0159` — it is already applied.** A migration file must
 > never be rewritten after it has been applied; the checksum above is the historical record.
-> **The same `set local lock_timeout` line in the unapplied `0160` must be corrected before that
-> migration is authorized**, since it will not arm under this CLI execution mode either.
+> **The same `set local lock_timeout` line in `0160` HAS BEEN CORRECTED** (DRAFT PR #483,
+> 2026-07-30): that migration now opens its own `begin;` … `commit;` so the timeout genuinely arms
+> and the apply is atomic. Proven under real lock contention on a CI-parity database — it failed in
+> ~5 s with SQLSTATE 55P03 instead of hanging, and left zero ledger rows, zero functions and zero
+> triggers behind. `0160` remains **unapplied and unauthorized**.
 
 ### 0157 — purpose and status
 
@@ -285,7 +288,7 @@ Superseded claims you may still encounter in dated material:
   **database-enforced in production now**. What remains pending is only PR #482's *code and
   documentation* merge/deploy, which changes no database state.
 - "0160 will be applied after 0159" — **`0160` is NOT applied and NOT authorized**, and its
-  `set local lock_timeout` line must be corrected first (see §0159's apply anomaly).
+  `set local lock_timeout` line has since been corrected in PR #483 (see §0159's apply anomaly).
 - "`calendar_sync_outbox` and `calendar_event_links` are 0 rows" — each holds **one row**
   from the single controlled Google Calendar validation on 2026-07-18. See
   [capability-register.md](./capability-register.md) §9.

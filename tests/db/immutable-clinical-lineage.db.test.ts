@@ -88,6 +88,27 @@ describe("0160 — a session cannot be moved to another client", () => {
 });
 
 describe("0160 — a settings block cannot be moved to another encounter", () => {
+  // Review finding (test-quality lens): session_blocks_immutable_lineage pins TWO
+  // columns — session_id AND studio_id — but only session_id was exercised, so
+  // dropping 'studio_id' from the trigger's TG_ARGV survived the whole DB lane.
+  it("refuses a studio_id change on a settings block", async () => {
+    const { blockId } = await seedSession(a);
+    // A random target studio on purpose: the BEFORE UPDATE guard must fire before
+    // any foreign key is consulted, so this proves the GUARD refuses the re-tenant
+    // rather than an FK incidentally catching it.
+    const elsewhere = randomUUID();
+    await expect(
+      asUser(a.userId, (q) =>
+        q("update public.session_blocks set studio_id=$2 where id=$1", [blockId, elsewhere]),
+      ),
+    ).rejects.toThrow(REPARENT_MSG);
+    await expect(
+      adminQuery("update public.session_blocks set studio_id=$2 where id=$1", [blockId, elsewhere]),
+    ).rejects.toThrow(REPARENT_MSG);
+    const row = await adminQuery("select studio_id from public.session_blocks where id=$1", [blockId]);
+    expect(row.rows[0].studio_id).toBe(a.studioId);
+  });
+
   it("refuses session_id change even when the block has NO entries (the reachable case)", async () => {
     const { blockId } = await seedSession(a);
     const other = await seedSession(a);
@@ -336,5 +357,61 @@ describe("0160 — the FK ON DELETE SET NULL cascades still work", () => {
       [sessionId],
     );
     expect(n.rows[0]).toEqual({ s: 0, b: 0, e: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review finding (test-quality lens): the guards' SECURITY INVOKER mode and
+// pinned empty search_path were only ever source-grepped in the migrations
+// test. Flipping the LIVE function to SECURITY DEFINER with an unpinned
+// search_path therefore survived the entire DB lane — a source grep cannot see
+// what is actually installed. These read pg_proc/pg_trigger instead.
+//
+// A SECURITY DEFINER guard with an unpinned search_path is the classic
+// privilege-escalation shape: it runs as the owner and resolves unqualified
+// names through the caller's search_path.
+// ---------------------------------------------------------------------------
+describe("0160 — the INSTALLED guards match their declared security posture", () => {
+  it("both guard functions are SECURITY INVOKER with search_path pinned to empty", async () => {
+    const res = await adminQuery(
+      `select p.proname, p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as cfg
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname in ('guard_immutable_clinical_lineage','guard_clearable_clinical_lineage')
+        order by p.proname`,
+    );
+    expect(res.rows).toHaveLength(2);
+    for (const row of res.rows) {
+      expect(
+        row.prosecdef,
+        `${row.proname} must be SECURITY INVOKER — it inspects only OLD/NEW and needs no elevated ` +
+          `rights; SECURITY DEFINER would make a pure guard an escalation surface`,
+      ).toBe(false);
+      expect(
+        row.cfg,
+        `${row.proname} must pin an empty search_path so unqualified names cannot be hijacked`,
+      ).toContain('search_path=""');
+    }
+  });
+
+  it("all five lineage triggers are installed exactly once and ENABLED", async () => {
+    const res = await adminQuery(
+      `select t.tgname, t.tgenabled
+         from pg_trigger t
+        where not t.tgisinternal
+          and (t.tgname like '%immutable_lineage' or t.tgname like '%clearable_lineage')
+        order by t.tgname`,
+    );
+    expect(res.rows.map((r: { tgname: string }) => r.tgname)).toEqual([
+      "electrolysis_entries_clearable_lineage",
+      "electrolysis_entries_immutable_lineage",
+      "laser_entries_immutable_lineage",
+      "session_blocks_immutable_lineage",
+      "sessions_immutable_lineage",
+    ]);
+    for (const row of res.rows) {
+      expect(row.tgenabled, `${row.tgname} must be enabled ('O', origin)`).toBe("O");
+    }
   });
 });
