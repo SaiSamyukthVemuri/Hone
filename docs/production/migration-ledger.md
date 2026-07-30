@@ -19,13 +19,13 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0160** (`0160_immutable_clinical_lineage.sql`) |
-| **Repo migration max** | **0160** — hosted == repo |
+| **Repo migration max** | **0161** — hosted is **0160**; the repo is deliberately ONE AHEAD (unapplied `0161` on DRAFT PR #487) |
 | **Total migrations in repo** | **159** (`0001` … `0157`, `0159`, `0160` — **no `0158`**) |
 | **Total applied in production** | **159**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its *source* merge (PR #483) is the only thing still pending. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
-| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **No `0161` exists.** |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **`0161` exists in the repository (DRAFT PR #487) but has NEVER been applied — it is absent from Remote by design.** |
 
 **Every migration `0001`–`0157` plus `0159` and `0160` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code

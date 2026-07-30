@@ -101,7 +101,9 @@ set local lock_timeout = '5s';
 --     term is what makes it total — with it there are no ties left to resolve
 --     in heap order, so the server and the screen can never disagree again.
 --   * Normalizes those services to 10, 20, 30 … BEFORE applying the move, so
---     one tap always moves exactly one position.
+--     one tap always moves exactly one position. p_move = 'none' normalizes
+--     WITHOUT moving anything — used to repair legacy duplicate positions, and
+--     by show_studio_service when the service was already visible.
 --   * HIDDEN services are not renumbered and not moved. They are also given a
 --     position ABOVE the visible block's range on un-hide by the application's
 --     normalize call, so a stale stored value can never collide with the new
@@ -116,7 +118,7 @@ set local lock_timeout = '5s';
 create or replace function public.reorder_studio_service(
   p_studio_id         uuid,
   p_service_id        uuid,
-  p_move              text,             -- 'top' | 'up' | 'down' | 'bottom'
+  p_move              text,             -- 'top' | 'up' | 'down' | 'bottom' | 'none'
   p_expected_position integer default null
 )
 returns uuid[]
@@ -136,8 +138,8 @@ begin
       using errcode = '42501';
   end if;
 
-  if p_move is null or p_move not in ('top', 'up', 'down', 'bottom') then
-    raise exception 'p_move must be one of top, up, down, bottom'
+  if p_move is null or p_move not in ('top', 'up', 'down', 'bottom', 'none') then
+    raise exception 'p_move must be one of top, up, down, bottom, none'
       using errcode = '22023';
   end if;
 
@@ -189,6 +191,7 @@ begin
                 when 'bottom' then v_len
                 when 'up'     then greatest(1, v_idx - 1)
                 when 'down'   then least(v_len, v_idx + 1)
+                when 'none'   then v_idx   -- normalize only; do not move
               end;
 
   if v_target <> v_idx then
@@ -227,6 +230,14 @@ grant execute on function public.reorder_studio_service(uuid, uuid, text, intege
 -- may be 100, i.e. right in the middle of the new 10/20/30 sequence, or exactly
 -- equal to another row's). This helper places a newly-shown service at the END
 -- of the visible order and renormalizes, in one transaction.
+--
+-- IDEMPOTENT BY CONSTRUCTION. The UPDATE is predicated on `active = false`, so
+-- calling this on a service that is ALREADY visible re-slots nothing — it only
+-- normalizes. Without that predicate the function silently moved an already-
+-- visible service to the BOTTOM, which is reachable from an ordinary stale tab:
+-- the Show/Hide control bakes its `active` value in at render time, so a second
+-- tab rendered while the service was hidden still posts active=true after the
+-- first tab has shown it. A visibility toggle must never reorder the menu.
 
 create or replace function public.show_studio_service(
   p_studio_id  uuid,
@@ -255,20 +266,31 @@ begin
          sort_order = v_max + 10,
          updated_at = now()
    where id = p_service_id
-     and studio_id = p_studio_id;
+     and studio_id = p_studio_id
+     and active = false;
 
+  if found then
+    -- It really was hidden: it now sits past the end, so 'bottom' is a no-op
+    -- move and the normalization pass gives it a clean trailing position.
+    return public.reorder_studio_service(p_studio_id, p_service_id, 'bottom');
+  end if;
+
+  -- Nothing updated: either already visible (a stale tab re-submitted Show) or
+  -- not this studio's service. Distinguish the two.
+  perform 1 from public.services
+   where id = p_service_id and studio_id = p_studio_id;
   if not found then
     raise exception 'service % not found in studio %', p_service_id, p_studio_id
       using errcode = 'P0002';
   end if;
 
-  -- Renormalize so the freshly-shown row lands on a clean position too.
-  return public.reorder_studio_service(p_studio_id, p_service_id, 'bottom');
+  -- Already visible. Normalize, but do NOT move it.
+  return public.reorder_studio_service(p_studio_id, p_service_id, 'none');
 end;
 $$;
 
 comment on function public.show_studio_service(uuid, uuid) is
-  'Re-show a hidden service at the END of the visible order and renormalize positions. Owner-only. Migration 0161.';
+  'Re-show a HIDDEN service at the END of the visible order and renormalize. Idempotent: on an already-visible service it normalizes without moving it. Owner-only. Migration 0161.';
 
 revoke all on function public.show_studio_service(uuid, uuid) from public, anon;
 grant execute on function public.show_studio_service(uuid, uuid)
@@ -299,11 +321,19 @@ grant execute on function public.show_studio_service(uuid, uuid)
 -- WIDEN ONLY. Every one of the six original keys stays legal, so no stored value
 -- becomes invalid and NO ROW IS REWRITTEN.
 --
--- The swap uses NOT VALID + VALIDATE deliberately. `add constraint … check` in
--- one step takes ACCESS EXCLUSIVE for the whole existing-row scan; NOT VALID
--- takes it only briefly, and VALIDATE then runs under SHARE UPDATE EXCLUSIVE,
--- which does not block concurrent reads or writes. The validation cannot fail:
--- the old allowed set is a strict subset of the new one.
+-- The swap uses NOT VALID + VALIDATE deliberately — but NOT for lock duration.
+-- Be precise about this: everything here runs inside the ONE transaction this
+-- file opens, so the ACCESS EXCLUSIVE taken by the `drop constraint` is held
+-- until COMMIT regardless, and VALIDATE's weaker SHARE UPDATE EXCLUSIVE is
+-- subsumed by it. Splitting the step buys no concurrency inside this file.
+--
+-- What it DOES buy is a smaller failure surface under the 5s lock_timeout: the
+-- validating scan is a separate statement, so a timeout is attributable and the
+-- rollback boundary is unambiguous. It also documents the intent for anyone who
+-- later lifts this into a non-transactional apply, where the distinction is
+-- real. The validation itself cannot fail: the old allowed set is a strict
+-- subset of the new one, so every existing row already satisfies it.
+-- `services` is a tiny per-studio table, so the scan is trivial either way.
 
 alter table public.services
   drop constraint if exists services_calendar_color_allowed;

@@ -138,7 +138,6 @@ export function ServiceAccordionItem({
   priceLabel,
   active,
   colorKey,
-  position,
   toggle,
   children,
 }: {
@@ -150,9 +149,6 @@ export function ServiceAccordionItem({
   // swatch so the row is identifiable at a glance and matches the calendar
   // card. Null when the column is not available yet (pre-0153 deploy window).
   colorKey?: string | null;
-  // 1-based position in the visible order, shown as a NUMBER so the ordering is
-  // never conveyed by colour or arrow placement alone.
-  position?: number | null;
   toggle: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -174,11 +170,6 @@ export function ServiceAccordionItem({
           <span aria-hidden className="text-neutral-400">
             {open ? "▾" : "▸"}
           </span>
-          {position != null && (
-            <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-              {position}
-            </span>
-          )}
           <span
             aria-hidden
             className={`inline-block h-3 w-3 shrink-0 rounded-full ${accent.dot}`}
@@ -314,36 +305,6 @@ export function ServiceSubmitButton({
   return (
     <button type="submit" disabled={pending} className={base}>
       {pending ? pendingLabel ?? "Saving…" : idleLabel}
-    </button>
-  );
-}
-
-// One arrow button inside a one-field form that posts to
-// reorderServiceAction. Showing a pending state is intentional: the
-// page re-renders after the action revalidates, and on a slow phone
-// connection a static "↑" would feel unresponsive. The parent decides
-// whether the button is disabled at the boundary (top of list cannot
-// move up, bottom cannot move down).
-export function MoveButton({
-  direction,
-  disabled,
-}: {
-  direction: "up" | "down";
-  disabled: boolean;
-}) {
-  const { pending } = useFormStatus();
-  const isUp = direction === "up";
-  const label = isUp ? "Move up" : "Move down";
-  const glyph = isUp ? "↑" : "↓";
-  return (
-    <button
-      type="submit"
-      disabled={disabled || pending}
-      aria-label={label}
-      title={label}
-      className="rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm leading-none text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-    >
-      {pending ? "…" : glyph}
     </button>
   );
 }

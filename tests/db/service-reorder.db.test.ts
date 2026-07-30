@@ -175,6 +175,47 @@ describe("hidden services never participate", () => {
     expect(new Set(orders).size).toBe(4);
     expect((await orderedNames())[3]).toBe("Electrolysis 60");
   });
+
+  it("show is IDEMPOTENT: re-showing an ALREADY-visible service never moves it", async () => {
+    // Reachable from an ordinary stale tab: the Show/Hide control bakes its
+    // `active` value in at render time, so a second tab rendered while the
+    // service was hidden still posts active=true after the first tab showed it.
+    // Before the fix this bumped the service to max+10 and 'bottom'-normalized
+    // it, silently sending a curated first service to the END of the menu.
+    await move(ids[2], "top");
+    const before = await orderedNames();
+    expect(before[0]).toBe("Electrolysis 60");
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.show_studio_service($1,$2) as ids`, [studio.studioId, ids[2]]),
+    );
+    expect(await orderedNames(), "a visibility toggle must never reorder the menu").toEqual(
+      before,
+    );
+    expect(await sortOrders()).toEqual([10, 20, 30, 40]);
+
+    // Repeating it is still a no-op.
+    await asUser(studio.userId, (q) =>
+      q(`select public.show_studio_service($1,$2) as ids`, [studio.studioId, ids[2]]),
+    );
+    expect(await orderedNames()).toEqual(before);
+  });
+
+  it("show still refuses a service from another studio", async () => {
+    const other = await seedStudio("svc-show-other");
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.show_studio_service($1,$2)`, [studio.studioId, other.studioId]),
+      ),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it("'none' normalizes without moving anything", async () => {
+    const before = await orderedNames();
+    await move(before.length > 0 ? ids[2] : ids[0], "none" as never);
+    expect(await orderedNames()).toEqual(before);
+    expect(await sortOrders()).toEqual([10, 20, 30, 40]);
+  });
 });
 
 describe("authorization", () => {

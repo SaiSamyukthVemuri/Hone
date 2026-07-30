@@ -246,16 +246,73 @@ describe("every ordering surface uses the same canonical key", () => {
     expect(actions).not.toMatch(/const \[newMine, newTheirs\]/);
   });
 
+  it("the action returns the RPC's resulting order, not a bare ok", () => {
+    // The RPC does not always perform the requested move — a stale caller gets
+    // a normalize instead. Reporting a bare ok would let the client keep an
+    // optimistic order the database never agreed to.
+    const actions = read("app/(app)/settings/services/actions.ts");
+    expect(actions).toMatch(/const \{ data, error \} = await supabase\.rpc\("reorder_studio_service"/);
+    expect(actions).toMatch(/return \{ ok: true, order: Array\.isArray\(data\)/);
+    const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
+    expect(list).toMatch(/const authoritative = result\.order\.filter/);
+  });
+
+  it("a stale session surfaces in place instead of tripping an error boundary", () => {
+    const actions = read("app/(app)/settings/services/actions.ts");
+    expect(actions).toMatch(/try \{\s*\(\{ studioId \} = await assertOwner\(\)\);\s*\} catch/);
+    expect(actions).toMatch(/Your session has expired/);
+  });
+
+  it("no dead reorder surface is left behind", () => {
+    // reorderServiceAction / normalizeServiceOrderAction / MoveButton were
+    // documented as a no-JS fallback but nothing ever posted to them. Dead code
+    // that claims a capability is worse than no code.
+    const actions = read("app/(app)/settings/services/actions.ts");
+    expect(actions).not.toMatch(/export async function reorderServiceAction/);
+    expect(actions).not.toMatch(/export async function normalizeServiceOrderAction/);
+    const controls = read("app/(app)/settings/services/ServiceFormControls.tsx");
+    expect(controls).not.toMatch(/export function MoveButton/);
+  });
+
   it("re-showing a hidden service goes through the RPC that re-slots it", () => {
     const actions = read("app/(app)/settings/services/actions.ts");
     expect(actions).toMatch(/rpc\("show_studio_service"/);
   });
 
-  it("the reorder controls are buttons with labels — no drag-only affordance", () => {
+  it("a NEW service is placed at the studio-wide end, not per modality", () => {
+    // The per-modality allocator is the root of the tie problem: each modality
+    // ran its own 100/110/120 sequence, so two modalities guaranteed a
+    // duplicate at 100. A new service must not re-create what 0161 repairs.
+    const actions = read("app/(app)/settings/services/actions.ts");
+    expect(actions).toMatch(/async function nextStudioSortOrder\(studioId: string\)/);
+    expect(actions).not.toMatch(/nextSortOrderForModality/);
+    expect(actions).not.toMatch(/query\.is\("modality", null\) : query\.eq\("modality", modality\)/);
+    // And a transient read failure must NOT silently fall back to a constant.
+    expect(actions).toMatch(/Failed to place the new service in the menu/);
+  });
+
+  it("the reorder controls are buttons with MEANINGFUL labels — no drag-only affordance", () => {
     const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
     expect(list).toMatch(/type="button"/);
-    expect(list).toMatch(/aria-label=/);
+    // The accessible name must carry the service NAME, never its UUID.
+    expect(list).toMatch(/aria-label=\{`\$\{MOVE_LABELS\[direction\]\.label\}: \$\{row\.name\}`\}/);
+    expect(list).not.toMatch(/aria-label=\{`[^`]*\$\{row\.id\}/);
     expect(list).not.toMatch(/draggable|onDragStart|dnd-kit|react-beautiful-dnd/);
+  });
+
+  it("the row is a real list item with a layout box (not display:contents)", () => {
+    const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
+    expect(list).not.toMatch(/<li[^>]*className="contents"/);
+    expect(list).toMatch(/className="flex list-none flex-col gap-1\.5"/);
+  });
+
+  it("exactly ONE position number is rendered per row", () => {
+    // A server-rendered badge plus a client-rendered line disagreed during an
+    // optimistic move. The client line is the single source of truth.
+    const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
+    const page = read("app/(app)/settings/services/page.tsx");
+    expect(list).toMatch(/Position \{position \+ 1\} of \{visibleIds\.length\}/);
+    expect(page).not.toMatch(/position=\{s\.active \? visibleIds\.indexOf/);
   });
 
   it("a move in flight disables every move control (single-flight)", () => {
@@ -268,5 +325,15 @@ describe("every ordering surface uses the same canonical key", () => {
     const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
     expect(list).toMatch(/setOrder\(previous\); \/\/ rollback/);
     expect(list).toMatch(/role="alert"/);
+  });
+
+  it("the server-order ref only advances when the sync is actually applied", () => {
+    // Advancing it while a move was in flight marked that server order as
+    // "already seen", so it could never be adopted — the list would show a
+    // stale order until a full page load.
+    const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
+    expect(list).toMatch(
+      /if \(incoming !== serverOrderRef\.current && !pending\) \{\s*serverOrderRef\.current = incoming;/,
+    );
   });
 });

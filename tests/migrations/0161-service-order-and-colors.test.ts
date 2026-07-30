@@ -127,10 +127,13 @@ describe("the atomic reorder RPC", () => {
     expect(body).toMatch(/for update/);
   });
 
-  it("supports all four moves and rejects anything else", () => {
-    expect(body).toMatch(/p_move not in \('top', 'up', 'down', 'bottom'\)/);
+  it("supports all four moves plus a pure normalize, and rejects anything else", () => {
+    expect(body).toMatch(/p_move not in \('top', 'up', 'down', 'bottom', 'none'\)/);
     expect(body).toMatch(/when 'top'\s+then 1/);
     expect(body).toMatch(/when 'bottom' then v_len/);
+    // 'none' normalizes WITHOUT moving — how show_studio_service stays
+    // idempotent when the service was already visible.
+    expect(body).toMatch(/when 'none'\s+then v_idx/);
   });
 
   it("normalizes to 10, 20, 30 … in ONE pass", () => {
@@ -168,6 +171,11 @@ describe("the show helper closes the un-hide collision", () => {
     expect(body).toMatch(/if not public\.is_studio_owner\(p_studio_id\)/);
     expect(body).toMatch(/sort_order = v_max \+ 10/);
     expect(body).toMatch(/reorder_studio_service\(p_studio_id, p_service_id, 'bottom'\)/);
+    // IDEMPOTENT: the re-slot UPDATE only fires for a row that was actually
+    // hidden. Without this predicate, a stale tab re-submitting "Show" silently
+    // moved an already-visible service to the BOTTOM of the menu.
+    expect(body).toMatch(/and active = false;/);
+    expect(body).toMatch(/reorder_studio_service\(p_studio_id, p_service_id, 'none'\)/);
     expect(FLAT).toMatch(
       /revoke all on function public\.show_studio_service\(uuid, uuid\) from public, anon/,
     );

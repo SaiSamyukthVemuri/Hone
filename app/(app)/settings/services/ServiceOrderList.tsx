@@ -35,6 +35,9 @@ import { moveServiceAction } from "./actions";
 
 export type OrderRow = {
   id: string;
+  // The service NAME, so the move controls have a meaningful accessible name.
+  // A screen reader must not hear "Move up: 3f2b8c1a-9d4e-…".
+  name: string;
   active: boolean;
   // Rendered header + edit form for this service, produced on the server.
   node: React.ReactNode;
@@ -53,14 +56,19 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
   const [optimisticOrder, setOptimisticOrder] = useOptimistic(order);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const serverOrderRef = useRef<string[]>(rows.map((r) => r.id));
+  const serverOrderRef = useRef<string>(rows.map((r) => r.id).join(","));
 
   // Re-sync when the server sends a new order (after revalidate, or after
   // another surface changed the services).
+  //
+  // The ref advances ONLY when the sync is actually applied. Advancing it while
+  // a move was in flight would mark that server order as "already seen" and it
+  // would never be adopted — the list would keep showing a stale order until a
+  // full page load.
   const incoming = rows.map((r) => r.id).join(",");
-  if (incoming !== serverOrderRef.current.join(",")) {
-    serverOrderRef.current = rows.map((r) => r.id);
-    if (!pending) setOrder(rows.map((r) => r.id));
+  if (incoming !== serverOrderRef.current && !pending) {
+    serverOrderRef.current = incoming;
+    setOrder(rows.map((r) => r.id));
   }
 
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -91,7 +99,12 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
         expectedPosition: position,
       });
       if (result.ok) {
-        setOrder(next);
+        // Adopt the order the DATABASE produced, not the optimistic guess. The
+        // RPC declines the move when the caller's view was stale (the service
+        // was hidden or removed elsewhere) and returns what it actually wrote.
+        const authoritative = result.order.filter((v) => byId.has(v));
+        const hiddenTail = previous.filter((v) => !authoritative.includes(v));
+        setOrder(authoritative.length > 0 ? [...authoritative, ...hiddenTail] : next);
       } else {
         setOrder(previous); // rollback
         setError(result.error);
@@ -116,31 +129,39 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
           const position = visibleIds.indexOf(row.id);
           const moves = availableMoves(position, visibleIds.length);
           return (
-            <li key={row.id} data-testid={`service-row-${row.id}`} className="contents">
-              <div className="flex flex-col gap-1.5">
-                {row.node}
-                {row.active && visibleIds.length > 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5 px-1">
-                    <span className="text-[11px] tabular-nums text-neutral-500">
-                      Position {position + 1} of {visibleIds.length}
-                    </span>
-                    {(Object.keys(MOVE_LABELS) as ServiceMove[]).map((direction) => (
-                      <button
-                        key={direction}
-                        type="button"
-                        onClick={() => move(row.id, direction)}
-                        disabled={pending || !moves[direction]}
-                        aria-label={`${MOVE_LABELS[direction].label}: ${row.id}`}
-                        title={MOVE_LABELS[direction].label}
-                        data-testid={`move-${direction}-${row.id}`}
-                        className="min-h-[36px] min-w-[36px] rounded-md border border-neutral-300 px-2.5 text-sm leading-none text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-                      >
-                        {MOVE_LABELS[direction].glyph}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+            // A real layout box, NOT display:contents — an element with no box
+            // is "not being rendered" per spec, which drops list semantics for
+            // assistive tech and gives the row a zero bounding rect.
+            <li
+              key={row.id}
+              data-testid={`service-row-${row.id}`}
+              className="flex list-none flex-col gap-1.5"
+            >
+              {row.node}
+              {row.active && visibleIds.length > 1 && (
+                <div className="flex flex-wrap items-center gap-1.5 px-1">
+                  {/* The position as a NUMBER — the single source of truth for
+                      "where am I in the order", and never conveyed by colour or
+                      arrow placement alone. */}
+                  <span className="text-[11px] tabular-nums text-neutral-500">
+                    Position {position + 1} of {visibleIds.length}
+                  </span>
+                  {(Object.keys(MOVE_LABELS) as ServiceMove[]).map((direction) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      onClick={() => move(row.id, direction)}
+                      disabled={pending || !moves[direction]}
+                      aria-label={`${MOVE_LABELS[direction].label}: ${row.name}`}
+                      title={MOVE_LABELS[direction].label}
+                      data-testid={`move-${direction}-${row.id}`}
+                      className="min-h-[36px] min-w-[36px] rounded-md border border-neutral-300 px-2.5 text-sm leading-none text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                    >
+                      {MOVE_LABELS[direction].glyph}
+                    </button>
+                  ))}
+                </div>
+              )}
             </li>
           );
         })}

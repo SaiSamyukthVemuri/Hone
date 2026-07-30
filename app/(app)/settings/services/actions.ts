@@ -5,11 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isServiceColorKey } from "@/lib/calendar/service-colors";
 import { isMissingColumnError } from "@/lib/db/missing-column";
-import {
-  compareServicePosition,
-  isServiceMove,
-  type ServiceMove,
-} from "@/lib/booking/service-order";
+import { isServiceMove, type ServiceMove } from "@/lib/booking/service-order";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -68,22 +64,32 @@ function parseSortOrder(value: FormDataEntryValue | null): number | null {
   return n;
 }
 
-async function nextSortOrderForModality(
-  studioId: string,
-  modality: string | null,
-): Promise<number> {
+// Position for a NEW service: the END of the studio's visible order.
+//
+// This was previously scoped PER MODALITY (`max(sort_order) + 10` within one
+// modality), which is the root of the tie problem migration 0161 exists to fix:
+// each modality ran its own 100/110/120 sequence, so a studio with a
+// consultation service and an electrolysis service was GUARANTEED to have two
+// rows at 100. Allocating studio-wide means a service added after a reorder
+// lands cleanly at the end instead of colliding with the middle of the
+// normalized 10/20/30 sequence.
+//
+// The error path deliberately does NOT fall back to a constant. Returning 100
+// on a transient read failure silently re-created a duplicate — the exact
+// condition the reorder RPC then had to repair.
+async function nextStudioSortOrder(studioId: string): Promise<number> {
   const supabase = await createClient();
-  let query = supabase
+  const { data, error } = await supabase
     .from("services")
     .select("sort_order")
     .eq("studio_id", studioId)
     .order("sort_order", { ascending: false })
-    .limit(1);
-  query = modality == null ? query.is("modality", null) : query.eq("modality", modality);
-  const { data, error } = await query.maybeSingle();
-  if (error) return 100;
-  if (!data) return 100;
-  return data.sort_order + 10;
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to place the new service in the menu: ${error.message}`);
+  }
+  return (data?.sort_order ?? 0) + 10;
 }
 
 async function assertOwner(): Promise<{ studioId: string }> {
@@ -106,9 +112,7 @@ export async function createServiceAction(formData: FormData): Promise<void> {
   const modality = parseModality(formData.get("modality"));
   const explicitSort = parseSortOrder(formData.get("sort_order"));
   const sort_order =
-    explicitSort != null
-      ? explicitSort
-      : await nextSortOrderForModality(studioId, modality);
+    explicitSort != null ? explicitSort : await nextStudioSortOrder(studioId);
 
   const supabase = await createClient();
   const base = {
@@ -206,19 +210,38 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
 // The typed entry point the settings list calls. Returns a RESULT rather than
 // throwing so the client can roll its optimistic move back and show the reason
 // in place, instead of tripping an error boundary and losing scroll position.
+//
+// It returns the RESULTING ORDER, not just ok/failed. The RPC does not always
+// perform the requested move — if the caller's view was stale (the service was
+// hidden or removed elsewhere) it normalizes and returns the order it actually
+// produced. Reporting a bare `ok` there would let the client keep an optimistic
+// order the database never agreed to, until the next full page load.
 export async function moveServiceAction(input: {
   id: string;
   move: ServiceMove;
   expectedPosition: number | null;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { studioId } = await assertOwner();
+}): Promise<{ ok: true; order: string[] } | { ok: false; error: string }> {
+  // assertOwner throws; catch it so a stale session surfaces as an in-place
+  // message rather than an error boundary that discards the page state.
+  let studioId: string;
+  try {
+    ({ studioId } = await assertOwner());
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error && /owner/i.test(err.message)
+          ? err.message
+          : "Your session has expired. Reload the page and try again.",
+    };
+  }
   if (!input.id) return { ok: false, error: "Missing service id." };
   if (!isServiceMove(input.move)) {
     return { ok: false, error: "Direction must be one of top, up, down, bottom." };
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.rpc("reorder_studio_service", {
+  const { data, error } = await supabase.rpc("reorder_studio_service", {
     p_studio_id: studioId,
     p_service_id: input.id,
     p_move: input.move,
@@ -242,62 +265,9 @@ export async function moveServiceAction(input: {
 
   revalidatePath("/settings/services");
   revalidatePath("/calendar");
-  return { ok: true };
-}
-
-// Progressive-enhancement fallback: the same move driven by a plain <form> post,
-// so the controls still work with JavaScript unavailable. Delegates to the one
-// implementation above; throwing here is correct because there is no client
-// state to roll back on this path.
-export async function reorderServiceAction(
-  formData: FormData,
-): Promise<void> {
-  const id = trimmed(formData.get("id"));
-  const moveRaw = trimmed(formData.get("direction"));
-  if (!isServiceMove(moveRaw)) {
-    throw new Error("Direction must be one of top, up, down, bottom.");
-  }
-  const expectedRaw = trimmed(formData.get("expected_position"));
-  const result = await moveServiceAction({
-    id,
-    move: moveRaw as ServiceMove,
-    expectedPosition:
-      expectedRaw.length > 0 && /^\d+$/.test(expectedRaw) ? parseInt(expectedRaw, 10) : null,
-  });
-  if (!result.ok) throw new Error(result.error);
-}
-
-// One-off repair for a studio whose stored positions are still the legacy
-// duplicate-heavy values: normalize the visible order WITHOUT moving anything.
-// Same RPC, and a no-op move keeps it a single atomic command.
-export async function normalizeServiceOrderAction(): Promise<void> {
-  const { studioId } = await assertOwner();
-  const supabase = await createClient();
-  const { data: rows, error: listErr } = await supabase
-    .from("services")
-    .select("id, name, sort_order, active")
-    .eq("studio_id", studioId)
-    .eq("active", true);
-  if (listErr) throw new Error(`Failed to read services: ${listErr.message}`);
-  // Sort in JS from the same data the page uses, so the client collation and
-  // the Postgres collation can never disagree about the canonical order.
-  const ordered = [...(rows ?? [])].sort(compareServicePosition);
-  const first = ordered[0];
-  if (!first) {
-    revalidatePath("/settings/services");
-    return;
-  }
-  // "Move the first item to the top" is a positional no-op that still triggers
-  // the RPC's full normalization pass.
-  const { error } = await supabase.rpc("reorder_studio_service", {
-    p_studio_id: studioId,
-    p_service_id: first.id,
-    p_move: "top",
-    p_expected_position: null,
-  });
-  if (error) throw new Error(`Failed to normalize service order: ${error.message}`);
-  revalidatePath("/settings/services");
-  revalidatePath("/calendar");
+  // The authoritative resulting order. The client adopts THIS, not its own
+  // optimistic guess, so a move the RPC declined can never stick on screen.
+  return { ok: true, order: Array.isArray(data) ? (data as string[]) : [] };
 }
 
 export async function toggleServiceActiveAction(

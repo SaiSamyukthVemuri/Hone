@@ -905,7 +905,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger's own hosted-max and repo-max rows both read 0160", () => {
+  it("the ledger states hosted max 0160 and repo max 0161 (the unapplied 0161)", () => {
     // Pinned to the specific rows. An existence check is not enough: the ledger
     // names 0159 in several places, so a flipped hosted-max row would still find
     // a match somewhere else in the file.
@@ -915,9 +915,17 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).toMatch(
       /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0160\*\*/,
     );
-    expect(MIGRATION_LEDGER, "the ledger's Repo migration max row must read 0160").toMatch(
-      /\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0160\*\*/,
-    );
+    // The repo is now deliberately ONE AHEAD of hosted: 0161 (service order +
+    // colours) is in the repository on a DRAFT PR and has never been applied.
+    // Hosted max is still 0160, asserted immediately above.
+    expect(
+      MIGRATION_LEDGER,
+      "the ledger's Repo migration max row must read 0161 (unapplied) while hosted stays 0160",
+    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0161\*\*/);
+    expect(
+      MIGRATION_LEDGER,
+      "…and must say plainly that 0161 is NOT applied",
+    ).toMatch(/0161[\s\S]{0,200}NOT APPLIED|NEVER been applied/i);
     expect(
       MIGRATION_LEDGER,
       "no ledger row may still assert a hosted/production migration max of 0157 or 0159",
@@ -942,7 +950,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     }
   });
 
-  it("0158 stays absent and permanently skipped; 0160 is APPLIED, and no 0161 exists", () => {
+  it("0158 stays absent and permanently skipped; 0160 is APPLIED; 0161 exists but is UNAPPLIED", () => {
     expect(MIGRATION_LEDGER).toMatch(/0158[^.\n]{0,120}\bskipped\b/i);
     expect(MIGRATION_LEDGER).toMatch(/\bnever be applied\b/i);
     // 0160 is APPLIED as of 2026-07-30. This assertion is the reverse of what it
@@ -955,7 +963,14 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
       MIGRATION_LEDGER,
       "no current ledger row may still describe 0160 as unapplied or not authorized",
     ).not.toMatch(/`0160`[^.\n]{0,60}\b(?:remains|is)\s+\*\*(?:unapplied|NOT applied)/i);
-    expect(MIGRATION_LEDGER, "there is no 0161").toMatch(/no `0161` exists|There is no `0161`/i);
+    // 0161 now EXISTS in the repository (DRAFT PR #487) but has never been
+    // applied. The ledger must say exactly that — the old "no 0161 exists"
+    // claim became false the moment the file landed on a branch.
+    expect(
+      MIGRATION_LEDGER,
+      "the ledger must describe 0161 as present-but-unapplied, not as non-existent",
+    ).toMatch(/`0161`[\s\S]{0,160}(?:NOT APPLIED|NEVER been applied)/i);
+    expect(MIGRATION_LEDGER).not.toMatch(/no `0161` exists|There is no `0161`/i);
   });
 
   it("the UI/source cleanup is described as SHIPPED, now that #482 has merged and deployed", () => {

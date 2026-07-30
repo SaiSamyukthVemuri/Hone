@@ -90,6 +90,7 @@ export default async function ServicesSettingsPage() {
                 <ServiceOrderList
                   rows={orderedServices.map((s) => ({
                     id: s.id,
+                    name: s.name,
                     active: s.active,
                     node: (
                       <ServiceAccordionItem
@@ -102,7 +103,6 @@ export default async function ServicesSettingsPage() {
                             ? ((s as { calendar_color?: string | null }).calendar_color ?? null)
                             : null
                         }
-                        position={s.active ? visibleIds.indexOf(s.id) + 1 : null}
                         toggle={<ToggleActiveButton id={s.id} active={s.active} />}
                       >
                         <ServiceEditForm

@@ -80,7 +80,7 @@ Refresh this roadmap:
 
 - Production branch: `claude/build-hone-saas-hOex7`.
 - Production source baseline at adoption: `325b124724760615fd2e55242a85f94cbea0d17c`.
-- Repository/hosted migration max: **`0160`** (both), as of 2026-07-30. `0158` is deliberately skipped and will never be applied; `0159` (signed-record retirement) and `0160` (immutable clinical lineage) are both applied and verified. There is no `0161`. *(This line previously read "expected: `0133`; no `0134`", then `0157`, then `0159` — all superseded.)*
+- Hosted migration max: **`0160`**; repository max: **`0161`** (unapplied), as of 2026-07-30. `0158` is deliberately skipped and will never be applied; `0159` (signed-record retirement) and `0160` (immutable clinical lineage) are both applied and verified. `0161` (service order RPC + widened calendar-colour CHECK) exists in the REPOSITORY on DRAFT PR #487 but is **NOT APPLIED**: hosted max stays `0160`, repo max is `0161`, and applying it needs separate migration authorization. *(This line previously read "expected: `0133`; no `0134`", then `0157`, then `0159` — all superseded.)*
 - Marketing PR #439 is open, unmerged, and has progressed to a broad public-site implementation. It must finish exact-head review, resolve review threads, pass all gates, merge, deploy, and receive live verification before the marketing overhaul is considered complete.
 - Once PR #439 ships, freeze major marketing redesign. Future marketing work should be correctness, support content, measured SEO growth, and product-proof updates rather than repeated visual rebuilds.
 
