@@ -133,7 +133,10 @@ deployed backend — immutable snapshots, version lineage, `clinical_audit_event
 and the narrow session-scoped correction permit — **is preserved and must not be weakened**, but
 **not** so finalization can be enabled later: it is preserved because it keeps the legacy
 evidence immutable, keeps the retirement fail-closed, and forbids `authenticated` `TRUNCATE` and
-arbitrary mutation of clinical tables. Ordinary operational audit trails
+any write to the three signed-record ledgers. It does NOT stop ordinary direct DML:
+`authenticated` still holds row INSERT/UPDATE/DELETE on `sessions`, `session_blocks`,
+`electrolysis_entries`, `laser_entries` and `treatment_images`, restricted only by RLS to
+same-studio rows — see known-limitations L18. Ordinary operational audit trails
 (`session_audit`, `record_keeping_audit_events`, `session_copy_operations`,
 `admin_action_events`, `client_portal_access_events`), actor attribution, timestamps,
 treatment-history integrity, whole-session-copy provenance and tenant isolation are all

@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { Client } from "pg";
 import {
   adminQuery,
   asRole,
   asUser,
   closePool,
+  resolveLocalDbUrl,
   seedLegacyRecordStatus,
   seedSession,
   seedStudio,
@@ -55,6 +57,16 @@ const RETIRED_RPCS = [
   "public.amend_finalized_session(uuid,uuid,text,text,text,jsonb)",
   "public.amend_finalized_session_with_image(uuid,uuid,text,text,text,text,bigint,text,uuid,text)",
   "public.build_session_snapshot(uuid)",
+  // The five correction APPLIERS. 0120 revoked them from anon/authenticated/public
+  // but never from service_role, so Supabase's default grant left them live — and
+  // they are the only leftover of the retired system that still held WRITE
+  // authority. Each is tenant-unaware by design (no is_studio_member check),
+  // because correct_finalized_session validated authority before calling it.
+  "public._apply_session_correction(uuid,jsonb)",
+  "public._apply_block_correction(uuid,jsonb)",
+  "public._apply_electrolysis_correction(uuid,jsonb)",
+  "public._apply_laser_correction(uuid,jsonb)",
+  "public._apply_image_correction(uuid,jsonb)",
 ] as const;
 
 const LEDGERS = [
@@ -246,6 +258,46 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
       "update public.sessions set finalized_at = now(), finalized_by = $2, current_snapshot_id = $3 where id = $1",
       [sessionId, a.practitionerId, snapshotId],
     ).catch(() => undefined);
+  });
+
+  it("the 0120 correction GUC no longer unlocks it (permit removed by 0159)", async () => {
+    // REPRODUCED before the fix: set_config on a custom placeholder is available to
+    // ANY role, so once the correction RPCs were EXECUTE-revoked the 0120 permit
+    // stopped being a guarded escape and became an open one — plain `authenticated`
+    // could rewrite the frozen record. 0159 removes the permit branches.
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await c.query("select set_config('hone.correction_session_id', $1, true)", [sessionId]);
+      await expect(
+        c.query("update public.session_blocks set energy_level = 99 where id=$1", [blockId]),
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+    // …and the permit is gone from the guard body, not merely ineffective here.
+    const def = await adminQuery(
+      "select pg_get_functiondef('public.guard_finalized_clinical_write'::regproc) as d",
+    );
+    expect(def.rows[0].d).not.toMatch(/hone\.correction_session_id/);
+  });
+
+  it("all three retired ledgers are immutable to TRUNCATE as well", async () => {
+    // "Fully immutable legacy evidence" was not true for TRUNCATE: it is
+    // statement-level, fires no row trigger and consults no policy.
+    for (const t of LEDGERS) {
+      for (const role of ["authenticated", "service_role"] as const) {
+        await expect(
+          asRole(role, (q) => q(`truncate public.${t}`)),
+        ).rejects.toMatchObject({ code: "42501" });
+      }
+    }
   });
 
   it("a studio member can still READ the legacy snapshot", async () => {

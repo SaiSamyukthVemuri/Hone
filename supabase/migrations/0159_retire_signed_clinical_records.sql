@@ -106,6 +106,16 @@
 -- non-draft sessions. If any of those is no longer true, stop and re-assess: the
 -- guards are written to be inert against the state above, not against an arbitrary one.
 --
+-- LOCK-ORDER WARNING, carried forward from the superseded PR #481's review so it is
+-- not rediscovered the hard way. Do NOT take a session-level `FOR UPDATE` inside a
+-- charting path. soft_delete_session_area (0123) locks a session_blocks row FIRST
+-- and only then inserts its session_audit row, which needs FOR KEY SHARE on the
+-- parent session — so a charting RPC that holds `FOR UPDATE` on the session while
+-- waiting for that block row deadlocks against it (SQLSTATE 40P01, reproduced).
+-- If a future change genuinely needs to serialize on the encounter, use
+-- `FOR NO KEY UPDATE`: it still conflicts with FOR UPDATE but is compatible with the
+-- FOR KEY SHARE a child insert takes.
+--
 -- MIXED-VERSION SAFETY.
 --   old app + new DB: the deployed app's Finalize and Correction controls stop
 --     working — that is the intent — and every error is a clean, stable server
@@ -174,10 +184,35 @@ revoke all on function public.amend_finalized_session_with_image(
 
 -- The snapshot BUILDER is read-only and harmless, but it exists only to serve the
 -- retired capability and to let an operator re-derive the legacy hash. Browser
--- roles were already revoked by 0119; take service_role too. The table owner
--- retains it, which is what the read-only integrity audit script uses.
+-- roles were already revoked by 0119; take service_role too. The table owner keeps
+-- it so an operator can still run the one-off read-only hash re-derivation embedded
+-- in the verification block at the bottom of this file.
 revoke all on function public.build_session_snapshot(uuid)
   from public, anon, authenticated, service_role;
+
+-- The five correction APPLIERS. 0120 revoked these from anon/authenticated/public
+-- but never from service_role, so Supabase's default grant left them live. They are
+-- the only leftover of the retired system that still holds WRITE authority, and they
+-- are unscoped by design: each performs e.g. `update public.sessions ... where id =
+-- p_session_id` with NO is_studio_member check and NO studio/client validation,
+-- because they were only ever meant to be called from inside
+-- correct_finalized_session, which now cannot run. Leaving five purpose-dead,
+-- tenant-unaware clinical mutators in the schema invites a future reader to reuse
+-- them as if they were sanctioned commands — exactly the "no bypassing application
+-- commands" posture this retirement asserts. Revoke them with the rest.
+revoke all on function public._apply_session_correction(uuid, jsonb)
+  from public, anon, authenticated, service_role;
+revoke all on function public._apply_block_correction(uuid, jsonb)
+  from public, anon, authenticated, service_role;
+revoke all on function public._apply_electrolysis_correction(uuid, jsonb)
+  from public, anon, authenticated, service_role;
+revoke all on function public._apply_laser_correction(uuid, jsonb)
+  from public, anon, authenticated, service_role;
+revoke all on function public._apply_image_correction(uuid, jsonb)
+  from public, anon, authenticated, service_role;
+
+comment on function public._apply_session_correction(uuid, jsonb) is
+  'RETIRED (0159): applier for the retired signed-correction path. EXECUTE revoked from every runtime role. Deliberately NOT a sanctioned command — it is tenant-unaware by design because correct_finalized_session validated authority before calling it, and that RPC can no longer run.';
 
 comment on function public.finalize_session(uuid, integer) is
   'RETIRED (0159): signed clinical records are not a Hone product capability. EXECUTE is revoked from every runtime role and public.studios.clinical_finalization_enabled is pinned false, so this cannot run. Retained unchanged so migration 0119 stays replayable.';
@@ -287,6 +322,145 @@ comment on table public.clinical_record_amendments is
   'RETIRED (0159), legacy evidence only (currently zero rows). Signed-record amendments are not a Hone product capability. Fully immutable — see clinical_record_snapshots.';
 comment on table public.clinical_audit_events is
   'RETIRED (0159), legacy evidence only (currently zero rows). This ledger recorded signed-record corrections/amendments ONLY; it is not the ordinary operational audit trail. session_audit, record_keeping_audit_events, session_copy_operations, admin_action_events and client_portal_access_events are all ACTIVE and untouched.';
+
+-- ===========================================================================
+-- 4b. Close the 0120 correction PERMIT — its only callers are now dead.
+-- ===========================================================================
+-- 0120 gave guard_finalized_clinical_write a narrow escape: a write to a frozen
+-- row is allowed when the transaction-local GUC hone.correction_session_id equals
+-- that row's session id. It was safe THEN because the only thing that could set it
+-- was a SECURITY DEFINER correction RPC that had already validated authority.
+-- Those RPCs are now EXECUTE-revoked from every runtime role — but the GUC itself
+-- was never privileged. set_config() on a custom placeholder is available to any
+-- role, so what used to be a guarded escape is now an OPEN one:
+--
+--   set_config('hone.correction_session_id', '<legacy session id>', true);
+--   update public.session_blocks set energy_level = 99 where id = '<frozen block>';
+--
+-- REPRODUCED as plain `authenticated` with a real studio-member JWT: without the GUC
+-- the write is refused (23514); with it, the frozen legacy record is rewritten.
+-- Removing the permit is therefore not a behaviour change for anything that still
+-- works — it deletes a door whose only legitimate key was destroyed above.
+--
+-- The function is recreated verbatim from 0120 EXCEPT that the three permit branches
+-- and the v_correcting variable are gone. Every other branch — the sessions freeze,
+-- the treatment_images branch, the child-table branches, the delete protections — is
+-- byte-for-byte the 0120 logic, so the legacy artifact keeps exactly the protection
+-- it has today, minus the bypass.
+create or replace function public.guard_finalized_clinical_write()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_status text;
+  v_new_status text;
+  v_msg constant text :=
+    'This clinical record is archived and read-only. Signed/finalized records are retired (0159); ordinary sessions stay editable.';
+begin
+  -- --- sessions ---------------------------------------------------------------
+  if tg_table_name = 'sessions' then
+    if tg_op = 'DELETE' then
+      if old.record_status in ('finalized', 'void')
+         or exists (select 1 from public.clinical_record_snapshots cs where cs.session_id = old.id) then
+        raise exception '%', v_msg using errcode = 'check_violation';
+      end if;
+      return old;
+    end if;
+    if old.record_status in ('finalized', 'void') then
+      if new.studio_id is distinct from old.studio_id
+         or new.client_id is distinct from old.client_id
+         or new.practitioner_id is distinct from old.practitioner_id
+         or new.performed_by_practitioner_id is distinct from old.performed_by_practitioner_id
+         or new.modality is distinct from old.modality
+         or new.started_at is distinct from old.started_at
+         or new.ended_at is distinct from old.ended_at
+         or new.started_at_original is distinct from old.started_at_original
+         or new.session_notes is distinct from old.session_notes
+         or new.next_session_note is distinct from old.next_session_note
+         or new.aftercare_and_risks_explained_at is distinct from old.aftercare_and_risks_explained_at
+         or new.aftercare_and_risks_explained_by is distinct from old.aftercare_and_risks_explained_by
+         or new.created_at is distinct from old.created_at
+         or new.deleted_at is distinct from old.deleted_at
+         or new.deleted_by is distinct from old.deleted_by
+         or new.delete_reason is distinct from old.delete_reason
+         or new.record_status is distinct from old.record_status
+         or new.finalized_at is distinct from old.finalized_at
+         or new.finalized_by is distinct from old.finalized_by
+         or new.record_version is distinct from old.record_version
+         or new.current_snapshot_id is distinct from old.current_snapshot_id
+         or new.record_origin is distinct from old.record_origin
+         or new.legacy_classification is distinct from old.legacy_classification then
+        raise exception '%', v_msg using errcode = 'check_violation';
+      end if;
+    end if;
+    return new;
+  end if;
+
+  -- --- treatment_images (nullable session_id) ---------------------------------
+  if tg_table_name = 'treatment_images' then
+    if tg_op = 'DELETE' then
+      if old.session_id is not null then
+        select s.record_status into v_status from public.sessions s where s.id = old.session_id;
+        if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+      end if;
+      return old;
+    elsif tg_op = 'INSERT' then
+      if new.session_id is not null then
+        select s.record_status into v_status from public.sessions s where s.id = new.session_id;
+        if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+      end if;
+      return new;
+    else
+      if old.session_id is not null then
+        select s.record_status into v_status from public.sessions s where s.id = old.session_id;
+        if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+      end if;
+      if new.session_id is not null and new.session_id is distinct from old.session_id then
+        select s.record_status into v_new_status from public.sessions s where s.id = new.session_id;
+        if v_new_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+      end if;
+      return new;
+    end if;
+  end if;
+
+  -- --- child clinical tables --------------------------------------------------
+  if tg_op = 'DELETE' then
+    select s.record_status into v_status from public.sessions s where s.id = old.session_id;
+    if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+    return old;
+  elsif tg_op = 'INSERT' then
+    select s.record_status into v_status from public.sessions s where s.id = new.session_id;
+    if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+    return new;
+  else
+    select s.record_status into v_status from public.sessions s where s.id = old.session_id;
+    if v_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+    if new.session_id is distinct from old.session_id then
+      select s.record_status into v_new_status from public.sessions s where s.id = new.session_id;
+      if v_new_status in ('finalized', 'void') then raise exception '%', v_msg using errcode = 'check_violation'; end if;
+    end if;
+    return new;
+  end if;
+end;
+$$;
+
+comment on function public.guard_finalized_clinical_write() is
+  '0119/0120, amended by 0159: freezes the ONE archived (legacy finalized) clinical record for every role. The 0120 hone.correction_session_id permit is REMOVED — set_config on a custom placeholder is available to any role, so once the correction RPCs were EXECUTE-revoked the permit stopped being a guarded escape and became an open one (reproduced as plain authenticated). Every other branch is the 0120 logic unchanged.';
+
+-- ===========================================================================
+-- 4c. The three retired ledgers really are immutable, TRUNCATE included.
+-- ===========================================================================
+-- The table comments below call these "fully immutable legacy evidence". That was
+-- not true for TRUNCATE: it is statement-level, fires no row trigger and consults
+-- no policy, and service_role could empty two of the three. Make the claim true.
+revoke truncate, references, trigger on public.clinical_record_snapshots
+  from public, anon, authenticated, service_role;
+revoke truncate, references, trigger on public.clinical_record_amendments
+  from public, anon, authenticated, service_role;
+revoke truncate, references, trigger on public.clinical_audit_events
+  from public, anon, authenticated, service_role;
 
 -- ===========================================================================
 -- 5. Privilege hardening that is safe to take right now.

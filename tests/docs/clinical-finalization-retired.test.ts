@@ -167,7 +167,7 @@ function blocks(doc: string): string[] {
  * backup — those are unrelated capabilities that must keep their wording.
  */
 const SIGNED_RECORD_MENTION =
-  /(clinical[ -]record|clinical finaliz\w*|finaliz\w*[ -]clinical|signed[ -](?:clinical|record|snapshot|correction|structured)|finalized (?:record|session|clinical|artifact)|finalization (?:boundary|flag|controls?)|finalize_session|correct_finalized_session|amend_finalized_session|build_session_snapshot|clinical_record_snapshots|clinical_record_amendments|clinical_audit_events|clinical_finalization_enabled|clinical_corrections_enabled|snapshot v2|SEC-09)/i;
+  /(clinical[ -]record|clinical finaliz\w*|finaliz\w*[ -]clinical|signed[ -](?:clinical|snapshot|structured)|signed[ -]record(?:s)?[ -](?:correction|amendment|workflow|ledger|system|snapshot|lineage|capability|finaliz\w*)|finalized (?:record|session|clinical|artifact)|finalization (?:boundary|flag|controls?)|finalize_session|correct_finalized_session|amend_finalized_session|build_session_snapshot|clinical_record_snapshots|clinical_record_amendments|clinical_audit_events|clinical_finalization_enabled|clinical_corrections_enabled|snapshot v2|SEC-09)/i;
 
 /**
  * Framings that would turn the retirement back into a plan. The optional third
@@ -205,11 +205,27 @@ const ATTACHED_NEGATOR =
   /(?:\bnot\b|\bno\b|\bnone\b|\bnever\b|\bneither\b|\bnor\b|\bcannot\b|\bcan't\b|\bimpossible\b|\bno longer\b|\bpreviously\b|\bformerly\b|\bsupersede[ds]?\b|\bsuperseding\b|\bstale\b|\brather than\b|\binstead of\b|~~)[^.;!?]{0,28}$/i;
 
 /** …and the same idea for a table-row LABEL, where the answer follows the label. */
-const TRAILING_NEGATOR = /^[^.;!?]{0,44}?(?:\bnone\b|\bn\/a\b|\bnot\b|\bnever\b|\bno\b|RETIRED)/i;
+// The negator must ATTACH to the framing word ("parked: no", "dormant — n/a",
+// "deferred? Never"), not merely appear somewhere in the next 44 characters. The
+// looser form excused ordinary re-parking prose — "parked, not abandoned", "dormant
+// — no studio has the flag on today" — which is exactly the drift this guard exists
+// to stop. `\bno\b` is dropped entirely: it matches far too much English.
+// The negator must ATTACH to the framing word, and it must be a negator that can
+// only be negating THAT word. Deliberately excluded: a bare `not`/`never`/`no`
+// following the framing, because "parked, not abandoned" and "dormant — no studio
+// has the flag on today" negate a DIFFERENT word while leaving the framing intact —
+// which is exactly the drift this guard exists to stop. `RETIRED`, `no longer`,
+// `none` and `n/a` cannot be read any other way. A leading negator ("not parked") is
+// handled separately by ATTACHED_NEGATOR, and a whole-block repudiation
+// ("rewritten from parked to RETIRED") by BLOCK_REPUDIATION.
+const TRAILING_NEGATOR =
+  // `|` is allowed because a markdown table cell boundary sits between the row
+  // label and its answer: `| **Next gate** | None — RETIRED |`.
+  /^[\s*_~|]*(?:[-—:,(]|->|→|to)?[\s*_~|]*(?:is|are|was|were|it is|they are)?[\s*_~|]*(?:no longer|none\b|n\/a\b|RETIRED)/i;
 
 /** A block may also repudiate the framing wholesale, and then quote it freely. */
 const BLOCK_REPUDIATION =
-  /(?:it is none of those|none of those apply|not any of those|no longer applies|\bsupersede[ds]\b|for the record[,:]|original instruction|struck through)/i;
+  /(?:it is none of those|none of those apply|not any of those|no longer applies|\bsupersede[ds]\b|for the record[,:]|original instruction|struck through|rewritten from|previously (?:described|framed|recorded) as|amended \d{4}-\d{2}-\d{2})/i;
 
 type Violation = { file: string; framing: string; match: string; block: string };
 

@@ -47,6 +47,13 @@ const RETIRED_RPCS = [
   "amend_finalized_session",
   "amend_finalized_session_with_image",
   "build_session_snapshot",
+  // The five correction appliers — the only leftover that still held WRITE
+  // authority (0120 never revoked service_role from them).
+  "_apply_session_correction",
+  "_apply_block_correction",
+  "_apply_electrolysis_correction",
+  "_apply_laser_correction",
+  "_apply_image_correction",
 ] as const;
 
 const LEDGERS = [
@@ -325,6 +332,20 @@ describe("0159 — ZERO data operations, nothing destructive", () => {
     ]) {
       expect(CODE, keep).not.toMatch(new RegExp(`\\b(drop|revoke|alter)[^;]*\\b${keep}\\b`, "i"));
     }
+  });
+
+  it("carries the lock-order warning forward from the superseded PR #481 review", () => {
+    // The reproduced 40P01 against soft_delete_session_area (0123) must survive the
+    // supersession, somewhere a future lock author will actually look.
+    expect(SQL).toMatch(/40P01/);
+    expect(SQL).toMatch(/soft_delete_session_area/);
+    expect(SQL).toMatch(/FOR NO KEY UPDATE/);
+  });
+
+  it("does not point at artifacts that do not exist", () => {
+    // An earlier draft justified keeping owner EXECUTE on build_session_snapshot by
+    // naming an "integrity audit script" that was deliberately dropped.
+    expect(SQL).not.toMatch(/integrity audit script/i);
   });
 
   it("states the retirement plainly and points at the decision record", () => {
