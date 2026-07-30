@@ -179,11 +179,37 @@
       "path": "docs/audits/2026-07-30/INDEPENDENT_REVIEW_FINDINGS.md",
       "role": "PASS_1_SELF_REVIEW",
       "status": "INGESTED",
-      "bytes": 74563,
-      "sha256": "f2b6675f437cc3171cf8267f3bef6732d9310a48ba8de082c7992ac426b9b9a6",
+      "bytes": 74435,
+      "sha256": "4432669eba953f6bd86f8614f5bb329d0fafb4601f46b24a0c2f8f01fb5ba677",
       "mtime_utc": null,
-      "note": "33 defects found in pass 1; all dispositioned in REVIEW_CLOSURE_REGISTER.md."
+      "note": "Regenerated at the current head. This file's Status column is generated from REVIEW_CLOSURE_REGISTER.md, so its hash changes whenever a review item is dispositioned."
     }
   ],
-  "pass": "corrected pass 3 (2026-07-30) — pass 2 was independently re-reviewed at head 7566a9c8, which raised 25 further defects including 12 pass-1 items whose recorded closure was false; all 25 are corrected and dispositioned in REVIEW_CLOSURE_REGISTER.md"
+  "pass": "corrected pass 3 (2026-07-30) — pass 2 was independently re-reviewed at head 7566a9c8, which raised 25 further defects including 12 pass-1 items whose recorded closure was false; all 25 are corrected and dispositioned in REVIEW_CLOSURE_REGISTER.md",
+  "preserved_source_content_digests": {
+    "note": "SHA-256 over the source_* cells of MASTER_FINDINGS_REGISTER.csv, grouped by source register. Emptying, truncating or rewriting any preserved source cell changes the digest and fails tests/audits/findings-register-consistency.test.ts. Two of the three source registers live outside the repository, so this is how their content is pinned inside it.",
+    "algorithm": "For each row: source_id, then every column whose name begins with source_, joined by U+0001. Rows sorted, joined by U+0002, hashed with sha256.",
+    "digests": {
+      "july_27": {
+        "rows": 48,
+        "sha256": "cf59de05b796e89c46b9d77b99d29927c02ae301070118cbd27938c780a4b80f"
+      },
+      "july_18": {
+        "rows": 34,
+        "sha256": "dcebc10d01e1a8fc1464b05453e1af83152a570490615ba98e8d9186ce17cc71"
+      },
+      "july_10": {
+        "rows": 40,
+        "sha256": "272a13c5d9afbf02fea246e702bc990c42eafd32d5f757dffa8e078e03b37005"
+      },
+      "chloe": {
+        "rows": 5,
+        "sha256": "068d9c5e7093db847b35df029de514cc9b4890098e1df0f4505a63957296ee19"
+      },
+      "discovered": {
+        "rows": 7,
+        "sha256": "4eaa707645831f590d942ad7ec5cc8ae45cb9dea49c21b93a7fda04ba397b573"
+      }
+    }
+  }
 }

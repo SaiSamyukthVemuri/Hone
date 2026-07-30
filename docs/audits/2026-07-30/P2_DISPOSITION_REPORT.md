@@ -1,6 +1,6 @@
 # P2 and P3 disposition — exact production `c64366c9ba4130283932bbe21e32bf2ed62c4975`
 
-## P2 (20)
+## P2 (18)
 
 | ID | Title | Status | Gate | Train | PR | Closable in platform phase? |
 |---|---|---|---|---|---|---|
@@ -9,7 +9,6 @@
 | `F-SCHED-002` | Public booking (and public reschedule) bypass the capacity booking-pause gate that internal booking enforces — inert today because capacity is OFF ev… | OPEN | BEFORE_THREE_STUDIOS | T9-public | PR-17 | yes |
 | `F-SCHED-003` | Public booking is not one transaction: it inserts the client row before the appointment, so a lost race leaves an orphan client; policy checks (hours… | OPEN | BEFORE_TEN_STUDIOS | T9-public | PR-17 | yes |
 | `F-SCHED-006` | Slot generation ignores errors on the blockout and reservation reads and fails OPEN (offers conflicted slots with no alert); the capacity-ON availabi… | PARTIALLY_FIXED | BEFORE_TEN_STUDIOS | T9-public | PR-18 | yes |
-| `F-RET-001` | Published 30-day / 90-day retention and deletion commitments have no implementing code: no purge job, no hard-delete path, no legal hold, no cross-sy… | OPEN | WILLOW_NOW | T0-copy | PR-02, PR-21 | yes |
 | `F-STORAGE-001` | Treatment-image upload can orphan private storage objects with no reconciler, and archive never deletes bytes at all | OPEN | BEFORE_TEN_STUDIOS | T10-data | PR-21 | yes |
 | `F-OFF-001` | No offboarding, studio-deletion or provider-disconnection workflow exists in any form | OPEN | BEFORE_TEN_STUDIOS | T10-data | PR-23 | yes |
 | `F-SCALE-001` | Studio export loads every row, builds the whole ZIP in server memory and returns it base64-encoded through a server action | OPEN | BEFORE_TEN_STUDIOS | T10-data | PR-22 | yes |
@@ -17,9 +16,8 @@
 | `F-OPS-004` | No backup, restore-drill, RPO/RTO, on-call or incident-command evidence exists for a production system already holding real clinical data | OPEN | WILLOW_NOW | T11-ops | PR-26 | yes |
 | `F-TEST-003` | Mobile lane is Chromium emulating an iPhone, not WebKit/iOS Safari, and no accessibility or physical-device acceptance evidence exists | OPEN | WILLOW_NOW | T11-ops | PR-25 | yes |
 | `F-PUBLIC-002` | Public booking reuses an existing client from an unverified email, permitting nuisance bookings attributed to a real client and an existing-client en… | OPEN | BEFORE_PUBLIC_SELF_SERVICE | T9-public | PR-17 | yes |
-| `L18` | authenticated holds direct row DML on five clinical tables | OPEN | BEFORE_TEN_STUDIOS | T7-clinical-dml | PR-10, PR-11 | yes |
 | `L19a` | Broad default table privileges: TRUNCATE granted to anon and authenticated on 64 of 86 tables | OPEN | BEFORE_THREE_STUDIOS | T1-privilege | PR-01 | yes |
-| `L19b` | sessions.appointment_id and treatment_plan_id are same-studio but not same-client validated | OPEN | BEFORE_THREE_STUDIOS | T1-privilege | PR-12 | yes |
+| `L19b` | sessions.appointment_id and treatment_plan_id are same-studio but not same-client validated | OPEN | BEFORE_THREE_STUDIOS | T6-identity | PR-09 | yes |
 | `CHLOE-002` | Checkout amount does not reliably default from the booked service, and the internal note is believed mandatory | EVIDENCE_LIMITATION | WILLOW_NOW | T3-charting | PR-13 | yes |
 | `CHLOE-003` | Service move up/down reordering is unreliable and a service cannot be brought to the top | OPEN | BEFORE_STUDIO_2 | T3-charting | PR-14 | yes |
 | `CHLOE-004` | Dashboard truncates the remember-note and the latest-settings summary | OPEN | WILLOW_NOW | T3-charting | PR-15 | yes |
@@ -56,6 +54,6 @@
 | `F-ONB-002` | Onboarding v2 wizard's requiredComplete covers only service + availability + public bookability; the wizard is flag-gated OFF and its copy claims boo… | OPEN | BEFORE_TEN_STUDIOS | NONE |
 | `F-PROV-001` | Repository provenance gap from the ZIP-based audit - resolved for this reconciliation by reading a git worktree pinned to the production SHA | NOT_A_LAUNCH_REQUIREMENT | NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION | NONE |
 | `F-PUBLIC-001` | Public booking is non-transactional: a client INSERT (and an existing-client SMS-consent UPDATE) commit before the appointment INSERT, so a failed bo… | OPEN | BEFORE_PUBLIC_SELF_SERVICE | T9-public |
-| `F-COPY-001` | Whole-session-copy provenance ledger cascades away: both source and target session FKs are ON DELETE CASCADE | OPEN | BEFORE_TEN_STUDIOS | T5-intake |
+| `F-COPY-001` | Whole-session-copy provenance ledger cascades away: both source and target session FKs are ON DELETE CASCADE | OPEN | BEFORE_TEN_STUDIOS | T10-data |
 | `L20` | service_role retains TRIGGER on the guarded clinical tables; owner can set session_replication_role | OPEN | BEFORE_THREE_STUDIOS | T1-privilege |
 | `L21` | Same-transaction session delete with a block-attached treatment image raises 23503 | OPEN | POST_GA | NONE |

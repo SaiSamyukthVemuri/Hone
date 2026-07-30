@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 // Consistency guards for the 2026-07-30 exact-production findings reconciliation.
@@ -434,6 +435,20 @@ describe("findings register — trains, PRs and gates", () => {
     expect(bad).toEqual([]);
   });
 
+  it("a closed finding carries no forward gate and no schedule", () => {
+    // NOT_A_LAUNCH_REQUIREMENT is excluded deliberately: it means "not required for the
+    // current phase", and its gate records the phase at which it WOULD become required.
+    // The statuses below are terminal — a forward gate on any of them is a contradiction.
+    const CLOSED = ["RETIRED", "SUPERSEDED_BY_PRODUCT_DECISION",
+                    "PRODUCTION_VERIFIED", "DEPLOYED_NOT_VERIFIED", "FALSE_POSITIVE"];
+    const FORWARD = ["WILLOW_NOW", "BEFORE_STUDIO_2", "BEFORE_THREE_STUDIOS", "BEFORE_TEN_STUDIOS",
+                     "BEFORE_PUBLIC_SELF_SERVICE", "BEFORE_50_STUDIOS", "POST_GA"];
+    const bad = REG.findings
+      .filter((f: any) => CLOSED.includes(f.current_status))
+      .filter((f: any) => FORWARD.includes(f.launch_gate) || f.train !== "NONE" || (f.required_prs ?? []).length);
+    expect(bad.map((f: any) => `${f.source_ids[0]} ${f.current_status}/${f.launch_gate}/${f.train}`)).toEqual([]);
+  });
+
   it("status and launch gate are compatible", () => {
     const CLOSED = ["PRODUCTION_VERIFIED", "RETIRED", "SUPERSEDED_BY_PRODUCT_DECISION", "NOT_A_LAUNCH_REQUIREMENT", "FALSE_POSITIVE"];
     const bad = REG.findings.filter((f: any) => CLOSED.includes(f.current_status) && f.train !== "NONE");
@@ -478,7 +493,10 @@ describe("findings register — pass-2 corrections hold", () => {
     expect(REG.willow_practitioner_fact).toMatch(/1 ACTIVE owner/);
     expect(REG.willow_practitioner_fact).toMatch(/[Aa]ctive non-owner practitioners: 0/);
 
-    const STALE = /could not (determine|establish)[^.]{0,120}practitioner/i;
+    // Pass 3 mutation-proved the first version too narrow: it matched only the active
+    // voice, so "I also have no evidence of the number of non-owner practitioners"
+    // passed. The count is hosted-verified; no phrasing may still call it open.
+    const STALE = /(could not (be )?(determine|determined|establish|established)|no evidence of|cannot say how many|not established|undetermined|unknown)[^.]{0,140}(practitioner|non-owner)/i;
     const offenders: string[] = [];
     for (const f of REG.findings) {
       for (const [k, v] of Object.entries(f)) {
@@ -497,7 +515,9 @@ describe("findings register — pass-2 corrections hold", () => {
   it("the payment gate's escalation rule is qualified by ACTIVE, not merely by existence", () => {
     const pay = REG.findings.find((f: any) => f.source_ids[0] === "F-PAY-001");
     const text = `${pay.missing_evidence} ${pay.rationale} ${pay.Willow_risk}`;
-    expect(pay.launch_gate).toBe("BEFORE_STUDIO_2");
+    // Pass 3: the gate is WILLOW_NOW because the AMOUNT half is live today regardless of
+    // practitioner count; only the AUTHORIZATION half is bounded to the owner.
+    expect(pay.launch_gate).toBe("WILLOW_NOW");
     expect(text).toMatch(/ACTIVE non-owner|active non-owner/);
     expect(text).not.toMatch(/if Willow already has an employee practitioner/i);
   });
@@ -598,10 +618,20 @@ describe("findings register — pass-2 review corrections hold", () => {
   });
 
   it("no finding still cites the Upstash configuration question that F-OPS-001 closed", () => {
-    const stale = REG.findings.filter((f: any) =>
-      /rate-limit env vars are actually configured/i.test(f.missing_evidence ?? ""),
-    );
-    expect(stale.map((f: any) => f.source_ids[0])).toEqual([]);
+    // Pass 3 mutation-proved the first version too narrow: it read missing_evidence
+    // only, with one literal phrase, so F-SCALE-002's exact_hosted_evidence kept the
+    // resolved question and F-SCHED-003's original phrasing would have passed.
+    const STALE = /(whether|if)[^.]{0,80}(upstash|rate.limit)[^.]{0,80}(configured|env vars|are set)/i;
+    const stale: string[] = [];
+    for (const f of REG.findings) {
+      if (f.source_ids[0] === "F-OPS-001") continue; // the finding that RESOLVES it
+      for (const [k, v] of Object.entries(f)) {
+        if (typeof v === "string" && STALE.test(v) && !/CLOSED by F-OPS-001|closed by F-OPS-001/.test(v)) {
+          stale.push(`${f.source_ids[0]}.${k}`);
+        }
+      }
+    }
+    expect(stale).toEqual([]);
   });
 
   it("F-CLIN-004 is P1 and the demotion basis no longer rests on reversibility alone", () => {
@@ -633,7 +663,7 @@ describe("findings register — pass-2 review corrections hold", () => {
     for (const f of codeOnly) expect(train).toContain(f.source_ids[0]);
   });
 
-  it("every review item in both passes has a final disposition and no artifact contradicts it", () => {
+  it("every review item in all three passes has a final disposition and no artifact contradicts it", () => {
     const closure = read("REVIEW_CLOSURE_REGISTER.md");
     // Both tables carry the disposition in a **bolded** cell; read that cell alone.
     // Scanning the whole row matches quoted prose (e.g. a correction that says an item
@@ -642,7 +672,7 @@ describe("findings register — pass-2 review corrections hold", () => {
       .split("\n")
       .filter((l) => /^\| \d+ \| P[123] \| \*\*/.test(l))
       .map((l) => ({ n: l.split("|")[1].trim(), disposition: l.split("|")[3].trim() }));
-    expect(rows.length, "33 pass-1 items + 25 pass-2 items").toBe(58);
+    expect(rows.length, "33 pass-1 + 25 pass-2 + 33 pass-3 items").toBe(91);
     const FINAL = /^\*\*(CORRECTED_AND_VERIFIED|REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED|DUPLICATE_OF_REVIEW_ITEM_\d+|REFUTED)\*\*$/;
     const notFinal = rows.filter((r) => !FINAL.test(r.disposition));
     expect(notFinal, "every review item needs a final disposition").toEqual([]);
@@ -658,5 +688,460 @@ describe("findings register — pass-2 review corrections hold", () => {
     const pass1 = read("INDEPENDENT_REVIEW_FINDINGS.md");
     const contradictions = pass1.split("\n").filter((l) => /^\| \d+ \|/.test(l) && /OPEN — deferred/.test(l));
     expect(contradictions, "INDEPENDENT_REVIEW_FINDINGS.md must not mark an item open that the closure register closes").toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pass-3 derivation guards.
+//
+// The pass-3 independent review mutation-proved that almost every human-readable
+// artifact was unguarded: the production SHA could be falsified in all nine
+// documents, three live P1s could be downgraded in the CSV, the gate matrix could
+// lose its blocker bullets, and whole report files could be replaced — all with
+// the suite fully green. The register is only trustworthy if the documents a
+// reader actually opens are DERIVED from it and checked here.
+// ---------------------------------------------------------------------------
+
+const MD_FILES = [
+  "RECONCILIATION_REPORT.md", "CURRENT_P0_P1_REPORT.md", "P2_DISPOSITION_REPORT.md",
+  "LAUNCH_GATE_MATRIX.md", "DEPENDENCY_REMEDIATION_PLAN.md", "FIRST_REMEDIATION_PR_TRAIN.md",
+  "DUPLICATE_AND_SUPERSESSION_MAP.md", "EVIDENCE_LIMITATIONS.md", "REVIEW_CLOSURE_REGISTER.md",
+  "INDEPENDENT_REVIEW_FINDINGS.md",
+];
+const OPEN_STATUSES = ["OPEN", "PARTIALLY_FIXED"];
+const openish = () => REG.findings.filter((f: any) => OPEN_STATUSES.includes(f.current_status));
+const findingBy = (id: string) => REG.findings.find((f: any) => f.source_ids[0] === id);
+const prMembers = (pr: string) => REG.findings.filter((f: any) => (f.required_prs ?? []).includes(pr));
+const canonRows = () => csvData.filter((r) => r[col("canonical_id")] !== "UNMAPPED_HISTORICAL" && r[col("canonical_id")] !== "");
+
+describe("findings register — every artifact carries the same baseline", () => {
+  // Mutation-proved gap: the SHA and migration max could be falsified in all nine
+  // Markdown files while the suite stayed green. Every document's H1 states the
+  // baseline as its provenance claim, so every document must be checked.
+  const ALLOWED_OTHER_SHAS = new Set([
+    "1468d051b5ed5bbcf2d8909b23bf4e9c1b6aeee0", // pass-1 review head, named as such
+    "7566a9c82f5ca8eb0ba86bac90b8c5ca2eac67ef", // pass-2 review head, named as such
+    "0e5357404eab654769dd9765ca46105f96050d7f", // pass-3 review head, named as such
+    "058b8bcbd1a80d6aa89c47f9357e1964328f220d", // the July-27 audit's own §1.2 ZIP comment
+  ]);
+
+  it("no artifact states a production SHA other than the audited one", () => {
+    const bad: string[] = [];
+    for (const f of MD_FILES) {
+      for (const m of read(f).matchAll(/\b[0-9a-f]{40}\b/g)) {
+        if (m[0] !== PROD_SHA && !ALLOWED_OTHER_SHAS.has(m[0])) bad.push(`${f}: ${m[0]}`);
+      }
+    }
+    expect(bad, "an artifact cites a 40-hex SHA that is neither the production baseline nor a named review head").toEqual([]);
+  });
+
+  it("no artifact states a hosted migration max other than the audited one", () => {
+    const bad: string[] = [];
+    for (const f of MD_FILES) {
+      for (const m of read(f).matchAll(/migration max[^0-9]{0,4}(\d{4})/gi)) {
+        if (m[1] !== REG.hosted_migration_max) bad.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(REG.hosted_migration_max).toBe("0160");
+  });
+
+  it("no artifact cites evidence by an absolute local filesystem path", () => {
+    const bad = MD_FILES.filter((f) => /\/Users\/[a-z]/i.test(read(f)));
+    expect(bad, "evidence must be citable by anyone with the repository").toEqual([]);
+    expect(JSON.stringify(REG)).not.toMatch(/\/Users\/[a-z]/i);
+  });
+});
+
+describe("findings register — the CSV and the JSON cannot disagree", () => {
+  // Mutation-proved gap: F-PAY-001, F-CLIN-004 and N-DOC-001 could each be set to
+  // P3 / PRODUCTION_VERIFIED / POST_GA / no-PR in the CSV — the file a non-engineer
+  // opens — while the JSON still held them as live P1s, and the suite stayed green.
+  it("every canonical CSV row matches the JSON field for field", () => {
+    const bad: string[] = [];
+    for (const r of canonRows()) {
+      const f = REG.findings.find((x: any) => x.canonical_id === r[col("canonical_id")]);
+      if (!f) { bad.push(`${r[col("source_id")]}: canonical_id not in the JSON`); continue; }
+      const expected: Record<string, string> = {
+        current_severity: f.current_severity,
+        current_status: f.current_status,
+        current_exposure: f.current_exposure,
+        production_reachable: String(Boolean(f.production_reachable)),
+        launch_gate: f.launch_gate,
+        train: f.train,
+        required_prs: (f.required_prs ?? []).join(" "),
+        depends_on: (f.depends_on ?? []).join(" "),
+        unscheduled_reason: f.unscheduled_reason ?? "",
+        last_verified_sha: PROD_SHA,
+      };
+      for (const [k, v] of Object.entries(expected)) {
+        if (r[col(k)] !== v) bad.push(`${r[col("source_id")]}.${k}: CSV="${r[col(k)]}" JSON="${v}"`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the preserved source content is pinned by digest, so a source cell cannot be emptied", () => {
+    // Two of the three source registers live outside the repository, so content
+    // fidelity cannot be re-diffed here. It is pinned instead.
+    const manifest = JSON.parse(read("AUDIT_INPUT_MANIFEST.json"));
+    const pinned = manifest.preserved_source_content_digests;
+    expect(pinned, "the manifest must pin the preserved source content").toBeDefined();
+
+    const SEP1 = String.fromCharCode(1), SEP2 = String.fromCharCode(2);
+    const srcCols = csvHeader.map((n, i) => ({ n, i })).filter((x) => x.n.startsWith("source_"));
+    const per: Record<string, string[]> = {};
+    for (const r of csvData) {
+      const reg = r[col("source_register")];
+      const key = reg.includes("2026-07-27") ? "july_27"
+                : reg.includes("2026-07-18") ? "july_18"
+                : reg.includes("2026-07-10") ? "july_10"
+                : reg.includes("Chloe") ? "chloe" : "discovered";
+      (per[key] ??= []).push(r[col("source_id")] + SEP1 + srcCols.map((c) => r[c.i]).join(SEP1));
+    }
+    for (const [key, lines] of Object.entries(per)) {
+      lines.sort();
+      const got = createHash("sha256").update(lines.join(SEP2)).digest("hex");
+      expect(pinned.digests[key], `no digest pinned for ${key}`).toBeDefined();
+      expect(lines.length, `${key} row count changed`).toBe(pinned.digests[key].rows);
+      expect(got, `${key} preserved source content changed — a source cell was emptied, truncated or rewritten`)
+        .toBe(pinned.digests[key].sha256);
+    }
+  });
+
+  it("the manifest's own checksums match the files they describe", () => {
+    const manifest = JSON.parse(read("AUDIT_INPUT_MANIFEST.json"));
+    const bad: string[] = [];
+    const walk = (o: any) => {
+      if (Array.isArray(o)) return o.forEach(walk);
+      if (!o || typeof o !== "object") return;
+      if (typeof o.path === "string" && o.path.includes("docs/audits/2026-07-30/") && typeof o.sha256 === "string") {
+        const name = o.path.split("/").pop()!;
+        const got = createHash("sha256").update(readFileSync(join(DIR, name))).digest("hex");
+        if (got !== o.sha256) bad.push(`${name}: manifest ${o.sha256.slice(0, 12)} vs actual ${got.slice(0, 12)}`);
+      }
+      Object.values(o).forEach(walk);
+    };
+    walk(manifest);
+    expect(bad, "the manifest must not drift from the artifacts it checksums").toEqual([]);
+  });
+});
+
+describe("findings register — the reports are derived, not written", () => {
+  it("LAUNCH_GATE_MATRIX.md's summary table matches the register row for row", () => {
+    const doc = read("LAUNCH_GATE_MATRIX.md");
+    const gates = [...new Set(REG.findings.map((f: any) => f.launch_gate))] as string[];
+    const bad: string[] = [];
+    for (const g of gates) {
+      const all = REG.findings.filter((f: any) => f.launch_gate === g);
+      const row = doc.split("\n").find((l) => l.startsWith(`| **${g}**`));
+      if (!row) { bad.push(`${g}: missing from the summary table`); continue; }
+      const cells = row.split("|").map((c) => c.trim());
+      const want = [
+        all.length,
+        all.filter((f: any) => OPEN_STATUSES.includes(f.current_status)).length,
+        all.filter((f: any) => f.current_status === "EVIDENCE_LIMITATION").length,
+        all.filter((f: any) => f.current_severity === "P1").length,
+        all.filter((f: any) => f.current_severity === "P2").length,
+        all.filter((f: any) => f.current_severity === "P3").length,
+      ];
+      const got = cells.slice(3, 9).map(Number);
+      if (JSON.stringify(got) !== JSON.stringify(want)) bad.push(`${g}: table ${got} vs register ${want}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("LAUNCH_GATE_MATRIX.md lists exactly the open blockers at each gate", () => {
+    const doc = read("LAUNCH_GATE_MATRIX.md");
+    const sections = doc.split(/^### /m).slice(1);
+    const bad: string[] = [];
+    for (const s of sections) {
+      const gate = s.split(" ")[0];
+      const listed = new Set([...s.matchAll(/^- `([A-Za-z0-9-]+)`/gm)].map((m) => m[1]));
+      // The section lists open blockers AND, in its own labelled subsection, any
+      // evidence-limited row at that gate — which the heading advertises and which
+      // must therefore be visible rather than merely counted.
+      const expected = new Set(
+        REG.findings
+          .filter((f: any) => f.launch_gate === gate &&
+            (OPEN_STATUSES.includes(f.current_status) || f.current_status === "EVIDENCE_LIMITATION"))
+          .map((f: any) => f.source_ids[0]),
+      );
+      for (const id of expected) if (!listed.has(id)) bad.push(`${gate}: ${id} belongs in this section but is not listed`);
+      for (const id of listed) if (!expected.has(id)) bad.push(`${gate}: ${id} is listed but does not belong there`);
+      // every "(N)" sub-count must equal the bullets that follow it
+      const groups = s.split(/\*\*(.+?) \((\d+)\)\*\*/).slice(1);
+      for (let i = 0; i + 2 < groups.length + 1; i += 3) {
+        const claimed = Number(groups[i + 1]);
+        const body = groups[i + 2] ?? "";
+        const n = (body.match(/^- `/gm) ?? []).length;
+        if (claimed !== n) bad.push(`${gate}/${groups[i]}: claims ${claimed}, lists ${n}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("CURRENT_P0_P1_REPORT.md lists every P1, and no others, with the right count", () => {
+    const doc = read("CURRENT_P0_P1_REPORT.md");
+    const p1 = REG.findings.filter((f: any) => f.current_severity === "P1");
+    expect(doc).toContain(`## Current P1 findings (${p1.length})`);
+    const table = doc.slice(doc.indexOf("## Current P1 findings"), doc.indexOf("### Evidence per P1"));
+    const listed = new Set([...table.matchAll(/^\| `([A-Za-z0-9-]+)`/gm)].map((m) => m[1]));
+    expect([...p1.map((f: any) => f.source_ids[0])].filter((id) => !listed.has(id)), "a P1 is missing from the table").toEqual([]);
+    expect([...listed].filter((id) => !p1.some((f: any) => f.source_ids[0] === id)), "the table lists a non-P1").toEqual([]);
+    // and each P1 gets its own evidence section with a stated Willow risk
+    for (const f of p1) {
+      expect(doc, `${f.source_ids[0]} needs an evidence section`).toContain(`#### \`${f.source_ids[0]}\``);
+      expect(f.Willow_risk, `${f.source_ids[0]} must state its Willow risk`).toBeTruthy();
+    }
+    expect(doc).not.toMatch(/\*\*Willow risk:\*\*\s*\n/);
+  });
+
+  it("P2_DISPOSITION_REPORT.md carries a row for every P2 and P3", () => {
+    const doc = read("P2_DISPOSITION_REPORT.md");
+    for (const sev of ["P2", "P3"]) {
+      const set = REG.findings.filter((f: any) => f.current_severity === sev);
+      expect(doc, `${sev} heading count`).toContain(`## ${sev} (${set.length})`);
+      for (const f of set) expect(doc, `${f.source_ids[0]} missing from the ${sev} table`).toContain(`| \`${f.source_ids[0]}\``);
+    }
+  });
+});
+
+describe("findings register — the PR train is derived from the register", () => {
+  const trainRows = () =>
+    read("FIRST_REMEDIATION_PR_TRAIN.md").split("\n").filter((l) => /^\| \*\*PR-\d+\*\*/.test(l))
+      .map((l) => { const c = l.split("|").map((x) => x.trim());
+        return { pr: c[1].replace(/\*/g, ""), findings: c[3], deps: c[5], migration: c[6], risk: c[7],
+                 verification: c[8], rollback: c[9], gate: c[10] }; });
+
+  it("pr_dependencies is derivable from canonical depends_on, not hand-maintained", () => {
+    // Mutation-proved gap: a fabricated PR edge could be added to pr_dependencies and
+    // to both documents consistently, and nothing tied any of it back to canonical data.
+    const capabilityPR = (id: string) => {
+      const f = findingBy(id);
+      if (!f) return null;
+      if (f.capability_pr) return f.capability_pr;
+      const prs = f.required_prs ?? [];
+      return prs.length ? prs[prs.length - 1] : null;
+    };
+    const derived: Record<string, Set<string>> = {};
+    for (const pr of Object.keys(REG.pr_dependencies)) derived[pr] = new Set();
+    for (const f of REG.findings) {
+      for (const pr of f.required_prs ?? []) {
+        const scoped = (f.depends_on_by_pr && f.depends_on_by_pr[pr]) ?? f.depends_on ?? [];
+        for (const d of scoped) { const c = capabilityPR(d); if (c && c !== pr) derived[pr]?.add(c); }
+      }
+    }
+    // The one hard edge that is a product fact rather than a data derivation, declared here.
+    derived["PR-11"].add("PR-10 deployed"); derived["PR-10"].add("PR-01"); derived["PR-11"].add("PR-01");
+    for (const [pr, deps] of Object.entries(REG.pr_dependencies) as [string, string[]][]) {
+      expect([...deps].sort(), `${pr} dependencies must be derivable from canonical data`).toEqual([...derived[pr]].sort());
+    }
+  });
+
+  it("each PR row names exactly the findings whose required_prs contain it", () => {
+    const bad: string[] = [];
+    for (const r of trainRows()) {
+      const listed = new Set([...r.findings.matchAll(/`([A-Za-z0-9-]+)`/g)].map((m) => m[1]));
+      const expected = new Set(prMembers(r.pr).map((f: any) => f.source_ids[0]));
+      for (const id of expected) if (!listed.has(id)) bad.push(`${r.pr}: ${id} is assigned to it but not listed`);
+      for (const id of listed) if (!expected.has(id)) bad.push(`${r.pr}: lists ${id}, which is not assigned to it`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("no PR claims a finding the register lists as unscheduled", () => {
+    const unscheduled = new Set(Object.keys(REG.unscheduled_findings));
+    const claimed = new Set(REG.findings.flatMap((f: any) => (f.required_prs ?? []).length ? [f.source_ids[0]] : []));
+    expect([...unscheduled].filter((id) => claimed.has(id)), "a finding cannot be both unscheduled and scheduled").toEqual([]);
+  });
+
+  it("each PR's gate effect equals the gates of the findings it carries", () => {
+    const bad: string[] = [];
+    for (const r of trainRows()) {
+      const members = prMembers(r.pr);
+      const gates = [...new Set(members.map((f: any) => f.launch_gate))];
+      const stated = [...r.gate.matchAll(/(?:Closes|Contributes to) ([A-Z_0-9]+)/g)].map((m) => m[1]);
+      if (JSON.stringify(stated.sort()) !== JSON.stringify(gates.sort())) {
+        bad.push(`${r.pr}: states [${stated}] but carries findings gated [${gates}]`);
+      }
+      // "Closes" is only permitted when the PR covers every open finding at that gate
+      for (const m of r.gate.matchAll(/Closes ([A-Z_0-9]+)/g)) {
+        const open = REG.findings.filter((f: any) => f.launch_gate === m[1] && OPEN_STATUSES.includes(f.current_status));
+        const covered = new Set(members.map((f: any) => f.canonical_id));
+        const missed = open.filter((f: any) => !covered.has(f.canonical_id));
+        if (missed.length) bad.push(`${r.pr}: claims to close ${m[1]} but misses ${missed.map((f: any) => f.source_ids[0])}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("each PR's production verification names every finding it carries", () => {
+    const bad: string[] = [];
+    for (const r of trainRows()) {
+      for (const f of prMembers(r.pr)) {
+        if (!r.verification.includes(f.source_ids[0])) bad.push(`${r.pr}: no acceptance criterion shown for ${f.source_ids[0]}`);
+      }
+      if (/…/.test(r.verification)) bad.push(`${r.pr}: an acceptance criterion is truncated`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("no PR is shown as low risk while a finding it carries records a high one", () => {
+    const bad: string[] = [];
+    for (const r of trainRows()) {
+      const high = prMembers(r.pr).filter((f: any) => /^(HIGH|Live money|Live at Willow today)/i.test((f.Willow_risk ?? "").trim()));
+      if (high.length && /^low\b/i.test(r.risk)) {
+        bad.push(`${r.pr}: shown "${r.risk}" while ${high[0].source_ids[0]} records "${high[0].Willow_risk.slice(0, 60)}"`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the plan's PR-level graph and per-finding dependencies match the register", () => {
+    // Mutation-proved gap: the plan carries a SECOND dependency table that no test read,
+    // so the L18 app-first edge could be deleted there while the train still stated it.
+    const plan = read("DEPENDENCY_REMEDIATION_PLAN.md");
+    const bad: string[] = [];
+    for (const [pr, deps] of Object.entries(REG.pr_dependencies) as [string, string[]][]) {
+      const row = plan.split("\n").find((l) => l.startsWith(`| **${pr}** |`));
+      if (!row) { bad.push(`${pr}: missing from the plan's PR graph`); continue; }
+      const cell = row.split("|")[2].trim();
+      const stated = cell === "—" ? [] : cell.split(",").map((x) => x.trim());
+      if (JSON.stringify(stated.sort()) !== JSON.stringify([...deps].sort())) {
+        bad.push(`${pr}: plan says [${stated}], register says [${deps}]`);
+      }
+    }
+    for (const f of REG.findings) {
+      if (!(f.depends_on ?? []).length || f.train === "NONE") continue;
+      const row = plan.split("\n").find((l) => l.startsWith(`| **${f.train}**`));
+      if (!row) continue;
+      const depCell = row.split("|")[4] ?? "";
+      const seg = depCell.split(";").find((s) => s.includes(`\`${f.source_ids[0]}\` →`));
+      if (!seg) { bad.push(`${f.train}: no dependency entry for ${f.source_ids[0]}`); continue; }
+      for (const d of f.depends_on) if (!seg.includes(d)) bad.push(`${f.source_ids[0]}: plan omits dependency ${d}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("a finding's depends_on does not contradict a blocking phrase in its own prose", () => {
+    // Pass 3 found four findings whose remediation_dependency named a blocker in prose
+    // while depends_on was empty, and the acyclicity result depended on the omission.
+    const IDS = REG.findings.map((f: any) => f.source_ids[0]);
+    const bad: string[] = [];
+    for (const f of REG.findings) {
+      if (!OPEN_STATUSES.includes(f.current_status)) continue;
+      const prose: string = f.remediation_dependency ?? "";
+      // "the same X as Y" is co-scheduling, not a dependency; co_requisites cover genuinely
+      // mutual pairs, which cannot be expressed as a direction without inventing one.
+      const coreq: string[] = f.co_requisites ?? [];
+      for (const m of prose.matchAll(/(hard-blocked on|blocked on|sequenced after|depends on)([^.]{0,160})/gi)) {
+        if (/\bsame\b[^.]{0,60}\bas\b/i.test(m[0])) continue;
+        for (const id of IDS) {
+          if (id === f.source_ids[0] || !m[2].includes(id)) continue;
+          if ((f.depends_on ?? []).includes(id)) continue;
+          // an explicitly reconciled non-merge-order relationship is allowed, and must say so
+          if ((f.operational_sequencing ?? "").includes(id)) continue;
+          if (coreq.includes(id)) continue;
+          if ((f.depends_on_by_pr_note ?? "").includes(id)) continue;
+          if (prose.includes("DEPENDENCY RECONCILIATION")) continue;
+          bad.push(`${f.source_ids[0]}: prose says "${m[1]} ... ${id}" but depends_on omits it`);
+        }
+      }
+    }
+    expect([...new Set(bad)]).toEqual([]);
+  });
+});
+
+describe("findings register — the scope bar holds across every artifact", () => {
+  // Mutation-proved gap: the sanitization guard read only the five Chloe CSV rows,
+  // so a client name or treatment detail inserted into a canonical JSON finding,
+  // or into any report, passed green.
+  // These match CONTENT that must never appear, not descriptions of it. "no client name"
+  // in an evidence field is a statement about a defect, not a customer name.
+  const BANNED: [RegExp, string][] = [
+    [/\b(see|attached|per|in) the screenshot\b/i, "a screenshot reference"],
+    [/\.(png|jpg|jpeg|heic|gif)\b/i, "an image attachment"],
+    [/\bpatient\b/i, "clinical-record language this product does not use"],
+    [/\b(mrs?|ms|dr)\.\s+[A-Z][a-z]+/i, "a personal name"],
+    [/\bclient (?:is |was |named) [A-Z][a-z]+/, "a named client"],
+  ];
+  it("no artifact carries a customer name, treatment content or a screenshot reference", () => {
+    const corpus: [string, string][] = [
+      ...MD_FILES.map((f) => [f, read(f)] as [string, string]),
+      ["MASTER_FINDINGS_REGISTER.json", read("MASTER_FINDINGS_REGISTER.json")],
+      ["MASTER_FINDINGS_REGISTER.csv", CSV],
+    ];
+    const bad: string[] = [];
+    for (const [name, text] of corpus) {
+      for (const [re, why] of BANNED) {
+        const m = text.match(re);
+        if (m) bad.push(`${name}: ${why} — "${m[0]}"`);
+      }
+    }
+    expect(bad, "the audit records sanitized reports only — no names, treatment content or screenshots").toEqual([]);
+  });
+
+  it("the Chloe rows record that they are sanitized", () => {
+    const rows = csvData.filter((r) => r[col("source_register")].includes("Chloe"));
+    expect(rows.length).toBe(5);
+    for (const r of rows) {
+      expect(r[col("source_recorded_disposition")]).toMatch(/sanitized/i);
+      expect(r[col("source_artifact_hash")]).toMatch(/no artifact stored/i);
+    }
+  });
+});
+
+describe("findings register — each acceptance criterion belongs to its own finding", () => {
+  // Pass 3 found the L19a / L19b / L20 acceptance criteria rotated: L19b carried L20's
+  // closure test, so PR-09 would have built the wrong fix and L19b would have stayed
+  // open on evidence that never mentions it. Nothing detected the rotation.
+  it("no two findings share an acceptance criterion", () => {
+    const seen = new Map<string, string>();
+    const dupes: string[] = [];
+    for (const f of REG.findings) {
+      const acc = (f.acceptance_evidence ?? "").trim();
+      if (!acc || /NO ACCEPTANCE CRITERION/.test(acc)) continue;
+      const prior = seen.get(acc);
+      if (prior) dupes.push(`${f.source_ids[0]} shares its acceptance criterion with ${prior}`);
+      else seen.set(acc, f.source_ids[0]);
+    }
+    expect(dupes, "a shared criterion means at least one finding cannot be closed on its own evidence").toEqual([]);
+  });
+
+  it("each open limitation's acceptance criterion names its own subject", () => {
+    // The four limitations are close enough in subject to be rotated unnoticed, so
+    // each is pinned to a token only its own remediation can satisfy.
+    const SUBJECT: Record<string, RegExp> = {
+      L18: /clinical tables/i,
+      L19a: /TRUNCATE/i,
+      L19b: /same[- ]?client|another CLIENT/i,
+      L20: /service_role|session_replication_role/i,
+    };
+    const bad: string[] = [];
+    for (const [id, re] of Object.entries(SUBJECT)) {
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      expect(f, `${id} must exist`).toBeDefined();
+      if (!re.test(f.acceptance_evidence ?? "")) bad.push(`${id}: its acceptance criterion does not name its own subject`);
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+describe("findings register — the retired direction cannot re-enter through acceptance criteria", () => {
+  it("no scheduled finding's acceptance criterion asks for a retired capability", () => {
+    // The July-27 criteria predate the retirement; three of them named finalized
+    // states, a finalization/correction surface and a snapshot migration.
+    const RETIRED = /finaliz|snapshot v2|snapshot migration|signed[- ]record/i;
+    const bad: string[] = [];
+    for (const f of REG.findings) {
+      if (!(f.required_prs ?? []).length) continue;
+      const acc: string = f.acceptance_evidence ?? "";
+      if (!RETIRED.test(acc)) continue;
+      // permitted only when the text explicitly restates it against this baseline
+      if (/RESTATED for this baseline/.test(acc)) continue;
+      bad.push(`${f.source_ids[0]}: acceptance criterion asks for a retired capability`);
+    }
+    expect(bad).toEqual([]);
   });
 });

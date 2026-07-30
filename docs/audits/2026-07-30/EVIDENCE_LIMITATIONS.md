@@ -5,8 +5,12 @@ What this audit could **not** prove, stated so nothing reads as verified that is
 ## Verification classes used
 
 - **Source-verified** — read at `c64366c9ba4130283932bbe21e32bf2ed62c4975` in the exact worktree.
-- **Hosted-verified** — read-only query against the production database.
+- **Hosted-verified** — read-only query against the production database, run for this reconciliation.
 - **Supplied, not independently verified** — taken from the task or from GitHub metadata.
+
+A finding's own `exact_hosted_evidence` field records what was queried **for that finding**. Where it
+says a fact was not re-queried, that is a statement about this reconciliation's own work, not a
+contradiction of the four baseline facts below, which were queried once and apply to every row.
 
 The production **git SHA**, **migration set**, **ACL/trigger/flag state** and the **Willow practitioner
 aggregate** are hosted-verified. The Willow aggregate is settled and no finding may state otherwise:
@@ -19,7 +23,7 @@ independently verified** — only that the URLs return 200 was checked.
 
 | Artifact | Status | Searches |
 |---|---|---|
-| `Hone_Findings.csv` | **PERMANENTLY UNAVAILABLE THIS RUN** | Exact-filename search of `~/Downloads`, `~/Documents`, `~/Desktop`, `~/Library/Mobile Documents`, `/Users/chloebaca/Hone`, `/Users/chloebaca/Hone-lineage` (maxdepth 4) |
+| `Hone_Findings.csv` | **PERMANENTLY UNAVAILABLE THIS RUN** | Exact-filename search of the user home tree (Downloads, Documents, Desktop, iCloud Mobile Documents) and both repository worktrees, maxdepth 4 |
 | `hone_evidence_excerpt.txt` | **PERMANENTLY UNAVAILABLE THIS RUN** | Same |
 
 Content was **not** reconstructed. No finding depends on them.

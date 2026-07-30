@@ -8,17 +8,17 @@ train is never shown as blocked because one of its members is.
 | Train | Findings | PRs | Per-finding dependencies |
 |---|---|---|---|
 | **T0-copy** | `F-DATA-001`, `F-RET-001`, `F-DOC-001`, `F-COMP-001`, `N-DOC-001` | PR-02, PR-21, PR-22 | `F-DATA-001` → `F-SCALE-001`, `F-DATA-002`, `F-RET-001` |
-| **T1-privilege** | `L19a`, `L19b`, `L20` | PR-01, PR-12 | none — nothing in this train is blocked |
-| **T10-data** | `F-DATA-002`, `F-IMPORT-001`, `F-STORAGE-001`, `F-OFF-001`, `F-SCALE-001` | PR-20, PR-21, PR-22, PR-23 | none — nothing in this train is blocked |
+| **T1-privilege** | `L19a`, `L20` | PR-01, PR-12 | none — nothing in this train is blocked |
+| **T10-data** | `F-DATA-002`, `F-IMPORT-001`, `F-STORAGE-001`, `F-OFF-001`, `F-SCALE-001`, `F-COPY-001` | PR-20, PR-21, PR-22, PR-23, PR-27 | `F-OFF-001` → `F-DATA-001`, `F-RET-001`, `F-STORAGE-001`; `F-COPY-001` → `F-RET-001` |
 | **T11-ops** | `F-OPS-001`, `F-OPS-003`, `F-OPS-004`, `F-STAGE-001`, `F-TEST-003` | PR-24, PR-25, PR-26 | none — nothing in this train is blocked |
 | **T2-payment** | `F-PAY-001` | PR-03 | none — nothing in this train is blocked |
 | **T3-charting** | `CHLOE-001`, `CHLOE-002`, `CHLOE-003`, `CHLOE-004`, `CHLOE-005` | PR-04, PR-13, PR-14, PR-15 | none — nothing in this train is blocked |
-| **T4-privacy** | `F-PRIV-001`, `F-PRIV-002` | PR-05, PR-09 | none — nothing in this train is blocked |
-| **T5-intake** | `F-CLIN-003`, `F-CLIN-004`, `F-COPY-001` | PR-06, PR-07 | none — nothing in this train is blocked |
-| **T6-identity** | `F-SEC-001`, `N-SEC-001` | PR-08 | none — nothing in this train is blocked |
+| **T4-privacy** | `F-PRIV-001`, `F-PRIV-002` | PR-05, PR-07 | none — nothing in this train is blocked |
+| **T5-intake** | `F-CLIN-003`, `F-CLIN-004` | PR-06 | none — nothing in this train is blocked |
+| **T6-identity** | `F-SEC-001`, `N-SEC-001`, `L19b` | PR-08, PR-09 | none — nothing in this train is blocked |
 | **T7-clinical-dml** | `L18` | PR-10, PR-11 | `L18` → `L19a` |
 | **T8-schedule** | `F-SEC-002`, `F-SCHED-001` | PR-16 | none — nothing in this train is blocked |
-| **T9-public** | `F-SCHED-002`, `F-SCHED-003`, `F-SCHED-004`, `F-SCHED-005`, `F-SCHED-006`, `F-SCALE-002`, `F-PUBLIC-001`, `F-PUBLIC-002` | PR-17, PR-18, PR-19 | `F-SCHED-002` → `F-SEC-002`; `F-SCHED-003` → `F-SEC-002`; `F-SCHED-004` → `F-SEC-002`; `F-SCHED-006` → `F-SEC-002`; `F-PUBLIC-001` → `F-SEC-002`; `F-PUBLIC-002` → `F-SEC-002` |
+| **T9-public** | `F-SCHED-002`, `F-SCHED-003`, `F-SCHED-004`, `F-SCHED-005`, `F-SCHED-006`, `F-SCALE-002`, `F-PUBLIC-001`, `F-PUBLIC-002` | PR-17, PR-18, PR-19 | `F-SCHED-002` → `F-SEC-002`; `F-SCHED-003` → `F-SEC-002`; `F-SCHED-004` → `F-SEC-002`; `F-SCHED-005` → `F-SCHED-002`; `F-SCHED-006` → `F-SEC-002`; `F-PUBLIC-001` → `F-SEC-002`; `F-PUBLIC-002` → `F-SEC-002` |
 
 ## PR-level dependency graph (derived)
 
@@ -42,14 +42,15 @@ train is never shown as blocked because one of its members is.
 | **PR-16** | — |
 | **PR-17** | PR-16 |
 | **PR-18** | PR-16 |
-| **PR-19** | — |
+| **PR-19** | PR-17 |
 | **PR-20** | — |
 | **PR-21** | — |
 | **PR-22** | PR-21 |
-| **PR-23** | — |
+| **PR-23** | PR-21, PR-22 |
 | **PR-24** | — |
 | **PR-25** | — |
 | **PR-26** | — |
+| **PR-27** | PR-21 |
 
 The graph was walked for cycles at both the finding level and the PR level — **both are acyclic**.
 The only *deployment*-ordered edge is **PR-11 after PR-10 deployed**; every other edge is a merge-order
@@ -82,11 +83,13 @@ Everything unscheduled is **P3**. No open P0, P1 or P2 is unscheduled.
 |---|---|---|---|---|---|---|
 | `F-CLIN-004` | P1 | OPEN | T5-intake | PR-06 | WILLOW_NOW | — |
 | `F-SEC-002` | P1 | OPEN | T8-schedule | PR-16 | BEFORE_STUDIO_2 | — |
-| `F-PAY-001` | P1 | PARTIALLY_FIXED | T2-payment | PR-03 | BEFORE_STUDIO_2 | — |
+| `F-PAY-001` | P1 | PARTIALLY_FIXED | T2-payment | PR-03 | WILLOW_NOW | — |
 | `F-PRIV-001` | P1 | OPEN | T4-privacy | PR-05 | WILLOW_NOW | — |
 | `F-DATA-001` | P1 | OPEN | T0-copy | PR-02, PR-22 | BEFORE_STUDIO_2 | F-SCALE-001, F-DATA-002, F-RET-001 |
 | `F-IMPORT-001` | P1 | OPEN | T10-data | PR-20 | BEFORE_STUDIO_2 | — |
+| `F-RET-001` | P1 | OPEN | T0-copy | PR-02, PR-21 | WILLOW_NOW | — |
 | `F-COMP-001` | P1 | OPEN | T0-copy | PR-02 | WILLOW_NOW | — |
 | `N-SEC-001` | P1 | OPEN | T6-identity | PR-08 | BEFORE_STUDIO_2 | — |
 | `N-DOC-001` | P1 | OPEN | T0-copy | PR-02 | WILLOW_NOW | — |
+| `L18` | P1 | OPEN | T7-clinical-dml | PR-10, PR-11 | BEFORE_STUDIO_2 | L19a |
 | `CHLOE-001` | P1 | OPEN | T3-charting | PR-04 | WILLOW_NOW | — |

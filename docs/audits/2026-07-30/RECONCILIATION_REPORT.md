@@ -33,8 +33,8 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 | Severity | Original (Jul 27) | Current OPEN | Partial | Deployed/Verified | Retired/Superseded | Not-a-launch-req | False positive | Status=EVIDENCE_LIMITATION |
 |---|---|---|---|---|---|---|---|---|
 | P0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| P1 | 14 | 9 | 1 | 0 | 0 | 0 | 0 | 0 |
-| P2 | 31 | 16 | 3 | 0 | 0 | 0 | 0 | 1 |
+| P1 | 14 | 11 | 1 | 0 | 0 | 0 | 0 | 0 |
+| P2 | 31 | 14 | 3 | 0 | 0 | 0 | 0 | 1 |
 | P3 | 2 | 19 | 3 | 1 | 3 | 4 | 0 | 0 |
 | **Total** | **48** | **44** | **7** | **1** | **3** | **4** | **0** | **1** |
 
@@ -50,19 +50,21 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 
 **Zero current P0 confirmed.** Evidence in [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md).
 
-## C. Current P1s (10)
+## C. Current P1s (12)
 
 | ID | Title | Exposure | Gate | Train | PR |
 |---|---|---|---|---|---|
 | `F-CLIN-004` | "Mark reviewed" accepts an unsubmitted (in_progress) intake and any intake in the studio — one UI click creates a false clinical-review sig… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T5-intake | PR-06 |
 | `F-SEC-002` | Any authenticated studio member can create, retime, re-status or delete appointments by direct PostgREST DML, bypassing the owner gates, du… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T8-schedule | PR-16 |
-| `F-PAY-001` | Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and exec… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T2-payment | PR-03 |
+| `F-PAY-001` | Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and exec… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T2-payment | PR-03 |
 | `F-PRIV-001` | Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens) | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T4-privacy | PR-05 |
 | `F-DATA-001` | Owner ZIP export omits most tenant-owned data (intake, consent, clinical notes, images, payments, portal, numbing/inventory fields) while t… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T0-copy | PR-02, PR-22 |
 | `F-IMPORT-001` | Quick Import commits clients and treatment memories in separate statements; a memory-insert failure strands clients permanently with no ide… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10-data | PR-20 |
+| `F-RET-001` | Published 30-day / 90-day retention and deletion commitments have no implementing code: no purge job, no hard-delete path, no legal hold, n… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02, PR-21 |
 | `F-COMP-001` | The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-E… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
 | `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T6-identity | PR-08 |
 | `N-DOC-001` | Public terms and pricing pages claim a subscription, payment-processing and refund lifecycle the product does not have | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
+| `L18` | authenticated holds direct row DML on five clinical tables | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T7-clinical-dml | PR-10, PR-11 |
 | `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T3-charting | PR-04 |
 
 Four of these did not exist as P1s in the first pass: **`F-PAY-001`** was raised from P2 (live money,
@@ -75,7 +77,7 @@ studio-owner report.
 
 | Severity | Count | Open/partial | Evidence-limited | With a PR | Closed/not-required |
 |---|---|---|---|---|---|
-| P2 | 20 | 19 | 1 | 20 | 0 |
+| P2 | 18 | 17 | 1 | 18 | 0 |
 | P3 | 30 | 22 | 0 | 12 | 8 |
 
 Full tables in [P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md).
@@ -99,9 +101,9 @@ dependencies.
 
 | Limitation | Canonical | Severity | Status | Reachable | Gate | Train |
 |---|---|---|---|---|---|---|
-| `L18` | `HN-051` | P2 | OPEN | true | BEFORE_TEN_STUDIOS | T7-clinical-dml |
+| `L18` | `HN-051` | P1 | OPEN | true | BEFORE_STUDIO_2 | T7-clinical-dml |
 | `L19a` | `HN-052` | P2 | OPEN | false | BEFORE_THREE_STUDIOS | T1-privilege |
-| `L19b` | `HN-053` | P2 | OPEN | true | BEFORE_THREE_STUDIOS | T1-privilege |
+| `L19b` | `HN-053` | P2 | OPEN | true | BEFORE_THREE_STUDIOS | T6-identity |
 | `L20` | `HN-054` | P3 | OPEN | false | BEFORE_THREE_STUDIOS | T1-privilege |
 | `L21` | `HN-055` | P3 | OPEN | false | POST_GA | NONE |
 
