@@ -6,9 +6,10 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
-> **Reconciled 2026-07-27; migration line updated 2026-07-30.** Production migration max **0160**
-> (`0159` = signed-clinical-record retirement and `0160` = immutable clinical lineage, both applied
-> and verified 2026-07-30; `0158` deliberately skipped and will never be applied); last runtime-bearing
+> **Reconciled 2026-07-27; migration line updated 2026-07-30.** Production migration max **0161**
+> (`0159` = signed-clinical-record retirement, `0160` = immutable clinical lineage and `0161` =
+> service order RPC + widened calendar-colour CHECK, all applied and verified 2026-07-30;
+> `0158` deliberately skipped and will never be applied); last runtime-bearing
 > application HEAD **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** (PR #478 merge, whole-session
 > copy), serving `hone.care`. One live studio with real clients: **Willow Electrolysis**.
 >

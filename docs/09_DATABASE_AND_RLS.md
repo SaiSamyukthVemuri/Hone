@@ -1,10 +1,10 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0160
-(`0160_immutable_clinical_lineage.sql`) — 159 applied, each exactly once, `0159` immediately
-preceding `0160`. `0158` is deliberately skipped and will never be applied. The
-hosted max is 0160; the repo max is 0161 — `0161_service_order_and_colors.sql` is
-in the repository but DELIBERATELY UNAPPLIED, awaiting migration authorization.**
+Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0161
+(`0161_service_order_and_colors.sql`) — 160 applied, each exactly once, `0160` immediately
+preceding `0161`. `0158` is deliberately skipped and will never be applied. The
+repository max and hosted max are both 0161 — `0161_service_order_and_colors.sql`
+was applied 2026-07-30 and independently verified.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -15,8 +15,8 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 > **Historical note.** Earlier revisions of this section stated, at various dates, "96
 > migrations, 0096 not yet applied", "production is at 0112", and "production migration max =
-> 0113", "the production max is 0157". All of those are **superseded** — the production max is
-> **0160**. The per-migration
+> 0113", "the production max is 0157", "the production max is 0160". All of those are **superseded** —
+> the production max is **0161**. The per-migration
 > prose table below remains historical through ~0092; everything from 0093 onward is
 > enumerated in the migration ledger linked above. Dated statements elsewhere in the docs are
 > point-in-time history, not current state.
@@ -27,7 +27,7 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current repo max `0161`, so the next is
+  [migration ledger](./production/migration-ledger.md). **Current max `0161`, so the next is
   `0162`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).

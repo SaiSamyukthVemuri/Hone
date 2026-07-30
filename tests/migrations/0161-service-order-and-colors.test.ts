@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { SERVICE_COLOR_KEYS, SERVICE_COLOR_KEYS_0153 } from "@/lib/calendar/service-colors";
 
 // Migration 0161 — deterministic service ordering + a wider, separable colour set.
 //
 // This test carries the REPO migration-max pin (it moved off the 0160 test when
-// 0161 landed). 0161 is DELIBERATELY UNAPPLIED: the repo max is 0161 while the
-// production max stays 0160 until a migration apply is separately authorized.
+// 0161 landed). 0161 was APPLIED to production 2026-07-30T23:38:07Z→23:38:16Z:
+// repo max and hosted max are both 0161, and the file is now IMMUTABLE.
 
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0161_")) as string;
@@ -41,6 +42,20 @@ describe("0161 — service order + colours (repo migration-max tripwire)", () =>
       .sort((a, b) => a - b);
     expect(nums[nums.length - 1]).toBe(161);
     expect(new Set(nums).size).toBe(nums.length);
+  });
+
+  it("is APPLIED in production, so its checksum is frozen", () => {
+    // An applied migration must never be edited — its recorded checksum has to
+    // keep describing the file on disk. Behaviour changes need a new migration
+    // (0162). This is the same protection 0159 and 0160 carry.
+    expect(
+      createHash("sha256").update(SQL).digest("hex"),
+      "0161 is APPLIED in production with this checksum. Never edit an applied " +
+        "migration — write a new one (0162).",
+    ).toBe("e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46");
+    const ledger = readFileSync(join(process.cwd(), "docs/production/migration-ledger.md"), "utf8");
+    expect(ledger, "the ledger must carry 0161's COMPLETE sha256").toContain("e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46");
+    expect(ledger, "the ledger must record 0161 as applied").toMatch(/0161[\s\S]{0,240}APPLIED 2026-07-30/);
   });
 
   it("declares its dependencies and its migration-max transition", () => {

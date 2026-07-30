@@ -74,18 +74,20 @@ describe("0160 — immutable clinical lineage", () => {
       ).not.toMatch(/repo max \(0160\) is deliberately one ahead/i);
     }
     const dbRls = read("docs/09_DATABASE_AND_RLS.md").replace(/\s+/g, " ");
+    // 0161 was applied 2026-07-30, so the production max advanced past 0160.
+    // 0160 itself remains applied and immutable — that is asserted above.
     expect(
       dbRls,
-      "docs/09 must state the production migration max is 0160",
-    ).toMatch(/production migration max = 0160/i);
+      "docs/09 must state the production migration max is 0161",
+    ).toMatch(/production migration max = 0161/i);
     expect(
       dbRls,
-      "docs/09 must state the hosted max is 0160 while the repo carries the unapplied 0161",
-    ).toMatch(/hosted max is 0160[^.]{0,120}repo max is 0161/i);
+      "docs/09 must state repo and hosted max are both 0161 now that it is applied",
+    ).toMatch(/repository max and hosted max are both 0161/i);
     expect(
       dbRls,
       "docs/09 must name 0162 as the next number to allocate",
-    ).toMatch(/Current repo max `0161`, so the next is `0162`/i);
+    ).toMatch(/Current max `0161`, so the next is\s*`0162`/i);
   });
 
   it("the applied 0160 checksum is pinned in the ledger and matches the file on disk", () => {
