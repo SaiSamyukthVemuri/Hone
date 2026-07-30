@@ -112,7 +112,10 @@ describe("placement + reuse", () => {
   it("each Today roster row renders the compact preview", () => {
     expect(PAGE).toMatch(/beforeToday=\{beforeTodayPreviews\.get\(appt\.client_id\)/);
     expect(PAGE).toMatch(/Before today/);
-    expect(PAGE).toMatch(/Remember: \{truncate\(beforeToday\.rememberLine, 70\)\}/);
+    // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
+    // 70-char cap is gone. Full-visibility is pinned in its own suite
+    // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
+    expect(PAGE).toMatch(/Remember: \{beforeToday\.rememberLine\}/);
     expect(PAGE).toMatch(/Latest setup: \{beforeToday\.setupLine \?\? "Not recorded"\}/);
     expect(PAGE).toMatch(/No charted history yet\./);
     expect(PAGE).toMatch(/No watch\/plan note\./);

@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// Dashboard memory visibility (Chloe production feedback).
+//
+// REPRODUCED DEFECT. The Today appointment card clipped the two lines Chloe
+// actually reads before a client sits down, in TWO independent ways:
+//   1. a JS character cap — `Remember: {truncate(beforeToday.rememberLine, 70)}`;
+//   2. Tailwind's `truncate` (= overflow:hidden; text-overflow:ellipsis;
+//      white-space:nowrap) on BOTH the Remember span and the Latest-setup span.
+// At 390px the usable text column is ~246px, so the CSS clamp bit at roughly
+// 30-35 characters — long before the 70-char cap. The full text was already in
+// the payload (lib/dashboard/before-today-previews.ts truncates nothing); only
+// the render threw it away.
+//
+// SCOPE GUARD. Only those two fields change. The page-local `truncate` helper
+// stays (the Pinned-note line still uses it) and the Daily Prep Brief keeps its
+// own 90-char caps — a deliberately compact, separate surface.
+
+const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+const PAGE = read("app/(app)/dashboard/page.tsx");
+const PREVIEWS = read("lib/dashboard/before-today-previews.ts");
+const PREP = read("lib/dashboard/daily-prep-brief.ts");
+
+// The Before-today preview block on the Today roster row: from the section
+// eyebrow to the last (already-untruncated) records line.
+const PREVIEW_BLOCK = PAGE.slice(
+  PAGE.indexOf(">\n                Before today\n"),
+  PAGE.indexOf("{beforeToday.recordsLine}"),
+);
+
+describe("Today appointment card shows the memory lines in full", () => {
+  it("isolated the right block of JSX", () => {
+    expect(PREVIEW_BLOCK.length).toBeGreaterThan(200);
+    expect(PREVIEW_BLOCK).toMatch(/Remember:/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest setup:/);
+  });
+
+  it("the Remember note is rendered whole — no character cap", () => {
+    expect(PREVIEW_BLOCK).toMatch(/Remember: \{beforeToday\.rememberLine\}/);
+    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.rememberLine/);
+  });
+
+  it("the latest-settings line is rendered whole", () => {
+    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{beforeToday\.setupLine \?\? "Not recorded"\}/);
+    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.setupLine/);
+  });
+
+  it("NEITHER line carries a CSS clamp any more", () => {
+    // \b...\b so the Tailwind CLASS is caught, not just a truncate(...) call —
+    // the class is the mechanism that actually clipped the text on the phone.
+    expect(PREVIEW_BLOCK).not.toMatch(/\btruncate\b/);
+    expect(PREVIEW_BLOCK).not.toMatch(/line-clamp/);
+    expect(PREVIEW_BLOCK).not.toMatch(/text-ellipsis/);
+  });
+
+  it("both lines wrap safely and keep intentional line breaks", () => {
+    const remember = PREVIEW_BLOCK.slice(
+      PREVIEW_BLOCK.indexOf("beforeToday.rememberLine ? ("),
+      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+    );
+    expect(remember).toMatch(/whitespace-pre-wrap break-words/);
+    const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
+    expect(setup).toMatch(/whitespace-pre-wrap break-words/);
+  });
+
+  it("the desktop hover title is preserved on the Remember line", () => {
+    expect(PREVIEW_BLOCK).toMatch(/title=\{beforeToday\.rememberLine\}/);
+  });
+});
+
+describe("nothing else on the dashboard changed", () => {
+  it("the page-local truncate helper survives for the Pinned-note line", () => {
+    expect(PAGE).toMatch(/function truncate\(text: string, max: number\): string/);
+    expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
+  });
+
+  it("the Daily Prep Brief keeps its own compact 90-char contract", () => {
+    // A separate, deliberately compact surface with its own helper — untouched.
+    expect(PREP).toMatch(/function truncate\(text: string, max: number\): string/);
+    expect(PREP).toMatch(/truncate\(input\.nextVisitNote, 90\)/);
+    expect(PREP).toMatch(/truncate\(input\.cautionNote, 90\)/);
+    expect(PREP).toMatch(/truncate\(input\.setupLine, 90\)/);
+  });
+
+  it("the preview data helper still truncates nothing (the fix is render-only)", () => {
+    expect(PREVIEWS).toMatch(/rememberLine: remember,/);
+    expect(PREVIEWS).toMatch(/setupLine: briefing\.latestSetupLine,/);
+    expect(PREVIEWS).not.toMatch(/\.slice\(|substring\(|…/);
+  });
+
+  it("the row still grows instead of clipping (layout contract)", () => {
+    // flex-wrap + items-start on the row and self-center on the action column:
+    // a taller text column pushes the actions down/aside, never under them.
+    expect(PAGE).toMatch(/flex flex-wrap items-start justify-between gap-3 px-4 py-4/);
+    expect(PAGE).toMatch(/flex flex-col items-end gap-2 self-center/);
+    expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
+  });
+});

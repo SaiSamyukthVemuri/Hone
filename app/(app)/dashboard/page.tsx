@@ -697,19 +697,28 @@ function AppointmentRow({
                 </span>
               ) : (
                 <>
+                  {/* Chloe: the Remember note and the latest-settings line are
+                      the two things she reads off this card before a client sits
+                      down, so they show IN FULL — no CSS clamp, no character
+                      cap. `whitespace-pre-wrap` keeps intentional line breaks
+                      she typed; `break-words` keeps a long unbroken token (a lot
+                      code, a pasted link) from pushing the row sideways at
+                      iPhone width. The `title` stays for desktop hover.
+                      The pinned-note line above and the Daily Prep Brief card
+                      below are separate compact surfaces and keep their caps. */}
                   {beforeToday.rememberLine ? (
                     <span
-                      className="truncate text-blue-900 dark:text-blue-200"
+                      className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
                       title={beforeToday.rememberLine}
                     >
-                      Remember: {truncate(beforeToday.rememberLine, 70)}
+                      Remember: {beforeToday.rememberLine}
                     </span>
                   ) : (
                     <span className="text-neutral-500">
                       No watch/plan note.
                     </span>
                   )}
-                  <span className="truncate text-neutral-600 dark:text-neutral-400">
+                  <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
                     Latest setup: {beforeToday.setupLine ?? "Not recorded"}
                   </span>
                   <span className="text-neutral-600 dark:text-neutral-400">

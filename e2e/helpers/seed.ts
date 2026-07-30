@@ -1494,6 +1494,78 @@ export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
   );
 }
 
+// Seed a client with (a) a completed prior session carrying a full treatment
+// setup and an optional caution note — the two things the dashboard's "Before
+// today" preview renders — and (b) a confirmed appointment TODAY in the studio's
+// local timezone so the client appears on the Today roster.
+//
+// The caution note becomes the "Remember:" line; the block's machine settings
+// become the "Latest setup:" line. Used by the dashboard-memory e2e to prove the
+// full text is rendered at iPhone width.
+export async function seedE2eDashboardMemoryClient(
+  seed: E2eSeed,
+  opts: { cautionNote: string | null },
+): Promise<{ clientId: string; appointmentId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const priorSessionId = randomUUID();
+  const blockId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [
+      clientId,
+      seed.studioId,
+      `Memory Client ${seed.runId}-${uniq}`,
+      `e2e-memory-${seed.runId}-${uniq}@harness.local`,
+    ],
+  );
+  // A COMPLETED prior session (started in the past) so it counts as history.
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis', now() - interval '30 days')`,
+    [priorSessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, side, mode, apilus_modality,
+        energy_level, minutes_performed, machine_frequency, probe_label,
+        caution_for_next_session, caution_note)
+     values ($1,$2,$3,1,'Upper lip','left','thermolysis','Synchro',
+        8, 20, '27.12 MHz', 'Ballet · Gold · Two-piece · F3 Short', $4, $5)`,
+    [blockId, seed.studioId, priorSessionId, opts.cautionNote != null, opts.cautionNote],
+  );
+  await sql(
+    `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
+     values ($1,$2,$3,'Upper lip','left',0)`,
+    [randomUUID(), seed.studioId, blockId],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed,
+        machine_frequency, hairs_treated)
+     values ($1,$2,$3,'Upper lip',array['Upper lip']::text[],'thermo',8,20,'27.12 MHz',40)`,
+    [randomUUID(), priorSessionId, blockId],
+  );
+  // An appointment TODAY in the studio's local day (seedE2eStudio pins a
+  // fixed-offset zone whose local clock reads ~09:00, so "now + 2h" is today).
+  const starts = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const ends = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+  const appointmentId = await seedConfirmedAppointment(
+    seed.studioId,
+    prac.id,
+    clientId,
+    starts,
+    ends,
+  );
+  return { clientId, appointmentId };
+}
+
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
   const rows = await sql<{ area: string; laterality: string }>(
     `select a.area, a.laterality
