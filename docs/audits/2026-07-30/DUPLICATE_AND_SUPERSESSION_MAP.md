@@ -13,8 +13,14 @@
 ## What "preserved" means here, precisely
 
 Every source register's own fields are carried into **explicit, individually-named columns** — one
-audit column per source column. The CSV header is **generated from the source-row shape**, so a source
-column cannot be silently dropped by a hand-maintained list.
+audit column per source column, and nothing is joined into a shared cell.
+
+**The enforceable control is the test suite, not a generator.** Three assertions in
+`tests/audits/findings-register-consistency.test.ts` hold this claim up, and each is
+mutation-checked: a cell-by-cell diff against the in-repo July-18 register; a SHA-256 over every
+`source_*` cell, pinned per register in `AUDIT_INPUT_MANIFEST.json`, so a cell cannot be emptied or
+rewritten; and a required-column list, so a column cannot be renamed away. Two of the three source
+registers live outside the repository, which is why the digest exists.
 
 - **July-27 audit (48):** evidence, failure scenario, affected, prerequisites, test limitations,
   acceptance criteria, recommended fix, rollout considerations.
@@ -65,6 +71,10 @@ either clinical flag, and any Finalize/signed-Correction surface.
 
 ## Historical rows not individually re-verified
 
-The 74 July-10/July-18 rows carry **every non-empty cell of their source register** (verified
-programmatically, not asserted) but were **not** individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
+The 74 July-10/July-18 rows carry **every non-empty cell of their source register except each
+register's own bookkeeping columns** — the July-18 `canonical_id` and `last_verified_date`, which this
+register supersedes with its own `canonical_id` and `last_verified_at`. That exclusion is the only
+one, and it is asserted in the diff test rather than left to a comment. The July-18 carry-through is
+verified programmatically against the in-repo source; the July-10 register is outside the repository,
+so its content is pinned by digest instead. Neither set was individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
 reads `NOT_INDIVIDUALLY_RE_VERIFIED` rather than a fabricated verdict. See `EVIDENCE_LIMITATIONS.md`.

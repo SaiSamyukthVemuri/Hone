@@ -1,7 +1,9 @@
 # Exact-production findings reconciliation — `c64366c9ba4130283932bbe21e32bf2ed62c4975`, migration max 0160
 
-**Corrected pass 2, 2026-07-30.** Supersedes the first pass, whose 33 self-review defects are all
-dispositioned in [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md).
+**Corrected pass 4, 2026-07-30.** Four independent review passes have been run against this
+deliverable; every item they raised is dispositioned in
+[REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md). What the consistency suite can and cannot
+establish is stated in [EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md).
 
 Sibling reports: [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md) ·
 [P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md) ·
@@ -131,7 +133,7 @@ carried into explicit columns.
 | `N-SEC-001` | P1 | this reconciliation | Surfaced by challenging the `F-SEC-001` closure — that finding's own acceptance criteria named practitioner re-parenting, which 0160 does not cover. |
 | `N-DOC-001` | P1 | this reconciliation | Split out of `F-BILL-001`, where a live public-claim defect had been buried inside a row closed as not-a-launch-requirement. |
 | `CHLOE-001..005` | P1×1, P2×4 | studio-owner report 2026-07-30 | Post-dates the audit; sanitized (no names, screenshots or treatment content). |
-| `L18`,`L19a`,`L19b`,`L20`,`L21` | P2×3, P3×2 | known-limitations register | Previously tracked only as prose, outside the machine-readable register. |
+| `L18`,`L19a`,`L19b`,`L20`,`L21` | P1×1, P2×2, P3×2 | known-limitations register | Previously tracked only as prose, outside the machine-readable register. |
 
 ## Method
 

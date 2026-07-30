@@ -663,7 +663,7 @@ describe("findings register — pass-2 review corrections hold", () => {
     for (const f of codeOnly) expect(train).toContain(f.source_ids[0]);
   });
 
-  it("every review item in all three passes has a final disposition and no artifact contradicts it", () => {
+  it("every review item in all four passes has a final disposition and no artifact contradicts it", () => {
     const closure = read("REVIEW_CLOSURE_REGISTER.md");
     // Both tables carry the disposition in a **bolded** cell; read that cell alone.
     // Scanning the whole row matches quoted prose (e.g. a correction that says an item
@@ -672,7 +672,7 @@ describe("findings register — pass-2 review corrections hold", () => {
       .split("\n")
       .filter((l) => /^\| \d+ \| P[123] \| \*\*/.test(l))
       .map((l) => ({ n: l.split("|")[1].trim(), disposition: l.split("|")[3].trim() }));
-    expect(rows.length, "33 pass-1 + 25 pass-2 + 33 pass-3 items").toBe(91);
+    expect(rows.length, "33 pass-1 + 25 pass-2 + 33 pass-3 + 23 pass-4 items").toBe(114);
     const FINAL = /^\*\*(CORRECTED_AND_VERIFIED|REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED|DUPLICATE_OF_REVIEW_ITEM_\d+|REFUTED)\*\*$/;
     const notFinal = rows.filter((r) => !FINAL.test(r.disposition));
     expect(notFinal, "every review item needs a final disposition").toEqual([]);
@@ -861,11 +861,11 @@ describe("findings register — the reports are derived, not written", () => {
       // The section lists open blockers AND, in its own labelled subsection, any
       // evidence-limited row at that gate — which the heading advertises and which
       // must therefore be visible rather than merely counted.
-      const expected = new Set(
+      const expected = new Set<string>(
         REG.findings
           .filter((f: any) => f.launch_gate === gate &&
             (OPEN_STATUSES.includes(f.current_status) || f.current_status === "EVIDENCE_LIMITATION"))
-          .map((f: any) => f.source_ids[0]),
+          .map((f: any) => String(f.source_ids[0])),
       );
       for (const id of expected) if (!listed.has(id)) bad.push(`${gate}: ${id} belongs in this section but is not listed`);
       for (const id of listed) if (!expected.has(id)) bad.push(`${gate}: ${id} is listed but does not belong there`);
@@ -943,7 +943,7 @@ describe("findings register — the PR train is derived from the register", () =
     const bad: string[] = [];
     for (const r of trainRows()) {
       const listed = new Set([...r.findings.matchAll(/`([A-Za-z0-9-]+)`/g)].map((m) => m[1]));
-      const expected = new Set(prMembers(r.pr).map((f: any) => f.source_ids[0]));
+      const expected = new Set<string>(prMembers(r.pr).map((f: any) => String(f.source_ids[0])));
       for (const id of expected) if (!listed.has(id)) bad.push(`${r.pr}: ${id} is assigned to it but not listed`);
       for (const id of listed) if (!expected.has(id)) bad.push(`${r.pr}: lists ${id}, which is not assigned to it`);
     }
@@ -1143,5 +1143,287 @@ describe("findings register — the retired direction cannot re-enter through ac
       bad.push(`${f.source_ids[0]}: acceptance criterion asks for a retired capability`);
     }
     expect(bad).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pass-4 derivation guards.
+//
+// Pass 4 mutation-proved that derivation had been applied to the ROWS of the
+// reports but not to their CELLS: a live P1 could be shown NOT_REACHABLE at
+// POST_GA, a P2 could be shown PRODUCTION_VERIFIED, an entire canonical finding
+// could be deleted and every artifact regenerated, and the pass-3 severity
+// raises could be silently reverted — all with the suite green.
+//
+// It also proved the limit of this approach, which is stated in
+// EVIDENCE_LIMITATIONS.md rather than left for a later pass to discover: these
+// guards make STRUCTURED drift detectable. They cannot make prose self-verifying.
+// ---------------------------------------------------------------------------
+
+describe("findings register — the canonical set itself is pinned", () => {
+  // Mutation-proved gap: F-OPS-004 could be deleted from the register, its CSV row
+  // relabelled UNMAPPED_HISTORICAL, and every derived artifact regenerated, green.
+  it("every non-historical source row maps to a canonical finding, and the mapped count is pinned", () => {
+    const mapped = csvData.filter((r) => {
+      const reg = r[col("source_register")];
+      return reg.includes("2026-07-27") || reg.includes("Chloe") ||
+             reg.includes("NEW-2026-07-30") || reg.includes("known-limitations");
+    });
+    expect(mapped.length, "48 July-27 + 5 Chloe + 2 discovered + 5 limitations").toBe(60);
+    const orphans = mapped.filter((r) => {
+      const cid = r[col("canonical_id")];
+      return !cid || cid === "UNMAPPED_HISTORICAL" || !REG.findings.some((f: any) => f.canonical_id === cid);
+    });
+    expect(orphans.map((r) => r[col("source_id")]), "a mapped row lost its canonical finding").toEqual([]);
+    expect(REG.findings.length, "the canonical set is 60 findings").toBe(60);
+  });
+
+  it("the severity and gate of every P1, and the Willow aggregate, are pinned", () => {
+    // These are the judgements three review passes were spent establishing. A silent
+    // revert of any of them is the single most damaging undetected edit possible.
+    const EXPECTED: Record<string, [string, string]> = {
+      "F-PAY-001": ["P1", "WILLOW_NOW"], "F-PRIV-001": ["P1", "WILLOW_NOW"],
+      "F-COMP-001": ["P1", "WILLOW_NOW"], "F-CLIN-004": ["P1", "WILLOW_NOW"],
+      "N-DOC-001": ["P1", "WILLOW_NOW"], "F-RET-001": ["P1", "WILLOW_NOW"],
+      "CHLOE-001": ["P1", "WILLOW_NOW"], "F-SEC-002": ["P1", "BEFORE_STUDIO_2"],
+      "N-SEC-001": ["P1", "BEFORE_STUDIO_2"], "L18": ["P1", "BEFORE_STUDIO_2"],
+      "F-DATA-001": ["P1", "BEFORE_STUDIO_2"], "F-IMPORT-001": ["P1", "BEFORE_STUDIO_2"],
+    };
+    const bad: string[] = [];
+    for (const [id, [sev, gate]] of Object.entries(EXPECTED)) {
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      if (!f) { bad.push(`${id}: missing from the register`); continue; }
+      if (f.current_severity !== sev) bad.push(`${id}: severity ${f.current_severity}, pinned ${sev}`);
+      if (f.launch_gate !== gate) bad.push(`${id}: gate ${f.launch_gate}, pinned ${gate}`);
+    }
+    expect(bad).toEqual([]);
+    const p1 = REG.findings.filter((f: any) => f.current_severity === "P1").map((f: any) => f.source_ids[0]);
+    expect(p1.sort(), "the P1 set is exactly these twelve").toEqual(Object.keys(EXPECTED).sort());
+
+    expect(REG.willow_practitioner_fact).toContain("2 practitioner");
+    expect(REG.willow_practitioner_fact).toMatch(/1 ACTIVE owner/);
+    expect(REG.willow_practitioner_fact).toMatch(/non-owner practitioners: 0/);
+  });
+
+  it("a discovered finding's original severity survives a later re-rating", () => {
+    // Pass 3 raised L18 P2 -> P1 and the CSV's source_original_severity followed it,
+    // destroying the record of what it was first rated.
+    const ORIGINAL: Record<string, string> = { L18: "P2", L19a: "P2", L19b: "P2", L20: "P3", L21: "P3" };
+    for (const [id, sev] of Object.entries(ORIGINAL)) {
+      const row = csvData.find((r) => r[col("source_id")] === id);
+      expect(row, `${id} row missing`).toBeDefined();
+      expect(row![col("source_original_severity")], `${id} original severity was overwritten`).toBe(sev);
+    }
+    const l18 = REG.findings.find((f: any) => f.source_ids[0] === "L18");
+    expect(l18.current_severity).toBe("P1");
+  });
+});
+
+describe("findings register — report cells, not just report rows", () => {
+  it("every cell of the P1 table matches the register", () => {
+    const doc = read("CURRENT_P0_P1_REPORT.md");
+    const table = doc.slice(doc.indexOf("| ID | Title"), doc.indexOf("### Evidence per P1"));
+    const bad: string[] = [];
+    for (const line of table.split("\n").filter((l) => /^\| `[A-Za-z0-9-]+` \|/.test(l))) {
+      const c = line.split("|").map((x) => x.trim());
+      const id = c[1].replace(/`/g, "");
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      if (!f) { bad.push(`${id}: not in the register`); continue; }
+      if (c[3] !== f.current_exposure) bad.push(`${id}: exposure "${c[3]}" vs "${f.current_exposure}"`);
+      if (c[4] !== f.launch_gate) bad.push(`${id}: gate "${c[4]}" vs "${f.launch_gate}"`);
+      if (c[5] !== f.train) bad.push(`${id}: train "${c[5]}" vs "${f.train}"`);
+      const prs = (f.required_prs ?? []).join(", ") || "—";
+      if (c[6] !== prs) bad.push(`${id}: PR "${c[6]}" vs "${prs}"`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("each P1's evidence section carries its real evidence, not a stub", () => {
+    // Mutation-proved gap: all 12 sections could be replaced with bare headings.
+    const doc = read("CURRENT_P0_P1_REPORT.md");
+    const bad: string[] = [];
+    for (const f of REG.findings.filter((x: any) => x.current_severity === "P1")) {
+      const id = f.source_ids[0];
+      const start = doc.indexOf(`#### \`${id}\``);
+      if (start < 0) { bad.push(`${id}: no evidence section`); continue; }
+      const next = doc.indexOf("#### `", start + 6);
+      const body = doc.slice(start, next < 0 ? doc.indexOf("## Demoted from P1", start) : next);
+      if (body.length < 400) bad.push(`${id}: evidence section is a stub (${body.length} chars)`);
+      for (const [label, field] of [["Source evidence", "exact_current_source"], ["Why P1", "rationale"],
+                                    ["Willow risk", "Willow_risk"]] as [string, string][]) {
+        const head = String(f[field] ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+        if (!head) { bad.push(`${id}: ${field} is empty in the register`); continue; }
+        if (!body.replace(/\s+/g, " ").includes(head)) bad.push(`${id}: ${label} does not match the register`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("every cell of the P2/P3 disposition tables matches the register", () => {
+    const doc = read("P2_DISPOSITION_REPORT.md");
+    const validPR = new Set(Object.keys(REG.pr_dependencies));
+    const bad: string[] = [];
+    for (const line of doc.split("\n").filter((l) => /^\| `[A-Za-z0-9-]+` \|/.test(l))) {
+      const c = line.split("|").map((x) => x.trim());
+      const id = c[1].replace(/`/g, "");
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      if (!f) { bad.push(`${id}: not in the register`); continue; }
+      if (c[3] !== f.current_status) bad.push(`${id}: status "${c[3]}" vs "${f.current_status}"`);
+      if (c[4] !== f.launch_gate) bad.push(`${id}: gate "${c[4]}" vs "${f.launch_gate}"`);
+      if (c[5] !== f.train) bad.push(`${id}: train "${c[5]}" vs "${f.train}"`);
+      const prCell = c[6] ?? "";
+      for (const m of prCell.matchAll(/PR-\d+/g)) {
+        if (!validPR.has(m[0])) bad.push(`${id}: names ${m[0]}, which is not a PR in the train`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the reconciliation report's counts are all derived from the register", () => {
+    const doc = read("RECONCILIATION_REPORT.md");
+    const n = (p: (f: any) => boolean) => REG.findings.filter(p).length;
+    const sev = (s: string) => REG.findings.filter((f: any) => f.current_severity === s);
+    // §A severity rows
+    for (const s of ["P0", "P1", "P2", "P3"]) {
+      const row = doc.split("\n").find((l) => l.startsWith(`| ${s} |`));
+      if (!row) { expect(sev(s).length, `${s} has findings but no §A row`).toBe(0); continue; }
+      const c = row.split("|").map((x) => x.trim());
+      expect(Number(c[3]), `${s} OPEN`).toBe(n((f) => f.current_severity === s && f.current_status === "OPEN"));
+      expect(Number(c[4]), `${s} partial`).toBe(n((f) => f.current_severity === s && f.current_status === "PARTIALLY_FIXED"));
+      expect(Number(c[9]), `${s} evidence-limited`).toBe(n((f) => f.current_severity === s && f.current_status === "EVIDENCE_LIMITATION"));
+    }
+    // canonical/source totals and the P1 heading
+    expect(doc).toContain(`**Canonical total: ${REG.counts.canonical_total}**`);
+    expect(doc).toContain(`source rows in the CSV: **${REG.counts.source_rows_in_csv_total}**`);
+    expect(doc).toContain(`## C. Current P1s (${sev("P1").length})`);
+    // §F limitation rows
+    const sectionF = doc.slice(doc.indexOf("## F. Open limitations"), doc.indexOf("## G."));
+    for (const id of ["L18", "L19a", "L19b", "L20", "L21"]) {
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      const row = sectionF.split("\n").find((l) => l.startsWith(`| \`${id}\` |`));
+      expect(row, `${id} missing from §F`).toBeDefined();
+      const c = row!.split("|").map((x) => x.trim());
+      expect(c[3], `${id} §F severity`).toBe(f.current_severity);
+      expect(c[4], `${id} §F status`).toBe(f.current_status);
+      expect(c[6], `${id} §F gate`).toBe(f.launch_gate);
+      expect(c[7], `${id} §F train`).toBe(f.train);
+    }
+    // §I must not restate a severity mix the register contradicts
+    const limSev: Record<string, number> = {};
+    for (const id of ["L18", "L19a", "L19b", "L20", "L21"]) {
+      const f = REG.findings.find((x: any) => x.source_ids[0] === id);
+      limSev[f.current_severity] = (limSev[f.current_severity] ?? 0) + 1;
+    }
+    const expectedMix = ["P1", "P2", "P3"].filter((s) => limSev[s]).map((s) => `${s}×${limSev[s]}`).join(", ");
+    expect(doc, "§I's limitation severity mix must match the register").toContain(expectedMix);
+  });
+});
+
+describe("findings register — the closure register cannot be hollowed out", () => {
+  it("every disposition row carries a defect, a correction and a verification", () => {
+    // Mutation-proved gap: all 91 rows could be blanked, and every disposition
+    // flipped, with the suite green.
+    const rows = read("REVIEW_CLOSURE_REGISTER.md").split("\n")
+      .filter((l) => /^\| \d+ \| P[123] \| \*\*/.test(l))
+      .map((l) => l.split("|").map((c) => c.trim()));
+    expect(rows.length).toBe(114);
+    const bad: string[] = [];
+    for (const c of rows) {
+      const n = c[1];
+      const isDupe = /DUPLICATE_OF_REVIEW_ITEM/.test(c[3]);
+      const cells = c.slice(4, -1).filter(Boolean);
+      if (cells.length < (isDupe ? 2 : 3)) bad.push(`item ${n}: evidence columns are empty`);
+      const correction = cells[cells.length - 2] ?? "";
+      if (!isDupe && correction.length < 40) bad.push(`item ${n}: correction is not stated`);
+    }
+    expect(bad).toEqual([]);
+    // the disposition mix is pinned so a wholesale flip is visible
+    const counts: Record<string, number> = {};
+    for (const c of rows) {
+      const key = c[3].replace(/\*/g, "").replace(/DUPLICATE_OF_REVIEW_ITEM_\d+/, "DUPLICATE");
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    expect(counts["DUPLICATE"]).toBe(5);
+    expect(counts["REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED"]).toBe(12);
+  });
+
+  it("the pass-1 record's status column matches the closure register item by item", () => {
+    // Mutation-proved gap: all 33 status cells could be rewritten to "NOT FIXED"
+    // (and the manifest hash refreshed) with the suite green. The previous guard
+    // was a single grep for one literal phrase.
+    const closure = read("REVIEW_CLOSURE_REGISTER.md");
+    const pass1Table = closure.slice(closure.indexOf("## Pass 1 —"), closure.indexOf("## Pass 2 —"));
+    const dispositions = new Map<string, string>();
+    for (const l of pass1Table.split("\n")) {
+      const m = l.match(/^\| (\d+) \| P[123] \| \*\*([^*]+)\*\*/);
+      if (m) dispositions.set(m[1], m[2].trim());
+    }
+    expect(dispositions.size).toBe(33);
+
+    const record = read("INDEPENDENT_REVIEW_FINDINGS.md");
+    const bad: string[] = [];
+    for (const l of record.split("\n")) {
+      const m = l.match(/^\| (\d+) \| /);
+      if (!m) continue;
+      const want = dispositions.get(m[1]);
+      if (!want) { bad.push(`item ${m[1]}: no disposition in the closure register`); continue; }
+      const status = l.split("|").map((c) => c.trim()).filter(Boolean).pop() ?? "";
+      if (status.replace(/\*/g, "").trim() !== want) {
+        bad.push(`item ${m[1]}: record says "${status.slice(0, 40)}", register says "${want}"`);
+      }
+    }
+    expect(bad, "the frozen pass-1 record must not contradict the authoritative register").toEqual([]);
+    expect([...dispositions.keys()].length).toBe(33);
+  });
+});
+
+describe("findings register — remaining artifact integrity", () => {
+  it("the manifest and the JSON carry the same baseline as the reports", () => {
+    const manifest = read("AUDIT_INPUT_MANIFEST.json");
+    for (const text of [manifest, read("MASTER_FINDINGS_REGISTER.json")]) {
+      for (const m of text.matchAll(/\b[0-9a-f]{40}\b/g)) {
+        if (m[0] === PROD_SHA) continue;
+        // review heads and the July-27 audit's own ZIP comment are named elsewhere
+        if (["1468d051b5ed5bbcf2d8909b23bf4e9c1b6aeee0", "7566a9c82f5ca8eb0ba86bac90b8c5ca2eac67ef",
+             "0e5357404eab654769dd9765ca46105f96050d7f", "2f9b9e9dda6108f48d6255f674a8b49832d2f02d",
+             "058b8bcbd1a80d6aa89c47f9357e1964328f220d", // the July-27 audit's own ZIP comment
+             "d579faea06699baf72dcc4098bc515f646506d89", // git tree of the production commit
+            ].includes(m[0])) continue;
+        throw new Error(`unexpected 40-hex SHA in a machine-readable artifact: ${m[0]}`);
+      }
+    }
+    expect(JSON.parse(manifest).production_sha).toBe(PROD_SHA);
+  });
+
+  it("no source_* column can be renamed away", () => {
+    // Column identity is what makes "no source column is dropped" checkable.
+    const REQUIRED = [
+      "source_register", "source_id", "source_title", "source_original_severity", "source_date",
+      "source_baseline_sha", "source_recorded_disposition", "source_evidence", "source_acceptance_criteria",
+      "source_recommended_fix", "source_production_evidence", "source_artifact_hash",
+      "source_code_status", "source_migration_status", "source_deployment_status", "source_enabled_status",
+      "source_exercised_status", "source_rollback", "source_willow_impact", "source_classification_rationale",
+      "source_category", "source_provider_impact", "source_data_migration_required",
+      "source_risk_at_stake", "source_business_impact", "source_confidence", "source_existing_controls",
+      "source_why_controls_insufficient", "source_required_regression_tests", "source_reproduction",
+      "source_classification", "source_domain", "source_exact_source_location", "source_confidence_rating",
+      "source_exploitability", "source_affected_scope", "source_current_exposure", "source_remediation_effort",
+      "source_affected_personas", "source_affected_tenants", "source_affected_workflows",
+      "source_affected_feature", "source_affected_launch_scenarios", "source_affected_users_data",
+    ];
+    for (const c of REQUIRED) expect(csvHeader, `${c} must exist`).toContain(c);
+  });
+
+  it("no PR row is shown without a Willow risk", () => {
+    const rows = read("FIRST_REMEDIATION_PR_TRAIN.md").split("\n")
+      .filter((l) => /^\| \*\*PR-\d+\*\*/.test(l)).map((l) => l.split("|").map((c) => c.trim()));
+    const bad = rows.filter((c) => !c[7] || c[7].length < 4).map((c) => c[1]);
+    expect(bad, "every PR must state a Willow risk").toEqual([]);
+  });
+
+  it("the audit's provenance statements name the current pass", () => {
+    expect(read("RECONCILIATION_REPORT.md")).not.toMatch(/Corrected pass 2\b/);
+    const manifest = JSON.parse(read("AUDIT_INPUT_MANIFEST.json"));
+    expect(String(manifest.pass)).toMatch(/pass 4/);
   });
 });

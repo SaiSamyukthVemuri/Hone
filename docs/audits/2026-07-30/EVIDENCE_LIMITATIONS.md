@@ -51,6 +51,27 @@ Content was **not** reconstructed. No finding depends on them.
    content are stored. `CHLOE-002` is explicitly `EVIDENCE_LIMITATION` because the repository claims a
    fix that is not confirmed on the deployed build.
 
+## What the consistency suite can and cannot establish
+
+This deliverable has been independently reviewed four times. Passes 2, 3 and 4 each found that guards
+cited as verification could not detect what they were credited with closing, and each was corrected by
+deriving more of the deliverable from the register. That work has a real limit, stated here rather than
+left for a later pass to present as a discovery:
+
+- **What the 76 assertions do establish.** Every count, gate, severity, status, dependency, PR
+  membership and preserved source cell in the machine-readable register is compared against the
+  documents that render it, in both directions. Structured drift between artifacts is detectable, and
+  each guard has been mutation-checked by reverting the correction and confirming a red suite.
+- **What they cannot establish.** They cannot make prose self-verifying. A rationale, a scope bullet or
+  a PR title can be rewritten to say something false about the world, and no test comparing artifacts to
+  each other will notice — only re-reading the source will. Pass 4 demonstrated exactly this by finding
+  that L18's severity rationale asserted three specific facts about the codebase that were false, while
+  every structural check stayed green.
+- **What follows.** The counts, gates and dependencies in this register are defended. The *judgements* —
+  why a finding is P1, why a gate is WILLOW_NOW — rest on the evidence quoted in each finding, which a
+  reader should check against the tree at `c64366c9ba4130283932bbe21e32bf2ed62c4975` before acting on it. Every finding cites exact
+  file:line locations for that purpose.
+
 ## Findings carrying missing evidence
 
 **51 of 60** canonical findings record something they could not prove. That is not the same as
@@ -71,7 +92,7 @@ Content was **not** reconstructed. No finding depends on them.
 | `F-SCHED-004` | Whether any existing appointment, timed block or recurring-break occurrence was actually written from a wall time inside a past DST gap — that requires a hosted query over starts_at against transition windows per studio timezone, which I did not run. |
 | `F-SCHED-005` | Per-studio count of active role='owner' practitioners (needed to know whether the null-assignment branch is live at any tenant), current per-studio values of practitioner_capacity_enabled, and whether any appointments rows already have practitioner_id IS NULL. |
 | `F-SCHED-006` | Real-world frequency of these query errors in production (no hosted error-rate or ops_alerts data was supplied), so I cannot say how often the fail-open has actually fired. |
-| `F-PAY-001` | Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner. Active non-owner practitioners: 0 (hosted-verified read-only aggregate, 2026-07-30). The authorization half of this finding therefore has no distinct actor at Willow today, which is why the gate is BEFORE_STUDIO_2 rather than … |
+| `F-PAY-001` | Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner; active non-owner practitioners: 0 (hosted-verified, 2026-07-30). That bounds the AUTHORIZATION half only. What remains genuinely unproven: I did not compare the 6 live charge amounts against the service-menu prices — that requ… |
 | `F-PAY-002` | I could not determine from source whether any prospective studio has actually asked for deposits or no-show protection; the audit asserts commercial parity pressure without demand evidence. Whether this ever becomes a launch requirement depends on that demand signal, which is not in the repository. |
 | `F-PRIV-001` | I cannot prove from source whether any such event has ALREADY been transmitted to Sentry — that requires querying the Sentry project's stored events (search by route pattern, never exporting raw URLs). I also cannot confirm from the repository whether Sentry's data region is US or EU, or the projec… |
 | `F-PRIV-002` | I cannot determine from source how many public-booking audit rows exist in production or how many carry non-empty notes, so the size of the historical remediation is unknown. I also could not find any code that redacts appointments.notes on request, so the redaction-divergence scenario is currently… |

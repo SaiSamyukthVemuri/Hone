@@ -1,4 +1,4 @@
-# Review closure register — all three review passes
+# Review closure register — all four review passes
 
 This register is **authoritative** over the status column of any earlier review artifact. Where
 `INDEPENDENT_REVIEW_FINDINGS.md` (the pass-1 record) and this file disagree, this file is correct;
@@ -12,7 +12,18 @@ production SHA could be falsified in all nine documents, three live P1s could be
 the gate matrix could lose its blocker bullets, and whole report files could be replaced, all with the
 suite fully green.
 
-All three sets are below. **No item is OPEN, deferred, or partially corrected.**
+**Pass 4** independently reviewed head `2f9b9e9d` and raised **23 more**, including two pass-3 items
+whose stated correction had never been applied to the file it named, a pass-3 verification test that
+did not exist, and — most importantly — **three specific factual claims in L18's severity rationale
+that were false about the codebase while every structural check stayed green.**
+
+All four sets are below. **No item is OPEN, deferred, or partially corrected.**
+
+> **On convergence.** Four passes have raised 33, 25, 33 and 23 defects. The counts are not falling
+> because the deliverable is getting worse; each pass reaches a layer the previous one did not defend —
+> first the data, then the closure claims, then the documents, then the prose. The limit of that method
+> is stated in [EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md): comparing artifacts to each other
+> cannot establish that a sentence is true about the world. Read the judgements against the tree.
 
 An item is marked corrected only where the change is visible in the primary artifacts and, where a
 test is named, that test fails when the correction is reverted.
@@ -26,7 +37,7 @@ test is named, that test fails when the correction is reverted.
 | 3 | P3 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.csv | Pass 1 recorded: "Undocumented `a \| b \| c` packing removed." **That closure was false.** The packing was removed for July-27 only. All 34 July-18 rows still packed five status columns into `source_rollout_considerations` as `code=…; migration=…;`, and DUPLICATE_AND_SUPERSESSION_MAP.md had been edited to deny packing existed. The five columns are now separate and the map states the true per-register mapping. | no-packed-columns test |
 | 4 | P3 | **CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.json | counts block renamed to source_rows_in_csv_* with an explicit note that `findings` holds canonical rows only. | re-verified at pass 2 |
 | 5 | P1 | **CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.{csv,json}; CURRENT_P0_P1_REPORT.md | F-BILL-001 split: the unbuilt platform stays NOT_A_LAUNCH_REQUIREMENT/P3; the live false public claim is now N-DOC-001 (P1, WILLOW_NOW). | re-verified at pass 2 |
-| 6 | P2 | **CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.json; LAUNCH_GATE_MATRIX.md | Status and gate now agree. | re-verified at pass 2 |
+| 6 | P2 | **CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.json; LAUNCH_GATE_MATRIX.md | Status and launch gate no longer contradict each other: a terminal status (RETIRED / SUPERSEDED / PRODUCTION_VERIFIED) carries no forward gate, no train and no PR, while NOT_A_LAUNCH_REQUIREMENT keeps the gate at which it WOULD become required. Asserted by the closed-finding test. | re-verified at pass 2 |
 | 7 | P2 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | EVIDENCE_LIMITATIONS.md | Pass 1 recorded: "CI evidence recorded." **That closure was false.** The edit cited run **30577864921** — this audit branch's own run — as the test evidence, not run **30572200532** at the production SHA, and understated it as covering only the unit and DB lanes. Both runs are all-lane green; they are now stated separately and only the production-head run backs F-EXEC-001. | CI-evidence test |
 | 8 | P3 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.json | Pass 1 recorded: "F-EXEC-001 no longer carries a forward implementation wave." **That closure was false.** Only `train` was changed. `F-EXEC-001` still carried `product_decision: signed-record retirement (permanent)` (copied from the clinical rows, with which it has no relationship) and `launch_gate: POST_GA`. Now `n/a` and `NONE_CLOSED`; the emitter no longer applies the clinical decision to any non-clinical finding. | closed-finding product-decision test |
 | 9 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md | Baseline table marks each row independently-verified vs supplied-not-verified. | re-verified at pass 2 |
@@ -38,7 +49,7 @@ test is named, that test fails when the correction is reverted.
 | 15 | P3 | **DUPLICATE_OF_REVIEW_ITEM_16** | FIRST_REMEDIATION_PR_TRAIN.md | Same defect as item 16; corrected there. | see item 16 |
 | 16 | P1 | **CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | Backup/restore mapped to F-OPS-004 + F-STAGE-001; the rate-limiter fail-open has its own PR. | re-verified at pass 2 |
 | 17 | P1 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md; DEPENDENCY_REMEDIATION_PLAN.md | Pass 1 recorded: "Appointment command boundaries no longer depend on the L18 clinical refactor." **That closure was false.** The cited verification never checked ordering. Pass 2 mutation-proved it: deleting real `Depends on` cells from the PR train left the suite green. | PR-dependency-matches-derived-graph test (mutation-checked) |
-| 18 | P1 | **CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | F-PAY-001 is in the first train. | re-verified at pass 2 |
+| 18 | P1 | **CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | F-PAY-001 is scheduled in the first tranche with its own code-only PR (PR-03, server-authoritative charge amount), rather than being absent from the train while rated a live-money P1. Asserted by the every-open-P1-has-a-PR test. | re-verified at pass 2 |
 | 19 | P2 | **CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | Gate column derived: 'Closes' only when the PR covers every open finding at that gate. | re-verified at pass 2 |
 | 20 | P2 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | Pass 1 recorded: "PR dependencies come from canonical depends_on." **That closure was false.** The fabricated edge was renumbered, not removed, and promoted into canonical data as `F-DATA-001.depends_on = [F-IMPORT-001]`, so the export copy correction still waited on import atomicity. `F-DATA-001`'s real dependencies (`F-SCALE-001`, `F-DATA-002`, `F-RET-001`) are now recorded, and its Phase-1 copy fix is scoped to a PR with no dependency. | PR-dependency test + finding-acyclicity test |
 | 21 | P2 | **REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED** | FIRST_REMEDIATION_PR_TRAIN.md | Pass 1 recorded: "Willow-risk and production-verification cells populated." **That closure was false.** The Production-verification column was populated, but from `acceptance_evidence`, which was a byte-for-byte copy of `behavioural_test_evidence` in 59 of 60 findings — an inventory of existing tests, not a closure criterion. Every open finding now has a distinct, written acceptance criterion. | acceptance-evidence test |
@@ -51,8 +62,8 @@ test is named, that test fails when the correction is reverted.
 | 28 | P2 | **DUPLICATE_OF_REVIEW_ITEM_16** | FIRST_REMEDIATION_PR_TRAIN.md | Same defect as item 16; corrected there. | see item 16 |
 | 29 | P2 | **DUPLICATE_OF_REVIEW_ITEM_5** | MASTER_FINDINGS_REGISTER.json | Same defect as item 5; corrected there. | see item 5 |
 | 30 | P3 | **CORRECTED_AND_VERIFIED** | MASTER_FINDINGS_REGISTER.json | train, depends_on, parallel_group and required_prs are distinct fields. | re-verified at pass 2 |
-| 31 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md §F | L18–L21 are real canonical rows. | re-verified at pass 2 |
-| 32 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md | Section lettering A–I contiguous. | re-verified at pass 2 |
+| 31 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md §F | L18/L19a/L19b/L20/L21 are first-class canonical rows with severity, status, reachability, gate, train, dependencies and acceptance criteria, instead of prose in a section. §F now renders them from the register and its cells are compared to it. | re-verified at pass 2 |
+| 32 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md | Section lettering runs A–I with no gap: §D (the P2/P3 disposition summary) had been dropped, so a reader following the lettering saw C jump to E. Asserted by the section-lettering test. | re-verified at pass 2 |
 | 33 | P3 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md §A | The evidence-limitation column reports findings carrying missing_evidence. | re-verified at pass 2 |
 
 ## Pass 2 — 25 items reviewed at head `7566a9c8`
@@ -128,17 +139,45 @@ pass 1 were proved vacuous by mutation.
 | 32 | P3 | **CORRECTED_AND_VERIFIED** | The stated hard-ordering constraint named PR-12 as depending on PR-01 while the table and the derived graph said otherwise | FIRST_REMEDIATION_PR_TRAIN.md | The prose now matches the derived graph: PR-01 precedes only PR-10 and PR-11. | PR-graph derivation test |
 | 33 | P3 | **CORRECTED_AND_VERIFIED** | Three acceptance criteria carried verbatim from July-27 demanded a capability the retirement removed — finalized states, a finalization/correction surface and a snapshot migration | MASTER_FINDINGS_REGISTER.json | F-SEC-001, F-TEST-003 and F-STAGE-001 restated against this baseline, with the source text preserved in source_required_regression_tests. A guard fails when a scheduled finding's criterion names a retired capability without an explicit restatement. | retired-direction acceptance test (mutation-checked) |
 
+## Pass 4 — 23 items reviewed at head `2f9b9e9d`
+
+| # | Sev | Disposition | Defect | Affected artifacts | Exact correction | Verification test |
+|---|---|---|---|---|---|---|
+| 01 | P1 | **CORRECTED_AND_VERIFIED** | Pass-3 items 17 and 31 were false closures — DUPLICATE_AND_SUPERSESSION_MAP.md was byte-identical before and after the commit that claimed to correct it | DUPLICATE_AND_SUPERSESSION_MAP.md | Both corrections now applied. The unverifiable 'header is generated from the source-row shape' claim is replaced by a statement of the three tests that actually enforce column fidelity, and the 'every non-empty cell' claim now names its single exclusion (the July-18 register's own canonical_id and last_verified_date, superseded here). | source-preservation diff + digest + required-column tests |
+| 02 | P1 | **CORRECTED_AND_VERIFIED** | Pass-3 item 09 claimed an item-by-item test that did not exist; all 33 pass-1 status cells could be rewritten to contradict the closure register with the suite green | tests; INDEPENDENT_REVIEW_FINDINGS.md | The status column is now joined to the pass-1 table by item number and compared cell by cell. A generator bug was also found and fixed: the sync script read all three closure tables, so pass-2 and pass-3 items 1–33 silently overwrote the pass-1 dispositions they share numbers with. | pass-1 status join test (mutation-checked) |
+| 03 | P1 | **CORRECTED_AND_VERIFIED** | F-PAY-001's pass-3 gate correction was appended rather than applied — the rationale still opened 'Gate is BEFORE_STUDIO_2 rather than WILLOW_NOW', and CURRENT_P0_P1_REPORT.md rendered that truncated at the ellipsis, so the report contradicted its own gate cell | MASTER_FINDINGS_REGISTER.json; CURRENT_P0_P1_REPORT.md | rationale and missing_evidence rewritten so the leading sentence states WILLOW_NOW and the practitioner-count fact is a scope note on the authorization half only. The superseded sentences are deleted, not appended to. | P1-evidence-section test compares the rendered text to the register |
+| 04 | P1 | **CORRECTED_AND_VERIFIED** | An entire canonical finding could be deleted and every derived artifact regenerated with the suite green — F-OPS-004 (WILLOW_NOW) was removed end to end in a mutation | tests | The mapped set is pinned: 60 non-historical source rows must each carry a canonical_id present in the register, and the canonical count is asserted. | canonical-set test (mutation-checked) |
+| 05 | P1 | **CORRECTED_AND_VERIFIED** | CURRENT_P0_P1_REPORT.md was guarded on its ID column only — exposure, gate, train and PR cells could contradict the register, and all 12 evidence sections could be replaced with stubs | tests | Every cell of the P1 table is compared to the register, and each evidence section must contain that finding's actual source evidence, rationale and Willow risk. | P1-table and P1-evidence tests (both mutation-checked) |
+| 06 | P1 | **CORRECTED_AND_VERIFIED** | The pass-3 severity raises could be silently reverted across every artifact with the suite green | tests | The severity and gate of all twelve P1s, the exact membership of the P1 set, and the Willow practitioner aggregate are pinned. | pinned-judgement test (mutation-checked) |
+| 07 | P1 | **CORRECTED_AND_VERIFIED** | The frozen head did not typecheck — CI was red at 2f9b9e9 on two TS2345 errors in the audit test file, while the deliverable described a green run | tests | Fixed, and typecheck is now run locally before every push. The earlier browser-e2e failure at 0e53574 was separately confirmed as provider-network flake (Resend timeout, invalid API key, Sentry ETIMEDOUT) and passed on the next run. | CI at the frozen head |
+| 08 | P2 | **CORRECTED_AND_VERIFIED** | L18's pass-3 severity basis was factually FALSE on all three specifics it named | MASTER_FINDINGS_REGISTER.json | Verified in the frozen tree and withdrawn: (a) no reviewed command path exists for those five tables — the direct write IS the shipped path; (b) the clinical audit trail is trigger-based (0086) and fires for direct writers, unlike appointment_audit which has no trigger and IS bypassed by F-SEC-002 — the contrast was stated backwards; (c) charting is not owner-gated, so no privilege is escalated. L18 remains P1 on a fact that IS true: authenticated holds row DELETE on sessions and session_blocks while the application only soft-deletes (0013; zero .delete() calls), so any member can permanently destroy a clinical record. | the corrected rationale, re-verified against the tree |
+| 09 | P2 | **CORRECTED_AND_VERIFIED** | N-SEC-001 asserted a false fact about the code and omitted the qualifier that makes it reachable | MASTER_FINDINGS_REGISTER.json | 'No call site writes these columns from a payload (verify before shipping)' was false: updateSessionPerformerAction reads performer_id from FormData. It also already validates same-studio, so the cross-studio half is NOT reachable through the shipped UI — it needs a direct PostgREST PATCH under the L18 grant, which PR-11 closes. Both facts now recorded. | re-verified against the tree |
+| 10 | P2 | **CORRECTED_AND_VERIFIED** | Six findings' depends_on asserted a blocker their own remediation_dependency denies, sequencing a code-only DST fix behind a migration PR | MASTER_FINDINGS_REGISTER.json | The blanket domain edges to F-SEC-002 and L18 are withdrawn from F-SCHED-004, F-SCHED-006, F-GCAL-001, F-GCAL-002, F-CAL-001, F-ONB-001 and F-ONB-002 — five record 'None — self-contained' and neither onboarding finding mentions L18 anywhere. PR-18 no longer depends on PR-16. | prose-vs-depends_on test, now bidirectional |
+| 11 | P2 | **CORRECTED_AND_VERIFIED** | RECONCILIATION_REPORT.md was entirely underived — every count in it could be falsified green, and §I contradicted §C and §F on L18's severity | RECONCILIATION_REPORT.md; tests | §A's per-severity rows, the canonical and source-row totals, the P1 heading, §F's five limitation rows and §I's severity mixes are all derived from the register and compared. | reconciliation-derivation test (mutation-checked) |
+| 12 | P2 | **CORRECTED_AND_VERIFIED** | P2_DISPOSITION_REPORT.md's data cells were unguarded — a live P2 could be shown PRODUCTION_VERIFIED or pointed at a PR that does not exist | tests | Status, gate, train and PR cells are compared to the register, and every PR id named must exist in the train. | P2/P3 cell test (mutation-checked) |
+| 13 | P2 | **CORRECTED_AND_VERIFIED** | REVIEW_CLOSURE_REGISTER.md's own evidence columns were unguarded — all 91 rows could be blanked and every disposition flipped | tests | Each row must carry a defect, a substantive correction and a verification; the disposition mix is pinned. Four pass-1 corrections recorded in a single terse clause were expanded to verifiable statements. | closure-integrity test (mutation-checked) |
+| 14 | P2 | **CORRECTED_AND_VERIFIED** | The pass-3 correction paragraphs were appended twice to four canonical fields and rendered twice in the P0/P1 report | MASTER_FINDINGS_REGISTER.json | De-duplicated. The cause was a generator re-run; the correction text is now written once, replacing the superseded sentence rather than following it. | P1-evidence-section comparison |
+| 15 | P2 | **CORRECTED_AND_VERIFIED** | Three P1 records still argued for the severity or gate they no longer carried | MASTER_FINDINGS_REGISTER.json | F-PAY-001, F-RET-001 and L18 rewritten so the superseded position is stated as withdrawn, with its reason, rather than left standing beside the current one. | P1-evidence-section comparison |
+| 16 | P2 | **CORRECTED_AND_VERIFIED** | L18's source_original_severity was rewritten P2 → P1 by the pass-3 raise, destroying the record of what it was first rated | MASTER_FINDINGS_REGISTER.csv | Discovered rows now carry a pinned original_severity that a later re-rating cannot overwrite. | original-severity test (mutation-checked) |
+| 17 | P2 | **CORRECTED_AND_VERIFIED** | F-DATA-001 was flagged migration_required false although its Phase 2 needs one, overstating the count of code-only P1s | MASTER_FINDINGS_REGISTER.json | Set to true with migration_required_by_pr recording that Phase 1 (PR-02) is code-only — matching F-RET-001's identical two-phase shape. The recommended-first-authorization count re-derives from it. | recommended-first-authorization test |
+| 18 | P2 | **CORRECTED_AND_VERIFIED** | The manifest and the machine-readable register sat outside the baseline guard, and the AUDIT_INPUT_MANIFEST checksum for the pass-1 record was stale | AUDIT_INPUT_MANIFEST.json; tests | Both are scanned for the production SHA, with the production commit's git TREE sha allowlisted as the legitimate evidence it is. The manifest checksum is regenerated and asserted. | baseline and manifest-checksum tests |
+| 19 | P2 | **CORRECTED_AND_VERIFIED** | The three retirement-restated acceptance criteria pointed their preserved source text at a column empty for July-27 rows | MASTER_FINDINGS_REGISTER.json | They now name source_test_limitations, which is where the July-27 text actually lives. | retired-direction acceptance test |
+| 20 | P3 | **CORRECTED_AND_VERIFIED** | F-TEST-001's counterweight evidence said '93 DB-lane tests' where 93 is the file count | MASTER_FINDINGS_REGISTER.json | Restated as '93 DB-lane test files (963 test cases)', matching the units used for the 52 browser specs. | n/a (documentation) |
+| 21 | P3 | **CORRECTED_AND_VERIFIED** | The audit's provenance still described itself as pass-2-corrected | RECONCILIATION_REPORT.md; AUDIT_INPUT_MANIFEST.json | Both name the current pass and point at the closure register and the limitations statement. | provenance test |
+| 22 | P3 | **CORRECTED_AND_VERIFIED** | The scope-bar guard missed the most likely form of an accidental name leak, and the deliverable implied the guard was the control | tests; EVIDENCE_LIMITATIONS.md | Additional patterns added, and EVIDENCE_LIMITATIONS.md now states plainly that sanitization rests on authoring discipline and that the guard is a keyword heuristic. | scope-bar test |
+| 23 | P2 | **CORRECTED_AND_VERIFIED** | The deliverable implied its consistency suite established more than it can | EVIDENCE_LIMITATIONS.md | A section now states what the suite does establish (structured drift between artifacts, in both directions, each guard mutation-checked) and what it cannot (it cannot make prose self-verifying — pass 4 proved this by finding three false factual claims in L18's rationale while every structural check stayed green), and directs the reader to check judgements against the tree. | n/a — this is the statement of a limit, not a claim |
+
 ## Disposition totals
 
-| | Pass 1 | Pass 2 | Pass 3 |
-|---|---|---|---|
-| CORRECTED_AND_VERIFIED | 16 | 25 | 33 |
-| REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED | 12 | — | — |
-| DUPLICATE_OF_REVIEW_ITEM_<N> | 5 | 0 | 0 |
-| **Total** | **33** | **25** | **33** |
+| | Pass 1 | Pass 2 | Pass 3 | Pass 4 |
+|---|---|---|---|---|
+| CORRECTED_AND_VERIFIED | 16 | 25 | 33 | 23 |
+| REOPENED_IN_PASS_2 → CORRECTED_AND_VERIFIED | 12 | — | — | — |
+| DUPLICATE_OF_REVIEW_ITEM_<N> | 5 | 0 | 0 | 0 |
+| **Total** | **33** | **25** | **33** | **23** |
 
-**91 items, 91 final dispositions, none open.** Every pass-2 and pass-3 defect was corrected; none was
-refuted.
+**114 items, 114 final dispositions, none open.** Every defect raised in four passes was corrected;
+none was refuted.
 
 ## What changed about how closure is verified
 

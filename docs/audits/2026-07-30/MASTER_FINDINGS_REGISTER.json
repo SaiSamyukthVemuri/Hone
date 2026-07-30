@@ -30,9 +30,7 @@
     "PR-17": [
       "PR-16"
     ],
-    "PR-18": [
-      "PR-16"
-    ],
+    "PR-18": [],
     "PR-19": [
       "PR-17"
     ],
@@ -405,7 +403,7 @@
       "rollout_required": "None. 0160 is already merged, applied and deployed; it performed zero data operations (0160:225-232 operator verification is read-only) and needs no backfill because the invariant governs transitions, not existing rows. If the optional treatment_plan_id composite is later pursued, it is a forward-only migration needing a cross-client preflight count first.",
       "rollback_strategy": "revert the PR",
       "Willow_risk": "",
-      "acceptance_evidence": "DB tests reject direct client/studio/practitioner re-parenting of a session by an authenticated studio member, including re-pointing any of the five practitioner FKs at another studio's practitioner (N-SEC-001), and prove the approved correction path — soft-delete plus re-chart, per the 0160 product decision — leaves an attributed trail. RESTATED for this baseline: the July-27 criterion additionally required proof 'in draft and finalized states' and an 'approved reassignment command'; finalized states are permanently retired (0159) and 0160:26-32 records that the reassignment command was deliberately not built. The source text is preserved in source_required_regression_tests.",
+      "acceptance_evidence": "DB tests reject direct client/studio/practitioner re-parenting of a session by an authenticated studio member, including re-pointing any of the five practitioner FKs at another studio's practitioner (N-SEC-001), and prove the approved correction path — soft-delete plus re-chart, per the 0160 product decision — leaves an attributed trail. RESTATED for this baseline: the July-27 criterion additionally required proof 'in draft and finalized states' and an 'approved reassignment command'; finalized states are permanently retired (0159) and 0160:26-32 records that the reassignment command was deliberately not built. The source text is preserved verbatim in the source_test_limitations column of this finding's July-27 row in MASTER_FINDINGS_REGISTER.csv.",
       "owner": "Sam",
       "last_verified_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
       "last_verified_at": "2026-07-30",
@@ -627,9 +625,7 @@
       "train": "T9-public",
       "remediation_wave": "T9-public",
       "parallel_group": "",
-      "depends_on": [
-        "F-SEC-002"
-      ],
+      "depends_on": [],
       "required_prs": [
         "PR-18"
       ],
@@ -641,7 +637,7 @@
       "operational_sequencing": "",
       "co_requisites": [],
       "co_requisite_note": "",
-      "depends_on_by_pr_note": "",
+      "depends_on_by_pr_note": "No dependency: remediation_dependency records this as a self-contained app change. The pass-3 edge to F-SEC-002 was applied by domain, not stated by the finding, and is withdrawn.",
       "migration_required": false,
       "rollout_required": "App-only deploy. Add gap/ambiguity detection to utcInstantFromLocal (or a sibling helper), make every typed-time caller reject a nonexistent wall time with a clear message and require an explicit occurrence for the repeated hour, and REWRITE tests/lib/booking/tz-dst-two-pass.test.ts:127-139 so it asserts rejection instead of pinning the shift. Do a read-only audit of appointments/timed blocks whose starts_at falls in a past DST transition window before changing anything; never auto-shift historical rows.",
       "rollback_strategy": "revert the PR",
@@ -725,9 +721,7 @@
       "train": "T9-public",
       "remediation_wave": "T9-public",
       "parallel_group": "",
-      "depends_on": [
-        "F-SEC-002"
-      ],
+      "depends_on": [],
       "required_prs": [
         "PR-18"
       ],
@@ -739,7 +733,7 @@
       "operational_sequencing": "",
       "co_requisites": [],
       "co_requisite_note": "",
-      "depends_on_by_pr_note": "",
+      "depends_on_by_pr_note": "No dependency: remediation_dependency records this as a self-contained app change. The pass-3 edge to F-SEC-002 was applied by domain, not stated by the finding, and is withdrawn.",
       "migration_required": false,
       "rollout_required": "App-only deploy. Destructure and handle `error` on the blockout and reservation reads (fail closed for mutation-relevant availability), emit a redacted ops signal on each, add the temporary-unavailable state to the public booking / reschedule / calendar surfaces, and add unit tests that inject an error into each query — the current mocks return data only, so no existing test exercises these branches.",
       "rollback_strategy": "revert the PR",
@@ -767,8 +761,8 @@
       "exact_current_source": "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts:44-46 (comment: \"No client-side amount derivation. Amount comes from the practitioner-confirmed form input, per PR #169's product rule. The eligibility helper carries sessions.price_paid_cents as a non-binding suggestion only.\"); :112-125 parseAmountCents (only >0 and <= ceiling); :147 const amountRaw = strOrEmpty(formData.get(\"amount_dollars\")); :201 amount_cents: amountParsed.cents; :127-144 prepareSessionPaymentChargeAction auth is getCurrentPractitionerWithStudio() with NO role check; :292-342 executeSessionPaymentChargeAction likewise has NO role check (contrast :546 refundPaymentChargeAttemptAction which does require practitioner.role !== \"owner\" -> deny). lib/billing/session-payment-types.ts:24 SESSION_PAYMENT_AMOUNT_CEILING_CENTS = 200_000. supabase/migrations/0073_payment_charge_attempts.sql:112 check (amount_cents > 0 and amount_cents <= 200000). lib/supabase/queries.ts:124-154 getCurrentPractitionerWithStudio returns any ACTIVE membership, no role gate. lib/billing/session-payment-eligibility.ts:63-66 \"No amount derivation ... non-binding suggestion only\"; :107 price_paid_cents carried through. components/session-payment-prepare-card.tsx:1206-1216 <input name=\"amount_dollars\" defaultValue={suggestedAmount}> freely editable. PARTIAL FIX FOUND: lib/billing/session-payment-default-amount.ts:1-90 resolveSessionPaymentDefault derives the DEFAULT from client_pricing then services.price_cents (header line 5-9 explicitly says \"Display/default only: the practitioner can always edit the field\"), wired at lib/billing/quick-checkout.ts:114-147. CONTRAST proving the gap is specific to session payments: app/(app)/calendar/[id]/manual-fee-actions.ts:27 \"No fee amount accepted from the browser. Amount comes from...\" and :169 amount_cents: eligibility.amountCents, server-derived in lib/billing/manual-fee-eligibility.ts:318-327 from studios.late_cancel_fee_cents / no_show_fee_cents.",
       "exact_hosted_evidence": "Live payments are ON for Willow with 6 live charges recorded (authoritative hosted fact supplied for this reconciliation); refunds have 0 rows so the owner-only refund compensating control has never been exercised in production. lib/billing/session-payment-charge.ts:733-738 records that the hard live-mode dormancy early-return was REMOVED (PR #323), so the executor is live-capable and gated only by the Stripe key/env layer. Migration max is 0160; nothing in 0159/0160 (clinical retirement + lineage triggers) touches payment_charge_attempts. git log for payment-actions.ts shows the last touching commits are c0254ac / 1c40348, i.e. no post-audit remediation commit.",
       "behavioural_test_evidence": "Not executed. Existing tests are source-string assertions (tests/app/sessions/prepare-session-payment-action.test.ts:62-63 asserts only that the action calls formData.get(\"amount_dollars\")), which is exactly the test limitation the audit named: they prove the amount reaches Stripe as requested and prove nothing about authorization policy. No test asserts a member-supplied amount that deviates from the service price is rejected, and no test asserts a non-owner is denied.",
-      "missing_evidence": "Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner. Active non-owner practitioners: 0 (hosted-verified read-only aggregate, 2026-07-30). The authorization half of this finding therefore has no distinct actor at Willow today, which is why the gate is BEFORE_STUDIO_2 rather than WILLOW_NOW. The escalation rule is stated in terms of ACTIVE non-owner practitioners: reactivating the inactive practitioner row, or onboarding Studio #2, moves this to WILLOW_NOW. The amount half is NOT bounded by practitioner count and is live today. What remains genuinely unproven: I did not compare the 6 live charge amounts against the service-menu prices — that requires a production query and was not authorized.",
-      "rationale": "RE-CLASSIFIED to P1 by the frozen-head review. The charge path moves LIVE money (live payments are on for Willow) and the practitioner-supplied amount is not compared server-side against the booked service or custom price. The prior work that defaults a service price is DISPLAY-ONLY — an editable default is not server-authoritative validation. Gate is BEFORE_STUDIO_2 rather than WILLOW_NOW because Willow: 2 practitioners total — 1 ACTIVE owner, 1 INACTIVE non-owner practitioner. Active non-owner practitioners: 0. (Read-only aggregate, roles/active/counts only, 2026-07-30.) — there is no active non-owner practitioner at Willow today, so the only person who can exercise it there is the owner, for whom an amount override is arguably intended policy. That mitigation evaporates the moment the inactive practitioner is reactivated or a second studio onboards, which is precisely the BEFORE_STUDIO_2 gate. GATE CORRECTION (pass 3): BEFORE_STUDIO_2 described only the AUTHORIZATION half, which the 0-active-non-owner fact bounds to the owner. The AMOUNT half is not bounded by practitioner count and is live at Willow today, so under the stated definition of WILLOW_NOW ('affects Willow on the live build today') the finding as a whole is WILLOW_NOW. The authorization half remains bounded to the owner until practitioner reactivation or Studio #2; that is a scope note, not a gate. GATE CORRECTION (pass 3): BEFORE_STUDIO_2 described only the AUTHORIZATION half, which the 0-active-non-owner fact bounds to the owner. The AMOUNT half is not bounded by practitioner count and is live at Willow today, so under the stated definition of WILLOW_NOW ('affects Willow on the live build today') the finding as a whole is WILLOW_NOW. The authorization half remains bounded to the owner until practitioner reactivation or Studio #2; that is a scope note, not a gate.",
+      "missing_evidence": "Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner; active non-owner practitioners: 0 (hosted-verified, 2026-07-30). That bounds the AUTHORIZATION half only. What remains genuinely unproven: I did not compare the 6 live charge amounts against the service-menu prices — that requires a production query and was not authorized.",
+      "rationale": "Gate is WILLOW_NOW. amount_dollars is taken from the submitted form (payment-actions.ts:147) and validated only as >0 and <=200000 cents (parseAmountCents :112-125) before being written as amount_cents (:201). No server-side comparison against the booked service's authoritative price exists; the prior work is display-only. This AMOUNT half is not bounded by practitioner count and is live at Willow today, which is what fixes the gate. SCOPE NOTE on the authorization half only: Willow has 2 practitioner rows — 1 ACTIVE owner and 1 INACTIVE non-owner, so 0 active non-owner practitioners. Only the owner can exercise the any-practitioner authorization gap today. That bound ends on practitioner reactivation or Studio #2; it never applied to the amount half. The compensating control is an owner-only refund (role checked only in the refund path at :546) that has never been exercised in production — 0 refund rows.",
       "remediation_dependency": "Independent of L18 and of the privilege sweep. Code-only.",
       "launch_gate": "WILLOW_NOW",
       "train": "T2-payment",
@@ -1003,7 +997,7 @@
       "exact_hosted_evidence": "Hosted facts supplied: migration max 0160; live payments ARE on at Willow (6 live charges) — so real payment records exist in production that this export cannot produce. Willow has ZERO non-draft sessions and there is exactly ONE legacy finalized session + ONE snapshot in a NON-Willow test studio, so the omitted clinical_record_snapshots content is currently 1 row outside Willow. Copy ledger (session_copy_operations) 0 rows; GCal tables 1 row. 0 clinical_audit_events, 0 amendments. Willow's actual intake/consent/image/portal row counts were NOT re-queried today.",
       "behavioural_test_evidence": "None. tests/app/settings/data/export-owner-gate.test.ts is a source-string test (readFileSync + regex over actions.ts). There is no DB or browser test that seeds a row in each table and asserts it appears in the archive.",
       "missing_evidence": "Willow's live row counts for client_intake_forms, client_consent_signatures, client_clinical_notes, treatment_images and client_portal_messages were not queried, so the concrete volume of currently-unexportable Willow data is unquantified. No test or CI check exists that compares export coverage to the schema, so drift since 0128 is unmeasured.",
-      "rationale": "Confirmed exactly as written, and worse than described. The action reads 16 datasets and writes 13 CSVs; roughly 60 tenant-owned tables plus the entire private treatment-image bucket are absent. Two later chart fields that Chloe uses daily are silently absent even from the rows that ARE exported: session_blocks.numbing_notes/numbing_status (0156) and probe_inventory_item_id (0155) are not in the select list at actions.ts:109-114. The severity driver is not the missing capability — it is the live in-product representation: the page says \"You can export everything at any time\" and \"Exportable any time\", explicitly recommends the ZIP as the pilot backup, and its \"Not included\" section names ONLY private warnings/personal notes, which reads as an exhaustive exclusion list. An owner following the on-screen instruction would hold a backup with no intake forms, no signed consents, no clinical notes, no treatment photos and no payment history. The UI \"Included\" list is also stale in the other direction: it does not mention the four record-keeping CSVs that ARE produced, one of which (record_keeping_exposure_incidents.csv) carries third-party PII — only the README inside the ZIP warns about that. This is an active, browser-reachable misrepresentation of a data-portability control, not an unbuilt future feature, so P1 stands. Existing coverage is source-string only (tests/app/settings/data/export-owner-gate.test.ts reads actions.ts with readFileSync and regex-matches the owner gate), which structurally cannot detect coverage drift.",
+      "rationale": "Confirmed exactly as written, and worse than described. The action reads 16 datasets and writes 13 CSVs; roughly 60 tenant-owned tables plus the entire private treatment-image bucket are absent. Two later chart fields that Chloe uses daily are silently absent even from the rows that ARE exported: session_blocks.numbing_notes/numbing_status (0156) and probe_inventory_item_id (0155) are not in the select list at actions.ts:109-114. The severity driver is not the missing capability — it is the live in-product representation: the page says \"You can export everything at any time\" and \"Exportable any time\", explicitly recommends the ZIP as the pilot backup, and its \"Not included\" section names ONLY private warnings/personal notes, which reads as an exhaustive exclusion list. An owner following the on-screen instruction would hold a backup with no intake forms, no signed consents, no clinical notes, no treatment photos and no payment history. The UI \"Included\" list is also stale in the other direction: it does not mention the four record-keeping CSVs that ARE produced, one of which (record_keeping_exposure_incidents.csv) carries third-party PII — only the README inside the ZIP warns about that. This is an active, browser-reachable misrepresentation of a data-portability control, not an unbuilt future feature, so P1 stands. Existing coverage is source-string only (tests/app/settings/data/export-owner-gate.test.ts reads actions.ts with readFileSync and regex-matches the owner gate), which structurally cannot detect coverage drift. PHASE NOTE (pass 4): migration_required is true because Phase 2 (the complete asynchronous export, PR-22) needs one, matching F-RET-001's identical two-phase shape. Phase 1 — the copy correction that discharges the live misrepresentation — is code-only and ships in PR-02, recorded in migration_required_by_pr.",
       "remediation_dependency": "Two-phase. Phase 1 (no migration, days): correct app/(app)/settings/data/page.tsx to say \"partial export\", replace the \"Not included\" paragraph with the real exclusion list (intake, consent, clinical notes, treatment photos, payments, portal messages, availability, audit), add the four record_keeping CSVs to the \"Included\" list with the PII warning, and remove the \"keep it as a backup\" framing. Phase 2 (larger): a versioned export manifest enumerating every tenant-owned table + the treatment-images bucket with checksums; must be built together with F-SCALE-001 (streaming/async) because the complete artifact cannot be produced in memory as base64, and it must land the F-DATA-002 manifest-derived audit list at the same time. Depends on the retention/legal-hold model (F-RET-001) to decide what soft-deleted rows the archive includes.",
       "launch_gate": "BEFORE_STUDIO_2",
       "train": "T0-copy",
@@ -1022,7 +1016,8 @@
         "PR-02": []
       },
       "migration_required_by_pr": {
-        "PR-02": false
+        "PR-02": false,
+        "PR-22": true
       },
       "capability_pr": "PR-22",
       "unscheduled_reason": "",
@@ -1034,9 +1029,9 @@
       "co_requisites": [],
       "co_requisite_note": "",
       "depends_on_by_pr_note": "",
-      "migration_required": false,
+      "migration_required": true,
       "rollout_required": "Phase 1 is a copy-only Vercel deploy, no migration, no flag. Phase 2 needs an export-job table/bucket and therefore a migration; it should ship behind an owner-only flag with the old export retained until the manifest validates against a seeded fixture of every table.",
-      "rollback_strategy": "revert the PR",
+      "rollback_strategy": "forward-fix via a new migration; applied migrations are never edited",
       "Willow_risk": "Live at Willow today as a misrepresentation: the export UI invites the owner to 'keep it as a backup' while the export is partial. A Willow owner relying on it as a backup would discover the gap only at restore time.",
       "acceptance_evidence": "Phase 1: a copy truth-guard asserting the export UI states exactly what the export contains. Phase 2: a test proving a full asynchronous export completes at scale and its manifest matches the delivered contents.",
       "owner": "Sam",
@@ -1156,8 +1151,8 @@
       "exact_hosted_evidence": "Hosted facts confirm only 3 registered crons run, which independently corroborates that no retention job is scheduled. Migration max 0160; no retention/hold table appears in the migration create-table inventory. Supabase backup retention/purge configuration is provider-side and was not inspected.",
       "behavioural_test_evidence": "None. No retention, purge or legal-hold test exists anywhere in the suite.",
       "missing_evidence": "Supabase backup retention configuration and whether a 90-day backup purge actually occurs could not be established from source; that is provider-side. No count of currently soft-deleted rows past 30 days at Willow. No legal review of whether the published wording matches operational reality.",
-      "rationale": "Confirmed. The gap is larger than 'not implemented as a coherent process': it is a live, published contractual and privacy-policy commitment on hone.care with literally zero implementing code — no scheduled purge, no soft-delete expiry, no legal-hold concept, and no provider-side evidence of the 90-day backup purge claim. The soft-delete markers that do exist (sessions.deleted_at, treatment_images.deleted_at) are never swept, so 'then hard-deleted from active systems' is currently false for every record. Treatment-image bytes are a concrete instance: archiveTreatmentImageAction (app/(app)/clients/[id]/images/actions.ts:367-381) only stamps deleted_at and never removes the storage object, so a client-deleted photo persists in the private bucket indefinitely. I am holding P2 rather than raising it: no unauthorized access occurs, no data is corrupted, and at 1 studio no deletion request has been shown to exist. But this is more than an unbuilt feature — the promise is already published, so it is an active accuracy defect on a live page. GATE CORRECTION (pass 2): this finding has two components and the earlier single gate understated the first. The PUBLISHED-CLAIM component is live today — app/privacy/page.tsx:353-361 and app/terms/page.tsx:484-495 both commit to a 30-day deletion and 90-day backup purge, and Willow already holds real client health data, so the audience for the statement exists now. That is the same class as N-DOC-001 and F-COMP-001, both WILLOW_NOW, and it is corrected the same way: copy-only, in PR-02. The IMPLEMENTATION component (purge job, hard-delete path, legal hold, cross-system lifecycle) remains BEFORE_PUBLIC_SELF_SERVICE and is PR-21. SEVERITY CORRECTION (pass 3): held at P2 on a single-studio-scale argument the deliverable explicitly rejects for N-DOC-001 and F-COMP-001, which are the same class — a live published claim that the product does not honour — and are P1. A published deletion commitment made to a health practitioner holding real client data is not a smaller claim than a billing-lifecycle one. SEVERITY CORRECTION (pass 3): held at P2 on a single-studio-scale argument the deliverable explicitly rejects for N-DOC-001 and F-COMP-001, which are the same class — a live published claim that the product does not honour — and are P1. A published deletion commitment made to a health practitioner holding real client data is not a smaller claim than a billing-lifecycle one.",
-      "remediation_dependency": "Sequenced after F-DATA-001 (a complete export must exist before anything is deleted) and jointly with F-OFF-001 (offboarding is the process that consumes the retention clock) and F-STORAGE-001 (the storage reconciler is the same bucket-vs-metadata walk a purge job needs). Needs a data inventory with purpose/legal basis/retention/hold per table, then idempotent purge jobs. Requires qualified privacy/legal review — not an engineering-only fix. Interim, no-code mitigation available immediately: soften the privacy/terms wording to describe the process actually operated. DEPENDENCY RECONCILIATION (pass 3): the 'sequenced after F-DATA-001' clause above is an operational precondition on running the first purge, recorded in operational_sequencing; the merge-order edge runs the other way (F-DATA-001's export scope depends on the retention decision) and is recorded in F-DATA-001.depends_on. DEPENDENCY RECONCILIATION (pass 3): the 'sequenced after F-DATA-001' clause above is an operational precondition on running the first purge, recorded in operational_sequencing; the merge-order edge runs the other way (F-DATA-001's export scope depends on the retention decision) and is recorded in F-DATA-001.depends_on.",
+      "rationale": "Published 30-day deletion and 90-day backup-purge commitments are live on app/privacy/page.tsx:353-361 and app/terms/page.tsx:484-495, with no implementing code: no purge job, no hard-delete path, no legal hold, no cross-system lifecycle. app/api/cron/ contains only appointment-reminders, calendar-reconcile, calendar-sync, materialize-recurring-breaks and no-show-check, and archiveTreatmentImageAction stamps deleted_at without removing the storage object. P1 on parity: this is the same class as N-DOC-001 and F-COMP-001 — a live published claim the product does not honour — and both are P1. A published deletion commitment made to a health practitioner already holding real client data is not a smaller claim than a billing-lifecycle one. The earlier P2, which rested on 'no unauthorized access occurs, no data is corrupted, and at 1 studio no deletion request has been shown to exist', is withdrawn: that is a single-studio-scale argument the deliverable explicitly rejects for the two findings it calls the same class. The finding has two components with different gates, recorded in launch_gate_by_pr: the PUBLISHED-CLAIM component is WILLOW_NOW and corrected copy-only in PR-02; the IMPLEMENTATION component (purge job, hard delete, legal hold, storage reconciler) is BEFORE_PUBLIC_SELF_SERVICE and is PR-21.",
+      "remediation_dependency": "Sequenced after F-DATA-001 (a complete export must exist before anything is deleted) and jointly with F-OFF-001 (offboarding is the process that consumes the retention clock) and F-STORAGE-001 (the storage reconciler is the same bucket-vs-metadata walk a purge job needs). Needs a data inventory with purpose/legal basis/retention/hold per table, then idempotent purge jobs. Requires qualified privacy/legal review — not an engineering-only fix. Interim, no-code mitigation available immediately: soften the privacy/terms wording to describe the process actually operated. DEPENDENCY RECONCILIATION (pass 3): the 'sequenced after F-DATA-001' clause above is an operational precondition on running the first purge, recorded in operational_sequencing; the merge-order edge runs the other way (F-DATA-001's export scope depends on the retention decision) and is recorded in F-DATA-001.depends_on.",
       "launch_gate": "WILLOW_NOW",
       "train": "T0-copy",
       "remediation_wave": "T0-copy",
@@ -1660,7 +1655,7 @@
       "rollout_required": "Infrastructure only: stand up a sanitized production-shape Supabase project (a PITR restore into a scratch project, then scrub PII), add a rehearsal step to docs/runbooks/migration-first-process.md before step 5, and record rehearsal timings per migration. No application change.",
       "rollback_strategy": "revert the PR",
       "Willow_risk": "",
-      "acceptance_evidence": "Rehearse a schema migration and a restore on staging against a production-sized dataset and record the result. RESTATED for this baseline: the July-27 criterion named a 'P0 snapshot migration'; the snapshot v2 direction is retired and no such migration will exist. The source text is preserved in source_required_regression_tests.",
+      "acceptance_evidence": "Rehearse a schema migration and a restore on staging against a production-sized dataset and record the result. RESTATED for this baseline: the July-27 criterion named a 'P0 snapshot migration'; the snapshot v2 direction is retired and no such migration will exist. The source text is preserved verbatim in the source_test_limitations column of this finding's July-27 row in MASTER_FINDINGS_REGISTER.csv.",
       "owner": "Sam",
       "last_verified_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
       "last_verified_at": "2026-07-30",
@@ -1681,7 +1676,7 @@
       "affected_roles": "Not role-scoped — a release-engineering evidence-quality finding.",
       "product_decision": "n/a",
       "exact_current_source": "Measured at c64366c9: 341 of 547 test files under tests/ call readFileSync on repository source. By directory — tests/migrations 79/79 files (100%), tests/docs 8/8 (100%), tests/app 164/177 (93%), tests/lib 69/166 (42%), tests/security 1/1, tests/db 0/93 (0%). Representative examples: tests/app/cron/reminder-heartbeat-wiring.test.ts:35-57 proves the reminder heartbeat wiring by `ROUTE.indexOf(\"recordReminderRunSuccess(\")` and a regex over the route's source text; tests/migrations/0160-immutable-clinical-lineage.test.ts:17-30 loads the migration SQL with readFileSync, strips comments, and asserts on the resulting string; tests/docs/clinical-finalization-retired.test.ts:1-30 is an explicit documentation-text guard. No coverage map, test-class label or CI classification exists — grepping tests/, docs/ and scripts/ for \"coverage map\", \"test class\", \"behavioural layer\" or \"coverage classification\" returns nothing.",
-      "exact_hosted_evidence": "Unchanged and, if anything, larger than at the time of the audit. The counterweight is also real and verifiable: 93 DB-lane tests (tests/db/, zero readFileSync, executed against a real Postgres with real RLS roles) and 52 browser specs across e2e/, e2e-mobile/, e2e-payment/, e2e-google/, all run in the exact-head CI run 30572200532. Critically, the two most recent security-hardening migrations each have BOTH a source-text test and a real behavioural test: tests/migrations/0159-*.test.ts + tests/db/clinical-finalization-retired.db.test.ts, and tests/migrations/0160-*.test.ts + tests/db/immutable-clinical-lineage.db.test.ts.",
+      "exact_hosted_evidence": "Unchanged and, if anything, larger than at the time of the audit. The counterweight is also real and verifiable: 93 DB-lane test files (963 test cases) (tests/db/, zero readFileSync, executed against a real Postgres with real RLS roles) and 52 browser specs across e2e/, e2e-mobile/, e2e-payment/, e2e-google/, all run in the exact-head CI run 30572200532. Critically, the two most recent security-hardening migrations each have BOTH a source-text test and a real behavioural test: tests/migrations/0159-*.test.ts + tests/db/clinical-finalization-retired.db.test.ts, and tests/migrations/0160-*.test.ts + tests/db/immutable-clinical-lineage.db.test.ts.",
       "behavioural_test_evidence": "Yes for the highest-risk paths: 93 real-DB tests including two-connection concurrency harnesses (tests/db/whole-session-copy-concurrency.db.test.ts, tests/db/move-preserve-target-race.db.test.ts, tests/db/schedule-lock-order.db.test.ts, tests/db/scoped-sources-lock.db.test.ts) plus four browser lanes. No for the wiring/route class, which is almost entirely source-text asserted.",
       "missing_evidence": "I counted files, not assertions — a file that calls readFileSync once and then makes 40 behavioural assertions is counted as source-string. The true assertion-level ratio may be lower than 62%.",
       "rationale": "Confirmed with hard numbers, and the recommended remediation (label test classes in CI; require a behavioural layer for every P0/P1 regression) is entirely unimplemented. But the finding's own caveat is borne out: the highest-risk invariants are not source-only. The clinical retirement and lineage guarantees, the copy RPC, the booking locks and the schedule writers all have real two-connection or real-role DB tests. The residual harm is evidentiary rather than technical — \"6049 tests green\" reads as far stronger assurance than it is, and roughly a third of the suite would survive a refactor that preserved comments while breaking behaviour. That misleads release decisions but does not by itself create a defect. Downgraded P2 -> P3 accordingly; it should be raised again the moment a P0/P1 fix ships with source-only coverage.",
@@ -1797,7 +1792,7 @@
       "rollout_required": "Two separable pieces. (1) Immediate, no deployment: run the recorded acceptance script on Chloe's actual iPhone across calendar, booking, intake, charting, photo upload and whole-session copy, then check L1 off. (2) Later, test-infrastructure only: add an HTTPS-capable local harness plus a `webkit` Playwright project and an axe pass on launch-critical routes.",
       "rollback_strategy": "revert the PR",
       "Willow_risk": "",
-      "acceptance_evidence": "Acceptance checklist covering copy, charting and payment on the deployed build. RESTATED for this baseline: the July-27 checklist also named 'finalization/correction', which is permanently retired (0159) and must not be reinstated as a test target. The source text is preserved in source_required_regression_tests.",
+      "acceptance_evidence": "Acceptance checklist covering copy, charting and payment on the deployed build. RESTATED for this baseline: the July-27 checklist also named 'finalization/correction', which is permanently retired (0159) and must not be reinstated as a test target. The source text is preserved verbatim in the source_test_limitations column of this finding's July-27 row in MASTER_FINDINGS_REGISTER.csv.",
       "owner": "Sam",
       "last_verified_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
       "last_verified_at": "2026-07-30",
@@ -1966,9 +1961,7 @@
       "train": "NONE",
       "remediation_wave": "NONE",
       "parallel_group": "",
-      "depends_on": [
-        "F-SEC-002"
-      ],
+      "depends_on": [],
       "required_prs": [],
       "depends_on_by_pr": null,
       "migration_required_by_pr": null,
@@ -2013,9 +2006,7 @@
       "train": "NONE",
       "remediation_wave": "NONE",
       "parallel_group": "",
-      "depends_on": [
-        "F-SEC-002"
-      ],
+      "depends_on": [],
       "required_prs": [],
       "depends_on_by_pr": null,
       "migration_required_by_pr": null,
@@ -2105,9 +2096,7 @@
       "train": "NONE",
       "remediation_wave": "NONE",
       "parallel_group": "",
-      "depends_on": [
-        "F-SEC-002"
-      ],
+      "depends_on": [],
       "required_prs": [],
       "depends_on_by_pr": null,
       "migration_required_by_pr": null,
@@ -2152,9 +2141,7 @@
       "train": "NONE",
       "remediation_wave": "NONE",
       "parallel_group": "",
-      "depends_on": [
-        "L18"
-      ],
+      "depends_on": [],
       "required_prs": [],
       "depends_on_by_pr": null,
       "migration_required_by_pr": null,
@@ -2165,7 +2152,7 @@
       "co_requisites": [
         "F-ONB-002"
       ],
-      "co_requisite_note": "F-ONB-001 and F-ONB-002 are mutually dependent: a launch gate is only meaningful if provisioning produces the evidence it checks, and the provisioning manifest is only specifiable once the gate defines what it must assert. Recorded as co-requisites rather than as a direction, because neither direction is true on its own and inventing one would fabricate an ordering.",
+      "co_requisite_note": "F-ONB-001 and F-ONB-002 are mutually dependent: a launch gate is only meaningful if provisioning produces the evidence it checks, and the provisioning manifest is only specifiable once the gate defines what it must assert. Recorded as co-requisites rather than as a direction, because neither direction is true on its own and inventing one would fabricate an ordering. The pass-3 edge to L18 is withdrawn: neither finding mentions L18 in any field, and it was never justified.",
       "depends_on_by_pr_note": "",
       "migration_required": false,
       "rollout_required": "Founder-led provisioning remains acceptable at this scale provided each run is written down: use the admin wizard, then follow a written per-studio checklist, and record the resulting configuration. Any automated template would be a new code-only feature (possibly one new table for the manifest) deployed normally.",
@@ -2201,9 +2188,7 @@
       "train": "NONE",
       "remediation_wave": "NONE",
       "parallel_group": "",
-      "depends_on": [
-        "L18"
-      ],
+      "depends_on": [],
       "required_prs": [],
       "depends_on_by_pr": null,
       "migration_required_by_pr": null,
@@ -2214,7 +2199,7 @@
       "co_requisites": [
         "F-ONB-001"
       ],
-      "co_requisite_note": "F-ONB-001 and F-ONB-002 are mutually dependent: a launch gate is only meaningful if provisioning produces the evidence it checks, and the provisioning manifest is only specifiable once the gate defines what it must assert. Recorded as co-requisites rather than as a direction, because neither direction is true on its own and inventing one would fabricate an ordering.",
+      "co_requisite_note": "F-ONB-001 and F-ONB-002 are mutually dependent: a launch gate is only meaningful if provisioning produces the evidence it checks, and the provisioning manifest is only specifiable once the gate defines what it must assert. Recorded as co-requisites rather than as a direction, because neither direction is true on its own and inventing one would fabricate an ordering. The pass-3 edge to L18 is withdrawn: neither finding mentions L18 in any field, and it was never justified.",
       "depends_on_by_pr_note": "",
       "migration_required": true,
       "rollout_required": "A launch-gate concept needs persistence (new columns or a table alongside studio_onboarding) so it is migration-first, then code. Until it exists, keep approval manual and written down; the 0-10 studio scale does not justify automating it yet.",
@@ -2436,8 +2421,8 @@
       "exact_hosted_evidence": "Read-only 2026-07-30: all five practitioner FKs on public.sessions are PLAIN single-column FKs to practitioners(id) — zero composite same-studio constraints. Triggers guarding practitioner columns: 0. has_table_privilege('authenticated','public.sessions','UPDATE')=true. sessions has 1 UPDATE-capable policy predicated on is_studio_member(studio_id), which still holds because studio_id does not change. 6 practitioners across 4 studios.",
       "behavioural_test_evidence": "None. tests/db/immutable-clinical-lineage.db.test.ts covers only the 0160 columns.",
       "missing_evidence": "Not reproduced by an actual PATCH (writes not authorized in this audit). CI-parity reproduction is the required next evidence.",
-      "rationale": "Surfaced by challenging the F-SEC-001 closure; F-SEC-001's own acceptance criteria named practitioner re-parenting, which 0160 does not cover. Because the FK targets practitioners(id) with no studio component, the target need not belong to the caller's studio.",
-      "remediation_dependency": "Independent of the privilege sweep — it is a constraint/trigger addition, not a grant change. No call site writes these columns from a payload (verify before shipping).",
+      "rationale": "Surfaced by challenging the F-SEC-001 closure; F-SEC-001's own acceptance criteria named practitioner re-parenting, which 0160 does not cover. Because the FK targets practitioners(id) with no studio component, the target need not belong to the caller's studio. REACHABILITY QUALIFIER (pass 4): the cross-studio half is NOT reachable through the shipped UI — its only writer validates same-studio. It requires a direct PostgREST PATCH under the authenticated UPDATE grant on sessions, which is L18. So PR-11 (the L18 revoke) closes this finding's browser-reachability outright, and PR-08's constraint is the durable fix that survives any future grant. The finding remains P1 because the constraint is absent at the database level and the grant is live today.",
+      "remediation_dependency": "Additive composite same-studio FK or validating trigger on the five practitioner FKs of sessions. One call site DOES write one of these columns from a payload: updateSessionPerformerAction (app/(app)/clients/[id]/sessions/[sessionId]/actions.ts:593-631) reads performer_id from FormData and writes performed_by_practitioner_id. It already re-queries practitioners with .eq(\"studio_id\", studio.id) and throws 'Practitioner not found in this studio.', so an additive same-studio constraint will not break it. CORRECTION (pass 4): the earlier text claimed 'No call site writes these columns from a payload (verify before shipping)' — that was false, and the parenthetical shows it was never checked. Independent of the privilege sweep as a FIX; not independent as an EXPOSURE (see rationale).",
       "launch_gate": "BEFORE_STUDIO_2",
       "train": "T6-identity",
       "remediation_wave": "T6-identity",
@@ -2454,7 +2439,7 @@
       "operational_sequencing": "",
       "co_requisites": [],
       "co_requisite_note": "",
-      "depends_on_by_pr_note": "",
+      "depends_on_by_pr_note": "PR-08 (the constraint) depends on nothing. The EXPOSURE is additionally closed by PR-11's revoke of authenticated DML on sessions; the two are complementary, not sequential.",
       "migration_required": true,
       "rollout_required": "Additive migration; no application change expected.",
       "rollback_strategy": "forward-fix via a new migration; applied migrations are never edited",
@@ -2530,7 +2515,7 @@
       "exact_hosted_evidence": "authenticated: sessions SIUD, session_blocks SIUD, electrolysis_entries SIU, laser_entries SIU, treatment_images SIU. anon SELECT-only on all. session_block_areas SELECT-only (0159).",
       "behavioural_test_evidence": "ACL matrix asserted in tests/db.",
       "missing_evidence": "",
-      "rationale": "0160 pinned lineage columns but removed no grant. Content DML remains direct, outside reviewed commands. SEVERITY AND GATE CORRECTION (pass 3): L18 is structurally identical to F-SEC-002 — authenticated holding direct row DML that bypasses the reviewed command path, its authorization checks and its audit trail — and F-SEC-002 is P1/BEFORE_STUDIO_2. L18's tables hold CLINICAL data, so it cannot be the lesser of the two. The remediation is larger (26 call sites, strictly ordered) but effort is not severity. SEVERITY AND GATE CORRECTION (pass 3): L18 is structurally identical to F-SEC-002 — authenticated holding direct row DML that bypasses the reviewed command path, its authorization checks and its audit trail — and F-SEC-002 is P1/BEFORE_STUDIO_2. L18's tables hold CLINICAL data, so it cannot be the lesser of the two. The remediation is larger (26 call sites, strictly ordered) but effort is not severity.",
+      "rationale": "authenticated holds direct row DML on five clinical tables (sessions SIUD, session_blocks SIUD, electrolysis_entries SIU, laser_entries SIU, treatment_images SIU), reachable through PostgREST by any studio member. SEVERITY BASIS (corrected in pass 4): the pass-3 rationale rested this on parity with F-SEC-002 — 'bypasses the reviewed command path, its authorization checks and its audit trail'. All three of those specifics are FALSE at this baseline and have been withdrawn: (a) no reviewed command path exists for these five tables — the direct authenticated write IS the shipped path, which is why the remediation must BUILD the commands first; (b) the clinical audit trail is trigger-based (0086: sessions_aftercare_audit, session_blocks_probe_lot_audit_insert/_update) so it fires for direct writers and is NOT bypassed — unlike appointment_audit, which has no trigger and is RPC-written, making F-SEC-002's bypass the genuine one; (c) charting is not owner-gated, so an L18 actor gains no privilege they lack in the UI. The finding is P1 on a different fact, which is true at this head: authenticated holds row DELETE on sessions and session_blocks while the application only ever soft-deletes (0013 adds deleted_at; there are zero .delete() calls against sessions in application code). Any studio member can therefore PERMANENTLY DESTROY a clinical record through a direct PostgREST DELETE, and 0160's lineage triggers pin columns, not row existence. Destruction of a clinical record with no recovery path is a P1 regardless of actor count, which is also why the gate is BEFORE_STUDIO_2 rather than later. The content-DML half (unvalidated writes to five tables) is the lesser part of the finding.",
       "remediation_dependency": "MUST be application-first: move the 26 callers onto narrow commands and DEPLOY before revoking. Revoke-first breaks live charting at apply time.",
       "launch_gate": "BEFORE_STUDIO_2",
       "train": "T7-clinical-dml",
@@ -2555,7 +2540,7 @@
       "migration_required": true,
       "rollout_required": "Two PRs, strictly ordered.",
       "rollback_strategy": "forward-fix via a new migration; applied migrations are never edited",
-      "Willow_risk": "Live at Willow today for the exposure; HIGH RISK IF THE REMEDIATION IS ORDERED WRONG — revoking before the 26 callers are deployed onto narrow commands breaks live charting at apply time.",
+      "Willow_risk": "Live at Willow today. authenticated holds DELETE on sessions and session_blocks, so any studio member can permanently destroy a clinical record through direct PostgREST DML; the application only soft-deletes, so there is no recovery path and no UI that would produce this state. HIGH RISK IF THE REMEDIATION IS ORDERED WRONG — revoking before the 26 callers are deployed onto narrow commands breaks live charting at apply time.",
       "acceptance_evidence": "Fresh-DB proof that authenticated holds no INSERT/UPDATE/DELETE on the 5 clinical tables, AND a deployed-build charting E2E proving every one of the 26 former direct writers still succeeds through its narrow command. The deploy proof must precede the revoke.",
       "owner": "Sam",
       "last_verified_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",

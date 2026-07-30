@@ -179,13 +179,13 @@
       "path": "docs/audits/2026-07-30/INDEPENDENT_REVIEW_FINDINGS.md",
       "role": "PASS_1_SELF_REVIEW",
       "status": "INGESTED",
-      "bytes": 74435,
-      "sha256": "4432669eba953f6bd86f8614f5bb329d0fafb4601f46b24a0c2f8f01fb5ba677",
+      "bytes": 74620,
+      "sha256": "50b06b8186908cffea868f8d6c66acb8796b5f394e92ebc8688d03c92ae33abc",
       "mtime_utc": null,
       "note": "Regenerated at the current head. This file's Status column is generated from REVIEW_CLOSURE_REGISTER.md, so its hash changes whenever a review item is dispositioned."
     }
   ],
-  "pass": "corrected pass 3 (2026-07-30) — pass 2 was independently re-reviewed at head 7566a9c8, which raised 25 further defects including 12 pass-1 items whose recorded closure was false; all 25 are corrected and dispositioned in REVIEW_CLOSURE_REGISTER.md",
+  "pass": "corrected pass 4 (2026-07-30) — four independent review passes; 91 items from passes 1-3 dispositioned in REVIEW_CLOSURE_REGISTER.md, pass-4 items appended there. See EVIDENCE_LIMITATIONS.md for what the consistency suite can and cannot establish.",
   "preserved_source_content_digests": {
     "note": "SHA-256 over the source_* cells of MASTER_FINDINGS_REGISTER.csv, grouped by source register. Emptying, truncating or rewriting any preserved source cell changes the digest and fails tests/audits/findings-register-consistency.test.ts. Two of the three source registers live outside the repository, so this is how their content is pinned inside it.",
     "algorithm": "For each row: source_id, then every column whose name begins with source_, joined by U+0001. Rows sorted, joined by U+0002, hashed with sha256.",
@@ -208,7 +208,7 @@
       },
       "discovered": {
         "rows": 7,
-        "sha256": "4eaa707645831f590d942ad7ec5cc8ae45cb9dea49c21b93a7fda04ba397b573"
+        "sha256": "f13cb27be2f46cf9e28e2e14c1848f9e4048bfd3dbf00e14904d651e16f540c1"
       }
     }
   }

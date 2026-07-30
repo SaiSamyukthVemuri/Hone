@@ -18,7 +18,7 @@ train is never shown as blocked because one of its members is.
 | **T6-identity** | `F-SEC-001`, `N-SEC-001`, `L19b` | PR-08, PR-09 | none — nothing in this train is blocked |
 | **T7-clinical-dml** | `L18` | PR-10, PR-11 | `L18` → `L19a` |
 | **T8-schedule** | `F-SEC-002`, `F-SCHED-001` | PR-16 | none — nothing in this train is blocked |
-| **T9-public** | `F-SCHED-002`, `F-SCHED-003`, `F-SCHED-004`, `F-SCHED-005`, `F-SCHED-006`, `F-SCALE-002`, `F-PUBLIC-001`, `F-PUBLIC-002` | PR-17, PR-18, PR-19 | `F-SCHED-002` → `F-SEC-002`; `F-SCHED-003` → `F-SEC-002`; `F-SCHED-004` → `F-SEC-002`; `F-SCHED-005` → `F-SCHED-002`; `F-SCHED-006` → `F-SEC-002`; `F-PUBLIC-001` → `F-SEC-002`; `F-PUBLIC-002` → `F-SEC-002` |
+| **T9-public** | `F-SCHED-002`, `F-SCHED-003`, `F-SCHED-004`, `F-SCHED-005`, `F-SCHED-006`, `F-SCALE-002`, `F-PUBLIC-001`, `F-PUBLIC-002` | PR-17, PR-18, PR-19 | `F-SCHED-002` → `F-SEC-002`; `F-SCHED-003` → `F-SEC-002`; `F-SCHED-005` → `F-SCHED-002`; `F-PUBLIC-001` → `F-SEC-002`; `F-PUBLIC-002` → `F-SEC-002` |
 
 ## PR-level dependency graph (derived)
 
@@ -41,7 +41,7 @@ train is never shown as blocked because one of its members is.
 | **PR-15** | — |
 | **PR-16** | — |
 | **PR-17** | PR-16 |
-| **PR-18** | PR-16 |
+| **PR-18** | — |
 | **PR-19** | PR-17 |
 | **PR-20** | — |
 | **PR-21** | — |
