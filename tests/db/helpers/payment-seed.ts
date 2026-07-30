@@ -23,6 +23,12 @@ export type PaymentScenario = {
   appointmentId: string;
   sessionId?: string;
   expectedAmountMinor: number;
+  // Set ONLY when opts.bookedService seeded a real services row and stamped it
+  // on the appointment. Left null by default so every pre-existing assertion
+  // (which relies on the no-service / price_paid_cents fallback) is unchanged.
+  serviceId: string | null;
+  serviceName: string | null;
+  servicePriceCents: number | null;
 };
 
 export type SeedOptions = {
@@ -45,6 +51,14 @@ export type SeedOptions = {
   connectLivemode?: boolean;
   // Attempt
   attempt?: "none" | "ready" | "pending_stripe" | "succeeded" | "failed" | "receipt_failed" | "refunded";
+  // Booked service (Chloe checkout-default regression). OMITTED BY DEFAULT: the
+  // historical fixture deliberately books NO service, which is exactly why no
+  // test ever exercised the booked-service default-amount path and why the
+  // migration-0151 PostgREST embed break shipped unnoticed. Supply this to seed
+  // a real public.services row and stamp appointments.service_id.
+  bookedService?: { name: string; priceCents: number | null; durationMinutes?: number };
+  // Client-specific price rows (public.client_pricing), matched by service NAME.
+  clientPricing?: Array<{ serviceName: string; priceCents: number; effectiveFrom: string; notes?: string }>;
 };
 
 const runToken = () => randomUUID().replace(/-/g, "").slice(0, 12);
@@ -156,17 +170,59 @@ async function seedCard(
   );
 }
 
+async function seedBookedService(
+  ids: Ids,
+  opts: SeedOptions,
+): Promise<{ id: string; name: string; priceCents: number | null } | null> {
+  if (!opts.bookedService) return null;
+  const row = await adminQuery(
+    `insert into public.services
+       (studio_id, name, default_duration_minutes, price_cents, active, modality)
+     values ($1,$2,$3,$4,true,'electrolysis') returning id`,
+    [
+      ids.studio.studioId,
+      opts.bookedService.name,
+      opts.bookedService.durationMinutes ?? 60,
+      opts.bookedService.priceCents,
+    ],
+  );
+  return {
+    id: row.rows[0].id,
+    name: opts.bookedService.name,
+    priceCents: opts.bookedService.priceCents,
+  };
+}
+
+async function seedClientPricing(ids: Ids, opts: SeedOptions): Promise<void> {
+  for (const row of opts.clientPricing ?? []) {
+    await adminQuery(
+      `insert into public.client_pricing
+         (studio_id, client_id, service_name, price_cents, effective_from, notes)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [
+        ids.studio.studioId,
+        ids.studio.clientId,
+        row.serviceName,
+        row.priceCents,
+        row.effectiveFrom,
+        row.notes ?? null,
+      ],
+    );
+  }
+}
+
 async function seedAppointmentAndSession(
   ids: Ids,
   opts: SeedOptions,
+  service: { id: string } | null,
 ): Promise<{ appointmentId: string; sessionId?: string }> {
   const now = new Date();
   const starts = new Date(now.getTime() - 90 * 60 * 1000).toISOString();
   const ends = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
   const appt = await adminQuery(
     `insert into public.appointments
-       (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status)
-     values ($1,$2,$3,$4,$5,60,$6) returning id`,
+       (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status, service_id)
+     values ($1,$2,$3,$4,$5,60,$6,$7) returning id`,
     [
       ids.studio.studioId,
       ids.studio.practitionerId,
@@ -174,6 +230,7 @@ async function seedAppointmentAndSession(
       starts,
       ends,
       opts.appointmentStatus ?? "completed",
+      service?.id ?? null,
     ],
   );
   const appointmentId = appt.rows[0].id;
@@ -252,7 +309,9 @@ export async function seedQuickCheckoutScenario(
   await seedCustomer(ids, opts);
   const auth = await seedAuthorization(ids, opts);
   await seedCard(ids, opts, auth);
-  const { appointmentId, sessionId } = await seedAppointmentAndSession(ids, opts);
+  const service = await seedBookedService(ids, opts);
+  await seedClientPricing(ids, opts);
+  const { appointmentId, sessionId } = await seedAppointmentAndSession(ids, opts, service);
   await seedAttempt(ids, sessionId, appointmentId, opts);
   return {
     runId,
@@ -263,6 +322,9 @@ export async function seedQuickCheckoutScenario(
     appointmentId,
     sessionId,
     expectedAmountMinor: AMOUNT_MINOR,
+    serviceId: service?.id ?? null,
+    serviceName: service?.name ?? null,
+    servicePriceCents: service?.priceCents ?? null,
   };
 }
 
