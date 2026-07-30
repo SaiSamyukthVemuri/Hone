@@ -28,7 +28,8 @@ not a PR diary — per-capability evidence lives in
 | **Current Git branch HEAD** | `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d` at reconciliation. Query GitHub for the live value — documentation commits may have advanced it since. |
 | **Last runtime-bearing application HEAD** | **`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`** — the PR #478 merge (whole-session copy). This is the baseline for every claim in this document. |
 | **Last runtime-bearing Vercel Production deployment** | `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb` — status **Ready**, target production, built from `96b28d6…` on branch `claude/build-hone-saas-hOex7`, aliased to `hone.care` and `www.hone.care`. |
-| **Production migration max** | **0157** — 157 migrations applied, each exactly once, **no `0158`+ applied**. Hosted `0157`; **repo max is now `0159`** (the clinical-finalization retirement migration, in-tree and **not yet applied**). `0158` is intentionally skipped — see §3 and the decision record. |
+| **Production migration max** | **0159** — 158 migrations applied, each exactly once, no duplicate or repaired entry. **Migration `0159` (signed-clinical-record retirement) was applied and verified in production on 2026-07-30**, immediately preceded by `0157`. **Repository max and hosted max are both `0159`.** `0158` is deliberately skipped — DRAFT PR #481 holds a different, superseded `0158` on a retained branch, and two artifacts must never share a number. **`0160` is NOT applied** (it is the separate lineage-immutability migration on DRAFT PR #483). See §3, [migration-ledger.md](./migration-ledger.md) and the decision record. |
+| **Database vs. application skew (temporary)** | The **database is ahead of the deployed application.** Signed-record retirement is already **database-enforced** as of the 0159 apply; the production application branch is still at `058b8bcbd1a80d6aa89c47f9357e1964328f220d` until PR #482 merges and deploys. Practitioner-facing dead-code removal is therefore **pending this merge** — it changes no database state. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
 | **Health** | `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**. All non-5xx. `ops_alerts` unresolved: **0**. |
 | **Customer / studio posture** | **One live studio with real clients: Willow Electrolysis** (2 practitioners, 24 clients, 75 appointments). Plus one controlled test studio used for validation, and three empty studios. Five studios total. |
@@ -112,7 +113,8 @@ the deployment succeeded.
 
 ## 3. Clinical finalization, corrections and amendments — RETIRED
 
-**RETIRED by product decision (2026-07-29) and enforced by migration 0159.** Signed and
+**RETIRED by product decision (2026-07-29) and enforced in production by migration 0159, applied
+and verified 2026-07-30.** Signed and
 cryptographically finalized clinical records are **not a Hone product capability**. Treatment
 sessions are ordinary, editable operational records, and practitioners correct charting mistakes
 by editing them through the normal charting commands. Full reasoning, the retained legacy
@@ -124,16 +126,21 @@ artifact and the reintroduction bar:
 | Phase 1 — finalization boundary (0119) | **RETIRED.** `clinical_finalization_enabled` is **false on all 5 studios** and is now pinned false by CHECK constraint `studios_clinical_finalization_retired` — no role can turn it on. `EXECUTE` on `finalize_session` is revoked from every runtime role, and `sessions_guard_retired_finalization` refuses any transition into `finalized`/`void`. Historically production-exercised **exactly once**, on the controlled non-Willow test studio (1 finalized session + 1 snapshot, hash still re-deriving, retained unchanged). **Willow: 0 non-draft sessions, ever.** |
 | Phase 2 — corrections & amendments backend (0120) | **RETIRED.** `clinical_corrections_enabled` is **false on all studios** and pinned false by `studios_clinical_corrections_retired`. **Never production-exercised** — 0 amendments, 0 clinical audit events, and `INSERT` is now refused on all three signed-record ledgers, so none can ever be produced. The generic 3-field correction UX was never approved, and no full-chart correction workspace will be built. |
 | Reliability/observability (PR #402) | **RETIRED with Phase 2.** The amendment path it instrumented is unreachable. |
-| Practitioner-facing Finalize / signed-record Correction controls | **REMOVED from the application.** There is no Finalize or signed-Correction surface. |
+| Practitioner-facing Finalize / signed-record Correction controls | **Unreachable in production now; source removal pending this PR's deployment.** The deployed application at `058b8bcb…` still *contains* `FinalizeSessionCard` and `RecordVersionsPanel`, but both render only behind `clinical_finalization_enabled` / `clinical_corrections_enabled`, which migration 0159 pinned `false` by CHECK constraint — so a normal production user does **not** see them, and direct RPC invocation is denied because `EXECUTE` is revoked from every runtime role. PR #482 deletes the now-dead components and server actions so the product source matches the database decision. |
 | Append-only clinical notes (0126/0127) | **Live for all studios, no flag** — 1 production row. **Unrelated to the above and NOT retired** — a correction here is a new row (`supersedes_note_id`), never a signed snapshot. |
 
 **Migration 0159 drops nothing.** The 0119/0120 objects stay in place so those migrations remain
 replayable, and the guards that protect the one legacy artifact are deliberately kept on. The
-deployed backend — immutable snapshots, version lineage, `clinical_audit_events`, append-only RLS
-and the narrow session-scoped correction permit — **is preserved and must not be weakened**, but
+deployed backend — immutable snapshots, version lineage, `clinical_audit_events` and append-only
+RLS — **is preserved and must not be weakened**, but
 **not** so finalization can be enabled later: it is preserved because it keeps the legacy
 evidence immutable, keeps the retirement fail-closed, and forbids `authenticated` `TRUNCATE` and
-any write to the three signed-record ledgers. It does NOT stop ordinary direct DML:
+any write to the three signed-record ledgers. **One 0120 mechanism was deliberately NOT preserved:**
+the `hone.correction_session_id` GUC permit is **removed** — `set_config` on a custom placeholder is
+available to any role, so once the correction RPCs were `EXECUTE`-revoked the permit stopped being a
+guarded escape and became an open one (reproduced as plain `authenticated`). Verified gone in
+production: the guard body no longer references it, or `current_setting` at all. It does NOT stop
+ordinary direct DML:
 `authenticated` still holds row INSERT/UPDATE/DELETE on `sessions`, `session_blocks`,
 `electrolysis_entries`, `laser_entries` and `treatment_images`, restricted only by RLS to
 same-studio rows — see known-limitations L18. Ordinary operational audit trails

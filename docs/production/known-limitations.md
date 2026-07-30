@@ -1,15 +1,18 @@
 # Hone — Known Limitations
 
 **Verified residual limitations as of 2026-07-27**, against application HEAD
-`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d` and production migration max **0157**.
+`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is now 0159**
+(applied 2026-07-30).
 
 Only limitations that were **directly verified** in this reconciliation are listed. Items
 that could not be checked from code, the CLI, or read-only production queries are recorded
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
 **Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
-records are now **RETIRED by product decision**, enforced by migration **0159** (in-tree, not yet
-applied — hosted max remains 0157). They are no longer parked, dormant or gated; there is no next
+records are now **RETIRED by product decision**, enforced by migration **0159**. **Amended
+2026-07-30: 0159 is APPLIED and verified in production** — the retirement is database-enforced, and
+the `hone.correction_session_id` bypass recorded here as live is **closed**. `0160` remains
+unapplied. They are no longer parked, dormant or gated; there is no next
 gate on either. The production facts in both rows were re-verified read-only on 2026-07-29 and
 are unchanged. See
 [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).

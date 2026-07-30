@@ -8,6 +8,7 @@
 | **Decided by** | Sam (product owner) |
 | **Scope** | The signed/finalized clinical-record system built by migrations **0119** (finalization boundary) and **0120** (corrections & amendments backend), plus the practitioner-facing Finalize and signed-record Correction surfaces. |
 | **Enforced by** | Migration **0159** (`supabase/migrations/0159_retire_signed_clinical_records.sql`) — additive, non-destructive, zero data operations. |
+| **Enforcement status** | **LIVE.** 0159 was applied and verified in production **2026-07-30T13:25:39Z–13:25:43Z** (SHA-256 `ea39fc36…f889f8`). The retirement is database-enforced; production migration max is **0159**. Practitioner-facing dead-code removal ships with PR #482 and changes no database state. |
 | **Supersedes** | Every prior document that described this capability as *parked*, *dormant pending customer approval*, *held*, *a later phase*, or gated behind "separate authorization". It is none of those. It is retired. |
 
 ---
