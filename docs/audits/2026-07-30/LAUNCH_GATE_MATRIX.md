@@ -1,4 +1,4 @@
-# Launch gate matrix — exact production `c64366c9ba4130283932bbe21e32bf2ed62c4975`
+# Launch gate matrix — exact production `395532489a07defd16d5c3a04ce26d2aedf46096`
 
 Gates are independent of severity. Every gate used is defined.
 
@@ -8,7 +8,7 @@ Gates are independent of severity. Every gate used is defined.
 
 | Gate | Definition | Total | Open/partial | Evidence-limited | P1 | P2 | P3 |
 |---|---|---|---|---|---|---|---|
-| **WILLOW_NOW** | Affects Willow on the live build today. | 11 | 10 | 1 | 7 | 4 | 0 |
+| **WILLOW_NOW** | Affects Willow on the live build today. | 9 | 9 | 0 | 6 | 3 | 0 |
 | **BEFORE_STUDIO_2** | Must close before an unrelated second studio is onboarded. | 9 | 9 | 0 | 5 | 2 | 2 |
 | **BEFORE_THREE_STUDIOS** | Must close before a third studio. | 7 | 7 | 0 | 0 | 4 | 3 |
 | **BEFORE_TEN_STUDIOS** | Must close before ten studios. | 18 | 18 | 0 | 0 | 7 | 11 |
@@ -17,30 +17,26 @@ Gates are independent of severity. Every gate used is defined.
 | **POST_GA** | May follow general availability. | 1 | 1 | 0 | 0 | 0 | 1 |
 | **NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION** | Out of scope by an explicit product decision. | 6 | 0 | 0 | 0 | 0 | 6 |
 | **NONE_CLOSED** | Closed on evidence — carries no forward gate. | 1 | 0 | 0 | 0 | 0 | 1 |
+| **NONE_SHIPPED** | Fix deployed to production — carries no forward gate; reporter acceptance may still be pending. | 2 | 0 | 0 | 1 | 1 | 0 |
 
 ## Open blockers per gate
 
-### WILLOW_NOW — 10 open/partial + 1 evidence-limited
+### WILLOW_NOW — 9 open/partial
 
-**Live-reachable defects (8)**
+**Live-reachable defects (7)**
 
 - `F-CLIN-004` **P1** OPEN — "Mark reviewed" accepts an unsubmitted (in_progress) intake and any intake in the studio — one UI click creates a false clinical-review signal and pe…
-- `F-PAY-001` **P1** PARTIALLY_FIXED — Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and execute the ch…
+- `F-PAY-001` **P1** OPEN — Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and execute the ch…
 - `F-PRIV-001` **P1** OPEN — Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens)
 - `F-RET-001` **P1** OPEN — Published 30-day / 90-day retention and deletion commitments have no implementing code: no purge job, no hard-delete path, no legal hold, no cross-sy…
 - `F-COMP-001` **P1** OPEN — The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-East-1
 - `N-DOC-001` **P1** OPEN — Public terms and pricing pages claim a subscription, payment-processing and refund lifecycle the product does not have
-- `CHLOE-001` **P1** OPEN — Typing a custom treatment area commits one partial area row per keystroke
 - `CHLOE-004` **P2** OPEN — Dashboard truncates the remember-note and the latest-settings summary
 
 **Not reachable today / unbuilt capability (2)**
 
 - `F-OPS-004` **P2** OPEN — No backup, restore-drill, RPO/RTO, on-call or incident-command evidence exists for a production system already holding real clinical data
 - `F-TEST-003` **P2** OPEN — Mobile lane is Chromium emulating an iPhone, not WebKit/iOS Safari, and no accessibility or physical-device acceptance evidence exists
-
-**Evidence-limited — not counted as open (1)**
-
-- `CHLOE-002` **P2** EVIDENCE_LIMITATION — Checkout amount does not reliably default from the booked service, and the internal note is believed mandatory
 
 ### BEFORE_STUDIO_2 — 9 open/partial
 

@@ -11,7 +11,13 @@ const DIR = join(process.cwd(), "docs/audits/2026-07-30");
 const read = (f: string) => readFileSync(join(DIR, f), "utf8");
 const REG = JSON.parse(read("MASTER_FINDINGS_REGISTER.json"));
 const CSV = read("MASTER_FINDINGS_REGISTER.csv");
-const PROD_SHA = "c64366c9ba4130283932bbe21e32bf2ed62c4975";
+// Current production head. The 60 findings were verified at AUDIT_SHA; production has
+// since moved via PR #485 and PR #488 with no migration, and only the findings that
+// delta touches were re-verified at the new head. Both SHAs are legitimate; which one a
+// finding carries is a statement about where it was actually read.
+const PROD_SHA = "395532489a07defd16d5c3a04ce26d2aedf46096";
+const AUDIT_SHA = "c64366c9ba4130283932bbe21e32bf2ed62c4975";
+const RE_VERIFIED_AT_NEW_HEAD = ["CHLOE-001", "CHLOE-002", "F-PAY-001"];
 
 const Q = String.fromCharCode(34);
 function parseCSV(txt: string): string[][] {
@@ -98,7 +104,7 @@ describe("findings register — classification integrity", () => {
 
   it("every finding has a launch gate", () => {
     const GATES = ["WILLOW_NOW","BEFORE_STUDIO_2","BEFORE_THREE_STUDIOS","BEFORE_TEN_STUDIOS",
-      "BEFORE_PUBLIC_SELF_SERVICE","BEFORE_50_STUDIOS","POST_GA","NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION","NONE_CLOSED"];
+      "BEFORE_PUBLIC_SELF_SERVICE","BEFORE_50_STUDIOS","POST_GA","NOT_REQUIRED_BY_CURRENT_PRODUCT_DECISION","NONE_CLOSED","NONE_SHIPPED"];
     for (const f of REG.findings) expect(GATES, `${f.canonical_id} gate=${f.launch_gate}`).toContain(f.launch_gate);
   });
 
@@ -109,14 +115,20 @@ describe("findings register — classification integrity", () => {
     expect(bad.map((f: any) => `${f.canonical_id}:${f.remediation_wave}`)).toEqual([]);
   });
 
-  it("every finding records the exact production SHA it was verified against", () => {
-    for (const f of REG.findings) expect(f.last_verified_sha, f.canonical_id).toBe(PROD_SHA);
+  it("every finding records the exact SHA it was verified against, and the delta is documented", () => {
     expect(REG.production_sha).toBe(PROD_SHA);
-    expect(REG.hosted_migration_max).toBe("0160");
+    expect(REG.audit_verification_sha).toBe(AUDIT_SHA);
+    expect(REG.baseline_delta?.migrations_applied).toBe(0);
+    expect(REG.baseline_delta?.hosted_migration_max_unchanged).toBe("0160");
+    const bad = REG.findings.filter((f: any) => {
+      const expected = RE_VERIFIED_AT_NEW_HEAD.includes(f.source_ids[0]) ? PROD_SHA : AUDIT_SHA;
+      return f.last_verified_sha !== expected;
+    });
+    expect(bad.map((f: any) => `${f.source_ids[0]} ${f.last_verified_sha}`),
+      "a finding must record the head it was actually verified against").toEqual([]);
+    expect(REG.baseline_delta.findings_re_verified_at_new_head.sort()).toEqual([...RE_VERIFIED_AT_NEW_HEAD].sort());
   });
-});
 
-describe("findings register — the retired product direction cannot return", () => {
   it("no signed-record capability is scheduled in any remediation wave", () => {
     // Detect SCHEDULING, not mention. A sentence that forbids the retired work
     // ("must NOT be built", "explicitly off the roadmap") is exactly what we want
@@ -439,6 +451,8 @@ describe("findings register — trains, PRs and gates", () => {
     // NOT_A_LAUNCH_REQUIREMENT is excluded deliberately: it means "not required for the
     // current phase", and its gate records the phase at which it WOULD become required.
     // The statuses below are terminal — a forward gate on any of them is a contradiction.
+    // DEPLOYED_NOT_VERIFIED means the fix shipped but the reporter has not accepted it.
+    // It carries no forward gate and no remediation, like the other terminal statuses.
     const CLOSED = ["RETIRED", "SUPERSEDED_BY_PRODUCT_DECISION",
                     "PRODUCTION_VERIFIED", "DEPLOYED_NOT_VERIFIED", "FALSE_POSITIVE"];
     const FORWARD = ["WILLOW_NOW", "BEFORE_STUDIO_2", "BEFORE_THREE_STUDIOS", "BEFORE_TEN_STUDIOS",
@@ -560,9 +574,10 @@ describe("findings register — pass-2 review corrections hold", () => {
       const heading = new RegExp(`### ${gate} — ${count} open/partial`);
       expect(gateDoc, `${gate} heading must report ${count} open/partial`).toMatch(heading);
     }
-    // CHLOE-002 is the only EVIDENCE_LIMITATION row; it must not inflate a WILLOW_NOW count.
+    // CHLOE-002 was the only EVIDENCE_LIMITATION row and PR #488 discharged it, so the
+    // set is now empty. Any new one must be deliberate, not a silent reclassification.
     const el = REG.findings.filter((f: any) => f.current_status === "EVIDENCE_LIMITATION");
-    expect(el.map((f: any) => f.source_ids[0])).toEqual(["CHLOE-002"]);
+    expect(el.map((f: any) => f.source_ids[0])).toEqual([]);
   });
 
   it("every open finding either has a PR or a stated reason it is unscheduled", () => {
@@ -610,7 +625,7 @@ describe("findings register — pass-2 review corrections hold", () => {
     const exec = REG.findings.find((f: any) => f.source_ids[0] === "F-EXEC-001");
     expect(exec.current_status).toBe("RETIRED");
     expect(exec.exact_hosted_evidence).toContain("30572200532");
-    expect(exec.exact_hosted_evidence).toContain(PROD_SHA);
+    expect(exec.exact_hosted_evidence).toContain(AUDIT_SHA);
     const ev = read("EVIDENCE_LIMITATIONS.md");
     expect(ev).toContain("30572200532");
     // the audit branch's own run must not be presented as production evidence
@@ -722,6 +737,7 @@ describe("findings register — every artifact carries the same baseline", () =>
     "1468d051b5ed5bbcf2d8909b23bf4e9c1b6aeee0", // pass-1 review head, named as such
     "7566a9c82f5ca8eb0ba86bac90b8c5ca2eac67ef", // pass-2 review head, named as such
     "0e5357404eab654769dd9765ca46105f96050d7f", // pass-3 review head, named as such
+    "c64366c9ba4130283932bbe21e32bf2ed62c4975", // the audit verification head, named as such
     "058b8bcbd1a80d6aa89c47f9357e1964328f220d", // the July-27 audit's own §1.2 ZIP comment
   ]);
 
@@ -772,7 +788,7 @@ describe("findings register — the CSV and the JSON cannot disagree", () => {
         required_prs: (f.required_prs ?? []).join(" "),
         depends_on: (f.depends_on ?? []).join(" "),
         unscheduled_reason: f.unscheduled_reason ?? "",
-        last_verified_sha: PROD_SHA,
+        last_verified_sha: f.last_verified_sha,
       };
       for (const [k, v] of Object.entries(expected)) {
         if (r[col(k)] !== v) bad.push(`${r[col("source_id")]}.${k}: CSV="${r[col(k)]}" JSON="${v}"`);
@@ -1182,10 +1198,12 @@ describe("findings register — the canonical set itself is pinned", () => {
     // These are the judgements three review passes were spent establishing. A silent
     // revert of any of them is the single most damaging undetected edit possible.
     const EXPECTED: Record<string, [string, string]> = {
+      // CHLOE-001's fix shipped in PR #485, so it carries no forward gate; it stays P1
+      // as the record of what was fixed and is DEPLOYED_NOT_VERIFIED pending Chloe.
       "F-PAY-001": ["P1", "WILLOW_NOW"], "F-PRIV-001": ["P1", "WILLOW_NOW"],
       "F-COMP-001": ["P1", "WILLOW_NOW"], "F-CLIN-004": ["P1", "WILLOW_NOW"],
       "N-DOC-001": ["P1", "WILLOW_NOW"], "F-RET-001": ["P1", "WILLOW_NOW"],
-      "CHLOE-001": ["P1", "WILLOW_NOW"], "F-SEC-002": ["P1", "BEFORE_STUDIO_2"],
+      "CHLOE-001": ["P1", "NONE_SHIPPED"], "F-SEC-002": ["P1", "BEFORE_STUDIO_2"],
       "N-SEC-001": ["P1", "BEFORE_STUDIO_2"], "L18": ["P1", "BEFORE_STUDIO_2"],
       "F-DATA-001": ["P1", "BEFORE_STUDIO_2"], "F-IMPORT-001": ["P1", "BEFORE_STUDIO_2"],
     };
@@ -1386,6 +1404,7 @@ describe("findings register — remaining artifact integrity", () => {
         // review heads and the July-27 audit's own ZIP comment are named elsewhere
         if (["1468d051b5ed5bbcf2d8909b23bf4e9c1b6aeee0", "7566a9c82f5ca8eb0ba86bac90b8c5ca2eac67ef",
              "0e5357404eab654769dd9765ca46105f96050d7f", "2f9b9e9dda6108f48d6255f674a8b49832d2f02d",
+             "c64366c9ba4130283932bbe21e32bf2ed62c4975", // the audit verification head
              "058b8bcbd1a80d6aa89c47f9357e1964328f220d", // the July-27 audit's own ZIP comment
              "d579faea06699baf72dcc4098bc515f646506d89", // git tree of the production commit
             ].includes(m[0])) continue;
@@ -1424,6 +1443,8 @@ describe("findings register — remaining artifact integrity", () => {
   it("the audit's provenance statements name the current pass", () => {
     expect(read("RECONCILIATION_REPORT.md")).not.toMatch(/Corrected pass 2\b/);
     const manifest = JSON.parse(read("AUDIT_INPUT_MANIFEST.json"));
-    expect(String(manifest.pass)).toMatch(/pass 4/);
+    expect(String(manifest.pass)).toMatch(/accepted 2026-07-31/);
+    expect(manifest.production_sha).toBe(PROD_SHA);
+    expect(manifest.audit_verification_sha).toBe(AUDIT_SHA);
   });
 });

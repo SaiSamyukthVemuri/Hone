@@ -1,4 +1,4 @@
-# Dependency-ordered remediation plan — `c64366c9ba4130283932bbe21e32bf2ed62c4975`
+# Dependency-ordered remediation plan — `395532489a07defd16d5c3a04ce26d2aedf46096`
 
 **Every row below is generated from canonical `train`, `depends_on` and `required_prs`.** Train
 membership is exactly the set of findings whose `train` field equals that train — no glob, no
@@ -12,7 +12,7 @@ train is never shown as blocked because one of its members is.
 | **T10-data** | `F-DATA-002`, `F-IMPORT-001`, `F-STORAGE-001`, `F-OFF-001`, `F-SCALE-001`, `F-COPY-001` | PR-20, PR-21, PR-22, PR-23, PR-27 | `F-OFF-001` → `F-DATA-001`, `F-RET-001`, `F-STORAGE-001`; `F-COPY-001` → `F-RET-001` |
 | **T11-ops** | `F-OPS-001`, `F-OPS-003`, `F-OPS-004`, `F-STAGE-001`, `F-TEST-003` | PR-24, PR-25, PR-26 | none — nothing in this train is blocked |
 | **T2-payment** | `F-PAY-001` | PR-03 | none — nothing in this train is blocked |
-| **T3-charting** | `CHLOE-001`, `CHLOE-002`, `CHLOE-003`, `CHLOE-004`, `CHLOE-005` | PR-04, PR-13, PR-14, PR-15 | none — nothing in this train is blocked |
+| **T3-charting** | `CHLOE-003`, `CHLOE-004`, `CHLOE-005` | PR-14, PR-15 | none — nothing in this train is blocked |
 | **T4-privacy** | `F-PRIV-001`, `F-PRIV-002` | PR-05, PR-07 | none — nothing in this train is blocked |
 | **T5-intake** | `F-CLIN-003`, `F-CLIN-004` | PR-06 | none — nothing in this train is blocked |
 | **T6-identity** | `F-SEC-001`, `N-SEC-001`, `L19b` | PR-08, PR-09 | none — nothing in this train is blocked |
@@ -58,8 +58,8 @@ edge.
 
 ## Explicitly NOT scheduled in this train
 
-This train is a **first tranche**. It covers 41
-of the 51 open/partial canonical findings. The
+This train is a **first tranche**. It covers 40
+of the 50 open/partial canonical findings. The
 following are **not** covered by any PR here, and no arrow above should be read as covering them:
 
 | ID | Sev | Gate | Why it is not in this tranche |
@@ -83,7 +83,7 @@ Everything unscheduled is **P3**. No open P0, P1 or P2 is unscheduled.
 |---|---|---|---|---|---|---|
 | `F-CLIN-004` | P1 | OPEN | T5-intake | PR-06 | WILLOW_NOW | — |
 | `F-SEC-002` | P1 | OPEN | T8-schedule | PR-16 | BEFORE_STUDIO_2 | — |
-| `F-PAY-001` | P1 | PARTIALLY_FIXED | T2-payment | PR-03 | WILLOW_NOW | — |
+| `F-PAY-001` | P1 | OPEN | T2-payment | PR-03 | WILLOW_NOW | — |
 | `F-PRIV-001` | P1 | OPEN | T4-privacy | PR-05 | WILLOW_NOW | — |
 | `F-DATA-001` | P1 | OPEN | T0-copy | PR-02, PR-22 | BEFORE_STUDIO_2 | F-SCALE-001, F-DATA-002, F-RET-001 |
 | `F-IMPORT-001` | P1 | OPEN | T10-data | PR-20 | BEFORE_STUDIO_2 | — |
@@ -92,4 +92,3 @@ Everything unscheduled is **P3**. No open P0, P1 or P2 is unscheduled.
 | `N-SEC-001` | P1 | OPEN | T6-identity | PR-08 | BEFORE_STUDIO_2 | — |
 | `N-DOC-001` | P1 | OPEN | T0-copy | PR-02 | WILLOW_NOW | — |
 | `L18` | P1 | OPEN | T7-clinical-dml | PR-10, PR-11 | BEFORE_STUDIO_2 | L19a |
-| `CHLOE-001` | P1 | OPEN | T3-charting | PR-04 | WILLOW_NOW | — |

@@ -76,5 +76,5 @@ register's own bookkeeping columns** — the July-18 `canonical_id` and `last_ve
 register supersedes with its own `canonical_id` and `last_verified_at`. That exclusion is the only
 one, and it is asserted in the diff test rather than left to a comment. The July-18 carry-through is
 verified programmatically against the in-repo source; the July-10 register is outside the repository,
-so its content is pinned by digest instead. Neither set was individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
+so its content is pinned by digest instead. Neither set was individually re-verified against `395532489a07defd16d5c3a04ce26d2aedf46096`; their canonical column reads `UNMAPPED_HISTORICAL` and their status
 reads `NOT_INDIVIDUALLY_RE_VERIFIED` rather than a fabricated verdict. See `EVIDENCE_LIMITATIONS.md`.

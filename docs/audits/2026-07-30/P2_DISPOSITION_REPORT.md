@@ -1,4 +1,4 @@
-# P2 and P3 disposition — exact production `c64366c9ba4130283932bbe21e32bf2ed62c4975`
+# P2 and P3 disposition — exact production `395532489a07defd16d5c3a04ce26d2aedf46096`
 
 ## P2 (18)
 
@@ -18,7 +18,7 @@
 | `F-PUBLIC-002` | Public booking reuses an existing client from an unverified email, permitting nuisance bookings attributed to a real client and an existing-client en… | OPEN | BEFORE_PUBLIC_SELF_SERVICE | T9-public | PR-17 | yes |
 | `L19a` | Broad default table privileges: TRUNCATE granted to anon and authenticated on 64 of 86 tables | OPEN | BEFORE_THREE_STUDIOS | T1-privilege | PR-01 | yes |
 | `L19b` | sessions.appointment_id and treatment_plan_id are same-studio but not same-client validated | OPEN | BEFORE_THREE_STUDIOS | T6-identity | PR-09 | yes |
-| `CHLOE-002` | Checkout amount does not reliably default from the booked service, and the internal note is believed mandatory | EVIDENCE_LIMITATION | WILLOW_NOW | T3-charting | PR-13 | yes |
+| `CHLOE-002` | Checkout amount does not reliably default from the booked service, and the internal note is believed mandatory | DEPLOYED_NOT_VERIFIED | NONE_SHIPPED | NONE | — | n/a (closed) |
 | `CHLOE-003` | Service move up/down reordering is unreliable and a service cannot be brought to the top | OPEN | BEFORE_STUDIO_2 | T3-charting | PR-14 | yes |
 | `CHLOE-004` | Dashboard truncates the remember-note and the latest-settings summary | OPEN | WILLOW_NOW | T3-charting | PR-15 | yes |
 | `CHLOE-005` | Service cards are spaced too tightly and the colour choices are hard to distinguish | OPEN | BEFORE_STUDIO_2 | T3-charting | PR-15 | yes |

@@ -4,7 +4,7 @@ What this audit could **not** prove, stated so nothing reads as verified that is
 
 ## Verification classes used
 
-- **Source-verified** — read at `c64366c9ba4130283932bbe21e32bf2ed62c4975` in the exact worktree.
+- **Source-verified** — read at `395532489a07defd16d5c3a04ce26d2aedf46096` in the exact worktree.
 - **Hosted-verified** — read-only query against the production database, run for this reconciliation.
 - **Supplied, not independently verified** — taken from the task or from GitHub metadata.
 
@@ -34,7 +34,7 @@ Content was **not** reconstructed. No finding depends on them.
    but only the 48 July-27 findings plus the rows discovered here were individually re-verified.
 2. **No production writes.** Read-only by authorization; findings needing a mutating reproduction say so.
 3. **Test evidence — two distinct runs, not to be conflated.**
-   - **Production head.** GitHub Actions run **30572200532** at `c64366c9ba4130283932bbe21e32bf2ed62c4975`, conclusion success, **all six
+   - **Production head.** GitHub Actions run **30572200532** at `395532489a07defd16d5c3a04ce26d2aedf46096`, conclusion success, **all six
      lanes green**: typecheck/lint/build/test/safety gates; db integration; browser e2e; payment browser
      e2e; mobile completion e2e; google browser e2e. This is the sole evidence for `F-EXEC-001` being
      RETIRED.
@@ -69,13 +69,13 @@ left for a later pass to present as a discovery:
   every structural check stayed green.
 - **What follows.** The counts, gates and dependencies in this register are defended. The *judgements* —
   why a finding is P1, why a gate is WILLOW_NOW — rest on the evidence quoted in each finding, which a
-  reader should check against the tree at `c64366c9ba4130283932bbe21e32bf2ed62c4975` before acting on it. Every finding cites exact
+  reader should check against the tree at `395532489a07defd16d5c3a04ce26d2aedf46096` before acting on it. Every finding cites exact
   file:line locations for that purpose.
 
 ## Findings carrying missing evidence
 
-**51 of 60** canonical findings record something they could not prove. That is not the same as
-"status = EVIDENCE_LIMITATION" (which is **1**), and §A of the reconciliation report reports both.
+**52 of 60** canonical findings record something they could not prove. That is not the same as
+"status = EVIDENCE_LIMITATION" (which is **0**), and §A of the reconciliation report reports both.
 
 | ID | Missing evidence |
 |---|---|
@@ -92,7 +92,7 @@ left for a later pass to present as a discovery:
 | `F-SCHED-004` | Whether any existing appointment, timed block or recurring-break occurrence was actually written from a wall time inside a past DST gap — that requires a hosted query over starts_at against transition windows per studio timezone, which I did not run. |
 | `F-SCHED-005` | Per-studio count of active role='owner' practitioners (needed to know whether the null-assignment branch is live at any tenant), current per-studio values of practitioner_capacity_enabled, and whether any appointments rows already have practitioner_id IS NULL. |
 | `F-SCHED-006` | Real-world frequency of these query errors in production (no hosted error-rate or ops_alerts data was supplied), so I cannot say how often the fail-open has actually fired. |
-| `F-PAY-001` | Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner; active non-owner practitioners: 0 (hosted-verified, 2026-07-30). That bounds the AUTHORIZATION half only. What remains genuinely unproven: I did not compare the 6 live charge amounts against the service-menu prices — that requ… |
+| `F-PAY-001` | Willow has 2 practitioner rows: 1 ACTIVE owner and 1 INACTIVE non-owner; active non-owner practitioners: 0 (hosted-verified, 2026-07-30). That bounds the AUTHORIZATION half only. What remains genuinely unproven: the 6 live charge amounts were not compared against the service-menu prices — that requ… |
 | `F-PAY-002` | I could not determine from source whether any prospective studio has actually asked for deposits or no-show protection; the audit asserts commercial parity pressure without demand evidence. Whether this ever becomes a launch requirement depends on that demand signal, which is not in the repository. |
 | `F-PRIV-001` | I cannot prove from source whether any such event has ALREADY been transmitted to Sentry — that requires querying the Sentry project's stored events (search by route pattern, never exporting raw URLs). I also cannot confirm from the repository whether Sentry's data region is US or EU, or the projec… |
 | `F-PRIV-002` | I cannot determine from source how many public-booking audit rows exist in production or how many carry non-empty notes, so the size of the historical remediation is unknown. I also could not find any code that redacts appointments.notes on request, so the redaction-divergence scenario is currently… |
@@ -129,4 +129,5 @@ left for a later pass to present as a discovery:
 | `F-COPY-001` | I did not query the hosted session_copy_operations row count as of today, so I cannot state how many provenance rows currently exist and are at risk (it was 0 at deploy). I also did not verify whether the RLS policy on sessions actually permits a studio member's direct PostgREST DELETE to succeed -… |
 | `N-SEC-001` | Not reproduced by an actual PATCH (writes not authorized in this audit). CI-parity reproduction is the required next evidence. |
 | `N-DOC-001` | No legal review performed; this audit states the mismatch, not its legal weight. |
-| `CHLOE-002` | Not reproduced on the deployed build; the repository's claim that both were fixed is NOT independently confirmed. Classified EVIDENCE_LIMITATION for that reason. |
+| `CHLOE-001` | STUDIO-OWNER ACCEPTANCE IS PENDING. Chloe reported this defect from live use and has not confirmed the fix on her own device. This finding is DEPLOYED_NOT_VERIFIED, not PRODUCTION_VERIFIED, for exactly that reason: CI proves the committed behaviour, it does not prove the reported symptom is gone fo… |
+| `CHLOE-002` | STUDIO-OWNER ACCEPTANCE IS PENDING. Chloe has not confirmed on her own device that the booked-service amount now defaults correctly during a real checkout. That is why this is DEPLOYED_NOT_VERIFIED rather than PRODUCTION_VERIFIED. The audit's earlier EVIDENCE_LIMITATION status — the repository clai… |

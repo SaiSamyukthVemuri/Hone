@@ -1,6 +1,6 @@
 {
   "audit_run": "2026-07-30 exact-production findings reconciliation",
-  "production_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
+  "production_sha": "395532489a07defd16d5c3a04ce26d2aedf46096",
   "hosted_migration_max": "0160",
   "generated_at_utc": "2026-07-30T19:29:18Z",
   "inputs": [
@@ -185,7 +185,7 @@
       "note": "Regenerated at the current head. This file's Status column is generated from REVIEW_CLOSURE_REGISTER.md, so its hash changes whenever a review item is dispositioned."
     }
   ],
-  "pass": "corrected pass 4 (2026-07-30) — four independent review passes; 91 items from passes 1-3 dispositioned in REVIEW_CLOSURE_REGISTER.md, pass-4 items appended there. See EVIDENCE_LIMITATIONS.md for what the consistency suite can and cannot establish.",
+  "pass": "accepted 2026-07-31 — register accepted as materially sound after four independent review passes (114 items, all dispositioned); no pass 5. Rebaselined onto the current production head.",
   "preserved_source_content_digests": {
     "note": "SHA-256 over the source_* cells of MASTER_FINDINGS_REGISTER.csv, grouped by source register. Emptying, truncating or rewriting any preserved source cell changes the digest and fails tests/audits/findings-register-consistency.test.ts. Two of the three source registers live outside the repository, so this is how their content is pinned inside it.",
     "algorithm": "For each row: source_id, then every column whose name begins with source_, joined by U+0001. Rows sorted, joined by U+0002, hashed with sha256.",
@@ -208,8 +208,10 @@
       },
       "discovered": {
         "rows": 7,
-        "sha256": "f13cb27be2f46cf9e28e2e14c1848f9e4048bfd3dbf00e14904d651e16f540c1"
+        "sha256": "600c7194455066507f2719c1c97ec988fe79d17cca55d4db5a3d1b327c894b8e"
       }
     }
-  }
+  },
+  "audit_verification_sha": "c64366c9ba4130283932bbe21e32bf2ed62c4975",
+  "baseline_reconciliation": "Post-audit production reconciliation, 2026-07-31. Production moved from c64366c9 to 395532489a07defd16d5c3a04ce26d2aedf46096 via PR #485 (custom areas commit once) and PR #488 (booked-service default amount repair). No migration was applied; hosted max remains 0160. Only CHLOE-001, CHLOE-002 and F-PAY-001 were re-verified at the new head. No pass-5 review was run: the register is accepted as materially sound."
 }

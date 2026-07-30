@@ -1,4 +1,4 @@
-# Exact-production findings reconciliation — `c64366c9ba4130283932bbe21e32bf2ed62c4975`, migration max 0160
+# Exact-production findings reconciliation — `395532489a07defd16d5c3a04ce26d2aedf46096`, migration max 0160
 
 **Corrected pass 4, 2026-07-30.** Four independent review passes have been run against this
 deliverable; every item they raised is dispositioned in
@@ -19,13 +19,40 @@ Sibling reports: [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md) ·
 
 | Field | Value | Verification |
 |---|---|---|
-| Production SHA | `c64366c9ba4130283932bbe21e32bf2ed62c4975` | **hosted/git-verified** |
+| Production SHA | `395532489a07defd16d5c3a04ce26d2aedf46096` | **hosted/git-verified** |
 | Hosted migration max | **0160** (0159×1, 0160×1, no 0158, 159 total, 0 dupes) | **hosted-verified** |
 | Signed-record retirement | flags false ×5 + 2 validated CHECKs; 0/10 retired fns runtime-executable; 1 snapshot re-derives; Willow 0 non-draft | **hosted-verified** |
 | Lineage protection | 2 guards, 5 enabled triggers, 0093 guard enabled | **hosted-verified** |
 | Willow practitioners | Willow: 2 practitioners total — 1 ACTIVE owner, 1 INACTIVE non-owner. Active non-owner practitioners: 0. Read-only aggregate (roles/active/counts only), 2026-07-30. | **hosted-verified** |
 | Latest production deployment | `EdFCbgfuPn7jsh6n73kTcsVwVqEX` | **supplied, not independently verified** — only that hone.care//login//dashboard return 200 was checked |
 | Health | 200 / 200 / 200 · 0 unresolved ops alerts | **hosted-verified** |
+
+## A0. Post-audit production reconciliation
+
+The audit froze at `c64366c9ba4130283932bbe21e32bf2ed62c4975`. Production has since advanced to the
+baseline above. **This section is the whole of the delta.**
+
+| | |
+|---|---|
+| Commits | `f85ade2`, `62b5b63`, `c510575` (PR #485) · `94ab0a2`, `3955324` (PR #488) |
+| Migrations applied | **0** — hosted max remains **0160** |
+| Runtime files changed | `components/multi-area-editor.tsx`, `components/chip-selector.tsx`, `components/session-payment-prepare-card.tsx`, the session page's default-amount read, new `lib/sessions/area-input.ts` |
+| Findings re-verified at the new head | `CHLOE-001`, `CHLOE-002`, `F-PAY-001` |
+| Findings re-classified | `CHLOE-001` OPEN → **DEPLOYED_NOT_VERIFIED** · `CHLOE-002` EVIDENCE_LIMITATION → **DEPLOYED_NOT_VERIFIED** · `F-PAY-001` PARTIALLY_FIXED → **OPEN** |
+
+Every other finding still records `c64366c9…` in `last_verified_sha`, because that is where it was
+actually read. No other finding's evidence cites a file the delta changed, so no other verdict moves.
+
+**`F-PAY-001` is NOT closed by PR #488.** `payment-actions.ts` is **byte-identical** across the delta.
+#488 repaired how the amount field is *populated* — a migration-0151 embed-alias regression made the
+booked-service price fail to load, silently. **Editable auto-population is not server-authoritative
+amount enforcement:** the field is a default, the practitioner can overwrite it with any value up to
+the CAD 2,000 ceiling, and the server still accepts whatever arrives. It remains **P1 / OPEN /
+WILLOW_NOW**.
+
+**No pass-5 review was run.** The register is accepted as materially sound after four independent
+passes; see [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md) and
+[EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md).
 
 ## A. Executive counts
 
@@ -35,15 +62,15 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 | Severity | Original (Jul 27) | Current OPEN | Partial | Deployed/Verified | Retired/Superseded | Not-a-launch-req | False positive | Status=EVIDENCE_LIMITATION |
 |---|---|---|---|---|---|---|---|---|
 | P0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| P1 | 14 | 11 | 1 | 0 | 0 | 0 | 0 | 0 |
-| P2 | 31 | 14 | 3 | 0 | 0 | 0 | 0 | 1 |
+| P1 | 14 | 11 | 0 | 1 | 0 | 0 | 0 | 0 |
+| P2 | 31 | 14 | 3 | 1 | 0 | 0 | 0 | 0 |
 | P3 | 2 | 19 | 3 | 1 | 3 | 4 | 0 | 0 |
-| **Total** | **48** | **44** | **7** | **1** | **3** | **4** | **0** | **1** |
+| **Total** | **48** | **44** | **6** | **3** | **3** | **4** | **0** | **0** |
 
 > **Counting convention, used identically in every report:** a finding is **open/partial** when its
 > status is `OPEN` or `PARTIALLY_FIXED`. `EVIDENCE_LIMITATION` is never counted as open; it has its
 > own column. The last column counts findings whose **status** is `EVIDENCE_LIMITATION`. Separately,
-> **51 of 60** findings record something in `missing_evidence` — a "0" in that column never means
+> **52 of 60** findings record something in `missing_evidence` — a "0" in that column never means
 > "no finding rests on unverified evidence". See [EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md).
 
 **Canonical total: 60** · source rows in the CSV: **134**.
@@ -67,7 +94,7 @@ rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discover
 | `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T6-identity | PR-08 |
 | `N-DOC-001` | Public terms and pricing pages claim a subscription, payment-processing and refund lifecycle the product does not have | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
 | `L18` | authenticated holds direct row DML on five clinical tables | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T7-clinical-dml | PR-10, PR-11 |
-| `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T3-charting | PR-04 |
+| `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | NOT_REACHABLE_IN_PRODUCTION | NONE_SHIPPED | NONE | — |
 
 Four of these did not exist as P1s in the first pass: **`F-PAY-001`** was raised from P2 (live money,
 no server-side amount authority), **`N-DOC-001`** was split out of a row that had been closed,
@@ -79,7 +106,7 @@ studio-owner report.
 
 | Severity | Count | Open/partial | Evidence-limited | With a PR | Closed/not-required |
 |---|---|---|---|---|---|
-| P2 | 18 | 17 | 1 | 18 | 0 |
+| P2 | 18 | 17 | 0 | 17 | 1 |
 | P3 | 30 | 22 | 0 | 12 | 8 |
 
 Full tables in [P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md).
@@ -122,7 +149,7 @@ per register. `HNE-REC-001`/`HNE-REC-002` are **RETIRED, not future enablement i
 
 ## H. Independent audit (48 findings)
 
-All 48 preserved and individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`, with full source evidence, failure
+All 48 preserved and individually re-verified against `395532489a07defd16d5c3a04ce26d2aedf46096`, with full source evidence, failure
 scenario, prerequisites, test limitations, acceptance criteria, recommended fix and rollout notes
 carried into explicit columns.
 
