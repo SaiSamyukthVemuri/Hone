@@ -5,15 +5,20 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isServiceColorKey } from "@/lib/calendar/service-colors";
 import { isMissingColumnError } from "@/lib/db/missing-column";
+import {
+  compareServicePosition,
+  isServiceMove,
+  type ServiceMove,
+} from "@/lib/booking/service-order";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-// Server-side allowlist validation for the calendar color. ONLY the six allowed
+// Server-side allowlist validation for the calendar color. ONLY the ten allowed
 // keys pass; rose/red, arbitrary CSS, or any unknown value is rejected. Absent ->
-// the safe default 'sky'. This is the authoritative guard; the DB CHECK (0153) is
-// the backstop.
+// the safe default 'sky'. This is the authoritative guard; the DB CHECK
+// (0153, widened by 0161) is the backstop.
 function parseCalendarColor(value: FormDataEntryValue | null): string {
   const v = trimmed(value);
   if (v.length === 0) return "sky";
@@ -173,86 +178,126 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/services");
 }
 
-// Move a service one position up or down in the list. The list is
-// ordered by sort_order (ascending); "up" means a smaller sort_order
-// (earlier on the booking page). Implementation swaps sort_order
-// values with the neighbour in the direction requested. Scoped to
-// active services only (active = true) because the public booking
-// menu only shows active services; hidden services should not affect
-// ordering controls the practitioner sees.
+// Move a service within the studio's VISIBLE service order.
 //
-// Storage: a two-step swap (write each row's new sort_order
-// separately) is safe here because services.sort_order is not subject
-// to a uniqueness constraint and the second update overrides the
-// first if the order is the same. Both rows belong to the same studio
-// and the same modality grouping has no impact on the public order
-// because services are sorted purely by sort_order on the booking
-// page.
-export async function reorderServiceAction(
-  formData: FormData,
-): Promise<void> {
+// THE DEFECT THIS REPLACES. The old implementation read its own list with
+// `order by sort_order` and NO secondary key, then swapped two sort_order values
+// with TWO independent, untransacted UPDATEs.
+//   * `services.sort_order` is `not null default 100` with no uniqueness and a
+//     PER-MODALITY allocator, so ties are the normal state. Tied rows came back
+//     in HEAP order, which changes after every UPDATE — so `list[idx]` was
+//     routinely NOT the row at screen position idx. When the action happened to
+//     find the clicked service at index 0 it returned silently: the arrow did
+//     nothing, forever, because nothing changed to break the tie. That is
+//     Chloe's "Client Consultation cannot reliably reach the top".
+//   * A failure between the two UPDATEs left both rows holding the neighbour's
+//     value — a NEW permanent duplicate.
+//
+// NOW: one atomic, owner-authorized RPC (migration 0161) normalizes the visible
+// order to 10, 20, 30 … and applies the move in the same transaction, using the
+// SAME total ordering the UI renders (sort_order, name, id). One tap = exactly
+// one position, every time. `expected_position` is an optimistic-concurrency
+// token: if the order changed underneath the practitioner, the move is refused
+// rather than applied to the wrong row.
+//
+// Hidden services never participate: they are not in the visible set, so they
+// cannot be swapped with and cannot shift the public order. Re-showing one goes
+// through showServiceAction, which re-slots it at the end.
+// The typed entry point the settings list calls. Returns a RESULT rather than
+// throwing so the client can roll its optimistic move back and show the reason
+// in place, instead of tripping an error boundary and losing scroll position.
+export async function moveServiceAction(input: {
+  id: string;
+  move: ServiceMove;
+  expectedPosition: number | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
   const { studioId } = await assertOwner();
-  const id = trimmed(formData.get("id"));
-  const dirRaw = trimmed(formData.get("direction"));
-  if (!id) throw new Error("Missing service id.");
-  if (dirRaw !== "up" && dirRaw !== "down") {
-    throw new Error("Direction must be 'up' or 'down'.");
+  if (!input.id) return { ok: false, error: "Missing service id." };
+  if (!isServiceMove(input.move)) {
+    return { ok: false, error: "Direction must be one of top, up, down, bottom." };
   }
 
   const supabase = await createClient();
-  const { data: rows, error: listErr } = await supabase
-    .from("services")
-    .select("id, sort_order, active")
-    .eq("studio_id", studioId)
-    .eq("active", true)
-    .order("sort_order", { ascending: true });
-  if (listErr) {
-    throw new Error(`Failed to read services: ${listErr.message}`);
-  }
-  const list = rows ?? [];
-  const idx = list.findIndex((r) => r.id === id);
-  if (idx === -1) {
-    // Service is hidden or does not belong to this studio; nothing to
-    // reorder. Revalidate so the UI re-renders if the assumption was
-    // stale.
+  const { error } = await supabase.rpc("reorder_studio_service", {
+    p_studio_id: studioId,
+    p_service_id: input.id,
+    p_move: input.move,
+    p_expected_position:
+      Number.isInteger(input.expectedPosition) && (input.expectedPosition as number) >= 0
+        ? input.expectedPosition
+        : null,
+  });
+  if (error) {
     revalidatePath("/settings/services");
-    return;
+    // 40001 is the RPC's stale-position signal, not a database fault.
+    if (error.code === "40001" || /changed elsewhere/i.test(error.message ?? "")) {
+      return {
+        ok: false,
+        error:
+          "The service order changed while you were tapping. The list has been refreshed — try again.",
+      };
+    }
+    return { ok: false, error: `Failed to reorder: ${error.message}` };
   }
-  const neighbourIdx = dirRaw === "up" ? idx - 1 : idx + 1;
-  if (neighbourIdx < 0 || neighbourIdx >= list.length) {
-    // Already at the top or bottom. No-op.
-    revalidatePath("/settings/services");
-    return;
-  }
-
-  const me = list[idx];
-  const neighbour = list[neighbourIdx];
-  const mySort = me.sort_order;
-  const neighbourSort = neighbour.sort_order;
-
-  // If two rows happen to share a sort_order, force the moved row to
-  // straddle the neighbour by one to guarantee a visible change.
-  const [newMine, newTheirs] =
-    mySort === neighbourSort
-      ? dirRaw === "up"
-        ? [neighbourSort - 1, neighbourSort]
-        : [neighbourSort + 1, neighbourSort]
-      : [neighbourSort, mySort];
-
-  const { error: e1 } = await supabase
-    .from("services")
-    .update({ sort_order: newMine, updated_at: new Date().toISOString() })
-    .eq("id", me.id)
-    .eq("studio_id", studioId);
-  if (e1) throw new Error(`Failed to reorder: ${e1.message}`);
-  const { error: e2 } = await supabase
-    .from("services")
-    .update({ sort_order: newTheirs, updated_at: new Date().toISOString() })
-    .eq("id", neighbour.id)
-    .eq("studio_id", studioId);
-  if (e2) throw new Error(`Failed to reorder: ${e2.message}`);
 
   revalidatePath("/settings/services");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+// Progressive-enhancement fallback: the same move driven by a plain <form> post,
+// so the controls still work with JavaScript unavailable. Delegates to the one
+// implementation above; throwing here is correct because there is no client
+// state to roll back on this path.
+export async function reorderServiceAction(
+  formData: FormData,
+): Promise<void> {
+  const id = trimmed(formData.get("id"));
+  const moveRaw = trimmed(formData.get("direction"));
+  if (!isServiceMove(moveRaw)) {
+    throw new Error("Direction must be one of top, up, down, bottom.");
+  }
+  const expectedRaw = trimmed(formData.get("expected_position"));
+  const result = await moveServiceAction({
+    id,
+    move: moveRaw as ServiceMove,
+    expectedPosition:
+      expectedRaw.length > 0 && /^\d+$/.test(expectedRaw) ? parseInt(expectedRaw, 10) : null,
+  });
+  if (!result.ok) throw new Error(result.error);
+}
+
+// One-off repair for a studio whose stored positions are still the legacy
+// duplicate-heavy values: normalize the visible order WITHOUT moving anything.
+// Same RPC, and a no-op move keeps it a single atomic command.
+export async function normalizeServiceOrderAction(): Promise<void> {
+  const { studioId } = await assertOwner();
+  const supabase = await createClient();
+  const { data: rows, error: listErr } = await supabase
+    .from("services")
+    .select("id, name, sort_order, active")
+    .eq("studio_id", studioId)
+    .eq("active", true);
+  if (listErr) throw new Error(`Failed to read services: ${listErr.message}`);
+  // Sort in JS from the same data the page uses, so the client collation and
+  // the Postgres collation can never disagree about the canonical order.
+  const ordered = [...(rows ?? [])].sort(compareServicePosition);
+  const first = ordered[0];
+  if (!first) {
+    revalidatePath("/settings/services");
+    return;
+  }
+  // "Move the first item to the top" is a positional no-op that still triggers
+  // the RPC's full normalization pass.
+  const { error } = await supabase.rpc("reorder_studio_service", {
+    p_studio_id: studioId,
+    p_service_id: first.id,
+    p_move: "top",
+    p_expected_position: null,
+  });
+  if (error) throw new Error(`Failed to normalize service order: ${error.message}`);
+  revalidatePath("/settings/services");
+  revalidatePath("/calendar");
 }
 
 export async function toggleServiceActiveAction(
@@ -264,11 +309,24 @@ export async function toggleServiceActiveAction(
   if (!id) throw new Error("Missing service id.");
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("services")
-    .update({ active, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("studio_id", studioId);
-  if (error) throw new Error(`Failed to update service: ${error.message}`);
+  if (active) {
+    // SHOWING. A hidden service keeps whatever sort_order it held when it was
+    // hidden — often 100, i.e. right inside the normalized 10/20/30 sequence,
+    // or exactly equal to another row. Re-slot it at the END of the visible
+    // order and renormalize, atomically (migration 0161).
+    const { error } = await supabase.rpc("show_studio_service", {
+      p_studio_id: studioId,
+      p_service_id: id,
+    });
+    if (error) throw new Error(`Failed to update service: ${error.message}`);
+  } else {
+    const { error } = await supabase
+      .from("services")
+      .update({ active, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("studio_id", studioId);
+    if (error) throw new Error(`Failed to update service: ${error.message}`);
+  }
   revalidatePath("/settings/services");
+  revalidatePath("/calendar");
 }

@@ -2,8 +2,9 @@
 
 Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0160
 (`0160_immutable_clinical_lineage.sql`) — 159 applied, each exactly once, `0159` immediately
-preceding `0160`. `0158` is deliberately skipped and will never be applied. Repository max and
-hosted max are both 0160.**
+preceding `0160`. `0158` is deliberately skipped and will never be applied. The
+hosted max is 0160; the repo max is 0161 — `0161_service_order_and_colors.sql` is
+in the repository but DELIBERATELY UNAPPLIED, awaiting migration authorization.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -26,8 +27,8 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current max `0160`, so the next is
-  `0161`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
+  [migration ledger](./production/migration-ledger.md). **Current repo max `0161`, so the next is
+  `0162`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
 
@@ -350,7 +351,7 @@ Use this list every time before opening a migration PR.
 - **What it verifies (v1):** cross-studio isolation (clients, sessions, session_blocks, exposure incidents, audit events); record-keeping audit immutability (member INSERT throws RLS violation; UPDATE/DELETE affect zero rows) and trigger behavior (created/updated events, `changed_fields`, actor resolution via `auth.uid()`, no event on a no-op update); the migration 0087 clinical delete posture (nine protected tables: member DELETE affects zero rows; four intentionally deletable tables: member DELETE works, stranger DELETE does not); the double-booking exclusion constraint (overlap raises `23P01`, back-to-back allowed, cancelled rows do not block, the buffer trigger extends the blocked range); and the claim RPCs (`claim_email_send` wins exactly once; `claim_session_payment_charge_attempt` refuses non-ready rows and foreign practitioners, claims a ready row exactly once, second call sees `already_pending`).
 - **How to run it locally:** `supabase db start && supabase db reset --local && npm run test:db` (needs Docker; the Supabase CLI is on brew). The unit lane (`npm test` / `npm run ci`) excludes `tests/db/` and never needs a database.
 - **Safety:** the harness (`tests/db/helpers/harness.ts`) refuses any connection string whose host is not localhost and any URL matching hosted-database patterns (supabase.co/.com, pooler, amazonaws, ...). It reads no env var except `HONE_LOCAL_DB_URL` and never touches production. CI runs it as the separate `db-integration` job with no secrets and no `--linked` anywhere. Guardrails are pinned in the unit lane (`tests/scripts/db-harness-guardrails.test.ts`).
-- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 44 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
+- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 45 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
 
 ## Generated types drift check (PR #221)
 

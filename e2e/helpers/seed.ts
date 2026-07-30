@@ -1494,6 +1494,56 @@ export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
   );
 }
 
+// Seed N services all sharing the LEGACY sort_order = 100 — the real production
+// shape (0021 defaults to 100 and the "next" allocator is scoped per modality,
+// so a studio with more than one modality is guaranteed to have ties). Returns
+// name -> id. Used by the service-order e2e to reproduce Chloe's defect.
+export async function seedE2eTiedServices(
+  studioId: string,
+  names: ReadonlyArray<string>,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const name of names) {
+    const rows = await sql<{ id: string }>(
+      `insert into public.services
+         (studio_id, name, default_duration_minutes, price_cents, active, modality, sort_order)
+       values ($1,$2,30,9500,true,'electrolysis',100) returning id`,
+      [studioId, name],
+    );
+    out[name] = rows[0]!.id;
+  }
+  return out;
+}
+
+// The order the PUBLIC BOOKING page's own query returns — its exact filter and
+// ORDER BY (app/book/[slug]/page.tsx). Used to prove settings and public booking
+// resolve to the identical order without depending on the separate
+// practitioner-eligibility filtering the booking FORM applies afterwards.
+export async function getPublicBookingServiceOrder(studioId: string): Promise<string[]> {
+  const rows = await sql<{ name: string }>(
+    `select name from public.services
+      where studio_id = $1 and active = true
+      order by sort_order asc, name asc, id asc`,
+    [studioId],
+  );
+  return rows.map((r) => r.name);
+}
+
+// The studio's VISIBLE service order as the database holds it, in the canonical
+// (sort_order, name, id) order every surface must agree on.
+export async function getStudioServiceOrder(
+  studioId: string,
+): Promise<Array<{ name: string; sort_order: number; calendar_color: string | null }>> {
+  const rows = await sql<{ name: string; sort_order: number; calendar_color: string | null }>(
+    `select name, sort_order, calendar_color
+       from public.services
+      where studio_id = $1 and active
+      order by sort_order asc, name asc, id asc`,
+    [studioId],
+  );
+  return rows.map((r) => ({ ...r, sort_order: Number(r.sort_order) }));
+}
+
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
   const rows = await sql<{ area: string; laterality: string }>(
     `select a.area, a.laterality

@@ -57,8 +57,15 @@ export async function getAllServices(studioId: string): Promise<Service[]> {
     .from("services")
     .select("*")
     .eq("studio_id", studioId)
+    // Canonical ordering columns. Callers still re-sort in JS through
+    // lib/booking/service-order.ts (the client and Postgres collations can
+    // disagree on `name`), but a services query that omits sort_order entirely
+    // is a trap — it is what let the settings page and the reorder action
+    // disagree about which row sat at which position.
     .order("active", { ascending: false })
-    .order("name");
+    .order("sort_order", { ascending: true })
+    .order("name")
+    .order("id");
   if (error) throw new Error(`Failed to load services: ${error.message}`);
   return (data ?? []) as Service[];
 }

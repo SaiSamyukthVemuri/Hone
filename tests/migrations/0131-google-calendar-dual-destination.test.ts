@@ -26,7 +26,7 @@ describe("0131 — repo migration-max tripwire", () => {
       .filter(Boolean)
       .map((m) => (m as RegExpExecArray)[1])
       .sort();
-    expect(nums[nums.length - 1]).toBe("0160"); // 0160 = immutable clinical lineage
+    expect(nums[nums.length - 1]).toBe("0161"); // 0161 = service order RPC + widened calendar-colour CHECK
     expect(files.some((f) => f.startsWith("0132_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0133_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0134_"))).toBe(true);
@@ -56,7 +56,7 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0152_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0153_"))).toBe(true);
     // Nothing 0153+ yet. Bump this tripwire consciously when adding migrations.
-    expect(files.filter((f) => /^01(6[1-9]|[7-9]\d)_/.test(f))).toEqual([]); // 0155 present (card-change dedupe); trip on 0156+
+    expect(files.filter((f) => /^01(6[2-9]|[7-9]\d)_/.test(f))).toEqual([]); // 0155 present (card-change dedupe); trip on 0156+
   });
 });
 
