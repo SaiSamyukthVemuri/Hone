@@ -67,15 +67,21 @@ export function MultiAreaEditor({
     return true;
   }
 
+  // Any edit to the SET invalidates the notice — it asserts a fact about the
+  // current set ("X is already in this settings block"), so leaving it up after
+  // the practitioner removes that very area would state something false.
   function setLaterality(index: number, lat: Laterality) {
+    setNotice(null);
     onChange(value.map((a, i) => (i === index ? { ...a, laterality: lat } : a)));
   }
 
   function remove(index: number) {
+    setNotice(null);
     onChange(value.filter((_, i) => i !== index));
   }
 
   function applyToAll(lat: Laterality) {
+    setNotice(null);
     onChange(value.map((a) => ({ ...a, laterality: lat })));
   }
 

@@ -85,6 +85,15 @@ describe("MultiAreaEditor commits custom areas explicitly", () => {
     expect(EDITOR).toMatch(/role="status"/);
   });
 
+  it("clears that notice on ANY edit to the set, so it cannot state a false fact", () => {
+    // The notice asserts something about the CURRENT set. Removing the very
+    // area it names, or changing a laterality, must retract it.
+    for (const fn of ["setLaterality", "remove", "applyToAll"]) {
+      const body = EDITOR.slice(EDITOR.indexOf(`function ${fn}(`));
+      expect(body.slice(0, 260), `${fn} must clear the notice`).toMatch(/setNotice\(null\);/);
+    }
+  });
+
   it("keeps per-area laterality, remove, and apply-to-all intact", () => {
     expect(EDITOR).toMatch(/function setLaterality/);
     expect(EDITOR).toMatch(/function remove/);
