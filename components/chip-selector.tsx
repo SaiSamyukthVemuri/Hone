@@ -14,6 +14,19 @@ type Props = {
 
 // Single-select chip selector. Selecting "Other" reveals a free-text input
 // that becomes the stored value.
+//
+// LIVE-CONTROLLED, DELIBERATELY. The "Other" input calls `onChange` on EVERY
+// keystroke. That is correct here because every parent holds ONE controlled
+// string and simply replaces it.
+//
+// DO NOT wire this component's `onChange` to a handler that APPENDS to a list.
+// That is exactly the defect fixed in the multi-area settings-block editor
+// (Chloe production feedback): `AreaPicker` was live-controlled the same way and
+// `MultiAreaEditor` used its `onChange` to append, so typing an 8-letter custom
+// area appended and PERSISTED eight partial rows, one per keystroke. If a list-
+// append parent is ever needed here, add an explicit commit (Enter + a button)
+// first — see `AreaPicker`'s `customCommit="explicit"` mode and
+// `lib/sessions/area-input.ts`.
 export function ChipSelector({
   options,
   value,
