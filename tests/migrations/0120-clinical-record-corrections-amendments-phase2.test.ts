@@ -25,7 +25,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
     // (per-practitioner availability). Bump this tripwire consciously
     // when a new migration lands.
-    expect(maxNum).toBe(159); // 0159 = retire signed clinical records (0158 intentionally skipped —
+    expect(maxNum).toBe(160); // 0160 = immutable clinical lineage (0158 intentionally skipped —
     // DRAFT PR #481 carries a different, superseded migration under that number on a
     // retained branch, and two artifacts must never share a number)
     expect(FILE).toMatch(/^0120_/);

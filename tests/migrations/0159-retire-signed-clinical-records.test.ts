@@ -72,17 +72,18 @@ const CLINICAL_TABLES = [
 ] as const;
 
 describe("0159 — retirement (repo migration-max tripwire)", () => {
-  it("is present, 0157 precedes it, exactly one 0159, and it is the repo max (nothing 0160+)", () => {
+  it("is present, 0157 precedes it, exactly one 0159, nothing 0161+ (repo max pin now lives in the 0160 test)", () => {
     expect(FILE).toMatch(/^0159_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0157_"))).toBe(true);
     expect(files.filter((f) => /^0159_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[0-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[1-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    // The absolute repo-max pin moved to the 0160 test (0160 = immutable clinical
+    // lineage, the follow-up this migration's header points at).
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(159);
     expect(new Set(nums).size).toBe(nums.length); // no duplicate number anywhere
   });
 
