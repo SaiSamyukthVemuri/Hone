@@ -102,7 +102,14 @@ describe("charting form uses the multi-area editor with the shared AreaPicker", 
   });
 
   it("adding an area never replaces prior selections", () => {
-    expect(EDITOR).toMatch(/onChange\(\[\.\.\.value,/); // append, never replace
+    // The append now lives in the shared commit rule (Chloe custom-area
+    // keystroke hotfix): the editor adopts the returned set, and
+    // commitAreaToSet is the only thing that builds it — by appending.
+    expect(EDITOR).toMatch(/commitAreaToSet\(value,/);
+    expect(EDITOR).toMatch(/onChange\(\[\.\.\.result\.value\]\)/);
+    expect(read("lib/sessions/area-input.ts")).toMatch(
+      /return \{ status: "added", value: \[\.\.\.value, \{ area, laterality \}\], area \};/,
+    );
   });
 });
 
