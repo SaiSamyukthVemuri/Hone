@@ -1,61 +1,43 @@
-# Dependency-ordered remediation plan — exact production `c64366c9ba4130283932bbe21e32bf2ed62c4975`
+# Dependency-ordered remediation plan — `c64366c9ba4130283932bbe21e32bf2ed62c4975`
 
-This is a dependency graph, not a severity sort. Two orderings are **hard constraints** and reversing
-either would break production:
-
-1. **L18 cannot be solved revoke-first.** `authenticated` holds row DML on `sessions`,
-   `session_blocks`, `electrolysis_entries`, `laser_entries` and `treatment_images`, and 26
-   application call sites write them directly. Revoking before those callers move onto narrow commands
-   would break Willow's live charting the moment the migration applied — before any deploy. Order is:
-   **move callers → deploy → then revoke.**
-2. **Privilege cleanup precedes anything that depends on privilege posture.** L19(a) and L20 share one
-   root cause (Supabase `ALTER DEFAULT PRIVILEGES`) and must be swept and verified together, not
-   piecemeal inside a feature migration.
-
-## Dependency graph
+Generated from canonical `depends_on` / `train` / `parallel_group`, not hand-edited.
 
 ```
-T0  containment                    (EMPTY — zero current P0)
-      |
-T1  privilege & ACL cleanup        L19(a) TRUNCATE sweep + L20 service_role TRIGGER
-      |                            + default-privilege change for future tables + ACL drift test
-      |
-      +--> T2  command-only clinical writes   (L18)  [app-first, then revoke]
-      |          26 direct writers -> narrow commands -> deploy -> revoke
-      |
-      +--> T3  identity & attribution         N-SEC-001 practitioner re-parenting
-      |                                        + appointment_id / treatment_plan_id same-client
-      |
-      +--> T4  appointment & schedule command boundaries   F-SEC-002, F-SCHED-001
-                 |
-                 +--> T5  public booking atomicity + kill switches
-                 |          F-SCHED-002, F-SCHED-003, F-PUBLIC-001, F-PUBLIC-002
-                 |
-                 +--> T6  timezone & slot correctness      F-SCHED-004, F-SCHED-006, F-SCALE-002
-
-T7  payment authority              F-PAY-001 (+ historical HNE-PAY-001/002)
-T8  intake merge & state integrity F-CLIN-003, F-CLIN-004 (+ P1-03/04/05/06)
-T9  privacy telemetry              F-PRIV-001, F-PRIV-002
-T10 import/export/retention/storage F-IMPORT-001, F-DATA-001, F-RET-001, F-STORAGE-001, F-SCALE-001, F-OFF-001
-T11 ops, restore, test assurance   F-OPS-001..005, F-STAGE-001, F-TEST-001..003, F-EXEC-001, F-COMP-001
-T12 multi-tenant foundation        RBAC, org/location, capacity, suspension  (needs T1-T4)
-T13 SaaS signup / provisioning / billing   F-ONB-*, F-PROV-001, F-BILL-001  (needs T12)
-T14 Google Calendar outbound v1    F-GCAL-001..003, F-CAL-001  (DORMANT; needs T4)
-T15 Resend / Twilio multi-tenant comms
-T16 support, export, self-service lifecycle
+T0-copy    N-DOC-001, F-DOC-001            copy-only, no deps          -> PR-02
+T0-charting CHLOE-001/002/004              code-only, no deps          -> PR-03, PR-08, PR-10
+T1         L19a, L20                       default-privilege sweep     -> PR-01
+T2         L18                             app-first THEN revoke       -> PR-06 then PR-07   (depends: T1)
+T3         N-SEC-001, F-SEC-001, L19b       identity/attribution        -> PR-04, PR-05       (no dep on T1)
+T4         F-SEC-002, F-SCHED-001           appointment command bounds  -> PR-11              (no dep on T2)
+T5         F-SCHED-002/003, F-PUBLIC-001/002 public booking             -> PR-14              (depends: T4)
+T6         F-SCHED-004/005/006, F-SCALE-002 timezone & slots            -> PR-15              (depends: T4)
+T7         F-PAY-001                        payment authority           -> PR-02
+T8         F-CLIN-003/004, F-COPY-001       intake & copy integrity     -> PR-12
+T9         F-PRIV-001/002                   telemetry privacy           -> PR-05
+T10        F-IMPORT-001, F-DATA-001/002,    import/export/retention     -> PR-13, PR-16, PR-17
+           F-RET-001, F-STORAGE-001,
+           F-SCALE-001, F-OFF-001
+T11        F-OPS-*, F-STAGE-001, F-TEST-*,  ops, restore, assurance     -> PR-18, PR-19, PR-20
+           F-COMP-001, L21
+T13        F-ONB-*, F-PROV-001, F-BILL-001, SaaS signup & billing       (depends: T2)
+           CHLOE-003/005
+T14        F-GCAL-*, F-CAL-001              Google Calendar (dormant)   (depends: T4)
 ```
 
-**Ordering rules enforced above.** Google Calendar (T14), Twilio/Resend (T15) and public
-self-service (T5/T13) are all scheduled *after* their applicable P1 dependencies. Nothing in T14–T16
-may start while an applicable T1–T4 item is open.
+**Ordering rules enforced:** Google Calendar (T14), SaaS signup (T13) and public booking (T5) all sit
+behind their applicable open P1 dependencies. The dependency graph was checked for cycles — **it is
+acyclic**.
 
-## Open P1s and where they sit
+## Open P0/P1 placement
 
-| ID | Severity | Status | Train | Gate | Dependency |
-|---|---|---|---|---|---|
-| `F-SEC-002` | P1 | OPEN | T4 | BEFORE_STUDIO_2 | Independent of L18 and of the clinical work. Two coupled steps: (1) revoke insert, update, delete on public.appointments from anon, authenticated (SELECT retained — the user-scope… |
-| `F-PRIV-001` | P1 | OPEN | T9 | WILLOW_NOW | None — fully self-contained and code-only, confined to lib/observability/sentry-scrub.ts. Three changes: (1) in scrubRequest, canonicalize the path against the known bearer-route … |
-| `F-DATA-001` | P1 | OPEN | T10 | BEFORE_STUDIO_2 | Two-phase. Phase 1 (no migration, days): correct app/(app)/settings/data/page.tsx to say "partial export", replace the "Not included" paragraph with the real exclusion list (intak… |
-| `F-IMPORT-001` | P1 | OPEN | T10 | BEFORE_STUDIO_2 | Needs a transactional import RPC (SECURITY DEFINER, owner-verified, taking the planned clients + memories as one JSON payload and inserting both inside one statement), or staged t… |
-| `F-COMP-001` | P1 | OPEN | T11 | WILLOW_NOW | Independent of all engineering findings. Shares a root cause with F-DOC-001 — no gated claims manifest — but must not wait for that control to be built. The verified-wording chang… |
-| `N-SEC-001` | P1 | OPEN | T3 | BEFORE_STUDIO_2 | Independent of L18. Fix is a same-studio composite FK plus/or a 0160-style column guard; both are additive and need no application change (no call site writes these columns from a… |
+| ID | Sev | Status | Train | PR | Gate | Depends on |
+|---|---|---|---|---|---|---|
+| `F-SEC-002` | P1 | OPEN | T4 | PR-11 | BEFORE_STUDIO_2 | — |
+| `F-PAY-001` | P1 | PARTIALLY_FIXED | T7 | PR-02 | BEFORE_STUDIO_2 | — |
+| `F-PRIV-001` | P1 | OPEN | T9 | PR-05 | WILLOW_NOW | — |
+| `F-DATA-001` | P1 | OPEN | T10 | PR-16, PR-17 | BEFORE_STUDIO_2 | F-IMPORT-001 |
+| `F-IMPORT-001` | P1 | OPEN | T10 | PR-13 | BEFORE_STUDIO_2 | — |
+| `F-COMP-001` | P1 | OPEN | T11 | PR-04 | WILLOW_NOW | — |
+| `N-SEC-001` | P1 | OPEN | T3 | PR-04 | BEFORE_STUDIO_2 | — |
+| `N-DOC-001` | P1 | OPEN | T0-copy | PR-02 | WILLOW_NOW | — |
+| `CHLOE-001` | P1 | OPEN | T0-charting | PR-03 | WILLOW_NOW | — |

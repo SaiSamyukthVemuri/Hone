@@ -1,38 +1,46 @@
 # Evidence limitations
 
-What this audit could **not** prove, and why. Stated so no reader mistakes an unproven claim for a
-verified one.
+What this audit could **not** prove, stated so nothing reads as verified that is not.
 
-## Permanently unavailable input artifacts
+## Verification classes used
 
-| Artifact | Status | Searches performed |
+- **Source-verified** — read at `c64366c9ba4130283932bbe21e32bf2ed62c4975` in the exact worktree.
+- **Hosted-verified** — read-only query against the production database.
+- **Supplied, not independently verified** — taken from the task or from GitHub metadata.
+
+The production **git SHA**, **migration set**, **ACL/trigger/flag state** and the **Willow practitioner
+aggregate** are hosted-verified. The **serving deployment identity** (that deployment
+`EdFCbgfuPn7jsh6n73kTcsVwVqEX` is the process actually serving hone.care) is **supplied, not
+independently verified** — only that the URLs return 200 was checked.
+
+## Permanently unavailable inputs
+
+| Artifact | Status | Searches |
 |---|---|---|
-| `Hone_Findings.csv` | **PERMANENTLY UNAVAILABLE THIS RUN** | Exact-filename search across `~/Downloads`, `~/Documents`, `~/Desktop`, `~/Library/Mobile Documents`, `/Users/chloebaca/Hone`, `/Users/chloebaca/Hone-lineage` (maxdepth 4). Not found. |
-| `hone_evidence_excerpt.txt` | **PERMANENTLY UNAVAILABLE THIS RUN** | Same search set. Not found. |
+| `Hone_Findings.csv` | **PERMANENTLY UNAVAILABLE THIS RUN** | Exact-filename search of `~/Downloads`, `~/Documents`, `~/Desktop`, `~/Library/Mobile Documents`, `/Users/chloebaca/Hone`, `/Users/chloebaca/Hone-lineage` (maxdepth 4) |
+| `hone_evidence_excerpt.txt` | **PERMANENTLY UNAVAILABLE THIS RUN** | Same |
 
-Their content was **not** reconstructed or inferred. No finding in this register depends on them.
+Content was **not** reconstructed. No finding depends on them.
 
-## Structural limitations of this run
+## Structural limitations
 
-1. **Historical registers were preserved, not re-verified.** All 74 July-10/July-18 source rows are
-   recorded verbatim with their original IDs, severities and dates, but only the 48 July-27 findings
-   (plus 1 new) were individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`. Their canonical status reads
-   `UNMAPPED_HISTORICAL`, never a fabricated verdict.
+1. **Historical registers preserved, not re-verified.** All 74 July-10/18 rows are carried in full,
+   but only the 48 July-27 findings plus the rows discovered here were individually re-verified.
+2. **No production writes.** Read-only by authorization; findings needing a mutating reproduction say so.
+3. **Test evidence.** CI run **30577864921 / #912** executed green at the audit head, covering the unit
+   suite and the DB/RLS lane. Where a finding cites a test file that was **not** run, its
+   `behavioural_test_evidence` says so rather than implying a green run.
+4. **Raw-grant reachability.** `anon`, `authenticated` and `service_role` are all **NOLOGIN**; only
+   `authenticator` and `postgres` can connect and PostgREST exposes no TRUNCATE verb. This is why the
+   64-table TRUNCATE posture is P2 defence-in-depth and not a P0.
+5. **Chloe feedback is a sanitized report**, not a reproduction: no names, screenshots or treatment
+   content are stored. `CHLOE-002` is explicitly `EVIDENCE_LIMITATION` because the repository claims a
+   fix that is not confirmed on the deployed build.
 
-2. **No production writes.** This audit is read-only by authorization. Findings whose proof requires a
-   mutating reproduction are marked accordingly; the strongest available evidence is applied migration
-   text plus read-only hosted state.
+## Findings carrying missing evidence
 
-3. **Behavioural test evidence is file-inventory, not a green run**, except where a suite was executed
-   in an earlier task in this session. Where an agent cited a test file it had not run, that is stated.
-
-4. **Reachability of raw privilege grants.** `anon`, `authenticated` and `service_role` are all
-   `NOLOGIN`; only `authenticator` and `postgres` can connect, and PostgREST exposes no TRUNCATE
-   verb. Raw TRUNCATE/REFERENCES/TRIGGER grants are therefore **not** browser-reachable. This was
-   verified from `pg_roles` and materially lowers several severities that would otherwise look
-   catastrophic on the grant matrix alone.
-
-## Per-finding missing evidence (49 findings)
+**51 of 60** canonical findings record something they could not prove. That is not the same as
+"status = EVIDENCE_LIMITATION" (which is **1**), and §A of the reconciliation report reports both.
 
 | ID | Missing evidence |
 |---|---|
@@ -84,4 +92,6 @@ Their content was **not** reconstructed or inferred. No finding in this register
 | `F-PUBLIC-001` | I did not measure how often 23P01/HB001 actually fires in production (a booking_slot_collision log event is emitted at :800-810, so the frequency is observable in Vercel logs, but I did not read them). I also did not count existing orphan clients at Willow, so the practical blast radius to date is … |
 | `F-PUBLIC-002` | I did not confirm from a hosted read that Willow's public booking page currently passes the readiness gate (loadPublicReadiness at :455-464), so "live and bookable today" rests on documented product state rather than a live probe. Most importantly, I did not verify whether the Upstash rate-limit en… |
 | `F-COPY-001` | I did not query the hosted session_copy_operations row count as of today, so I cannot state how many provenance rows currently exist and are at risk (it was 0 at deploy). I also did not verify whether the RLS policy on sessions actually permits a studio member's direct PostgREST DELETE to succeed -… |
-| `N-SEC-001` | Not reproduced by an actual PATCH against production (writes are not authorized in this audit). Reproduction on a CI-parity database is the required next evidence. |
+| `N-SEC-001` | Not reproduced by an actual PATCH (writes not authorized in this audit). CI-parity reproduction is the required next evidence. |
+| `N-DOC-001` | No legal review performed; this audit states the mismatch, not its legal weight. |
+| `CHLOE-002` | Not reproduced on the deployed build; the repository's claim that both were fixed is NOT independently confirmed. Classified EVIDENCE_LIMITATION for that reason. |

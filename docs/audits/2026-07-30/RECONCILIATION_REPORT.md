@@ -1,98 +1,135 @@
 # Exact-production findings reconciliation — `c64366c9ba4130283932bbe21e32bf2ed62c4975`, migration max 0160
 
-**Generated 2026-07-30.** Every current classification was verified against the exact production
-source at `c64366c9ba4130283932bbe21e32bf2ed62c4975` and read-only hosted evidence. Historical counts are **not** reported as current
-counts.
+**Corrected pass 2, 2026-07-30.** Supersedes the first pass, whose 33 self-review defects are all
+dispositioned in [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md).
 
-## Baseline (independently re-verified for this run)
+Sibling reports: [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md) ·
+[P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md) ·
+[LAUNCH_GATE_MATRIX.md](./LAUNCH_GATE_MATRIX.md) ·
+[DEPENDENCY_REMEDIATION_PLAN.md](./DEPENDENCY_REMEDIATION_PLAN.md) ·
+[FIRST_REMEDIATION_PR_TRAIN.md](./FIRST_REMEDIATION_PR_TRAIN.md) ·
+[DUPLICATE_AND_SUPERSESSION_MAP.md](./DUPLICATE_AND_SUPERSESSION_MAP.md) ·
+[EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md) ·
+[INDEPENDENT_REVIEW_FINDINGS.md](./INDEPENDENT_REVIEW_FINDINGS.md) ·
+[AUDIT_INPUT_MANIFEST.json](./AUDIT_INPUT_MANIFEST.json)
 
-| Field | Value |
-|---|---|
-| Production branch | `claude/build-hone-saas-hOex7` |
-| Exact production SHA | `c64366c9ba4130283932bbe21e32bf2ed62c4975` (parents `d77d4434` + `7521dbc4`, PR #483 merge, 2026-07-30T14:50:32-04:00) |
-| Runtime-bearing SHA | same |
-| Hosted migration max | **0160** — `0159`×1, `0160`×1, **no `0158`**, nothing above 0160, **159 total**, 0 duplicates, `0159` immediately precedes `0160` |
-| Latest production deployment | `EdFCbgfuPn7jsh6n73kTcsVwVqEX` (GitHub `5680522621`), success 2026-07-30T18:52:31Z |
-| Health | `hone.care`, `/login`, `/dashboard` all 200; 0 unresolved ops alerts |
-| Open PRs | 0 |
-| Signed-record retirement | flags false on all 5 studios + 2 validated CHECKs; 0/10 retired functions runtime-executable; 1 legacy snapshot, hash re-derives; Willow 0 non-draft; 0 amendments; 0 clinical_audit_events |
-| Lineage protection | 2 SECURITY INVOKER guards (`search_path` pinned), 5 enabled triggers, `treatment_images_enforce_integrity` enabled |
-| Aggregates | 5 studios · 31 clients · 111 appointments · 76 sessions · 14 charge attempts · 2 copy operations · 1 GCal event link |
+## Baseline — per-row verification class
+
+| Field | Value | Verification |
+|---|---|---|
+| Production SHA | `c64366c9ba4130283932bbe21e32bf2ed62c4975` | **hosted/git-verified** |
+| Hosted migration max | **0160** (0159×1, 0160×1, no 0158, 159 total, 0 dupes) | **hosted-verified** |
+| Signed-record retirement | flags false ×5 + 2 validated CHECKs; 0/10 retired fns runtime-executable; 1 snapshot re-derives; Willow 0 non-draft | **hosted-verified** |
+| Lineage protection | 2 guards, 5 enabled triggers, 0093 guard enabled | **hosted-verified** |
+| Willow practitioners | Willow: 2 practitioners total — 1 ACTIVE owner, 1 INACTIVE non-owner. Active non-owner practitioners: 0. Read-only aggregate (roles/active/counts only), 2026-07-30. | **hosted-verified** |
+| Latest production deployment | `EdFCbgfuPn7jsh6n73kTcsVwVqEX` | **supplied, not independently verified** — only that hone.care//login//dashboard return 200 was checked |
+| Health | 200 / 200 / 200 · 0 unresolved ops alerts | **hosted-verified** |
 
 ## A. Executive counts
 
-| Severity | Original (Jul 27) | Current OPEN | Partial | Deployed/Verified | Retired/Superseded | Not-a-launch-req | False positive | Evidence limitation |
+Original column = the July-27 audit's own severities. Current = this reconciliation, which also adds
+rows the July-27 audit did not contain (5 limitations, 5 Chloe items, 2 discovered).
+
+| Severity | Original (Jul 27) | Current OPEN | Partial | Deployed/Verified | Retired/Superseded | Not-a-launch-req | False positive | Status=EVIDENCE_LIMITATION |
 |---|---|---|---|---|---|---|---|---|
 | P0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| P1 | 14 | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
-| P2 | 31 | 11 | 4 | 0 | 0 | 0 | 0 | 0 |
-| P3 | 2 | 17 | 3 | 1 | 3 | 4 | 0 | 0 |
-| **Total** | **48** | **34** | **7** | **1** | **3** | **4** | **0** | **0** |
+| P1 | 14 | 8 | 1 | 0 | 0 | 0 | 0 | 0 |
+| P2 | 31 | 17 | 3 | 0 | 0 | 0 | 0 | 1 |
+| P3 | 2 | 19 | 3 | 1 | 3 | 4 | 0 | 0 |
+| **Total** | **48** | **44** | **7** | **1** | **3** | **4** | **0** | **1** |
 
-Current canonical total is **49** (48 July-27 findings + 1 discovered in this run).
-The severity distribution moved substantially: the single P0 is gone, P1 fell from 14 to
-6, and 28 findings are now P3.
+> The last column counts findings whose **status** is `EVIDENCE_LIMITATION`. Separately,
+> **51 of 60** findings record something in `missing_evidence` — a "0" in that column never means
+> "no finding rests on unverified evidence". See [EVIDENCE_LIMITATIONS.md](./EVIDENCE_LIMITATIONS.md).
+
+**Canonical total: 60** · source rows in the CSV: **134**.
 
 ## B. Current P0s
 
-**Zero current P0 confirmed.** Full evidence in `CURRENT_P0_P1_REPORT.md`.
+**Zero current P0 confirmed.** Evidence in [CURRENT_P0_P1_REPORT.md](./CURRENT_P0_P1_REPORT.md).
 
-## C. Current P1s (6)
+## C. Current P1s (9)
 
-| ID | Title | Exposure | Studio #2 blocker | Dependency |
+| ID | Title | Exposure | Gate | Train | PR |
+|---|---|---|---|---|---|
+| `F-SEC-002` | Any authenticated studio member can create, retime, re-status or delete appointments by direct PostgREST DML, bypassing the owner gates, du… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T4 | PR-11 |
+| `F-PAY-001` | Session-payment amount is browser-supplied and unbounded up to CAD 2,000; any active practitioner (not just the owner) can prepare and exec… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T7 | PR-02 |
+| `F-PRIV-001` | Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens) | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T9 | PR-05 |
+| `F-DATA-001` | Owner ZIP export omits most tenant-owned data (intake, consent, clinical notes, images, payments, portal, numbing/inventory fields) while t… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10 | PR-16, PR-17 |
+| `F-IMPORT-001` | Quick Import commits clients and treatment memories in separate statements; a memory-insert failure strands clients permanently with no ide… | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T10 | PR-13 |
+| `F-COMP-001` | The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-E… | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T11 | PR-04 |
+| `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | BEFORE_STUDIO_2 | T3 | PR-04 |
+| `N-DOC-001` | Public terms page claims a subscription and refund lifecycle the product does not have | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-copy | PR-02 |
+| `CHLOE-001` | Typing a custom treatment area commits one partial area row per keystroke | REACHABLE_IN_PRODUCTION | WILLOW_NOW | T0-charting | PR-03 |
+
+Three of these did not exist as P1s in the first pass: **`F-PAY-001`** was raised from P2 (live money,
+no server-side amount authority), **`N-DOC-001`** was split out of a row that had been closed, and
+**`CHLOE-001`** is new from the studio-owner report.
+
+## D. P2 and P3 disposition summary
+
+| Severity | Count | Open/partial | With a PR | Closed/not-required |
 |---|---|---|---|---|
-| `F-SEC-002` | Any authenticated studio member can create, retime, re-status or delete appointments by direct PostgREST DML, bypassing the owner gates, duration authority, booking kill switch, buffer rule and every audit row of create_internal_appointmen… | REACHABLE_IN_PRODUCTION | **YES** | Independent of L18 and of the clinical work. Two coupled steps: (1) revoke insert, update, delete on public.appointments from anon, authenticated (SELECT retained — the user-scoped server client reads appointments in lib/booking/queries.ts… |
-| `F-PRIV-001` | Sentry receives raw bearer credentials embedded in URL path segments (intake, portal, appointment-manage and calendar-feed tokens) | REACHABLE_IN_PRODUCTION | no | None — fully self-contained and code-only, confined to lib/observability/sentry-scrub.ts. Three changes: (1) in scrubRequest, canonicalize the path against the known bearer-route prefixes (/intake/, /manage/, /cancel/, /reschedule/, /porta… |
-| `F-DATA-001` | Owner ZIP export omits most tenant-owned data (intake, consent, clinical notes, images, payments, portal, numbing/inventory fields) while the UI presents it as a complete backup | REACHABLE_IN_PRODUCTION | **YES** | Two-phase. Phase 1 (no migration, days): correct app/(app)/settings/data/page.tsx to say "partial export", replace the "Not included" paragraph with the real exclusion list (intake, consent, clinical notes, treatment photos, payments, port… |
-| `F-IMPORT-001` | Quick Import commits clients and treatment memories in separate statements; a memory-insert failure strands clients permanently with no idempotent repair, and the final batch-completion update is unchecked | REACHABLE_IN_PRODUCTION | **YES** | Needs a transactional import RPC (SECURITY DEFINER, owner-verified, taking the planned clients + memories as one JSON payload and inserting both inside one statement), or staged tables with validate→preview→commit. Requires giving each sou… |
-| `F-COMP-001` | The in-app Data settings page tells studio owners their clinical data is hosted in Canada while the privacy policy states it is in AWS US-East-1 | REACHABLE_IN_PRODUCTION | no | Independent of all engineering findings. Shares a root cause with F-DOC-001 — no gated claims manifest — but must not wait for that control to be built. The verified-wording change should precede any further sales conversation. |
-| `N-SEC-001` | Session practitioner attribution can be re-pointed, including to another studio's practitioner | REACHABLE_IN_PRODUCTION | **YES** | Independent of L18. Fix is a same-studio composite FK plus/or a 0160-style column guard; both are additive and need no application change (no call site writes these columns from a payload — verify before revoking). |
+| P2 | 21 | 21 | 18 | 0 |
+| P3 | 30 | 22 | 11 | 8 |
 
-## E. Retired / superseded findings
+Full tables in [P2_DISPOSITION_REPORT.md](./P2_DISPOSITION_REPORT.md).
+
+## E. Retired / superseded / not-required
 
 | ID | Status | Basis |
 |---|---|---|
-| `F-CLIN-001` | SUPERSEDED_BY_PRODUCT_DECISION | Finalize-versus-child-write interleaving — unreachable: finalization is permanently retired and cannot be invoked by any runtime role |
-| `F-CLIN-002` | SUPERSEDED_BY_PRODUCT_DECISION | Signed snapshot omits authoritative fields — moot: no new snapshot can ever be produced; the one legacy snapshot is frozen legacy evidence |
-| `F-PAY-002` | NOT_A_LAUNCH_REQUIREMENT | Public-booking deposits, card-on-file capture at booking, packages and partial/split payments are not built (deliberate scope hold) |
-| `F-BILL-001` | NOT_A_LAUNCH_REQUIREMENT | SaaS subscription billing, entitlements, dunning and access-suspension control plane do not exist (studio billing is manual) |
-| `F-EXEC-001` | RETIRED | Exact-head verification lanes were environment-blocked for the original audit — now satisfied by a green all-lane CI run on the production SHA |
-| `F-GCAL-003` | NOT_A_LAUNCH_REQUIREMENT | Inbound Google busy-time import and true two-way sync are not built (outbound-only scope, correctly labelled in the UI) |
-| `F-PROV-001` | NOT_A_LAUNCH_REQUIREMENT | Repository provenance gap from the ZIP-based audit - resolved for this reconciliation by reading a git worktree pinned to the production SHA |
+| `F-CLIN-001` | SUPERSEDED_BY_PRODUCT_DECISION | The race requires a finalizer transaction to run concurrently with a child write. There is no longer any way to start a finalizer transaction: the RPC's EXECUTE is revoked from every runtime role, no application code ca… |
+| `F-CLIN-002` | SUPERSEDED_BY_PRODUCT_DECISION | The finding's harm is that a verifier could call a hash valid while the snapshot fails to represent structured areas or the later 0155 probe-inventory / 0156 numbing fields. That harm requires snapshots to be a live pro… |
+| `F-PAY-002` | NOT_A_LAUNCH_REQUIREMENT | This is not a defect. It is an accurate scope statement about capability that was deliberately not built, and the current source confirms the absence completely and cleanly — the public booking action never touches any … |
+| `F-BILL-001` | NOT_A_LAUNCH_REQUIREMENT | SPLIT by the frozen-head review. The unbuilt subscription/billing platform is a capability gap: Willow is invoiced outside the product, so it blocks nothing today but is required before public self-service. The LIVE FAL… |
+| `F-EXEC-001` | RETIRED | Retired. The finding described a limitation of the original audit's evidence-gathering environment, not a property of the product, and that limitation does not apply to this reconciliation. Unlike the original ZIP, the … |
+| `F-GCAL-003` | NOT_A_LAUNCH_REQUIREMENT | Confirmed as an accurate description of scope, and explicitly NOT an active defect. The two inbound/two-way flag columns exist from 0121 but default false and are read by no runtime code at all - the only reference outs… |
+| `F-PROV-001` | NOT_A_LAUNCH_REQUIREMENT | This finding is about the ORIGINAL audit's evidence base, not about the product, and it is now resolved by construction. This reconciliation is not reading a ZIP: it reads a git worktree whose HEAD is the production SHA… |
 
-## F. Existing open limitations mapped to canonical findings
+## F. Open limitations — now first-class canonical rows
 
-| Limitation | Canonical mapping | Current state |
-|---|---|---|
-| **L18** — `authenticated` direct row DML on 5 clinical tables | Cross-cuts `F-SEC-001` residual + train **T2** | **OPEN.** 0160 pinned lineage columns but removed no grant. Requires 26 call sites to move to narrow commands **first**, then revoke. |
-| **L19(a)** — broad TRUNCATE outside the 9 covered tables | Train **T1** | **OPEN, and larger than documented: 64 of 86 public tables grant TRUNCATE to both `anon` and `authenticated`**, including `session_audit`, `audit_logs`, `record_keeping_audit_events`, `appointment_audit`, `stripe_events`, `stripe_payment_audit`, and 16 payment/portal tables that have RLS on with **zero policies**. **Not browser-reachable** (roles are NOLOGIN; PostgREST exposes no TRUNCATE). |
-| **L19(b)** — `appointment_id` / `treatment_plan_id` not same-client validated | Train **T3** | **OPEN.** 0160 deliberately did not pin them so re-linking keeps working; the fix is a validating trigger, not a freeze. |
-| **L20** — `service_role` retains TRIGGER on the 4 guarded tables | Train **T1** | **OPEN.** Shares L19(a)'s root cause; sweep together. Not app-reachable. |
-| **L21** — same-transaction session delete → `23503` | Not a train; watch item | **OPEN, pre-existing, proven 0160-neutral, unreachable from the app.** |
+L18–L21 are no longer prose: each is a canonical row with severity, reachability, gate, train and
+dependencies.
 
-## G. Historical P1 register mapping (July 18, 34 rows)
+| Limitation | Canonical | Severity | Status | Reachable | Gate | Train |
+|---|---|---|---|---|---|---|
+| `L18` | `HN-051` | P2 | OPEN | true | BEFORE_TEN_STUDIOS | T2 |
+| `L19a` | `HN-052` | P2 | OPEN | false | BEFORE_THREE_STUDIOS | T1 |
+| `L19b` | `HN-053` | P2 | OPEN | true | BEFORE_THREE_STUDIOS | T3 |
+| `L20` | `HN-054` | P3 | OPEN | false | BEFORE_THREE_STUDIOS | T1 |
+| `L21` | `HN-055` | P3 | OPEN | false | POST_GA | T11 |
 
-All 34 IDs preserved in `MASTER_FINDINGS_REGISTER.csv`. **18 of them also appear in the July 10
-register** and are recorded once per register. Signed-record items `HNE-REC-001` and `HNE-REC-002`
-are **RETIRED — not future enablement items**; see `DUPLICATE_AND_SUPERSESSION_MAP.md`.
+**L19(a) is larger than previously documented — 64 of 86 public tables** grant TRUNCATE to both browser
+roles, including `session_audit`, `audit_logs`, `record_keeping_audit_events`, `stripe_events` and 16
+payment/portal tables with RLS-on/zero-policies. It is **not browser-reachable** (NOLOGIN roles;
+PostgREST has no TRUNCATE verb), which is why it is P2 defence-in-depth rather than P0.
 
-## H. Independent audit mapping (July 27, 48 findings)
+## G. Historical July-18 register (34 rows)
 
-All 48 F-* IDs preserved and individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`. Per-finding evidence is in
-`MASTER_FINDINGS_REGISTER.json`.
+All 34 preserved with their own `source_recorded_disposition`: **16 PARTIALLY FIXED, 10 OPEN,
+5 DEPLOYED, 3 PRODUCTION VERIFIED**. 18 IDs also appear in the July-10 register and are recorded once
+per register. `HNE-REC-001`/`HNE-REC-002` are **RETIRED, not future enablement items**.
 
-## I. New findings discovered against `c64366c9ba4130283932bbe21e32bf2ed62c4975`
+## H. Independent audit (48 findings)
 
-| ID | Severity | Title | Why it was missed |
+All 48 preserved and individually re-verified against `c64366c9ba4130283932bbe21e32bf2ed62c4975`, with full source evidence, failure
+scenario, prerequisites, test limitations, acceptance criteria, recommended fix and rollout notes
+carried into explicit columns.
+
+## I. Findings discovered outside the July-27 audit (12)
+
+| ID | Sev | Source | Why it was not in the July-27 audit |
 |---|---|---|---|
-| `N-SEC-001` | **P1** | Session practitioner attribution can be re-pointed, including to another studio's practitioner | Surfaced by adversarially challenging the `F-SEC-001` closure. Migration 0160 closed client/studio/session/block re-parenting; the audit's own acceptance criteria for `F-SEC-001` also named **practitioner** re-parenting, which 0160 does not cover. Verified read-only: all five practitioner FKs on `sessions` are plain single-column FKs to `practitioners(id)` with **no** composite same-studio constraint (0094 added those only for `client_id`/`appointment_id`), **zero** triggers guard those columns, `authenticated` holds UPDATE, and the RLS predicate is on `studio_id` — which does not change. |
+| `N-SEC-001` | P1 | this reconciliation | Surfaced by challenging the `F-SEC-001` closure — that finding's own acceptance criteria named practitioner re-parenting, which 0160 does not cover. |
+| `N-DOC-001` | P1 | this reconciliation | Split out of `F-BILL-001`, where a live public-claim defect had been buried inside a row closed as not-a-launch-requirement. |
+| `CHLOE-001..005` | P1×1, P2×4 | studio-owner report 2026-07-30 | Post-dates the audit; sanitized (no names, screenshots or treatment content). |
+| `L18`,`L19a`,`L19b`,`L20`,`L21` | P2×3, P3×2 | known-limitations register | Previously tracked only as prose, outside the machine-readable register. |
 
-## Method notes
+## Method
 
-- **Two classifications were overturned by adversarial challenge**, both away from false closure:
-  `F-SEC-001` (PRODUCTION_VERIFIED → **PARTIALLY_FIXED/P2**) and `F-PROV-001`
-  (→ NOT_A_LAUNCH_REQUIREMENT/P3). The `F-SEC-001` correction directly contradicted this program's
-  own stated expectation that 0160 would make it production-verified — the expectation was offered as
-  a direction to *verify*, and verification found a residual.
-- Nothing was classified from a title, PR title, commit message, documentation claim, source-string
-  test, or the existence of a function or table.
+- Nothing classified from a title, PR title, commit message, documentation claim, source-string test,
+  or the existence of a function or table.
+- Every non-open verdict in pass 1 was adversarially challenged; two were overturned.
+- Pass 2 corrected all 33 self-review defects — see
+  [REVIEW_CLOSURE_REGISTER.md](./REVIEW_CLOSURE_REGISTER.md).

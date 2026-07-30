@@ -163,6 +163,27 @@
       "sha256": "7f6ded93871d1cfa1ff61aa6867e1bc89b278b5bf47c8dfb0a1176c42d4c487a",
       "mtime_utc": "2026-07-30T19:24:01.972Z",
       "note": null
+    },
+    {
+      "name": "Chloe production feedback — 2026-07-30",
+      "path": "(verbal/visual report, sanitized)",
+      "role": "NEW_SOURCE_REGISTER",
+      "status": "INGESTED_SANITIZED",
+      "bytes": null,
+      "sha256": null,
+      "mtime_utc": null,
+      "note": "5 items ingested as source rows CHLOE-001..005. No client names, no screenshots, no treatment content stored. Implementation deliberately NOT performed in this audit."
+    },
+    {
+      "name": "docs/audits/2026-07-30/INDEPENDENT_REVIEW_FINDINGS.md",
+      "path": "docs/audits/2026-07-30/INDEPENDENT_REVIEW_FINDINGS.md",
+      "role": "PASS_1_SELF_REVIEW",
+      "status": "INGESTED",
+      "bytes": 74563,
+      "sha256": "f2b6675f437cc3171cf8267f3bef6732d9310a48ba8de082c7992ac426b9b9a6",
+      "mtime_utc": null,
+      "note": "33 defects found in pass 1; all dispositioned in REVIEW_CLOSURE_REGISTER.md."
     }
-  ]
+  ],
+  "pass": "corrected pass 2 (2026-07-30)"
 }
