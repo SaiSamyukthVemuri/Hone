@@ -22,7 +22,7 @@ describe("0152 — file present + precedes nothing unexpected", () => {
     // The absolute repo-max pin lives in the 0131 test; this only guards
     // forward of the current chain (0153 colors + 0154 card-change dedupe now
     // present; trip on 0156+).
-    expect(files.filter((f) => /^01(5[8-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[0-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

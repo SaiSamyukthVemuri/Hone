@@ -77,9 +77,22 @@ SAFE-WILLOW is delivered as a sequence of behavioural-contract slices, each on `
    Hone canonical state; **analytics failure cannot affect the payment result**.
 6. **Photos & records** — treatment-photo metadata; same-parent ownership; signed-URL behaviour
    on the local harness; records / print / export consistency.
-7. **Clinical finalization** — enable finalization only on a synthetic tenant; immutable
-   snapshot; direct mutation denied; attributable amendment/correction; observation + narrative
-   agreement after finalization.
+7. **Clinical finalization — CANCELLED / RETIRED (2026-07-29).** Not deferred, not pending: this
+   slice will never be written. Signed and cryptographically finalized clinical records are **not
+   a Hone product capability**; treatment sessions remain ordinary, editable operational records
+   and practitioners correct mistakes by editing them. *Superseded design, for the record:*
+   "enable finalization only on a synthetic tenant; immutable snapshot; direct mutation denied;
+   attributable amendment/correction; observation + narrative agreement after finalization." That
+   first step is now **impossible by construction** — migration 0159 pins
+   `clinical_finalization_enabled` and `clinical_corrections_enabled` `false` with CHECK
+   constraints, so no tenant, synthetic or real, can enable finalization. **Replacement evidence:**
+   `tests/db/clinical-finalization-retired.db.test.ts` — a drift guard asserting the retirement
+   holds (flags un-settable, retired RPCs un-executable, no transition into `finalized`/`void`, no
+   `INSERT` into the three signed-record ledgers, legacy artifact preserved). Decision record:
+   `docs/decisions/clinical-finalization-retired.md`. *What this slice still owed and where it now
+   lives:* "direct mutation denied" is covered by the retained 0119/0120 append-only guards plus
+   the 0159 privilege hardening; observation/narrative agreement is the already-closed chart-note
+   contract (P1-13), which no longer has a finalization state to agree with.
 8. **Practitioner access & provider gates** — approved practitioner access; removed practitioner
    denied; Google / SMS / experimental controls remain off; no worker claims synthetic or Willow
    work unexpectedly.

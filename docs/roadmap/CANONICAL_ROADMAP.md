@@ -51,7 +51,7 @@ Every capability must use one of these states:
 - **CONTROLLED VERIFIED** - exercised on an approved synthetic or controlled tenant.
 - **LIMITED RELEASE** - enabled for a named cohort with monitoring and rollback.
 - **GENERALLY AVAILABLE** - self-service, supported, documented, measured, and approved for the target market.
-- **RETIRED** - no longer available; migration/offboarding complete.
+- **RETIRED** - no longer available; migration/offboarding complete. **RETIRED is terminal**, and applies equally to a capability that was never released: a deployed-dormant capability can be retired directly without ever reaching LIMITED RELEASE, in which case retirement means the product decision is recorded and the database enforces that it cannot be enabled. A RETIRED item is not DEPLOYED DORMANT, not parked, and not a gate anyone can grant.
 
 ### 1.3 Change control
 
@@ -80,7 +80,7 @@ Refresh this roadmap:
 
 - Production branch: `claude/build-hone-saas-hOex7`.
 - Production source baseline at adoption: `325b124724760615fd2e55242a85f94cbea0d17c`.
-- Repository/hosted migration max: **`0157`** (both). *(This line previously read "expected: `0133`; no `0134`" — superseded; 0134–0157 all exist in-tree and are all applied in production.)*
+- Repository/hosted migration max: **`0159`** (both), as of 2026-07-30. `0158` is deliberately skipped and will never be applied; `0160` is **not** applied. *(This line previously read "expected: `0133`; no `0134`", then `0157` — both superseded; 0134–0157 plus 0159 exist in-tree and are all applied in production.)*
 - Marketing PR #439 is open, unmerged, and has progressed to a broad public-site implementation. It must finish exact-head review, resolve review threads, pass all gates, merge, deploy, and receive live verification before the marketing overhaul is considered complete.
 - Once PR #439 ships, freeze major marketing redesign. Future marketing work should be correctness, support content, measured SEO growth, and product-proof updates rather than repeated visual rebuilds.
 
@@ -412,9 +412,37 @@ Make active-card replacement transactional. Use typed processed/retryable/termin
 
 Persist consent and provider outbox atomically. Dispatch only from current durable consent. Withdrawal before execution cancels delivery. Replays cannot duplicate provider events.
 
-### SEC-09: Clinical finalization, amendments, and chart contract
+### SEC-09: Clinical finalization, amendments, and chart contract — **RETIRED (2026-07-29)**
 
-Reconcile the already-deployed clinical finalization/correction work. Close any remaining gaps in immutable snapshots, amendment attribution, version conflicts, audit mandates, and customer-visible record provenance. Resolve the observation-chip/narrative contract across save, reload, history, print/export, copy-previous, finalization, and correction.
+**Status: RETIRED.** The ID is kept so nothing silently disappears from a canonical document, but
+**no work maps to it and none may be opened against it.**
+
+*Original instruction, superseded:* "Reconcile the already-deployed clinical finalization/correction work. Close any remaining gaps in immutable snapshots, amendment attribution, version conflicts, audit mandates, and customer-visible record provenance. Resolve the observation-chip/narrative contract across save, reload, history, print/export, copy-previous, finalization, and correction."
+
+*Why retired:* signed and cryptographically finalized clinical records are **not a Hone product
+capability**. Practitioner-signed snapshots, immutable finalized records, "snapshot v2",
+cryptographic clinical-record hashes as a product feature, and any correction/amendment workflow
+built around signed snapshots are permanently rejected. Treatment sessions remain **ordinary,
+editable operational records**, and practitioners correct charting mistakes by editing them.
+Migration **0159** enforces this in the database: both studio flags are pinned `false` by CHECK
+constraint, `EXECUTE` on the finalize/correct/amend/snapshot RPCs is revoked from every runtime
+role, transitions into `finalized`/`void` are refused, and `INSERT` is refused on all three
+signed-record ledgers. Decision record:
+**`docs/decisions/clinical-finalization-retired.md`**.
+
+*What this does NOT retire.* Ordinary operational audit trails (`session_audit`,
+`record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`,
+`client_portal_access_events`), actor attribution, timestamps, treatment-history integrity,
+whole-session-copy provenance and tenant isolation are all **retained and must not be weakened**.
+`clinical_audit_events` is **not** one of them — its CHECK admits only
+`correction`/`amendment`, so it is part of the retired system despite its name. The
+observation-chip / narrative chart-note contract (**P1-13**) was already closed on its own
+evidence and is unaffected; it now covers save, reload, history, print/export and copy-previous
+only, because there is no finalization or signed-correction state left to reconcile.
+
+*Reintroduction is not a backlog item.* It would require a new explicit product decision, an
+architecture review, a legal/privacy review, a migration plan and fresh acceptance — see §7 of the
+decision record. Do not cite SEC-09 in any future PR.
 
 ### SEC-10: Retention, legal hold, export, and purge
 
@@ -438,7 +466,9 @@ Prove hosted bucket policies, same-parent relationships, signed URL behavior, me
 
 ### SEC-14: Owner-facing audit log UI
 
-Expose a tenant-scoped, privacy-minimized audit timeline for organization owners. Include identity/access changes, practitioner invitations and removals, booking-policy changes, subscription/billing state, provider connections, exports, clinical finalization/amendment status, support access, and destructive actions.
+Expose a tenant-scoped, privacy-minimized audit timeline for organization owners. Include identity/access changes, practitioner invitations and removals, booking-policy changes, subscription/billing state, provider connections, exports, ordinary session edit history, support access, and destructive actions.
+
+*(Amended 2026-07-29: this item previously read "clinical finalization/amendment status". That is retired — see SEC-09 — so the clinical slice of this timeline is ordinary session edit history (`session_audit`) plus the other retained operational audit tables, never signed-record status.)*
 
 Do not duplicate treatment notes, intake answers, photos, tokens, full contact details, payment secrets, or provider credentials into the audit UI. Audit events must be server-authored, immutable, consistently attributable, and linked to a stable command/event ID.
 
@@ -448,7 +478,7 @@ Do not duplicate treatment notes, intake answers, photos, tokens, full contact d
 - Every closed finding has regression, migration, deployment, and production evidence.
 - Willow contract remains green.
 - Studio A/B matrix has no cross-tenant success.
-- Treatment memory is backed by trustworthy immutable/versioned records.
+- Treatment memory is backed by trustworthy **ordinary editable** records with actor attribution, timestamps, session edit history and whole-session-copy provenance. *(Amended 2026-07-29: previously "trustworthy immutable/versioned records" — signed/finalized/versioned clinical records are RETIRED, see SEC-09. Trustworthiness is delivered by audit trails and tenant isolation, not by freezing the record.)*
 
 ## 8. Phase 2 — multi-studio tenant foundation
 
@@ -983,7 +1013,7 @@ Define SLOs for:
 - signup/provisioning;
 - public booking;
 - portal login;
-- chart save/finalize;
+- chart save/edit; *(amended 2026-07-29: was "chart save/finalize" — finalization is retired, SEC-09)*
 - payment charge/refund;
 - subscription webhook lag;
 - email/SMS queue and delivery;
@@ -1165,7 +1195,7 @@ This is an indicative sequence. Phase 0 may split or merge slices, but cannot re
 12. **SEC-BOOKING** - atomic booking, policy evidence, durable side effects.
 13. **SEC-PAYMENT** - card replacement and webhook reconciliation.
 14. **SEC-CONSENT** - marketing consent and provider outbox.
-15. **SEC-CLINICAL** - finalization/amendment/chart-note contract.
+15. **SEC-CLINICAL** - **RETIRED (2026-07-29).** Was "finalization/amendment/chart-note contract". Finalization and signed amendments are retired (SEC-09); the chart-note contract (P1-13) is already closed. Nothing remains in the delivery train under this ID.
 16. **SEC-DATA** - retention, Storage, export/purge foundations.
 17. **SEC-AUDIT-UI** - owner-facing tenant audit history.
 18. **TEN-MATRIX** - executed full Studio A/B boundary suite.
@@ -1292,7 +1322,7 @@ Add organization-wide clients/policies/reporting and location-local services, re
 - open P0/P1 count;
 - tenant-boundary negative test pass rate;
 - cross-tenant incidents;
-- clinical save/finalization conflicts;
+- clinical save/edit conflicts; *(amended 2026-07-29: was "clinical save/finalization conflicts" — finalization is retired, SEC-09)*
 - audit completeness;
 - deletion/export manifest completeness;
 - Willow regression count.
@@ -1351,7 +1381,7 @@ Public self-service is GO only when:
 9. Decide/enable production PITR and run an isolated restore drill before adding an external non-Willow studio.
 10. Audit current Resend, Meta/provider-selector, analytics, MFA, audit, export, and trust capabilities instead of assuming they are absent or complete.
 11. Finish Calendar c4b/c4c/recovery under Sam-only controls.
-12. Reconcile and close the applicable P1/security/clinical/tenant gates.
+12. Reconcile and close the applicable P1/security/clinical/tenant gates. **SEC-09 is excluded — it is RETIRED, not a gate to close.**
 13. Build organization, RBAC, signup, billing, provisioning, onboarding, support, and offboarding in dependency order.
 14. Finish Resend as the email platform and Twilio as a tenant-isolated ISV communications platform.
 15. Build provider-agnostic attribution, then Meta Pixel/CAPI with durable consent and per-studio credentials.
@@ -1378,7 +1408,7 @@ Public self-service is GO only when:
 
 # Appendix B — broader launch-critical categories to reconcile
 
-- immutable finalized treatment history and attributable amendments;
+- ~~immutable finalized treatment history and attributable amendments~~ — **RETIRED 2026-07-29** (SEC-09). Replaced by: **attributable ordinary treatment history** — actor attribution, timestamps, `session_audit` edit history, whole-session-copy provenance and tenant isolation on records that stay editable;
 - submitted/reviewed intake immutability;
 - non-forgeable transaction-mandatory audit evidence;
 - hosted storage/photo policy and lifecycle proof;
@@ -1450,3 +1480,53 @@ and `P1_RECONCILIATION_REPORT_2026-07-18.md` (same directory); capability axes:
   practitioner/provider gates still to come). **Chloe human validation stays separate from this
   automated evidence.** No P1 aggregate classification changed; **Gate A still does not pass**;
   no external studio onboarded.
+
+---
+
+# Annex B — Clinical finalization retirement (2026-07-29)
+
+Annex A above is a **dated 2026-07-18 record** and is retained verbatim as history. Two of its
+lines are **superseded** by the product decision recorded below; the decision, not Annex A, is
+current.
+
+**Decision (2026-07-29, ACCEPTED, Sam):** Hone will **not** offer signed or cryptographically
+finalized clinical records. Practitioner-signed snapshots, immutable finalized records, "snapshot
+v2", cryptographic clinical-record hashes as a product feature, and any correction/amendment
+workflow built around signed snapshots are **permanently rejected**. Treatment sessions remain
+**ordinary, editable operational records**; practitioners correct charting mistakes by editing
+them. Enforced in the database by migration **0159** (five mechanisms: both flags pinned `false`
+by CHECK constraint; `EXECUTE` revoked from every runtime role on the finalize/correct/amend/
+snapshot RPCs; transitions of `sessions.record_status` into `finalized`/`void` refused; `INSERT`
+refused on `clinical_record_snapshots` / `clinical_record_amendments` / `clinical_audit_events`;
+plus privilege hardening that breaks nothing today). 0159 **drops nothing** and performs **zero
+data operations**. `0158` is intentionally skipped — DRAFT PR #481 carries a different,
+superseded migration under that number on a branch retained for audit evidence.
+
+Full decision record, including the retained legacy artifact and the reintroduction bar:
+**`docs/decisions/clinical-finalization-retired.md`**.
+
+**Superseded Annex A lines:**
+
+- *"HNE-REC-001 enforcement is deployed via 0119/0120 but **flag-OFF** (protects nothing yet;
+  enablement needs separate authorization + Chloe validation)."* — **Superseded.** There is no
+  authorization to seek and no Chloe validation to schedule. The flags cannot be turned on by any
+  role. HNE-REC-001 is closed as **RETIRED — will not be enforced by signed snapshots.** The
+  record-integrity requirement it represented is met instead by retained ordinary audit:
+  `session_audit`, `record_keeping_audit_events`, `session_copy_operations`,
+  `admin_action_events`, `client_portal_access_events`, with actor attribution and timestamps.
+- *SAFE-WILLOW remaining scope listing "clinical finalization" among the slices "still to come."*
+  — **Superseded.** That slice is **cancelled**, not pending; see `WAVE1_DESIGN.md` slice 7. Its
+  replacement is the retirement drift guard `tests/db/clinical-finalization-retired.db.test.ts`.
+  The remaining SAFE-WILLOW slices (appointment-lifecycle/portal, communications, payments,
+  photos/records, practitioner/provider gates) are unaffected and still outstanding.
+
+**Roadmap items retired or amended by this decision:** **SEC-09** (retired in place, ID kept) ·
+**SEC-CLINICAL** in the delivery train (§18 item 15) · **SEC-14** clinical slice · Phase 1 exit
+criterion on "immutable/versioned records" · Appendix B first bullet · the OPS-01 SLO and the
+Safety-and-trust metric that named "finalize"/"finalization". Nothing else in this roadmap changes.
+
+**What this decision explicitly does NOT license.** It is not permission to weaken tenant
+isolation, remove audit data, allow cross-studio change, assign one client's session to another
+client, let browser users bypass application commands, or permit `authenticated` `TRUNCATE` or
+arbitrary mutation of clinical tables. Migration 0159 moves in the opposite direction on several
+of those.

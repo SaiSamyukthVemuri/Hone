@@ -225,6 +225,36 @@ export async function seedMember(
   return { userId, practitionerId };
 }
 
+// Force a session into the RETIRED 'finalized'/'void' lifecycle, for the few
+// suites that must still exercise behaviour against a legacy record.
+//
+// Migration 0159 permanently blocks that transition for EVERY role, so the only
+// way to construct the state is to disable the retirement trigger as the table
+// OWNER, write, and re-enable. That is deliberate and deliberately noisy: it is
+// proof that the shipped schema carries no bypass at all. `anon`, `authenticated`
+// and `service_role` cannot do this — only the migration channel can, which is
+// exactly the posture the product decision asks for. Any suite calling this is
+// asserting something about the ONE preserved legacy artifact, never about a
+// capability a practitioner has.
+export async function seedLegacyRecordStatus(
+  sessionId: string,
+  status: "finalized" | "void",
+): Promise<void> {
+  await adminQuery(
+    "alter table public.sessions disable trigger sessions_guard_retired_finalization",
+  );
+  try {
+    await adminQuery("update public.sessions set record_status = $2 where id = $1", [
+      sessionId,
+      status,
+    ]);
+  } finally {
+    await adminQuery(
+      "alter table public.sessions enable trigger sessions_guard_retired_finalization",
+    );
+  }
+}
+
 // Seed a session (electrolysis) for a studio's client; returns ids.
 export async function seedSession(
   studio: SeededStudio,

@@ -1,8 +1,9 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-27 there are 157 migrations in
-`supabase/migrations/` (latest `0157_whole_session_copy_setup.sql`), and the production
-migration max = 0157 — hosted == repo, all applied, each exactly once, with no `0158`+.**
+Hone uses Supabase Postgres. **As of 2026-07-30 there are 158 migrations in
+`supabase/migrations/` (latest `0159_retire_signed_clinical_records.sql`), and the production
+migration max = 0159 — hosted == repo, all applied, each exactly once. `0158` is deliberately
+skipped and will never be applied; `0160` is NOT applied.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -65,11 +66,20 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
   `google_oauth_states`, `admin_action_events` (0113) have RLS enabled with **no browser
   policy** plus explicit `REVOKE` — service-role only. `admin_action_events` also has **no
   foreign keys**, deliberately, so an audit event survives deletion of the row it references.
-- **Append-only.** `client_clinical_notes` (0126/0127), `clinical_record_snapshots` (0119),
-  `clinical_record_amendments` and `clinical_audit_events` (0120),
-  `client_portal_access_events` (0111) and the record-keeping audit tables are SELECT-only to
-  members with writes via trusted paths; UPDATE/DELETE are blocked — for the finalized
-  clinical artifacts, **for all roles including service_role**.
+- **Append-only.** `client_clinical_notes` (0126/0127), `client_portal_access_events` (0111) and
+  the record-keeping audit tables are SELECT-only to members with writes via trusted paths;
+  UPDATE/DELETE are blocked. `client_clinical_notes` is **live for every studio** and is
+  unrelated to the retired signed-record system: a correction there is a **new row**
+  ([clinical-notes-append-only-contract.md](./clinical-notes-append-only-contract.md)).
+- **Fully immutable legacy evidence — no INSERT either.** `clinical_record_snapshots` (0119),
+  `clinical_record_amendments` and `clinical_audit_events` (0120) belong to the **retired**
+  signed-record system. 0119/0120 blocked UPDATE/DELETE **for all roles including
+  service_role**; 0159 also blocks INSERT, so nothing can be added, changed or removed. They
+  are retained, readable evidence of what was once built — not an active capability, and
+  `clinical_audit_events` is **not** Hone's operational audit trail (that is `session_audit`,
+  `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events` and
+  `client_portal_access_events`, all active). See
+  [decisions/clinical-finalization-retired.md](./decisions/clinical-finalization-retired.md).
 - **Owner-tier read.** `record_keeping_exposure_incidents` (0088) is owner-only to read and
   edit (it carries sensitive personal/health detail), while any active member may still file
   a new incident. The audit table carries a matching owner-only carve-out for exposure rows.
@@ -78,7 +88,14 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
   0115 went further and *dropped* the residual entry DELETE policies and revoked
   `truncate, delete` from `anon, authenticated`.
 - **SELECT-only with every other privilege revoked.** `session_copy_operations` (0157) — see
-  the next section.
+  the next section. Since 0159, `session_block_areas` (0128) is the same shape: browser roles
+  hold studio-scoped SELECT and nothing else, its `FOR ALL` policy is narrowed to SELECT, and
+  every write goes through `create_session_block_with_areas` /
+  `update_session_block_with_areas` / `copy_session_setup`. The app contains **zero** direct
+  writes to it, so the revocation is invisible to the deployed application. 0159 also removes
+  every remaining `anon` write privilege and `TRUNCATE`/`REFERENCES`/`TRIGGER` from `anon` **and
+  `authenticated`** on all six clinical tables (`sessions`, `session_blocks`,
+  `session_block_areas`, `electrolysis_entries`, `laser_entries`, `treatment_images`).
 
 ### RLS is not the same thing as a table privilege
 
@@ -163,13 +180,24 @@ alone is **not** sufficient. Always revoke from `anon` explicitly.
   `update_session_block_with_areas`: `is_studio_member` gate, allow-listed
   `jsonb_populate_record`, `SELECT … FOR UPDATE` row lock, `stale_block_version` optimistic
   concurrency, delete+insert area replacement in one transaction.
-- **Clinical finalization + corrections (0119/0120)** — `finalize_session`,
-  `correct_finalized_session`, `amend_finalized_session_with_image`. The correction path uses
-  the codebase's **only** narrow bypass: a transaction-local, session-scoped GUC
-  (`hone.correction_session_id`) the write-guard honours **only** when it equals that exact
-  row's `session_id`. It is structurally unreachable from PostgREST (a client cannot compose a
-  `SET` plus a frozen-row write in one transaction) and is discarded at COMMIT/ROLLBACK. There
-  is **no** service-role, `auth.uid()` or role-based bypass of the finalized-record guards.
+- **Signed clinical finalization + signed corrections (0119/0120) — RETIRED, NOT CALLABLE.**
+  `finalize_session`, `correct_finalized_session`, `amend_finalized_session`,
+  `amend_finalized_session_with_image` and `build_session_snapshot` still exist so 0119/0120
+  stay replayable, but 0159 **revoked `EXECUTE` from `public`, `anon`, `authenticated` and
+  `service_role`**, so nothing that serves a request can invoke them. Signed / cryptographically
+  finalized clinical records are not a Hone capability; treatment sessions are ordinary editable
+  records. The correction path's narrow bypass — a transaction-local, session-scoped GUC
+  (`hone.correction_session_id`) that the write-guard formerly honoured when it matched the row's
+  own `session_id` — **is REMOVED by 0159 and is no longer honoured at all.** It had to go: once the
+  correction RPCs were `EXECUTE`-revoked, the permit stopped being a guarded escape and became an
+  open one, because `set_config` on a custom placeholder is available to **any** role — reproduced
+  as plain `authenticated` rewriting the frozen legacy record. Verified in production after the
+  0159 apply: `guard_finalized_clinical_write` no longer references the placeholder, or
+  `current_setting` at all. There never was, and still is not, a service-role, `auth.uid()` or
+  role-based bypass of the finalized-record guards. Those guards
+  (`guard_finalized_clinical_write` + its five triggers, `guard_snapshot_append_only`,
+  `guard_practitioner_finalized_refs`) are deliberately **kept** — their remaining job is to
+  protect the one legacy finalized artifact. See the retirement posture below.
 - **Capacity / booking commands (0142–0150)** — parameter-based authorization: the server
   action resolves actor and studio server-side and nothing is trusted from the browser.
   Duration is derived from the **locked, revalidated service row inside the transaction**
@@ -194,6 +222,58 @@ Legacy inventory (pre-0075 payment/booking RPCs, retained for reference):
 - `practitioner_cancel_appointment` (0033).
 - `mark_appointment_no_show` (0033).
 - `claim_manual_fee_charge_attempt` (0065 / PR #146).
+
+### Retired system — signed / finalized clinical records (0119/0120, retired by 0159)
+
+**Signed and cryptographically finalized clinical records are RETIRED. They are not parked, not
+dormant and not a later phase** — the product decision is
+[decisions/clinical-finalization-retired.md](./decisions/clinical-finalization-retired.md), and
+migration 0159 enforces it in the database. Treatment sessions are **ordinary editable
+operational records**: a practitioner fixes a mis-charted session by editing it through the
+normal charting commands. Nothing about ordinary audit is given up — `session_audit`,
+`record_keeping_audit_events`, `session_copy_operations`, `admin_action_events` and
+`client_portal_access_events` are all active, actor attribution and timestamps are unchanged,
+whole-session-copy provenance is unchanged, and tenant isolation is unchanged.
+
+The capability had to be closed in the **database**, not by deleting a button: `authenticated`
+held `EXECUTE` on the four retired RPCs, and a studio owner could `PATCH`
+`clinical_finalization_enabled = true` straight through PostgREST via the
+`studios: owners update` policy.
+
+| 0159 mechanism | Posture |
+|---|---|
+| CHECK `studios_clinical_finalization_retired` / `studios_clinical_corrections_retired` | `studios.clinical_finalization_enabled` and `studios.clinical_corrections_enabled` are pinned `false`. A CHECK is declarative and consults no policy, so **no role** can turn them on — not a studio owner through the owners-update policy, not `service_role`, not a future settings screen. Both columns are kept so 0119/0120 stay replayable. |
+| `revoke all on function …` | `EXECUTE` on `finalize_session`, `correct_finalized_session`, `amend_finalized_session`, `amend_finalized_session_with_image` and `build_session_snapshot` is revoked from `public`, `anon`, `authenticated` **and `service_role`**. The owner keeps `build_session_snapshot` only so the legacy hash can be re-derived read-only. |
+| Trigger `sessions_guard_retired_finalization` | Refuses any transition of `sessions.record_status` **into** `finalized`/`void`, and any INSERT that is not `draft`. It is a *transition* guard, so the one legacy row is untouched. |
+| Triggers `*_retired_no_insert` on the three signed ledgers | INSERT refused on `clinical_record_snapshots`, `clinical_record_amendments` and `clinical_audit_events`. With the 0119/0120 append-only guards already blocking UPDATE/DELETE for every role, those tables are now **fully immutable legacy evidence**. |
+| Clinical-table privilege hardening | Every remaining `anon` write privilege on the six clinical tables is removed, and `TRUNCATE`/`REFERENCES`/`TRIGGER` are removed from `anon` **and `authenticated`** on all six — `TRUNCATE` is statement-level, consults no policy and fires no row trigger, so a grant was the only thing standing between a browser role and an emptied clinical table. |
+| `session_block_areas` read-only to browser roles | Studio-scoped SELECT only, `FOR ALL` policy narrowed to SELECT, and the 0128 studio-derive trigger widened to cover `studio_id` (an UPDATE touching only `studio_id` previously did not re-derive it, leaving a row readable by the wrong studio). Zero direct application writes exist, so this is invisible to the deployed app. |
+
+**0159 drops nothing.** The 0119/0120 tables, columns, functions and triggers stay in place, and
+the guards that *protect* the legacy artifact (`guard_finalized_clinical_write` + its five
+triggers, `guard_snapshot_append_only`, `guard_practitioner_finalized_refs`) are deliberately
+kept switched on. `sessions.record_status` is **kept** because two shipped features read it on
+live paths: 0157's whole-session copy (source resolver excludes a `void` source; the commit
+requires a `draft` target) and 0123's `soft_delete_session_area`. After 0159 every real session
+is `draft` and stays `draft`.
+
+**The one legacy artifact.** Production holds exactly one finalized session — in a **non-Willow
+controlled-test studio**, finalized 2026-07-11 — with one `clinical_record_snapshots` row whose
+`content_hash` still re-derives to a MATCH (re-verified read-only 2026-07-29). `clinical_record_amendments`
+and `clinical_audit_events` hold **0 rows**; Willow has **0** non-draft sessions. That artifact is
+retained, readable and unchanged: deleting it would destroy audit history and regenerating its
+hash would fabricate one.
+
+**Not done by 0159, and deliberately so.** Direct DML on `public.sessions`, `session_blocks`,
+`electrolysis_entries`, `laser_entries` and `treatment_images` is **not** revoked — the deployed
+application still writes all five directly, so revoking before those callers move onto narrow
+reviewed commands would break live charting the moment the migration applied. That is staged
+into the follow-up PR. There is **no** snapshot v2 and no structured-area signed-correction
+framework; those are retired, not deferred. Reintroducing any of it would require a **new
+product decision**, not a flag flip.
+
+Behaviour is pinned by `tests/db/clinical-finalization-retired.db.test.ts` (DB lane) and the
+documentation posture by `tests/docs/clinical-finalization-retired.test.ts` (unit lane).
 
 ## Migration timeline summary
 
@@ -268,7 +348,7 @@ Use this list every time before opening a migration PR.
 - **What it verifies (v1):** cross-studio isolation (clients, sessions, session_blocks, exposure incidents, audit events); record-keeping audit immutability (member INSERT throws RLS violation; UPDATE/DELETE affect zero rows) and trigger behavior (created/updated events, `changed_fields`, actor resolution via `auth.uid()`, no event on a no-op update); the migration 0087 clinical delete posture (nine protected tables: member DELETE affects zero rows; four intentionally deletable tables: member DELETE works, stranger DELETE does not); the double-booking exclusion constraint (overlap raises `23P01`, back-to-back allowed, cancelled rows do not block, the buffer trigger extends the blocked range); and the claim RPCs (`claim_email_send` wins exactly once; `claim_session_payment_charge_attempt` refuses non-ready rows and foreign practitioners, claims a ready row exactly once, second call sees `already_pending`).
 - **How to run it locally:** `supabase db start && supabase db reset --local && npm run test:db` (needs Docker; the Supabase CLI is on brew). The unit lane (`npm test` / `npm run ci`) excludes `tests/db/` and never needs a database.
 - **Safety:** the harness (`tests/db/helpers/harness.ts`) refuses any connection string whose host is not localhost and any URL matching hosted-database patterns (supabase.co/.com, pooler, amazonaws, ...). It reads no env var except `HONE_LOCAL_DB_URL` and never touches production. CI runs it as the separate `db-integration` job with no secrets and no `--linked` anywhere. Guardrails are pinned in the unit lane (`tests/scripts/db-harness-guardrails.test.ts`).
-- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 45 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
+- **Still open after v1:** portal/anon token-route policies and storage policies. *(Corrected 2026-07-27: **browser E2E is no longer open** — `playwright.config.ts` plus 44 specs under `e2e/` run as the `browser-e2e` CI job. The DB lane itself has grown to 94 `.db.test.ts` suites.)* The generated-types drift check shipped in PR #221 (next section).
 
 ## Generated types drift check (PR #221)
 
@@ -295,7 +375,7 @@ applied in production** (prod max = **0157**). Full per-migration purposes and a
 | Range | Theme | Posture today |
 |---|---|---|
 | 0114–0118 | Clinical delete/soft-delete hardening, calendar-feed credential hash-only, `session_audit` cross-tenant INSERT hardening, intake terminal-state immutability | Live |
-| 0119–0120 | Clinical Record Phase 1 (finalization boundary) + Phase 2 (corrections & amendments backend) | **Deployed, DORMANT** — both studio flags OFF on every studio; Phase 2 customer workflow **PARKED** |
+| 0119–0120 | Signed clinical records — Phase 1 (finalization boundary) + Phase 2 (signed corrections & amendments backend) | **RETIRED by product decision (2026-07-29), enforced by 0159** — not a Hone capability. Flags pinned `false`, RPC `EXECUTE` revoked from every runtime role, no session may enter `finalized`/`void`, the three signed ledgers refuse INSERT. Nothing dropped: 0119/0120 stay replayable and the one legacy artifact stays readable and immutable. Read them as **history** |
 | 0121–0122 | Google Calendar Phase A — connection & OAuth foundation | Deployed; connection flag ON for the controlled test studio only |
 | 0123 | Atomic aggregate soft-delete of a wrongly-recorded treatment area | Live |
 | 0124–0125 | Google Calendar B1 outbound schema/queue + B2.3-a intent-gated enqueue | Deployed; **1 outbox row + 1 event link** from a single controlled validation |
@@ -310,6 +390,16 @@ applied in production** (prod max = **0157**). Full per-migration purposes and a
 | 0152 | Actual overlap HARD / configured buffer SOFT | Live |
 | 0153–0156 | Per-service calendar colour, notification dedupe key, probe-inventory linkage, conditional numbing notes | Live |
 | **0157** | **Whole-session copy — provenance ledger + 4 SECURITY DEFINER functions** | **Applied + deployed + enabled; 0 ledger rows — never production-exercised** |
+
+**0158 is deliberately skipped** (the number is claimed so two artifacts can never share it —
+DRAFT PR #481 carries a different, superseded 0158 on a branch retained for audit evidence), and
+**0159 was applied and verified in production on 2026-07-30**, making the signed-record retirement
+**database-enforced**. `0160` is **not applied**.
+
+| # | Theme | Posture |
+|---|---|---|
+| ~~0158~~ | *(skipped — see above)* | Never written to this branch |
+| **0159** | **Retire signed / finalized clinical records + safe clinical-privilege hardening** | **APPLIED to production 2026-07-30** (13:25:39Z–13:25:43Z), verified. Additive and non-destructive: zero data operations, nothing dropped. Flags pinned `false`, retired RPC `EXECUTE` revoked, `finalized`/`void` transitions refused, the three signed ledgers refuse INSERT, `anon` clinical write privileges and `anon`/`authenticated` `TRUNCATE`/`REFERENCES`/`TRIGGER` removed, `session_block_areas` read-only to browser roles. Direct DML on `sessions` / `session_blocks` / `electrolysis_entries` / `laser_entries` / `treatment_images` is **not** revoked — the deployed app still writes those directly; that is the follow-up PR |
 
 ### One-line purposes, 0093–0112
 

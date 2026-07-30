@@ -14,18 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-07-27)
+## Current state (verified 2026-07-30)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0157** (`0157_whole_session_copy_setup.sql`) |
-| **Repo migration max** | **0157** — hosted == repo |
-| **Total migrations in repo** | **157** (`0001` … `0157`) |
-| **Total applied in production** | **157**, each applied **exactly once** (0 duplicate versions) |
-| **Migrations at or above `0158`** | **none** |
-| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version through 0157 |
+| **Hosted (production) migration max** | **0159** (`0159_retire_signed_clinical_records.sql`) |
+| **Repo migration max** | **0159** — hosted == repo |
+| **Total migrations in repo** | **158** (`0001` … `0157`, `0159` — **no `0158`**) |
+| **Total applied in production** | **158**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
+| **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
+| **`0160`** | **NOT applied.** Lineage-immutability migration on DRAFT PR #483 — separate, and not yet authorized. |
+| **Immediately preceding `0159`** | `0157` |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every applied version; `0159` Remote populated 2026-07-30 |
 
-**Every migration `0001`–`0157` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -48,7 +50,55 @@ merge — with two deliberate exceptions noted below.
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
 
-### 0157 — current purpose and status
+### 0159 — current purpose and status
+
+**`0159_retire_signed_clinical_records.sql` — retire signed / cryptographically finalized
+clinical records, and harden the clinical write surface where nothing exercises it.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0159_retire_signed_clinical_records.sql` (595 lines) |
+| **Applied to production** | **2026-07-30T13:25:39Z → 13:25:43Z** (~4 s) |
+| **SHA-256** | `ea39fc360cc75609a92a3686d677486720e9d234c4b70b81a07913c31fb889f8` |
+| **Applied from** | PR #482 head `04c8832f1fe176b9ff136f512e2c1e71b6bc8faf`, clean worktree; dry run listed **only** 0159 |
+| **`0158`** | **Intentionally skipped** — see the table above |
+| **`0160`** | **Absent / not applied** |
+| **Business-data operations** | **ZERO.** No row inserted, updated or deleted; no flag value changed; no snapshot created, regenerated or rehashed; no amendment; no clinical audit event; no session status changed. All counts identical before and after; nothing created in the apply window. |
+| **Purpose** | Make the retired capability unreachable at the database layer rather than only in the UI — the flags were browser-reachable through the `studios: owners update` policy plus `EXECUTE` on the retired RPCs. |
+
+**What it enforces.** Both clinical flags pinned `false` by validated CHECK constraints
+(`studios_clinical_finalization_retired`, `studios_clinical_corrections_retired`); `EXECUTE`
+revoked from `PUBLIC`/`anon`/`authenticated`/`service_role` on all **10** retired functions (the 5
+RPCs plus the 5 `_apply_*_correction` appliers) while the owner retains it for the documented
+read-only hash re-derivation; a *transition* guard refusing any move into `finalized`/`void`;
+`INSERT` refused on all three signed ledgers; the 0120 `hone.correction_session_id` permit
+**removed**; and privilege hardening that no code path exercises — every remaining `anon` write
+removed from the six clinical tables, `TRUNCATE`/`REFERENCES`/`TRIGGER` removed from `anon` **and**
+`authenticated` on all six plus the three ledgers, `session_block_areas` reduced to a SELECT-only
+policy, and the 0128 studio-derive trigger widened to `session_block_id, studio_id`.
+**It drops nothing** — the 0119/0120 objects and the guards protecting the legacy artifact are kept.
+
+> **Apply anomaly — recorded truthfully.** The migration's `set local lock_timeout = '5s'` emitted
+> **`WARNING (25P01): SET LOCAL can only be used in transaction blocks`**, because the CLI did not
+> execute the file inside an explicit transaction. **The intended five-second lock timeout did not
+> arm, and the apply was therefore NOT atomic.** The migration nonetheless completed successfully
+> with no errors (7 benign `drop … if exists` NOTICEs), and **every section was independently
+> verified afterward** rather than assumed from all-or-nothing rollback: both CHECK constraints
+> present and validated; 10/10 functions with zero runtime `EXECUTE`; all 4 retirement triggers
+> present and enabled; the GUC permit and every `current_setting` reference gone from
+> `guard_finalized_clinical_write` (definition md5 `af50bdcf…` → `ddc5fa69…`, its 5 triggers intact);
+> the legacy snapshot byte-identical (md5 `e3c47f5e133e724a78d3aefc866c35c5`, 1389 bytes, hash
+> `34ecc21a…`, still re-deriving byte-identically); `anon` writes 6→0 and `anon`/`authenticated`
+> TRUNCATE·REFERENCES·TRIGGER 20→0 while `authenticated` kept every row-DML privilege the deployed
+> application uses; `session_block_areas` reduced to one `_member_select` policy with the derive
+> trigger widened.
+>
+> **Do not "fix" the lock-timeout line in `0159` — it is already applied.** A migration file must
+> never be rewritten after it has been applied; the checksum above is the historical record.
+> **The same `set local lock_timeout` line in the unapplied `0160` must be corrected before that
+> migration is authorized**, since it will not arm under this CLI execution mode either.
+
+### 0157 — purpose and status
 
 **`0157_whole_session_copy_setup.sql` — whole-session "Copy areas and settings from last
 session": atomic, idempotent, source-authoritative batch commit + provenance ledger.**
@@ -225,10 +275,17 @@ Superseded claims you may still encounter in dated material:
 
 - "0096 not yet applied" / "0095 NOT yet applied" / "0093 / 0094 must not be applied until
   approved" — **all applied.**
-- "production max is 0112 / 0113 / 0124 / 0132 / 0133" — **the production max is 0157.**
+- "production max is 0112 / 0113 / 0124 / 0132 / 0133 / 0157" — **the production max is 0159.**
 - "0133 repo-added, hosted apply pending" — **0133 is applied.**
 - "0157 is pending / unapplied / awaiting authorization" — **0157 was applied
   2026-07-27T02:01:29Z**, before PR #478 merged.
+- "0159 is in repo but not yet applied" / "hosted max is still 0157" / "0159 needs
+  migration-only authorization" / "apply 0159 first" — **0159 was applied
+  2026-07-30T13:25:39Z–13:25:43Z** and verified. The signed-record retirement is
+  **database-enforced in production now**. What remains pending is only PR #482's *code and
+  documentation* merge/deploy, which changes no database state.
+- "0160 will be applied after 0159" — **`0160` is NOT applied and NOT authorized**, and its
+  `set local lock_timeout` line must be corrected first (see §0159's apply anomaly).
 - "`calendar_sync_outbox` and `calendar_event_links` are 0 rows" — each holds **one row**
   from the single controlled Google Calendar validation on 2026-07-18. See
   [capability-register.md](./capability-register.md) §9.

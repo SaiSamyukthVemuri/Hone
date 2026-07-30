@@ -11,7 +11,7 @@ describe("0155 — probe inventory chart linkage (additive, same-studio FK, no b
     expect(FILE).toMatch(/^0155_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0154_"))).toBe(true);
-    expect(files.filter((f) => /^01(5[8-9]|[6-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[0-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("A. adds a NULLABLE probe_key to record_keeping_sterile_items with a length CHECK (no NOT NULL, no default, no backfill)", () => {
