@@ -129,7 +129,7 @@ export async function globalSearchAction(
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:client_id(name), service:services(name)",
+            "id, starts_at, status, client:clients(name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .in("client_id", clientIds)
@@ -141,7 +141,7 @@ export async function globalSearchAction(
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:client_id(name), service:services(name)",
+            "id, starts_at, status, client:clients(name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .eq("status", status)
@@ -155,7 +155,7 @@ export async function globalSearchAction(
       ? await supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:client_id(name), service:services(name)",
+            "id, starts_at, status, client:clients(name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .in("service_id", serviceRows.map((s) => s.id as string))

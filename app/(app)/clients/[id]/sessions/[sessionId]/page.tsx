@@ -134,13 +134,36 @@ export default async function SessionDetailPage({
   const paymentApptId = sessionPaymentEligibility.appointment?.id ?? null;
   if (paymentApptId) {
     const supabaseForDefault = await createClient();
-    const { data: apptRow } = await supabaseForDefault
+    // BARE-TABLE embed, not a column hint. Migration 0151 replaced the
+    // single-column appointments.service_id FK with a composite
+    // (service_id, studio_id) FK, and PostgREST resolves an
+    // `alias:<fk_column>(...)` hint only against a SINGLE-column FK. The old
+    // column-hint form therefore returned PGRST200 ("Could not
+    // find a relationship between 'appointments' and 'service_id'") on every
+    // request, the error was discarded, and the booked-service default amount
+    // was silently null on this page while quick checkout — which already used
+    // the bare-table form — kept working. Same class of breakage migration 0094
+    // caused and commit 8f0517e swept; 0151 was not swept.
+    const { data: apptRow, error: apptErr } = await supabaseForDefault
       .from("appointments")
-      .select("duration_minutes, services:service_id(name, price_cents)")
+      .select("duration_minutes, service:services(name, price_cents)")
       .eq("studio_id", studio.id)
       .eq("id", paymentApptId)
       .maybeSingle();
-    const svcEmbed = (apptRow as { services?: unknown } | null)?.services;
+    if (apptErr) {
+      // Never throw: a failed default-amount read must not block charting. But
+      // it must be OBSERVABLE — swallowing it is what let this regress for a
+      // week. No client data in the log line.
+      console.error(
+        JSON.stringify({
+          event: "session_payment_default_amount_read_failed",
+          appointment_id: paymentApptId,
+          code: apptErr.code ?? null,
+          message: apptErr.message ?? null,
+        }),
+      );
+    }
+    const svcEmbed = (apptRow as { service?: unknown } | null)?.service;
     const svcObj = (Array.isArray(svcEmbed) ? svcEmbed[0] : svcEmbed) as {
       name?: string | null;
       price_cents?: number | null;

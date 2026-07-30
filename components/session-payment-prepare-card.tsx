@@ -1253,6 +1253,21 @@ function PrepareForm({
             <span>You can adjust before preparing.</span>
           </div>
         )}
+        {/* Chloe checkout-default fix: the ONLY previously-unexplained state
+            was "no default and no historical session price" — a bare $ box with
+            no reason why. Say it plainly instead of letting a blank field imply
+            auto-population succeeded. Reached whenever the booking has no
+            service linked, or the booked service carries no price and the
+            client has no current custom price. Never implies a payment was
+            taken or that live mode is on. */}
+        {defaultAmount == null && eligibility.session?.pricePaidCents == null && (
+          <span
+            className="text-[11px] text-neutral-500"
+            data-testid="session-payment-no-default-amount"
+          >
+            No price is configured for this booked service. Enter the amount.
+          </span>
+        )}
       </label>
 
       <label className="flex flex-col gap-1">
