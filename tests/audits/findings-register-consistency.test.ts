@@ -28,6 +28,31 @@ const csvHeader = csvRows[0];
 const csvData = csvRows.slice(1);
 const col = (name: string) => csvHeader.indexOf(name);
 
+describe("findings register — CSV structural integrity", () => {
+  // The first frozen-head review found the CSV shipped with 21 headers and 20
+  // fields on every row: `production_reachable` was missing from the row builder,
+  // silently shifting every later column left by one. A register whose columns do
+  // not line up is worse than no register, so this is asserted first.
+  it("every data row has exactly as many fields as the header", () => {
+    const bad = csvData
+      .map((r, i) => ({ line: i + 2, got: r.length }))
+      .filter((x) => x.got !== csvHeader.length);
+    expect(
+      bad.slice(0, 5),
+      `header has ${csvHeader.length} columns; ${bad.length} row(s) disagree`,
+    ).toEqual([]);
+  });
+
+  it("the columns that must never be empty are populated on every row", () => {
+    for (const name of ["source_register", "source_id", "source_original_severity"]) {
+      const i = col(name);
+      expect(i, `header is missing ${name}`).toBeGreaterThan(-1);
+      const empty = csvData.filter((r) => !r[i]?.trim?.());
+      expect(empty.length, `${name} empty on ${empty.length} row(s)`).toBe(0);
+    }
+  });
+});
+
 describe("findings register — source preservation", () => {
   it("every source finding appears exactly once per register", () => {
     const seen = new Map<string, number>();
