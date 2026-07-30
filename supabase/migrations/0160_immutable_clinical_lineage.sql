@@ -45,7 +45,46 @@
 -- established.
 --
 -- Migration max 0159 -> 0160.
+--
 -- ---------------------------------------------------------------------------
+-- WHY THIS FILE OPENS ITS OWN TRANSACTION (learned the hard way from 0159).
+--
+-- Applying migration 0159 to production on 2026-07-30 emitted:
+--
+--   WARNING (25P01): SET LOCAL can only be used in transaction blocks
+--
+-- The production apply path (`supabase db push --linked`) does NOT wrap a
+-- migration file in an explicit transaction. Two consequences, both bad:
+--
+--   1. `SET LOCAL lock_timeout` silently did nothing. The five-second timeout
+--      NEVER ARMED, so the apply could have blocked indefinitely behind a live
+--      charting transaction instead of failing fast.
+--   2. The file was NOT ATOMIC. A failure partway through would have left some
+--      objects created and others not, with no rollback — 0159's completeness
+--      had to be re-verified section by section afterwards rather than being
+--      guaranteed.
+--
+-- A file containing `SET LOCAL` is therefore NOT transactional merely because it
+-- says so. This migration opens the transaction itself, so the timeout genuinely
+-- arms and the whole file commits or rolls back as one unit.
+--
+-- EXPECTED ROLLBACK BEHAVIOUR. If any statement fails — including a
+-- lock_timeout (SQLSTATE 55P03) while acquiring the ACCESS EXCLUSIVE lock that
+-- CREATE TRIGGER needs — the COMMIT is never reached and the entire transaction
+-- rolls back. The required post-failure state is: ZERO 0160 ledger rows, ZERO of
+-- the two guard functions, ZERO of the five triggers, no partial COMMENT, and
+-- every existing row unchanged. Re-running is then safe and idempotent.
+--
+-- `SET LOCAL` (not a session-global `SET`) is deliberate: it is scoped to this
+-- transaction and reverts at COMMIT/ROLLBACK, so it can never leak a modified
+-- lock_timeout into the pooled connection that runs the next migration.
+--
+-- Every statement below is legal inside a transaction block. This migration uses
+-- no CREATE INDEX CONCURRENTLY, no ALTER TYPE ... ADD VALUE, no database
+-- create/drop, no VACUUM, and no other transaction-forbidden operation.
+-- ---------------------------------------------------------------------------
+
+begin;
 
 set local lock_timeout = '5s';
 
@@ -160,6 +199,8 @@ drop trigger if exists laser_entries_immutable_lineage on public.laser_entries;
 create trigger laser_entries_immutable_lineage
   before update of session_id on public.laser_entries
   for each row execute function public.guard_immutable_clinical_lineage('session_id');
+
+commit;
 
 -- treatment_images: DELIBERATELY NOT COVERED HERE. Migration 0093's
 -- treatment_images_enforce_integrity trigger already freezes studio_id, client_id,

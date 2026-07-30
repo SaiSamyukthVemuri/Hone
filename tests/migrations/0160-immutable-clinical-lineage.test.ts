@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -61,8 +62,26 @@ describe("0160 — immutable clinical lineage (repo migration-max tripwire)", ()
       // …and still says neither is applied.
       expect(doc, `${f} says unapplied`).toMatch(/(?:NOT (?:yet )?applied|neither applied|unapplied)/i);
     }
-    // The apply order must be stated somewhere current.
-    expect(read("docs/09_DATABASE_AND_RLS.md")).toMatch(/depends on 0159/i);
+    // The apply order must be stated somewhere current. Since 0159 is now APPLIED
+    // in production, the statement is no longer "0160 depends on a pending 0159" —
+    // it is that repo max (0160) is deliberately one ahead of hosted max (0159),
+    // which is precisely what makes 0160 the next migration to apply.
+    // Markdown is hard-wrapped, so a sentence spans lines. Flatten whitespace and
+    // pin the SENTENCE — not the line breaks, and not a bare substring.
+    const dbRls = read("docs/09_DATABASE_AND_RLS.md");
+    const flat = dbRls.replace(/\s+/g, " ");
+    expect(
+      flat,
+      "docs/09 must state that repo max is one ahead of hosted because 0160 is unapplied",
+    ).toMatch(/repo max \(0160\) is deliberately one ahead of hosted max \(0159\)/i);
+    expect(
+      flat,
+      "docs/09 must state that 0159 being applied is what makes 0160 next",
+    ).toMatch(/0159 being applied is what makes 0160 the next migration to apply/i);
+    expect(
+      flat,
+      "docs/09 must not claim hosted == repo while 0160 sits unapplied in-tree",
+    ).not.toMatch(/hosted == repo/);
   });
 });
 
@@ -191,5 +210,122 @@ describe("0160 — ZERO data operations, nothing destructive", () => {
     expect(SQL).toMatch(/NEEDS NO APPLICATION CHANGE/i);
     expect(SQL).toMatch(/26/); // the verified call-site count
     expect(SQL).toMatch(/INSERT only/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TRANSACTION CONTRACT (added after the migration-0159 production apply).
+//
+// Applying 0159 emitted `WARNING (25P01): SET LOCAL can only be used in
+// transaction blocks` — `supabase db push` does NOT wrap a migration file in an
+// explicit transaction, so `SET LOCAL lock_timeout` never armed and the file was
+// not atomic. 0160 must therefore open its own transaction.
+//
+// These assertions parse EXECUTABLE statements. Grepping the raw file for
+// "begin"/"commit" would pass on a migration that merely mentions them in a
+// comment or in a PL/pgSQL function body, which is exactly the failure mode
+// worth guarding.
+// ---------------------------------------------------------------------------
+
+/**
+ * Executable SQL statements, with comments and dollar-quoted function bodies
+ * removed. PL/pgSQL bodies contain their own `begin`/`end`, so leaving them in
+ * would make a body's `begin` masquerade as transaction control.
+ */
+function executableStatements(sql: string): string[] {
+  const withoutBodies = sql.replace(/\$\$[\s\S]*?\$\$/g, "$$BODY$$");
+  const withoutBlockComments = withoutBodies.replace(/\/\*[\s\S]*?\*\//g, "");
+  const withoutLineComments = withoutBlockComments
+    .split("\n")
+    .map((l) => l.replace(/--.*$/, ""))
+    .join("\n");
+  return withoutLineComments
+    .split(";")
+    .map((s) => s.trim().replace(/\s+/g, " "))
+    .filter((s) => s.length > 0);
+}
+
+describe("0160 — transaction contract (learned from the 0159 apply)", () => {
+  const statements = executableStatements(SQL);
+
+  it("opens with BEGIN as the very first executable statement", () => {
+    expect(
+      statements[0]?.toLowerCase(),
+      "`supabase db push` does not wrap migrations in a transaction, so 0160 must " +
+        "open one itself or its lock_timeout will not arm and the apply will not be atomic",
+    ).toBe("begin");
+  });
+
+  it("sets a LOCAL lock_timeout, and does so inside the transaction", () => {
+    const beginAt = statements.findIndex((s) => s.toLowerCase() === "begin");
+    const setAt = statements.findIndex((s) => /^set\s+local\s+lock_timeout/i.test(s));
+    expect(setAt, "0160 must set a lock_timeout").toBeGreaterThan(-1);
+    expect(
+      setAt,
+      "SET LOCAL must come AFTER BEGIN — outside a transaction block it raises 25P01 " +
+        "and silently does nothing (this is exactly what happened to 0159)",
+    ).toBeGreaterThan(beginAt);
+    expect(statements[setAt]).toMatch(/^set local lock_timeout = '5s'$/i);
+  });
+
+  it("never uses a session-global SET lock_timeout", () => {
+    const globalSet = statements.filter((s) => /^set\s+lock_timeout/i.test(s));
+    expect(
+      globalSet,
+      "a session-global SET would leak a modified lock_timeout into the pooled " +
+        "connection that runs the next migration; SET LOCAL reverts at COMMIT/ROLLBACK",
+    ).toEqual([]);
+  });
+
+  it("closes with COMMIT as the final executable statement", () => {
+    expect(statements[statements.length - 1]?.toLowerCase()).toBe("commit");
+  });
+
+  it("opens and closes exactly one transaction, and never rolls back mid-file", () => {
+    const begins = statements.filter((s) => s.toLowerCase() === "begin");
+    const commits = statements.filter((s) => s.toLowerCase() === "commit");
+    const rollbacks = statements.filter((s) => /^rollback/i.test(s));
+    expect(begins).toHaveLength(1);
+    expect(commits).toHaveLength(1);
+    expect(rollbacks).toEqual([]);
+  });
+
+  it("contains no statement that is illegal inside a transaction block", () => {
+    const FORBIDDEN: Array<[RegExp, string]> = [
+      [/\bconcurrently\b/i, "CREATE/DROP INDEX CONCURRENTLY cannot run in a transaction"],
+      [/\balter\s+type\b[\s\S]*\badd\s+value\b/i, "ALTER TYPE ... ADD VALUE is restricted in a transaction"],
+      [/\bcreate\s+database\b/i, "CREATE DATABASE cannot run in a transaction"],
+      [/\bdrop\s+database\b/i, "DROP DATABASE cannot run in a transaction"],
+      [/\bvacuum\b/i, "VACUUM cannot run in a transaction"],
+      [/\bcreate\s+tablespace\b/i, "CREATE TABLESPACE cannot run in a transaction"],
+      [/\bdrop\s+tablespace\b/i, "DROP TABLESPACE cannot run in a transaction"],
+      [/\bcluster\b/i, "CLUSTER cannot run in a transaction"],
+      [/\bdiscard\b/i, "DISCARD cannot run in a transaction"],
+      [/\bcreate\s+subscription\b/i, "CREATE SUBSCRIPTION cannot run in a transaction"],
+    ];
+    for (const [re, why] of FORBIDDEN) {
+      const hit = statements.find((s) => re.test(s));
+      expect(hit, `0160 opens an explicit transaction, so: ${why}`).toBeUndefined();
+    }
+  });
+
+  it("does not modify the already-applied migration 0159", () => {
+    // 0159 is APPLIED in production. Its recorded checksum must keep describing
+    // the file on disk; a migration file is never edited after it is applied.
+    const applied = readFileSync(
+      join(MIG_DIR, "0159_retire_signed_clinical_records.sql"),
+      "utf8",
+    );
+    const sha = createHash("sha256").update(applied).digest("hex");
+    expect(
+      sha,
+      "migration 0159 was applied to production 2026-07-30 with this exact checksum. " +
+        "If you need to change its behaviour, write a NEW migration — never edit an applied one.",
+    ).toBe("ea39fc360cc75609a92a3686d677486720e9d234c4b70b81a07913c31fb889f8");
+    expect(
+      applied,
+      "0159 keeps its original `set local lock_timeout` line: it is a historical artifact, " +
+        "not something to retro-fix. 0160 is where the transaction lesson is applied.",
+    ).toMatch(/set local lock_timeout = '5s';/);
   });
 });

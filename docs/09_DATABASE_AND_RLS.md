@@ -1,9 +1,11 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-30 there are 158 migrations in
-`supabase/migrations/` (latest `0159_retire_signed_clinical_records.sql`), and the production
-migration max = 0159 — hosted == repo, all applied, each exactly once. `0158` is deliberately
-skipped and will never be applied; `0160` is NOT applied.**
+Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0159
+(`0159_retire_signed_clinical_records.sql`) — 158 applied, each exactly once. `0158` is
+deliberately skipped and will never be applied. The repository also carries
+`0160_immutable_clinical_lineage.sql` on DRAFT PR #483, which is **NOT applied**, so repo max
+(0160) is deliberately one ahead of hosted max (0159). 0159 being applied is what makes 0160
+the next migration to apply.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
