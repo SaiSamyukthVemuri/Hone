@@ -1,10 +1,10 @@
 {
   "$schema_note": "Capability status manifest per the P1 closure program vocabulary. Axes: designed, code_complete, deployed (on prod head), enabled (flags/config on), exercised (real controlled use), approved (customer/operator validated), generally_available (all tenants, no gate). Evidence basis: exact head 0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3, hosted migration parity 0133, read-only hosted checks 2026-07-18. Never treat designed/code_complete/deployed as live.",
   "$retired_axis_note": "TERMINAL STATE, added 2026-07-29. The 7 axes above form a progress ladder with no rejection state, so a permanently-cancelled capability would otherwise sit mid-ladder and read as pending. An entry carrying \"retired\": true is a CLOSED PRODUCT DECISION: it is NOT parked, dormant, held, deferred or awaiting approval, and the remaining axes are historical facts about what was once built, never a to-do list. \"retired\": true overrides every other axis for planning purposes; no work may be opened against it and it maps to no roadmap ID. Reversal requires a new explicit product decision, architecture review, legal/privacy review, migration plan and fresh acceptance -- not a flag flip. Each retired entry names its decision record in \"retired_decision_record\".",
-  "as_of": "2026-07-18",
-  "amended": "2026-07-29 -- clinical_finalization_amendments moved to the terminal retired state (see $retired_axis_note). No other entry changed.",
-  "production_head": "0a5741fdb4d92ff8f776ebe4736e03ccfa6626d3",
-  "hosted_migration_max": "0133",
+  "as_of": "2026-07-30",
+  "amended": "2026-07-30 -- as_of, production_head and hosted_migration_max corrected; hosted_migration_max had been stale at 0133 since 2026-07-18. Migrations 0159 (signed-record retirement) and 0160 (immutable clinical lineage) are both APPLIED and verified in production; 0158 is deliberately skipped and will never be applied. 0160 pins record identity only -- ordinary charting stays editable and no signed-record capability returned. Known limitations L18, L19, L20 and L21 remain OPEN. Earlier: 2026-07-29 -- clinical_finalization_amendments moved to the terminal retired state (see $retired_axis_note).",
+  "production_head": "d77d44346addd98f4829f757531011bc7ca0c0d1",
+  "hosted_migration_max": "0160",
   "capabilities": {
     "public_booking": {
       "designed": true, "code_complete": true, "deployed": true, "enabled": true,

@@ -905,26 +905,26 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger's own hosted-max and repo-max rows both read 0159", () => {
+  it("the ledger's own hosted-max and repo-max rows both read 0160", () => {
     // Pinned to the specific rows. An existence check is not enough: the ledger
     // names 0159 in several places, so a flipped hosted-max row would still find
     // a match somewhere else in the file.
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Hosted (production) migration max row must read 0159",
+      "the ledger's Hosted (production) migration max row must read 0160",
     ).toMatch(
-      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0159\*\*/,
+      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0160\*\*/,
     );
-    expect(MIGRATION_LEDGER, "the ledger's Repo migration max row must read 0159").toMatch(
-      /\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0159\*\*/,
+    expect(MIGRATION_LEDGER, "the ledger's Repo migration max row must read 0160").toMatch(
+      /\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0160\*\*/,
     );
     expect(
       MIGRATION_LEDGER,
-      "no ledger row may still assert a hosted/production migration max of 0157",
-    ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*0157\*\*/);
+      "no ledger row may still assert a hosted/production migration max of 0157 or 0159",
+    ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*015[79]\*\*/);
   });
 
-  it("production migration max is stated as 0159 where a max is asserted", () => {
+  it("production migration max is stated as 0160 where a max is asserted", () => {
     for (const [name, doc] of [
       ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
       ["docs/production/current-state.md", CURRENT_STATE],
@@ -932,26 +932,30 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
       ["README.md", README],
       ["docs/roadmap/CANONICAL_ROADMAP.md", ROADMAP],
     ] as const) {
-      expect(doc, `${name} must assert production migration max 0159`).toMatch(
-        /(?:migration max|max)[^.\n]{0,60}\b0159\b/i,
+      expect(doc, `${name} must assert production migration max 0160`).toMatch(
+        /(?:migration max|max)[^.\n]{0,80}\b0160\b/i,
       );
-      expect(doc, `${name} must not still assert a production migration max of 0157`).not.toMatch(
-        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}0157\b/i,
-      );
+      expect(
+        doc,
+        `${name} must not still assert a production migration max of 0157 or 0159`,
+      ).not.toMatch(/production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}015[79]\b/i);
     }
   });
 
-  it("0158 stays absent and permanently skipped; 0160 stays unapplied", () => {
+  it("0158 stays absent and permanently skipped; 0160 is APPLIED, and no 0161 exists", () => {
     expect(MIGRATION_LEDGER).toMatch(/0158[^.\n]{0,120}\bskipped\b/i);
     expect(MIGRATION_LEDGER).toMatch(/\bnever be applied\b/i);
-    expect(MIGRATION_LEDGER, "the ledger must state 0160 is NOT applied").toMatch(
-      /0160[^.\n]{0,80}\bNOT applied\b/,
-    );
-    for (const [name, doc] of APPLIED_DOCS) {
-      expect(doc, `${name} must not claim 0160 was applied`).not.toMatch(
-        /0160[^.\n]{0,60}\b(?:was|is|has been)\s+applied\b/i,
-      );
-    }
+    // 0160 is APPLIED as of 2026-07-30. This assertion is the reverse of what it
+    // was before the apply, and is pinned to the ledger's own status row.
+    expect(
+      MIGRATION_LEDGER,
+      "the ledger's 0160 row must state it is APPLIED, not pending",
+    ).toMatch(/\|\s*\*\*`0160`\*\*\s*\|\s*\*\*APPLIED 2026-07-30\*\*/);
+    expect(
+      MIGRATION_LEDGER,
+      "no current ledger row may still describe 0160 as unapplied or not authorized",
+    ).not.toMatch(/`0160`[^.\n]{0,60}\b(?:remains|is)\s+\*\*(?:unapplied|NOT applied)/i);
+    expect(MIGRATION_LEDGER, "there is no 0161").toMatch(/no `0161` exists|There is no `0161`/i);
   });
 
   it("the UI/source cleanup is described as SHIPPED, now that #482 has merged and deployed", () => {
@@ -1013,7 +1017,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).toMatch(/independently verified/i);
   });
 
-  it("forbids rewriting the applied 0159 file, and flags the same defect in unapplied 0160", () => {
+  it("forbids rewriting EITHER applied migration — 0159 and 0160 are both immutable now", () => {
     const L = flat(MIGRATION_LEDGER);
     expect(L).toMatch(
       /Do not "fix" the lock-timeout line in `0159` — it is already applied\./,
@@ -1025,8 +1029,11 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).toMatch(/same `set local lock_timeout` line in `0160` HAS BEEN CORRECTED/);
     expect(
       L,
-      "…and must still say 0160 is unapplied and unauthorized, which the correction does not change",
-    ).toMatch(/`0160` remains \*\*unapplied and unauthorized\*\*/);
+      "…and that 0160 was then APPLIED, so it too is now immutable. This assertion is the reverse " +
+        "of what it was before 2026-07-30; an applied migration is never edited.",
+    ).toMatch(
+      /`0160` was subsequently applied to production on 2026-07-30[^.]*and must not be edited either/i,
+    );
   });
 
   it("the applied 0159 file still carries the exact line the ledger's checksum covers", () => {

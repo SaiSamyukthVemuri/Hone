@@ -1,8 +1,9 @@
 # Hone — Known Limitations
 
 **Verified residual limitations as of 2026-07-27**, against application HEAD
-`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is now 0159**
-(applied 2026-07-30).
+`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is now 0160** — both `0159`
+(signed-record retirement) and `0160` (immutable clinical lineage) were applied and verified
+2026-07-30.
 
 Only limitations that were **directly verified** in this reconciliation are listed. Items
 that could not be checked from code, the CLI, or read-only production queries are recorded
@@ -224,7 +225,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Current mitigation** | None beyond the above. This is a **defence-in-depth** gap, not an exploitable hole: it presumes an attacker who already has DDL against the production database, at which point they could simply `DROP TRIGGER`. |
 | **Owner** | Sam |
 | **Next gate** | Fold `revoke trigger on public.sessions, public.session_blocks, public.electrolysis_entries, public.laser_entries from service_role` into the same separately-authorized, repo-wide privilege sweep that L19(a) already requires — the two share a root cause (Supabase's default grants) and should be verified together rather than piecemeal in a lineage migration. |
-| **Blocks** | Neither today. It does **not** block migration 0160, whose guards are effective against every role reachable from the application. |
+| **Blocks** | Neither today. It did **not** block migration 0160, which is now applied — its guards are effective against every role reachable from the application. **This limitation remains OPEN.** |
 
 ## L21 — hard-deleting a session in the SAME transaction that created a block-attached treatment image fails
 
@@ -237,7 +238,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Current mitigation** | None needed today. Recorded so a future admin or right-to-erasure routine that wraps seed-and-delete in one transaction is not surprised by it. |
 | **Owner** | Sam |
 | **Next gate** | Only if an in-transaction hard-delete path is ever built. The fix would be to null `session_block_id` before deleting the parent, or to delete the image rows first. |
-| **Blocks** | Nothing. Explicitly **not** a blocker for migration 0160. |
+| **Blocks** | Nothing. Explicitly **not** a blocker for migration 0160, which is now applied. **This limitation remains OPEN.** |
 
 ## L19 — `TRUNCATE` is still granted broadly outside the clinical tables, and two session links are not same-client validated
 

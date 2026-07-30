@@ -47,41 +47,117 @@ describe("0160 — immutable clinical lineage (repo migration-max tripwire)", ()
     expect(SQL).toMatch(/DEPENDS ON: migration 0159/i);
   });
 
-  it("the current docs state the repo max, so a new migration cannot silently desync them", () => {
-    // Review finding: 0160 originally shipped with zero doc changes, leaving three
-    // "maintained as current" documents asserting the repo max was 0159 — so an
-    // operator preparing the apply would have expected one file and met two.
+  it("the current docs state the APPLIED status and max, so they cannot silently desync", () => {
+    // 0160 is APPLIED in production as of 2026-07-30. Before the apply this test
+    // asserted the docs said "unapplied" and that repo max was one ahead of hosted;
+    // both are now the false claims, so the assertions are reversed.
     const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
     for (const f of [
       "docs/production/current-state.md",
       "docs/14_AI_HANDOFF.md",
       "docs/09_DATABASE_AND_RLS.md",
     ]) {
-      const doc = read(f);
-      expect(doc, `${f} names 0160`).toMatch(/0160/);
-      // …and still says neither is applied.
-      expect(doc, `${f} says unapplied`).toMatch(/(?:NOT (?:yet )?applied|neither applied|unapplied)/i);
+      const flat = read(f).replace(/\s+/g, " ");
+      expect(flat, `${f} names 0160`).toMatch(/0160/);
+      expect(
+        flat,
+        `${f} must not still describe 0160 as unapplied/pending — it was applied 2026-07-30`,
+      ).not.toMatch(
+        // Scoped to the MIGRATION's status. "…source merge is pending" is a different
+        // claim about the PR, not about whether the migration ran.
+        /0160(?![^.]{0,40}source merge)[^.]{0,70}\b(?:is |remains )?(?:NOT applied|not applied|unapplied|not authorized|migration is pending|apply is pending)/i,
+      );
+      expect(
+        flat,
+        `${f} must not still claim the repo max is one ahead of the hosted max`,
+      ).not.toMatch(/repo max \(0160\) is deliberately one ahead/i);
     }
-    // The apply order must be stated somewhere current. Since 0159 is now APPLIED
-    // in production, the statement is no longer "0160 depends on a pending 0159" —
-    // it is that repo max (0160) is deliberately one ahead of hosted max (0159),
-    // which is precisely what makes 0160 the next migration to apply.
-    // Markdown is hard-wrapped, so a sentence spans lines. Flatten whitespace and
-    // pin the SENTENCE — not the line breaks, and not a bare substring.
-    const dbRls = read("docs/09_DATABASE_AND_RLS.md");
-    const flat = dbRls.replace(/\s+/g, " ");
+    const dbRls = read("docs/09_DATABASE_AND_RLS.md").replace(/\s+/g, " ");
+    expect(
+      dbRls,
+      "docs/09 must state the production migration max is 0160",
+    ).toMatch(/production migration max = 0160/i);
+    expect(
+      dbRls,
+      "docs/09 must state repo and hosted max are both 0160",
+    ).toMatch(/Repository max and hosted max are both 0160/i);
+    expect(
+      dbRls,
+      "docs/09 must name 0161 as the next number, since 0158 is permanently skipped",
+    ).toMatch(/Current max `0160`, so the next is `0161`/i);
+  });
+
+  it("the applied 0160 checksum is pinned in the ledger and matches the file on disk", () => {
+    const APPLIED_SHA = "e56a1ee7efc95e561cd17a0c33750ee4aaaf2a956f425576af39ce4a0e6094d4";
+    expect(
+      createHash("sha256").update(SQL).digest("hex"),
+      "0160 is APPLIED in production with this checksum. Never edit an applied migration — " +
+        "write a new one (0161).",
+    ).toBe(APPLIED_SHA);
+    const ledger = readFileSync(join(process.cwd(), "docs/production/migration-ledger.md"), "utf8");
+    expect(
+      ledger,
+      "the ledger must carry 0160's COMPLETE sha256, not an abbreviation",
+    ).toContain(APPLIED_SHA);
+    expect(ledger, "the ledger must record the exact apply window").toMatch(
+      /2026-07-30T17:52:48Z\s*→\s*17:52:51Z/,
+    );
+  });
+
+  it("current docs state the lineage defect is enforced, and do NOT overclaim", () => {
+    const cs = readFileSync(join(process.cwd(), "docs/production/current-state.md"), "utf8");
+    const flat = cs.replace(/\s+/g, " ");
     expect(
       flat,
-      "docs/09 must state that repo max is one ahead of hosted because 0160 is unapplied",
-    ).toMatch(/repo max \(0160\) is deliberately one ahead of hosted max \(0159\)/i);
+      "current-state must say the re-parenting defect is database-enforced, deployed and verified",
+    ).toMatch(/database-enforced,\s*deployed and production-verified/i);
+    expect(flat, "…and that it ran in an explicit transaction with no 25P01").toMatch(
+      /explicit `BEGIN` \/ `SET LOCAL lock_timeout` \/ `COMMIT` transaction/,
+    );
+    expect(flat, "…naming every protected identity column").toMatch(/electrolysis_entries\.block_id/);
+    expect(flat, "…and that block_id is clearable only to NULL").toMatch(
+      /clearable only to `NULL`/i,
+    );
+    expect(flat, "ordinary charting must still be described as editable").toMatch(
+      /Ordinary charting remains fully editable/i,
+    );
     expect(
       flat,
-      "docs/09 must state that 0159 being applied is what makes 0160 next",
-    ).toMatch(/0159 being applied is what makes 0160 the next migration to apply/i);
+      "current-state must NOT claim 0160 closed all clinical write risk",
+    ).toMatch(/0160 does not close all clinical write risks/i);
+    for (const l of ["L18", "L19", "L20", "L21"]) {
+      expect(flat, `${l} must still be named as open`).toContain(l);
+    }
+  });
+
+  it("L20 and L21 remain OPEN, and the broader DML boundary is not declared closed", () => {
+    const kl = readFileSync(join(process.cwd(), "docs/production/known-limitations.md"), "utf8");
+    for (const heading of [
+      "## L18 — `authenticated` still holds direct row DML on five clinical tables",
+      "## L19 — `TRUNCATE` is still granted broadly outside the clinical tables",
+      "## L20 — `service_role` retains `TRIGGER` on the clinical tables",
+      "## L21 — hard-deleting a session in the SAME transaction",
+    ]) {
+      expect(kl, `${heading} must still exist — 0160 closed none of these`).toContain(heading);
+    }
+    const flat = kl.replace(/\s+/g, " ");
+    expect(flat, "L20 must be marked as remaining open").toMatch(
+      /its guards are effective against every role reachable from the application\. \*\*This limitation remains OPEN\.\*\*/i,
+    );
+    expect(flat, "L21 must be marked as remaining open").toMatch(
+      /not\*\* a blocker for migration 0160, which is now applied\. \*\*This limitation remains OPEN\.\*\*/i,
+    );
+  });
+
+  it("the capability manifest reports the corrected hosted max", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(process.cwd(), "docs/roadmap/CAPABILITY_MANIFEST.json"), "utf8"),
+    );
     expect(
-      flat,
-      "docs/09 must not claim hosted == repo while 0160 sits unapplied in-tree",
-    ).not.toMatch(/hosted == repo/);
+      manifest.hosted_migration_max,
+      "the manifest's hosted_migration_max is a current-state field and must read 0160",
+    ).toBe("0160");
+    expect(manifest.as_of).toBe("2026-07-30");
   });
 });
 

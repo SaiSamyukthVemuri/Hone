@@ -14,20 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-07-30)
+## Current state (verified 2026-07-30, post-0160 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0159** (`0159_retire_signed_clinical_records.sql`) |
-| **Repo migration max** | **0159** — hosted == repo |
-| **Total migrations in repo** | **158** (`0001` … `0157`, `0159` — **no `0158`**) |
-| **Total applied in production** | **158**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
+| **Hosted (production) migration max** | **0160** (`0160_immutable_clinical_lineage.sql`) |
+| **Repo migration max** | **0160** — hosted == repo |
+| **Total migrations in repo** | **159** (`0001` … `0157`, `0159`, `0160` — **no `0158`**) |
+| **Total applied in production** | **159**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
-| **`0160`** | **NOT applied.** Lineage-immutability migration on DRAFT PR #483 — separate, and not yet authorized. |
-| **Immediately preceding `0159`** | `0157` |
-| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every applied version; `0159` Remote populated 2026-07-30 |
+| **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its *source* merge (PR #483) is the only thing still pending. |
+| **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **No `0161` exists.** |
 
-**Every migration `0001`–`0157` plus `0159` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159` and `0160` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -49,6 +49,38 @@ merge — with two deliberate exceptions noted below.
 - **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0160 — current purpose and status
+
+**`0160_immutable_clinical_lineage.sql` — a treatment record belongs to ONE client and ONE encounter.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0160_immutable_clinical_lineage.sql` |
+| **Applied to production** | **2026-07-30T17:52:48Z → 17:52:51Z** (~3 s) |
+| **SHA-256** | `e56a1ee7efc95e561cd17a0c33750ee4aaaf2a956f425576af39ce4a0e6094d4` |
+| **Applied from** | PR #483 head `ba6c62a2ed0c2a294313a0d89d110c0ef8a9028f`, clean worktree; dry run listed **only** 0160 |
+| **Transaction** | **Explicit `begin;` / `set local lock_timeout = '5s'` / `commit;` inside the file** |
+| **Lock timeout** | **Armed correctly** — unlike 0159, whose `SET LOCAL` never took effect |
+| **`25P01`** | **None.** The 0159 `SET LOCAL can only be used in transaction blocks` warning did **not** recur |
+| **`55P03`** | **None.** No lock timeout fired; the pre-apply check found a completely quiet database |
+| **Errors** | **None** |
+| **Notices** | **5**, all benign `DROP TRIGGER IF EXISTS … does not exist, skipping` |
+| **Business-data operations** | **ZERO** — no row inserted, updated or deleted; no flag changed; counts and lineage checksums identical across the apply window |
+| **Provider operations** | **ZERO** — Stripe, Google, Twilio, Resend all untouched |
+| **Installed** | **2 functions** (`guard_immutable_clinical_lineage`, `guard_clearable_clinical_lineage`) and **5 triggers** (`sessions_immutable_lineage`, `session_blocks_immutable_lineage`, `electrolysis_entries_immutable_lineage`, `electrolysis_entries_clearable_lineage`, `laser_entries_immutable_lineage`) |
+| **Preserved** | Migration 0093's `treatment_images_enforce_integrity` remains enabled; 0160 added **no** trigger to `treatment_images` |
+| **Migration max** | **0159 → 0160**; `0158` remains deliberately absent |
+
+**Why the explicit transaction.** Applying 0159 proved that `supabase db push` does not wrap a
+migration file in a transaction: its `SET LOCAL lock_timeout` raised `WARNING (25P01)` and never armed,
+leaving that apply non-atomic. 0160 therefore opens its own transaction, which was validated before the
+apply on a CI-parity database under a real competing `SHARE ROW EXCLUSIVE` lock — it failed in ~5 s with
+`55P03` instead of hanging, and rolled back to **zero** ledger rows, functions, triggers and comments.
+
+> **Neither `0159` nor `0160` may be edited.** Both are applied; their recorded checksums must keep
+> describing the files on disk. Behaviour changes require a **new** migration — the next number is
+> `0161`, since `0158` is permanently skipped.
 
 ### 0159 — current purpose and status
 
@@ -99,7 +131,8 @@ policy, and the 0128 studio-derive trigger widened to `session_block_id, studio_
 > 2026-07-30): that migration now opens its own `begin;` … `commit;` so the timeout genuinely arms
 > and the apply is atomic. Proven under real lock contention on a CI-parity database — it failed in
 > ~5 s with SQLSTATE 55P03 instead of hanging, and left zero ledger rows, zero functions and zero
-> triggers behind. `0160` remains **unapplied and unauthorized**.
+> triggers behind. **`0160` was subsequently applied to production on 2026-07-30 — see its own
+> section above — and must not be edited either.**
 
 ### 0157 — purpose and status
 
@@ -285,10 +318,13 @@ Superseded claims you may still encounter in dated material:
 - "0159 is in repo but not yet applied" / "hosted max is still 0157" / "0159 needs
   migration-only authorization" / "apply 0159 first" — **0159 was applied
   2026-07-30T13:25:39Z–13:25:43Z** and verified. The signed-record retirement is
-  **database-enforced in production now**. What remains pending is only PR #482's *code and
-  documentation* merge/deploy, which changes no database state.
-- "0160 will be applied after 0159" — **`0160` is NOT applied and NOT authorized**, and its
-  `set local lock_timeout` line has since been corrected in PR #483 (see §0159's apply anomaly).
+  **database-enforced in production now**. PR #482's code and documentation merge/deploy is also
+  complete (merged `d77d4434`, deployed 2026-07-30).
+- "production max is 0159" / "hosted max 0159, repo max 0160" / "0160 is not applied / pending /
+  not authorized" / "apply 0160 first" / "0160 needs migration-only authorization" / "PR #483
+  contains an unapplied migration" / "the same-studio lineage defect remains open" — **all
+  superseded. `0160` was applied 2026-07-30T17:52:48Z–17:52:51Z and independently verified; the
+  production migration max is 0160**, and the lineage defect is database-enforced.
 - "`calendar_sync_outbox` and `calendar_event_links` are 0 rows" — each holds **one row**
   from the single controlled Google Calendar validation on 2026-07-18. See
   [capability-register.md](./capability-register.md) §9.
