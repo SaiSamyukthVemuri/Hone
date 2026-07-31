@@ -132,9 +132,15 @@ describe("item 4: energy level lives under Treatment readings (no duplicate)", (
 });
 
 describe("item 5: OmniBlend reading layout", () => {
-  it("is OmniBlend-specific and reorders galvanic before thermolysis", () => {
+  it("galvanic precedes thermolysis for EVERY mode, not only OmniBlend", () => {
+    // Machine order (Chloe): she reads the Apilus top-to-bottom, and the
+    // galvanic group is above thermolysis on every blend modality — PicoBlend,
+    // OmniBlend, MultiBlend, EvoluBlend, SynchroBlend. The old code branched the
+    // ORDER on OmniBlend alone; that conditional is gone.
     expect(FORM).toMatch(/const isOmniblend = draft\.apilusModality === "Omniblend"/);
-    expect(FORM).toMatch(/isOmniblend \? \(\s*<>\s*\{galvSection\}\s*\{thermoSection\}/);
+    expect(FORM).toMatch(/\{galvSection\}\s*\n\s*\{thermoSection\}/);
+    expect(FORM).not.toMatch(/isOmniblend \? \(\s*<>\s*\{galvSection\}/);
+    expect(FORM).not.toMatch(/\{thermoSection\}\s*\n\s*\{galvSection\}/);
   });
   it("hides thermolysis duration for OmniBlend; galvanic intensity is no longer a visible input at all", () => {
     // OmniBlend has no thermolysis duration — still gated behind !isOmniblend.

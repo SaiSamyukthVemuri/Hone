@@ -202,6 +202,63 @@ export function SimplifiedEntryForm({
 
       {/* Mode-aware readings (Phase 3), same as the one-page form. The
           block's mode drives which groups show. */}
+      {/* MACHINE ORDER (Chloe): the galvanic group (units of lye → duration →
+          mA) precedes thermolysis (duration → intensity → pulse count → pulse
+          delay), matching the Apilus screen and the one-page charting form. The
+          canonical list lives in lib/sessions/reading-field-order.ts. */}
+      {(block.mode === "galv" || block.mode === "blend") && (
+        <div className="flex flex-col gap-3">
+          {block.mode === "blend" && (
+            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Galvanic
+            </span>
+          )}
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Units of lye (UL)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min={0}
+                value={draft.unitsOfLye}
+                onChange={(e) => update("unitsOfLye", e.target.value)}
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Galvanic duration (s)</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min={0}
+                value={draft.galvanicDurationSeconds}
+                onChange={(e) =>
+                  update("galvanicDurationSeconds", e.target.value)
+                }
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
+            {/* Galvanic intensity % removed as an active input (Chloe / PicoBlend).
+                This form is create-only, so there is no historical value to
+                round-trip; new entries leave it NULL. No migration. */}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Galvanic mA</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min={0}
+                value={draft.galvanicMa}
+                onChange={(e) => update("galvanicMa", e.target.value)}
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
       {(block.mode === "thermo" || block.mode === "blend") && (
         <div className="flex flex-col gap-3">
           {block.mode === "blend" && (
@@ -210,6 +267,20 @@ export function SimplifiedEntryForm({
             </span>
           )}
           <div className="grid gap-4 md:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Thermolysis duration (s)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                min={0}
+                value={draft.thermolysisDurationSeconds}
+                onChange={(e) =>
+                  update("thermolysisDurationSeconds", e.target.value)
+                }
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">Thermolysis intensity %</span>
               <input
@@ -221,20 +292,6 @@ export function SimplifiedEntryForm({
                 value={draft.thermolysisIntensityPercent}
                 onChange={(e) =>
                   update("thermolysisIntensityPercent", e.target.value)
-                }
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Thermolysis duration (s)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.001"
-                min={0}
-                value={draft.thermolysisDurationSeconds}
-                onChange={(e) =>
-                  update("thermolysisDurationSeconds", e.target.value)
                 }
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
@@ -298,59 +355,6 @@ export function SimplifiedEntryForm({
                 </span>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {(block.mode === "galv" || block.mode === "blend") && (
-        <div className="flex flex-col gap-3">
-          {block.mode === "blend" && (
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-              Galvanic
-            </span>
-          )}
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Galvanic mA</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min={0}
-                value={draft.galvanicMa}
-                onChange={(e) => update("galvanicMa", e.target.value)}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Galvanic duration (s)</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                step="1"
-                min={0}
-                value={draft.galvanicDurationSeconds}
-                onChange={(e) =>
-                  update("galvanicDurationSeconds", e.target.value)
-                }
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
-            {/* Galvanic intensity % removed as an active input (Chloe / PicoBlend).
-                This form is create-only, so there is no historical value to
-                round-trip; new entries leave it NULL. No migration. */}
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Units of lye (UL)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.1"
-                min={0}
-                value={draft.unitsOfLye}
-                onChange={(e) => update("unitsOfLye", e.target.value)}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
           </div>
         </div>
       )}

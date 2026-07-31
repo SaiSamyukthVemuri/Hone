@@ -168,14 +168,17 @@ describe("copy card matches the Phase A charting contract", () => {
   it("(3C) the pulse control is labeled 'Thermolysis pulse count' and sits INSIDE the thermolysis section", () => {
     expect(CARD).toMatch(/>Thermolysis pulse count</);
     expect(CARD).not.toMatch(/>Pulse count</); // old standalone label gone
-    // Structurally: the pulse label appears within the thermolysis block
-    // (between showThermo and the galvanic section).
+    // Structurally: the pulse label appears within the thermolysis block. Machine
+    // order (Chloe) puts the GALVANIC group first, so containment is asserted
+    // against the thermolysis block itself, not by "before galvanic".
     const thermo = CARD.indexOf("sections.showThermo");
     const galv = CARD.indexOf("sections.showGalv");
     const pulse = CARD.indexOf("Thermolysis pulse count");
     expect(thermo).toBeGreaterThan(-1);
+    expect(galv).toBeGreaterThan(-1);
+    expect(galv).toBeLessThan(thermo); // galvanic group comes first
     expect(pulse).toBeGreaterThan(thermo);
-    expect(pulse).toBeLessThan(galv);
+    expect(CARD.slice(thermo, pulse)).not.toMatch(/Galvanic mA|Units of lye/);
   });
 
   it("(3C) ports the charting form's OmniBlend rule: no thermolysis duration for OmniBlend", () => {

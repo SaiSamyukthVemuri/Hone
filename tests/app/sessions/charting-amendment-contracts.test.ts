@@ -22,14 +22,19 @@ describe("SimplifiedEntryForm parity with BlockSetupForm (Chloe)", () => {
   });
 
   it("(2) the pulse control is structurally INSIDE the thermolysis section", () => {
-    // The thermolysis section is gated on thermo/blend; the pulse control appears
-    // between the thermolysis readings and the galvanic section.
+    // Machine order (Chloe): the GALVANIC group now renders first, so the pulse
+    // control's containment is asserted against the thermolysis block itself
+    // rather than by "before galvanic", which is no longer true.
     const thermoStart = SIMPLE.indexOf('block.mode === "thermo" || block.mode === "blend"');
     const galvStart = SIMPLE.indexOf('block.mode === "galv" || block.mode === "blend"');
     const pulse = SIMPLE.indexOf("Thermolysis pulse count");
     expect(thermoStart).toBeGreaterThan(-1);
-    expect(pulse).toBeGreaterThan(thermoStart);
-    expect(pulse).toBeLessThan(galvStart);
+    expect(galvStart).toBeGreaterThan(-1);
+    expect(galvStart).toBeLessThan(thermoStart); // galvanic group comes first
+    expect(pulse).toBeGreaterThan(thermoStart); // ...and pulse is inside thermolysis
+    // Nothing galvanic separates the thermolysis readings from the pulse control.
+    const thermoBlock = SIMPLE.slice(thermoStart, pulse);
+    expect(thermoBlock).not.toMatch(/Galvanic mA|Units of lye/);
   });
 
   it("(3) no standalone `mode !== \"galv\"` pulse section remains", () => {

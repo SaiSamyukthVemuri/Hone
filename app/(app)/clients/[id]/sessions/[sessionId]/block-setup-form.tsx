@@ -911,16 +911,19 @@ export function BlockSetupForm({
             Galvanic
           </span>
         )}
+        {/* MACHINE ORDER (Chloe): units of lye, then galvanic duration, then mA
+            — the order the Apilus shows them, so she can read straight down.
+            The canonical list lives in lib/sessions/reading-field-order.ts. */}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Galvanic mA</span>
+            <span className="text-sm font-medium">Units of lye (UL)</span>
             <input
               type="number"
               inputMode="decimal"
-              step="0.01"
+              step="0.1"
               min={0}
-              value={draft.galvanicMa}
-              onChange={(e) => update("galvanicMa", e.target.value)}
+              value={draft.unitsOfLye}
+              onChange={(e) => update("unitsOfLye", e.target.value)}
               className={READING_INPUT_CLS}
             />
           </label>
@@ -944,14 +947,14 @@ export function BlockSetupForm({
               editing a legacy galvanic entry never touches its recorded intensity;
               new entries always store NULL. No migration, no backfill. */}
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Units of lye (UL)</span>
+            <span className="text-sm font-medium">Galvanic mA</span>
             <input
               type="number"
               inputMode="decimal"
-              step="0.1"
+              step="0.01"
               min={0}
-              value={draft.unitsOfLye}
-              onChange={(e) => update("unitsOfLye", e.target.value)}
+              value={draft.galvanicMa}
+              onChange={(e) => update("galvanicMa", e.target.value)}
               className={READING_INPUT_CLS}
             />
           </label>
@@ -1206,21 +1209,12 @@ export function BlockSetupForm({
           />
         </label>
 
-        {/* PR #279 (Chloe): OmniBlend charts galvanic BEFORE thermolysis; every
-            other mode keeps thermolysis first. The section contents (incl.
-            OmniBlend hiding thermolysis duration + galvanic intensity) are built
-            above as thermoSection / galvSection. */}
-        {isOmniblend ? (
-          <>
-            {galvSection}
-            {thermoSection}
-          </>
-        ) : (
-          <>
-            {thermoSection}
-            {galvSection}
-          </>
-        )}
+        {/* MACHINE ORDER (Chloe): the COMPLETE galvanic group precedes
+            thermolysis for every blend modality — PicoBlend, OmniBlend,
+            MultiBlend, EvoluBlend, SynchroBlend — not only OmniBlend as before.
+            Pure modes render whichever single group applies. */}
+        {galvSection}
+        {thermoSection}
 
         <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
           <span className="text-sm font-medium">Hairs treated</span>

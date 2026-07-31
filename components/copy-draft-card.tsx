@@ -204,23 +204,59 @@ export function CopyDraftCard({
         </div>
       )}
 
-      {/* Thermolysis readings (thermo/blend). */}
-      {sections.showThermo && (
+      {/* MACHINE ORDER (Chloe): energy level, then the complete galvanic group
+          (units of lye → duration → mA), then thermolysis (duration → intensity
+          → pulse count → pulse delay). Same order as the charting forms; the
+          canonical list lives in lib/sessions/reading-field-order.ts. */}
+      {/* Galvanic readings (galv/blend). */}
+      {sections.showGalv && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Thermolysis intensity %</span>
+            <span className="text-sm font-medium">Units of lye</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              value={s.unitsOfLye}
+              onChange={(e) => patchSetup({ unitsOfLye: e.target.value })}
+              data-testid={`copy-draft-${draft.key}-units-lye`}
+              className={READING_INPUT_CLS}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Galvanic duration (s)</span>
             <input
               type="number"
               inputMode="numeric"
               min={0}
-              max={100}
-              value={s.thermolysisIntensityPercent}
-              onChange={(e) => patchSetup({ thermolysisIntensityPercent: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-therm-intensity`}
+              value={s.galvanicDurationSeconds}
+              onChange={(e) => patchSetup({ galvanicDurationSeconds: e.target.value })}
+              data-testid={`copy-draft-${draft.key}-galv-duration`}
               className={READING_INPUT_CLS}
             />
           </label>
-          {!isOmniblend && (
+          {/* The galvanic intensity reading is RETIRED (Phase A): no field here. */}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Galvanic mA</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min={0}
+              value={s.galvanicMa}
+              onChange={(e) => patchSetup({ galvanicMa: e.target.value })}
+              data-testid={`copy-draft-${draft.key}-galv-ma`}
+              className={READING_INPUT_CLS}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* Thermolysis readings (thermo/blend). */}
+      {sections.showThermo && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {!isOmniblend && (
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">Thermolysis duration (s)</span>
               <input
@@ -235,6 +271,19 @@ export function CopyDraftCard({
               />
             </label>
           )}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Thermolysis intensity %</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={100}
+              value={s.thermolysisIntensityPercent}
+              onChange={(e) => patchSetup({ thermolysisIntensityPercent: e.target.value })}
+              data-testid={`copy-draft-${draft.key}-therm-intensity`}
+              className={READING_INPUT_CLS}
+            />
+          </label>
           {/* Pulse control lives INSIDE the thermolysis section (Phase A): pulse
               is a thermolysis concept, shown only for thermo/blend. */}
           <label className="flex flex-col gap-1.5">
@@ -268,51 +317,6 @@ export function CopyDraftCard({
               />
             </label>
           )}
-        </div>
-      )}
-
-      {/* Galvanic readings (galv/blend). */}
-      {sections.showGalv && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Galvanic mA</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min={0}
-              value={s.galvanicMa}
-              onChange={(e) => patchSetup({ galvanicMa: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-galv-ma`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Galvanic duration (s)</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              value={s.galvanicDurationSeconds}
-              onChange={(e) => patchSetup({ galvanicDurationSeconds: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-galv-duration`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
-          {/* The galvanic intensity reading is RETIRED (Phase A): no field here. */}
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Units of lye</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.1"
-              min={0}
-              value={s.unitsOfLye}
-              onChange={(e) => patchSetup({ unitsOfLye: e.target.value })}
-              data-testid={`copy-draft-${draft.key}-units-lye`}
-              className={READING_INPUT_CLS}
-            />
-          </label>
         </div>
       )}
 
