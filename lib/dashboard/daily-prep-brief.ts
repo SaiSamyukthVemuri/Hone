@@ -76,12 +76,6 @@ export type DailyPrepBrief = {
 
 const UPCOMING_EXCLUDED = new Set(["completed", "no_show", "cancelled"]);
 
-function truncate(text: string, max: number): string {
-  const t = text.trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max - 1).trimEnd()}…`;
-}
-
 // Shorten a granular buildBeforeToday reminder into a compact, safe
 // chip. Unmatched reminders pass through unchanged (already
 // safe-worded). The source strings are the canonical reminders; this
@@ -147,15 +141,26 @@ function priorityFor(input: DailyPrepInput): DailyPrepPriority {
 function buildItem(input: DailyPrepInput): DailyPrepBriefItem {
   const reminders: string[] = [];
 
-  // Recorded memory first.
+  // Recorded memory first, IN FULL.
+  //
+  // These three lines used to be capped at 90 characters. Chloe reads them off
+  // the dashboard before a client sits down, and a note cut mid-sentence is
+  // worse than no note — she had to open the client to find out what her own
+  // instruction actually said. The Today roster card was already un-capped for
+  // exactly this reason; the brief renders the SAME note a few hundred pixels
+  // lower on the SAME screen, so leaving it clipped here just moved the
+  // complaint. Nothing upstream truncates (before-today-previews passes the
+  // strings through verbatim), and the card wraps with `break-words` +
+  // `whitespace-pre-wrap`, so long or multi-line notes grow the row instead of
+  // being lost.
   if (input.nextVisitNote?.trim()) {
-    reminders.push(`For next visit: ${truncate(input.nextVisitNote, 90)}`);
+    reminders.push(`For next visit: ${input.nextVisitNote.trim()}`);
   }
   if (input.cautionNote?.trim()) {
-    reminders.push(`Caution noted: ${truncate(input.cautionNote, 90)}`);
+    reminders.push(`Caution noted: ${input.cautionNote.trim()}`);
   }
   if (input.hasHistory && input.setupLine?.trim()) {
-    reminders.push(`Last recorded: ${truncate(input.setupLine, 90)}`);
+    reminders.push(`Last recorded: ${input.setupLine.trim()}`);
   }
 
   // Intake and charting attention.

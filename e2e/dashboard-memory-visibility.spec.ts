@@ -180,3 +180,91 @@ test.describe("desktop is unaffected", () => {
     await expect(el).toHaveAttribute("title", new RegExp(LONG_NOTE_LINE_1.slice(0, 30)));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Daily Prep Brief — the SAME note, on the SAME screen, also in full.
+// ---------------------------------------------------------------------------
+// The roster card was un-capped first; the brief kept its own 90-character cap,
+// so a long note still appeared clipped a few hundred pixels lower. These prove
+// both surfaces now agree.
+test.describe("Daily Prep Brief at iPhone width", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  const briefCard = (page: Page) =>
+    page.locator("section").filter({ hasText: "Daily prep brief" }).first();
+
+  test("the caution note renders in FULL in the brief, not capped at 90", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await seedE2eDashboardMemoryClient(seed, { cautionNote: LONG_NOTE });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+
+    const card = briefCard(page);
+    await expect(card).toBeVisible({ timeout: T });
+    const line = card.locator("li").filter({ hasText: /^Caution noted: / }).first();
+    await expect(line).toBeVisible();
+
+    const text = await line.innerText();
+    await test.step("whole note present, no ellipsis, past the old 90-char cap", async () => {
+      expect(text).toContain(LONG_NOTE_LINE_1);
+      expect(text).toContain(LONG_NOTE_LINE_2);
+      expect(text).not.toContain("…");
+      expect(text.length).toBeGreaterThan(90);
+    });
+
+    await test.step("it wraps rather than being clipped", async () => {
+      const m = await line.evaluate((node) => {
+        const cs = getComputedStyle(node);
+        return {
+          whiteSpace: cs.whiteSpace,
+          textOverflow: cs.textOverflow,
+          overflow: cs.overflow,
+          lineHeight: parseFloat(cs.lineHeight) || 16,
+          height: node.getBoundingClientRect().height,
+          scrollWidth: node.scrollWidth,
+          clientWidth: node.clientWidth,
+        };
+      });
+      expect(m.whiteSpace).toBe("pre-wrap");
+      expect(m.textOverflow).not.toBe("ellipsis");
+      expect(m.overflow).not.toBe("hidden");
+      expect(m.height).toBeGreaterThan(m.lineHeight * 1.5);
+      expect(m.scrollWidth).toBeLessThanOrEqual(m.clientWidth + 1);
+    });
+
+    await test.step("the page still does not scroll sideways", async () => {
+      const w = await page.evaluate(() => ({
+        s: document.documentElement.scrollWidth,
+        c: document.documentElement.clientWidth,
+      }));
+      expect(w.s, `no horizontal overflow (${w.s} vs ${w.c})`).toBeLessThanOrEqual(w.c);
+    });
+
+    await test.step("roster card and brief show the SAME text — the actual defect", async () => {
+      const roster = (await rememberLine(page).innerText())
+        .replace(/^Remember:\s*/, "")
+        .trim();
+      const brief = text.replace(/^Caution noted:\s*/, "").trim();
+      expect(brief).toBe(roster);
+    });
+  });
+
+  test("an unbroken token in the brief wraps rather than widening the page", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await seedE2eDashboardMemoryClient(seed, { cautionNote: `Lot ${"A".repeat(90)}` });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+
+    const line = briefCard(page).locator("li").filter({ hasText: /^Caution noted: / }).first();
+    await expect(line).toBeVisible({ timeout: T });
+    expect(
+      await line.evaluate((n) => getComputedStyle(n).overflowWrap || getComputedStyle(n).wordWrap),
+    ).toBe("break-word");
+
+    const w = await page.evaluate(() => ({
+      s: document.documentElement.scrollWidth,
+      c: document.documentElement.clientWidth,
+    }));
+    expect(w.s).toBeLessThanOrEqual(w.c);
+  });
+});

@@ -76,12 +76,23 @@ describe("nothing else on the dashboard changed", () => {
     expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
   });
 
-  it("the Daily Prep Brief keeps its own compact 90-char contract", () => {
-    // A separate, deliberately compact surface with its own helper — untouched.
-    expect(PREP).toMatch(/function truncate\(text: string, max: number\): string/);
-    expect(PREP).toMatch(/truncate\(input\.nextVisitNote, 90\)/);
-    expect(PREP).toMatch(/truncate\(input\.cautionNote, 90\)/);
-    expect(PREP).toMatch(/truncate\(input\.setupLine, 90\)/);
+  it("the Daily Prep Brief renders its memory lines in FULL too", () => {
+    // Reversed deliberately. The brief renders the SAME note as the Today
+    // roster card, a few hundred pixels lower on the SAME screen, so capping it
+    // at 90 characters here only moved the complaint. Its own truncate helper
+    // is gone, and the three memory lines interpolate the trimmed value.
+    expect(PREP).not.toMatch(/function truncate\(/);
+    expect(PREP).not.toMatch(/truncate\(input\./);
+    expect(PREP).toMatch(/For next visit: \$\{input\.nextVisitNote\.trim\(\)\}/);
+    expect(PREP).toMatch(/Caution noted: \$\{input\.cautionNote\.trim\(\)\}/);
+    expect(PREP).toMatch(/Last recorded: \$\{input\.setupLine\.trim\(\)\}/);
+  });
+
+  it("the Daily Prep Brief CARD wraps instead of clipping", () => {
+    const CARD = read("app/(app)/dashboard/daily-prep-brief.tsx");
+    expect(CARD).toMatch(/whitespace-pre-wrap break-words text-xs/);
+    expect(CARD).not.toMatch(/\btruncate\b/);
+    expect(CARD).not.toMatch(/line-clamp/);
   });
 
   it("the preview data helper still truncates nothing (the fix is render-only)", () => {

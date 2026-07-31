@@ -222,3 +222,61 @@ describe("dashboard wiring and card (source pins)", () => {
     expect(pkg).not.toMatch(/@anthropic-ai|openai|@google\/gen|@ai-sdk|langchain/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Full-length recorded memory (Chloe: the brief still cut her notes off).
+// ---------------------------------------------------------------------------
+// The three memory lines used to be capped at 90 characters by a module-local
+// truncate(). The Today roster card had already been un-capped; the brief
+// renders the SAME note on the SAME screen, so the cap just relocated the
+// complaint. These pin that nothing in the builder shortens them.
+describe("recorded-memory lines are never truncated", () => {
+  // Longer than the old 90-char cap, so a regression is unmissable.
+  const LONG =
+    "Drop to energy level 8 on the upper lip next visit and re-check tolerance " +
+    "after the first pass; she reacted to the higher setting last time and " +
+    "preferred shorter passes with a longer rest between them.";
+
+  it("keeps a long next-visit note whole, with no ellipsis", () => {
+    const item = only({ nextVisitNote: LONG });
+    expect(item.reminders).toContain(`For next visit: ${LONG}`);
+    expect(item.reminders.join("\n")).not.toContain("…");
+  });
+
+  it("keeps a long caution note whole", () => {
+    const item = only({ cautionNote: LONG });
+    expect(item.reminders).toContain(`Caution noted: ${LONG}`);
+  });
+
+  it("keeps a long latest-setup line whole", () => {
+    const item = only({ hasHistory: true, setupLine: LONG });
+    expect(item.reminders).toContain(`Last recorded: ${LONG}`);
+  });
+
+  it("preserves the practitioner's own line breaks", () => {
+    const multi = "Upper lip: energy level 8.\nNumbing 30 min ahead.";
+    const item = only({ nextVisitNote: multi });
+    expect(item.reminders).toContain(`For next visit: ${multi}`);
+  });
+
+  it("still trims surrounding whitespace", () => {
+    const item = only({ nextVisitNote: "   Start lower.   " });
+    expect(item.reminders).toContain("For next visit: Start lower.");
+  });
+
+  it("a note far past the old cap is carried verbatim, character for character", () => {
+    const huge = "x".repeat(2000);
+    const item = only({ nextVisitNote: huge });
+    const line = item.reminders.find((r) => r.startsWith("For next visit: "));
+    expect(line).toBeDefined();
+    expect(line!.slice("For next visit: ".length)).toHaveLength(2000);
+  });
+
+  it("the brief and the Today roster now agree on the SAME note", () => {
+    // The exact defect: the roster showed the note in full while the brief,
+    // rendered lower on the same screen, showed it clipped at 90.
+    const item = only({ nextVisitNote: LONG });
+    const briefLine = item.reminders.find((r) => r.startsWith("For next visit: "))!;
+    expect(briefLine.slice("For next visit: ".length)).toBe(LONG);
+  });
+});
