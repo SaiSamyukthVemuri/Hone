@@ -1264,6 +1264,43 @@ export async function getBlockEntryCount(blockId: string): Promise<number> {
 // Seed a probe row in the studio's sterilization inventory
 // (record_keeping_sterile_items) so the charting probe-lot selector has an
 // ACTIVE (or expired) candidate. expiryDate null = never expires.
+// Chloe probe-lot auto-fill: seed a PRIOR charted settings block that records a
+// probe lot the practitioner typed, with NO inventory link — i.e. exactly the
+// shape a studio with no probe inventory accumulates. `probeKey` null + a
+// `probeLabel` seeds the LEGACY free-text row the normalized-label fallback is
+// for. Returns the block id.
+export async function seedE2eChartedProbeLot(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: {
+    lotNumber: string;
+    probeKey?: string | null;
+    probeLabel?: string | null;
+    confirmed?: boolean;
+    primaryArea?: string;
+  },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, mode, energy_level,
+        minutes_performed, machine_frequency, probe_key, probe_label,
+        probe_lot_number, probe_lot_confirmed)
+     values ($1,$2,$3,1,$4,'thermo',5,10,'27 MHz',$5,$6,$7,$8)`,
+    [
+      blockId,
+      seed.studioId,
+      sessionId,
+      opts.primaryArea ?? "Chin",
+      opts.probeKey ?? null,
+      opts.probeLabel ?? null,
+      opts.lotNumber,
+      opts.confirmed ?? false,
+    ],
+  );
+  return { blockId };
+}
+
 export async function seedE2eProbeInventoryItem(
   seed: E2eSeed,
   opts: {

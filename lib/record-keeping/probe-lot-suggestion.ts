@@ -22,6 +22,13 @@ export type ProbeLotSuggestion = {
   // confirmed LINKED selection exists (e.g. only confirmed manual rows, or only
   // unconfirmed linked rows).
   lastConfirmedInventoryItemId: string | null;
+  // The most recently CHARTED lot for this probe, by created_at alone —
+  // confirmation is deliberately ignored. This is the only field the charting
+  // auto-fill history fallback may use: "what lot am I using right now" is a
+  // question about RECENCY, and `lot` above is confirmed-first, so a single old
+  // confirmed row would otherwise pin the field forever (auto-fill never
+  // confirms, so every later row stays unconfirmed).
+  lastCharted: string;
 };
 
 export type ProbeLotSuggestions = {

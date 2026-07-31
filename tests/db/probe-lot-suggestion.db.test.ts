@@ -153,6 +153,7 @@ type SuggRow = {
   probe_lot_number: string | null;
   probe_lot_confirmed: boolean;
   probe_inventory_item_id: string | null;
+  created_at: string;
 };
 // 0155: the suggestion carries the DISPLAY winner's linked id (may be null) AND,
 // independently, the newest CONFIRMED-LINKED id — the only value auto-fill uses.
@@ -162,6 +163,9 @@ type Sugg = {
   confirmed: boolean;
   inventoryItemId: string | null;
   lastConfirmedInventoryItemId: string | null;
+  // Chloe probe-lot auto-fill: recency ONLY, ignoring confirmation. The charting
+  // history fallback uses this and NOT `lot`, which is confirmed-first.
+  lastCharted: string;
 };
 
 function normalizeLabel(label: string | null): string {
@@ -182,21 +186,42 @@ function reduceSuggestions(rows: SuggRow[]): {
     inventoryItemId: string | null,
   ) => {
     if (!(slot in map)) {
-      map[slot] = { lot, confirmed, inventoryItemId, lastConfirmedInventoryItemId: null };
+      map[slot] = { lot, confirmed, inventoryItemId, lastConfirmedInventoryItemId: null, lastCharted: "" };
     }
     if (confirmed && inventoryItemId != null && map[slot].lastConfirmedInventoryItemId == null) {
       map[slot].lastConfirmedInventoryItemId = inventoryItemId;
     }
   };
+  const seedLastCharted = (
+    map: Record<string, Sugg>,
+    seenAt: Record<string, string>,
+    slot: string,
+    lot: string,
+    createdAt: string,
+  ) => {
+    const previous = seenAt[slot];
+    if (previous !== undefined && previous >= createdAt) return;
+    seenAt[slot] = createdAt;
+    map[slot].lastCharted = lot;
+  };
+  const lastChartedAtByKey: Record<string, string> = {};
+  const lastChartedAtByLabel: Record<string, string> = {};
   for (const row of rows) {
     const lot = row.probe_lot_number?.trim();
     if (!lot) continue;
     const confirmed = row.probe_lot_confirmed === true;
     const inventoryItemId = row.probe_inventory_item_id ?? null;
+    const createdAt = row.created_at ?? "";
     const key = row.probe_key?.trim();
-    if (key) seedFirst(byKey, key, lot, confirmed, inventoryItemId);
+    if (key) {
+      seedFirst(byKey, key, lot, confirmed, inventoryItemId);
+      seedLastCharted(byKey, lastChartedAtByKey, key, lot, createdAt);
+    }
     const label = normalizeLabel(row.probe_label);
-    if (label) seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
+    if (label) {
+      seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
+      seedLastCharted(byLabel, lastChartedAtByLabel, label, lot, createdAt);
+    }
   }
   return { byKey, byLabel };
 }
@@ -269,8 +294,10 @@ describe("getProbeLotSuggestions semantics (byKey + byLabel, confirmed-aware)", 
     const { rows } = await adminQuery(SUGG_QUERY, [c.studioId]);
     const { byKey } = reduceSuggestions(rows as SuggRow[]);
     // confirmed beats newer unconfirmed (K linked to inventory); U fallback kept.
-    expect(byKey["K"]).toEqual({ lot: "KC", confirmed: true, inventoryItemId: kInventoryId, lastConfirmedInventoryItemId: kInventoryId });
-    expect(byKey["U"]).toEqual({ lot: "UU", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null });
+    // lastCharted is the separate recency-only track: K's newest row is the
+    // UNCONFIRMED KU, so it differs from the confirmed-first display winner.
+    expect(byKey["K"]).toEqual({ lot: "KC", confirmed: true, inventoryItemId: kInventoryId, lastConfirmedInventoryItemId: kInventoryId, lastCharted: "KU" });
+    expect(byKey["U"]).toEqual({ lot: "UU", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "UU" });
   });
 
   it("(#4) surfaces the CONFIRMED lot's linked inventory id (the auto-fill source); the unconfirmed fallback carries no confirmed id", async () => {
@@ -289,7 +316,7 @@ describe("getProbeLotSuggestions semantics (byKey + byLabel, confirmed-aware)", 
   it("byLabel provides a normalized free-text fallback (probe_key null)", async () => {
     const { rows } = await adminQuery(SUGG_QUERY, [c.studioId]);
     const { byLabel } = reduceSuggestions(rows as SuggRow[]);
-    expect(byLabel["sterex · gold · two-piece · f2 short"]).toEqual({ lot: "FREETEXTLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null });
+    expect(byLabel["sterex · gold · two-piece · f2 short"]).toEqual({ lot: "FREETEXTLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "FREETEXTLOT" });
   });
 
   it("never leaks another studio's lot into byKey/byLabel", async () => {
@@ -335,6 +362,10 @@ describe("last-confirmed LINKED selection (0155 issue #2)", () => {
     // --- Probe P3: ONLY confirmed MANUAL rows -------------------------------
     await insertLabeledBlock(s, sess, { probeKey: "P3", lot: "P3-MANUAL", confirmed: true, createdAt: "2026-03-01T00:00:00Z", inventoryItemId: null });
 
+    // --- Legacy label rows (probe_key NULL): older then newer, both unconfirmed.
+    await insertLabeledBlock(s, sess, { probeKey: null, label: "Legacy · Probe · Label", lot: "LEGACY-OLDER", confirmed: false, createdAt: "2026-02-01T00:00:00Z" });
+    await insertLabeledBlock(s, sess, { probeKey: null, label: "Legacy · Probe · Label", lot: "LEGACY-NEWER", confirmed: false, createdAt: "2026-06-01T00:00:00Z" });
+
     // --- Probe P4: a DELETED confirmed-linked + a cross-studio confirmed-linked
     const p4Deleted = await seedSterileItem(s, { probeKey: "P4", lot: "P4-DEL" });
     await insertLabeledBlock(s, sess, { probeKey: "P4", lot: "P4-DEL", confirmed: true, createdAt: "2026-04-01T00:00:00Z", inventoryItemId: p4Deleted, deleted: true });
@@ -367,6 +398,29 @@ describe("last-confirmed LINKED selection (0155 issue #2)", () => {
     const { byKey } = reduceSuggestions(rows as SuggRow[]);
     expect(byKey["P3"].confirmed).toBe(true);
     expect(byKey["P3"].lastConfirmedInventoryItemId).toBeNull();
+  });
+
+  // Chloe probe-lot auto-fill: the charting history fallback must offer the lot
+  // she LAST CHARTED, not the last one she happened to confirm. Because
+  // auto-fill never confirms, one old confirmed row would otherwise pin the
+  // field forever and she would keep retyping — the original complaint.
+  it("lastCharted is recency-ONLY: a newer UNCONFIRMED lot beats an older CONFIRMED one", async () => {
+    const { rows } = await adminQuery(SUGG_QUERY, [s.studioId]);
+    const { byKey } = reduceSuggestions(rows as SuggRow[]);
+    // P2 has an older CONFIRMED linked row and a newer UNCONFIRMED linked row.
+    // The display winner is confirmed-first...
+    expect(byKey["P2"].confirmed).toBe(true);
+    // ...but lastCharted is the newest row by created_at regardless.
+    expect(byKey["P2"].lastCharted).toBe("P2-NEW"); // newest by created_at
+    expect(byKey["P2"].lot).toBe("P2-OLD"); // display winner is confirmed-first
+    expect(byKey["P2"].lastCharted).not.toBe(byKey["P2"].lot);
+  });
+
+  it("lastCharted tracks byLabel independently (legacy rows with no probe_key)", async () => {
+    const { rows } = await adminQuery(SUGG_QUERY, [s.studioId]);
+    const { byLabel } = reduceSuggestions(rows as SuggRow[]);
+    const label = normalizeLabel("Legacy · Probe · Label");
+    expect(byLabel[label].lastCharted).toBe("LEGACY-NEWER");
   });
 
   it("deleted rows never contribute, and cross-studio linked ids never leak", async () => {

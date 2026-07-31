@@ -58,27 +58,42 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
     expect(FORM).toMatch(/probeLotSuggestions/);
     // The suggestions query surfaces the linked inventory item id for auto-fill.
     expect(RK).toMatch(/probe_inventory_item_id/);
-    // Truthful inventory-backed copy.
-    expect(FORM).toMatch(/Auto-filled from your last confirmed inventory lot/);
-    expect(FORM).toMatch(/Only active inventory lot for this probe/);
+    // Truthful provenance copy now lives with the resolver that produces it,
+    // so the string and its branch cannot drift apart.
+    const AUTOFILL = readFileSync(
+      join(process.cwd(), "lib/record-keeping/probe-lot-autofill.ts"),
+      "utf8",
+    );
+    expect(AUTOFILL).toMatch(/Auto-filled from your last confirmed inventory lot/);
+    expect(AUTOFILL).toMatch(/Only active inventory lot for this probe/);
+    // The history fallback that makes auto-fill work for a studio with no
+    // probe inventory at all.
+    expect(AUTOFILL).toMatch(/Auto-filled from your last charted lot for this probe — not linked to inventory/);
+    expect(FORM).toMatch(/probeLotSourceMessage\(lotStatus\)/);
     expect(FORM).toMatch(/Confirm lot\/batch/);
     // Old copy is gone.
     expect(FORM).not.toMatch(/Suggested from records/);
     expect(FORM).not.toMatch(/Suggested from last probe lot/);
   });
-  it("(0155) auto-fills the last-confirmed / sole-active inventory lot, always unconfirmed", () => {
-    // The reactive effect resolves inventory (ACTIVE, matching probe_key) and
-    // writes the linked id + lot number unconfirmed; it never runs once the
-    // practitioner has edited manually.
-    expect(FORM).toMatch(
-      /resolveInventoryAutofill\(\s*probeLotInventory,\s*draft\.probeKey,/,
-    );
+  it("auto-fills inventory FIRST, then recorded charting, always unconfirmed", () => {
+    // The reactive effect now delegates the whole precedence to one composed
+    // resolver. Inventory still wins; the recorded-charting fallback is what
+    // makes auto-fill work at all for a studio with no probe inventory — the
+    // shape that made this fail on every appointment.
+    expect(FORM).toMatch(/resolveProbeLotAutofill\(\{/);
+    expect(FORM).not.toMatch(/resolveInventoryAutofill\(/);
     // The auto-fill rule lives in the shared pure module.
     expect(SUGG).toMatch(/suggestions\.byKey\[probeKey\]/); // still exposes byKey
     expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
-    expect(FORM).toMatch(
-      /probeInventoryItemId: autofill\.option\.id,\s*\n\s*probeLotNumber: autofill\.option\.lotNumber,\s*\n\s*probeLotConfirmed: false/,
+    expect(FORM).toMatch(/const patch = probeLotDraftPatch\(result\);/);
+    const AUTOFILL = readFileSync(
+      join(process.cwd(), "lib/record-keeping/probe-lot-autofill.ts"),
+      "utf8",
     );
+    // Inventory results link; history results never do.
+    expect(AUTOFILL).toMatch(/probeInventoryItemId: result\.option\.id,/);
+    expect(AUTOFILL).toMatch(/probeLotNumber: result\.lotNumber,\s*\n\s*probeInventoryItemId: null,/);
+    expect(AUTOFILL).not.toMatch(/probeLotConfirmed: true/);
   });
   it("typing the lot un-confirms it + marks a manual edit (probe switch won't clobber)", () => {
     expect(FORM).toMatch(/probeLotConfirmed: false/);

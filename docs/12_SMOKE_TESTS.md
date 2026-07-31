@@ -1161,7 +1161,7 @@ And since PR #227 a browser E2E lane (separate CI job `browser-e2e`; LOCAL stack
 ```bash
 supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 supabase db reset --local
-npm run test:e2e           # Chromium, ALL 47 specs under e2e/ (testDir: ./e2e) —
+npm run test:e2e           # Chromium, ALL 48 specs under e2e/ (testDir: ./e2e) —
                            # the core treatment-memory loop plus every later spec
 npm run test:e2e:payment   # fake-Stripe payment lane
 npm run test:e2e:mobile    # mobile-completion lane (iPhone profile)

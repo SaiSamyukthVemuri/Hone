@@ -235,6 +235,7 @@ export async function getProbeLotSuggestions(
         confirmed,
         inventoryItemId,
         lastConfirmedInventoryItemId: null,
+        lastCharted: "",
       };
     }
     if (
@@ -245,16 +246,41 @@ export async function getProbeLotSuggestions(
       map[slot].lastConfirmedInventoryItemId = inventoryItemId;
     }
   };
+  // lastCharted is recency-ONLY, so it cannot be seeded from the
+  // confirmed-first ordering above. Resolved in a second pass over the same
+  // rows, ordered by created_at desc within each confirmed group: the newest
+  // row overall is whichever of the two group-leaders has the later created_at.
+  const seedLastCharted = (
+    map: Record<string, ProbeLotSuggestion>,
+    seenAt: Record<string, string>,
+    slot: string,
+    lot: string,
+    createdAt: string,
+  ) => {
+    const previous = seenAt[slot];
+    if (previous !== undefined && previous >= createdAt) return;
+    seenAt[slot] = createdAt;
+    map[slot].lastCharted = lot;
+  };
+  const lastChartedAtByKey: Record<string, string> = {};
+  const lastChartedAtByLabel: Record<string, string> = {};
   for (const row of data ?? []) {
     const lot = (row.probe_lot_number as string | null)?.trim();
     if (!lot) continue;
     const confirmed = row.probe_lot_confirmed === true;
     const inventoryItemId =
       (row.probe_inventory_item_id as string | null) ?? null;
+    const createdAt = (row.created_at as string | null) ?? "";
     const key = (row.probe_key as string | null)?.trim();
-    if (key) seedFirst(byKey, key, lot, confirmed, inventoryItemId);
+    if (key) {
+      seedFirst(byKey, key, lot, confirmed, inventoryItemId);
+      seedLastCharted(byKey, lastChartedAtByKey, key, lot, createdAt);
+    }
     const label = normalizeProbeLabel(row.probe_label as string | null);
-    if (label) seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
+    if (label) {
+      seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
+      seedLastCharted(byLabel, lastChartedAtByLabel, label, lot, createdAt);
+    }
   }
   return { byKey, byLabel };
 }
