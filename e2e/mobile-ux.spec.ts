@@ -184,21 +184,21 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       .first()
       .boundingBox();
     expect(todayBox && snapshotBox && todayBox.y < snapshotBox.y).toBe(true);
-    // PR #241: the Daily Prep Brief renders under Today, fits the
-    // phone, and the brand-new client appears with a calm no-history
-    // subtitle. A prep item links to the client page.
-    const briefHeading = page.getByRole("heading", { name: "Daily prep brief" });
-    await expect(briefHeading).toBeVisible();
-    const brief = page
-      .locator("section")
-      .filter({ has: briefHeading });
+    // The Daily Prep Brief list is RETIRED: it re-rendered every appointment a
+    // second time. Its preparation facts now live once, inside the Today card,
+    // which must still fit the phone and state the no-history case calmly.
     await expect(
-      brief.getByText(/No prior treatment history yet/).first(),
+      page.getByRole("heading", { name: "Daily prep brief" }),
+    ).toHaveCount(0);
+    const todaySection = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Today", exact: true }) });
+    await expect(
+      todaySection.getByText(/New client · No charted history yet/).first(),
     ).toBeVisible();
-    await expectNoPageOverflow(page, "dashboard with daily prep brief");
-    const briefLink = brief.getByRole("link", { name: seed.clientName }).first();
-    await expect(briefLink).toBeVisible();
-    await expectInsideViewport(page, briefLink, "daily prep brief item link");
+    // ONE relationship phrasing, not two.
+    await expect(page.getByText(/No prior treatment history yet/)).toHaveCount(0);
+    await expectNoPageOverflow(page, "dashboard with combined Today workflow");
     // PR #236: the booked appointment shows ONE obvious action. The
     // client is brand new (no history yet), so it reads Open client.
     const action = page.getByRole("link", { name: "Open client" }).first();

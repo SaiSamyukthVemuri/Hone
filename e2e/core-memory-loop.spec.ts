@@ -207,19 +207,23 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(page.getByText("Mild redness").first()).toBeVisible();
   });
 
-  await test.step("Daily Prep Brief surfaces the recorded next-visit memory", async () => {
-    // PR #241: the rules-based Daily Prep Brief on the Dashboard pulls
-    // the same recorded facts. The returning client's upcoming
-    // appointment carries the saved next-visit note as a prep item.
+  await test.step("the Today card surfaces the recorded next-visit memory", async () => {
+    // The rules-based prep derivation still pulls the same recorded facts — it
+    // now renders ONCE, inside the appointment's own Today card, instead of a
+    // second time in a separate "Daily prep brief" list.
     await page.goto("/dashboard");
     await expect(
-      page.getByRole("heading", { name: "Daily prep brief" }),
+      page.getByRole("heading", { name: "Today", exact: true }),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
       page
-        .getByText(/For next visit: E2E caution: shorter intervals next visit/)
+        .getByText(/Remember: E2E caution: shorter intervals next visit/)
         .first(),
     ).toBeVisible();
+    // The retired separate list is gone.
+    await expect(
+      page.getByRole("heading", { name: "Daily prep brief" }),
+    ).toHaveCount(0);
 
     // PR #249: the rules-based Follow-up assistant renders on the
     // dashboard too (its bounded studio-scoped loader runs against the
