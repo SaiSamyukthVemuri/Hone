@@ -18,14 +18,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0160** (`0160_immutable_clinical_lineage.sql`) |
-| **Repo migration max** | **0160** — hosted == repo |
+| **Hosted (production) migration max** | **0161** (`0161_service_order_and_colors.sql`, applied 2026-07-30T23:38:07Z→23:38:16Z) |
+| **Repo migration max** | **0161** — hosted == repo |
 | **Total migrations in repo** | **159** (`0001` … `0157`, `0159`, `0160` — **no `0158`**) |
 | **Total applied in production** | **159**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
-| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **No `0161` exists.** |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** |
 
 **Every migration `0001`–`0157` plus `0159` and `0160` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
@@ -80,7 +80,7 @@ apply on a CI-parity database under a real competing `SHARE ROW EXCLUSIVE` lock 
 
 > **Neither `0159` nor `0160` may be edited.** Both are applied; their recorded checksums must keep
 > describing the files on disk. Behaviour changes require a **new** migration — the next number is
-> `0161`, since `0158` is permanently skipped.
+> `0162`, since `0158` is permanently skipped and `0161` is applied.
 
 ### 0159 — current purpose and status
 

@@ -4,6 +4,7 @@ import {
   appointmentCardClasses,
   isServiceColorKey,
   SERVICE_COLOR_KEYS,
+  SERVICE_COLOR_KEYS_0153,
 } from "@/lib/calendar/service-colors";
 
 // Calendar color represents the booked SERVICE explicitly (0153 persisted
@@ -11,6 +12,9 @@ import {
 
 describe("service colors — explicit persisted color contract", () => {
   it("maps each allowed key to a distinct trusted bundle; rose/red never appears", () => {
+    // 0161 widened the set from six to ten. The six 0153 keys keep their exact
+    // positions so no stored value changes meaning; the four additions skip the
+    // crowded blue band and the reserved red/rose/pink families.
     expect([...SERVICE_COLOR_KEYS]).toEqual([
       "amber",
       "emerald",
@@ -18,6 +22,13 @@ describe("service colors — explicit persisted color contract", () => {
       "sky",
       "indigo",
       "violet",
+      "orange",
+      "lime",
+      "fuchsia",
+      "slate",
+    ]);
+    expect([...SERVICE_COLOR_KEYS].slice(0, SERVICE_COLOR_KEYS_0153.length)).toEqual([
+      ...SERVICE_COLOR_KEYS_0153,
     ]);
     const bundles = SERVICE_COLOR_KEYS.map((k) => serviceColorClasses(k));
     expect(new Set(bundles).size).toBe(SERVICE_COLOR_KEYS.length); // all distinct
@@ -27,7 +38,9 @@ describe("service colors — explicit persisted color contract", () => {
   });
 
   it("rejects invalid keys AND rose/red -> neutral fallback (never a color, never CSS)", () => {
-    for (const bad of ["rose", "red", "pink", "purple", "bg-red-500", "", "VIOLET ", "amber "]) {
+    // pink stays REJECTED after 0161: at a glance on a phone it reads as rose,
+    // which is reserved for allergy / clinical-caution signals.
+    for (const bad of ["rose", "red", "pink", "purple", "blue", "cyan", "bg-red-500", "", "VIOLET ", "amber "]) {
       const cls = serviceColorClasses(bad);
       expect(cls, `${bad} must be neutral`).toMatch(/neutral/);
       expect(cls).not.toMatch(/rose|red/);

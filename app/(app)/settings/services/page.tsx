@@ -1,20 +1,20 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
+import { sortServicesForSettings } from "@/lib/booking/service-order";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
 import {
   createServiceAction,
-  reorderServiceAction,
   toggleServiceActiveAction,
   updateServiceAction,
 } from "./actions";
 import {
   CalendarColorField,
   DurationField,
-  MoveButton,
   ServiceAccordionItem,
   ServiceSubmitButton,
   ToggleActiveSubmitButton,
 } from "./ServiceFormControls";
+import { ServiceOrderList } from "./ServiceOrderList";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -36,14 +36,15 @@ export default async function ServicesSettingsPage() {
   // One list, active services first (then hidden), each as a collapsed row.
   // Keeping hidden services inline (rather than in a separate section) means
   // the Hide/Show toggle flips the row's status pill in place instead of
-  // relocating the card — clearer feedback. Booking-page modality grouping
-  // is unaffected (separate surface).
-  const orderedServices = [...services].sort(
-    (a, b) =>
-      Number(b.active) - Number(a.active) ||
-      a.sort_order - b.sort_order ||
-      a.name.localeCompare(b.name),
-  );
+  // relocating the card — clearer feedback.
+  //
+  // THE ORDER IS NOW SHARED. sortServicesForSettings applies the same TOTAL
+  // ordering (sort_order, name, id) that migration 0161's reorder RPC and the
+  // public booking page use. The old local sort omitted the `id` term, so tied
+  // sort_order values were resolved differently here than on the server — which
+  // is why an arrow could point at one row and move another, or silently do
+  // nothing at all.
+  const orderedServices = sortServicesForSettings(services);
 
   return (
     <div className="flex flex-col gap-10">
@@ -67,9 +68,12 @@ export default async function ServicesSettingsPage() {
             Service menu order
           </h3>
           <p className="text-xs text-neutral-500">
-            Arrange how services appear on your public booking page.
-            Use the arrow buttons next to a visible service to move it
-            up or down.
+            The order visible services appear in. Use{" "}
+            <span className="font-medium">Move to top / up / down / to bottom</span>{" "}
+            on a service to change it. On the public booking page services are
+            grouped by modality first (consultations, then electrolysis, then
+            laser), and this order applies within each group. Hidden services
+            keep their place in history but are not in the booking order.
           </p>
         </div>
         {orderedServices.length === 0 ? (
@@ -78,42 +82,38 @@ export default async function ServicesSettingsPage() {
           </p>
         ) : (
           <div className="flex flex-col gap-3">
-            {/* Visible-only positions for Move up/down. Hidden services
-                are not on the public booking menu, so they get no
-                reorder controls (matches reorderServiceAction's
-                active-only sort scope). */}
             {(() => {
               const visibleIds = orderedServices
                 .filter((s) => s.active)
                 .map((s) => s.id);
-              return orderedServices.map((s) => {
-                const pos = s.active ? visibleIds.indexOf(s.id) : -1;
-                const isFirstVisible = pos === 0;
-                const isLastVisible = pos === visibleIds.length - 1;
-                return (
-                  <ServiceAccordionItem
-                    key={s.id}
-                    name={s.name}
-                    durationLabel={`${s.default_duration_minutes} min`}
-                    priceLabel={formatPrice(s.price_cents)}
-                    active={s.active}
-                    toggle={
-                      <>
-                        {s.active && (
-                          <ReorderButtons
-                            id={s.id}
-                            disableUp={isFirstVisible}
-                            disableDown={isLastVisible}
-                          />
-                        )}
-                        <ToggleActiveButton id={s.id} active={s.active} />
-                      </>
-                    }
-                  >
-                    <ServiceEditForm service={s} calendarColorAvailable={calendarColorAvailable} />
-                  </ServiceAccordionItem>
-                );
-              });
+              return (
+                <ServiceOrderList
+                  rows={orderedServices.map((s) => ({
+                    id: s.id,
+                    name: s.name,
+                    active: s.active,
+                    node: (
+                      <ServiceAccordionItem
+                        name={s.name}
+                        durationLabel={`${s.default_duration_minutes} min`}
+                        priceLabel={formatPrice(s.price_cents)}
+                        active={s.active}
+                        colorKey={
+                          calendarColorAvailable
+                            ? ((s as { calendar_color?: string | null }).calendar_color ?? null)
+                            : null
+                        }
+                        toggle={<ToggleActiveButton id={s.id} active={s.active} />}
+                      >
+                        <ServiceEditForm
+                          service={s}
+                          calendarColorAvailable={calendarColorAvailable}
+                        />
+                      </ServiceAccordionItem>
+                    ),
+                  }))}
+                />
+              );
             })()}
           </div>
         )}
@@ -238,12 +238,18 @@ function ServiceEditForm({
               label="Position number"
               hint="Most people use the Move up and Move down arrows on the row instead. This is here only for fine-grained control."
             >
+              {/* step={1}, not step={10}. Legacy rows hold values like 99, 101
+                  and 111 (the old tie-break wrote neighbour±1); with step={10}
+                  the browser reported a stepMismatch and silently blocked
+                  submission of the WHOLE edit form, so unrelated edits to name,
+                  price or care instructions appeared to do nothing. min={0}
+                  still holds — the 0161 RPC only ever writes 10, 20, 30 … */}
               <input
                 name="sort_order"
                 type="number"
                 min={0}
                 max={100000}
-                step={10}
+                step={1}
                 defaultValue={service.sort_order}
                 className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
               />
@@ -260,37 +266,6 @@ function ServiceEditForm({
         </div>
       </form>
     </div>
-  );
-}
-
-// One small <form> per direction. Each posts to reorderServiceAction
-// with the service id and direction. Two separate forms (rather than
-// one with two submits) keeps useFormStatus scoped to the individual
-// button so only the clicked arrow shows the pending state. Server
-// action revalidates /settings/services so the list re-renders in
-// the new order.
-function ReorderButtons({
-  id,
-  disableUp,
-  disableDown,
-}: {
-  id: string;
-  disableUp: boolean;
-  disableDown: boolean;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <form action={reorderServiceAction}>
-        <input type="hidden" name="id" value={id} />
-        <input type="hidden" name="direction" value="up" />
-        <MoveButton direction="up" disabled={disableUp} />
-      </form>
-      <form action={reorderServiceAction}>
-        <input type="hidden" name="id" value={id} />
-        <input type="hidden" name="direction" value="down" />
-        <MoveButton direction="down" disabled={disableDown} />
-      </form>
-    </span>
   );
 }
 

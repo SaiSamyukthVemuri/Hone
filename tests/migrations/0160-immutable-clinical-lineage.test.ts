@@ -28,18 +28,19 @@ function fn(name: string): string {
   return CODE.slice(start, CODE.indexOf("$$", open + 2) + 2);
 }
 
-describe("0160 — immutable clinical lineage (repo migration-max tripwire)", () => {
-  it("is present, 0159 precedes it, exactly one 0160, and it is the repo max", () => {
+describe("0160 — immutable clinical lineage", () => {
+  // The repo-max pin now lives in the 0161 test; 0160 remains the PRODUCTION max.
+  it("is present, 0159 precedes it, exactly one 0160, and nothing 0162+ yet", () => {
     expect(FILE).toMatch(/^0160_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0159_"))).toBe(true);
     expect(files.filter((f) => /^0160_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[1-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[2-9]|[7-9]\d)_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(160);
+    expect(nums[nums.length - 1]).toBe(161); // 0161 = service order + colours (UNAPPLIED)
     expect(new Set(nums).size).toBe(nums.length);
   });
 
@@ -73,18 +74,20 @@ describe("0160 — immutable clinical lineage (repo migration-max tripwire)", ()
       ).not.toMatch(/repo max \(0160\) is deliberately one ahead/i);
     }
     const dbRls = read("docs/09_DATABASE_AND_RLS.md").replace(/\s+/g, " ");
+    // 0161 was applied 2026-07-30, so the production max advanced past 0160.
+    // 0160 itself remains applied and immutable — that is asserted above.
     expect(
       dbRls,
-      "docs/09 must state the production migration max is 0160",
-    ).toMatch(/production migration max = 0160/i);
+      "docs/09 must state the production migration max is 0161",
+    ).toMatch(/production migration max = 0161/i);
     expect(
       dbRls,
-      "docs/09 must state repo and hosted max are both 0160",
-    ).toMatch(/Repository max and hosted max are both 0160/i);
+      "docs/09 must state repo and hosted max are both 0161 now that it is applied",
+    ).toMatch(/repository max and hosted max are both 0161/i);
     expect(
       dbRls,
-      "docs/09 must name 0161 as the next number, since 0158 is permanently skipped",
-    ).toMatch(/Current max `0160`, so the next is `0161`/i);
+      "docs/09 must name 0162 as the next number to allocate",
+    ).toMatch(/Current max `0161`, so the next is\s*`0162`/i);
   });
 
   it("the applied 0160 checksum is pinned in the ledger and matches the file on disk", () => {

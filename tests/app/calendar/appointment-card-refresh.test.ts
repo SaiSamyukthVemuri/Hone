@@ -84,7 +84,10 @@ describe("stronger-but-calm fills + accent", () => {
     const a = serviceCardClasses("svc-abc", "Electrolysis");
     const b = serviceCardClasses("svc-abc", "Electrolysis");
     expect(a).toBe(b); // same id → same color
-    expect(a).toMatch(/^bg-(amber|emerald|teal|sky|indigo|violet)-100 /);
+    // 0161 deepened emerald/indigo (and added orange/lime/fuchsia/slate) so the
+    // hue-adjacent pairs Chloe could not tell apart now differ in LIGHTNESS too;
+    // the legacy id hash is still bounded to the ORIGINAL six families.
+    expect(a).toMatch(/^bg-(amber|emerald|teal|sky|indigo|violet)-(100|200) /);
     // deleted/unknown service → the unchanged neutral fallback
     expect(serviceCardClasses(null, null)).toMatch(/^bg-neutral-100 /);
   });
