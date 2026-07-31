@@ -110,14 +110,20 @@ describe("compactBeforeToday", () => {
 
 describe("placement + reuse", () => {
   it("each Today roster row renders the compact preview", () => {
-    expect(PAGE).toMatch(/beforeToday=\{beforeTodayPreviews\.get\(appt\.client_id\)/);
+    // The preview now feeds the combined workflow model (keyed by APPOINTMENT
+    // id) instead of being handed to the row directly, so the same facts can no
+    // longer be rendered twice from two sources.
+    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
+    expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
     // 70-char cap is gone. Full-visibility is pinned in its own suite
     // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
-    expect(PAGE).toMatch(/Remember: \{beforeToday\.rememberLine\}/);
-    expect(PAGE).toMatch(/Latest setup: \{beforeToday\.setupLine \?\? "Not recorded"\}/);
-    expect(PAGE).toMatch(/No charted history yet\./);
+    expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
+    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
+    // ONE relationship line now: the old card said "No charted history yet."
+    // and the brief separately said "No prior treatment history yet".
+    expect(PAGE).toMatch(/New client · No charted history yet/);
     expect(PAGE).toMatch(/No watch\/plan note\./);
     // Empty roster state untouched.
     expect(PAGE).toMatch(/No appointments today\./);

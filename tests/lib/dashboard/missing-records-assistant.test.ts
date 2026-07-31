@@ -288,8 +288,10 @@ describe("dashboard wiring (source pins)", () => {
   });
 
   it("the existing Daily Prep Brief and Today next actions stay intact", () => {
-    expect(PAGE).toMatch(/buildDailyPrepBrief\(dailyPrepInputs\)/);
-    expect(PAGE).toMatch(/<DailyPrepBriefCard brief=\{dailyPrepBrief\}/);
+    // The Daily Prep Brief card is retired; its preparation facts now render
+    // once inside the combined Today appointment card.
+    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
+    expect(PAGE).not.toMatch(/DailyPrepBriefCard/);
     expect(PAGE).toMatch(/resolveNextAction\(/);
   });
 

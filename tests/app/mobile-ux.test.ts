@@ -110,16 +110,24 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
-describe("Daily Prep Brief V1 (PR #241)", () => {
-  it("the card wraps cleanly on phones (no nowrap, no fixed widths)", () => {
-    const CARD = read("app/(app)/dashboard/daily-prep-brief.tsx");
-    expect((CARD.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect(CARD).not.toMatch(/whitespace-nowrap|w-\[\d/);
+// The separate Daily Prep Brief card is RETIRED: it re-rendered every
+// appointment a second time on the same screen. Its preparation facts now live
+// once, inside the Today appointment card.
+describe("combined Today workflow (replaces the Daily Prep Brief card)", () => {
+  it("the appointment card wraps cleanly on phones (no nowrap, no fixed widths)", () => {
+    const PAGE = read("app/(app)/dashboard/page.tsx");
+    const row = PAGE.slice(
+      PAGE.indexOf("function AppointmentRow("),
+      PAGE.indexOf("function AppointmentStatusPill("),
+    );
+    expect((row.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(row).not.toMatch(/whitespace-nowrap|w-\[\d/);
   });
 
-  it("the e2e specs assert the brief renders with recorded memory", () => {
-    expect(read("e2e/mobile-ux.spec.ts")).toMatch(/Daily prep brief/);
-    expect(read("e2e/core-memory-loop.spec.ts")).toMatch(/Daily prep brief/);
+  it("the e2e specs assert ONE combined list, with no separate brief", () => {
+    expect(read("e2e/combined-today-workflow.spec.ts")).toMatch(
+      /Daily prep brief/,
+    );
   });
 });
 

@@ -45,12 +45,14 @@ import {
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import {
-  buildDailyPrepBrief,
-  type DailyPrepCharting,
-  type DailyPrepInput,
-  type DailyPrepIntake,
-} from "@/lib/dashboard/daily-prep-brief";
-import { DailyPrepBriefCard } from "./daily-prep-brief";
+  buildTodayWorkflow,
+  todayWorkflowByAppointment,
+  type TodayCharting,
+  type TodayIntake,
+  type TodayWorkflowInput,
+  type TodayWorkflowItem,
+} from "@/lib/dashboard/today-workflow";
+import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { FollowUpAssistantCard } from "./follow-up-assistant";
@@ -316,40 +318,43 @@ export default async function DashboardPage({
     visibleAppointments.map((a) => a.client_id),
   );
 
-  // PR #241: Daily Prep Brief V1. Rules-based only (no AI, no model,
-  // no provider, no action): a pure helper turns facts already loaded
-  // above (visible appointments, the Before Today previews, the
-  // linked-session charting state, intake status) into a deterministic
-  // prep list. No new query. Studio-scoped, recorded-history wording.
-  const dailyPrepInputs: DailyPrepInput[] = visibleAppointments.map((appt) => {
-    const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
-    const linked = sessionByAppointment.get(appt.id) ?? null;
-    const charting: DailyPrepCharting = linked
-      ? linked.hasChartedArea
-        ? "charted"
-        : "started"
-      : appt.status === "completed"
-        ? "needs"
-        : "none";
-    const intakeStatus = intakeByClient.get(appt.client_id) ?? null;
-    const intake: DailyPrepIntake = intakeStatus ?? "none";
-    return {
-      appointmentId: appt.id,
-      clientId: appt.client_id,
-      clientName: appt.client?.name ?? "Client",
-      timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
-      status: appt.status,
-      serviceName: appt.service?.name ?? null,
-      hasHistory: preview?.hasHistory ?? false,
-      nextVisitNote: preview?.nextVisitNote ?? null,
-      cautionNote: preview?.cautionNote ?? null,
-      setupLine: preview?.setupLine ?? null,
-      reminders: preview?.reminders ?? [],
-      intake,
-      charting,
-    };
-  });
-  const dailyPrepBrief = buildDailyPrepBrief(dailyPrepInputs);
+  // ONE combined Today workflow (Chloe: "Today and the Daily Prep Brief are
+  // redundant"). A pure helper turns facts already loaded above — visible
+  // appointments, the Before Today previews, the linked-session charting state,
+  // intake status — into exactly one card per appointment, keyed by APPOINTMENT
+  // id and in the query's chronological order. No new query; nothing sorted.
+  const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
+    (appt) => {
+      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const linked = sessionByAppointment.get(appt.id) ?? null;
+      const charting: TodayCharting = linked
+        ? linked.hasChartedArea
+          ? "charted"
+          : "started"
+        : appt.status === "completed"
+          ? "needs"
+          : "none";
+      const intakeStatus = intakeByClient.get(appt.client_id) ?? null;
+      const intake: TodayIntake = intakeStatus ?? "none";
+      return {
+        appointmentId: appt.id,
+        clientId: appt.client_id,
+        clientName: appt.client?.name ?? "Client",
+        timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
+        status: appt.status,
+        serviceName: appt.service?.name ?? null,
+        hasHistory: preview?.hasHistory ?? false,
+        nextVisitNote: preview?.nextVisitNote ?? null,
+        cautionNote: preview?.cautionNote ?? null,
+        setupLine: preview?.setupLine ?? null,
+        reminders: preview?.reminders ?? [],
+        intake,
+        charting,
+      };
+    },
+  );
+  const todayWorkflow = buildTodayWorkflow(todayWorkflowInputs);
+  const workflowByAppointment = todayWorkflowByAppointment(todayWorkflow);
 
   // PR #214: recorded-history attention list (two batched reads over
   // the 200 most recent sessions; unique clients counted once).
@@ -454,11 +459,11 @@ export default async function DashboardPage({
               <li key={appt.id}>
                 <AppointmentRow
                   appt={appt}
+                  workflow={workflowByAppointment.get(appt.id) ?? null}
                   pinnedNoteText={
                     pinnedByClient.get(appt.client_id)?.text ?? null
                   }
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
-                  beforeToday={beforeTodayPreviews.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "no_session"}
                   tz={studio.timezone}
@@ -468,13 +473,16 @@ export default async function DashboardPage({
             ))}
           </ul>
         )}
+        {/* The pilot feedback prompt used to live at the foot of the Daily Prep
+            Brief card. That card is gone, so it moves here — ONCE, at the foot
+            of the combined section, never once per appointment. Same
+            surface="daily_prep" contract, so pilot feedback stays comparable
+            across the change. */}
+        {visibleAppointments.length > 0 && (
+          <PilotFeedbackPrompt surface="daily_prep" />
+        )}
       </section>
 
-      {/* PR #241: Daily Prep Brief V1, directly under Today so the
-          day's recorded memory and follow-up items are right where the
-          practitioner is already looking. Rules-based, read-only,
-          links only. */}
-      <DailyPrepBriefCard brief={dailyPrepBrief} />
 
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown here, under
@@ -556,11 +564,12 @@ function DaySummary({
   appointmentCount: number;
   clientCount: number;
 }) {
-  if (appointmentCount === 0) {
-    return (
-      <p className="mt-1 text-sm text-neutral-500">No appointments today.</p>
-    );
-  }
+  // ONE empty-day message. EmptyDayState is the single source of truth for the
+  // empty day; this summary used to print "No appointments today." as well, so
+  // the sentence appeared twice — once under the heading and once in the card
+  // below it. The counts below are the only thing this component adds, and on
+  // an empty day there are no counts worth stating.
+  if (appointmentCount === 0) return null;
   const appt = `${appointmentCount} ${appointmentCount === 1 ? "appointment" : "appointments"}`;
   const client = `${clientCount} ${clientCount === 1 ? "client" : "clients"}`;
   return (
@@ -575,18 +584,20 @@ function DaySummary({
 // ---------------------------------------------------------------------------
 function AppointmentRow({
   appt,
+  workflow,
   pinnedNoteText,
   intakeStatus,
-  beforeToday,
   linkedSession,
   paymentState,
   tz,
   timeFormat,
 }: {
   appt: TodayAppointment;
+  // The ONE derived preparation model for THIS appointment (keyed by
+  // appointment id, so two same-client appointments never share a card).
+  workflow: TodayWorkflowItem | null;
   pinnedNoteText: string | null;
   intakeStatus: ClientIntakeForm["status"] | null;
-  beforeToday: BeforeTodayPreview | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
   tz: string;
@@ -598,7 +609,7 @@ function AppointmentRow({
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,
-    hasHistory: beforeToday?.hasHistory ?? false,
+    hasHistory: workflow?.hasHistory ?? false,
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
@@ -683,48 +694,71 @@ function AppointmentRow({
               {truncate(pinnedNoteText, 50)}
             </div>
           )}
-          {/* PR #212: compact Before-today preview; the full card
-              lives on the client Overview. Recorded-history wording
-              only; subdued styling so rows stay short. */}
-          {beforeToday && (
+          {/* PREPARATION — the facts that used to be split across the Today
+              row and the Daily Prep Brief, now resolved ONCE by
+              buildTodayWorkflow and rendered once here. Nothing below repeats a
+              status already shown by a pill or chip above. */}
+          {workflow && (
             <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                 Before today
               </span>
-              {!beforeToday.hasHistory ? (
+              {!workflow.hasHistory ? (
+                // ONE relationship line, not "New client" here and "No prior
+                // treatment history yet" somewhere else.
                 <span className="text-neutral-500">
-                  No charted history yet.
+                  New client · No charted history yet
                 </span>
               ) : (
                 <>
-                  {/* Chloe: the Remember note and the latest-settings line are
-                      the two things she reads off this card before a client sits
-                      down, so they show IN FULL — no CSS clamp, no character
-                      cap. `whitespace-pre-wrap` keeps intentional line breaks
-                      she typed; `break-words` keeps a long unbroken token (a lot
-                      code, a pasted link) from pushing the row sideways at
-                      iPhone width. The `title` stays for desktop hover.
-                      The pinned-note line above and the Daily Prep Brief card
-                      below are separate compact surfaces and keep their caps. */}
-                  {beforeToday.rememberLine ? (
+                  {/* Remember = the PLAN note (next_session_note). It is no
+                      longer taken from `rememberLine`, which collapsed the
+                      caution and the plan into one string, so the caution used
+                      to print twice under two different labels. */}
+                  {workflow.remember && (
                     <span
                       className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-                      title={beforeToday.rememberLine}
+                      title={workflow.remember}
                     >
-                      Remember: {beforeToday.rememberLine}
-                    </span>
-                  ) : (
-                    <span className="text-neutral-500">
-                      No watch/plan note.
+                      Remember: {workflow.remember}
                     </span>
                   )}
+                  {/* Caution = the watch line, kept visually distinct in the
+                      established rose convention and never folded into
+                      Remember. */}
+                  {workflow.caution && (
+                    <span
+                      className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
+                      title={workflow.caution}
+                    >
+                      Caution: {workflow.caution}
+                    </span>
+                  )}
+                  {!workflow.remember && !workflow.caution && (
+                    <span className="text-neutral-500">No watch/plan note.</span>
+                  )}
+                  {/* Latest setup, once. The brief's duplicate "Last recorded:"
+                      line is gone. */}
                   <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                    Latest setup: {beforeToday.setupLine ?? "Not recorded"}
-                  </span>
-                  <span className="text-neutral-600 dark:text-neutral-400">
-                    {beforeToday.recordsLine}
+                    Latest setup: {workflow.setup ?? "Not recorded"}
                   </span>
                 </>
+              )}
+              {/* Specific missing-record reminders, once each. The generic
+                  "Records: N reminders" count is gone: it said nothing these
+                  chips do not say precisely. */}
+              {workflow.missingRecords.length > 0 && (
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                  {workflow.missingRecords.map((r) => (
+                    <span
+                      key={r}
+                      data-testid="missing-record-chip"
+                      className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+                    >
+                      {r}
+                    </span>
+                  ))}
+                </span>
               )}
             </div>
           )}

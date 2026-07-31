@@ -1600,7 +1600,10 @@ export async function getStudioServiceOrder(
 // full text is rendered at iPhone width.
 export async function seedE2eDashboardMemoryClient(
   seed: E2eSeed,
-  opts: { cautionNote: string | null },
+  // `nextVisitNote` is the PLAN note (sessions.next_session_note) — a distinct
+  // fact from the caution. The combined Today card labels them separately, so
+  // tests need to set them independently.
+  opts: { cautionNote: string | null; nextVisitNote?: string | null },
 ): Promise<{ clientId: string; appointmentId: string }> {
   const prac = (
     await sql<{ id: string }>(
@@ -1623,9 +1626,9 @@ export async function seedE2eDashboardMemoryClient(
   );
   // A COMPLETED prior session (started in the past) so it counts as history.
   await sql(
-    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
-     values ($1,$2,$3,$4,'electrolysis', now() - interval '30 days')`,
-    [priorSessionId, seed.studioId, clientId, prac.id],
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+     values ($1,$2,$3,$4,'electrolysis', now() - interval '30 days', $5)`,
+    [priorSessionId, seed.studioId, clientId, prac.id, opts.nextVisitNote ?? null],
   );
   await sql(
     `insert into public.session_blocks
@@ -1660,6 +1663,32 @@ export async function seedE2eDashboardMemoryClient(
     ends,
   );
   return { clientId, appointmentId };
+}
+
+// A SECOND appointment today for an EXISTING client — the case that proves the
+// combined view joins by appointment id, not client id. Two appointments for
+// one person must stay two cards.
+export async function seedE2eSecondAppointmentToday(
+  seed: E2eSeed,
+  clientId: string,
+  hoursFromNow: number,
+): Promise<{ appointmentId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const starts = new Date(Date.now() + hoursFromNow * 3600 * 1000).toISOString();
+  const ends = new Date(Date.now() + (hoursFromNow + 1) * 3600 * 1000).toISOString();
+  const appointmentId = await seedConfirmedAppointment(
+    seed.studioId,
+    prac.id,
+    clientId,
+    starts,
+    ends,
+  );
+  return { appointmentId };
 }
 
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {

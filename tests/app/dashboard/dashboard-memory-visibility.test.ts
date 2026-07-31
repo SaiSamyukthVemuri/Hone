@@ -6,7 +6,7 @@ import { join } from "node:path";
 //
 // REPRODUCED DEFECT. The Today appointment card clipped the two lines Chloe
 // actually reads before a client sits down, in TWO independent ways:
-//   1. a JS character cap — `Remember: {truncate(beforeToday.rememberLine, 70)}`;
+//   1. a JS character cap — `Remember: {truncate(workflow.remember, 70)}`;
 //   2. Tailwind's `truncate` (= overflow:hidden; text-overflow:ellipsis;
 //      white-space:nowrap) on BOTH the Remember span and the Latest-setup span.
 // At 390px the usable text column is ~246px, so the CSS clamp bit at roughly
@@ -21,13 +21,16 @@ import { join } from "node:path";
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const PAGE = read("app/(app)/dashboard/page.tsx");
 const PREVIEWS = read("lib/dashboard/before-today-previews.ts");
-const PREP = read("lib/dashboard/daily-prep-brief.ts");
+const WORKFLOW = read("lib/dashboard/today-workflow.ts");
 
 // The Before-today preview block on the Today roster row: from the section
 // eyebrow to the last (already-untruncated) records line.
+// The preparation block of the combined Today card. The old generic
+// "{beforeToday.recordsLine}" end-marker is gone with the record-count line, so
+// the block now ends at the missing-record chips that replaced it.
 const PREVIEW_BLOCK = PAGE.slice(
-  PAGE.indexOf(">\n                Before today\n"),
-  PAGE.indexOf("{beforeToday.recordsLine}"),
+  PAGE.indexOf("Before today"),
+  PAGE.indexOf("workflow.missingRecords.length > 0"),
 );
 
 describe("Today appointment card shows the memory lines in full", () => {
@@ -38,12 +41,12 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("the Remember note is rendered whole — no character cap", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Remember: \{beforeToday\.rememberLine\}/);
-    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.rememberLine/);
+    expect(PREVIEW_BLOCK).toMatch(/Remember: \{workflow\.remember\}/);
+    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(workflow\.remember/);
   });
 
   it("the latest-settings line is rendered whole", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{beforeToday\.setupLine \?\? "Not recorded"\}/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
     expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.setupLine/);
   });
 
@@ -56,17 +59,26 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("both lines wrap safely and keep intentional line breaks", () => {
+    // Remember and Caution are now independent optional blocks (the old single
+    // ternary folded the caution into Remember).
     const remember = PREVIEW_BLOCK.slice(
-      PREVIEW_BLOCK.indexOf("beforeToday.rememberLine ? ("),
+      PREVIEW_BLOCK.indexOf("{workflow.remember && ("),
       PREVIEW_BLOCK.indexOf("No watch/plan note."),
     );
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
     const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
     expect(setup).toMatch(/whitespace-pre-wrap break-words/);
+    // The caution is its own wrapped block, in the rose convention.
+    const caution = PREVIEW_BLOCK.slice(
+      PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
+      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+    );
+    expect(caution).toMatch(/whitespace-pre-wrap break-words/);
+    expect(caution).toMatch(/text-rose-900/);
   });
 
   it("the desktop hover title is preserved on the Remember line", () => {
-    expect(PREVIEW_BLOCK).toMatch(/title=\{beforeToday\.rememberLine\}/);
+    expect(PREVIEW_BLOCK).toMatch(/title=\{workflow\.remember\}/);
   });
 });
 
@@ -76,23 +88,23 @@ describe("nothing else on the dashboard changed", () => {
     expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
   });
 
-  it("the Daily Prep Brief renders its memory lines in FULL too", () => {
-    // Reversed deliberately. The brief renders the SAME note as the Today
-    // roster card, a few hundred pixels lower on the SAME screen, so capping it
-    // at 90 characters here only moved the complaint. Its own truncate helper
-    // is gone, and the three memory lines interpolate the trimmed value.
-    expect(PREP).not.toMatch(/function truncate\(/);
-    expect(PREP).not.toMatch(/truncate\(input\./);
-    expect(PREP).toMatch(/For next visit: \$\{input\.nextVisitNote\.trim\(\)\}/);
-    expect(PREP).toMatch(/Caution noted: \$\{input\.cautionNote\.trim\(\)\}/);
-    expect(PREP).toMatch(/Last recorded: \$\{input\.setupLine\.trim\(\)\}/);
+  it("the combined workflow model carries the memory notes uncapped", () => {
+    // The 90-character cap that once lived in the brief is gone with the brief
+    // itself. The combined model trims only the outer edges and never slices.
+    expect(WORKFLOW).not.toMatch(/function truncate\(/);
+    expect(WORKFLOW).not.toMatch(/\.slice\(0,|substring\(|line-clamp|…/);
+    expect(WORKFLOW).toMatch(/const remember = trimmedOrNull\(input\.nextVisitNote\)/);
+    expect(WORKFLOW).toMatch(/const caution = trimmedOrNull\(input\.cautionNote\)/);
   });
 
-  it("the Daily Prep Brief CARD wraps instead of clipping", () => {
-    const CARD = read("app/(app)/dashboard/daily-prep-brief.tsx");
-    expect(CARD).toMatch(/whitespace-pre-wrap break-words text-xs/);
-    expect(CARD).not.toMatch(/\btruncate\b/);
-    expect(CARD).not.toMatch(/line-clamp/);
+  it("the ONE appointment card wraps instead of clipping", () => {
+    const PAGE = read("app/(app)/dashboard/page.tsx");
+    const row = PAGE.slice(
+      PAGE.indexOf("function AppointmentRow("),
+      PAGE.indexOf("function AppointmentStatusPill("),
+    );
+    expect(row).toMatch(/whitespace-pre-wrap break-words/);
+    expect(row).not.toMatch(/line-clamp/);
   });
 
   it("the preview data helper still truncates nothing (the fix is render-only)", () => {

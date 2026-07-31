@@ -133,10 +133,6 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     join(process.cwd(), "app/(app)/dashboard/page.tsx"),
     "utf8",
   );
-  const DAILY = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/daily-prep-brief.tsx"),
-    "utf8",
-  );
   const FOLLOWUP = readFileSync(
     join(process.cwd(), "app/(app)/dashboard/follow-up-assistant.tsx"),
     "utf8",
@@ -144,12 +140,17 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
 
   it("the dashboard renders the Pilot learning card and keeps the agentic cards", () => {
     expect(PAGE).toMatch(/<PilotLearningCard \/>/);
-    expect(PAGE).toMatch(/<DailyPrepBriefCard brief=\{dailyPrepBrief\}/);
+    // The Daily Prep Brief card is retired into the combined Today workflow.
+    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
     expect(PAGE).toMatch(/<FollowUpAssistantCard assistant=\{followUpAssistant\}/);
   });
 
   it("the two intended surfaces carry the feedback prompt; nothing else", () => {
-    expect(DAILY).toMatch(/<PilotFeedbackPrompt surface="daily_prep"/);
+    // surface="daily_prep" is an unchanged pilot contract, so feedback stays
+    // comparable across the retirement. It moved to the foot of the combined
+    // Today section — ONCE, never once per appointment card.
+    const prompts = PAGE.match(/<PilotFeedbackPrompt surface="daily_prep" \/>/g) ?? [];
+    expect(prompts).toHaveLength(1);
     expect(FOLLOWUP).toMatch(/<PilotFeedbackPrompt surface="follow_up_assistant"/);
   });
 });
