@@ -38,6 +38,7 @@ export function ProbePicker({
         </span>
         <button
           type="button"
+          data-testid="probe-change"
           onClick={() => {
             setBrand(selected.brand);
             setMaterial(selected.material);

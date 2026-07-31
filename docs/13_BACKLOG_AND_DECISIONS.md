@@ -19,6 +19,41 @@
 
 This section **is** maintained as current. Everything under "Decision log" below is history.
 
+### Whole-session copy does not carry the probe lot/batch — `Open, migration-scoped`
+
+**Status (2026-07-31): OPEN. Needs a NEW migration (next verified-free number, expected 0162).
+Deliberately NOT attempted in PR A2, which is code-only.**
+
+*What is true today.* Copying a whole prior session reproduces the machine/probe setup but
+carries **no** probe lot. Migration `0157_whole_session_copy_setup.sql` is the reason, in two
+places, and both are SQL function bodies:
+
+* `copy_session_setup` (SECURITY DEFINER) builds each destination row from a fixed INSERT
+  column allow-list that **omits** `probe_lot_number`, `probe_lot_confirmed` and
+  `probe_inventory_item_id`. The omission is deliberate — the migration header lists the lot
+  columns under the outcomes that are "NEVER read from the payload" — so even a forged spec
+  carrying a lot stores nothing.
+* the preview/canonical-descriptor payload never `select`s those columns either, so the lot is
+  absent from the draft the practitioner reviews before committing.
+
+*Why it cannot be done in application code.* Both are function bodies inside a migration;
+changing either requires `create or replace function`, i.e. a migration. The alternative —
+writing the lot after the commit through `updateSessionBlockAction` — would add a second,
+non-transactional write outside the RPC's fingerprint/idempotency guarantees, so a partial
+failure could leave blocks copied but lots missing. Rejected.
+
+*Required behaviour when this is built* (already specified, and already implemented for the
+in-form same-session copy in PR A2, so the semantics are settled):
+
+* prefill the exact copied lot, **UNCONFIRMED** — a copy is a transcription, never a check of
+  the physical package;
+* retain the inventory link **only** when the item is still ACTIVE and matches the copied probe;
+* otherwise clear **only** the link, preserve the lot text, and require confirmation;
+* explicitly selecting a different probe afterwards runs the normal per-probe resolver.
+
+*Not a regression.* No lot is copied through this path today and PR A2 does not change that;
+this entry records the gap so it is not mistaken for shipped behaviour.
+
 ### Willow direct new-client consultation booking route — `Deferred by product decision`
 
 **Decision (2026-07-27): DEFERRED.** A dedicated direct booking route for new-client

@@ -1337,6 +1337,15 @@ export async function seedE2eProbeInventoryItem(
 // so the Notification Centre computes its "Replace disinfectant now" operational
 // alert. A far-past discard_due_date with no date_discarded is unambiguously
 // overdue in any studio timezone. Returns the record id.
+// Expire a probe inventory lot out-of-band, so a test can prove that a COPY
+// preserves the lot text while dropping a link that is no longer valid.
+export async function expireProbeInventoryItem(itemId: string): Promise<void> {
+  await sql(
+    `update public.record_keeping_sterile_items set expiry_date = '2000-01-01' where id = $1`,
+    [itemId],
+  );
+}
+
 export async function seedE2eOverdueDisinfectant(
   seed: E2eSeed,
   opts: { name?: string; discardDueDate?: string; datePrepared?: string } = {},

@@ -63,6 +63,14 @@ export const BLOCK_SETUP_FIELDS = [
   "probe_size_value",
   "probe_length",
   "probe_label",
+  // The lot/batch travels WITH the probe. Copying the probe but not its lot left
+  // the destination with a probe whose lot then auto-resolved from unrelated
+  // history — silently swapping a traceability value the practitioner believed
+  // she had copied. The lot is copied EXACTLY; the inventory link is copied only
+  // when it still belongs to that probe (checked by the caller against live
+  // inventory), and a copy is NEVER confirmed.
+  "probe_lot_number",
+  "probe_inventory_item_id",
 ] as const;
 
 // Minimal structural source shapes (decoupled from the DB row types).
@@ -73,6 +81,10 @@ export type SetupSourceBlock = {
   minutes_performed: number | null;
   machine_frequency: string | null;
   probe_key: string | null;
+  // The lot snapshot + its durable inventory link. Optional so a caller with a
+  // narrower row shape still satisfies this contract structurally.
+  probe_lot_number?: string | null;
+  probe_inventory_item_id?: string | null;
 };
 
 // galvanic_intensity_percent is intentionally NOT part of the source contract:
@@ -110,6 +122,11 @@ export type TreatmentSetupDraftPatch = {
   unitsOfLye: string;
   pulseCount: string;
   pulseDelay: string;
+  // Copied EXACTLY from the source block. `probeLotConfirmed` is always false:
+  // a copy is a transcription, not a check of the physical package.
+  probeLotNumber: string;
+  probeInventoryItemId: string | null;
+  probeLotConfirmed: false;
 };
 
 function s(n: number | null | undefined): string {
@@ -137,6 +154,12 @@ export function firstLiveEntry<T extends SetupSourceEntry>(
 export function buildTreatmentSetupDraftPatch(
   block: SetupSourceBlock,
   firstEntry: SetupSourceEntry | null,
+  // Live inventory ids that are ACTIVE and belong to the copied probe. A link is
+  // carried only when the source's item is in this set, so a copy can never
+  // resurrect a link to an expired, archived or reclassified inventory row.
+  // Omit it to copy the lot NUMBER only (link dropped) — the safe default for a
+  // caller that cannot check inventory.
+  linkableInventoryItemIds?: ReadonlySet<string>,
 ): TreatmentSetupDraftPatch {
   const mode = ((block.mode ?? firstEntry?.mode) ?? "") as string;
   const isGalv = mode === "galv";
@@ -169,5 +192,27 @@ export function buildTreatmentSetupDraftPatch(
     unitsOfLye: wantGalv ? s(firstEntry?.units_of_lye) : "",
     pulseCount: s(pulseCount),
     pulseDelay,
+    // The lot travels with the probe, verbatim.
+    probeLotNumber: (block.probe_lot_number ?? "").trim(),
+    probeInventoryItemId: resolveCopiedInventoryLink(
+      block.probe_inventory_item_id ?? null,
+      linkableInventoryItemIds,
+    ),
+    // Never confirmed by a copy.
+    probeLotConfirmed: false,
   };
+}
+
+// A copied inventory link is kept ONLY when the item is still linkable for the
+// copied probe. Otherwise the LINK is dropped and the lot NUMBER is preserved:
+// the practitioner still sees the lot she copied, but the record never claims
+// traceability to an inventory row that is expired, archived, or now classified
+// under a different probe.
+function resolveCopiedInventoryLink(
+  sourceItemId: string | null,
+  linkable: ReadonlySet<string> | undefined,
+): string | null {
+  if (!sourceItemId) return null;
+  if (!linkable) return null;
+  return linkable.has(sourceItemId) ? sourceItemId : null;
 }

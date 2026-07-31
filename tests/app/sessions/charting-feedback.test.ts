@@ -84,7 +84,7 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
     expect(FORM).not.toMatch(/resolveInventoryAutofill\(/);
     // The auto-fill rule lives in the shared pure module.
     expect(SUGG).toMatch(/suggestions\.byKey\[probeKey\]/); // still exposes byKey
-    expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
+    expect(FORM).toMatch(/if \(draft\.probeKey === lotOwnerProbeKey\) return;/);
     expect(FORM).toMatch(/const patch = probeLotDraftPatch\(result\);/);
     const AUTOFILL = readFileSync(
       join(process.cwd(), "lib/record-keeping/probe-lot-autofill.ts"),
@@ -95,9 +95,13 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
     expect(AUTOFILL).toMatch(/probeLotNumber: result\.lotNumber,\s*\n\s*probeInventoryItemId: null,/);
     expect(AUTOFILL).not.toMatch(/probeLotConfirmed: true/);
   });
-  it("typing the lot un-confirms it + marks a manual edit (probe switch won't clobber)", () => {
+  it("typing the lot un-confirms it + binds the value to the CURRENT probe", () => {
     expect(FORM).toMatch(/probeLotConfirmed: false/);
-    expect(FORM).toMatch(/setLotEditedManually\(value\.trim\(\) !== ""\)/);
+    // A typed lot belongs to the probe selected when it was typed: it survives
+    // re-renders for that probe, and a probe switch drops it (a lot is
+    // probe-specific — it must never follow the practitioner to another probe).
+    expect(FORM).toMatch(/setLotOwnerProbeKey\(draft\.probeKey\);/);
+    expect(FORM).not.toMatch(/lotEditedManually/);
     expect(FORM).toMatch(/update\("probeLotConfirmed", !draft\.probeLotConfirmed\)/);
   });
   it("the query is studio-scoped, same-probe, and excludes null/blank/deleted", () => {
