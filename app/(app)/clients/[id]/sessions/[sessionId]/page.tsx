@@ -65,6 +65,15 @@ import {
   reviseClinicalNoteAction,
 } from "../../clinical-notes-actions";
 import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
+import {
+  resolveFinishAppointmentState,
+  chartingLabel,
+  aftercareLabel,
+  completionLabel,
+  postcareLabel,
+} from "@/lib/sessions/finish-appointment";
+import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
+import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 
 export default async function SessionDetailPage({
@@ -131,6 +140,20 @@ export default async function SessionDetailPage({
   // validates the submitted amount, and the executor still charges
   // the prepared row's stored amount.
   let sessionPaymentDefault: SessionPaymentDefaultAmount | null = null;
+  // Populated from the SAME widened appointment read below; feeds the Finish
+  // appointment workflow without a second read of the same row.
+  let apptContext: {
+    status: string | null;
+    endsAt: string | null;
+    postcareSentAt: string | null;
+    postcareFailedAt: string | null;
+    postcareClaimedAt: string | null;
+    postcareSendAttempts: number;
+    serviceName: string | null;
+    serviceModality: string | null;
+    startsAt: string | null;
+    practitionerName: string | null;
+  } | null = null;
   const paymentApptId = sessionPaymentEligibility.appointment?.id ?? null;
   if (paymentApptId) {
     const supabaseForDefault = await createClient();
@@ -144,9 +167,16 @@ export default async function SessionDetailPage({
     // was silently null on this page while quick checkout — which already used
     // the bare-table form — kept working. Same class of breakage migration 0094
     // caused and commit 8f0517e swept; 0151 was not swept.
+    // ONE appointment context read. It already existed for the booked-service
+    // payment default; it is WIDENED here to also supply the Finish appointment
+    // workflow (status, end time, postcare send-state, practitioner, modality)
+    // rather than issuing a second read of the same row. Still bounded,
+    // studio-scoped and appointment-id-scoped, still read-only.
     const { data: apptRow, error: apptErr } = await supabaseForDefault
       .from("appointments")
-      .select("duration_minutes, service:services(name, price_cents)")
+      .select(
+        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners(display_name)",
+      )
       .eq("studio_id", studio.id)
       .eq("id", paymentApptId)
       .maybeSingle();
@@ -163,6 +193,33 @@ export default async function SessionDetailPage({
         }),
       );
     }
+    {
+      const row = apptRow as Record<string, unknown> | null;
+      const svc = row?.service;
+      const svcOne = (Array.isArray(svc) ? svc[0] : svc) as
+        | { name?: string | null; modality?: string | null }
+        | null;
+      const prac = row?.practitioner;
+      const pracOne = (Array.isArray(prac) ? prac[0] : prac) as
+        | { display_name?: string | null }
+        | null;
+      apptContext = row
+        ? {
+            status: (row.status as string | null) ?? null,
+            endsAt: (row.ends_at as string | null) ?? null,
+            postcareSentAt: (row.postcare_email_sent_at as string | null) ?? null,
+            postcareFailedAt: (row.postcare_email_failed_at as string | null) ?? null,
+            postcareClaimedAt: (row.postcare_email_claimed_at as string | null) ?? null,
+            postcareSendAttempts:
+              (row.postcare_email_send_attempts as number | null) ?? 0,
+            serviceName: svcOne?.name ?? null,
+            serviceModality: svcOne?.modality ?? null,
+            startsAt: (row.starts_at as string | null) ?? null,
+            practitionerName: pracOne?.display_name ?? null,
+          }
+        : null;
+    }
+
     const svcEmbed = (apptRow as { service?: unknown } | null)?.service;
     const svcObj = (Array.isArray(svcEmbed) ? svcEmbed[0] : svcEmbed) as {
       name?: string | null;
@@ -199,6 +256,38 @@ export default async function SessionDetailPage({
     session.modality === "electrolysis"
       ? await getSessionWithBlocks(sessionId)
       : null;
+
+
+  // FINISH APPOINTMENT workflow context, derived from what is already loaded:
+  // the widened appointment read above, the session, the client, and the studio
+  // (studio:studios(*) already carries every postcare column). NO new query.
+  const finishAppt = apptContext;
+  const liveChartedBlocks = (blockData?.blocks ?? []).filter((b) => b.deleted_at == null).length;
+  const finishState = resolveFinishAppointmentState({
+    chartedBlockCount: liveChartedBlocks,
+    aftercareExplainedAt: session.aftercare_and_risks_explained_at ?? null,
+    // Joined by sessions.appointment_id — NEVER by client id, because a client
+    // can have several appointments and the wrong one would be completed.
+    appointment: finishAppt
+      ? {
+          id: paymentApptId as string,
+          status: finishAppt.status ?? "",
+          endsAt: finishAppt.endsAt,
+        }
+      : null,
+    clientEmail: clientData.client.email ?? null,
+    postcareConfigured:
+      !!studio.postcare_aftercare_text &&
+      studio.postcare_aftercare_text.trim().length > 0,
+    isOwner: practitioner.role === "owner",
+    postcareSentAt: finishAppt?.postcareSentAt ?? null,
+    postcareFailedAt: finishAppt?.postcareFailedAt ?? null,
+    postcareClaimedAt: finishAppt?.postcareClaimedAt ?? null,
+    postcareSendAttempts: finishAppt?.postcareSendAttempts ?? 0,
+    serviceModality: finishAppt?.serviceModality ?? null,
+    // Injected clock: the presenter never reads one itself.
+    nowMs: Date.now(),
+  });
 
   // PR #279 (Chloe charting feedback): the latest current probe lot/batch from
   // Feature A (Chloe charting feedback): the most recent lot/batch used for
@@ -444,26 +533,6 @@ export default async function SessionDetailPage({
           inline SessionPerformerLine under the title is the single
           performer surface. */}
 
-      {/* PR #181. id="session-payment" anchor so the calendar
-          NextStepCard's "Go to billing" link deep-scrolls into the
-          payment card. The wrapper is a noop visually; the anchor
-          is the entire surface the practitioner is looking for. */}
-      <div id="session-payment">
-        <SessionPaymentPrepareCard
-          sessionId={session.id}
-          clientId={id}
-          eligibility={sessionPaymentEligibility}
-          defaultAmount={sessionPaymentDefault}
-          // Trusted, server-derived owner flag — gates the owner-only Technical
-          // payment details disclosure + the Refund button (server refund
-          // authorization is unchanged; it is owner-only there too).
-          isOwner={practitioner.role === "owner"}
-          prepareAction={prepareSessionPaymentChargeAction}
-          executeAction={executeSessionPaymentChargeAction}
-          sendReceiptAction={sendPaymentChargeReceiptAction}
-          refundAction={refundPaymentChargeAttemptAction}
-        />
-      </div>
 
       {/* Migration 0157: whole-session "Copy areas and settings" — editable
           draft-model replacement for the paused one-tap copy. The preview is
@@ -578,53 +647,170 @@ export default async function SessionDetailPage({
         )}
       </section>
 
-      {/* PR #235: the risks/aftercare stamp is markable right where
-          charting happens, instead of only from the Records page.
-          SAME toggle component and SAME server action as the Records
-          procedure row (PR #205); no new write path. */}
-      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <div>
-          <h2 className="text-lg font-medium">Risks &amp; aftercare</h2>
-          <p className="text-sm text-neutral-500">
-            Recorded on the client procedure record for this session.
-          </p>
-        </div>
-        {isFinalized ? (
-          <p className="text-sm text-neutral-800 dark:text-neutral-200">
-            {session.aftercare_and_risks_explained_at
-              ? "Risks & aftercare explained (recorded on the procedure record)."
-              : "Risks & aftercare were not marked as explained."}
-          </p>
-        ) : (
-          <AftercareExplainedToggle
-            sessionId={session.id}
-            explainedAt={session.aftercare_and_risks_explained_at ?? null}
-            action={markAftercareExplainedAction}
-          />
-        )}
-      </section>
 
-      {/* PR #238 (Chloe pilot): "How do I save and complete the
-          session?" Everything on this page already saves per piece
-          (each treatment area, the next-visit note, the risks &
-          aftercare stamp), so there is nothing left to submit at the
-          end; this section says that plainly and gives an obvious
-          way OUT of charting. Links only: no new write path, no
-          duplicate submit buttons, nothing sticky covering fields. */}
-      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      {/* FINISH APPOINTMENT (Chloe). She charts the visit, then the two
+          consequential closing actions — marking the appointment completed and
+          sending postcare — live on the calendar appointment page, a different
+          surface. So they get forgotten, and payment (which is gated on
+          completion) stays locked. This section brings the EXISTING trusted
+          controls into one visible checklist: the shared completion control and
+          the shared postcare section, not reimplementations.
+
+          Everything above still saves as you go; nothing here is a new
+          lifecycle system. */}
+      <section
+        data-testid="finish-appointment"
+        className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+      >
         <div>
-          <h2 className="text-lg font-medium">Finish up</h2>
+          <h2 className="text-lg font-medium">Finish appointment</h2>
           <p className="text-sm text-neutral-500">
-            Everything above is already saved as you go: each treatment area,
-            the next-visit note, and the risks &amp; aftercare stamp save with
-            their own buttons. There is no separate session save.
+            Review the visit, complete the appointment, and send postcare before
+            leaving.
           </p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          {/* PR 1 (charting hardening): "Done charting" now shows a NON-BLOCKING
-              aftercare prompt when the session has no aftercare stamp. It never
-              blocks — "Continue without marking" always proceeds. When the stamp
-              is present it behaves like the old plain link. */}
+
+        {/* 1. TREATMENT CHART — informational. Deliberately NOT a block on
+            completion: completion is already possible today with an empty
+            chart, and silently introducing a clinical lock here would be a new
+            restriction nobody asked for. */}
+        <div className="flex flex-col gap-1 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Treatment chart
+          </span>
+          <span
+            data-testid="finish-charting-status"
+            className={
+              finishState.charting === "charted"
+                ? "text-sm text-neutral-700 dark:text-neutral-300"
+                : "text-sm text-amber-800 dark:text-amber-300"
+            }
+          >
+            {chartingLabel(finishState.charting)}
+          </span>
+        </div>
+
+        {/* 2. RISKS & AFTERCARE EXPLAINED — the session stamp, distinct from
+            the postcare email. "Explained" means she discussed it; "sent" means
+            an email was handed to the provider. Never auto-stamped. */}
+        <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Risks &amp; aftercare explained
+          </span>
+          <span
+            data-testid="finish-aftercare-status"
+            className="text-sm text-neutral-700 dark:text-neutral-300"
+          >
+            {aftercareLabel(finishState.aftercare)}
+          </span>
+          {/* The EXISTING toggle, always rendered for an editable session so
+              both of its states survive: it shows "✓ Risks explained and
+              aftercare provided" once marked, and can still be un-marked if she
+              taps it by mistake. Gating it on "not marked" would have removed
+              both, which is a behaviour change nobody asked for. */}
+          {!isFinalized && (
+            <AftercareExplainedToggle
+              sessionId={session.id}
+              explainedAt={session.aftercare_and_risks_explained_at ?? null}
+              action={markAftercareExplainedAction}
+            />
+          )}
+        </div>
+
+        {/* 3. APPOINTMENT COMPLETED — only when a booked appointment is linked
+            (by sessions.appointment_id, never by client). Uses THE shared
+            completion control, so the end-time gate, the accessible
+            confirmation, single-flight and the audit row are the same ones the
+            calendar surface has always used. No-show is deliberately absent. */}
+        <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Appointment completed
+          </span>
+          <span
+            data-testid="finish-completion-status"
+            className={
+              finishState.completion.kind === "completed"
+                ? "text-sm font-medium text-green-700 dark:text-green-400"
+                : "text-sm text-neutral-700 dark:text-neutral-300"
+            }
+          >
+            {completionLabel(finishState.completion)}
+          </span>
+          {!isFinalized && finishState.completion.kind === "ready" && (
+            <MarkAppointmentCompleteControl
+              appointmentId={finishState.completion.appointmentId}
+              endsAt={finishState.completion.endsAt}
+              block
+            />
+          )}
+          {finishState.completion.kind === "before_end" && (
+            <p className="text-xs text-neutral-500">
+              You can mark it completed once the appointment end time passes —
+              this updates on its own.
+            </p>
+          )}
+        </div>
+
+        {/* 4. POSTCARE EMAIL — THE shared section, identical to the calendar
+            surface: same preview, same first-send claim, same consultation
+            attestation, same failure honesty. Postcare stays an explicit manual
+            action unless the studio's existing auto_on_complete setting sends
+            it; nothing here auto-sends after completion. */}
+        <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+          {finishState.postcare.kind === "unlinked" ? (
+            <>
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Postcare email
+              </span>
+              <span
+                data-testid="finish-postcare-status"
+                className="text-sm text-neutral-700 dark:text-neutral-300"
+              >
+                {postcareLabel(finishState.postcare)}
+              </span>
+            </>
+          ) : (
+            !isFinalized &&
+            paymentApptId && (
+              <PostcareSection
+                clientEmail={clientData.client.email ?? null}
+                appointmentId={paymentApptId}
+                studioName={studio.name}
+                studioEmail={
+                  (studio.postcare_contact_email?.trim() ||
+                    studio.owner_email) ?? null
+                }
+                studioTimezone={studio.timezone}
+                aftercareText={studio.postcare_aftercare_text}
+                warningSignsText={studio.postcare_warning_signs_text}
+                productRecommendationsText={
+                  studio.postcare_product_recommendations_text
+                }
+                reviewUrl={studio.postcare_review_url}
+                reviewPromptText={studio.postcare_review_prompt_text}
+                clientName={clientData.client.name}
+                serviceName={apptContext?.serviceName ?? null}
+                serviceModality={apptContext?.serviceModality ?? null}
+                startsAt={apptContext?.startsAt ?? ""}
+                practitionerName={apptContext?.practitionerName ?? null}
+                postcareEmailSentAt={apptContext?.postcareSentAt ?? null}
+                postcareEmailSendAttempts={
+                  apptContext?.postcareSendAttempts ?? 0
+                }
+                postcareEmailClaimedAt={apptContext?.postcareClaimedAt ?? null}
+                postcareEmailFailedAt={apptContext?.postcareFailedAt ?? null}
+                isOwner={practitioner.role === "owner"}
+              />
+            )
+          )}
+        </div>
+
+        {/* FINAL EXIT. The safe-exit semantics from DoneChartingButton move
+            here intact: leaving without the aftercare stamp still requires the
+            explicit warning, and "Continue without marking" still proceeds
+            without writing anything. Nothing above navigates automatically —
+            she must be able to SEE the updated statuses before leaving. */}
+        <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 sm:flex-row sm:items-center dark:border-neutral-800">
           {isFinalized ? (
             <Link
               href={`/clients/${id}?tab=sessions`}
@@ -636,20 +822,42 @@ export default async function SessionDetailPage({
             <DoneChartingButton
               sessionId={session.id}
               doneHref={`/clients/${id}?tab=sessions`}
-              aftercareExplained={session.aftercare_and_risks_explained_at != null}
+              aftercareExplained={
+                session.aftercare_and_risks_explained_at != null
+              }
               markAction={markAftercareExplainedAction}
+              label="Done — back to client"
             />
-          )}
-          {paymentApptId && (
-            <Link
-              href={`/calendar/${paymentApptId}`}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-900 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100"
-            >
-              Review appointment &amp; billing
-            </Link>
           )}
         </div>
       </section>
+
+      {/* MOVED, NOT CHANGED (Chloe's flow: chart → finish → pay). This block
+          used to sit ABOVE the charting content, so payment was the first thing
+          on the page and the completion it depends on was the last. It is
+          relocated verbatim — same wrapper, same anchor, same component, same
+          props, same actions — so the practitioner reaches it immediately after
+          completing the appointment that unlocks it. */}
+      {/* PR #181. id="session-payment" anchor so the calendar
+          NextStepCard's "Go to billing" link deep-scrolls into the
+          payment card. The wrapper is a noop visually; the anchor
+          is the entire surface the practitioner is looking for. */}
+      <div id="session-payment">
+        <SessionPaymentPrepareCard
+          sessionId={session.id}
+          clientId={id}
+          eligibility={sessionPaymentEligibility}
+          defaultAmount={sessionPaymentDefault}
+          // Trusted, server-derived owner flag — gates the owner-only Technical
+          // payment details disclosure + the Refund button (server refund
+          // authorization is unchanged; it is owner-only there too).
+          isOwner={practitioner.role === "owner"}
+          prepareAction={prepareSessionPaymentChargeAction}
+          executeAction={executeSessionPaymentChargeAction}
+          sendReceiptAction={sendPaymentChargeReceiptAction}
+          refundAction={refundPaymentChargeAttemptAction}
+        />
+      </div>
 
       {/* An archived (legacy finalized) record cannot be soft-deleted — the DB
           guard from 0119 still enforces that — so the destructive control is

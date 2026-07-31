@@ -226,7 +226,7 @@ describe("Session payment prepare form wiring", () => {
     // composite one (PGRST200), so the default was always null here. See
     // tests/app/tenant-consistency-embeds.test.ts for the permanent ban.
     expect(SESSION_PAGE).toMatch(
-      /service:services\(name, price_cents\)/,
+      /service:services\(name, price_cents, modality\)/,
     );
     expect(SESSION_PAGE).toMatch(/from\("client_pricing"\)/);
     expect(SESSION_PAGE).toMatch(/defaultAmount=\{sessionPaymentDefault\}/);

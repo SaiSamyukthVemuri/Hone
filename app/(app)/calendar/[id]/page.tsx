@@ -31,6 +31,7 @@ import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-s
 import { calendarReturnHref } from "../calendar-return";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import { PostcareSendButton } from "../PostcareSendButton";
+import { PostcareSection } from "@/components/appointment/postcare-section";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
 import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
@@ -478,10 +479,12 @@ export default async function AppointmentDetailPage({
           explicit "treatment was performed" confirmation on send.
           Status is NOT a gate. Empty postcare aftercare text is
           surfaced as inline guidance, not a silent block. The section
-          is hidden entirely only when the client has no email on
-          file. */}
-      {data.client?.email && (
+          renders a clear "Postcare unavailable — no client email"
+          state instead of vanishing when the client has no EMAIL. (A deleted
+          client row is a different case and still renders nothing.) */}
+      {data.client && (
         <PostcareSection
+          clientEmail={data.client?.email ?? null}
           appointmentId={id}
           studioName={studio.name}
           // Match the priority used by sendPostcareToClient
@@ -1389,105 +1392,3 @@ function EmailRow({
 // send button is not rendered in this state; the action would
 // reject anyway, and the missing-setup case is what the practitioner
 // actually needs to act on.
-function PostcareSection(props: {
-  appointmentId: string;
-  studioName: string;
-  studioEmail: string | null;
-  studioTimezone: string;
-  aftercareText: string | null;
-  warningSignsText: string | null;
-  productRecommendationsText: string | null;
-  reviewUrl: string | null;
-  reviewPromptText: string | null;
-  clientName: string;
-  serviceName: string | null;
-  serviceModality: string | null;
-  startsAt: string;
-  practitionerName: string | null;
-  postcareEmailSentAt: string | null;
-  postcareEmailSendAttempts: number;
-  // PR #311: postcare send-state correctness.
-  postcareEmailClaimedAt: string | null;
-  postcareEmailFailedAt: string | null;
-  isOwner: boolean;
-}) {
-  const preview = buildPostcareEmail({
-    clientName: props.clientName,
-    studioName: props.studioName,
-    studioEmail: props.studioEmail,
-    practitionerName: props.practitionerName,
-    serviceName: props.serviceName,
-    startsAt: props.startsAt ? new Date(props.startsAt) : null,
-    timezone: props.studioTimezone,
-    aftercareText: props.aftercareText,
-    warningSignsText: props.warningSignsText,
-    productRecommendationsText: props.productRecommendationsText,
-    reviewUrl: props.reviewUrl,
-    reviewPromptText: props.reviewPromptText,
-  });
-
-  const aftercareConfigured =
-    !!props.aftercareText && props.aftercareText.trim().length > 0;
-  const isConsultation = props.serviceModality === "consultation";
-
-  return (
-    <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-        Postcare email
-      </h2>
-      {isConsultation && (
-        <p className="text-sm text-neutral-700 dark:text-neutral-300">
-          Consultations sometimes include a short electrolysis test
-          treatment. Send postcare only if treatment was performed.
-        </p>
-      )}
-      {aftercareConfigured ? (
-        <>
-          <p className="text-xs text-neutral-500">
-            {isConsultation
-              ? "Preview the email before sending. You'll confirm that treatment was performed in the next step."
-              : "Send the client your studio's aftercare information. Preview the email before sending."}
-          </p>
-          <PostcareSendButton
-            appointmentId={props.appointmentId}
-            alreadySentAt={props.postcareEmailSentAt}
-            failedAt={props.postcareEmailFailedAt}
-            // PR #311: "sending" = a fresh claim with no outcome yet (server-
-            // computed so the client render carries no Date.now → no hydration
-            // mismatch). A stale claim (>5 min, sender died) is not "sending".
-            sending={
-              !!(
-                props.postcareEmailClaimedAt &&
-                !props.postcareEmailSentAt &&
-                !props.postcareEmailFailedAt &&
-                Date.now() - new Date(props.postcareEmailClaimedAt).getTime() <
-                  5 * 60_000
-              )
-            }
-            sendAttempts={props.postcareEmailSendAttempts}
-            previewText={preview.preview}
-            requiresConsultationConfirmation={isConsultation}
-          />
-        </>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-neutral-700 dark:text-neutral-300">
-            Postcare email is not configured yet.
-          </p>
-          {props.isOwner ? (
-            <a
-              href="/settings/intake#postcare"
-              className="self-start rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Configure postcare
-            </a>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              Ask the studio owner to configure postcare instructions.
-            </p>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}

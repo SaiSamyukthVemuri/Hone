@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { sendPostcareEmailAction } from "./actions";
 
 // Manual postcare send + preview modal.
@@ -57,6 +58,7 @@ export function PostcareSendButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [treatmentPerformed, setTreatmentPerformed] = useState(false);
   // After a successful send the modal switches to a "Sent" confirmation
@@ -116,6 +118,13 @@ export function PostcareSendButton({
         setError(r.error);
         return;
       }
+      // DURABLE state, not just the transient confirmation. The modal's
+      // "Sent" view is immediate feedback; this re-renders the server
+      // component so the parent settles on the provider-confirmed
+      // postcare_email_sent_at and the trigger becomes "Resend postcare".
+      // Only a successful provider handoff refreshes — a failure leaves the
+      // modal open with its error, and nothing claims the email was sent.
+      router.refresh();
       // Stay in the modal in a confirmation state so the send does not
       // look silent. The useEffect above closes it shortly after.
       setJustSent(true);

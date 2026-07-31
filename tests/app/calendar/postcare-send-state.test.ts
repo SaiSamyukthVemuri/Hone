@@ -125,10 +125,20 @@ describe("postcare UI states (PostcareSendButton)", () => {
     const visible = codeOnly(BUTTON);
     expect(visible).not.toMatch(/\b(delivered|received|opened|read receipt|has read)\b/i);
   });
-  it("the page computes a server-side 'sending' flag (stale-claim aware, no client Date.now)", () => {
-    expect(PAGE).toMatch(/sending=\{/);
-    expect(PAGE).toMatch(/Date\.now\(\) - new Date\(props\.postcareEmailClaimedAt\)\.getTime\(\) </);
-    expect(PAGE).toMatch(/failedAt=\{props\.postcareEmailFailedAt\}/);
+  it("the SHARED postcare section computes a server-side 'sending' flag (stale-claim aware, no client Date.now)", () => {
+    // PostcareSection was extracted so the calendar page and the charting
+    // "Finish appointment" workflow render ONE implementation. The stale-claim
+    // computation moved with it, unchanged, and is still server-side.
+    const SHARED = readFileSync(
+      path.resolve(__dirname, "../../../components/appointment/postcare-section.tsx"),
+      "utf8",
+    );
+    expect(SHARED).toMatch(/sending=\{/);
+    expect(SHARED).toMatch(/Date\.now\(\) - new Date\(props\.postcareEmailClaimedAt\)\.getTime\(\) </);
+    expect(SHARED).toMatch(/failedAt=\{props\.postcareEmailFailedAt\}/);
+    // The calendar page mounts it rather than reimplementing it.
+    expect(PAGE).toMatch(/<PostcareSection/);
+    expect(PAGE).not.toMatch(/function PostcareSection/);
   });
 });
 

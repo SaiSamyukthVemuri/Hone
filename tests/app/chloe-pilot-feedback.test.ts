@@ -77,33 +77,50 @@ describe("2. client sections: stable select on phones", () => {
 });
 
 describe("3. charting: obvious finish, no new write path", () => {
-  it("the Finish up section closes the charting page", () => {
-    expect(SESSION_PAGE).toMatch(/Finish up/);
+  it("the Finish appointment section closes the charting page", () => {
+    // The loose "Finish up" links block is replaced by the Finish appointment
+    // workflow: same purpose (an obvious way OUT of charting, no new write
+    // path), now with the completion + postcare controls she used to have to
+    // hunt for on the calendar page.
+    expect(SESSION_PAGE).toMatch(/Finish appointment/);
     expect(SESSION_PAGE).toMatch(
-      /Everything above is already saved as you go/,
+      /Review the visit, complete the appointment, and send postcare before/,
     );
-    expect(SESSION_PAGE).toMatch(/There is no separate session save\./);
-    expect(SESSION_PAGE).toMatch(/Done charting/);
-    expect(SESSION_PAGE).toMatch(/Review appointment &amp; billing/);
+    // The four visit-closing states are all named on this one surface.
+    for (const step of [
+      "Treatment chart",
+      "Risks &amp; aftercare explained",
+      "Appointment completed",
+      "Postcare email",
+    ]) {
+      expect(SESSION_PAGE).toContain(step);
+    }
+    expect(SESSION_PAGE).toMatch(/Done — back to client/);
   });
 
   it("finish actions navigate to existing routes; no new session write/submit path", () => {
+    // Scoped to the Finish section ONLY. The session-payment block now sits
+    // directly below it (chart → finish → pay), and that block legitimately
+    // contains forms — they are the payment card's, not a new session write.
     const finish = SESSION_PAGE.slice(
-      SESSION_PAGE.indexOf("Finish up"),
-      SESSION_PAGE.indexOf("<DeleteSessionForm"),
+      SESSION_PAGE.indexOf('data-testid="finish-appointment"'),
+      SESSION_PAGE.indexOf('id="session-payment"'),
     );
     // Charting PR 1: "Done charting" is now the non-blocking aftercare guard,
     // which navigates to the sessions tab (doneHref) — still no session write.
     expect(finish).toMatch(/<DoneChartingButton/);
     expect(finish).toMatch(/doneHref=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
-    expect(finish).toMatch(/href=\{`\/calendar\/\$\{paymentApptId\}`\}/);
+    expect(finish).toMatch(/label="Done — back to client"/);
+    // The "Review appointment & billing" hop is GONE: the completion and
+    // postcare controls it pointed at are now in this very section.
+    expect(finish).not.toMatch(/Review appointment/);
     // no NEW session-save form/submit in the finish section (the aftercare mark
     // reuses the existing toggle action, not a new write path).
     expect(finish).not.toMatch(/<form|type="submit"|createSession|updateSession|addElectrolysis/);
   });
 
   it("finish links are touch sized and render above Delete", () => {
-    const finish = SESSION_PAGE.indexOf("Finish up");
+    const finish = SESSION_PAGE.indexOf('data-testid="finish-appointment"');
     const del = SESSION_PAGE.indexOf("<DeleteSessionForm");
     expect(finish).toBeGreaterThan(-1);
     expect(del).toBeGreaterThan(finish);
@@ -201,7 +218,7 @@ describe("safety", () => {
     const spec = read("e2e/mobile-ux.spec.ts");
     expect(spec).toMatch(/fontSize/);
     expect(spec).toMatch(/selectOption/);
-    expect(spec).toMatch(/Done charting/);
+    expect(spec).toMatch(/Done — back to client/);
     const core = read("e2e/core-memory-loop.spec.ts");
     expect(core).toMatch(/Procedure records|procedure record for one client/);
   });

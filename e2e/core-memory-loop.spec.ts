@@ -155,22 +155,19 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByText("E2E caution: shorter intervals next visit").first(),
     ).toBeVisible({ timeout: 20_000 });
 
-    // PR #238: the Finish up section makes the end of charting
-    // obvious. This session HAS appointment context, so both exits
-    // render: Done charting and the appointment/billing review link.
+    // The Finish appointment workflow replaces the loose "Finish up" links.
+    // The completion and postcare controls it used to send her to the calendar
+    // page for are now IN this section, so the hop is gone by design.
+    await expect(page.getByTestId("finish-appointment")).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Finish up" }),
+      page.getByRole("button", { name: /Done — back to client/ }),
     ).toBeVisible();
+    await expect(page.getByTestId("finish-completion-status")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Done charting" }),
-    ).toBeVisible();
-    const reviewLink = page.getByRole("link", {
-      name: "Review appointment & billing",
-    });
-    await expect(reviewLink).toBeVisible();
-    expect(await reviewLink.getAttribute("href")).toBe(
-      `/calendar/${firstAppointmentId}`,
-    );
+      page.getByRole("link", { name: "Review appointment & billing" }),
+    ).toHaveCount(0);
+    expect(firstAppointmentId).toBeTruthy();
+    expect(true).toBe(true);
   });
 
   await test.step("dashboard Today row knows the appointment is charted (PR #236)", async () => {
