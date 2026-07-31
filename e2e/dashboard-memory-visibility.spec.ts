@@ -36,6 +36,13 @@ function rememberLine(page: Page) {
   return page.locator("span").filter({ hasText: /^Remember: / }).first();
 }
 
+// The combined Today card labels the watch line "Caution:" and the plan note
+// "Remember:" — the old card collapsed both into one "Remember:" line, which is
+// exactly the duplication the combined workflow removed.
+function cautionLine(page: Page) {
+  return page.locator("span").filter({ hasText: /^Caution: / }).first();
+}
+
 function setupLine(page: Page) {
   return page.locator("span").filter({ hasText: /^Latest setup: / }).first();
 }
@@ -47,7 +54,11 @@ test.describe("iPhone profile", () => {
 
   test("the Remember note and latest-settings line show in FULL at 390px", async ({ page }) => {
     const seed = await seedE2eStudio();
-    await seedE2eDashboardMemoryClient(seed, { cautionNote: LONG_NOTE });
+    // Seed the PLAN note: it is what the card labels "Remember:".
+    await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: null,
+      nextVisitNote: LONG_NOTE,
+    });
     await loginAsOwner(page, seed);
     await openDashboard(page);
 
@@ -139,7 +150,8 @@ test.describe("iPhone profile", () => {
   test("an unbroken token wraps rather than pushing the layout sideways", async ({ page }) => {
     const seed = await seedE2eStudio();
     await seedE2eDashboardMemoryClient(seed, {
-      cautionNote: `Lot ${"A".repeat(90)}`,
+      cautionNote: null,
+      nextVisitNote: `Lot ${"A".repeat(90)}`,
     });
     await loginAsOwner(page, seed);
     await openDashboard(page);
@@ -170,7 +182,10 @@ test.describe("desktop is unaffected", () => {
 
   test("the full note renders and keeps its hover title", async ({ page }) => {
     const seed = await seedE2eStudio();
-    await seedE2eDashboardMemoryClient(seed, { cautionNote: LONG_NOTE });
+    await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: null,
+      nextVisitNote: LONG_NOTE,
+    });
     await loginAsOwner(page, seed);
     await openDashboard(page);
 
@@ -182,34 +197,46 @@ test.describe("desktop is unaffected", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Daily Prep Brief — the SAME note, on the SAME screen, also in full.
+// The CAUTION line on the combined Today card.
 // ---------------------------------------------------------------------------
-// The roster card was un-capped first; the brief kept its own 90-character cap,
-// so a long note still appeared clipped a few hundred pixels lower. These prove
-// both surfaces now agree.
-test.describe("Daily Prep Brief at iPhone width", () => {
+// This used to be the "Daily Prep Brief" block: the brief re-rendered the same
+// note a few hundred pixels lower under a different label, with its own
+// 90-character cap. The brief is retired — the caution now renders ONCE, on the
+// appointment's own card, labelled "Caution:" and visually distinct from the
+// plan note. The full-text guarantees it proved are asserted here instead.
+test.describe("the caution line at iPhone width", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-  const briefCard = (page: Page) =>
-    page.locator("section").filter({ hasText: "Daily prep brief" }).first();
-
-  test("the caution note renders in FULL in the brief, not capped at 90", async ({ page }) => {
+  test("a caution renders in FULL, once, and never also as Remember", async ({ page }) => {
     const seed = await seedE2eStudio();
     await seedE2eDashboardMemoryClient(seed, { cautionNote: LONG_NOTE });
     await loginAsOwner(page, seed);
     await openDashboard(page);
 
-    const card = briefCard(page);
-    await expect(card).toBeVisible({ timeout: T });
-    const line = card.locator("li").filter({ hasText: /^Caution noted: / }).first();
-    await expect(line).toBeVisible();
-
+    const line = cautionLine(page);
+    await expect(line).toBeVisible({ timeout: T });
     const text = await line.innerText();
+
     await test.step("whole note present, no ellipsis, past the old 90-char cap", async () => {
       expect(text).toContain(LONG_NOTE_LINE_1);
       expect(text).toContain(LONG_NOTE_LINE_2);
       expect(text).not.toContain("…");
       expect(text.length).toBeGreaterThan(90);
+    });
+
+    await test.step("it appears exactly ONCE on the page", async () => {
+      await expect(
+        page.locator("span").filter({ hasText: /^Caution: / }),
+      ).toHaveCount(1);
+      // ...and the retired brief's second copy is gone entirely.
+      await expect(
+        page.getByRole("heading", { name: "Daily prep brief" }),
+      ).toHaveCount(0);
+      await expect(page.getByText("Caution noted:")).toHaveCount(0);
+      // No plan note was recorded, so nothing claims one.
+      await expect(
+        page.locator("span").filter({ hasText: /^Remember: / }),
+      ).toHaveCount(0);
     });
 
     await test.step("it wraps rather than being clipped", async () => {
@@ -239,23 +266,15 @@ test.describe("Daily Prep Brief at iPhone width", () => {
       }));
       expect(w.s, `no horizontal overflow (${w.s} vs ${w.c})`).toBeLessThanOrEqual(w.c);
     });
-
-    await test.step("roster card and brief show the SAME text — the actual defect", async () => {
-      const roster = (await rememberLine(page).innerText())
-        .replace(/^Remember:\s*/, "")
-        .trim();
-      const brief = text.replace(/^Caution noted:\s*/, "").trim();
-      expect(brief).toBe(roster);
-    });
   });
 
-  test("an unbroken token in the brief wraps rather than widening the page", async ({ page }) => {
+  test("an unbroken token in the caution wraps rather than widening the page", async ({ page }) => {
     const seed = await seedE2eStudio();
     await seedE2eDashboardMemoryClient(seed, { cautionNote: `Lot ${"A".repeat(90)}` });
     await loginAsOwner(page, seed);
     await openDashboard(page);
 
-    const line = briefCard(page).locator("li").filter({ hasText: /^Caution noted: / }).first();
+    const line = cautionLine(page);
     await expect(line).toBeVisible({ timeout: T });
     expect(
       await line.evaluate((n) => getComputedStyle(n).overflowWrap || getComputedStyle(n).wordWrap),
