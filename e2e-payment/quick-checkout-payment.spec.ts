@@ -47,7 +47,15 @@ test.beforeAll(async () => {
   // A clean fake ledger for this run (survives a Playwright retry).
   resetFakeStripeLedger();
   clearFakeStripeOutcome();
-  seed = await seedEligiblePaymentWithLogin({ label: "success" });
+  // F-PAY-001: this success journey must have a REAL booked service priced at
+  // the amount it charges. It previously carried no service at all and relied
+  // on the historical sessions.price_paid_cents fallback to populate the field
+  // — the exact fallback this change removed, because a past payment is not an
+  // authority for what to charge today.
+  seed = await seedEligiblePaymentWithLogin({
+    label: "success",
+    bookedService: { name: "Quick Checkout Success", priceCents: 22500 },
+  });
 });
 
 test.afterAll(async () => {
@@ -120,7 +128,10 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
   await expect(modal.getByText(seed.clientName)).toBeVisible();
-  await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveValue("225.00");
+  // F-PAY-001: the amount is the server's decision, rendered not edited — and
+  // quick checkout shows exactly what session detail shows.
+  await expect(modal.getByTestId("authoritative-amount")).toHaveText("$225.00");
+  await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
   await expect(modal.getByText(/ending in 4242/i)).toBeVisible();
   // Processor identifiers are never shown by default (owner-only disclosure; and
   // there is no PaymentIntent yet anyway).

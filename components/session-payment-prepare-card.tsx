@@ -6,7 +6,11 @@ import type {
   SessionPaymentEligibility,
   SessionPaymentExistingAttemptSummary,
 } from "@/lib/billing/session-payment-types";
-import type { SessionPaymentDefaultAmount } from "@/lib/billing/session-payment-default-amount";
+import type {
+  ResolvedSessionPaymentAmount,
+  SessionPaymentAmountResult,
+} from "@/lib/billing/session-payment-amount";
+import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -179,7 +183,7 @@ export function SessionPaymentPrepareCard({
   sessionId,
   clientId,
   eligibility,
-  defaultAmount = null,
+  amountResult = null,
   isOwner = false,
   prepareAction,
   executeAction,
@@ -197,7 +201,8 @@ export function SessionPaymentPrepareCard({
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
   // amount. Null keeps the pre-#200 behavior.
-  defaultAmount?: SessionPaymentDefaultAmount | null;
+  // The server's pricing decision for this session (resolved or blocked).
+  amountResult?: SessionPaymentAmountResult | null;
   prepareAction: PrepareAction;
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
@@ -244,18 +249,12 @@ export function SessionPaymentPrepareCard({
 
   const showPrepareForm =
     eligibility.eligible && !activeAttempt && !prepareJustSucceeded;
-  // PR #200 defaulting order: client custom pricing / booked service
-  // price (resolved server-side into defaultAmount), then the
-  // historical session price, then blank manual entry.
-  const suggestedAmount =
-    defaultAmount != null
-      ? formatCadFromCents(defaultAmount.amountCents).replace("$", "")
-      : eligibility.session?.pricePaidCents != null
-        ? formatCadFromCents(eligibility.session.pricePaidCents).replace(
-            "$",
-            "",
-          )
-        : "";
+  // F-PAY-001: there is no "suggested" amount any more. Either the server
+  // resolved ONE authoritative amount, or preparation is blocked with a reason.
+  // The historical session price is NOT a pricing authority and is no longer
+  // consulted here.
+  const resolvedAmount =
+    amountResult && amountResult.kind === "resolved" ? amountResult : null;
 
   return (
     <section
@@ -327,12 +326,33 @@ export function SessionPaymentPrepareCard({
         <BlockedPanel reasons={eligibility.blockingReasons} />
       )}
 
-      {showPrepareForm && (
+      {/* Blocked pricing: a calm explanation instead of a blank editable box.
+          Preparation is withdrawn entirely — there is no amount to confirm. */}
+      {/* A null result means the pricing context itself could not be loaded.
+          Never render nothing: say so, and offer no prepare action. */}
+      {showPrepareForm && !amountResult && (
+        <p
+          data-testid="pricing-blocked"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          The payment amount could not be confirmed. Refresh and try again.
+        </p>
+      )}
+
+      {showPrepareForm && amountResult && amountResult.kind !== "resolved" && (
+        <p
+          data-testid="pricing-blocked"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          {unresolvedAmountMessage(amountResult)}
+        </p>
+      )}
+
+      {showPrepareForm && resolvedAmount && (
         <PrepareForm
           sessionId={sessionId}
           eligibility={eligibility}
-          suggestedAmount={suggestedAmount}
-          defaultAmount={defaultAmount}
+          amount={resolvedAmount}
           pending={preparePending}
           error={prepareError}
           blockingReasons={prepareBlockingReasons}
@@ -839,7 +859,10 @@ function ReceiptSubPanel({
                   setError(r.error);
                 });
               }}
-              className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              // min-h-[44px]: this is the control Chloe presses on a phone with a
+        // client in the chair, so it meets the touch-target floor the rest of
+        // the charting surfaces already use.
+        className="inline-flex min-h-[44px] items-center justify-center self-start rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
             >
               {pending ? "Sending receipt..." : "Send receipt"}
             </button>
@@ -974,7 +997,10 @@ function RefundSubPanel({
                 type="button"
                 disabled={pending}
                 onClick={() => setConfirming(true)}
-                className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+                // min-h-[44px]: this is the control Chloe presses on a phone with a
+        // client in the chair, so it meets the touch-target floor the rest of
+        // the charting surfaces already use.
+        className="inline-flex min-h-[44px] items-center justify-center self-start rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Refund charge
               </button>
@@ -1159,8 +1185,7 @@ function UnknownStatusPanel({
 function PrepareForm({
   sessionId,
   eligibility,
-  suggestedAmount,
-  defaultAmount,
+  amount,
   pending,
   error,
   blockingReasons,
@@ -1168,8 +1193,8 @@ function PrepareForm({
 }: {
   sessionId: string;
   eligibility: Extract<SessionPaymentEligibility, { eligible: true }>;
-  suggestedAmount: string;
-  defaultAmount: SessionPaymentDefaultAmount | null;
+  // The SERVER's resolved amount. The form renders it and never edits it.
+  amount: ResolvedSessionPaymentAmount;
   pending: boolean;
   error: string | null;
   blockingReasons: string[];
@@ -1198,77 +1223,48 @@ function PrepareForm({
         </ul>
       )}
 
-      <label className="flex flex-col gap-1">
+      {/* F-PAY-001. The amount is NO LONGER an input. It used to be an
+          editable field whose value the prepare action inserted verbatim, so
+          the browser decided what the client was charged. The server now
+          resolves the amount from current records; this renders that decision
+          and submits it back ONLY as expected_amount_cents, which can cause a
+          rejection if the price moved but can never choose a value. */}
+      <div className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
           Amount (CAD)
         </span>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-500">$</span>
-          <input
-            type="text"
-            name="amount_dollars"
-            defaultValue={suggestedAmount}
-            placeholder="0.00"
-            inputMode="decimal"
-            className="w-32 rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            aria-label="Amount in Canadian dollars"
-          />
-          {defaultAmount == null &&
-            eligibility.session?.pricePaidCents != null && (
-              <span className="text-[11px] text-neutral-500">
-                Suggestion from session price
-              </span>
-            )}
-        </div>
-        {/* PR #200: say where the default came from, and that it is
-            editable. Never implies the client has paid or that live
-            payments are on; the test-mode header copy above is
-            unchanged. PR #202 (Chloe retest): the booked service
-            name is now a visible line of its own right under the
-            amount, so the practitioner sees WHY that amount loaded;
-            the source copy below it stays small. Rendered only when
-            a default actually resolved, so no fake service label
-            appears for unlinked or unpriced sessions. */}
-        {defaultAmount != null && (
-          <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-              Booked service: {defaultAmount.serviceName}
-              {defaultAmount.durationMinutes != null &&
-                ` (${defaultAmount.durationMinutes} min)`}
-            </span>
-            {defaultAmount.source === "custom_pricing" ? (
-              <>
-                <span>
-                  Defaulted from this client&apos;s custom pricing.
-                </span>
-                {defaultAmount.customPricingNote && (
-                  <span>
-                    Custom pricing reminder: {defaultAmount.customPricingNote}
-                  </span>
-                )}
-              </>
-            ) : (
-              <span>Defaulted from booked service.</span>
-            )}
-            <span>You can adjust before preparing.</span>
-          </div>
-        )}
-        {/* Chloe checkout-default fix: the ONLY previously-unexplained state
-            was "no default and no historical session price" — a bare $ box with
-            no reason why. Say it plainly instead of letting a blank field imply
-            auto-population succeeded. Reached whenever the booking has no
-            service linked, or the booked service carries no price and the
-            client has no current custom price. Never implies a payment was
-            taken or that live mode is on. */}
-        {defaultAmount == null && eligibility.session?.pricePaidCents == null && (
+        <div className="flex items-baseline gap-2">
           <span
-            className="text-[11px] text-neutral-500"
-            data-testid="session-payment-no-default-amount"
+            data-testid="authoritative-amount"
+            className="text-lg font-medium tabular-nums"
           >
-            No price is configured for this booked service. Enter the amount.
+            {formatCadFromCents(amount.amountCents)}
           </span>
-        )}
-      </label>
+        </div>
+        <input
+          type="hidden"
+          name="expected_amount_cents"
+          value={String(amount.amountCents)}
+        />
+        <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
+          <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            Booked service: {amount.serviceName}
+            {amount.durationMinutes != null && ` (${amount.durationMinutes} min)`}
+          </span>
+          {amount.source === "custom_pricing" ? (
+            <>
+              <span data-testid="amount-source">
+                Client-specific price for this service.
+              </span>
+              {amount.customPricingNote && (
+                <span>Custom pricing reminder: {amount.customPricingNote}</span>
+              )}
+            </>
+          ) : (
+            <span data-testid="amount-source">Booked service price.</span>
+          )}
+        </div>
+      </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
@@ -1303,7 +1299,10 @@ function PrepareForm({
       <button
         type="submit"
         disabled={pending}
-        className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+        // min-h-[44px]: this is the control Chloe presses on a phone with a
+        // client in the chair, so it meets the touch-target floor the rest of
+        // the charting surfaces already use.
+        className="inline-flex min-h-[44px] items-center justify-center self-start rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
       >
         {pending ? "Preparing..." : "Prepare session payment"}
       </button>

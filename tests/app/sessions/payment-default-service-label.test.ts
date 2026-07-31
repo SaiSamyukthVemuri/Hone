@@ -1,70 +1,72 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 
-// PR #202: the booked service name renders clearly near the Amount
-// field whenever the payment default resolved (service price OR
-// client custom pricing), so the practitioner sees why that amount
-// loaded. UI/copy only: no defaulting-logic, action, executor, or
-// gate change.
+// F-PAY-001. This suite used to pin the "display default" amount FIELD: an
+// editable input whose value the prepare action inserted verbatim. The amount
+// is now a server decision that the card RENDERS and never edits, so these pin
+// the authoritative display instead.
 
-function read(rel: string): string {
-  return readFileSync(join(process.cwd(), rel), "utf8");
-}
+const CARD = readFileSync(
+  path.resolve(__dirname, "../../../components/session-payment-prepare-card.tsx"),
+  "utf8",
+);
 
-const CARD = read("components/session-payment-prepare-card.tsx");
+const amountRegion = CARD.slice(
+  CARD.indexOf('data-testid="authoritative-amount"') - 900,
+  CARD.indexOf('name="internal_note"'),
+);
 
-describe("booked service label near the amount (PR #202)", () => {
-  // The block between the amount input and the internal-note field.
-  const region = CARD.slice(
-    CARD.indexOf('name="amount_dollars"'),
-    CARD.indexOf('name="internal_note"'),
-  );
-
-  it("service-price default shows the booked service name near the amount", () => {
-    expect(region).toMatch(/Booked service: \{defaultAmount\.serviceName\}/);
-    // It renders ABOVE the source copy, inside the same label block.
-    expect(region.indexOf("Booked service:")).toBeLessThan(
-      region.indexOf("Defaulted from booked service."),
-    );
+describe("the authoritative amount is displayed, not edited", () => {
+  it("renders the server amount and submits it only as a stale-price check", () => {
+    expect(amountRegion).toMatch(/formatCadFromCents\(amount\.amountCents\)/);
+    expect(amountRegion).toMatch(/name="expected_amount_cents"/);
+    expect(amountRegion).toMatch(/type="hidden"/);
   });
 
-  it("custom-pricing default shows the service name AND the custom pricing reminder", () => {
-    // The service label line sits outside the source ternary, so it
-    // renders for BOTH sources; the reminder stays custom-only.
-    const labelIdx = region.indexOf("Booked service:");
-    const ternaryIdx = region.indexOf('defaultAmount.source === "custom_pricing"');
-    expect(labelIdx).toBeGreaterThan(-1);
-    expect(labelIdx).toBeLessThan(ternaryIdx);
-    expect(region).toMatch(/Custom pricing reminder: \{defaultAmount\.customPricingNote\}/);
+  it("there is NO editable amount input anywhere in the card", () => {
+    expect(CARD).not.toMatch(/name="amount_dollars"/);
+    expect(CARD).not.toMatch(/aria-label="Amount in Canadian dollars"/);
+    expect(CARD).not.toMatch(/suggestedAmount/);
+    // ...and no copy inviting an edit.
+    expect(CARD).not.toMatch(/You can adjust before preparing/);
   });
 
-  it("no service label renders when no default resolved (no fake label)", () => {
-    // The entire block is gated on a resolved default; an unlinked
-    // or unpriced session has defaultAmount === null.
-    expect(region).toMatch(/\{defaultAmount != null && \(/);
-    const before = region.slice(0, region.indexOf("{defaultAmount != null && ("));
-    expect(before).not.toMatch(/Booked service:/);
+  it("names the booked service and its duration beside the amount", () => {
+    expect(amountRegion).toMatch(/Booked service: \{amount\.serviceName\}/);
+    expect(amountRegion).toMatch(/amount\.durationMinutes != null/);
   });
 
-  it("the amount stays editable and the adjust copy remains", () => {
-    expect(region).toMatch(/defaultValue=\{suggestedAmount\}/);
-    expect(region).not.toMatch(/readOnly|disabled/);
-    expect(region).toMatch(/You can adjust before preparing\./);
+  it("states the source truthfully for both pricing paths", () => {
+    expect(amountRegion).toMatch(/amount\.source === "custom_pricing"/);
+    expect(amountRegion).toMatch(/Client-specific price for this service\./);
+    expect(amountRegion).toMatch(/Booked service price\./);
+    expect(amountRegion).toMatch(/amount\.customPricingNote/);
   });
-});
 
-describe("safety: display-only change", () => {
-  it("prepare/refund actions and the executor are untouched by the label", () => {
-    const actions = read(
-      "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
-    );
-    const executor = read("lib/billing/session-payment-charge.ts");
-    const resolver = read("lib/billing/session-payment-default-amount.ts");
-    expect(actions).not.toMatch(/Booked service:/);
-    expect(executor).not.toMatch(/Booked service:/);
-    // The defaulting logic itself is unchanged: still a pure module
-    // with no imports.
-    expect(resolver).not.toMatch(/^import /m);
+  it("blocked pricing replaces the form with a calm reason — never a blank box", () => {
+    expect(CARD).toMatch(/data-testid="pricing-blocked"/);
+    expect(CARD).toMatch(/unresolvedAmountMessage\(amountResult\)/);
+    // The prepare form only renders when the amount actually resolved.
+    expect(CARD).toMatch(/showPrepareForm && resolvedAmount &&/);
+  });
+
+  it("carries no historical-session-price fallback", () => {
+    const code = CARD.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/pricePaidCents != null\s*\n?\s*\?/);
+    expect(code).not.toMatch(/Suggestion from session price/);
+  });
+
+  it("prepare/execute/receipt/refund actions are untouched by the amount change", () => {
+    for (const prop of [
+      "prepareAction",
+      "executeAction",
+      "sendReceiptAction",
+      "refundAction",
+    ]) {
+      expect(CARD).toContain(prop);
+    }
+    // Execution still receives only the attempt id — no amount argument.
+    expect(CARD).not.toMatch(/executeAction[\s\S]{0,200}amount/);
   });
 });

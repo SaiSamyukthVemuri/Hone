@@ -18,11 +18,8 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
 import { DoneChartingButton } from "./DoneChartingButton";
-import {
-  resolveSessionPaymentDefault,
-  type SessionPaymentDefaultAmount,
-} from "@/lib/billing/session-payment-default-amount";
 import { todayInTz } from "@/lib/booking/tz";
+import { getAuthoritativeSessionPaymentAmount } from "@/lib/billing/authoritative-session-payment";
 import {
   executeSessionPaymentChargeAction,
   prepareSessionPaymentChargeAction,
@@ -139,7 +136,15 @@ export default async function SessionDetailPage({
   // default ONLY: the field stays editable, the prepare action still
   // validates the submitted amount, and the executor still charges
   // the prepared row's stored amount.
-  let sessionPaymentDefault: SessionPaymentDefaultAmount | null = null;
+  // F-PAY-001: ONE authoritative pricing decision, from the shared trusted
+  // loader. The page no longer computes a "display default" of its own, and
+  // there is no historical-session-price fallback.
+  const pricedForPage = await getAuthoritativeSessionPaymentAmount({
+    studioId: studio.id,
+    sessionId: session.id,
+    studioTimezone: studio.timezone,
+  });
+  const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
   let apptContext: {
@@ -233,29 +238,6 @@ export default async function SessionDetailPage({
       name?: string | null;
       price_cents?: number | null;
     } | null;
-    if (svcObj?.name) {
-      const { data: pricingRows } = await supabaseForDefault
-        .from("client_pricing")
-        .select("service_name, price_cents, notes, effective_from")
-        .eq("studio_id", studio.id)
-        .eq("client_id", id);
-      sessionPaymentDefault = resolveSessionPaymentDefault({
-        service: {
-          name: svcObj.name,
-          price_cents: svcObj.price_cents ?? null,
-        },
-        appointmentDurationMinutes:
-          (apptRow as { duration_minutes?: number | null } | null)
-            ?.duration_minutes ?? null,
-        customPricing: (pricingRows ?? []) as Array<{
-          service_name: string;
-          price_cents: number;
-          notes: string | null;
-          effective_from: string;
-        }>,
-        today: todayInTz(studio.timezone),
-      });
-    }
   }
 
   // Electrolysis sessions render through the block-grouped view. We fetch
@@ -872,7 +854,7 @@ export default async function SessionDetailPage({
           sessionId={session.id}
           clientId={id}
           eligibility={sessionPaymentEligibility}
-          defaultAmount={sessionPaymentDefault}
+          amountResult={sessionPaymentAmount}
           // Trusted, server-derived owner flag — gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

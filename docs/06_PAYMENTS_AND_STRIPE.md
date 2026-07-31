@@ -578,3 +578,70 @@ select stripe_event_id, event_type, stripe_account_id, stripe_livemode,
  order by created_at desc
  limit 20;
 ```
+
+
+## Session payment amounts are SERVER-AUTHORITATIVE (F-PAY-001)
+
+**Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.** Not deployed,
+not closed, not production verified.
+
+**What was wrong.** `prepareSessionPaymentChargeAction` read `amount_dollars`
+from the submitted form and inserted it into `payment_charge_attempts.amount_cents`.
+The page computed a correct suggestion and the practitioner could edit the
+field, so whatever came back was stored. A request preparing $1.00 against a
+$145.00 service was accepted and became a real chargeable row — reproduced
+locally: displayed 14500, submitted 100, stored **100**. The executor then
+faithfully charged it, because the unsafe decision had already happened at
+preparation.
+
+**Pricing precedence** (`lib/billing/session-payment-amount.ts`, pure, no clock,
+injected studio-local date):
+
+1. the current **client-specific** price for the booked service;
+2. otherwise the booked service's **current menu price**;
+3. otherwise preparation is **BLOCKED**.
+
+There is no fallback to `sessions.price_paid_cents`, to a prior attempt, or to
+anything the browser sent. A past payment is not an authority for what to charge
+today.
+
+**Ambiguity fails closed.** `client_pricing` has no uniqueness constraint on
+(studio, client, service) — only a primary key — so two equally-current rows can
+disagree. Conflicting equally-current prices **block** preparation with a
+"review this client's pricing" reason; picking one would mean charging an amount
+decided by database row order. Equally-current rows that agree on the price
+resolve normally, because every candidate yields the same number.
+
+**Trusted loading.** `lib/billing/authoritative-session-payment.ts` is
+`server-only` and re-reads the live session, the appointment via
+`sessions.appointment_id` (never recovered by client id), and current pricing.
+The appointment query is scoped by id **and** studio **and** the session's own
+client. Service–studio lineage is enforced by migration 0151's composite
+`(service_id, studio_id)` relationship rather than an app-level check.
+
+**The form contract.** `session_id`, `expected_amount_cents`, `internal_note`.
+`amount_dollars` is not read. `expected_amount_cents` is **stale-display
+detection only**: it can cause a rejection, never supply a value. If it does not
+match the freshly resolved amount, nothing is inserted and the practitioner is
+asked to review the new amount and press Prepare again — a payment is never
+prepared at a number she did not just look at.
+
+**The ceiling** applies to the authoritative amount and never clamps: a price
+above the supported limit blocks with a "review the pricing" message, because
+the amount is no longer something she can edit down.
+
+**No manual override exists.** A safe audited override would need permission,
+original amount, override amount, reason, an audit event and reporting; none of
+that is built, and `internal_note` is not a substitute.
+
+**Both surfaces share one authority.** The session-detail card and the
+quick-checkout modal call the same loader and render the same component, so they
+cannot disagree about the amount or its source. Reopening quick checkout
+refetches current pricing.
+
+**Preparation is the pricing boundary; execution is the persisted-attempt
+boundary.** Once prepared, `amount_cents` is fixed: later menu or custom-pricing
+changes do not rewrite it. `executeSessionPaymentChargeAction` takes
+`attempt_id` only, `runSessionPaymentCharge` charges the persisted amount, and
+no pricing is re-read during execution. Receipts, refunds and Stripe idempotency
+are unchanged.

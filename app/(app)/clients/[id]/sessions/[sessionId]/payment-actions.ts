@@ -6,6 +6,11 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
+  getAuthoritativeSessionPaymentAmount,
+  loadFailureMessage,
+} from "@/lib/billing/authoritative-session-payment";
+import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import {
   getSessionPaymentEligibility,
 } from "@/lib/billing/session-payment-eligibility";
 import {
@@ -46,7 +51,7 @@ import {
 //     as a non-binding suggestion only.
 //
 // Inputs (FormData):
-//   * session_id, amount_dollars, internal_note. studio_id,
+//   * session_id, expected_amount_cents, internal_note. studio_id,
 //     client_id, and practitioner_id are resolved server-side; the
 //     client cannot supply them. The action also re-reads
 //     session.client_id from the eligibility result, so a form
@@ -83,6 +88,13 @@ const AMOUNT_INVALID_ERROR =
   "Enter an amount greater than $0.00.";
 const AMOUNT_TOO_LARGE_ERROR =
   `Amount must be $${(SESSION_PAYMENT_AMOUNT_CEILING_CENTS / 100).toFixed(0)} or less.`;
+// The ceiling now applies to a price the practitioner CANNOT edit, so telling
+// her the amount "must be $X or less" would be unactionable. Point at the
+// pricing instead, which is the thing she can actually change.
+const AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR =
+  `This configured price is above the supported session-payment limit of $${(
+    SESSION_PAYMENT_AMOUNT_CEILING_CENTS / 100
+  ).toFixed(0)}. Review the pricing before preparing payment.`;
 const DUPLICATE_ATTEMPT_ERROR =
   "A session payment attempt is already prepared for this session.";
 
@@ -99,6 +111,22 @@ function logInternal(event: string, detail: unknown) {
     console.error(event, detail);
   }
 }
+
+// Parses the browser's expected_amount_cents. This is a STALE-DISPLAY CHECK,
+// never authority: it can only cause a rejection, never decide a value.
+function parseExpectedCents(
+  raw: string,
+): { ok: true; cents: number } | { ok: false } {
+  if (!/^\d+$/.test(raw)) return { ok: false };
+  const cents = Number(raw);
+  if (!Number.isSafeInteger(cents) || cents <= 0) return { ok: false };
+  return { ok: true, cents };
+}
+
+// Safe, fixed copy for a price that moved (or a request that could not say
+// what it was showing). Never leaks a DB error or the other amount.
+const PRICE_CHANGED_ERROR =
+  "The price changed. Refresh and review the current amount before preparing payment.";
 
 function strOrEmpty(v: FormDataEntryValue | null): string {
   return typeof v === "string" ? v.trim() : "";
@@ -134,25 +162,32 @@ export async function prepareSessionPaymentChargeAction(
   // direct form post without a session is rejected.
   let practitionerId: string;
   let studioId: string;
+  let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
+    studioTimezone = studio.timezone;
   } catch (err) {
     logInternal("session_payment_prepare_auth_failed", { err: String(err) });
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
   const sessionId = strOrEmpty(formData.get("session_id"));
-  const amountRaw = strOrEmpty(formData.get("amount_dollars"));
+  // F-PAY-001: `amount_dollars` is NOT read. The browser no longer decides the
+  // amount; it only tells us which amount it was showing, so a price that moved
+  // since the practitioner looked at it can be caught instead of charged.
+  const expectedRaw = strOrEmpty(formData.get("expected_amount_cents"));
   const internalNote = strOrEmpty(formData.get("internal_note"));
 
   if (!sessionId) {
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
   }
-  const amountParsed = parseAmountCents(amountRaw);
-  if (!amountParsed.ok) {
-    return { ok: false, error: amountParsed.error };
+  const expected = parseExpectedCents(expectedRaw);
+  if (!expected.ok) {
+    // Missing or malformed: insert nothing. A request that cannot say what it
+    // was showing cannot be confirmed against the current price.
+    return { ok: false, error: PRICE_CHANGED_ERROR };
   }
   // The internal note is optional (blank/whitespace-only -> NULL, see the
   // insert below). Only the maximum-length cap is enforced here; it still
@@ -182,6 +217,38 @@ export async function prepareSessionPaymentChargeAction(
   const clientId = eligibility.client.id;
   const appointmentId = eligibility.appointment.id ?? null;
 
+  // THE AMOUNT DECISION. Independently re-loaded from current records — not
+  // from the page's props, not from the modal's state, and not from the form.
+  // This is the whole point of F-PAY-001: the value inserted below is derived
+  // here, server-side, at the moment of preparation.
+  const priced = await getAuthoritativeSessionPaymentAmount({
+    studioId,
+    sessionId,
+    studioTimezone,
+  });
+  if (!priced.ok) {
+    return { ok: false, error: loadFailureMessage(priced.failure) };
+  }
+  if (priced.result.kind !== "resolved") {
+    return { ok: false, error: unresolvedAmountMessage(priced.result) };
+  }
+  const authoritativeCents = priced.result.amountCents;
+
+  // The ceiling applies to the AUTHORITATIVE amount. It is never clamped and
+  // never replaced by the browser's value: a price above the supported ceiling
+  // is a pricing problem for a human to look at, not something to quietly
+  // reduce.
+  if (authoritativeCents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS) {
+    return { ok: false, error: AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR };
+  }
+
+  // Stale-display check. If the price moved between render and submit, insert
+  // nothing and make the practitioner re-read the new amount. Preparing at a
+  // number she never saw would be exactly the failure this PR exists to remove.
+  if (expected.cents !== authoritativeCents) {
+    return { ok: false, error: PRICE_CHANGED_ERROR };
+  }
+
   const admin = createAdminClient();
   const { data: inserted, error: insertErr } = await admin
     .from("payment_charge_attempts")
@@ -198,7 +265,7 @@ export async function prepareSessionPaymentChargeAction(
       appointment_id: appointmentId,
       session_id: sessionId,
       created_by_practitioner_id: practitionerId,
-      amount_cents: amountParsed.cents,
+      amount_cents: authoritativeCents,
       currency: "cad",
       status: "ready",
       client_payment_method_id: eligibility.card.id,
@@ -294,10 +361,12 @@ export async function executeSessionPaymentChargeAction(
 ): Promise<ExecuteSessionPaymentResult> {
   let practitionerId: string;
   let studioId: string;
+  let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
+    studioTimezone = studio.timezone;
   } catch (err) {
     logInternal("session_payment_execute_auth_failed", { err: String(err) });
     return {
@@ -430,10 +499,12 @@ export async function sendPaymentChargeReceiptAction(
 ): Promise<SendPaymentReceiptActionResult> {
   let practitionerId: string;
   let studioId: string;
+  let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
+    studioTimezone = studio.timezone;
   } catch (err) {
     logInternal("payment_receipt_action_auth_failed", { err: String(err) });
     return {
@@ -536,6 +607,7 @@ export async function refundPaymentChargeAttemptAction(
 ): Promise<RefundPaymentActionResult> {
   let practitionerId: string;
   let studioId: string;
+  let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     // PR #201 (live payments gate preparation): refunds are
@@ -559,6 +631,7 @@ export async function refundPaymentChargeAttemptAction(
     }
     practitionerId = practitioner.id;
     studioId = studio.id;
+    studioTimezone = studio.timezone;
   } catch (err) {
     logInternal("payment_refund_action_auth_failed", { err: String(err) });
     return {

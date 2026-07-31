@@ -59,8 +59,14 @@ describe('prepare action: "use server" + auth gate', () => {
 });
 
 describe("prepare action: amount + note validation", () => {
-  it("parses amount_dollars and converts to cents server-side", () => {
-    expect(ACTION).toMatch(/formData\.get\("amount_dollars"\)/);
+  it("F-PAY-001: the browser amount is NOT read; the server resolves it", () => {
+    // The action used to read amount_dollars and insert it verbatim, so a
+    // tampered form decided what the client was charged.
+    const code = ACTION.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/formData\.get\("amount_dollars"\)/);
+    expect(code).toMatch(/formData\.get\("expected_amount_cents"\)/);
+    expect(code).toMatch(/getAuthoritativeSessionPaymentAmount\(/);
+    expect(code).toMatch(/amount_cents: authoritativeCents,/);
     expect(ACTION).toMatch(/Math\.round\(asNumber \* 100\)/);
   });
 
