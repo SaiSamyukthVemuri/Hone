@@ -64,10 +64,15 @@ export function DailyPrepBriefCard({ brief }: { brief: DailyPrepBrief }) {
                   </p>
                   {item.reminders.length > 0 && (
                     <ul className="mt-1.5 flex flex-col gap-0.5">
+                      {/* Recorded-memory lines render IN FULL (the 90-char cap
+                          is gone). `whitespace-pre-wrap` keeps the line breaks
+                          the practitioner typed; `break-words` keeps a long
+                          unbroken token from widening the card at iPhone
+                          width. Same contract as the Today roster card. */}
                       {item.reminders.map((reminder) => (
                         <li
                           key={reminder}
-                          className="break-words text-xs text-neutral-700 dark:text-neutral-300"
+                          className="whitespace-pre-wrap break-words text-xs text-neutral-700 dark:text-neutral-300"
                         >
                           {reminder}
                         </li>
