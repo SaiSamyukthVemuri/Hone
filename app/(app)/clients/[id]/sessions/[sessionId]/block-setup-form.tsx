@@ -36,10 +36,15 @@ import {
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import { ProbeLotSelect } from "@/components/probe-lot-select";
 import {
-  resolveInventoryAutofill,
   probeLotOptionsForProbe,
   type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
+import {
+  probeLotDraftPatch,
+  probeLotSourceMessage,
+  resolveProbeLotAutofill,
+  type ProbeLotAutofillResult,
+} from "@/lib/record-keeping/probe-lot-autofill";
 import type { SessionBlockWithEntries } from "@/lib/supabase/queries";
 import {
   buildTreatmentSetupDraftPatch,
@@ -414,20 +419,25 @@ export function BlockSetupForm({
   // region-grouped picker only expands when there's no area yet or the
   // practitioner taps "Change".
 
-  // Inventory-backed lot auto-fill (migration 0155). Runs ONLY when the
-  // practitioner CHANGES the probe (never on mount, so an edited block keeps its
-  // saved selection), and never over a manual entry. It considers ONLY ACTIVE
-  // inventory for the new probe_key; auto-fills the last-confirmed linked lot,
-  // else the sole active lot, else clears to the chooser. Auto-filled lots are
-  // always UNCONFIRMED. A linked lot for the OLD probe is cleared here.
+  // Probe-lot auto-fill. Runs ONLY when the practitioner CHANGES the probe
+  // (never on mount, so an edited block keeps its saved selection), and never
+  // over a manual entry.
+  //
+  // THE DEFECT THIS FIXES. This used to consider ACTIVE INVENTORY ONLY. A studio
+  // with no probe inventory therefore got `choose` on every probe pick, the lot
+  // field was CLEARED, and the picker rendered "No active inventory lot for this
+  // probe. Type the lot/batch manually…" — even for a probe whose lot had been
+  // charted many times. `resolveProbeLotSuggestion`, which resolves exactly that
+  // recorded history, was exported and unit-tested but never called by any
+  // application code; this file imported its module for the TYPE only.
+  // resolveProbeLotAutofill now owns the whole precedence.
   const autofilledForProbeRef = useRef<string>(draft.probeKey);
-  const [lotStatus, setLotStatus] = useState<
-    "last-confirmed" | "only-active" | "choose" | "manual" | null
-  >(() =>
-    (block?.probe_lot_number ?? "").trim() !== "" &&
-    (block?.probe_inventory_item_id ?? null) == null
-      ? "manual"
-      : null,
+  const [lotStatus, setLotStatus] = useState<ProbeLotAutofillResult["kind"] | "manual" | null>(
+    () =>
+      (block?.probe_lot_number ?? "").trim() !== "" &&
+      (block?.probe_inventory_item_id ?? null) == null
+        ? "manual"
+        : null,
   );
 
   // Options (active + expired) for the currently selected probe.
@@ -440,46 +450,23 @@ export function BlockSetupForm({
     if (draft.probeKey === autofilledForProbeRef.current) return; // no probe change
     autofilledForProbeRef.current = draft.probeKey;
     if (lotEditedManually) return; // a genuine manual lot survives a probe switch
-    // Auto-fill is driven ONLY by the newest prior selection that was BOTH
-    // confirmed AND inventory-linked (lastConfirmedInventoryItemId) — a newer
-    // confirmed MANUAL row can never mask it, and an unconfirmed linked row never
-    // qualifies. resolveInventoryAutofill still requires that id to be active +
-    // matching the selected probe (contract #2 unambiguous rule).
-    const lastConfirmedId =
-      probeLotSuggestions.byKey[draft.probeKey]?.lastConfirmedInventoryItemId ??
-      null;
-    const autofill = resolveInventoryAutofill(
-      probeLotInventory,
-      draft.probeKey,
-      lastConfirmedId,
-    );
-    setLotStatus(autofill.kind);
-    setDraft((d) =>
-      autofill.kind === "choose"
-        ? {
-            ...d,
-            probeInventoryItemId: null,
-            probeLotNumber: "",
-            probeLotConfirmed: false,
-          }
-        : {
-            ...d,
-            probeInventoryItemId: autofill.option.id,
-            probeLotNumber: autofill.option.lotNumber,
-            probeLotConfirmed: false,
-          },
-    );
+    const result = resolveProbeLotAutofill({
+      probeKey: draft.probeKey,
+      inventory: probeLotInventory,
+      suggestions: probeLotSuggestions,
+    });
+    setLotStatus(result.kind);
+    const patch = probeLotDraftPatch(result);
+    setDraft((d) => ({ ...d, ...patch }));
     // React to the PROBE changing, not our own writes (setDraft is stable).
   }, [draft.probeKey, lotEditedManually, probeLotInventory, probeLotSuggestions]);
 
+  // "manual" is a form-local state (a saved manual lot on an edited block); the
+  // resolver owns every auto-filled provenance string.
   const lotSourceMessage =
-    lotStatus === "last-confirmed"
-      ? "Auto-filled from your last confirmed inventory lot. Confirm the package."
-      : lotStatus === "only-active"
-        ? "Only active inventory lot for this probe. Confirm the package."
-        : lotStatus === "choose"
-          ? "Choose the lot/batch from inventory."
-          : null;
+    lotStatus == null || lotStatus === "manual"
+      ? null
+      : probeLotSourceMessage(lotStatus);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -1048,7 +1035,10 @@ export function BlockSetupForm({
             onManualChange={(value) => {
               // Typing clears any inventory link, un-confirms, and marks manual
               // so a later probe switch never clobbers it. Clearing it back to
-              // empty re-enables inventory auto-fill for the next probe.
+              // empty drops the provenance line entirely and re-enables
+              // auto-fill for the NEXT explicit probe selection — a cleared
+              // field stays cleared until then (it must not silently refill
+              // from history on an unrelated re-render).
               setDraft((d) => ({
                 ...d,
                 probeInventoryItemId: null,
@@ -1056,7 +1046,7 @@ export function BlockSetupForm({
                 probeLotConfirmed: false,
               }));
               setLotEditedManually(value.trim() !== "");
-              setLotStatus(value.trim() !== "" ? "manual" : "choose");
+              setLotStatus(value.trim() !== "" ? "manual" : null);
             }}
           />
           {lotSourceMessage && (
