@@ -52,7 +52,7 @@ describe("session page wires the guard from the existing stamp", () => {
   it("passes aftercareExplained derived from aftercare_and_risks_explained_at + the Done href + the existing action", () => {
     expect(PAGE).toMatch(/<DoneChartingButton/);
     expect(PAGE).toMatch(
-      /aftercareExplained=\{session\.aftercare_and_risks_explained_at != null\}/,
+      /aftercareExplained=\{\s*session\.aftercare_and_risks_explained_at != null\s*\}/,
     );
     expect(PAGE).toMatch(/doneHref=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
     expect(PAGE).toMatch(/markAction=\{markAftercareExplainedAction\}/);

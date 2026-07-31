@@ -4,6 +4,35 @@ import { expect, type Locator, type Page } from "@playwright/test";
 // the REAL modal + the REAL prepare/execute server actions; nothing bypasses the
 // UI or calls a server action directly.
 
+// THE synchronization boundary for "a payment is prepared".
+//
+// WHY THIS EXISTS. SessionPaymentPrepareCard renders a transient
+// "Session payment prepared." banner gated on `prepareJustSucceeded &&
+// !activeAttempt` — it exists only in the brief window between the action
+// resolving and router.refresh() landing the persisted row, and it DISAPPEARS
+// the moment that row arrives. Waiting on it asks the test to observe a FRAME,
+// not a STATE. It passed by timing luck until page timing changed, then failed
+// in CI while the payment was perfectly prepared: one `ready` attempt, the
+// correct amount, a NULL note, and Run charge on screen.
+//
+// Durable state is the oracle instead — the persisted ready panel, which is
+// what the practitioner actually relies on and which does not evaporate.
+export async function expectPreparedDurable(scope: Locator): Promise<void> {
+  await expect(scope.getByText(/Prepared .* not yet charged/i)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(scope.getByRole("button", { name: /^run charge$/i })).toBeVisible();
+  // The form is replaced by the ready panel — proof the persisted row landed.
+  await expect(
+    scope.getByRole("button", { name: /prepare session payment/i }),
+  ).toHaveCount(0);
+}
+
+// The session-detail payment card, by its existing accessible region label.
+export function sessionPaymentRegion(page: Page): Locator {
+  return page.getByRole("region", { name: "Session payment" });
+}
+
 export function modalOf(page: Page): Locator {
   return page.getByTestId("quick-checkout-modal");
 }
@@ -30,7 +59,13 @@ export async function prepareInModal(modal: Locator): Promise<void> {
     .getByPlaceholder(/note explaining the session payment/i)
     .fill("E2E concurrency-safety session payment");
   await modal.getByRole("button", { name: /prepare session payment/i }).click();
-  await expect(modal.getByText(/session payment prepared/i)).toBeVisible();
+  // Durable ready state, never the transient banner (see expectPreparedDurable).
+  await expect(modal.getByRole("button", { name: /^run charge$/i })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    modal.getByRole("button", { name: /prepare session payment/i }),
+  ).toHaveCount(0);
 }
 
 // Open checkout (fresh context load), advance through the explicit confirmation,

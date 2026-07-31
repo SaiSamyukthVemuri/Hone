@@ -7,7 +7,11 @@ import {
   closePool,
   type PaymentSeed,
 } from "./helpers/payment-fixture";
-import { modalOf } from "./helpers/checkout-flow";
+import {
+  modalOf,
+  expectPreparedDurable,
+  sessionPaymentRegion,
+} from "./helpers/checkout-flow";
 
 // ===========================================================================
 // Checkout default amount + optional internal note (Chloe production feedback)
@@ -291,19 +295,31 @@ test.describe("internal note is optional everywhere", () => {
     await openSessionDetail(page, seed);
     await expect(noteField(page)).toHaveValue("");
     await page.getByRole("button", { name: /prepare session payment/i }).click();
-    await expect(page.getByText(/session payment prepared/i)).toBeVisible({ timeout: 20_000 });
+    // Synchronize on the DURABLE prepared state. The transient
+    // "Session payment prepared." banner is replaced the instant
+    // router.refresh() lands the persisted row, so waiting on it is a race that
+    // fails while the payment is perfectly prepared.
+    const region = sessionPaymentRegion(page);
+    await expectPreparedDurable(region);
 
     const rows = await adminQuery(
-      `select internal_note, amount_cents
+      `select status, internal_note, amount_cents
          from public.payment_charge_attempts
         where session_id = $1
         order by created_at desc limit 1`,
       [seed.sessionId],
     );
+    // Exactly one attempt — no duplicate from a double submit.
     expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].status).toBe("ready");
     // Blank note persists as NULL — never an auto-generated placeholder.
     expect(rows.rows[0].internal_note).toBeNull();
     // The prepared amount is the booked-service default that populated the form.
     expect(Number(rows.rows[0].amount_cents)).toBe(SERVICE_PRICE_CENTS);
+    // ...and the durable UI agrees with the row.
+    await expect(region.getByRole("button", { name: /^run charge$/i })).toBeVisible();
+    await expect(
+      region.getByRole("button", { name: /prepare session payment/i }),
+    ).toHaveCount(0);
   });
 });

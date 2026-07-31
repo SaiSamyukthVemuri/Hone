@@ -19,6 +19,11 @@ type Props = {
   doneHref: string;
   aftercareExplained: boolean;
   markAction: (formData: FormData) => Promise<MarkResult>;
+  // The exit now sits at the foot of the Finish appointment workflow, so it
+  // reads "Done — back to client" there. The safe-exit semantics are unchanged:
+  // an unmarked aftercare stamp still raises the explicit warning, and
+  // "Continue without marking" still proceeds without writing anything.
+  label?: string;
 };
 
 const DONE_CLASS =
@@ -29,6 +34,7 @@ export function DoneChartingButton({
   doneHref,
   aftercareExplained,
   markAction,
+  label = "Done charting",
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -76,7 +82,7 @@ export function DoneChartingButton({
   return (
     <>
       <button type="button" onClick={onDoneClick} className={DONE_CLASS}>
-        Done charting
+        {label}
       </button>
 
       {open && (

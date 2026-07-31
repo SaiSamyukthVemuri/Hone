@@ -484,18 +484,22 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     ).toBeVisible({ timeout: 20_000 });
     await expectNoPageOverflow(page, "charting page after save");
 
-    // PR #238: the Finish up section answers "how do I save and
-    // complete?": it says everything already saved per piece and the
-    // Done charting link is reachable and exits to the client's
-    // Sessions tab. (This walk-in session has no linked appointment,
-    // so the appointment/billing link correctly does not render.)
-    const finishHeading = page.getByRole("heading", { name: "Finish up" });
+    // The Finish appointment workflow answers "how do I finish?": the four
+    // visit-closing states in one place, and a clear exit to the client's
+    // Sessions tab. (This walk-in session has no linked appointment, so the
+    // completion/postcare steps say so rather than offering actions.)
+    const finishHeading = page.getByRole("heading", { name: "Finish appointment" });
     await finishHeading.scrollIntoViewIfNeeded();
     await expect(finishHeading).toBeVisible();
     await expect(
-      page.getByText(/Everything above is already saved as you go/),
+      page.getByText(/Review the visit, complete the appointment/),
     ).toBeVisible();
-    const doneCharting = page.getByRole("button", { name: "Done charting" });
+    // Walk-in: no appointment is linked, so the completion/postcare controls
+    // correctly say so instead of offering an action.
+    await expect(page.getByTestId("finish-completion-status")).toHaveText(
+      "No booked appointment linked",
+    );
+    const doneCharting = page.getByRole("button", { name: /Done — back to client/ });
     await expect(doneCharting).toBeVisible();
     await expectInsideViewport(page, doneCharting, "done charting button");
     await expect(
@@ -621,9 +625,12 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expectNoPageOverflow(ipadPage, "iPad calendar");
     // PR #235: the charting page fits iPad width too.
     await ipadPage.goto(sessionPath);
+    // The standalone "Risks & aftercare" section folded into the Finish
+    // appointment workflow, where the same stamp is one of the four states.
     await expect(
-      ipadPage.getByRole("heading", { name: /risks & aftercare/i }),
+      ipadPage.getByRole("heading", { name: "Finish appointment" }),
     ).toBeVisible();
+    await expect(ipadPage.getByTestId("finish-aftercare-status")).toBeVisible();
     await expectNoPageOverflow(ipadPage, "iPad charting page");
     await ipadPage.goto("/calendar");
     await syntheticDrag(ipadPage, "touch");

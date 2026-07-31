@@ -1691,6 +1691,232 @@ export async function seedE2eSecondAppointmentToday(
   return { appointmentId };
 }
 
+// A session LINKED to an appointment that has already ENDED — the state the
+// Finish appointment workflow exists for. `postcare` seeds the send-state
+// columns so the sent / failed / sending branches can be exercised without ever
+// touching a provider.
+export async function seedE2eEndedAppointmentSession(
+  seed: E2eSeed,
+  opts: {
+    status?: "confirmed" | "completed" | "cancelled" | "no_show";
+    endedHoursAgo?: number;
+    // Ends shortly in the FUTURE, so a test can watch the completion control's
+    // own timer cross ends_at without reloading.
+    endsInSeconds?: number;
+    clientEmail?: string | null;
+    charted?: boolean;
+    aftercareExplained?: boolean;
+    postcare?: {
+      sentAt?: string | null;
+      failedAt?: string | null;
+      claimedAt?: string | null;
+      attempts?: number;
+    };
+    serviceModality?: string | null;
+  } = {},
+): Promise<{ clientId: string; sessionId: string; appointmentId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  const email =
+    opts.clientEmail === undefined
+      ? `e2e-finish-${seed.runId}-${uniq}@harness.local`
+      : opts.clientEmail;
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Finish Client ${seed.runId}-${uniq}`, email],
+  );
+  const hoursAgo = opts.endedHoursAgo ?? 2;
+  const starts =
+    opts.endsInSeconds != null
+      ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      : new Date(Date.now() - (hoursAgo + 1) * 3600 * 1000).toISOString();
+  const ends =
+    opts.endsInSeconds != null
+      ? new Date(Date.now() + opts.endsInSeconds * 1000).toISOString()
+      : new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString();
+  const appointmentId = await seedConfirmedAppointment(
+    seed.studioId,
+    prac.id,
+    clientId,
+    starts,
+    ends,
+  );
+  if (opts.status && opts.status !== "confirmed") {
+    await sql(`update public.appointments set status = $2 where id = $1`, [
+      appointmentId,
+      opts.status,
+    ]);
+  }
+  const pc = opts.postcare ?? {};
+  await sql(
+    `update public.appointments
+        set postcare_email_sent_at = $2,
+            postcare_email_failed_at = $3,
+            postcare_email_claimed_at = $4,
+            postcare_email_send_attempts = $5
+      where id = $1`,
+    [
+      appointmentId,
+      pc.sentAt ?? null,
+      pc.failedAt ?? null,
+      pc.claimedAt ?? null,
+      pc.attempts ?? 0,
+    ],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id, started_at, aftercare_and_risks_explained_at)
+     values ($1,$2,$3,$4,'electrolysis',$5, now() - interval '2 hours', $6)`,
+    [
+      sessionId,
+      seed.studioId,
+      clientId,
+      prac.id,
+      appointmentId,
+      opts.aftercareExplained ? new Date().toISOString() : null,
+    ],
+  );
+  if (opts.charted) {
+    const blockId = randomUUID();
+    await sql(
+      `insert into public.session_blocks
+         (id, studio_id, session_id, sort_order, primary_area, mode, energy_level, minutes_performed, machine_frequency)
+       values ($1,$2,$3,1,'Chin','thermo',5,10,'13.56 MHz')`,
+      [blockId, seed.studioId, sessionId],
+    );
+  }
+  return { clientId, sessionId, appointmentId };
+}
+
+// A LASER session with one entry, live or soft-deleted. Proves the charting
+// state is computed from the session's OWN modality rows.
+export async function seedE2eLaserSessionWithEntry(
+  seed: E2eSeed,
+  opts: { deleted: boolean },
+): Promise<{ clientId: string; sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Laser Client ${seed.runId}-${uniq}`, `e2e-laser-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'laser', now() - interval '1 hour')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.laser_entries (id, session_id, zone, deleted_at)
+     values ($1,$2,'Chin',$3)`,
+    [randomUUID(), sessionId, opts.deleted ? new Date().toISOString() : null],
+  );
+  return { clientId, sessionId };
+}
+
+// A session whose sessions.appointment_id points at an appointment belonging to
+// a DIFFERENT client — the lineage the Finish query must reject.
+export async function seedE2eCrossClientLinkedSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string; appointmentId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const otherClientId = randomUUID();
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  for (const [cid, tag] of [
+    [otherClientId, "other"],
+    [clientId, "owner"],
+  ] as const) {
+    await sql(
+      `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+      [cid, seed.studioId, `X ${tag} ${seed.runId}-${uniq}`, `e2e-x-${tag}-${seed.runId}-${uniq}@harness.local`],
+    );
+  }
+  const starts = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const ends = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  // The appointment belongs to the OTHER client.
+  const appointmentId = await seedConfirmedAppointment(
+    seed.studioId,
+    prac.id,
+    otherClientId,
+    starts,
+    ends,
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id, started_at)
+     values ($1,$2,$3,$4,'electrolysis',$5, now() - interval '2 hours')`,
+    [sessionId, seed.studioId, clientId, prac.id, appointmentId],
+  );
+  return { clientId, sessionId, appointmentId };
+}
+
+// A freeform session with NO linked appointment.
+export async function seedE2eUnlinkedSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string }> {
+  return seedE2eDraftElectrolysisSession(seed);
+}
+
+// Configure (or clear) the studio's postcare aftercare text.
+export async function setStudioPostcareText(
+  studioId: string,
+  text: string | null,
+): Promise<void> {
+  await sql(`update public.studios set postcare_aftercare_text = $2 where id = $1`, [
+    studioId,
+    text,
+  ]);
+}
+
+export async function getAppointmentPostcareState(appointmentId: string): Promise<{
+  status: string;
+  sentAt: string | null;
+  attempts: number;
+}> {
+  const rows = await sql<{
+    status: string;
+    postcare_email_sent_at: string | null;
+    postcare_email_send_attempts: number;
+  }>(
+    `select status, postcare_email_sent_at, postcare_email_send_attempts
+       from public.appointments where id = $1`,
+    [appointmentId],
+  );
+  return {
+    status: rows[0].status,
+    sentAt: rows[0].postcare_email_sent_at,
+    attempts: rows[0].postcare_email_send_attempts,
+  };
+}
+
+export async function getSessionAftercareStamp(
+  sessionId: string,
+): Promise<string | null> {
+  const rows = await sql<{ aftercare_and_risks_explained_at: string | null }>(
+    `select aftercare_and_risks_explained_at from public.sessions where id = $1`,
+    [sessionId],
+  );
+  return rows[0]?.aftercare_and_risks_explained_at ?? null;
+}
+
 export async function getSessionBlockAreas(sessionId: string): Promise<string[]> {
   const rows = await sql<{ area: string; laterality: string }>(
     `select a.area, a.laterality

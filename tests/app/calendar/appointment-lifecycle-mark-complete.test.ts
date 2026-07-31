@@ -9,11 +9,22 @@ import path from "node:path";
 // now back. Tests pin: button presence, gating, two-click confirm,
 // success message, and the absence of any cancelled/no-show flip.
 
+// The completion control was EXTRACTED so the calendar surface and the
+// charting "Finish appointment" workflow share one implementation instead of
+// two lookalikes. Everything these tests pin still exists — it just lives in
+// the shared control now, which is exactly the point: one place to regress.
 const COMPONENT_PATH = path.resolve(
+  __dirname,
+  "../../../components/appointment/mark-complete-control.tsx",
+);
+const COMPONENT = readFileSync(COMPONENT_PATH, "utf8");
+
+// The calendar surface itself, which still owns Mark no-show.
+const CALENDAR_PATH = path.resolve(
   __dirname,
   "../../../app/(app)/calendar/AppointmentLifecycleActions.tsx",
 );
-const COMPONENT = readFileSync(COMPONENT_PATH, "utf8");
+const CALENDAR = readFileSync(CALENDAR_PATH, "utf8");
 
 const ACTIONS_PATH = path.resolve(
   __dirname,
@@ -31,7 +42,10 @@ function codeOnly(src: string): string {
 describe("AppointmentLifecycleActions: Mark completed button restoration", () => {
   it("imports markAppointmentCompleteAction from the calendar actions module", () => {
     expect(COMPONENT).toMatch(
-      /import \{\s*\n?\s*markAppointmentCompleteAction,\s*\n?\s*markAppointmentNoShowAction,\s*\n?\s*\} from "\.\/actions"/,
+      /import \{\s*\n?\s*markAppointmentCompleteAction \} from "@\/app\/\(app\)\/calendar\/actions"/,
+    );
+    expect(CALENDAR).toMatch(
+      /import \{ markAppointmentNoShowAction \} from "\.\/actions"/,
     );
   });
 
@@ -45,7 +59,7 @@ describe("AppointmentLifecycleActions: Mark completed button restoration", () =>
     // outline-only variant used by Mark no-show.
     const block =
       COMPONENT.match(
-        /<button[\s\S]{0,2000}onClick=\{runComplete\}[\s\S]{0,2000}Mark completed/,
+        /<button[\s\S]{0,2000}onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
     expect(block).toMatch(/bg-neutral-900/);
     expect(block).toMatch(/text-white/);
@@ -54,13 +68,13 @@ describe("AppointmentLifecycleActions: Mark completed button restoration", () =>
 
 describe("AppointmentLifecycleActions: Mark completed gating", () => {
   it("the component returns null for non-confirmed statuses", () => {
-    expect(COMPONENT).toMatch(/if \(status !== "confirmed"\) return null;/);
+    expect(CALENDAR).toMatch(/if \(status !== "confirmed"\) return null;/);
   });
 
   it("the Mark completed button is disabled when pending OR !hasEnded", () => {
     const block =
       COMPONENT.match(
-        /<button[\s\S]{0,2000}onClick=\{runComplete\}[\s\S]{0,2000}Mark completed/,
+        /<button[\s\S]{0,2000}onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
     expect(block).toMatch(/disabled=\{pending \|\| !hasEnded\}/);
   });
@@ -72,7 +86,7 @@ describe("AppointmentLifecycleActions: Mark completed gating", () => {
     // copy is pinned here.
     const block =
       COMPONENT.match(
-        /onClick=\{runComplete\}[\s\S]{0,2000}Mark completed/,
+        /onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
     expect(block).toMatch(
       /Appointment can be marked completed after the appointment has ended\./,
@@ -95,9 +109,10 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
     expect(COMPONENT).toMatch(
       /import \{ ConfirmDialog \} from "@\/components\/confirm-dialog"/,
     );
-    // One dialog per action (complete + no-show).
-    const dialogs = COMPONENT.match(/<ConfirmDialog\b/g) ?? [];
-    expect(dialogs.length).toBeGreaterThanOrEqual(2);
+    // One dialog per action, now one per owner: the shared completion control
+    // carries the complete dialog, the calendar surface carries no-show.
+    expect((COMPONENT.match(/<ConfirmDialog\b/g) ?? []).length).toBe(1);
+    expect((CALENDAR.match(/<ConfirmDialog\b/g) ?? []).length).toBe(1);
   });
 
   it("does NOT use window.confirm anywhere (the iOS-suppressible API is gone)", () => {
@@ -113,33 +128,39 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
   });
 
   it("declares NO_SHOW_CONFIRM_MESSAGE with separate, truthful copy", () => {
-    expect(COMPONENT).toMatch(
+    expect(CALENDAR).toMatch(
       /NO_SHOW_CONFIRM_MESSAGE\s*=\s*[\s\S]{0,200}records that the appointment was missed and cannot be undone from this screen\./,
     );
   });
 
   it("each dialog carries a distinct confirm label so the copy is action-specific", () => {
     expect(COMPONENT).toMatch(/confirmLabel="Mark completed"/);
-    expect(COMPONENT).toMatch(/confirmLabel="Mark no-show"/);
+    expect(CALENDAR).toMatch(/confirmLabel="Mark no-show"/);
+    // Charting must never offer no-show: no button, no action, no dialog.
+    const controlCode = COMPONENT.split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(controlCode).not.toMatch(/no-show/i);
+    expect(controlCode).not.toMatch(/NoShowAction/);
   });
 
   it("the buttons OPEN the dialog and send NO request (setConfirming, no action call)", () => {
     // runComplete / runNoShow only set which dialog is open; they must not
     // call a server action directly.
-    const runComplete =
-      COMPONENT.match(/function runComplete\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    const openConfirm =
+      COMPONENT.match(/function openConfirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
     const runNoShow =
-      COMPONENT.match(/function runNoShow\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
-    expect(runComplete).toMatch(/setConfirming\("complete"\)/);
-    expect(runNoShow).toMatch(/setConfirming\("no_show"\)/);
-    expect(runComplete).not.toMatch(/markAppointment(Complete|NoShow)Action/);
+      CALENDAR.match(/function runNoShow\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(openConfirm).toMatch(/setConfirming\(true\)/);
+    expect(runNoShow).toMatch(/setConfirming\(true\)/);
+    expect(openConfirm).not.toMatch(/markAppointment(Complete|NoShow)Action/);
     expect(runNoShow).not.toMatch(/markAppointment(Complete|NoShow)Action/);
   });
 
   it("Cancel sends NO request: handleCancel closes and sets the calm hint only", () => {
     const handleCancel =
       COMPONENT.match(/function handleCancel\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
-    expect(handleCancel).toMatch(/setConfirming\(null\)/);
+    expect(handleCancel).toMatch(/setConfirming\(false\)/);
     expect(handleCancel).toMatch(/setHint\("Cancelled, no change made\."\)/);
     expect(handleCancel).not.toMatch(/markAppointment(Complete|NoShow)Action/);
     expect(handleCancel).not.toMatch(/startTransition/);
@@ -157,7 +178,10 @@ describe("AppointmentLifecycleActions: confirm runs the action once", () => {
   it("handleConfirm calls the correct action inside a transition", () => {
     expect(handleConfirm).toMatch(/startTransition\(async \(\) => \{/);
     expect(handleConfirm).toMatch(/markAppointmentCompleteAction\(fd\)/);
-    expect(handleConfirm).toMatch(/markAppointmentNoShowAction\(fd\)/);
+    expect(handleConfirm).not.toMatch(/markAppointmentNoShowAction/);
+    const calendarConfirm =
+      CALENDAR.match(/function handleConfirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(calendarConfirm).toMatch(/markAppointmentNoShowAction\(fd\)/);
   });
 
   it("guards against a double request (early-return while pending; dialog disables Confirm)", () => {
@@ -180,16 +204,18 @@ describe("AppointmentLifecycleActions: confirm runs the action once", () => {
 });
 
 describe("AppointmentLifecycleActions: cancelled / no_show paths unchanged", () => {
-  it("the no-show button still renders with its existing handler", () => {
-    expect(COMPONENT).toMatch(
+  it("the no-show button still renders with its existing handler (calendar only)", () => {
+    expect(CALENDAR).toMatch(
       /<button[\s\S]{0,2000}onClick=\{runNoShow\}[\s\S]{0,2000}Mark no-show/,
     );
   });
 
   it("cancelled / no_show / completed appointments return null (no buttons)", () => {
     // The early return guards every terminal-state appointment so
-    // neither Mark completed nor Mark no-show renders.
-    expect(COMPONENT).toMatch(/status !== "confirmed"/);
+    // neither Mark completed nor Mark no-show renders on the calendar. The
+    // charting workflow reaches the same outcome through the pure presenter,
+    // which returns a terminal completion state and mounts no control at all.
+    expect(CALENDAR).toMatch(/status !== "confirmed"/);
   });
 
   it("the component does NOT add any 'restore' / 'reopen' affordance", () => {
