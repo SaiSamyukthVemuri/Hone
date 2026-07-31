@@ -35,7 +35,9 @@ async function selectF3Probe(page: import("@playwright/test").Page) {
 }
 
 async function switchToF2Probe(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: "Change" }).click();
+  // Scoped testid: once an area is chosen the area picker also renders a
+  // "Change" control, so the bare role+name is ambiguous.
+  await page.getByTestId("probe-change").click();
   await page.getByRole("button", { name: "Stainless steel", exact: true }).click();
   await page.getByRole("button", { name: "F2 Short", exact: true }).click();
 }
@@ -230,12 +232,9 @@ test("active INVENTORY outranks charted history, and a manual override is never 
     );
   });
 
-  await test.step("typing her own lot wins over everything, drops the link, and survives a probe change", async () => {
+  await test.step("typing her own lot wins over inventory FOR THAT PROBE, and drops the link", async () => {
     await page.getByTestId("probe-lot-input").fill("TYPED-BY-HAND");
     await expect(page.getByTestId("probe-lot-linked")).toHaveCount(0);
-    // Switching probes must NOT clobber a value she typed.
-    await switchToF2Probe(page);
-    await expect(page.getByTestId("probe-lot-input")).toHaveValue("TYPED-BY-HAND");
     await page.getByTestId("save-treatment-area").click();
     await expect
       .poll(async () => JSON.stringify(await getSessionBlockInventoryLinks(sessionId)), {
@@ -244,5 +243,22 @@ test("active INVENTORY outranks charted history, and a manual override is never 
       .toBe(JSON.stringify([{ lot: "TYPED-BY-HAND", itemId: null }]));
     // The inventory row was never consumed by this block.
     expect(itemId).toBeTruthy();
+  });
+
+  // CORRECTED. This step previously asserted that a typed lot SURVIVES a probe
+  // change. That was the defect: a lot belongs to one probe, so carrying it to a
+  // different probe made the record claim a lot never used on it. Provenance is
+  // now per-probe (see probe-lot-scope-and-copy-mobile.spec.ts for the full
+  // matrix); a probe change always re-resolves for the newly selected probe.
+  await test.step("a typed lot does NOT follow her onto a different probe", async () => {
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId(/^edit-area-/).first().click();
+    await expect(page.getByTestId("probe-lot-input")).toHaveValue("TYPED-BY-HAND", {
+      timeout: T,
+    });
+    await switchToF2Probe(page);
+    await expect(page.getByTestId("probe-lot-input")).not.toHaveValue("TYPED-BY-HAND");
+    // F2 has neither inventory nor charted history in this studio → blank.
+    await expect(page.getByTestId("probe-lot-input")).toHaveValue("", { timeout: T });
   });
 });

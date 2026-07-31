@@ -71,7 +71,7 @@ describe("2. copy settings: full, area-aware, never the response", () => {
     // which carries the block machine settings AND the primary entry's
     // mode-gated machine readings — a superset of the old block-only copy.
     expect(copyFn).toMatch(/firstLiveEntry\(source\.electrolysis_entries\)/);
-    expect(copyFn).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    expect(copyFn).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
     for (const field of [
       "mode",
       "apilusModality",

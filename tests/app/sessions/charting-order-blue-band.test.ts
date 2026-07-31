@@ -74,7 +74,7 @@ describe("charting field order (Chloe's exact flow)", () => {
     expect(FORM).toMatch(/machineFrequency: \(draft\.machineFrequency \|\| null\) as/);
     expect(FORM).toMatch(/minutesPerformed:/);
     // copy-settings still carries the full setup — now via the shared contract.
-    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
     // No field was removed.
     expect(FORM).toMatch(/<ProbePicker/);
     expect(FORM).toMatch(/>Energy level \(EL\)<\/span>/);

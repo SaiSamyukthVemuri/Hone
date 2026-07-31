@@ -81,7 +81,7 @@ function read(rel: string): string {
 describe("form wiring (source pins — NOT a DOM behavior test)", () => {
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
-  it("auto-fill goes through the ONE composed resolver, gated by lotEditedManually, never auto-confirms", () => {
+  it("auto-fill goes through the ONE composed resolver, scoped PER PROBE, never auto-confirms", () => {
     // The form no longer calls resolveInventoryAutofill directly: inventory AND
     // recorded-history precedence now live together in
     // lib/record-keeping/probe-lot-autofill.ts, so the rule is stated once.
@@ -90,7 +90,12 @@ describe("form wiring (source pins — NOT a DOM behavior test)", () => {
     expect(FORM).toMatch(/inventory: probeLotInventory,/);
     expect(FORM).toMatch(/suggestions: probeLotSuggestions,/);
     expect(FORM).not.toMatch(/resolveInventoryAutofill\(/);
-    expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
+    // Provenance is per-probe: the effect exits while the same probe is still
+    // selected (so a typed/copied value survives re-renders) and re-resolves
+    // unconditionally when the probe changes.
+    expect(FORM).toMatch(/if \(draft\.probeKey === lotOwnerProbeKey\) return;/);
+    // The global latch is GONE — it kept one probe's lot attached to the next.
+    expect(FORM).not.toMatch(/lotEditedManually/);
     // The patch (and therefore "never auto-confirm") is owned by the resolver.
     expect(FORM).toMatch(/const patch = probeLotDraftPatch\(result\);/);
     const AUTOFILL = read("lib/record-keeping/probe-lot-autofill.ts");
@@ -98,8 +103,8 @@ describe("form wiring (source pins — NOT a DOM behavior test)", () => {
     expect(AUTOFILL).not.toMatch(/probeLotConfirmed: true/);
   });
 
-  it("typed values are protected (manual edit sets lotEditedManually and clears the link)", () => {
-    expect(FORM).toMatch(/setLotEditedManually\(value\.trim\(\) !== ""\)/);
+  it("typed values are protected (a manual edit binds to the CURRENT probe and clears the link)", () => {
+    expect(FORM).toMatch(/setLotOwnerProbeKey\(draft\.probeKey\);/);
     // onManualChange clears the inventory link.
     expect(FORM).toMatch(/probeInventoryItemId: null,\s*\n\s*probeLotNumber: value,/);
   });

@@ -26,7 +26,11 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     );
     // copySettings builds the patch from the source block's first live entry.
     expect(FORM).toMatch(/firstLiveEntry\(source\.electrolysis_entries\)/);
-    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    // The third argument is the set of inventory ids still LINKABLE for the
+    // copied probe, so a copy never resurrects an expired/reclassified link.
+    expect(FORM).toMatch(
+      /buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/,
+    );
     // It spreads the patch onto the existing draft (preserving all other keys).
     expect(FORM).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
   });
@@ -69,7 +73,9 @@ describe("the shared contract itself excludes outcomes + gates by mode", () => {
       "reaction_type",
       "caution_note",
       "numbing_status",
-      "probe_lot_number",
+      // probe_lot_confirmed stays forbidden — a copy is never confirmed. But
+      // probe_lot_number + probe_inventory_item_id are now DELIBERATELY part of
+      // the contract: the lot travels with the probe.
       "probe_lot_confirmed",
       "probe_lot_id",
     ]) {

@@ -90,7 +90,7 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     // In-form copy carries machine frequency via the shared snapshot contract.
     // The whole-session action is temporarily contained (writes nothing), so it
     // no longer selects/copies these columns at all.
-    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry\)/);
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
     expect(SNAPSHOT).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
     expect(ACTIONS).toMatch(/copyPreviousSessionAreasAction/);
     expect(ACTIONS).toMatch(/temporarily unavailable/);

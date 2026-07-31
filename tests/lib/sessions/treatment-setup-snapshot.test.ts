@@ -142,13 +142,77 @@ describe("outcome fields are structurally absent from the patch", () => {
       "cautionForNextSession",
       "cautionNote",
       "numbingStatus",
-      "probeLotNumber",
-      "probeLotConfirmed",
+      // probeLotNumber / probeInventoryItemId / probeLotConfirmed ARE part of
+      // the contract now: the lot travels WITH the probe (see the dedicated
+      // suite below). Copying a probe without its lot let the destination
+      // silently auto-resolve a DIFFERENT lot from unrelated history.
       "primaryArea",
       "side",
       "areas",
     ]) {
       expect(keys).not.toContain(forbidden);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The lot travels WITH the probe (Chloe: a copy must reproduce the exact lot,
+// never let it be swapped for an unrelated historical one).
+// ---------------------------------------------------------------------------
+describe("copied probe lot + inventory link", () => {
+  const src = (over: Record<string, unknown> = {}) => ({
+    ...block(),
+    probe_key: "sterex-gold-two-piece-f3-short",
+    probe_lot_number: "  460941  ",
+    probe_inventory_item_id: "item-1",
+    ...over,
+  });
+
+  it("copies the lot number EXACTLY (trimmed) and never marks it confirmed", () => {
+    const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"]));
+    expect(p.probeLotNumber).toBe("460941");
+    expect(p.probeLotConfirmed).toBe(false);
+  });
+
+  it("keeps the inventory link when the item is still linkable for the copied probe", () => {
+    const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"]));
+    expect(p.probeInventoryItemId).toBe("item-1");
+  });
+
+  it("drops ONLY the link — never the lot text — when the item is no longer linkable", () => {
+    // Expired, archived, or reclassified under a different probe: all three
+    // reach here as "not in the linkable set".
+    const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["other-item"]));
+    expect(p.probeInventoryItemId).toBeNull();
+    expect(p.probeLotNumber).toBe("460941"); // she still sees what she copied
+    expect(p.probeLotConfirmed).toBe(false);
+  });
+
+  it("drops the link when the caller cannot check inventory (safe default)", () => {
+    const p = buildTreatmentSetupDraftPatch(src(), entry());
+    expect(p.probeInventoryItemId).toBeNull();
+    expect(p.probeLotNumber).toBe("460941");
+  });
+
+  it("a source with no lot copies an empty lot and no link", () => {
+    const p = buildTreatmentSetupDraftPatch(
+      src({ probe_lot_number: null, probe_inventory_item_id: null }),
+      entry(),
+      new Set(["item-1"]),
+    );
+    expect(p.probeLotNumber).toBe("");
+    expect(p.probeInventoryItemId).toBeNull();
+  });
+
+  it("a manual (unlinked) source lot copies as text with no link, even when inventory is empty", () => {
+    // The zero-inventory studio shape: nothing is linkable, and the copied lot
+    // must still arrive intact.
+    const p = buildTreatmentSetupDraftPatch(
+      src({ probe_inventory_item_id: null }),
+      entry(),
+      new Set(),
+    );
+    expect(p.probeLotNumber).toBe("460941");
+    expect(p.probeInventoryItemId).toBeNull();
   });
 });

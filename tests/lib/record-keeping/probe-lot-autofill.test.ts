@@ -318,13 +318,35 @@ describe("provenance copy is truthful", () => {
   });
 });
 
-describe("form wiring", () => {
+describe("form wiring — provenance is PER PROBE, not a global latch", () => {
   const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
-  it("the effect fires ONLY on a probe change and respects a manual edit", () => {
-    expect(FORM).toMatch(/if \(draft\.probeKey === autofilledForProbeRef\.current\) return;/);
-    expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
+  it("the effect exits while the SAME probe is selected (so a typed/copied value survives re-renders)", () => {
+    expect(FORM).toMatch(/if \(draft\.probeKey === lotOwnerProbeKey\) return;/);
+  });
+
+  it("a probe CHANGE always re-resolves — there is no manual latch that can survive it", () => {
+    // The old global `lotEditedManually` boolean latched true on the first
+    // keystroke and never cleared, so one probe's lot stayed attached to the
+    // next probe she selected. It is gone entirely.
+    expect(FORM).not.toMatch(/lotEditedManually/);
+    const guard = "if (draft.probeKey === lotOwnerProbeKey) return;";
+    const start = FORM.indexOf(guard) + guard.length;
+    const body = FORM.slice(start, FORM.indexOf("}, [draft.probeKey", start));
+    // Nothing between the same-probe guard and the resolve can skip the resolve.
+    expect(body).not.toMatch(/\breturn;/);
+    expect(body).toMatch(/resolveProbeLotAutofill\(\{/);
+    expect(body).toMatch(/setLotOwnerProbeKey\(draft\.probeKey\);/);
+    expect(body).toMatch(/const patch = probeLotDraftPatch\(result\);/);
+  });
+
+  it("every value-setting path binds the value to the probe selected at that moment", () => {
+    // Typed, and explicitly picked from inventory.
+    const binds = FORM.match(/setLotOwnerProbeKey\(draft\.probeKey\);/g) ?? [];
+    expect(binds.length).toBeGreaterThanOrEqual(2);
+    // Copied — bound to the COPIED probe, not the one previously selected.
+    expect(FORM).toMatch(/setLotOwnerProbeKey\(patch\.probeKey\);/);
   });
 
   it("a cleared manual field drops the provenance line instead of claiming 'choose'", () => {
@@ -332,25 +354,54 @@ describe("form wiring", () => {
   });
 });
 
-describe("copy workflows keep their existing lot contract", () => {
+describe("copy workflows carry the EXACT lot with the probe", () => {
   const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+  const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
+  const SNAP = read("lib/sessions/treatment-setup-snapshot.ts");
 
-  it("the reusable setup snapshot still EXCLUDES the lot (traceability, not setup)", () => {
-    // Deliberate and unchanged by this PR: a lot number asserts which physical
-    // package was used on a client, so it is never carried forward as "setup".
-    // Auto-fill therefore fills a BLANK field after a copy — it never replaces
-    // a copied historical lot, because no lot is copied.
-    const SNAP = read("lib/sessions/treatment-setup-snapshot.ts");
-    expect(SNAP).toMatch(/NEVER:[\s\S]{0,200}probe_lot_number\/confirmed\/id/);
-    expect(SNAP).not.toMatch(/probeLotNumber:/);
-    expect(SNAP).not.toMatch(/probeInventoryItemId:/);
+  it("the reusable setup snapshot now carries the lot + link, never a confirmation", () => {
+    // Copying the probe WITHOUT its lot left the destination with a probe whose
+    // lot then auto-resolved from unrelated history — silently swapping a
+    // traceability value the practitioner believed she had copied.
+    expect(SNAP).toMatch(/"probe_lot_number",/);
+    expect(SNAP).toMatch(/"probe_inventory_item_id",/);
+    expect(SNAP).toMatch(/probeLotNumber: \(block\.probe_lot_number \?\? ""\)\.trim\(\),/);
+    expect(SNAP).toMatch(/probeLotConfirmed: false,/);
+    expect(SNAP).not.toMatch(/probeLotConfirmed: true/);
   });
 
-  it("a manually typed lot survives a copy, because the effect is gated", () => {
-    const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
-    // Copy applies a patch that changes probeKey; the auto-fill effect fires on
-    // that change but returns early when the practitioner has typed a lot.
-    expect(FORM).toMatch(/const patch = buildTreatmentSetupDraftPatch\(source, firstEntry\);/);
-    expect(FORM).toMatch(/if \(lotEditedManually\) return;/);
+  it("a copied inventory LINK is kept only when the item is still linkable for the copied probe", () => {
+    expect(SNAP).toMatch(/function resolveCopiedInventoryLink\(/);
+    expect(SNAP).toMatch(/return linkable\.has\(sourceItemId\) \? sourceItemId : null;/);
+    // No linkable set supplied → lot NUMBER only, link dropped (safe default).
+    expect(SNAP).toMatch(/if \(!linkable\) return null;/);
+  });
+
+  it("the form supplies only ACTIVE lots for the COPIED probe as linkable", () => {
+    expect(FORM).toMatch(/activeProbeLotOptionsForProbe\(\s*probeLotInventory,\s*source\.probe_key \?\? "",\s*\)/);
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
+  });
+
+  it("a copied lot is bound to the copied probe, so the resolver cannot overwrite it", () => {
+    expect(FORM).toMatch(/setLotOwnerProbeKey\(patch\.probeKey\);/);
+    expect(FORM).toMatch(/setLotStatus\(patch\.probeLotNumber\.trim\(\) !== "" \? "copied" : null\)/);
+  });
+
+  it("'Add another pass' never touches the block's lot or inventory link", () => {
+    // A pass is an electrolysis_entries row under the SAME block; the lot lives
+    // on the block. The add-pass action must never update those columns.
+    const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts");
+    const start = ACTIONS.indexOf("export async function addElectrolysisEntryAction");
+    expect(start).toBeGreaterThan(-1);
+    // Strip comments: the action documents the legacy free-text lot in prose.
+    const body = ACTIONS.slice(start, ACTIONS.indexOf("\nexport ", start + 10))
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+    expect(body).not.toMatch(/probe_lot_number/);
+    expect(body).not.toMatch(/probe_inventory_item_id/);
+    expect(body).not.toMatch(/probe_lot_confirmed/);
+    // And it never issues an update against session_blocks at all.
+    expect(body).not.toMatch(/from\("session_blocks"\)[\s\S]{0,200}\.update\(/);
   });
 });

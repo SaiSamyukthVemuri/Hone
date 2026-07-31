@@ -84,8 +84,11 @@ describe("form wiring: durable link + snapshot (no dormant FK)", () => {
   });
 
   it("selecting/typing a lot marks manual/link state so a probe switch behaves correctly", () => {
-    expect(FORM).toMatch(/setLotEditedManually\(value\.trim\(\) !== ""\)/);
-    expect(FORM).toMatch(/setLotEditedManually\(false\)/); // an inventory select is NOT manual
+    // Provenance is per-probe: BOTH an explicit inventory pick and a typed
+    // value bind the lot to the probe selected at that moment, so neither can
+    // follow the practitioner onto a different probe.
+    expect(FORM).toMatch(/setLotOwnerProbeKey\(draft\.probeKey\);/);
+    expect(FORM).not.toMatch(/setLotEditedManually/);
   });
 });
 

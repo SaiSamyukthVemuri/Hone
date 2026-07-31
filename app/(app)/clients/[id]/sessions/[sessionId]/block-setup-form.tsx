@@ -20,7 +20,7 @@
 // actions already accept every field used here — no action behavior
 // change.
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useState, useTransition } from "react";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -36,6 +36,7 @@ import {
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import { ProbeLotSelect } from "@/components/probe-lot-select";
 import {
+  activeProbeLotOptionsForProbe,
   probeLotOptionsForProbe,
   type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
@@ -375,6 +376,12 @@ function initialDraft(
   };
 }
 
+// Where the value in the lot/batch field came from. The resolver kinds are
+// auto-fill provenance; "manual" is a value the practitioner typed (or a manual
+// lot on a saved block being edited); "copied" is one carried in by "Copy
+// settings from another area in this session".
+type LotStatus = ProbeLotAutofillResult["kind"] | "manual" | "copied" | null;
+
 export function BlockSetupForm({
   sessionId,
   clientId,
@@ -393,18 +400,18 @@ export function BlockSetupForm({
   const [draft, setDraft] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
-  // Feature A: whether the practitioner has typed/edited the lot themselves. A
-  // saved lot on an existing block counts as manual (never clobber it). While
-  // false, the lot field auto-populates from the same-probe suggestion as the
-  // practitioner picks a probe; once they edit, we stop suggesting so a probe
-  // switch never overwrites a manual value.
-  // Only a MANUAL saved lot (probe_lot_number present AND no inventory link)
-  // counts as "manually edited" — a linked block is inventory-backed, not
-  // manual, so a probe switch re-runs the inventory auto-fill for it.
-  const [lotEditedManually, setLotEditedManually] = useState<boolean>(
-    () =>
-      (block?.probe_lot_number ?? "").trim() !== "" &&
-      (block?.probe_inventory_item_id ?? null) == null,
+  // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
+  // rather than as a global "has she edited it?" boolean.
+  //
+  // The global boolean was wrong in a way that matters clinically: once she
+  // typed a lot for a Sterex F4, the flag latched true forever, so selecting a
+  // DIFFERENT probe left the F4 lot sitting under it. The record then claimed a
+  // lot that was never used on that probe. `lotOwnerProbeKey` is the probe the
+  // current lot value belongs to; when the selected probe moves away from it,
+  // the previous probe's value, inventory link and provenance are all dropped
+  // and the resolver runs fresh for the newly selected probe.
+  const [lotOwnerProbeKey, setLotOwnerProbeKey] = useState<string>(
+    () => draft.probeKey,
   );
   const [error, setError] = useState<string | null>(null);
   // PR #191: inline feedback after "Copy settings" so the
@@ -431,13 +438,11 @@ export function BlockSetupForm({
   // recorded history, was exported and unit-tested but never called by any
   // application code; this file imported its module for the TYPE only.
   // resolveProbeLotAutofill now owns the whole precedence.
-  const autofilledForProbeRef = useRef<string>(draft.probeKey);
-  const [lotStatus, setLotStatus] = useState<ProbeLotAutofillResult["kind"] | "manual" | null>(
-    () =>
-      (block?.probe_lot_number ?? "").trim() !== "" &&
-      (block?.probe_inventory_item_id ?? null) == null
-        ? "manual"
-        : null,
+  const [lotStatus, setLotStatus] = useState<LotStatus>(() =>
+    (block?.probe_lot_number ?? "").trim() !== "" &&
+    (block?.probe_inventory_item_id ?? null) == null
+      ? "manual"
+      : null,
   );
 
   // Options (active + expired) for the currently selected probe.
@@ -447,26 +452,36 @@ export function BlockSetupForm({
   );
 
   useEffect(() => {
-    if (draft.probeKey === autofilledForProbeRef.current) return; // no probe change
-    autofilledForProbeRef.current = draft.probeKey;
-    if (lotEditedManually) return; // a genuine manual lot survives a probe switch
+    // Same probe still selected → leave the field completely alone. This is what
+    // lets a typed lot (or a copied one) survive any unrelated re-render: the
+    // effect re-runs on every render, and every one of those runs exits here.
+    if (draft.probeKey === lotOwnerProbeKey) return;
+    // The probe CHANGED. Whatever was in the field belonged to the old probe, so
+    // it is dropped unconditionally — manual, copied or auto-filled alike. A lot
+    // is probe-specific; carrying one across a probe switch would attach it to a
+    // probe it was never used on.
     const result = resolveProbeLotAutofill({
       probeKey: draft.probeKey,
       inventory: probeLotInventory,
       suggestions: probeLotSuggestions,
     });
+    setLotOwnerProbeKey(draft.probeKey);
     setLotStatus(result.kind);
     const patch = probeLotDraftPatch(result);
     setDraft((d) => ({ ...d, ...patch }));
     // React to the PROBE changing, not our own writes (setDraft is stable).
-  }, [draft.probeKey, lotEditedManually, probeLotInventory, probeLotSuggestions]);
+  }, [draft.probeKey, lotOwnerProbeKey, probeLotInventory, probeLotSuggestions]);
 
   // "manual" is a form-local state (a saved manual lot on an edited block); the
   // resolver owns every auto-filled provenance string.
   const lotSourceMessage =
     lotStatus == null || lotStatus === "manual"
       ? null
-      : probeLotSourceMessage(lotStatus);
+      : lotStatus === "copied"
+        ? // A copied lot is a transcription of another area's record, so say so
+          // and say it still needs checking against the package in hand.
+          "Copied with these settings — confirm the lot/batch on the package."
+        : probeLotSourceMessage(lotStatus);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -510,8 +525,22 @@ export function BlockSetupForm({
     // manually entered probe lot, and every outcome/response field are
     // preserved — the patch carries ONLY reusable setup keys.
     const firstEntry = firstLiveEntry(source.electrolysis_entries);
-    const patch = buildTreatmentSetupDraftPatch(source, firstEntry);
+    // The lot travels with the probe. Its inventory LINK is carried only when
+    // the source's item is still an ACTIVE lot for the copied probe — so a copy
+    // can never resurrect a link to an expired, archived or reclassified row.
+    const linkable = new Set(
+      activeProbeLotOptionsForProbe(
+        probeLotInventory,
+        source.probe_key ?? "",
+      ).map((o) => o.id),
+    );
+    const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable);
     setDraft((d) => ({ ...d, ...patch }));
+    // Bind the copied lot to the copied probe, so the probe-change effect does
+    // NOT then overwrite it with an unrelated historical suggestion. Selecting a
+    // different probe afterwards still runs the normal resolver for that probe.
+    setLotOwnerProbeKey(patch.probeKey);
+    setLotStatus(patch.probeLotNumber.trim() !== "" ? "copied" : null);
     const sourceName = source.primary_area?.trim() || source.block_name?.trim();
     if (areaMatch) {
       setCopyMessage(
@@ -1029,23 +1058,25 @@ export function BlockSetupForm({
                 probeLotNumber: option.lotNumber,
                 probeLotConfirmed: false,
               }));
-              setLotEditedManually(false);
+              // An explicit pick also binds the value to the current probe.
+              setLotOwnerProbeKey(draft.probeKey);
               setLotStatus(null);
             }}
             onManualChange={(value) => {
-              // Typing clears any inventory link, un-confirms, and marks manual
-              // so a later probe switch never clobbers it. Clearing it back to
-              // empty drops the provenance line entirely and re-enables
-              // auto-fill for the NEXT explicit probe selection — a cleared
-              // field stays cleared until then (it must not silently refill
-              // from history on an unrelated re-render).
+              // Typing clears any inventory link and un-confirms. The value is
+              // bound to the CURRENTLY selected probe: it survives every
+              // unrelated re-render while that probe stays selected, and is
+              // dropped the moment a different probe is chosen. Clearing it back
+              // to empty drops the provenance line but keeps the binding, so the
+              // field stays empty until she picks a different probe.
               setDraft((d) => ({
                 ...d,
                 probeInventoryItemId: null,
                 probeLotNumber: value,
                 probeLotConfirmed: false,
               }));
-              setLotEditedManually(value.trim() !== "");
+              // The typed value belongs to the probe selected RIGHT NOW.
+              setLotOwnerProbeKey(draft.probeKey);
               setLotStatus(value.trim() !== "" ? "manual" : null);
             }}
           />
@@ -1087,7 +1118,7 @@ export function BlockSetupForm({
                 ? "Confirmed ✓"
                 : "Confirm lot/batch"}
             </button>
-            {!draft.probeLotConfirmed && lotEditedManually && (
+            {!draft.probeLotConfirmed && lotStatus === "manual" && (
               <span className="text-neutral-500">
                 Lot/batch changed for this entry.
               </span>
