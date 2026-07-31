@@ -204,11 +204,11 @@ describe("scope containment", () => {
   });
 
   it("the appointment is joined by sessions.appointment_id, never by client id", () => {
-    // The page's appointment id comes from the eligibility read, which embeds
-    // appointments through sessions.appointment_id.
-    expect(PAGE).toMatch(/sessionPaymentEligibility\.appointment\?\.id/);
-    // The widened read is scoped by that id AND the studio.
-    expect(PAGE).toMatch(/\.eq\("studio_id", studio\.id\)\s*\n\s*\.eq\("id", paymentApptId\)/);
+    // Taken straight off the session row — never from the billing eligibility.
+    expect(PAGE).toMatch(/const linkedAppointmentId = session\.appointment_id \?\? null;/);
+    expect(code(PAGE)).not.toMatch(/sessionPaymentEligibility\.appointment/);
+    // The widened read is scoped by that id, the studio AND the client.
+    expect(PAGE).toMatch(/\.eq\("id", linkedAppointmentId\)\s*\n\s*\.eq\("studio_id", studio\.id\)/);
     // No client-id-based appointment lookup.
     expect(code(PAGE)).not.toMatch(/from\("appointments"\)[\s\S]{0,300}eq\("client_id"/);
   });
@@ -234,5 +234,123 @@ describe("scope containment", () => {
       expect(finish.slice(0, at)).toMatch(/!isFinalized|isFinalized \?/);
     }
     expect(finish).toContain("Back to sessions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Corrections: the three blockers found on the first head.
+// ---------------------------------------------------------------------------
+describe("BLOCKER 1: the end-time control is mounted before the end too", () => {
+  it("mounts MarkAppointmentCompleteControl for BOTH before_end and ready", () => {
+    const finish = PAGE.slice(
+      PAGE.indexOf('data-testid="finish-appointment"'),
+      PAGE.indexOf('id="session-payment"'),
+    );
+    // Mounting only on "ready" meant the self-enabling timer never ran, so the
+    // button could not appear when ends_at passed without a manual refresh.
+    expect(finish).toMatch(/completion\.kind === "ready" \|\|/);
+    expect(finish).toMatch(/completion\.kind === "before_end"/);
+    expect(finish).toContain("<MarkAppointmentCompleteControl");
+    // ...and there is exactly ONE mount, so there is exactly one timer.
+    expect((finish.match(/<MarkAppointmentCompleteControl/g) ?? []).length).toBe(1);
+  });
+
+  it("the page adds no second timer and no duplicate pre-end explanation", () => {
+    const finish = PAGE.slice(
+      PAGE.indexOf('data-testid="finish-appointment"'),
+      PAGE.indexOf('id="session-payment"'),
+    );
+    expect(finish).not.toMatch(/setTimeout|setInterval|useEffect/);
+    // The helper text is passed to the control, not rendered a second time.
+    expect(finish).toMatch(/notEndedHint=/);
+    expect((finish.match(/updates on its own/g) ?? []).length).toBe(1);
+  });
+
+  it("the shared control owns the disabled state and the timer", () => {
+    expect(CONTROL).toMatch(/disabled=\{pending \|\| !hasEnded\}/);
+    expect(CONTROL).toMatch(/window\.setTimeout\(\(\) => setNowTick/);
+    expect(CONTROL).toMatch(/data-testid="mark-complete-not-ended"/);
+  });
+});
+
+describe("BLOCKER 2: Finish uses sessions.appointment_id, not billing types", () => {
+  it("reads the linked appointment id straight off the session row", () => {
+    expect(PAGE).toMatch(
+      /const linkedAppointmentId = session\.appointment_id \?\? null;/,
+    );
+  });
+
+  it("no Finish identifier comes from the billing eligibility result", () => {
+    const c = code(PAGE);
+    expect(c).not.toMatch(/sessionPaymentEligibility\.appointment/);
+    // The eligibility object is still passed to the unchanged payment card.
+    expect(c).toMatch(/eligibility=\{sessionPaymentEligibility\}/);
+  });
+
+  it("the appointment context query verifies id, studio AND client lineage", () => {
+    expect(PAGE).toMatch(
+      /\.eq\("id", linkedAppointmentId\)\s*\n\s*\.eq\("studio_id", studio\.id\)[\s\S]{0,400}\.eq\("client_id", id\)/,
+    );
+    expect(PAGE).toMatch(/\.maybeSingle\(\)/);
+  });
+
+  it("no appointment is ever recovered by client id alone", () => {
+    const c = code(PAGE);
+    // The only client_id filter on appointments is the lineage check that also
+    // pins the appointment id.
+    const q = c.slice(c.indexOf('from("appointments")'), c.indexOf(".maybeSingle()"));
+    expect(q).toMatch(/\.eq\("id", linkedAppointmentId\)/);
+    expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.limit\(/);
+    expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.order\(/);
+  });
+
+  it("still exactly ONE appointment read", () => {
+    expect((PAGE.match(/from\("appointments"\)/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("BLOCKER 3: charting is modality-aware", () => {
+  it("counts electrolysis blocks OR laser entries, never one for both", () => {
+    expect(PAGE).toMatch(/const liveChartedCount =/);
+    expect(PAGE).toMatch(/session\.modality === "electrolysis"/);
+    expect(PAGE).toMatch(
+      /\(blockData\?\.blocks \?\? \[\]\)\.filter\(\(b\) => b\.deleted_at == null\)\.length/,
+    );
+    expect(PAGE).toMatch(
+      /\(session\.laser_entries \?\? \[\]\)\.filter\(\(e\) => e\.deleted_at == null\)\.length/,
+    );
+    expect(PAGE).toMatch(/chartedBlockCount: liveChartedCount,/);
+  });
+
+  it("deleted rows are excluded on BOTH modality paths", () => {
+    const seg = PAGE.slice(
+      PAGE.indexOf("const liveChartedCount ="),
+      PAGE.indexOf("const finishState ="),
+    );
+    expect((seg.match(/deleted_at == null/g) ?? []).length).toBe(2);
+  });
+
+  it("pins the upstream behaviour it relies on: getSessionForClient strips deleted entries", () => {
+    // Traced, not assumed: session.laser_entries is already live-only.
+    const QUERIES = read("lib/supabase/queries.ts");
+    expect(QUERIES).toMatch(/return data \? stripDeletedEntries\(data as SessionWithEntries\) : null;/);
+    expect(QUERIES).toMatch(
+      /laser_entries: \(session\.laser_entries \?\? \[\]\)\.filter\(\s*\n?\s*\(e\) => !e\.deleted_at,?\s*\n?\s*\)/,
+    );
+  });
+});
+
+describe("the aftercare toggle regression stays fixed", () => {
+  it("is NOT gated on the unmarked state — both states survive", () => {
+    const finish = PAGE.slice(
+      PAGE.indexOf('data-testid="finish-appointment"'),
+      PAGE.indexOf('id="session-payment"'),
+    );
+    expect(finish).toContain("<AftercareExplainedToggle");
+    expect(finish).not.toMatch(/finishState\.aftercare === "not_marked" &&\s*\(?\s*<AftercareExplainedToggle/);
+    // The existing control renders both the mark and the "✓ explained" state.
+    const FORMS = read("app/(app)/records/record-forms.tsx");
+    expect(FORMS).toMatch(/✓ Risks explained and aftercare provided/);
+    expect(FORMS).toMatch(/Mark: procedure risks explained/);
   });
 });

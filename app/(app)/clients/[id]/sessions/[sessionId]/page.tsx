@@ -154,8 +154,12 @@ export default async function SessionDetailPage({
     startsAt: string | null;
     practitionerName: string | null;
   } | null = null;
-  const paymentApptId = sessionPaymentEligibility.appointment?.id ?? null;
-  if (paymentApptId) {
+  // THE appointment identity for this page: sessions.appointment_id. Taken
+  // directly from the session row, NOT from the billing eligibility result —
+  // the Finish workflow must not depend on billing-domain types, and lineage is
+  // verified below against BOTH studio and client.
+  const linkedAppointmentId = session.appointment_id ?? null;
+  if (linkedAppointmentId) {
     const supabaseForDefault = await createClient();
     // BARE-TABLE embed, not a column hint. Migration 0151 replaced the
     // single-column appointments.service_id FK with a composite
@@ -177,8 +181,12 @@ export default async function SessionDetailPage({
       .select(
         "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners(display_name)",
       )
+      .eq("id", linkedAppointmentId)
       .eq("studio_id", studio.id)
-      .eq("id", paymentApptId)
+      // Lineage: the appointment must belong to THIS client too. A session
+      // pointing at another client's appointment yields no row, so the Finish
+      // workflow renders no completion or postcare controls for it.
+      .eq("client_id", id)
       .maybeSingle();
     if (apptErr) {
       // Never throw: a failed default-amount read must not block charting. But
@@ -187,7 +195,7 @@ export default async function SessionDetailPage({
       console.error(
         JSON.stringify({
           event: "session_payment_default_amount_read_failed",
-          appointment_id: paymentApptId,
+          appointment_id: linkedAppointmentId,
           code: apptErr.code ?? null,
           message: apptErr.message ?? null,
         }),
@@ -262,15 +270,27 @@ export default async function SessionDetailPage({
   // the widened appointment read above, the session, the client, and the studio
   // (studio:studios(*) already carries every postcare column). NO new query.
   const finishAppt = apptContext;
-  const liveChartedBlocks = (blockData?.blocks ?? []).filter((b) => b.deleted_at == null).length;
+  // LIVE charting for THIS session's modality. Electrolysis charts as settings
+  // blocks; laser charts as laser_entries. Counting blocks alone made every
+  // laser session read "No treatment charted yet" even when fully charted,
+  // because blockData is only loaded for electrolysis.
+  //
+  // getSessionForClient already runs stripDeletedEntries(), so
+  // session.laser_entries is live-only; the block list is filtered explicitly
+  // here because getSessionWithBlocks returns soft-deleted rows too.
+  const liveChartedCount =
+    session.modality === "electrolysis"
+      ? (blockData?.blocks ?? []).filter((b) => b.deleted_at == null).length
+      : (session.laser_entries ?? []).filter((e) => e.deleted_at == null).length;
+
   const finishState = resolveFinishAppointmentState({
-    chartedBlockCount: liveChartedBlocks,
+    chartedBlockCount: liveChartedCount,
     aftercareExplainedAt: session.aftercare_and_risks_explained_at ?? null,
     // Joined by sessions.appointment_id — NEVER by client id, because a client
     // can have several appointments and the wrong one would be completed.
     appointment: finishAppt
       ? {
-          id: paymentApptId as string,
+          id: linkedAppointmentId as string,
           status: finishAppt.status ?? "",
           endsAt: finishAppt.endsAt,
         }
@@ -736,19 +756,24 @@ export default async function SessionDetailPage({
           >
             {completionLabel(finishState.completion)}
           </span>
-          {!isFinalized && finishState.completion.kind === "ready" && (
-            <MarkAppointmentCompleteControl
-              appointmentId={finishState.completion.appointmentId}
-              endsAt={finishState.completion.endsAt}
-              block
-            />
-          )}
-          {finishState.completion.kind === "before_end" && (
-            <p className="text-xs text-neutral-500">
-              You can mark it completed once the appointment end time passes —
-              this updates on its own.
-            </p>
-          )}
+          {/* Mounted for BOTH before_end and ready. The shared control owns the
+              disabled state AND the timer that re-enables the button the moment
+              ends_at passes — mounting it only when already "ready" meant the
+              timer never ran, so the button could not appear without a manual
+              refresh, while the copy claimed it would update on its own. The
+              control renders its own authoritative helper text when not ended,
+              so there is no second explanation and no second timer. */}
+          {!isFinalized &&
+            linkedAppointmentId &&
+            (finishState.completion.kind === "ready" ||
+              finishState.completion.kind === "before_end") && (
+              <MarkAppointmentCompleteControl
+                appointmentId={linkedAppointmentId}
+                endsAt={finishState.completion.endsAt}
+                notEndedHint="You can mark it completed once the appointment end time passes — this updates on its own."
+                block
+              />
+            )}
         </div>
 
         {/* 4. POSTCARE EMAIL — THE shared section, identical to the calendar
@@ -771,10 +796,10 @@ export default async function SessionDetailPage({
             </>
           ) : (
             !isFinalized &&
-            paymentApptId && (
+            linkedAppointmentId && (
               <PostcareSection
                 clientEmail={clientData.client.email ?? null}
-                appointmentId={paymentApptId}
+                appointmentId={linkedAppointmentId}
                 studioName={studio.name}
                 studioEmail={
                   (studio.postcare_contact_email?.trim() ||

@@ -3,6 +3,8 @@ import {
   seedE2eStudio,
   seedE2eEndedAppointmentSession,
   seedE2eUnlinkedSession,
+  seedE2eLaserSessionWithEntry,
+  seedE2eCrossClientLinkedSession,
   setStudioPostcareText,
   getAppointmentPostcareState,
   getSessionAftercareStamp,
@@ -115,9 +117,35 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expectNoHorizontalScroll(page);
     });
 
-    test("pre-end appointment: completion disabled, exit still available", async ({
+    test("pre-end: the button is MOUNTED and disabled, then enables itself when ends_at passes — no reload", async ({
       page,
     }) => {
+      const seed = await seedE2eStudio();
+      // Ends in ~6 seconds, so the real timer can be observed crossing it.
+      const s = await seedE2eEndedAppointmentSession(seed, {
+        endsInSeconds: 6,
+      });
+      await loginAsOwner(page, seed);
+      await openSession(page, s.clientId, s.sessionId);
+
+      // MOUNTED (so its self-enabling timer is running) but disabled. Mounting
+      // it only once "ready" meant the timer never ran and the button could not
+      // appear without a manual refresh, while the copy promised otherwise.
+      const button = page.getByTestId("mark-appointment-complete");
+      await expect(button).toBeVisible();
+      await expect(button).toBeDisabled();
+      await expect(page.getByTestId("mark-complete-not-ended")).toHaveText(
+        /updates on its own/,
+      );
+
+      // No navigation, no reload — the SAME mounted button becomes enabled.
+      const url = page.url();
+      await expect(button).toBeEnabled({ timeout: 20_000 });
+      expect(page.url()).toBe(url);
+      await expect(page.getByTestId("mark-complete-not-ended")).toHaveCount(0);
+    });
+
+    test("pre-end appointment: exit still available", async ({ page }) => {
       const seed = await seedE2eStudio();
       const s = await seedE2eEndedAppointmentSession(seed, { endedHoursAgo: -2 });
       await loginAsOwner(page, seed);
@@ -126,7 +154,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expect(page.getByTestId("finish-completion-status")).toHaveText(
         "Available after the appointment ends",
       );
-      await expect(page.getByTestId("mark-appointment-complete")).toHaveCount(0);
+      await expect(page.getByTestId("mark-appointment-complete")).toBeDisabled();
       // The safe exit is still there.
       await expect(
         finish(page).getByRole("button", { name: /Done — back to client/ }),
@@ -315,6 +343,44 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       // Charting NEVER offers no-show.
       await expect(page.getByRole("button", { name: /no-show/i })).toHaveCount(0);
       await expectNoHorizontalScroll(page);
+    });
+
+    test("a LASER session with a live entry reads as charted", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const s = await seedE2eLaserSessionWithEntry(seed, { deleted: false });
+      await loginAsOwner(page, seed);
+      await openSession(page, s.clientId, s.sessionId);
+      await expect(page.getByTestId("finish-charting-status")).toHaveText(
+        "Charting recorded",
+      );
+    });
+
+    test("a LASER session whose only entry is deleted reads as empty", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      const s = await seedE2eLaserSessionWithEntry(seed, { deleted: true });
+      await loginAsOwner(page, seed);
+      await openSession(page, s.clientId, s.sessionId);
+      await expect(page.getByTestId("finish-charting-status")).toHaveText(
+        "No treatment charted yet",
+      );
+    });
+
+    test("an appointment belonging to ANOTHER client yields no Finish actions", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      const s = await seedE2eCrossClientLinkedSession(seed);
+      await loginAsOwner(page, seed);
+      await openSession(page, s.clientId, s.sessionId);
+
+      // The lineage check (studio AND client) finds no row, so the workflow
+      // offers nothing to complete or send.
+      await expect(page.getByTestId("mark-appointment-complete")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Send postcare", exact: true }),
+      ).toHaveCount(0);
     });
 
     test("touch targets are at least 44px and the confirmation is usable", async ({

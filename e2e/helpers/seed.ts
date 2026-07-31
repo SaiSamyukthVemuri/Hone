@@ -1700,6 +1700,9 @@ export async function seedE2eEndedAppointmentSession(
   opts: {
     status?: "confirmed" | "completed" | "cancelled" | "no_show";
     endedHoursAgo?: number;
+    // Ends shortly in the FUTURE, so a test can watch the completion control's
+    // own timer cross ends_at without reloading.
+    endsInSeconds?: number;
     clientEmail?: string | null;
     charted?: boolean;
     aftercareExplained?: boolean;
@@ -1730,8 +1733,14 @@ export async function seedE2eEndedAppointmentSession(
     [clientId, seed.studioId, `Finish Client ${seed.runId}-${uniq}`, email],
   );
   const hoursAgo = opts.endedHoursAgo ?? 2;
-  const starts = new Date(Date.now() - (hoursAgo + 1) * 3600 * 1000).toISOString();
-  const ends = new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString();
+  const starts =
+    opts.endsInSeconds != null
+      ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      : new Date(Date.now() - (hoursAgo + 1) * 3600 * 1000).toISOString();
+  const ends =
+    opts.endsInSeconds != null
+      ? new Date(Date.now() + opts.endsInSeconds * 1000).toISOString()
+      : new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString();
   const appointmentId = await seedConfirmedAppointment(
     seed.studioId,
     prac.id,
@@ -1782,6 +1791,80 @@ export async function seedE2eEndedAppointmentSession(
       [blockId, seed.studioId, sessionId],
     );
   }
+  return { clientId, sessionId, appointmentId };
+}
+
+// A LASER session with one entry, live or soft-deleted. Proves the charting
+// state is computed from the session's OWN modality rows.
+export async function seedE2eLaserSessionWithEntry(
+  seed: E2eSeed,
+  opts: { deleted: boolean },
+): Promise<{ clientId: string; sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, `Laser Client ${seed.runId}-${uniq}`, `e2e-laser-${seed.runId}-${uniq}@harness.local`],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'laser', now() - interval '1 hour')`,
+    [sessionId, seed.studioId, clientId, prac.id],
+  );
+  await sql(
+    `insert into public.laser_entries (id, session_id, zone, deleted_at)
+     values ($1,$2,'Chin',$3)`,
+    [randomUUID(), sessionId, opts.deleted ? new Date().toISOString() : null],
+  );
+  return { clientId, sessionId };
+}
+
+// A session whose sessions.appointment_id points at an appointment belonging to
+// a DIFFERENT client — the lineage the Finish query must reject.
+export async function seedE2eCrossClientLinkedSession(
+  seed: E2eSeed,
+): Promise<{ clientId: string; sessionId: string; appointmentId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const otherClientId = randomUUID();
+  const clientId = randomUUID();
+  const sessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  for (const [cid, tag] of [
+    [otherClientId, "other"],
+    [clientId, "owner"],
+  ] as const) {
+    await sql(
+      `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+      [cid, seed.studioId, `X ${tag} ${seed.runId}-${uniq}`, `e2e-x-${tag}-${seed.runId}-${uniq}@harness.local`],
+    );
+  }
+  const starts = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const ends = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  // The appointment belongs to the OTHER client.
+  const appointmentId = await seedConfirmedAppointment(
+    seed.studioId,
+    prac.id,
+    otherClientId,
+    starts,
+    ends,
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id, started_at)
+     values ($1,$2,$3,$4,'electrolysis',$5, now() - interval '2 hours')`,
+    [sessionId, seed.studioId, clientId, prac.id, appointmentId],
+  );
   return { clientId, sessionId, appointmentId };
 }
 
