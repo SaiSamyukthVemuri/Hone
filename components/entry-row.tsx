@@ -89,8 +89,11 @@ export function ElectrolysisEntryRow({
   // present, show grouped Galvanic / Thermolysis lines instead of the
   // legacy intensity/duration/pulse in the meta line (avoids duplication).
   // Legacy entries (no structured readings) keep the original display.
+  // MACHINE ORDER (Chloe): units of lye, then duration, then mA — the same
+  // order the charting forms capture them in, so a saved record reads back the
+  // way it was entered. Canonical list: lib/sessions/reading-field-order.ts.
   const galvanicParts: string[] = [];
-  if (entry.galvanic_ma != null) galvanicParts.push(`${entry.galvanic_ma} mA`);
+  if (entry.units_of_lye != null) galvanicParts.push(`${entry.units_of_lye} UL`);
   if (entry.galvanic_duration_seconds != null) {
     galvanicParts.push(`${entry.galvanic_duration_seconds}s`);
   }
@@ -99,13 +102,11 @@ export function ElectrolysisEntryRow({
   // values remain in the DB and in the raw data export (see the rollout runbook's
   // display policy); they are intentionally omitted from this practitioner-facing
   // line so they can't be read as a current setting.
-  if (entry.units_of_lye != null) galvanicParts.push(`${entry.units_of_lye} UL`);
+  if (entry.galvanic_ma != null) galvanicParts.push(`${entry.galvanic_ma} mA`);
 
   const isThermoish = entry.mode === "thermo" || entry.mode === "blend";
+  // MACHINE ORDER: duration, then intensity, then pulse count / pulse delay.
   const thermoParts: string[] = [];
-  if (entry.thermolysis_intensity_percent != null) {
-    thermoParts.push(`${entry.thermolysis_intensity_percent}%`);
-  }
   if (entry.thermolysis_duration_seconds != null) {
     // PR #165. Route through formatSeconds so fractional values
     // like 0.15 / 0.2 render as "0.15 seconds" / "0.2 seconds"
@@ -115,6 +116,9 @@ export function ElectrolysisEntryRow({
     // the practitioner-facing copy reads naturally.
     const label = formatSeconds(entry.thermolysis_duration_seconds);
     if (label) thermoParts.push(label);
+  }
+  if (entry.thermolysis_intensity_percent != null) {
+    thermoParts.push(`${entry.thermolysis_intensity_percent}%`);
   }
   // Pulse delay only reads when multiple pulses were done (pulse_count > 1) and
   // a value was recorded. numeric may arrive as string via PostgREST, so
