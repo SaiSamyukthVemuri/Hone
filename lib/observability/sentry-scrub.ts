@@ -16,6 +16,7 @@
 // and edge runtimes.
 
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/nextjs";
+import { canonicalizeTokenPaths } from "@/lib/security/token-routes";
 
 const REDACTED = "[Redacted]";
 const MAX_DEPTH = 8;
@@ -97,9 +98,20 @@ const SUPABASE_TOKEN_RE =
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.
 const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
 
-/** Redact sensitive substrings from a free-text string. */
+/** Redact sensitive substrings from a free-text string.
+ *
+ *  F-PRIV-001. Token-route canonicalization runs FIRST, before any value
+ *  pattern. Those patterns key off credential SYNTAX (JWT segments, a `Bearer `
+ *  prefix, Supabase shapes) and are structurally blind to an opaque credential
+ *  sitting in a URL path — /intake/9f3a... looks like an ordinary path segment
+ *  to every one of them. Canonicalization keys off the ROUTE instead, so the
+ *  credential is removed no matter what it looks like.
+ *
+ *  Because every recursive string surface (extra, contexts, tags, span data,
+ *  breadcrumb messages, exception values) funnels through here, they all
+ *  inherit the protection rather than each needing its own call. */
 export function redactString(input: string): string {
-  return input
+  return canonicalizeTokenPaths(input)
     .replace(EMAIL_RE, REDACTED)
     .replace(JWT_RE, REDACTED)
     .replace(BEARER_RE, REDACTED)
@@ -180,13 +192,29 @@ function scrubContexts(
   return out;
 }
 
+/** Sanitize a field KNOWN to be a URL. Order matters and is deliberate:
+ *
+ *   1. canonicalize token-route credentials — this also consumes the query and
+ *      fragment of a token URL, so a credential cannot escape by hiding behind
+ *      an encoded `?` or a malformed separator that step 2 fails to split on;
+ *   2. drop the query string and fragment (identifiers leak through both);
+ *   3. run the ordinary value redactions.
+ *
+ *  Doing (2) before (1) would be unsafe: a URL whose separator we mis-parse
+ *  would keep its raw path credential. Doing (1) first means the credential is
+ *  already gone regardless of how the rest of the string is shaped. */
+function sanitizeUrlString(url: string): string {
+  const canonical = canonicalizeTokenPaths(url);
+  return redactString(canonical.split("?")[0].split("#")[0]);
+}
+
 function scrubRequest(request: Record<string, unknown>): void {
   // With sendDefaultPii:false these are usually absent; drop them anyway.
   delete request.cookies;
   delete request.headers; // may carry Authorization / Cookie / forwarded IPs
   delete request.query_string; // may carry filter values, emails, tokens
   if (typeof request.url === "string") {
-    request.url = redactString(request.url.split("?")[0]);
+    request.url = sanitizeUrlString(request.url);
   }
   if (request.data !== undefined) {
     request.data = deepScrub(
@@ -218,7 +246,7 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
       (breadcrumb.category === "fetch" || breadcrumb.category === "xhr") &&
       typeof data.url === "string"
     ) {
-      data.url = redactString(data.url.split("?")[0]);
+      data.url = sanitizeUrlString(data.url);
     }
     breadcrumb.data = deepScrub(
       data,
@@ -237,6 +265,18 @@ function scrubEventCommon<T extends Event>(event: T): T {
 
   if (typeof event.message === "string") {
     event.message = redactString(event.message);
+  }
+
+  // F-PRIV-001. The transaction NAME was previously never scrubbed at all — it
+  // is the event's grouping key and reads as structural metadata, but on a
+  // dynamic route it is built from the resolved path, so it carried the raw
+  // credential ("GET /intake/<token>"). It is a plain string, not a URL field,
+  // so it goes through redactString: token routes are canonicalized to
+  // "GET /intake/[Redacted]", keeping the route family for grouping while the
+  // credential is gone. Applied in the COMMON path so error and transaction
+  // events are covered by one contract.
+  if (typeof event.transaction === "string") {
+    event.transaction = redactString(event.transaction);
   }
 
   if (event.exception?.values) {
