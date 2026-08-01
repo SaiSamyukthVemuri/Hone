@@ -318,16 +318,67 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await cleanupPaymentScenario(s.studioId);
     });
 
-    test("a rapid double-click prepares exactly ONE attempt", async ({ page }) => {
+    test("two rapid activations of the SAME mounted button prepare exactly one attempt", async ({
+      page,
+    }) => {
       const s = await seed("double");
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
-      const btn = region.getByRole("button", { name: /prepare session payment/i });
-      await Promise.all([btn.click(), btn.click().catch(() => {})]);
+
+      // WHY NOT Promise.all([btn.click(), btn.click()]): the first successful
+      // submission replaces the form with the ready panel, so the SECOND
+      // Playwright locator action waits on a control that no longer exists and
+      // burns the whole test timeout. That is a broken test, not a broken
+      // product — it went flaky in CI (timeout, then pass on retry).
+      //
+      // Instead: dispatch BOTH activations synchronously inside one browser
+      // task, against the same still-mounted button, and count the server
+      // requests without reading any request body.
+      const posts: string[] = [];
+      page.on("request", (r) => {
+        if (r.method() === "POST") posts.push(r.url());
+      });
+
+      const dispatched = await region.evaluate((el) => {
+        const buttons = Array.from(el.querySelectorAll("button"));
+        const btn = buttons.find((b) =>
+          /prepare session payment/i.test(b.textContent ?? ""),
+        ) as HTMLButtonElement | undefined;
+        if (!btn) return 0;
+        // Two real activations, back to back, with no await between them.
+        let n = 0;
+        btn.click();
+        n += 1;
+        btn.click();
+        n += 1;
+        return n;
+      });
+      // Both activations were genuinely dispatched — this is not one ordinary
+      // click wearing a different name.
+      expect(dispatched).toBe(2);
+
       await expectPreparedDurable(region);
+
+      // Exactly one prepared row, at the authoritative amount.
       const rows = await attempts(s.sessionId);
       expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("ready");
       expect(Number(rows[0].amount_cents)).toBe(PRICE);
+      // No second active/succeeded attempt of any kind.
+      const all = await adminQuery(
+        `select count(*)::int n from public.payment_charge_attempts where session_id = $1`,
+        [s.sessionId],
+      );
+      expect(all.rows[0].n).toBe(1);
+      // Blank note still stores NULL.
+      const note = await adminQuery(
+        `select internal_note from public.payment_charge_attempts where session_id = $1`,
+        [s.sessionId],
+      );
+      expect(note.rows[0].internal_note).toBeNull();
+      // Preparation never reaches the processor.
+      expect(posts.filter((u) => /api\.stripe\.com/.test(u))).toHaveLength(0);
+
       await cleanupPaymentScenario(s.studioId);
     });
 
