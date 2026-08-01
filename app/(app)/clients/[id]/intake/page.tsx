@@ -333,11 +333,19 @@ export default async function ClientIntakePage({
         ))}
       </div>
 
+      {/* F-CLIN-004: pass the ACTUAL server status. The previous
+          `alreadyReviewed` boolean collapsed in_progress and submitted into a
+          single "not reviewed" state, so the Mark reviewed CTA was rendered
+          for intakes the client had never submitted. */}
       <IntakeReviewForm
         intakeId={intake.id}
         clientId={id}
         initialNotes={intake.practitioner_notes}
-        alreadyReviewed={intake.status === "reviewed"}
+        status={intake.status}
+        reviewedAtIso={intake.reviewed_at}
+        reviewedByName={
+          reviewer ? reviewer.display_name || reviewer.email : null
+        }
       />
     </div>
   );

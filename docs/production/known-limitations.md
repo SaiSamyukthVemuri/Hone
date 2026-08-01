@@ -265,6 +265,22 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | A separate, explicitly authorized piece of work: (1) move the 26 direct writers onto narrow commands with the authority checks the existing charting RPCs already model; (2) deploy; (3) only then revoke `INSERT`/`UPDATE`/`DELETE` from `authenticated` on those five tables. Sequence matters — application-first, then the revocation. |
 | **Blocks** | Neither today. It should be closed before the deep audit signs off on the clinical write surface. |
 
+## L22 — `F-CLIN-004`: the intake review application path is fixed, but the database boundary is still open
+
+**Status: APPLICATION PATH IMPLEMENTED — DATABASE BOUNDARY STILL OPEN.**
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-08-01 |
+| **Impact** | `F-CLIN-004` is the "Mark reviewed accepts an unsubmitted intake, and any intake in the studio" finding. The **application and UI exploit is closed**: `markIntakeReviewedAction` now performs one conditional `UPDATE` that requires `id` + server-derived `studio_id` + the submitted `client_id` + `deleted_at is null` + `status = 'submitted'` + `submitted_at is not null`, proves exactly one affected row via `.select()`, derives `status`/`reviewed_at`/`reviewed_by` server-side, and returns one generic failure for every refusal. The review CTA is no longer rendered for an `in_progress` intake at all. **What is NOT closed:** an authenticated studio member can still drive `in_progress -> reviewed` by a **direct PostgREST `PATCH`**, bypassing the application entirely. Migration **0118** does not stop it, because all of its review guards are nested under `if old.status in ('submitted','reviewed')` — when the OLD row is still `in_progress` the whole guard block is skipped. |
+| **Evidence** | Proved by a real authenticated PostgREST/SQL probe on the migrated local database (migration max 0161): `old.status = in_progress`, `new.status = reviewed`, `submitted_at = NULL`, result **`UPDATE 1`**; `reviewed_at` and `reviewed_by` were accepted. Every probe row was synthetic and rolled back or confined to the disposable local database. The cause is verified in the trigger source itself (`enforce_intake_terminal_immutability`, `supabase/migrations/0118_intake_terminal_immutability.sql:50`). This is pinned as a machine-checked canary by `tests/db/intake-review-db-boundary.db.test.ts`, which asserts the transition is **still reachable today** and must be inverted in the same PR that lands the fix. |
+| **Production reality** | A read-only aggregate over `client_intake_forms` (counts only; no ids, no answers, no notes, no client/practitioner identity) found **zero inconsistent rows** across both studios: no `reviewed` row with a NULL `submitted_at`, NULL `reviewed_at` or NULL `reviewed_by`, and no `in_progress` row carrying review metadata. Willow Electrolysis: 7 `in_progress`, 2 `submitted`, 16 `reviewed`. My Studio: 1 / 1 / 3. **Zero inconsistent rows does not close the reachable defect** — it means the defect has not been exercised, not that it cannot be. No production correction was performed and none is needed. |
+| **Current mitigation** | The ordinary route is closed: the deployed UI cannot produce this transition, and the server action refuses it even when called directly with a forged payload. The residual path requires a studio member to deliberately craft a PostgREST request against their own studio's data. |
+| **Why it is not closed here** | Closing it needs a schema/trigger change, and the authorization for that work was explicitly withheld from this PR. Migration **0162 was not created**. |
+| **Owner** | Sam |
+| **Next gate** | A separately authorized migration **0162** strengthening `enforce_intake_terminal_immutability` so that any incoming transition to `reviewed`: requires `OLD.status = 'submitted'`; requires `OLD.submitted_at IS NOT NULL`; validates `reviewed_by` as the caller's own active practitioner; preserves the existing reviewed-attribution immutability; and rejects `in_progress -> reviewed` under authenticated PostgREST. **That migration is not promised to be sufficient until it has had its own adversarial review and DB tests.** |
+| **Blocks** | Neither today — Willow can keep working, and the live UI cannot reach the defect. `F-CLIN-004` must **not** be described as closed, remediated, production-verified or fully fixed until 0162 lands and is verified. |
+
 
 ---
 
