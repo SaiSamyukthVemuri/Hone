@@ -2278,17 +2278,60 @@ export async function countReviewedIntakes(studioId: string): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// Transition an intake to reviewed OUT OF BAND (direct service-role SQL, which
-// migration 0118's trigger exempts because auth.uid() is null). Models "another
-// device reviewed this row while your tab was open" for the stale-page E2E.
+// Transition an intake to reviewed OUT OF BAND. Models "another device reviewed
+// this row while your tab was open" for the stale-page E2E.
+//
+// MIGRATION 0162 CHANGED HOW THIS MUST BE DONE. It previously ran as plain
+// service-role SQL, which migration 0118 exempted because auth.uid() is null.
+// 0162 deliberately removes that exemption for the incoming review transition —
+// no runtime service-role path marks an intake reviewed, so a service-role
+// review now FAILS CLOSED. Doing it that way would raise 23514 and break this
+// helper.
+//
+// So the helper now performs a LEGITIMATE authenticated review: it adopts the
+// reviewing practitioner's own auth user for one transaction (exactly as
+// PostgREST presents a logged-in member to Postgres) and issues the same
+// statement the application would. That is also a more faithful model of
+// "another device" than a service-role write ever was.
 export async function markReviewedOutOfBand(
   intakeId: string,
   practitionerId: string,
 ): Promise<void> {
-  await sql(
-    `update public.client_intake_forms
-        set status = 'reviewed', reviewed_at = now(), reviewed_by = $2
-      where id = $1`,
-    [intakeId, practitionerId],
-  );
+  const client = new PgClient({ connectionString: E2E_DB_URL });
+  await client.connect();
+  try {
+    const owner = await client.query<{ user_id: string }>(
+      `select user_id from public.practitioners where id = $1`,
+      [practitionerId],
+    );
+    const userId = owner.rows[0]?.user_id;
+    if (!userId) {
+      throw new Error(
+        `markReviewedOutOfBand: practitioner ${practitionerId} has no auth user`,
+      );
+    }
+    await client.query("begin");
+    await client.query("set local role authenticated");
+    await client.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: userId, role: "authenticated" }),
+    ]);
+    const res = await client.query(
+      `update public.client_intake_forms
+          set status = 'reviewed', reviewed_at = now(), reviewed_by = $2
+        where id = $1 and status = 'submitted'
+        returning id`,
+      [intakeId, practitionerId],
+    );
+    if (res.rowCount !== 1) {
+      throw new Error(
+        `markReviewedOutOfBand: expected exactly 1 transitioned row, got ${res.rowCount}`,
+      );
+    }
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback").catch(() => undefined);
+    throw e;
+  } finally {
+    await client.end();
+  }
 }

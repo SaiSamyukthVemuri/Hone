@@ -920,8 +920,8 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Repo migration max row must read 0161",
-    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0161\*\*/);
+      "the ledger's Repo migration max row must read 0162 (0162 is written but NOT applied)",
+    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0162\*\*/);
     expect(
       MIGRATION_LEDGER,
       "…and must record 0161 as APPLIED with its checksum, not as pending",

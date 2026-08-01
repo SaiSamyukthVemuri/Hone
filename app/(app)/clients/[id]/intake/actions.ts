@@ -35,8 +35,10 @@ export type ReviewResult = { ok: true } | { ok: false; error: string };
 // authenticated direct PostgREST PATCH can still drive in_progress → reviewed,
 // because migration 0118's review guards are nested under
 // `if old.status in ('submitted','reviewed')` and therefore never run when the
-// OLD row is still in_progress. Closing that requires a separately authorized
-// migration 0162; see docs/03_SECURITY_AND_PRIVACY.md.
+// OLD row is still in_progress. Closing that requires migration 0162, which now
+// EXISTS and is tested but is NOT YET APPLIED to production (hosted migration
+// max is still 0161), so this remains true of production until it is applied.
+// See docs/03_SECURITY_AND_PRIVACY.md and known-limitations L22.
 // ---------------------------------------------------------------------------
 
 // Single generic failure for EVERY non-success outcome of the review update.

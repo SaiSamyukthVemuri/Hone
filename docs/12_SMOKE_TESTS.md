@@ -1138,6 +1138,41 @@ Fixes a P1 overclaim: `sendPostcareEmailAction` used `postcare_email_sent_at` as
 
 Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max — **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" in earlier revisions of this entry was exactly the staleness the derivation was introduced to prevent); the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
 
+## Intake review database boundary smoke (migration 0162 — NOT APPLIED)
+
+Confirms the database half of `F-CLIN-004`. **The migration is written and tested but NOT
+APPLIED**: repo migration max is `0162`, hosted (production) max is still `0161`, so **none of
+the operator checks below can be performed against production yet** — they become valid only
+after `0162` is applied under separate explicit authorization.
+
+**Automated coverage (run these now):** `npm run test:db` →
+`tests/db/intake-review-db-boundary.db.test.ts` runs the full adversarial matrix against a fresh
+local database with the whole migration chain applied, as the `authenticated` role with a real
+studio-member JWT: `in_progress -> reviewed` refused (including with a forged `submitted_at`);
+`submitted` with a NULL `submitted_at` refused; a legitimate `submitted -> reviewed` still
+succeeds exactly once; `reviewed_by` from another studio, from the same studio but a different
+user, inactive, NULL, or an arbitrary UUID all refused; a user holding practitioner rows in two
+studios cannot review with the wrong studio's row; a forged historical or future `reviewed_at` is
+overwritten with server time; attribution cannot be rewritten; `reviewed -> submitted` and
+`reviewed -> in_progress` refused; answers and `submitted_at` immutable; `practitioner_notes`
+still editable in every status; the service-role client submission still works; a service-role
+review transition is refused; an anonymous update is refused; and a **real two-connection race**
+produces exactly one transition with immutable attribution. `npm test` →
+`tests/migrations/0162-intake-review-transition-integrity.test.ts` pins the SQL contract, the
+transaction/lock discipline, and the repo migration-max tripwire. **Also run `npm run test:e2e`**:
+0162 changes what `e2e/helpers/seed.ts`'s `markReviewedOutOfBand` must do (a service-role review
+now fails closed, so it performs a genuine authenticated review instead), and the `browser-e2e`
+lane is the only lane that executes that helper — via `e2e/intake-review-integrity.spec.ts` C2.
+
+**Operator check — ONLY AFTER 0162 IS APPLIED (read-only, no writes):** confirm
+`supabase migration list --linked` shows `0162` in Remote exactly once; open
+`/clients/<id>/intake` for a client whose intake is still in progress and confirm there is no
+*Mark reviewed* control (unchanged from PR #497); for a submitted intake, mark it reviewed
+through the UI and confirm the Reviewed line shows **the server's** time; confirm the intake
+history still lists prior rows unchanged. Do **not** attempt a direct PostgREST `PATCH` against
+production to test the boundary — the automated lane already proves it on a disposable database.
+No production writes, no backfill, no data correction. Live payments remain disabled.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:

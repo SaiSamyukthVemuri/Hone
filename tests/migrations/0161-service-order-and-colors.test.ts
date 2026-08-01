@@ -29,18 +29,24 @@ const statements = CODE.split(";")
   .map((s) => s.trim())
   .filter(Boolean);
 
-describe("0161 — service order + colours (repo migration-max tripwire)", () => {
-  it("is present, 0160 precedes it, exactly one 0161, and it is the repo max", () => {
+// NOTE: the REPO migration-max tripwire has MOVED to the 0162 test, following
+// the house convention that it always lives with the NEWEST migration's test
+// (it moved off 0160 when 0161 landed, and off 0161 when 0162 landed).
+// 0161 keeps its own ordinal + frozen-checksum protections, because it is
+// APPLIED in production and must never be edited.
+describe("0161 — service order + colours (applied, checksum frozen)", () => {
+  it("is present, 0160 precedes it, and there is exactly one 0161", () => {
     expect(FILE).toMatch(/^0161_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0160_"))).toBe(true);
     expect(files.filter((f) => /^0161_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[2-9]|[7-9]\d)_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(161);
+    // 0161 is no longer the max — 0162 is — but the chain must stay dense and
+    // duplicate-free, and 0161 must still be in it.
+    expect(nums).toContain(161);
     expect(new Set(nums).size).toBe(nums.length);
   });
 

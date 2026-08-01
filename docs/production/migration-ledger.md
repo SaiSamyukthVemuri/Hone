@@ -19,9 +19,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0161** (`0161_service_order_and_colors.sql`, applied 2026-07-30T23:38:07Z→23:38:16Z) |
-| **Repo migration max** | **0161** — hosted == repo |
-| **Total migrations in repo** | **159** (`0001` … `0157`, `0159`, `0160` — **no `0158`**) |
-| **Total applied in production** | **159**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry) |
+| **Repo migration max** | **0162** — **hosted != repo.** `0162` is written and tested but **NOT APPLIED**; see the 0162 proposal below. |
+| **Total migrations in repo** | **161** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162` — **no `0158`**) |
+| **Total applied in production** | **160**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). The 161st file on disk, `0162`, is **NOT applied**. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
@@ -49,6 +49,29 @@ merge — with two deliberate exceptions noted below.
 - **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0162 — PROPOSAL (written, tested, **NOT APPLIED**)
+
+**`0162_intake_review_transition_integrity.sql` — an intake may only become `reviewed` from a
+genuinely SUBMITTED row, by the caller's own active practitioner in that studio, at a
+database-stamped time.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0162_intake_review_transition_integrity.sql` |
+| **Status** | **NOT APPLIED.** Repo max `0162`, hosted max `0161`. Awaiting explicit apply authorization. |
+| **Class** | Trigger-function replacement. **No** schema, column, constraint, index, policy or grant change; **no** data change, backfill or deletion. |
+| **Finding** | `F-CLIN-004`. Migration `0118` nests every review check inside `if old.status in ('submitted','reviewed')`, so an `in_progress` OLD row skipped the block entirely and an authenticated direct PostgREST `PATCH` could drive `in_progress -> reviewed` with `submitted_at` NULL (`UPDATE 1`). |
+| **Depends on** | `0118` (whose function body it replaces). Trigger **name** and attachment are unchanged. |
+| **Contract added** | For any `new.status = 'reviewed'` where `old.status IS DISTINCT FROM 'reviewed'`: `old.status = 'submitted'`; `old.submitted_at IS NOT NULL`; `new.submitted_at` unchanged; non-null `reviewed_by` that is an **active** practitioner with `user_id = auth.uid()` **and** `studio_id = old.studio_id`; and `reviewed_at` **stamped by the database** via `transaction_timestamp()`. |
+| **Hardenings** | `reviewed` becomes terminal for end users (0118 blocked only `-> in_progress`, leaving `reviewed -> submitted` open as two-step attribution laundering); review metadata may not be attached to a non-reviewed row. |
+| **Service role** | The 0118 blanket `auth.uid() is null` exemption is **not** preserved for the review transition — a caller audit found `status: "reviewed"` written in exactly one place in the repository, on the authenticated path — so a service-role review **fails closed**. Service-role client submission (`in_progress -> submitted`), inserts and link-metadata writes are untouched and still exempt from the end-user rules. |
+| **App compatibility** | The DEPLOYED `markIntakeReviewedAction` (PR #497, merge `b7d85f5`) still succeeds: it selects back only `id, client_id` and never asserts the `reviewed_at` it sent, so the DB stamp is invisible to it. Proven by the "deployed PR #497 application compatibility" cases in the DB suite. |
+| **Transaction + locks** | Opens its own `begin; … commit;` with `set local lock_timeout = '5s'`, following the 0159/0160/0161 precedent (`db push` does not wrap a file in a transaction, so a bare `SET LOCAL` would emit 25P01 and never arm). On lock timeout (55P03) COMMIT is never reached and the previous 0118 function and trigger remain in place. |
+| **Idempotent** | `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER` — replays cleanly on a fresh database. |
+| **Editable?** | **Yes, for now.** This file is deliberately **not** checksum-frozen while it remains unapplied, and must be frozen in the same change that records its apply. The applied migrations (`0159`, `0160`, `0161`) are frozen and must never be edited. |
+| **Pre-apply requirement** | Re-run the read-only aggregate carried at the foot of the migration (counts only). It changes no existing row, so a non-zero count is **not** corrected by applying it — that needs a separate authorized reconciliation, never a silent downgrade. |
+| **Proof** | `tests/db/intake-review-db-boundary.db.test.ts` (adversarial matrix + a real two-connection concurrency race) and `tests/migrations/0162-intake-review-transition-integrity.test.ts` (source contract + the repo migration-max tripwire, which moved here from the 0161 test). |
 
 ### 0160 — current purpose and status
 
@@ -80,7 +103,8 @@ apply on a CI-parity database under a real competing `SHARE ROW EXCLUSIVE` lock 
 
 > **Neither `0159` nor `0160` may be edited.** Both are applied; their recorded checksums must keep
 > describing the files on disk. Behaviour changes require a **new** migration — the next number is
-> `0162`, since `0158` is permanently skipped and `0161` is applied.
+> `0163`, since `0158` is permanently skipped, `0161` is applied, and `0162` is already allocated
+> (written but NOT applied).
 
 ### 0159 — current purpose and status
 
