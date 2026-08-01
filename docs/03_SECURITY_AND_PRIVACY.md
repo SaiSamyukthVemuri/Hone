@@ -89,6 +89,37 @@ Vercel Analytics + Speed Insights are removed from the root layout. Safe trees o
 
 Each React-tree token page also exports `metadata.robots = { index: false, follow: false }` as a redundant meta-tag signal. The route handler `/calendar-feed/[token]/route.ts` relies on the header alone (no HTML head).
 
+### Token paths are canonicalized before Sentry transmission (F-PRIV-001)
+
+**Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.**
+
+The token in these routes is a **replayable bearer credential**: possession of the URL is possession of the authorization. That makes the *path itself* secret material — a different problem from the query string, and one `sendDefaultPii: false` does not solve, because a URL path is not PII, it is a credential.
+
+Before this change, `lib/observability/sentry-scrub.ts` stripped the query string but **deliberately preserved the path**, and never scrubbed `event.transaction` at all. The existing value patterns (JWT triple-segment, a literal `Bearer ` prefix, Supabase token shapes, email, phone) all key off credential **syntax**, so an arbitrary opaque segment like `/intake/9f3a…` passed straight through every one of them.
+
+`lib/security/token-routes.ts` is now the **single canonical registry** of the six token-bearing families, consumed by both the privacy-header block in `next.config.ts` and the Sentry scrubber. `canonicalizeTokenPaths` keys off the **route**, not the credential shape:
+
+```
+https://hone.care/intake/RAW?x=1#frag   ->  https://hone.care/intake/[Redacted]
+GET /portal/verify/RAW/step/2           ->  GET /portal/verify/[Redacted]
+```
+
+What is guaranteed:
+
+- The **credential, every suffix segment after it, the query string and the fragment** are all removed — `/intake/<token>/step/2` is as replayable as `/intake/<token>`.
+- **No token-derived hash, fingerprint, prefix or suffix is ever sent.** The placeholder is a fixed constant, so two different credentials produce byte-identical output and telemetry cannot be used to correlate or brute-force a token.
+- Protection is **credential-shape independent** — opaque, base64url, UUID-like, dotted non-JWT, percent-encoded and short credentials are all covered.
+- It runs **first** inside `redactString`, so every recursive string surface inherits it: `request.url`, `event.transaction`, `event.message`, exception values, breadcrumb messages, fetch/XHR breadcrumb URLs, span descriptions, span data, `extra`, `contexts` and `tags`.
+- The same pure module runs in **browser, Node and edge** — the three Sentry configs share it and none reimplements scrubbing locally.
+- It is **idempotent** and **non-throwing**; it never parses or decodes a URL, so it cannot re-emit a decoded secret.
+- The **route family and origin are preserved** on purpose. The goal is safe diagnostics, not no diagnostics.
+
+Six protected families: `/portal/verify`, `/cancel`, `/reschedule`, `/manage`, `/intake`, `/calendar-feed`.
+
+**Adding a new token-bearing route:** add it to `lib/security/token-routes.ts`. Both privacy headers and Sentry canonicalization then apply automatically, and `tests/lib/security/token-route-parity.test.ts` fails if `next.config.ts` re-declares its own list or if the family set changes without deliberate review. `sendDefaultPii: false` is **not** the only control, and Session Replay and Sentry Logs remain disabled with console breadcrumbs dropped.
+
+This change affects telemetry emitted **from now on**. No historical Sentry event was deleted, no provider-side deletion was performed, and no live token was rotated or revoked. Pinned by `tests/lib/observability/sentry-token-paths.test.ts` (138 cases incl. a deterministic 120-credential generated matrix) and `tests/lib/security/token-route-parity.test.ts`.
+
 ### Ops alert observability (PR #153)
 
 A new `ops_alerts` table (migration 0067) records durable, append-only rows for operator-facing silent-failure states: manual fee charge needs_manual_review, Stripe webhook processing failures, card-on-file setup failures, email/SMS give-up, cron route failures. The `lib/ops/alerts.ts:recordOpsAlert` helper is the single entry point.

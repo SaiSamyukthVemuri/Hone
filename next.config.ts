@@ -1,6 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
+import { TOKEN_ROUTE_PATTERNS } from "./lib/security/token-routes";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -18,14 +19,11 @@ import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./l
 //
 // Any new token-bearing public route MUST be added to this list
 // AND must not opt into SafeAnalytics (PR #142).
-const TOKEN_ROUTE_PATTERNS = [
-  "/portal/verify/:token*",
-  "/cancel/:token*",
-  "/reschedule/:token*",
-  "/manage/:token*",
-  "/intake/:token*",
-  "/calendar-feed/:token*",
-];
+// F-PRIV-001. This list used to be declared inline here. It now comes from the
+// single canonical registry, because a SECOND consumer needs exactly the same
+// families: the Sentry scrubber, which canonicalizes these credentials out of
+// telemetry. Two lists kept in step by a comment is precisely how one of them
+// silently drifts, so both import the module and a parity test enforces it.
 
 // PR #150. Resolve the Supabase URL from build-time env so the CSP
 // connect-src can scope to the specific project host rather than a
