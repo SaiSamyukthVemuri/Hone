@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { resolveSessionPaymentDefault } from "@/lib/billing/session-payment-default-amount";
 
 // PR #200: Last Treatment warning placement + service price default.
 //
@@ -24,7 +23,7 @@ const SESSION_PAGE = read(
 );
 const SUMMARY = read("components/last-session-summary.tsx");
 const CARD = read("components/session-payment-prepare-card.tsx");
-const RESOLVER = read("lib/billing/session-payment-default-amount.ts");
+const RESOLVER = read("lib/billing/session-payment-amount.ts");
 
 // ---------------------------------------------------------------------------
 // 1. Watch/Plan box attached to the Last treatment card
@@ -107,120 +106,14 @@ describe("From last visit box is attached to the Last treatment card", () => {
 
 const TODAY = "2026-06-12";
 
-describe("resolveSessionPaymentDefault", () => {
-  it("linked appointment with a service price defaults from the service", () => {
-    const r = resolveSessionPaymentDefault({
-      service: { name: "Electrolysis 60 min", price_cents: 12000 },
-      appointmentDurationMinutes: 60,
-      customPricing: [],
-      today: TODAY,
-    });
-    expect(r).toEqual({
-      amountCents: 12000,
-      source: "service_price",
-      serviceName: "Electrolysis 60 min",
-      durationMinutes: 60,
-      customPricingNote: null,
-    });
-  });
-
-  it("no service or no service price keeps manual behavior (null)", () => {
-    expect(
-      resolveSessionPaymentDefault({
-        service: null,
-        appointmentDurationMinutes: 60,
-        customPricing: [],
-        today: TODAY,
-      }),
-    ).toBeNull();
-    expect(
-      resolveSessionPaymentDefault({
-        service: { name: "Consult", price_cents: null },
-        appointmentDurationMinutes: 30,
-        customPricing: [],
-        today: TODAY,
-      }),
-    ).toBeNull();
-    expect(
-      resolveSessionPaymentDefault({
-        service: { name: "Consult", price_cents: 0 },
-        appointmentDurationMinutes: 30,
-        customPricing: [],
-        today: TODAY,
-      }),
-    ).toBeNull();
-  });
-
-  it("client custom pricing for the same service name overrides the menu price", () => {
-    const r = resolveSessionPaymentDefault({
-      service: { name: "Electrolysis 60 min", price_cents: 12000 },
-      appointmentDurationMinutes: 60,
-      customPricing: [
-        {
-          service_name: "  electrolysis 60 MIN ",
-          price_cents: 9500,
-          notes: "Loyalty rate",
-          effective_from: "2026-01-01",
-        },
-      ],
-      today: TODAY,
-    });
-    expect(r?.source).toBe("custom_pricing");
-    expect(r?.amountCents).toBe(9500);
-    expect(r?.customPricingNote).toBe("Loyalty rate");
-  });
-
-  it("future-dated custom pricing is ignored; newest effective row wins", () => {
-    const r = resolveSessionPaymentDefault({
-      service: { name: "Electrolysis 60 min", price_cents: 12000 },
-      appointmentDurationMinutes: 60,
-      customPricing: [
-        {
-          service_name: "Electrolysis 60 min",
-          price_cents: 8000,
-          notes: null,
-          effective_from: "2025-01-01",
-        },
-        {
-          service_name: "Electrolysis 60 min",
-          price_cents: 9000,
-          notes: null,
-          effective_from: "2026-06-01",
-        },
-        {
-          service_name: "Electrolysis 60 min",
-          price_cents: 7000,
-          notes: null,
-          effective_from: "2027-01-01",
-        },
-      ],
-      today: TODAY,
-    });
-    expect(r?.amountCents).toBe(9000);
-  });
-
-  it("custom pricing for a DIFFERENT service does not apply", () => {
-    const r = resolveSessionPaymentDefault({
-      service: { name: "Electrolysis 60 min", price_cents: 12000 },
-      appointmentDurationMinutes: 60,
-      customPricing: [
-        {
-          service_name: "Electrolysis 30 min",
-          price_cents: 6000,
-          notes: null,
-          effective_from: "2026-01-01",
-        },
-      ],
-      today: TODAY,
-    });
-    expect(r?.source).toBe("service_price");
-    expect(r?.amountCents).toBe(12000);
-  });
-});
+// The pure pricing resolver moved to lib/billing/session-payment-amount.ts and
+// is covered in full by tests/lib/billing/session-payment-amount.test.ts. The
+// old display-default resolver is retired: it produced a SUGGESTION the browser
+// could edit, and that edit became the charged amount (F-PAY-001).
 
 describe("Session payment prepare form wiring", () => {
   it("the session page resolves the default from appointment + custom pricing and passes it down", () => {
-    expect(SESSION_PAGE).toMatch(/resolveSessionPaymentDefault\(\{/);
+    expect(SESSION_PAGE).toMatch(/getAuthoritativeSessionPaymentAmount\(\{/);
     // BARE-TABLE embed. The old `services:service_id(...)` column hint stopped
     // resolving when migration 0151 replaced the single-column FK with a
     // composite one (PGRST200), so the default was always null here. See
@@ -228,38 +121,47 @@ describe("Session payment prepare form wiring", () => {
     expect(SESSION_PAGE).toMatch(
       /service:services\(name, price_cents, modality\)/,
     );
-    expect(SESSION_PAGE).toMatch(/from\("client_pricing"\)/);
-    expect(SESSION_PAGE).toMatch(/defaultAmount=\{sessionPaymentDefault\}/);
+    // The page no longer assembles pricing itself: no client_pricing read and
+    // no local precedence. ONE shared trusted loader serves the page, the
+    // quick-checkout modal and the prepare action.
+    expect(SESSION_PAGE).toMatch(/getAuthoritativeSessionPaymentAmount\(\{/);
+    expect(SESSION_PAGE).toMatch(/amountResult=\{sessionPaymentAmount\}/);
+    const pageCode = SESSION_PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(pageCode).not.toMatch(/from\("client_pricing"\)/);
   });
 
-  it("the default fills the amount field but the field stays editable", () => {
-    expect(CARD).toMatch(
-      /defaultAmount != null\s*\n?\s*\? formatCadFromCents\(defaultAmount\.amountCents\)/,
+  it("the amount is rendered by the server decision, never editable", () => {
+    expect(CARD).toMatch(/formatCadFromCents\(amount\.amountCents\)/);
+    const amountRegion = CARD.slice(
+      CARD.indexOf('data-testid="authoritative-amount"') - 400,
+      CARD.indexOf('data-testid="authoritative-amount"') + 400,
     );
-    // Same plain text input; no readOnly/disabled on the amount.
-    const amountInput = CARD.slice(
-      CARD.indexOf('name="amount_dollars"') - 400,
-      CARD.indexOf('name="amount_dollars"') + 400,
-    );
-    expect(amountInput).toMatch(/defaultValue=\{suggestedAmount\}/);
-    expect(amountInput).not.toMatch(/readOnly|disabled/);
+    expect(amountRegion).toMatch(/data-testid="authoritative-amount"/);
+    // No input at all — not editable, not merely disabled.
+    expect(amountRegion).not.toMatch(/name="amount_dollars"/);
+    expect(CARD).not.toMatch(/aria-label="Amount in Canadian dollars"/);
+    // Submitted only as a stale-display check.
+    expect(CARD).toMatch(/name="expected_amount_cents"/);
   });
 
-  it("source copy: booked service label / custom pricing reminder / adjustable (PR #202 shape)", () => {
-    // PR #202: the booked service name is a visible line of its own
-    // near the amount, for both default sources.
-    expect(CARD).toMatch(/Booked service: \{defaultAmount\.serviceName\}/);
-    expect(CARD).toMatch(/Defaulted from booked service\./);
-    expect(CARD).toMatch(/custom pricing\./);
+  it("source copy names the client-specific or booked-service price truthfully", () => {
+    expect(CARD).toMatch(/Booked service: \{amount\.serviceName\}/);
+    expect(CARD).toMatch(/Client-specific price for this service\./);
+    expect(CARD).toMatch(/Booked service price\./);
     expect(CARD).toMatch(/Custom pricing reminder:/);
-    expect(CARD).toMatch(/You can adjust before preparing\./);
+    // The old invitation to edit is gone.
+    expect(CARD).not.toMatch(/You can adjust before preparing/);
   });
 
-  it("falls back to the historical session price suggestion when no default", () => {
-    expect(CARD).toMatch(/Suggestion from session price/);
-    expect(CARD).toMatch(
-      /defaultAmount == null &&\s*\n?\s*eligibility\.session\?\.pricePaidCents != null/,
-    );
+  it("has NO historical session-price fallback — unresolved pricing BLOCKS", () => {
+    const cardCode = CARD.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(cardCode).not.toMatch(/Suggestion from session price/);
+    expect(cardCode).not.toMatch(/pricePaidCents != null/);
+    expect(CARD).toMatch(/data-testid="pricing-blocked"/);
+    expect(CARD).toMatch(/unresolvedAmountMessage\(amountResult\)/);
   });
 
   it("prepare copy is neutral (charge happens on run) and nothing implies the client paid", () => {
@@ -282,6 +184,7 @@ describe("safety: defaulting is display-only", () => {
       "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
     );
     expect(actions).not.toMatch(/resolveSessionPaymentDefault/);
+    expect(actions).not.toMatch(/resolveAuthoritativeSessionPaymentAmount\(/);
     expect(
       existsSync(join(process.cwd(), "lib/billing/session-payment-charge.ts")),
     ).toBe(true);

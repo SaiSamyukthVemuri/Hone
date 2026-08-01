@@ -143,8 +143,22 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
   it("the Refund charge button only appears when status is null or failed (persisted)", () => {
     const block = blockFor("RefundSubPanel");
     // The button-render gate excludes persistedSucceeded + persistedPending.
-    expect(block).toMatch(
-      /!persistedSucceeded[\s\S]{0,800}!persistedPending[\s\S]{0,800}Refund charge/,
+    // STRUCTURAL, not distance-based. The original assertion allowed 800
+    // characters between each token; unrelated edits elsewhere in the file
+    // pushed the gap past that and failed while the gate was perfectly intact.
+    // Assert the guard itself instead of how close together it happens to sit.
+    const gateIdx = block.indexOf("!persistedSucceeded");
+    const pendingIdx = block.indexOf("!persistedPending");
+    const buttonIdx = block.indexOf("Refund charge");
+    expect(gateIdx, "persistedSucceeded guard present").toBeGreaterThan(-1);
+    expect(pendingIdx, "persistedPending guard present").toBeGreaterThan(-1);
+    expect(buttonIdx, "Refund charge button present").toBeGreaterThan(-1);
+    // Both guards precede the button, i.e. they gate its render.
+    expect(gateIdx).toBeLessThan(buttonIdx);
+    expect(pendingIdx).toBeLessThan(buttonIdx);
+    // ...and they are part of one conjunction, not two unrelated branches.
+    expect(block.slice(gateIdx, pendingIdx + 20)).toMatch(
+      /!persistedSucceeded\s*&&\s*\n?\s*!persistedPending/,
     );
   });
 

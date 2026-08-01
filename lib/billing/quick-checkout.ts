@@ -2,16 +2,14 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { todayInTz } from "@/lib/booking/tz";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
-import {
-  resolveSessionPaymentDefault,
-  type SessionPaymentDefaultAmount,
-} from "@/lib/billing/session-payment-default-amount";
+import { getAuthoritativeSessionPaymentAmount } from "@/lib/billing/authoritative-session-payment";
+import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-amount";
 import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-types";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
 // is waiting). This resolver is the ONLY new server logic — it turns an
-// APPOINTMENT into the exact same eligibility + default-amount inputs the session
-// detail page already computes, so the quick-checkout modal can render the
+// APPOINTMENT into the exact same eligibility + authoritative-amount decision the
+// session detail page uses, so the quick-checkout modal can render the
 // existing SessionPaymentPrepareCard and drive the existing prepare/execute/
 // receipt/refund server actions UNCHANGED. It never charges, never writes, and
 // never touches clinical state.
@@ -34,7 +32,7 @@ export type QuickCheckoutContext =
         serviceName: string | null;
       };
       eligibility: SessionPaymentEligibility;
-      defaultAmount: SessionPaymentDefaultAmount | null;
+      amountResult: SessionPaymentAmountResult | null;
     }
   | {
       ok: false;
@@ -111,26 +109,15 @@ export async function resolveQuickCheckoutContext(
     sessionId,
   });
 
-  let defaultAmount: SessionPaymentDefaultAmount | null = null;
-  if (svcObj?.name) {
-    const { data: pricingRows } = await supabase
-      .from("client_pricing")
-      .select("service_name, price_cents, notes, effective_from")
-      .eq("studio_id", args.studioId)
-      .eq("client_id", clientId ?? "");
-    defaultAmount = resolveSessionPaymentDefault({
-      service: { name: svcObj.name, price_cents: svcObj.price_cents ?? null },
-      appointmentDurationMinutes:
-        (appt.duration_minutes as number | null) ?? null,
-      customPricing: (pricingRows ?? []) as Array<{
-        service_name: string;
-        price_cents: number;
-        notes: string | null;
-        effective_from: string;
-      }>,
-      today: todayInTz(args.studioTimezone),
-    });
-  }
+  // F-PAY-001: quick checkout does NOT reconstruct pricing. It calls the same
+  // trusted server loader the session-detail card and the prepare action use,
+  // so the two surfaces cannot disagree about the amount or its source.
+  const priced = await getAuthoritativeSessionPaymentAmount({
+    studioId: args.studioId,
+    sessionId,
+    studioTimezone: args.studioTimezone,
+  });
+  const amountResult = priced.ok ? priced.result : null;
 
   return {
     ok: true,
@@ -144,6 +131,6 @@ export async function resolveQuickCheckoutContext(
       serviceName: svcObj?.name ?? null,
     },
     eligibility,
-    defaultAmount,
+    amountResult,
   };
 }

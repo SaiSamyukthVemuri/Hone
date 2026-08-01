@@ -116,10 +116,25 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   // Chloe's exact starting state: a CONFIRMED appointment whose end time has
   // passed (the seed sets ends_at 30 min ago), with a session + saved card +
   // connected account — but NOT yet marked complete.
+  // F-PAY-001: this journey promises "one fake charge", so it needs a REAL
+  // priced booked service. It previously had appointment.service_id = NULL and
+  // no service row, and relied on sessions.price_paid_cents to populate an
+  // editable amount field — the historical fallback that is now retired,
+  // because a past payment is not an authority for what to charge today.
   seed = await seedEligiblePaymentWithLogin({
     label: "mobile-complete",
     appointmentStatus: "confirmed",
+    bookedService: { name: "Mobile Completion Service", priceCents: 22500 },
   });
+  // Fixture guard: the success journey MUST start from resolvable pricing, so a
+  // future fixture change cannot silently return this test to the blocked path.
+  const svc = await adminQuery(
+    `select s.price_cents from public.appointments a
+       join public.services s on s.id = a.service_id
+      where a.id = $1`,
+    [seed.appointmentId],
+  );
+  expect(Number(svc.rows[0]?.price_cents)).toBe(22500);
   expect(await getSessionPaymentAttemptRows(seed.sessionId)).toHaveLength(0);
 
   await loginAsOwner(page, seed);
@@ -160,6 +175,21 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   await checkoutButton.click();
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
+  // The amount is the SERVER's decision, rendered and not editable.
+  await expect(modal.getByTestId("authoritative-amount")).toHaveText("$225.00");
+  await expect(modal.getByTestId("amount-source")).toHaveText("Booked service price.");
+  await expect(
+    modal.getByText(/Booked service: Mobile Completion Service/),
+  ).toBeVisible();
+  await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+  await expect(modal.locator('input[name="amount_dollars"]')).toHaveCount(0);
+  await expect(modal.locator('input[name="expected_amount_cents"]')).toHaveValue("22500");
+  await expect(modal.getByTestId("pricing-blocked")).toHaveCount(0);
+  const prepareCta = modal.getByRole("button", { name: /prepare session payment/i });
+  await expect(prepareCta).toBeVisible();
+  const ctaBox = await prepareCta.boundingBox();
+  expect(ctaBox!.height).toBeGreaterThanOrEqual(44);
+
   const note = modal.getByPlaceholder(/note explaining the session payment/i);
   await expect(note).toBeVisible();
   expect(await note.getAttribute("required")).toBeNull(); // optional, not required

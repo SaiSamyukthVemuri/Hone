@@ -228,7 +228,7 @@ export function QuickCheckoutModal({
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
               eligibility={ctx.eligibility}
-              defaultAmount={ctx.defaultAmount}
+              amountResult={ctx.amountResult}
               isOwner={ctx.isOwner}
               prepareAction={withRefresh(prepareSessionPaymentChargeAction)}
               executeAction={withRefresh(executeSessionPaymentChargeAction)}

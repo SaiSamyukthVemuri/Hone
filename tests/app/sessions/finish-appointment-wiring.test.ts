@@ -43,7 +43,10 @@ describe("page order: charting → Finish appointment → session payment", () =
       "sessionId={session.id}",
       "clientId={id}",
       "eligibility={sessionPaymentEligibility}",
-      "defaultAmount={sessionPaymentDefault}",
+      // F-PAY-001 renamed this prop: the card now receives the SERVER's pricing
+      // decision instead of an editable display default. Placement, wrapper,
+      // anchor and every action prop are unchanged.
+      "amountResult={sessionPaymentAmount}",
       'isOwner={practitioner.role === "owner"}',
       "prepareAction={prepareSessionPaymentChargeAction}",
       "executeAction={executeSessionPaymentChargeAction}",

@@ -44,8 +44,10 @@ const SERVICE_NAME_PREFIX = "Checkout Default";
 const SERVICE_PRICE_CENTS = 14500; // $145.00
 const CUSTOM_PRICE_CENTS = 11000; // $110.00
 
+// F-PAY-001: the amount is no longer an input. It is the server's decision,
+// RENDERED. These read it rather than typing into it.
 const amountField = (scope: Page | ReturnType<typeof modalOf>) =>
-  scope.getByLabel("Amount in Canadian dollars");
+  scope.getByTestId("authoritative-amount");
 const noteField = (scope: Page | ReturnType<typeof modalOf>) =>
   scope.getByPlaceholder(/note explaining the session payment/i);
 
@@ -84,10 +86,11 @@ test.describe("priced booked service", () => {
     await openSessionDetail(page, seed);
 
     // THE regression assertion. Pre-fix this field is empty on this surface.
-    await expect(amountField(page)).toHaveValue("145.00");
+    await expect(amountField(page)).toHaveText("$145.00");
     await expect(page.getByText(/Booked service: Checkout Default Priced/)).toBeVisible();
-    await expect(page.getByText("Defaulted from booked service.")).toBeVisible();
-    await expect(page.getByText("You can adjust before preparing.")).toBeVisible();
+    await expect(page.getByTestId("amount-source")).toHaveText("Booked service price.");
+    // The old invitation to edit is gone: the amount is authoritative.
+    await expect(page.getByText("You can adjust before preparing.")).toHaveCount(0);
     // The "no price configured" state must NOT appear when a price resolved.
     await expect(page.getByTestId("session-payment-no-default-amount")).toHaveCount(0);
   });
@@ -95,11 +98,14 @@ test.describe("priced booked service", () => {
   test("the amount stays editable", async ({ page }) => {
     await loginAsOwner(page, seed);
     await openSessionDetail(page, seed);
-    const amount = amountField(page);
-    await expect(amount).not.toHaveAttribute("readonly", /.*/);
-    await expect(amount).toBeEditable();
-    await amount.fill("99.50");
-    await expect(amount).toHaveValue("99.50");
+    // THE security assertion, inverted by this PR: the amount CANNOT be edited.
+    await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+    await expect(page.locator('input[name="amount_dollars"]')).toHaveCount(0);
+    // ...and the value the server decided is what is submitted back for the
+    // stale check only.
+    await expect(
+      page.locator('input[name="expected_amount_cents"]'),
+    ).toHaveValue("14500");
   });
 
   test("quick checkout prefills identically — the two surfaces agree", async ({ page }) => {
@@ -108,7 +114,7 @@ test.describe("priced booked service", () => {
     await page.getByTestId("checkout-button").first().click();
     const modal = modalOf(page);
     await expect(modal).toBeVisible({ timeout: 20_000 });
-    await expect(amountField(modal)).toHaveValue("145.00");
+    await expect(amountField(modal)).toHaveText("$145.00");
     await expect(modal.getByText(/Booked service: Checkout Default Priced/)).toBeVisible();
   });
 
@@ -117,13 +123,13 @@ test.describe("priced booked service", () => {
     await page.goto("/dashboard");
     await page.getByTestId("checkout-button").first().click();
     let modal = modalOf(page);
-    await expect(amountField(modal)).toHaveValue("145.00");
-    await amountField(modal).fill("1.00");
+    await expect(amountField(modal)).toHaveText("$145.00");
+    // Nothing to fill: the amount is not an input any more.
     await modal.getByTestId("quick-checkout-close").click();
     await expect(modal).toHaveCount(0);
     await page.getByTestId("checkout-button").first().click();
     modal = modalOf(page);
-    await expect(amountField(modal)).toHaveValue("145.00");
+    await expect(amountField(modal)).toHaveText("$145.00");
   });
 });
 
@@ -165,11 +171,22 @@ test.describe("custom client pricing precedence", () => {
   test("the current custom price wins over the menu price, and says so", async ({ page }) => {
     await loginAsOwner(page, seed);
     await openSessionDetail(page, seed);
-    await expect(amountField(page)).toHaveValue("110.00");
-    await expect(page.getByText("Defaulted from this client's custom pricing.")).toBeVisible();
+    await expect(amountField(page)).toHaveText("$110.00");
+    await expect(page.getByTestId("amount-source")).toHaveText(
+      "Client-specific price for this service.",
+    );
     await expect(page.getByText(/Custom pricing reminder: Long-standing package rate/)).toBeVisible();
     // The future-dated 250.00 row must NOT win.
-    await expect(amountField(page)).not.toHaveValue("250.00");
+    await expect(amountField(page)).not.toHaveText("$250.00");
+    // Non-editable, and the displayed amount is what gets submitted back for
+    // the stale check only.
+    await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+    await expect(page.locator('input[name="expected_amount_cents"]')).toHaveValue(
+      "11000",
+    );
+    await expect(
+      page.getByRole("button", { name: /prepare session payment/i }),
+    ).toBeVisible();
   });
 });
 
@@ -192,12 +209,26 @@ test.describe("no resolvable price", () => {
     try {
       await loginAsOwner(page, seed);
       await openSessionDetail(page, seed);
-      await expect(amountField(page)).toHaveValue("");
-      await expect(page.getByTestId("session-payment-no-default-amount")).toContainText(
-        "No price is configured for this booked service.",
+      // F-PAY-001: an unresolvable price now BLOCKS preparation instead of
+      // offering a blank editable field. There is no amount, no expected
+      // amount and no Prepare action — and nothing is inserted.
+      await expect(amountField(page)).toHaveCount(0);
+      await expect(page.getByTestId("pricing-blocked")).toContainText(
+        /No price is configured/i,
       );
-      // No fabricated service label when nothing resolved.
+      await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+      await expect(
+        page.locator('input[name="expected_amount_cents"]'),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: /prepare session payment/i }),
+      ).toHaveCount(0);
       await expect(page.getByText(/Defaulted from/)).toHaveCount(0);
+      const rows = await adminQuery(
+        `select id from public.payment_charge_attempts where session_id = $1`,
+        [seed.sessionId],
+      );
+      expect(rows.rows).toHaveLength(0);
     } finally {
       await cleanupPaymentScenario(seed.studioId);
     }
@@ -213,8 +244,19 @@ test.describe("no resolvable price", () => {
     try {
       await loginAsOwner(page, seed);
       await openSessionDetail(page, seed);
-      await expect(amountField(page)).toHaveValue("");
-      await expect(page.getByTestId("session-payment-no-default-amount")).toBeVisible();
+      // No booked service at all → blocked with its own precise reason.
+      await expect(amountField(page)).toHaveCount(0);
+      await expect(page.getByTestId("pricing-blocked")).toContainText(
+        /no booked service/i,
+      );
+      await expect(
+        page.getByRole("button", { name: /prepare session payment/i }),
+      ).toHaveCount(0);
+      const rows = await adminQuery(
+        `select id from public.payment_charge_attempts where session_id = $1`,
+        [seed.sessionId],
+      );
+      expect(rows.rows).toHaveLength(0);
     } finally {
       await cleanupPaymentScenario(seed.studioId);
     }
@@ -244,8 +286,13 @@ test.describe("no resolvable price", () => {
       // Documents the KNOWN name-matching limitation: the negotiated rate is
       // silently dropped and the menu price is used. The label is honest about
       // which source won, so the practitioner can see it.
-      await expect(amountField(page)).toHaveValue("145.00");
-      await expect(page.getByText("Defaulted from booked service.")).toBeVisible();
+      await expect(amountField(page)).toHaveText("$145.00");
+      await expect(page.getByTestId("amount-source")).toHaveText("Booked service price.");
+      await expect(page.getByText(/Booked service: .*Renamed/)).toBeVisible();
+      await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+      await expect(page.locator('input[name="expected_amount_cents"]')).toHaveValue(
+        "14500",
+      );
     } finally {
       await cleanupPaymentScenario(seed.studioId);
     }

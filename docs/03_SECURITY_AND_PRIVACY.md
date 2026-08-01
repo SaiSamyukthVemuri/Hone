@@ -1,5 +1,16 @@
 # 03 Security and privacy
 
+## Session payment amount authority
+
+Session charge amounts are resolved **server-side** from current records at the
+moment of preparation; the browser cannot decide
+`payment_charge_attempts.amount_cents`. Precedence is current client-specific
+price → current booked-service menu price → block. Conflicting equally-current
+client prices fail closed. `expected_amount_cents` submitted by the UI is
+stale-display detection only and can never supply a value. See
+docs/06_PAYMENTS_AND_STRIPE.md. **F-PAY-001: IMPLEMENTED — PENDING MERGE AND
+PRODUCTION VERIFICATION.**
+
 ## 1. Tenant isolation model
 
 Hone is multi-tenant per studio. The unit of isolation is `studio_id`.

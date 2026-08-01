@@ -18,9 +18,13 @@ const BUTTON = read("components/checkout-button.tsx");
 const CAL = read("app/(app)/calendar/[id]/page.tsx");
 
 describe("resolver reuses the existing eligibility + amount path (no duplicated payment logic)", () => {
-  it("delegates to getSessionPaymentEligibility + resolveSessionPaymentDefault", () => {
+  it("delegates to getSessionPaymentEligibility + the SHARED authoritative loader", () => {
     expect(RESOLVER).toMatch(/getSessionPaymentEligibility\(\{/);
-    expect(RESOLVER).toMatch(/resolveSessionPaymentDefault\(/);
+    // Parity by construction: quick checkout calls the SAME trusted loader the
+    // session-detail page and the prepare action use — no second algorithm.
+    expect(RESOLVER).toMatch(/getAuthoritativeSessionPaymentAmount\(/);
+    expect(RESOLVER).not.toMatch(/resolveSessionPaymentDefault/);
+    expect(RESOLVER).not.toMatch(/resolveAuthoritativeSessionPaymentAmount\(/);
   });
   it("is session-scoped: requires a session for the appointment, else returns an ineligible reason", () => {
     expect(RESOLVER).toMatch(/from\("sessions"\)/);

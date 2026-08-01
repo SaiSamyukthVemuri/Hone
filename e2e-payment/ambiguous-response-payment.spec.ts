@@ -49,7 +49,27 @@ const stripeNetworkRequests: string[] = [];
 test.beforeAll(async () => {
   resetFakeStripeLedger();
   clearFakeStripeOutcome();
-  seed = await seedEligiblePaymentWithLogin({ label: "ambig" });
+  // F-PAY-001: this is a SUCCESSFUL payment journey, so it must start from
+  // resolvable authoritative pricing. It previously had no booked service at
+  // all and leaned on sessions.price_paid_cents to populate an editable amount
+  // field — the historical fallback this PR retires. Without a priced service
+  // the card now (correctly) renders its blocked state and withdraws the
+  // prepare form, which is why this spec failed before ever reaching Prepare.
+  seed = await seedEligiblePaymentWithLogin({
+    label: "ambig",
+    bookedService: { name: "Ambiguous Response Service", priceCents: 22500 },
+  });
+  // Pre-browser guard: a future fixture change cannot silently return this
+  // success journey to the blocked-pricing path.
+  {
+    const svcRow = await adminQuery(
+      `select s.price_cents from public.appointments a
+         join public.services s on s.id = a.service_id
+        where a.id = $1`,
+      [seed.appointmentId],
+    );
+    expect(Number(svcRow.rows[0]?.price_cents)).toBe(22500);
+  }
 });
 
 test.afterAll(async () => {
