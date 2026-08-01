@@ -2196,3 +2196,99 @@ export async function getClientPersonalNotes(clientId: string): Promise<string> 
   );
   return rows[0]?.personal_notes ?? "";
 }
+
+// ---------------------------------------------------------------------------
+// Intake review integrity (F-CLIN-004) helpers.
+//
+// Seed intake rows in a chosen lifecycle state and read them straight back
+// from the database, so the browser E2E can use DB STATE as the oracle rather
+// than trusting on-screen copy. Rows are INSERTed (migration 0118's guard is a
+// BEFORE UPDATE trigger and does not fire on insert), so a submitted or
+// reviewed fixture can be created directly.
+// ---------------------------------------------------------------------------
+
+export type E2eIntakeState = "in_progress" | "submitted" | "reviewed";
+
+export async function seedE2eIntake(
+  studioId: string,
+  clientId: string,
+  state: E2eIntakeState,
+  responses: Record<string, unknown> = { has_allergies: "no" },
+): Promise<string> {
+  const id = randomUUID();
+  if (state === "in_progress") {
+    await sql(
+      `insert into public.client_intake_forms
+         (id, studio_id, client_id, status, responses)
+       values ($1, $2, $3, 'in_progress', $4::jsonb)`,
+      [id, studioId, clientId, JSON.stringify(responses)],
+    );
+  } else if (state === "submitted") {
+    await sql(
+      `insert into public.client_intake_forms
+         (id, studio_id, client_id, status, responses, submitted_at)
+       values ($1, $2, $3, 'submitted', $4::jsonb, now())`,
+      [id, studioId, clientId, JSON.stringify(responses)],
+    );
+  } else {
+    await sql(
+      `insert into public.client_intake_forms
+         (id, studio_id, client_id, status, responses, submitted_at, reviewed_at, reviewed_by)
+       values ($1, $2, $3, 'reviewed', $4::jsonb, now(), now(),
+               (select id from public.practitioners where studio_id=$2 and role='owner' limit 1))`,
+      [id, studioId, clientId, JSON.stringify(responses)],
+    );
+  }
+  return id;
+}
+
+export type E2eIntakeRow = {
+  id: string;
+  client_id: string;
+  status: E2eIntakeState;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  practitioner_notes: string | null;
+};
+
+// The oracle. Reads the durable row, not the screen.
+export async function getIntakeRow(intakeId: string): Promise<E2eIntakeRow | null> {
+  const rows = await sql<E2eIntakeRow>(
+    `select id, client_id, status,
+            submitted_at::text as submitted_at,
+            reviewed_at::text  as reviewed_at,
+            reviewed_by,
+            practitioner_notes
+       from public.client_intake_forms
+      where id = $1`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+}
+
+// Counts how many intakes for this studio are currently reviewed — used to
+// prove that a double confirm produced exactly ONE transition, not two.
+export async function countReviewedIntakes(studioId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int n from public.client_intake_forms
+      where studio_id = $1 and status = 'reviewed' and deleted_at is null`,
+    [studioId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Transition an intake to reviewed OUT OF BAND (direct service-role SQL, which
+// migration 0118's trigger exempts because auth.uid() is null). Models "another
+// device reviewed this row while your tab was open" for the stale-page E2E.
+export async function markReviewedOutOfBand(
+  intakeId: string,
+  practitionerId: string,
+): Promise<void> {
+  await sql(
+    `update public.client_intake_forms
+        set status = 'reviewed', reviewed_at = now(), reviewed_by = $2
+      where id = $1`,
+    [intakeId, practitionerId],
+  );
+}

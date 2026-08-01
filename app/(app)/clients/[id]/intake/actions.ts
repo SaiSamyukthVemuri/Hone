@@ -15,6 +15,73 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
+// ---------------------------------------------------------------------------
+// F-CLIN-004 — intake review integrity (APPLICATION PATH).
+//
+// The previous implementation filtered the review UPDATE by intake id +
+// studio_id + deleted_at only. It did NOT require the submitted client_id,
+// did NOT require status='submitted', did NOT require submitted_at, and did
+// NOT select the affected row — so a zero-row UPDATE reported success and a
+// forged client_id could drive a same-studio cross-client review. It also
+// returned the raw PostgREST error.message.
+//
+// Both actions below are now written so that ONE conditional UPDATE is the
+// single authority. Every safety predicate lives in the statement itself, the
+// mutated values are all server-derived, and `.select()` proves exactly one
+// row transitioned. A pre-read is never used in place of the update.
+//
+// SCOPE NOTE (deliberate, load-bearing): this closes the ordinary application
+// and UI exploit only. F-CLIN-004 REMAINS OPEN at the database boundary — an
+// authenticated direct PostgREST PATCH can still drive in_progress → reviewed,
+// because migration 0118's review guards are nested under
+// `if old.status in ('submitted','reviewed')` and therefore never run when the
+// OLD row is still in_progress. Closing that requires a separately authorized
+// migration 0162; see docs/03_SECURITY_AND_PRIVACY.md.
+// ---------------------------------------------------------------------------
+
+// Single generic failure for EVERY non-success outcome of the review update.
+// It deliberately does not disclose whether the intake exists, belongs to
+// another client, belongs to another studio, was deleted, is already
+// reviewed, or is still in progress — all six collapse to one string.
+const REVIEW_NOT_PERMITTED =
+  "This intake can only be reviewed after this client submits it. Refresh and check the current intake status.";
+
+// Curated copy for an actual database/transport failure. Distinct from the
+// predicate miss above so the practitioner knows retrying is reasonable, but
+// still carries no provider text.
+const REVIEW_DB_FAILURE =
+  "Could not mark this intake reviewed. Please try again.";
+
+const NOTES_NOT_PERMITTED =
+  "Could not save these notes. Refresh and check the current intake status.";
+
+const NOTES_DB_FAILURE = "Could not save these notes. Please try again.";
+
+// Structured, PII-free log for a sanitized failure. Never logs responses,
+// practitioner notes, client identity, or the raw row — only the event, the
+// action, and the provider error code/message for operator triage. The
+// message is logged server-side ONLY; it is never returned to the browser.
+function logIntakeActionFailure(
+  event: string,
+  detail: { code?: string; message?: string },
+): void {
+  console.error(
+    JSON.stringify({
+      event,
+      code: detail.code ?? null,
+      message: detail.message ?? null,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+// Normalise the practitioner-notes textarea value: blank / whitespace-only
+// becomes NULL, anything else is trimmed. Shared by both actions so the two
+// surfaces cannot drift.
+function normaliseNotes(raw: FormDataEntryValue | null): string | null {
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+}
+
 export async function markIntakeReviewedAction(formData: FormData): Promise<ReviewResult> {
   const intakeId = formData.get("intake_id");
   const clientId = formData.get("client_id");
@@ -27,18 +94,33 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
     return { ok: false, error: "Missing client id." };
   }
 
-  const notes =
-    typeof notesRaw === "string" && notesRaw.trim().length > 0
-      ? notesRaw.trim()
-      : null;
+  const notes = normaliseNotes(notesRaw);
 
+  // Authority for studio + actor is the authenticated session, never the
+  // browser payload. `clientId` below is ONLY an extra constraint tying the
+  // intake to the route the practitioner is looking at; it grants nothing.
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot review intakes." };
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+
+  // THE single authority. Every predicate is in the statement:
+  //   id           — the intake being reviewed
+  //   studio_id    — server-derived tenancy (RLS also applies)
+  //   client_id    — must be the client whose route this is
+  //   deleted_at   — soft-deleted rows are not reviewable
+  //   status       — must still be 'submitted' (this is ALSO the race
+  //                  boundary: under READ COMMITTED the second of two
+  //                  concurrent updates re-evaluates this predicate against
+  //                  the winner's committed row, sees 'reviewed', and
+  //                  matches zero rows)
+  //   submitted_at — a submitted row must carry its submission timestamp
+  //
+  // status / reviewed_at / reviewed_by are all server-derived. Nothing the
+  // browser sent can reach them.
+  const { data, error } = await supabase
     .from("client_intake_forms")
     .update({
       status: "reviewed",
@@ -48,14 +130,61 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
     })
     .eq("id", intakeId)
     .eq("studio_id", studio.id)
-    .is("deleted_at", null);
-  if (error) return { ok: false, error: error.message };
+    .eq("client_id", clientId)
+    .is("deleted_at", null)
+    .eq("status", "submitted")
+    .not("submitted_at", "is", null)
+    .select("id, client_id");
 
-  revalidatePath(`/clients/${clientId}`);
-  revalidatePath(`/clients/${clientId}/intake`);
+  if (error) {
+    logIntakeActionFailure("intake_review_update_failed", {
+      code: (error as { code?: string }).code,
+      message: error.message,
+    });
+    return { ok: false, error: REVIEW_DB_FAILURE };
+  }
+
+  const rows = data ?? [];
+  // Zero rows means the update matched nothing — it is NOT success. More than
+  // one row would mean the predicate set failed to identify a single record,
+  // which must never happen on a primary key; treat it as a failure too rather
+  // than reporting a partial success.
+  if (rows.length !== 1) {
+    if (rows.length > 1) {
+      logIntakeActionFailure("intake_review_multi_row", {
+        message: `expected 1 affected row, got ${rows.length}`,
+      });
+    }
+    return { ok: false, error: REVIEW_NOT_PERMITTED };
+  }
+
+  // Revalidate using the client_id the DATABASE returned, not the raw form
+  // value. The returned row is proof of what actually transitioned, so a
+  // forged client route can never be revalidated off the back of a failed or
+  // mismatched update.
+  const reviewedClientId = rows[0].client_id;
+  if (reviewedClientId !== clientId) {
+    // Unreachable while the .eq("client_id", ...) predicate is present; kept
+    // as a defensive invariant so a future edit that drops it fails closed
+    // instead of silently revalidating a foreign route.
+    logIntakeActionFailure("intake_review_client_mismatch", {
+      message: "affected row client_id did not match the constrained route",
+    });
+    return { ok: false, error: REVIEW_NOT_PERMITTED };
+  }
+
+  revalidatePath(`/clients/${reviewedClientId}`);
+  revalidatePath(`/clients/${reviewedClientId}/intake`);
   return { ok: true };
 }
 
+// Practitioner notes stay editable in EVERY status (in_progress, submitted,
+// reviewed) — that is existing, intended product behaviour and is unchanged.
+// What changes is the guard set: the update now also requires the submitted
+// client_id and proves exactly one row was affected, and it returns curated
+// copy instead of the raw provider error. It writes practitioner_notes and
+// nothing else, so responses / status / submitted_at / reviewed_at /
+// reviewed_by cannot be touched through this path.
 export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewResult> {
   const intakeId = formData.get("intake_id");
   const clientId = formData.get("client_id");
@@ -67,10 +196,7 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
     return { ok: false, error: "Missing client id." };
   }
 
-  const notes =
-    typeof notesRaw === "string" && notesRaw.trim().length > 0
-      ? notesRaw.trim()
-      : null;
+  const notes = normaliseNotes(notesRaw);
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
@@ -78,15 +204,42 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("client_intake_forms")
     .update({ practitioner_notes: notes })
     .eq("id", intakeId)
     .eq("studio_id", studio.id)
-    .is("deleted_at", null);
-  if (error) return { ok: false, error: error.message };
+    .eq("client_id", clientId)
+    .is("deleted_at", null)
+    .select("id, client_id");
 
-  revalidatePath(`/clients/${clientId}/intake`);
+  if (error) {
+    logIntakeActionFailure("intake_notes_update_failed", {
+      code: (error as { code?: string }).code,
+      message: error.message,
+    });
+    return { ok: false, error: NOTES_DB_FAILURE };
+  }
+
+  const rows = data ?? [];
+  if (rows.length !== 1) {
+    if (rows.length > 1) {
+      logIntakeActionFailure("intake_notes_multi_row", {
+        message: `expected 1 affected row, got ${rows.length}`,
+      });
+    }
+    return { ok: false, error: NOTES_NOT_PERMITTED };
+  }
+
+  const notedClientId = rows[0].client_id;
+  if (notedClientId !== clientId) {
+    logIntakeActionFailure("intake_notes_client_mismatch", {
+      message: "affected row client_id did not match the constrained route",
+    });
+    return { ok: false, error: NOTES_NOT_PERMITTED };
+  }
+
+  revalidatePath(`/clients/${notedClientId}/intake`);
   return { ok: true };
 }
 
