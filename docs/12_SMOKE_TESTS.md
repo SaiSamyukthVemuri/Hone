@@ -1138,12 +1138,64 @@ Fixes a P1 overclaim: `sendPostcareEmailAction` used `postcare_email_sent_at` as
 
 Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max — **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" in earlier revisions of this entry was exactly the staleness the derivation was introduced to prevent); the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
 
-## Intake review database boundary smoke (migration 0162 — NOT APPLIED)
+## Intake INSERT boundary smoke (migration 0163 — APPLIED 2026-08-02)
 
-Confirms the database half of `F-CLIN-004`. **The migration is written and tested but NOT
-APPLIED**: repo migration max is `0162`, hosted (production) max is still `0161`, so **none of
-the operator checks below can be performed against production yet** — they become valid only
-after `0162` is applied under separate explicit authorization.
+Closes the residual `0162` could not reach. **`0163` was APPLIED to production 2026-08-02** and
+is frozen; hosted migration max is `0163`, so the operator checks below are now valid. Production
+verification used effective `has_table_privilege` results, policy inspection and the table ACL —
+**no production INSERT probe was performed**, which is the correct evidence for a
+privilege-removal migration.
+
+**Scope, stated exactly:** `client_intake_forms` authenticated INSERT residual closed by 0163; broader direct clinical DML findings remain open.
+
+**The defect.** 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT. An
+authenticated studio member could skip the guarded transition entirely and INSERT a brand-new
+`client_intake_forms` row already `status = 'reviewed'`, with a NULL `submitted_at` and a forged
+historical `reviewed_at`. `0163` drops `client_intake_forms_member_insert` (plus any legacy
+`FOR ALL` policy, defensively) and REVOKEs `INSERT` from `authenticated` **and** `anon`. It
+removes the capability rather than constraining it because a caller audit found **zero**
+legitimate authenticated INSERT paths — both writers (`ensureIntakeForClient`,
+`createIntakeRequestForClient`) use the service-role admin client.
+
+**Automated coverage (run these now):** `npm run test:db` →
+`tests/db/intake-insert-boundary.db.test.ts` runs against a fresh local database with the whole
+chain applied: an authenticated same-studio INSERT of a normal `in_progress` row is denied; the
+same-studio INSERT of an **already-reviewed** row (the residual itself) is denied; a cross-studio
+INSERT is denied; an anonymous INSERT is denied; a service-role INSERT of a normal `in_progress`
+row succeeds; both writer shapes (`ensureIntakeForClient` and the `createIntakeRequestForClient`
+reissue, which stamps `requested_at`/`requested_by`) still create rows; authenticated SELECT and
+a permitted UPDATE are unchanged and cross-studio SELECT still returns zero rows; 0162's
+`in_progress -> reviewed` refusal still fires with `23514`; and structurally, **no INSERT table
+privilege and no INSERT or FOR ALL policy remains** for `anon`/`authenticated`, while
+`service_role` keeps INSERT and RLS stays enabled. The former
+`RESIDUAL: the INSERT path is NOT closed by 0162` cases in
+`tests/db/intake-review-db-boundary.db.test.ts` are **inverted** and now assert refusal.
+`npm test` → `tests/migrations/0163-revoke-authenticated-intake-insert.test.ts` pins the SQL
+contract (transactional with an armed `lock_timeout`, both halves of the removal, everything it
+must not touch, and that it does not claim L18 is closed) and carries the repo migration-max
+tripwire, which moved here from the 0162 test.
+
+**Reset discipline:** run the DB lane against a database reset with the **pinned** CLI
+(`npx --yes supabase@2.102.0 db reset --local`) and confirm grants parity before trusting a
+result — a newer CLI strips Data-API grants and makes every authenticated query fail at the
+privilege layer, which looks exactly like this migration working when it is not.
+
+**Operator check (read-only, no writes):** confirm
+`supabase migration list --linked` shows `0163` in Remote exactly once; confirm
+`information_schema.role_table_grants` returns **zero** INSERT rows for `anon`/`authenticated` on
+`client_intake_forms`; confirm `pg_policies` for that table lists exactly `member_select`
+(SELECT) and `member_update` (UPDATE) and nothing with cmd `INSERT` or `ALL`; confirm the 0162
+trigger function md5 is unchanged; and confirm the row count is unchanged. Then, in the app,
+confirm a practitioner can still send a new intake form and resend a link (both go through the
+service-role writers) and that reviewing a submitted intake still works. Live payments remain
+enabled for approved studios — do not initiate a charge as part of this smoke.
+
+## Intake review database boundary smoke (migration 0162 — APPLIED 2026-08-02)
+
+Confirms the database half of `F-CLIN-004`. **`0162` was APPLIED to production 2026-08-02** and
+is frozen; hosted migration max is `0162`, so the operator checks below are now valid. Note that
+0162 closed the review **UPDATE** transition only — the INSERT residual is closed by `0163`,
+which is **NOT APPLIED**; see the section below.
 
 **Automated coverage (run these now):** `npm run test:db` →
 `tests/db/intake-review-db-boundary.db.test.ts` runs the full adversarial matrix against a fresh

@@ -14,20 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-02, post-0162 apply)
+## Current state (verified 2026-08-02, post-0163 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0162** (`0162_intake_review_transition_integrity.sql`, applied 2026-08-02T14:10:32Z→14:10:36Z) |
-| **Repo migration max** | **0162** — **hosted == repo.** Parity restored by the 2026-08-02 apply; see the 0162 record below. Next free number is **0163**. |
-| **Total migrations in repo** | **161** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162` — **no `0158`**) |
-| **Total applied in production** | **161**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
+| **Hosted (production) migration max** | **0163** (`0163_revoke_authenticated_intake_insert.sql`, applied 2026-08-02T17:37:23Z→17:37:27Z) |
+| **Repo migration max** | **0163** — **hosted == repo.** Parity restored by the 2026-08-02T17:37Z apply; see the 0163 record below. Next free number is **0164**. |
+| **Total migrations in repo** | **162** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162`, `0163` — **no `0158`**) |
+| **Total applied in production** | **162**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
 | **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at **every** version, including `0162` — there is no longer any pending row. `0159`/`0160` Remote populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** **`0162` was APPLIED 2026-08-02 and is present in Remote exactly once (sha256 `41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088`).** |
 
-**Every migration `0001`–`0157` plus `0159`, `0160`, `0161` and `0162` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159`, `0160`, `0161`, `0162` and `0163` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -49,6 +49,33 @@ merge — with two deliberate exceptions noted below.
 - **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0163 — APPLIED 2026-08-02
+
+**`0163_revoke_authenticated_intake_insert.sql` — remove the `authenticated` INSERT capability on
+`client_intake_forms`, closing the residual 0162 could not reach.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0163_revoke_authenticated_intake_insert.sql` |
+| **Status** | ✅ **APPLIED 2026-08-02T17:37:23Z → 17:37:27Z** from `~/Hone-intake-insert` at authorized head `d04f15ed299304f99a982970910fca95b1bc6950` (CI run `30758514555`, completed/success at that exact sha). Hosted max `0162`→**`0163`**; applied count 161→162; repo == hosted. |
+| **Frozen checksum** | `sha256 71bc681aa87740af7696cb602c188acc9bbd9be6d0989dcc1f09000f3d8960d6`. **This file is now FROZEN and must never be edited.** |
+| **Apply evidence** | Guard PASS `project-ref = alhhybgqdmcdyzpybykj`. Pre-apply: hosted max `0162`, `0163` the ONLY pending row, `db push --dry-run` listed only `0163`, all four inconsistency probes **0**, `client_intake_forms` **0** ungranted locks / **0** conflicting transactions / DB **0** active backends. **Privilege-source check (the gate):** INSERT reached both browser roles via a DIRECT ACL entry granted by `postgres` (`anon=arwdDxtm/postgres`, `authenticated=arwdDxtm/postgres` — the `a` bit); **PUBLIC held ZERO INSERT grants** and neither role inherits from any other role (`pg_auth_members` empty for both), so the two REVOKEs remove the ONLY path. Applied with `supabase db push --linked --yes`: four benign `policy … does not exist, skipping` NOTICEs (confirming no legacy broad policy existed), **no error, no 25P01, no 55P03** — the file's own `begin; … commit;` worked. |
+| **Post-apply verification** | Hosted max **`0163`**, present exactly once. **Effective privileges via `has_table_privilege` (not merely `information_schema`):** `anon` INSERT **false** · `authenticated` INSERT **false** · `authenticated` SELECT **true** · `authenticated` UPDATE **true** · `service_role` INSERT **true**. Table ACL now `anon=rwdDxtm/postgres, authenticated=rwdDxtm/postgres` — the `a` (INSERT) bit is GONE from both, while `postgres`/`service_role` keep `arwdDxtm`. `pg_policies` holds exactly `client_intake_forms_member_select` (SELECT) and `client_intake_forms_member_update` (UPDATE) — **no INSERT policy, no ALL policy**. 0162 UNCHANGED: trigger `client_intake_forms_terminal_immutability` `tgenabled='O'`, `tgtype=19`, `prosecdef=false`, `proconfig=search_path=""`, function md5 **`9e50a57a0781d5caa045224f2dd05970`** — byte-identical to the 0162 apply. |
+| **Zero data change** | 35 rows before and after; status split 9 in_progress / 6 submitted / 20 reviewed unchanged; stable state hash `2e53949e8eb2e1df336ff5a176def3ea` **byte-identical** across the apply; all four inconsistency probes still **0**. |
+| **Verification method** | This is a privilege-removal migration, so **no production INSERT probe was performed** and the classifier was not worked around. The production evidence is: effective `has_table_privilege` results, policy inspection, the table ACL bits, the exact applied source, and the green real-DB `db integration` lane of CI run `30758514555`. |
+| **Class** | Privilege + policy change only. **No** schema, column, constraint, index, trigger or function change; **no** data change, backfill or deletion. |
+| **Finding** | The `client_intake_forms` authenticated INSERT residual. 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT: a member could skip the guarded transition entirely and INSERT a row already `status='reviewed'` with a NULL `submitted_at` and a forged `reviewed_at`. Two things made it reachable — the `authenticated` INSERT grant, and `client_intake_forms_member_insert`, whose `WITH CHECK` was only a studio-membership test (which studio, never what state). |
+| **Caller audit (the gate)** | At baseline `b176f115d40f25ad0efb3fc02aa6bc4db61ebda0`, `client_intake_forms` has exactly **two** runtime INSERT writers and **both are service role**: `lib/intake/queries.ts :: ensureIntakeForClient` and `:: createIntakeRequestForClient`, each via `createAdminClient()`. No upsert, no INSERT-performing RPC, no raw INSERT. **Zero legitimate authenticated INSERT paths**, so the capability is removed outright rather than constrained. |
+| **What it does** | Defensively drops any legacy `FOR ALL` policy (a FOR ALL policy would silently re-grant INSERT); drops `client_intake_forms_member_insert`; `REVOKE INSERT … FROM authenticated`; `REVOKE INSERT … FROM anon`. Revoking both the policy and the grant means two independent things must be undone before a browser role can insert again. |
+| **`anon`** | Revoked explicitly by role name — the 0129/0130 lesson: `revoke … from public` alone leaves `anon` holding a privilege, because Supabase's `ALTER DEFAULT PRIVILEGES` grants it at create time. Defence in depth; `anon` could not satisfy a membership check today. |
+| **Preserved** | `authenticated` **SELECT** and **UPDATE** (both policies untouched, so reading an intake and the 0162-guarded review transition keep working). **service_role / admin INSERT** — the two legitimate writers are unaffected. 0162's trigger and function are **not** touched; 0162 is APPLIED and FROZEN. |
+| **Scope — honest** | `client_intake_forms` authenticated INSERT residual closed by 0163; broader direct clinical DML findings remain open. `authenticated` retains direct row DML on `sessions`, `session_blocks`, `electrolysis_entries`, `laser_entries` and `treatment_images`; this migration does not touch them. **Do not describe L18 as closed.** |
+| **Transaction + locks** | Opens its own `begin; … commit;` with `set local lock_timeout = '5s'`, following the 0159/0160/0161/0162 precedent (`db push` does not wrap a file in a transaction, so a bare `SET LOCAL` would emit 25P01 and never arm). On lock timeout (55P03) COMMIT is never reached and the previous grants and policies remain in place. |
+| **Idempotent** | Every statement is `drop … if exists` or a plain `REVOKE`, so it replays cleanly on a fresh database and on one already at 0163. Verified: a pinned-CLI `db reset --local` applied it with only four benign "policy does not exist, skipping" notices — confirming no legacy broad policy exists at this baseline. |
+| **Editable?** | **NO — FROZEN as of the 2026-08-02 apply.** `0159`, `0160`, `0161`, `0162` and now `0163` are applied and must never be edited. |
+| **Proof** | `tests/db/intake-insert-boundary.db.test.ts` (14 cases: same-studio in_progress and already-reviewed INSERT denied, cross-studio denied, anon denied, service-role INSERT succeeds, both writer shapes still create rows, SELECT/UPDATE preserved, 0162's transition still enforced, and no INSERT policy or privilege remains) and `tests/migrations/0163-revoke-authenticated-intake-insert.test.ts` (source contract + the repo migration-max tripwire, which moved here from the 0162 test). The former `RESIDUAL: the INSERT path is NOT closed by 0162` cases in `tests/db/intake-review-db-boundary.db.test.ts` are **inverted**. Local: 58/58 focused intake DB cases pass on a fresh pinned-CLI reset. |
+| **Post-apply verification** | Carried as a comment at the foot of the migration: no INSERT privilege for `anon`/`authenticated`; only `member_select` (SELECT) and `member_update` (UPDATE) policies remain and none is INSERT or ALL; the 0162 trigger and function md5 unchanged; row count unchanged. |
 
 ### 0162 — APPLIED 2026-08-02
 

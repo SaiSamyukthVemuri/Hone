@@ -6,9 +6,10 @@ Built by [Saltkiln](https://saltkiln.com). Pilot studio: **Willow Electrolysis**
 
 ## Status
 
-> **Reconciled 2026-07-27; migration line updated 2026-08-02.** Production migration max **0162**
-> (`0162` = intake review transition integrity, applied and verified 2026-08-02 and now frozen;
-> repository and hosted migration state match; next number is `0163`. Earlier: `0159` =
+> **Reconciled 2026-07-27; migration line updated 2026-08-02.** Production migration max **0163**
+> (`0163` = intake INSERT boundary and `0162` = intake review transition integrity, both applied
+> and verified 2026-08-02 and now frozen; repository and hosted migration state match; next
+> number is `0164`. Earlier: `0159` =
 > signed-clinical-record retirement, `0160` = immutable clinical lineage and `0161` = service
 > order RPC + widened calendar-colour CHECK, all applied and verified 2026-07-30;
 > `0158` deliberately skipped and will never be applied); last runtime-bearing

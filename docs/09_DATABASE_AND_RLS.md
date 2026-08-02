@@ -1,11 +1,11 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0162
-(`0162_intake_review_transition_integrity.sql`) — 161 applied, each exactly once, `0161`
-immediately preceding `0162`. `0158` is deliberately skipped and will never be applied.
-`0162` was applied 2026-08-02, independently verified, and is now **frozen**. The repository
-max is also **0162**, so repository and hosted migration state **match**; the next migration
-number is **0163**.**
+Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0163
+(`0163_revoke_authenticated_intake_insert.sql`) — 162 applied, each exactly once, `0162`
+immediately preceding `0163`. `0158` is deliberately skipped and will never be applied.
+`0163` was applied 2026-08-02, independently verified, and is now **frozen**, as is `0162`
+before it. The repository max is also **0163**, so repository and hosted migration state
+**match**; the next migration number is **0164**.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -16,8 +16,8 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 > **Historical note.** Earlier revisions of this section stated, at various dates, "96
 > migrations, 0096 not yet applied", "production is at 0112", and "production migration max =
-> 0113", "the production max is 0157", "the production max is 0160". All of those are **superseded** —
-> the production max is **0162**. The per-migration
+> 0113", "the production max is 0157", "the production max is 0160", "the production max is 0162". All of
+> those are **superseded** — the production max is **0163**. The per-migration
 > prose table below remains historical through ~0092; everything from 0093 onward is
 > enumerated in the migration ledger linked above. Dated statements elsewhere in the docs are
 > point-in-time history, not current state.
@@ -28,13 +28,34 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current repo max `0162`, so the next is
-  `0163`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
+  [migration ledger](./production/migration-ledger.md). **Current repo max `0163`, so the next is
+  `0164`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
-  **Repo and hosted are at parity: both are `0162`.** `0162` was applied 2026-08-02 and is
-  frozen — see the intake review boundary entry below and
+  **Repo and hosted are at parity: both are `0163`.** `0163` was applied 2026-08-02 and is
+  frozen — see the intake INSERT boundary entry below and
   [known-limitations L22](./production/known-limitations.md).
+
+**Intake INSERT boundary (0163 — APPLIED 2026-08-02, frozen).** 0162 closed the review *transition*,
+but its guard is a BEFORE **UPDATE** trigger and so never fires on INSERT. Until 0163 an
+authenticated studio member could skip the guarded transition entirely and **INSERT a brand-new
+`client_intake_forms` row that was already `status = 'reviewed'`**, with a NULL `submitted_at`
+and a forged historical `reviewed_at` — a clinical "this intake was reviewed" record for a form
+the client never submitted. Two things made it reachable: `authenticated` held the `INSERT` table
+privilege, and the `client_intake_forms_member_insert` policy's `WITH CHECK` was only
+`is_studio_member(studio_id)` — it constrained *which studio* a row could be created in, never
+*what state* it could be created in. `0163` removes **both**: it defensively drops any legacy
+`FOR ALL` policy (which would silently re-grant INSERT), drops the dedicated INSERT policy, and
+`REVOKE`s `INSERT` from `authenticated` **and** `anon`. It removes the capability rather than
+policing the values because a caller audit found **zero** legitimate authenticated INSERT paths —
+both runtime writers, `ensureIntakeForClient` and `createIntakeRequestForClient`
+(`lib/intake/queries.ts`), use the service-role admin client. `authenticated` SELECT and UPDATE
+are preserved, so reading an intake and the 0162-guarded review transition are unaffected, and
+service-role INSERT is preserved, so both writers keep working. **Scope:** `client_intake_forms` authenticated INSERT residual closed by 0163; broader direct clinical DML findings remain open.
+`authenticated` still holds direct row DML on `sessions`, `session_blocks`,
+`electrolysis_entries`, `laser_entries` and `treatment_images` — see
+[known-limitations L18](./production/known-limitations.md). Behavioural proof:
+`tests/db/intake-insert-boundary.db.test.ts`.
 
 **Intake review transition integrity (0162 — APPLIED 2026-08-02, frozen).** Migration `0118` made
 submitted/reviewed intake answers immutable, but every one of its review checks sits inside
