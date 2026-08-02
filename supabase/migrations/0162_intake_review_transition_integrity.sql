@@ -48,7 +48,8 @@
 --      AND whose studio_id = old.studio_id       (right person, right studio)
 --   6. new.reviewed_at is stamped BY THE DATABASE, not by the caller.
 --
--- Plus two hardenings inside the existing end-user section:
+-- Plus THREE hardenings inside the existing end-user section, numbered here in
+-- the order they appear in the body:
 --
 --   7. once reviewed, the status is TERMINAL for end users. 0118 blocked only
 --      the regression to 'in_progress', which left `reviewed -> submitted`
@@ -57,11 +58,24 @@
 --      (0118's attribution check only fires when those VALUES change), then
 --      step two re-reviews and legitimately re-stamps the attacker as
 --      reviewer. Blocking any regression out of 'reviewed' closes it.
+--   9. ONLY THE CLIENT MAY SUBMIT. Without this rule the six checks above are
+--      bypassable in TWO statements and this whole migration is defeated:
+--      statement one forges `status='submitted', submitted_at=now()`, and
+--      statement two then reviews it — step one manufactures exactly the
+--      evidence step two checks. Found by the adversarial pass and reproduced
+--      end-to-end as `authenticated` on a CI-parity database. Safe to enforce
+--      because `status: "submitted"` is written in exactly ONE place in the
+--      repository — the public tokenized route, which runs as service role and
+--      is exempt via the early return.
 --   8. review metadata may not be attached to a row that is not reviewed. A
 --      studio member could otherwise set reviewed_by/reviewed_at on a
 --      'submitted' or 'in_progress' row without ever setting status, which is
 --      exactly the `in_progress with review metadata` inconsistency the
 --      production audit query looks for.
+--
+-- (The numbering is historical: (9) was added after (8) when the adversarial
+-- pass found the two-statement bypass, and the identifiers are kept stable
+-- because the DB and behavioural suites name them.)
 --
 -- ===========================================================================
 -- reviewed_at: THE DATABASE IS NOW AUTHORITATIVE
@@ -225,8 +239,8 @@ begin
   end if;
 
   -- =========================================================================
-  -- 2. END-USER TERMINAL IMMUTABILITY (0118, preserved verbatim, plus two
-  --    0162 hardenings).
+  -- 2. END-USER TERMINAL IMMUTABILITY (0118, preserved verbatim, plus three
+  --    0162 hardenings: (7), (9), (8) in that order).
   --
   -- Service-role / admin paths (no JWT) remain trusted and exempt HERE: they
   -- legitimately perform the client's in_progress -> submitted transition,

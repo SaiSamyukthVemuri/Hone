@@ -168,7 +168,7 @@ describe("0162 — the service-role decision is explicit and evidenced", () => {
   });
 });
 
-describe("0162 — the 0118 contract is preserved, plus two hardenings", () => {
+describe("0162 — the 0118 contract is preserved, plus three hardenings", () => {
   it("keeps answers immutable on terminal rows", () => {
     expect(SQL).toMatch(
       /Submitted intake answers are immutable; create a new intake to amend\./,
