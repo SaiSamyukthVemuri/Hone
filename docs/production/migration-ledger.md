@@ -14,20 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-07-30, post-0160 apply)
+## Current state (verified 2026-08-02, post-0162 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0161** (`0161_service_order_and_colors.sql`, applied 2026-07-30T23:38:07Z→23:38:16Z) |
-| **Repo migration max** | **0162** — **hosted != repo.** `0162` is written and tested but **NOT APPLIED**; see the 0162 proposal below. |
+| **Hosted (production) migration max** | **0162** (`0162_intake_review_transition_integrity.sql`, applied 2026-08-02T14:10:32Z→14:10:36Z) |
+| **Repo migration max** | **0162** — **hosted == repo.** Parity restored by the 2026-08-02 apply; see the 0162 record below. Next free number is **0163**. |
 | **Total migrations in repo** | **161** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162` — **no `0158`**) |
-| **Total applied in production** | **160**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). The 161st file on disk, `0162`, is **NOT applied**. |
+| **Total applied in production** | **161**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
-| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at every version; `0159` and `0160` Remote both populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** |
+| **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at **every** version, including `0162` — there is no longer any pending row. `0159`/`0160` Remote populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** **`0162` was APPLIED 2026-08-02 and is present in Remote exactly once (sha256 `41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088`).** |
 
-**Every migration `0001`–`0157` plus `0159` and `0160` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159`, `0160`, `0161` and `0162` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -50,7 +50,7 @@ merge — with two deliberate exceptions noted below.
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
 
-### 0162 — PROPOSAL (written, tested, **NOT APPLIED**)
+### 0162 — APPLIED 2026-08-02
 
 **`0162_intake_review_transition_integrity.sql` — an intake may only become `reviewed` from a
 genuinely SUBMITTED row, by the caller's own active practitioner in that studio, at a
@@ -59,7 +59,12 @@ database-stamped time.**
 | Field | Value |
 |---|---|
 | **Migration** | `0162_intake_review_transition_integrity.sql` |
-| **Status** | **NOT APPLIED.** Repo max `0162`, hosted max `0161`. Awaiting explicit apply authorization. |
+| **Status** | ✅ **APPLIED 2026-08-02T14:10:32Z → 14:10:36Z** from `~/Hone-0162` at authorized head `dddfae60524fb6e179f35269e5c102abd7d017ba` (tree clean apart from the untracked local-only `supabase/config.toml`). Repo max `0162` = hosted max `0162`; applied count 160 → 161. |
+| **Frozen checksum** | `sha256 41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088`. **This file is now FROZEN and must never be edited.** |
+| **Apply evidence** | Guard PASS `project-ref = alhhybgqdmcdyzpybykj`. Pre-apply: hosted max `0161`, 160 applied, `0162` the ONLY row with a blank Remote column, `db push --dry-run` listed only `0162`, all four inconsistency counts **0**, `client_intake_forms` had **0** ungranted locks and the DB **0** active backends. Applied with `supabase db push --linked --yes`. **No SQL error, no NOTICE, no 25P01, no 55P03** — the file's own `begin; … commit;` worked, as with 0159/0160/0161. One benign CLIENT-SIDE warning only: the CLI could not write its local `pgdelta` catalog cache (missing `supabase/.temp/pgdelta/*.crt`); it is a caching step that runs after the migration and has no bearing on the applied SQL. |
+| **Post-apply verification** | Hosted max **`0162`**, present exactly once; `0158` still absent (permanently skipped). Trigger `client_intake_forms_terminal_immutability` on `client_intake_forms` → `enforce_intake_terminal_immutability`, `tgenabled='O'`, `tgtype=19` (BEFORE UPDATE FOR EACH ROW), `prosecdef=false` (**SECURITY INVOKER**), `proconfig=search_path=""`. Exactly 2 triggers on the table (the guard + the pre-existing `set_updated_at`), no duplicates. Function replaced: length 2002 → **8291**, md5 `689014c8…` → `9e50a57a…`. **The deployed function body is byte-identical to the reviewed source in this file** — comment-stripped, whitespace-normalized sha256 `5b2826dda11efdf44535ab15ff4fc343f1fc4f80b59ff0ec8898d5343745679a` on both sides, 3003 chars each. All ten guard predicates present, and the section-1 reviewer predicate precedes the `auth.uid() is null` early return (offsets 155 < 4144), so service-role review transitions fail closed. |
+| **Zero data change** | `client_intake_forms` 34 rows before and after; state md5 `26c7795adb311d39ae9fd8552f25bb6b` **byte-identical** across the apply; status split unchanged (20 reviewed / 5 submitted / 9 in_progress); all four inconsistency counts still **0**. |
+| **⚠️ Verification limit — stated plainly** | **No production behavioural write-probe was performed.** The intended negative control (attempt `in_progress -> reviewed` as `authenticated` inside `begin; … rollback;`) was refused by the environment's auto-mode classifier, which blocks UPDATE-bearing SQL through `supabase db query`. It was **not** worked around. Behavioural proof therefore rests on (a) the exact deployed-source verification above and (b) the green `db integration (local supabase)` lane of CI run `30750450652` at head `dddfae6`, which exercises the full adversarial refusal matrix against a real migrated database. Production refusal is inferred from identical source, not observed. |
 | **Class** | Trigger-function replacement. **No** schema, column, constraint, index, policy or grant change; **no** data change, backfill or deletion. |
 | **Finding** | `F-CLIN-004`. Migration `0118` nests every review check inside `if old.status in ('submitted','reviewed')`, so an `in_progress` OLD row skipped the block entirely and an authenticated direct PostgREST `PATCH` could drive `in_progress -> reviewed` with `submitted_at` NULL (`UPDATE 1`). |
 | **Depends on** | `0118` (whose function body it replaces). Trigger **name** and attachment are unchanged. |
@@ -69,8 +74,8 @@ database-stamped time.**
 | **App compatibility** | The DEPLOYED `markIntakeReviewedAction` (PR #497, merge `b7d85f5`) still succeeds: it selects back only `id, client_id` and never asserts the `reviewed_at` it sent, so the DB stamp is invisible to it. Proven by the "deployed PR #497 application compatibility" cases in the DB suite. |
 | **Transaction + locks** | Opens its own `begin; … commit;` with `set local lock_timeout = '5s'`, following the 0159/0160/0161 precedent (`db push` does not wrap a file in a transaction, so a bare `SET LOCAL` would emit 25P01 and never arm). On lock timeout (55P03) COMMIT is never reached and the previous 0118 function and trigger remain in place. |
 | **Idempotent** | `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER` — replays cleanly on a fresh database. |
-| **Editable?** | **Yes, for now.** This file is deliberately **not** checksum-frozen while it remains unapplied, and must be frozen in the same change that records its apply. The applied migrations (`0159`, `0160`, `0161`) are frozen and must never be edited. |
-| **Pre-apply requirement** | Re-run the read-only aggregate carried at the foot of the migration (counts only). It changes no existing row, so a non-zero count is **not** corrected by applying it — that needs a separate authorized reconciliation, never a silent downgrade. |
+| **Editable?** | **NO — FROZEN as of the 2026-08-02 apply.** `0159`, `0160`, `0161` and now `0162` are applied and must never be edited. |
+| **Pre-apply requirement** | ✅ Satisfied. The read-only aggregate at the foot of the migration was re-run immediately before the apply and returned **zero** on all four counts for both studios holding intake rows (`My Studio`, `Willow Electrolysis`). The defect was reachable but never exercised. |
 | **Proof** | `tests/db/intake-review-db-boundary.db.test.ts` (adversarial matrix + a real two-connection concurrency race) and `tests/migrations/0162-intake-review-transition-integrity.test.ts` (source contract + the repo migration-max tripwire, which moved here from the 0161 test). |
 
 ### 0160 — current purpose and status

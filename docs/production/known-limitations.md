@@ -1,9 +1,11 @@
 # Hone — Known Limitations
 
 **Verified residual limitations as of 2026-07-27**, against application HEAD
-`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is now 0160** — both `0159`
-(signed-record retirement) and `0160` (immutable clinical lineage) were applied and verified
-2026-07-30.
+`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is 0162**, applied and
+verified 2026-08-02 (`0162` intake review transition integrity). Preceding applies: `0161`
+(service order + colours) 2026-07-30, and `0159` (signed-record retirement) + `0160` (immutable
+clinical lineage) 2026-07-30. Repo and hosted are at **parity**; next free number is `0163`
+(`0158` permanently skipped).
 
 Only limitations that were **directly verified** in this reconciliation are listed. Items
 that could not be checked from code, the CLI, or read-only production queries are recorded
@@ -265,9 +267,9 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | A separate, explicitly authorized piece of work: (1) move the 26 direct writers onto narrow commands with the authority checks the existing charting RPCs already model; (2) deploy; (3) only then revoke `INSERT`/`UPDATE`/`DELETE` from `authenticated` on those five tables. Sequence matters — application-first, then the revocation. |
 | **Blocks** | Neither today. It should be closed before the deep audit signs off on the clinical write surface. |
 
-## L22 — `F-CLIN-004`: the intake review database boundary is fixed in code but NOT APPLIED
+## L22 — `F-CLIN-004`: the intake review UPDATE boundary is CLOSED; the INSERT path remains open
 
-**Status: APPLICATION DEPLOYED — DATABASE FIX IMPLEMENTED, NOT APPLIED.**
+**Status: APPLICATION DEPLOYED · MIGRATION 0162 APPLIED 2026-08-02 · residual INSERT path still open (see L18).**
 
 | Field | Value |
 |---|---|
@@ -278,10 +280,10 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Production reality** | A read-only aggregate over `client_intake_forms` (counts only; no ids, no answers, no notes, no client/practitioner identity) found **zero inconsistent rows** across both studios: no `reviewed` row with a NULL `submitted_at`, NULL `reviewed_at` or NULL `reviewed_by`, and no `in_progress` row carrying review metadata. Willow Electrolysis: 7 `in_progress`, 2 `submitted`, 16 `reviewed`. My Studio: 1 / 1 / 3. **Zero inconsistent rows does not close the reachable defect** — it means the defect has not been exercised, not that it cannot be. 0162 changes no existing row, so applying it would not correct an inconsistent row if one appeared; that would need a separate, explicitly authorized reconciliation with the practitioner, never a silent downgrade. |
 | **Current mitigation** | The ordinary route is closed and deployed. The residual path requires a studio member to deliberately craft a PostgREST request against their own studio's data. |
 | **Residual NOT closed by 0162 (the INSERT path)** | 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT. An authenticated studio member can still create a brand-new intake row that is **already `reviewed`**, with a NULL `submitted_at` and a forged historical `reviewed_at` — `authenticated` holds `INSERT` on `client_intake_forms` and the INSERT policy's `WITH CHECK` is only `is_studio_member(studio_id)`. **Reproduced on a fresh local database and rolled back.** This is the broader "authenticated holds direct row DML on clinical tables" limitation already tracked as **L18**, not a defect introduced by 0162, and closing it means revoking `INSERT` or adding an INSERT guard — a different blast radius that needs its own authorization. It is pinned by the `RESIDUAL: the INSERT path is NOT closed by 0162` cases in `tests/db/intake-review-db-boundary.db.test.ts` so it cannot be forgotten. Once such a row exists, 0162 *does* bind it: its attribution cannot be rewritten and it cannot regress. |
-| **Why it is still open** | **The migration is NOT APPLIED.** Repo migration max is `0162`; hosted (production) max is still `0161`. Applying it is a separate, explicitly authorized step that has not been taken. |
+| **Why it remains listed** | The `UPDATE` half is **CLOSED**: `0162` was applied to production 2026-08-02T14:10:32Z→14:10:36Z under explicit authorization; hosted max is now `0162` and the deployed trigger function body is byte-identical to the reviewed source (normalized sha256 `5b2826dd…`). **This entry stays open solely for the INSERT residual in the row above**, which 0162 does not and cannot address. |
 | **Owner** | Sam |
-| **Next gate** | Re-run the read-only pre-apply aggregate (carried as a comment at the foot of the migration), then apply `0162` to production with explicit authorization, then verify: hosted max becomes `0162`; the trigger function contains the incoming-review contract; a synthetic authenticated `in_progress -> reviewed` probe is refused; and a legitimate `submitted -> reviewed` still succeeds. |
-| **Blocks** | Neither today — Willow can keep working and the live UI cannot reach the defect. `F-CLIN-004` must **not** be described as closed, remediated, production-verified or fully fixed until 0162 is **applied** and verified in production. |
+| **Next gate** | Close the INSERT residual (needs its own authorization — it means revoking `INSERT` or adding an INSERT guard, i.e. L18's blast radius). **Separately: production behavioural write-probing was NOT available** — the auto-mode classifier blocks UPDATE-bearing SQL through `supabase db query`, so the synthetic `in_progress -> reviewed` refusal and the legitimate `submitted -> reviewed` success were **not** observed against production. They are proven only by (a) the byte-identical deployed function source and (b) the green real-database `db integration` CI lane at head `dddfae6`. Observing them in production remains an open verification item. |
+| **Blocks** | Neither today. `F-CLIN-004`'s **UPDATE** boundary is now database-enforced in production. It must still **not** be described as fully closed: the INSERT path is open, and no production behavioural probe was run — the fix is *source-verified*, not *behaviour-observed*, in production. |
 
 
 ---
