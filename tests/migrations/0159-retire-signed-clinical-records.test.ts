@@ -77,7 +77,7 @@ describe("0159 — retirement (repo migration-max tripwire)", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0157_"))).toBe(true);
     expect(files.filter((f) => /^0159_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[3-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[4-9]|[7-9]\d)_/.test(f))).toEqual([]);
     // The absolute repo-max pin moved to the 0160 test (0160 = immutable clinical
     // lineage, the follow-up this migration's header points at).
     const nums = files

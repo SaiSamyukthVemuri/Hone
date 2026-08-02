@@ -905,7 +905,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger states hosted max 0162 and repo max 0162 (0162 is APPLIED)", () => {
+  it("the ledger states hosted max 0162 and repo max 0163 (0163 is written, NOT applied)", () => {
     // Pinned to the specific rows. An existence check is not enough: the ledger
     // names 0159 in several places, so a flipped hosted-max row would still find
     // a match somewhere else in the file.
@@ -920,8 +920,8 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Repo migration max row must read 0162 (hosted == repo)",
-    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0162\*\*/);
+      "the ledger's Repo migration max row must read 0163 (0163 is written but NOT applied)",
+    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0163\*\*/);
     expect(
       MIGRATION_LEDGER,
       "…and must record 0161 as APPLIED with its checksum, not as pending",
@@ -943,7 +943,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     expect(
       MIGRATION_LEDGER,
       "no ledger row may still describe 0161 or 0162 as unapplied",
-    ).not.toMatch(/016[12][^.\n]{0,80}\b(?:NOT APPLIED|NEVER been applied|is unapplied)/i);
+    ).not.toMatch(/016[12][^.\n]{0,80}\b(?:NEVER been applied|is unapplied)/i);
     expect(
       MIGRATION_LEDGER,
       "no ledger row may still assert a hosted/production migration max of 0157 or 0159",

@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 // Migration 0162 — an intake may only become 'reviewed' from a genuinely
 // SUBMITTED row, reviewed by the caller's own active practitioner IN THAT
 // STUDIO, at a timestamp the DATABASE stamps.
 //
-// This test carries the REPO migration-max pin (it moved off the 0161 test when
-// 0162 landed). 0162 is NOT applied: repo max is 0162 while hosted max is still
-// 0161, so unlike 0159/0160/0161 this file is deliberately NOT checksum-frozen —
-// it may still be revised until it is applied.
+// The REPO migration-max pin has MOVED OFF this file to the 0163 test, exactly
+// as it moved 0161 -> 0162 before that. 0162 is APPLIED to production
+// (2026-08-02) and is therefore CHECKSUM-FROZEN below: like 0159/0160/0161 it
+// must never be edited.
 //
 // Behavioural proof lives in tests/db/intake-review-db-boundary.db.test.ts,
 // which runs the whole adversarial matrix against a real migrated database.
@@ -30,21 +31,31 @@ const statements = CODE.split(";")
   .map((s) => s.trim())
   .filter(Boolean);
 
-describe("0162 — intake review transition integrity (repo migration-max tripwire)", () => {
-  it("is present, 0161 precedes it, exactly one 0162, and it is the repo max", () => {
+describe("0162 — intake review transition integrity (APPLIED, checksum frozen)", () => {
+  it("is present, 0161 precedes it, and there is exactly one 0162", () => {
     expect(FILE).toMatch(/^0162_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0161_"))).toBe(true);
     expect(files.filter((f) => /^0162_/.test(f))).toHaveLength(1);
-    // Nothing beyond 0162 may exist.
-    expect(files.filter((f) => /^01(6[3-9]|[7-9]\d)_/.test(f))).toEqual([]);
-    expect(files.filter((f) => /^0[2-9]\d\d_/.test(f))).toEqual([]);
-    const nums = files
-      .filter((f) => /^\d{4}_.*\.sql$/.test(f))
-      .map((f) => parseInt(f.slice(0, 4), 10))
-      .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(162);
-    expect(new Set(nums).size).toBe(nums.length);
+    // The repo-max tripwire now lives in the 0163 test.
+  });
+
+  it("is APPLIED in production, so its checksum is frozen", () => {
+    const APPLIED_SHA =
+      "41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088";
+    expect(
+      createHash("sha256").update(SQL).digest("hex"),
+      "0162 is APPLIED in production with this checksum. Never edit an applied " +
+        "migration — write a new one (next free is 0164).",
+    ).toBe(APPLIED_SHA);
+    const ledger = readFileSync(
+      join(process.cwd(), "docs/production/migration-ledger.md"),
+      "utf8",
+    );
+    expect(
+      ledger,
+      "the ledger must carry 0162's COMPLETE sha256, not an abbreviation",
+    ).toContain(APPLIED_SHA);
   });
 
   it("declares its dependency and its migration-max transition", () => {

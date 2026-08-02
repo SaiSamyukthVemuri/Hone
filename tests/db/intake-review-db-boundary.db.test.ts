@@ -971,54 +971,81 @@ describe("F-CLIN-004 / deployed PR #497 application compatibility", () => {
 });
 
 // ===========================================================================
-// RESIDUAL, STILL OPEN AFTER 0162 — the INSERT path.
+// RESIDUAL — CLOSED BY MIGRATION 0163 (was: the INSERT path).
 // ===========================================================================
 //
-// 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT. An
-// authenticated studio member can therefore create a brand-new intake row that
-// is ALREADY `reviewed`, with a NULL submitted_at and a forged historical
-// reviewed_at, because `authenticated` holds INSERT on the table and the INSERT
-// policy's WITH CHECK is only `is_studio_member(studio_id)`.
+// 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT.
+// Until 0163 an authenticated studio member could therefore create a brand-new
+// intake row that was ALREADY `reviewed`, with a NULL submitted_at and a forged
+// historical reviewed_at, because `authenticated` held INSERT on the table and
+// the INSERT policy's WITH CHECK was only `is_studio_member(studio_id)`.
 //
-// This is NOT closed by 0162 and is deliberately out of its scope: it is the
-// broader "authenticated holds direct row DML on clinical tables" limitation
-// already tracked as **L18** in docs/production/known-limitations.md, and
-// closing it means revoking INSERT (or adding an INSERT guard), which is a
-// different blast radius needing its own authorization.
+// THIS BLOCK HAS BEEN INVERTED. Migration 0163 removes the capability outright
+// — it drops `client_intake_forms_member_insert` (plus any legacy FOR ALL
+// policy, defensively) and REVOKEs INSERT from both `authenticated` and `anon`
+// — so the forgery that used to succeed here must now be REFUSED.
 //
-// This case PINS the residual so it cannot be forgotten and so the PR cannot
-// claim more than it delivers. When it is closed, invert this test.
-describe("F-CLIN-004 / RESIDUAL: the INSERT path is NOT closed by 0162", () => {
-  it("KNOWN OPEN — an authenticated member can INSERT a row already 'reviewed' with a forged reviewed_at", async () => {
+// SCOPE: 0163 closes the `client_intake_forms` authenticated INSERT residual
+// ONLY. Broader direct clinical DML findings remain OPEN under **L18**;
+// `authenticated` still holds row DML on sessions, session_blocks,
+// electrolysis_entries, laser_entries and treatment_images. Do NOT read this
+// block as evidence that L18 is closed.
+//
+// The full INSERT-boundary matrix (cross-studio, anon, the surviving
+// service-role writers, SELECT/UPDATE preservation) lives in
+// tests/db/intake-insert-boundary.db.test.ts.
+describe("F-CLIN-004 / RESIDUAL: the INSERT path is CLOSED by 0163", () => {
+  it("an authenticated member can NO LONGER INSERT a row already 'reviewed' with a forged reviewed_at", async () => {
     const forgedId = randomUUID();
     const forgedAt = "2001-01-01T00:00:00.000Z";
 
-    const res = await userQuery(
-      A.userId,
-      `insert into public.client_intake_forms
-         (id, studio_id, client_id, status, responses, submitted_at, reviewed_at, reviewed_by)
-       values ($1, $2, $3, 'reviewed', '{"q":"placeholder"}'::jsonb, null, $4, $5)
-       returning id`,
-      [forgedId, A.studioId, A.clientId, forgedAt, A.practitionerId],
+    let code: string | undefined;
+    try {
+      await userQuery(
+        A.userId,
+        `insert into public.client_intake_forms
+           (id, studio_id, client_id, status, responses, submitted_at, reviewed_at, reviewed_by)
+         values ($1, $2, $3, 'reviewed', '{"q":"placeholder"}'::jsonb, null, $4, $5)
+         returning id`,
+        [forgedId, A.studioId, A.clientId, forgedAt, A.practitionerId],
+      );
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+
+    // THE RESIDUAL IS CLOSED. The insert is refused at the privilege layer.
+    expect(code, "the forged already-reviewed INSERT must be refused").toBe("42501");
+
+    const still = await adminQuery(
+      `select id from public.client_intake_forms where id = $1`,
+      [forgedId],
     );
-
-    // THIS IS THE RESIDUAL. The insert succeeds.
-    expect(res.rowCount).toBe(1);
-    const row = await readRow(forgedId);
-    expect(row.status).toBe("reviewed");
-    expect(row.submitted_at).toBeNull();
-    expect((row.reviewed_at as Date).getTime()).toBe(new Date(forgedAt).getTime());
-
-    // Clean up so no other case sees this synthetic row.
-    await adminQuery(`delete from public.client_intake_forms where id = $1`, [forgedId]);
+    expect(still.rowCount, "no forged row may exist").toBe(0);
   });
 
-  it("0162 still binds the row once it exists: the forged row cannot then be UPDATED into a new review", async () => {
-    // Even though the row was born 'reviewed', the UPDATE guard applies from
-    // then on — attribution cannot be rewritten and it cannot regress.
+  it("a plain authenticated INSERT is refused too — the capability is gone, not merely constrained", async () => {
+    // 0163 removes the capability rather than policing the values, so even a
+    // perfectly ordinary in_progress row cannot be created from the browser
+    // role. Both legitimate writers use the service-role admin client.
+    let code: string | undefined;
+    try {
+      await userQuery(
+        A.userId,
+        `insert into public.client_intake_forms (studio_id, client_id) values ($1, $2)`,
+        [A.studioId, A.clientId],
+      );
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+    expect(code).toBe("42501");
+  });
+
+  it("0162 still binds a service-role-created row: it cannot be UPDATED into a new review", async () => {
+    // The row can now only be born through the service-role path, but once it
+    // exists the 0162 UPDATE guard applies exactly as before — attribution
+    // cannot be rewritten and the status cannot regress.
     const forgedId = randomUUID();
-    await userQuery(
-      A.userId,
+    await adminQuery(
       `insert into public.client_intake_forms
          (id, studio_id, client_id, status, responses, submitted_at, reviewed_at, reviewed_by)
        values ($1, $2, $3, 'reviewed', '{"q":"placeholder"}'::jsonb, null, now(), $4)`,
