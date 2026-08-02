@@ -210,6 +210,16 @@ function parseSubmittedChips(
   return { ok: true, chips: normalizeChips(parsed) };
 }
 
+// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
+// This action is BLOCK-COUPLED and is therefore deliberately NOT migrated to a
+// narrow entry command. When the submitted form omits `block_id` — a legacy
+// caller shape this action still supports — it calls ensureBlockForSession,
+// which INSERTs a session_blocks row before the electrolysis entry is written.
+// The two writes are in separate transactions, so a failed entry write leaves
+// the newly created block behind. Making it atomic needs a command that owns
+// BOTH writes, i.e. session_blocks work. It moves in the combined
+// session_blocks/electrolysis_entries phase, and this exception expires with
+// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
 export async function addElectrolysisEntryAction(
   formData: FormData,
 ): Promise<AddElectrolysisEntryResult> {
@@ -440,13 +450,23 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
       : null;
 
   const supabase = await createClient();
-  const { error } = await supabase.from("laser_entries").insert({
-    session_id: sessionId,
-    zone,
-    session_number: Number.isFinite(sessionNumber) ? sessionNumber : null,
-    equipment_params:
+  // L18 Phase 1A: written through the narrow reviewed command
+  // `create_laser_entry` (migration 0164) rather than a direct table INSERT.
+  // The command is SECURITY DEFINER with a pinned empty search_path; it
+  // requires a non-null auth.uid(), resolves the studio and client from the
+  // trusted `sessions` row, requires the caller to be an ACTIVE practitioner of
+  // that studio, and re-checks the asserted client. This action writes ONLY
+  // laser_entries — it has no session_blocks dependency — which is why it is
+  // the one writer this phase could move atomically. The thrown message shape
+  // is unchanged.
+  const { error } = await supabase.rpc("create_laser_entry", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_zone: zone,
+    p_session_number: Number.isFinite(sessionNumber) ? sessionNumber : null,
+    p_equipment_params:
       Object.keys(equipmentParams).length > 0 ? equipmentParams : null,
-    observation_notes: nullableString(formData.get("observation_notes")),
+    p_observation_notes: nullableString(formData.get("observation_notes")),
   });
 
   if (error) throw new Error(`Failed to add entry: ${error.message}`);

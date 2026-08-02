@@ -914,6 +914,15 @@ export type CreateAreaWithEntryInput = {
   probeLotConfirmed?: boolean;
 };
 
+// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
+// This action writes session_blocks AND electrolysis_entries as ONE user
+// intent, so it is deliberately NOT migrated to a narrow entry command in L18
+// Phase 1A. Splitting only the entry half onto an RPC would leave the pair
+// straddling two transactions — the same non-atomicity that exists today.
+// Making it genuinely atomic needs a command that owns BOTH writes, which is
+// session_blocks work. It moves in the combined
+// session_blocks/electrolysis_entries phase, and this exception expires with
+// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
 export async function createTreatmentAreaWithEntryAction(
   input: CreateAreaWithEntryInput,
 ): Promise<BlockResult> {
@@ -1179,6 +1188,15 @@ export type UpdateAreaWithEntryInput = {
   probeLotConfirmed?: boolean;
 };
 
+// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
+// This action writes session_blocks AND electrolysis_entries as ONE user
+// intent, so it is deliberately NOT migrated to a narrow entry command in L18
+// Phase 1A. Splitting only the entry half onto an RPC would leave the pair
+// straddling two transactions — the same non-atomicity that exists today.
+// Making it genuinely atomic needs a command that owns BOTH writes, which is
+// session_blocks work. It moves in the combined
+// session_blocks/electrolysis_entries phase, and this exception expires with
+// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
 export async function updateTreatmentAreaWithEntryAction(
   input: UpdateAreaWithEntryInput,
 ): Promise<BlockResult> {

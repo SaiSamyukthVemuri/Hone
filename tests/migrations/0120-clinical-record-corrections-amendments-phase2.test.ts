@@ -25,7 +25,7 @@ describe("0120 — repo migration-max tripwire", () => {
     // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
     // (per-practitioner availability). Bump this tripwire consciously
     // when a new migration lands.
-    expect(maxNum).toBe(163); // 0163 = intake INSERT boundary (NOT APPLIED)
+    expect(maxNum).toBe(165); // 0165 = service_role EXECUTE repair (NOT APPLIED)
     // DRAFT PR #481 carries a different, superseded migration under that number on a
     // retained branch, and two artifacts must never share a number)
     expect(FILE).toMatch(/^0120_/);

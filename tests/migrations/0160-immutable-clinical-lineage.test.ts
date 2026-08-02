@@ -35,12 +35,12 @@ describe("0160 — immutable clinical lineage", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0159_"))).toBe(true);
     expect(files.filter((f) => /^0160_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[4-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(163); // 0163 = intake INSERT boundary (NOT APPLIED)
+    expect(nums[nums.length - 1]).toBe(165); // 0165 = service_role EXECUTE repair (NOT APPLIED)
     expect(new Set(nums).size).toBe(nums.length);
   });
 
@@ -78,31 +78,34 @@ describe("0160 — immutable clinical lineage", () => {
     // 0160 itself remains applied and immutable — that is asserted above.
     expect(
       dbRls,
-      "docs/09 must state the production migration max is 0163",
-    ).toMatch(/production migration max = 0163/i);
+      "docs/09 must state the production migration max is 0165",
+    ).toMatch(/production migration max = 0165/i);
     // 0163 is now APPLIED, so repo max and hosted max MATCH again. (This pin
     // oscillates by design: parity while nothing is pending, split while a
     // migration is written and unapplied.)
     expect(
       dbRls,
-      "docs/09 must record 0163 as applied, not as written-but-unapplied",
-    ).toMatch(/0163[\s\S]{0,200}applied 2026-08-02/i);
+      "docs/09 must record 0165 as applied, not as written-but-unapplied",
+    ).toMatch(/0165[\s\S]{0,200}applied 2026-08-02/i);
+    // 0164 is written but NOT APPLIED, so repo and hosted deliberately DIFFER
+    // again. (This pin oscillates by design: parity while nothing is pending,
+    // split while a migration is written and unapplied.)
     expect(
       dbRls,
       "docs/09 must state repository and hosted migration state match",
     ).toMatch(/repository and hosted migration state \*{0,2}match/i);
     expect(
       dbRls,
-      "docs/09 must not still describe 0163 as NOT APPLIED",
-    ).not.toMatch(/0163[^.\n]{0,120}\bNOT\s*\n?APPLIED\b/i);
+      "docs/09 must not still describe 0165 as NOT APPLIED",
+    ).not.toMatch(/0165[^.\n]{0,120}\bNOT\s*\n?APPLIED\b/i);
     expect(
       dbRls,
       "docs/09 must not still claim hosted max is 0161",
     ).not.toMatch(/hosted max is (?:still )?0161/i);
     expect(
       dbRls,
-      "docs/09 must name 0164 as the next number to allocate",
-    ).toMatch(/Current repo max `0163`, so the next is\s*`0164`/i);
+      "docs/09 must name 0166 as the next number to allocate",
+    ).toMatch(/Current repo max `0165`, so the next is\s*`0166`/i);
   });
 
   it("the applied 0160 checksum is pinned in the ledger and matches the file on disk", () => {

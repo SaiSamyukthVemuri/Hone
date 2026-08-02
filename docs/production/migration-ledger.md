@@ -14,20 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-02, post-0163 apply)
+## Current state (verified 2026-08-02, post-0165 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0163** (`0163_revoke_authenticated_intake_insert.sql`, applied 2026-08-02T17:37:23Z→17:37:27Z) |
-| **Repo migration max** | **0163** — **hosted == repo.** Parity restored by the 2026-08-02T17:37Z apply; see the 0163 record below. Next free number is **0164**. |
-| **Total migrations in repo** | **162** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162`, `0163` — **no `0158`**) |
-| **Total applied in production** | **162**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
+| **Hosted (production) migration max** | **0165** (`0165_revoke_service_role_laser_entry_execute.sql`, applied 2026-08-02T20:20:02Z→20:20:06Z) |
+| **Repo migration max** | **0165** — **hosted == repo.** Parity restored by the 2026-08-02T20:20Z apply. Next free number is **0166**. |
+| **Total migrations in repo** | **164** (`0001` … `0157`, `0159` … `0165` — **no `0158`**) |
+| **Total applied in production** | **164**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
 | **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at **every** version, including `0162` — there is no longer any pending row. `0159`/`0160` Remote populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** **`0162` was APPLIED 2026-08-02 and is present in Remote exactly once (sha256 `41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088`).** |
 
-**Every migration `0001`–`0157` plus `0159`, `0160`, `0161`, `0162` and `0163` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159`–`0165` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -49,6 +49,52 @@ merge — with two deliberate exceptions noted below.
 - **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0165 — APPLIED 2026-08-02
+
+**`0165_revoke_service_role_laser_entry_execute.sql` — revoke the unintended `service_role`
+EXECUTE that `0164` left on `create_laser_entry`.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0165_revoke_service_role_laser_entry_execute.sql` |
+| **Status** | ✅ **APPLIED 2026-08-02T20:20:02Z → 20:20:06Z** at authorized head `2fe88d6e176b13b3620921280e75182e6cdedae2` (CI run `30764322410`, success at that exact sha). Hosted max `0164`→**`0165`**; applied 163→164; repo == hosted. No error, no notices. |
+| **Frozen checksum** | `sha256 b3a150bd1d6478b7eaafe42f0ec599bcae123bacb8bc7106085196f921492193`. **FROZEN — never edit.** |
+| **Post-apply verification** | ACL `{postgres=X/postgres,authenticated=X/postgres}` — was `{postgres,authenticated,service_role}`. `service_role` EXECUTE **true → false**; `authenticated` **true**; `anon` **false**; PUBLIC **0 ACL entries**. Function UNCHANGED: `pg_get_functiondef` md5 **`b25acad06fda86adb9a85e334ca0570d`** identical before and after, `prosecdef=true`, `proconfig=search_path=""`, owner `postgres` — REVOKE does not touch the definition. Direct table DML unchanged: `laser_entries` INSERT **true**, `electrolysis_entries` INSERT **true**. ZERO clinical rows changed across the apply (laser 2, electrolysis 44, sessions 82 before and after). |
+| **Class** | One `REVOKE` on one exact function signature. **No** function recreation, body change, schema, policy, trigger or data change; **no** table-privilege change; **no** `ALTER DEFAULT PRIVILEGES` change. |
+| **Defect** | `0164` intended EXECUTE for `authenticated` only and said so in its header. Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` AND `service_role` at create time; `0164` revoked only `public` and `anon`. Deployed ACL after the apply: `{postgres=X, authenticated=X, service_role=X}`. |
+| **Precedent** | Identical class to `0129` (revoked only `from public`, leaving `anon`) which `0130` repaired. `0164` quoted that lesson and reproduced it one role over. |
+| **Exposure** | **None found.** `create_laser_entry`'s first statement requires a non-null `auth.uid()`; a `service_role` caller has no JWT so it raises `check_violation` before touching a row. A least-privilege deviation and a false source comment, not a reachable path. |
+| **Preserved** | `authenticated` EXECUTE; `anon`/PUBLIC already none; `postgres` ownership; the function body, `prosecdef` and `search_path` (no `create or replace`); all direct table DML. |
+| **Prevention** | `tests/security/clinical-rpc-grant-guard.test.ts` now requires every authenticated-only clinical RPC to revoke from `public`, `anon` AND `service_role` explicitly, searching all migrations so a later repair counts. `returns trigger` functions are excluded — they are not directly callable (`0A000`), so EXECUTE on them is inert. |
+| **Transaction + locks** | Own `begin; … commit;` with `set local lock_timeout = '5s'`, per the 0159–0164 precedent. |
+| **Editable?** | **NO — FROZEN as of the 2026-08-02 apply.** `0159`–`0165` are applied and must never be edited. |
+| **Proof** | `tests/migrations/0165-revoke-service-role-laser-entry-execute.test.ts` (19 source-contract cases + the repo migration-max tripwire, moved here from the 0164 test) and `tests/db/entry-create-commands.db.test.ts` (23 cases; asserts the full post-0165 ACL is exactly `{authenticated, postgres}` with `service_role` **false** and `postgres` still owner). |
+
+### 0164 — APPLIED 2026-08-02
+
+**`0164_clean_entry_create_commands.sql` — L18 Phase 1A: a narrow reviewed create command for the
+ONE genuinely entry-only writer (`addLaserEntryAction`).**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0164_clean_entry_create_commands.sql` |
+| **Status** | ✅ **APPLIED 2026-08-02T19:39:45Z → 19:39:49Z** at authorized head `eca934b5cc9e1fa8a5149d87f8e04793d6975d12` (CI run `30762245378`, success at that exact sha). Hosted max `0163`→**`0164`**; applied 162→163. No error, no notices, no 25P01/55P03. |
+| **Frozen checksum** | `sha256 a1f3aa2754378ee5c171d62fa2a60b5c787801953f4a887b031db4ec439a3826`. **FROZEN — never edit.** |
+| **Post-apply verification** | `create_laser_entry` present exactly once; `create_electrolysis_entry` absent (count 0); `prosecdef=true`, `proconfig=search_path=""`; `authenticated` EXECUTE **true**, `anon` **false**, PUBLIC **false** (0 PUBLIC ACL entries); direct DML on `laser_entries` and `electrolysis_entries` both **still true** — additive confirmed; ZERO clinical rows changed (electrolysis 43, laser 2, sessions 81, blocks 59; both id-hashes byte-identical across the apply). |
+| ⚠️ **Defect found AFTER the apply** | **`service_role` EXECUTE was `true`, contrary to this migration's own header claim of "deliberately no service_role grant".** Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `service_role` at create time and `0164` revoked only from `public` and `anon`. Deployed ACL: `{postgres=X/postgres, authenticated=X/postgres, service_role=X/postgres}`. Same defect class as `0129`→`0130`, one role over. **No exposure found** — the command requires a non-null `auth.uid()`, so a service-role caller raises `check_violation` before touching a row. Repaired by **`0165`** (written, NOT applied). `0164` is frozen and was **not** edited. |
+| **Class** | **Purely additive** — ONE SECURITY DEFINER function plus its EXECUTE grants. **No** schema, column, constraint, index, policy, trigger or grant-removal change; **no** data change, backfill or deletion. **Nothing is revoked**, so direct DML keeps working throughout this phase and the deployed application is unaffected by the apply. |
+| **Finding** | `L18` — `authenticated` holds direct row DML on five clinical tables. Closing it requires moving every legitimate runtime writer onto narrow commands FIRST, deploying, and only then revoking. This is the first step. |
+| **Writer census** | Phase 0 recon verified **25** runtime write sites, **not the 26** the findings register records — the register's figure came from a proximity grep; the corrected count follows each `.from()` statement chain to bracket depth zero. See [l18-command-inventory.md](./l18-command-inventory.md). |
+| **What it adds** | `create_laser_entry(...)` — SECURITY DEFINER; `search_path = ''`; requires a non-null `auth.uid()`; resolves `studio_id`/`client_id` from the trusted `sessions` row; requires the caller to be an **ACTIVE practitioner of that same studio** matched by `auth.uid()`; re-checks the asserted client against the session's real client; explicit typed parameters only; no dynamic SQL; no generic JSON patch; returns only the new row id. |
+| **Attribution** | The command takes no studio, practitioner or actor parameter, so a caller cannot assert another practitioner or redirect a row to another tenant. |
+| **Validation** | Unchanged and un-reimplemented: every clinical value passes through verbatim, so the existing CHECK constraints and the 0119/0159 `guard_finalized_clinical_write` and 0160 `guard_immutable_clinical_lineage` triggers remain the sole authority. |
+| **Privileges** | EXECUTE revoked from `PUBLIC` **and** `anon` explicitly (the 0129/0130 lesson), granted to `authenticated` only. **No service-role command** — ordinary practitioner charting must not run through an admin client, and both commands require a non-null `auth.uid()` anyway. `postgres` retains ownership. |
+| **Scope — honest** | **LASER-ONLY.** PARTIAL — the clean laser-entry creation path uses a narrow command. Electrolysis entry writers remain direct because each relevant user workflow can depend on `session_blocks` and must move atomically in the combined phase. Direct table grants remain in place. **All three** electrolysis writers are block-coupled and deferred: `createTreatmentAreaWithEntryAction` and `updateTreatmentAreaWithEntryAction` write a block then an entry, and `addElectrolysisEntryAction` can create a default `session_blocks` row through `ensureBlockForSession` before creating the electrolysis entry; the two writes are not atomic today and must move together. ⚠️ **Correction:** an earlier revision of this migration wrongly classified `addElectrolysisEntryAction` as cleanly separable and created a `create_electrolysis_entry` command; both were removed. **`electrolysis_entries` is NOT command-bound. Neither entry table is command-boundary complete. L18 is NOT closed.** |
+| **Drift guard** | `tests/security/entry-direct-dml-guard.test.ts` fails CI if a runtime direct writer reappears. Exactly **three** exceptions, pinned to exact file AND function, each labelled `TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION` in source; the count is asserted, so a fourth cannot be appended quietly. It also asserts that `laser_entries` has **no** direct writer left and that electrolysis direct DML is **not** claimed closed. It is not a growable allowlist. |
+| **Transaction + locks** | Opens its own `begin; … commit;` with `set local lock_timeout = '5s'`, per the 0159–0163 precedent. |
+| **Editable?** | **NO — FROZEN as of the 2026-08-02 apply.** `0159`–`0164` are applied and must never be edited. |
+| **Proof** | `tests/db/entry-create-commands.db.test.ts` (22 cases on a fresh pinned reset) and `tests/migrations/0164-clean-entry-create-commands.test.ts` (source contract + the repo migration-max tripwire, moved here from the 0163 test), plus `tests/app/sessions/entry-actions-use-commands.test.ts`. |
 
 ### 0163 — APPLIED 2026-08-02
 

@@ -20,7 +20,7 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0156_"))).toBe(true);
     expect(files.filter((f) => /^0157_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[4-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
     // The absolute repo-max pin moved to the 0159 test (0159 = retire signed
     // clinical records; 0158 is intentionally skipped, see that test).
   });
