@@ -98,17 +98,87 @@ describe("PR CI — path-aware lane selection", () => {
     expect(CI).toMatch(/needs\.browser-e2e-shard\.result/);
     expect(CI).toMatch(/skipped\)/);
     expect(CI).toMatch(/browser_run.*= "true".*exit 1|exit 1/s);
-    expect(CI).toMatch(/all browser shards passed/);
+    expect(CI).toMatch(/browser shard\(s\) passed/);
   });
 
-  it("extended coverage is split across two separate shard jobs", () => {
-    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2\]" : "\[1\]"\}/);
-    expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/2/);
+  it("extended coverage creates exactly FOUR shards", () => {
+    // Run 30767725631 cancelled both 2-shard jobs at the 10-minute hard
+    // timeout with ZERO test failures (shard 2 reached 72/90). Four shards
+    // halve the per-shard load to ~45 tests.
+    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[1\]"\}/);
+    expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
     expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
+  });
+
+  it("targeted coverage remains a SINGLE browser job", () => {
+    expect(CI).toMatch(/: "\[1\]"/);
+  });
+
+  it("the aggregator requires all four extended shards", () => {
+    expect(CI).toMatch(/EXPECTED=\$\(node -e/);
+    expect(CI).toMatch(/must run exactly 4 shards/);
+  });
+
+  it("a CANCELLED shard fails the aggregator", () => {
+    expect(CI).toMatch(/cancelled\)/);
+    expect(CI).toMatch(/were CANCELLED[\s\S]{0,80}treated as failure/);
+    // The cancelled branch must exit non-zero.
+    const seg = CI.slice(CI.indexOf("cancelled)"), CI.indexOf("cancelled)") + 400);
+    expect(seg).toMatch(/exit 1/);
+  });
+
+  it("a MISSING shard result fails the aggregator when coverage was required", () => {
+    expect(CI).toMatch(/shard result is MISSING while browser coverage was required/);
+    expect(CI).toMatch(/if \[ -z "\$\{SHARD_RESULT:-\}" \]/);
+  });
+
+  it("the extended shard hard timeout EXCEEDS its performance target", () => {
+    // Target <10 min per extended shard; hard timeout 12. A job whose hard
+    // timeout equals its target gets cancelled for being merely slow, which is
+    // exactly how run 30767725631 was misreported as a failure.
+    expect(CI).toMatch(
+      /timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 12 \|\| 10 \}\}/,
+    );
+    expect(CI).toMatch(/hard timeout 12 min/i);
+    expect(CI).toMatch(/target <10 min per shard/i);
   });
 
   it("shard traces are uploaded independently", () => {
     expect(CI).toMatch(/playwright-traces-shard-\$\{\{ matrix\.shard \}\}/);
+  });
+
+  it("EVERY browser-driving job caches Playwright browsers", () => {
+    // The previous head claimed caching but wired it only into nightly.yml, so
+    // all four PR browser jobs re-downloaded Chromium + FFmpeg + headless shell
+    // on every run.
+    const caches = CI.match(/path: ~\/\.cache\/ms-playwright/g) ?? [];
+    expect(caches.length, "all four browser jobs must cache").toBe(4);
+    expect((CI.match(/uses: actions\/cache@v4/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("the cache key is bound to runner OS and the exact Playwright version", () => {
+    expect(CI).toMatch(
+      /key: playwright-\$\{\{ runner\.os \}\}-\$\{\{ steps\.pw\.outputs\.version \}\}-\$\{\{ hashFiles\('package-lock\.json'\) \}\}/,
+    );
+    expect(CI).toMatch(/require\('@playwright\/test\/package\.json'\)\.version/);
+  });
+
+  it("a cache HIT skips the browser download and installs only system deps", () => {
+    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(4);
+    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit == 'true'/g) ?? []).length).toBe(4);
+    expect((CI.match(/playwright install-deps chromium/g) ?? []).length).toBe(4);
+  });
+
+  it("no browser download runs unconditionally", () => {
+    const lines = CI.split("\n");
+    const unguarded: number[] = [];
+    lines.forEach((l, i) => {
+      if (l.includes("playwright install --with-deps chromium")) {
+        const ctx = lines.slice(Math.max(0, i - 4), i).join("\n");
+        if (!ctx.includes("cache-hit != 'true'")) unguarded.push(i + 1);
+      }
+    });
+    expect(unguarded, "every browser download must be behind a cache-miss guard").toEqual([]);
   });
 
   it("emits timing diagnostics including a timeout hint", () => {
@@ -144,8 +214,9 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
-    // Targeted 8 / extended 10, expressed conditionally.
-    expect(CI).toMatch(/timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 10 \|\| 8 \}\}/);
+    // Targeted hard timeout 10 (target ~6), extended shard hard timeout 12
+    // (target <10). Hard timeout must EXCEED the target — see run 30767725631.
+    expect(CI).toMatch(/timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 12 \|\| 10 \}\}/);
   });
 
   it("every job declares an explicit timeout", () => {

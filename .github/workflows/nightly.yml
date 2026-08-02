@@ -47,26 +47,41 @@ jobs:
             needs_supabase: true
             needs_browsers: false
             timeout: 30
-          - lane: "core browser e2e"
-            command: "npm run test:e2e"
+          - lane: "core browser e2e (shard 1/4)"
+            command: "npx playwright test --shard=1/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 40
+            timeout: 15
+          - lane: "core browser e2e (shard 2/4)"
+            command: "npx playwright test --shard=2/4"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 15
+          - lane: "core browser e2e (shard 3/4)"
+            command: "npx playwright test --shard=3/4"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 15
+          - lane: "core browser e2e (shard 4/4)"
+            command: "npx playwright test --shard=4/4"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 15
           - lane: "payment e2e (fake stripe)"
             command: "npm run test:e2e:payment"
             needs_supabase: true
             needs_browsers: true
-            timeout: 40
+            timeout: 15
           - lane: "mobile completion e2e"
             command: "npm run test:e2e:mobile"
             needs_supabase: true
             needs_browsers: true
-            timeout: 40
+            timeout: 15
           - lane: "google e2e (fake google)"
             command: "npm run test:e2e:google"
             needs_supabase: true
             needs_browsers: true
-            timeout: 40
+            timeout: 15
 
     env:
       NEXT_PUBLIC_APP_ORIGIN: "http://localhost:3111"
@@ -94,17 +109,28 @@ jobs:
 
       # Browsers are only fetched for the lanes that actually drive one, and the
       # download is cached across runs.
+      - name: Resolve Playwright version
+        id: pw
+        if: matrix.needs_browsers
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
+        id: pw-cache
         if: matrix.needs_browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: playwright-${{ runner.os }}-
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
 
-      - name: Install Playwright browsers
-        if: matrix.needs_browsers
+      - name: Install Playwright browsers (cache miss)
+        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       # Supabase is only started for lanes that need a database. The DB-less
       # lane skips several minutes of container startup entirely.

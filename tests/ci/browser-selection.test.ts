@@ -124,11 +124,24 @@ describe("acceptance case 7 — shared browser fixture", () => {
       expect(s.reason).toMatch(/shared/i);
     }
   });
-  it("extended coverage means every spec, and is sharded", () => {
+  it("extended coverage means every spec, and is sharded into four", () => {
     const p = plan("e2e/helpers/seed.ts");
     expect(p.browser.extended).toBe(true);
     expect(p.browser.sharded).toBe(true);
     expect(specsForGroups([EXTENDED])).toBeNull(); // null = run everything
+  });
+
+  it("docs-only and migration-only still select NO browser job", () => {
+    expect(sel("docs/production/migration-ledger.md").groups).toEqual([]);
+    expect(sel("supabase/migrations/0166_x.sql").groups).toEqual([]);
+    expect(plan("supabase/migrations/0166_x.sql").browser.groups).toEqual([]);
+  });
+
+  it("migration-only still skips payment, Google and mobile", () => {
+    const p = plan("supabase/migrations/0166_x.sql");
+    expect(laneRuns(p, "payment browser")).toBe(false);
+    expect(laneRuns(p, "google browser")).toBe(false);
+    expect(laneRuns(p, "mobile completion")).toBe(false);
   });
 });
 

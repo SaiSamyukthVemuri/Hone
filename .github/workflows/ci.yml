@@ -113,7 +113,7 @@ jobs:
                 // Extended coverage is split across two SEPARATE JOBS, so each
                 // shard gets its own runner and its own Supabase stack. That
                 // preserves the isolation the single-worker config protects.
-                `browser_shards=${r.extended ? "[1,2]" : "[1]"}`,
+                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1]"}`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -312,8 +312,14 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    # Targeted PR lane budget is 8 min; an extended shard is allowed 10.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 10 || 8 }}
+    # HARD TIMEOUT is deliberately ABOVE the performance target, so a job that
+    # is merely slow fails loudly on its own terms instead of being cancelled at
+    # exactly its target. Run 30767725631 was cancelled at a 10-minute hard
+    # timeout while shard 2 had completed 72/90 tests with ZERO failures —
+    # a budget problem misreported as a test failure.
+    #   targeted  : target ~6 min, hard timeout 10 min
+    #   extended  : target <10 min per shard, hard timeout 12 min
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 12 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -355,8 +361,31 @@ jobs:
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
 
-      - name: Install Playwright Chromium
+      # Playwright browsers are ~150MB and were previously re-downloaded on
+      # every browser job (Chromium + FFmpeg + headless shell). Keyed to the
+      # EXACT resolved Playwright version so a dependency bump busts the cache
+      # rather than silently reusing incompatible binaries.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        # Browser binaries come from the cache; only OS-level libs are needed.
+        run: npx playwright install-deps chromium
 
       - name: Record setup duration
         id: setup_done
@@ -368,8 +397,8 @@ jobs:
           set -euo pipefail
           echo "reason: ${{ needs.changes.outputs.browser_reason }}"
           if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
-            echo "extended coverage — native Playwright shard ${{ matrix.shard }} of 2"
-            npx playwright test --shard=${{ matrix.shard }}/2
+            echo "extended coverage — native Playwright shard ${{ matrix.shard }} of 4"
+            npx playwright test --shard=${{ matrix.shard }}/4
           else
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
             npx playwright test ${{ needs.changes.outputs.browser_specs }}
@@ -417,20 +446,59 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Aggregate browser shard results
+        env:
+          SHARD_RESULT: ${{ needs.browser-e2e-shard.result }}
+          BROWSER_RUN: ${{ needs.changes.outputs.browser_run }}
+          FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
+          EXTENDED: ${{ needs.changes.outputs.browser_extended }}
+          SHARDS: ${{ needs.changes.outputs.browser_shards }}
         run: |
-          RESULT="${{ needs.browser-e2e-shard.result }}"
-          echo "shard job result: $RESULT"
-          echo "browser lane requested: ${{ needs.changes.outputs.browser_run }}"
-          case "$RESULT" in
+          set -euo pipefail
+          REQUIRED="false"
+          if [ "$BROWSER_RUN" = "true" ] || [ "$FULL_MATRIX" = "true" ]; then REQUIRED="true"; fi
+          EXPECTED=$(node -e 'const s=process.env.SHARDS||"[1]";console.log(JSON.parse(s).length)')
+
+          echo "shard job result : ${SHARD_RESULT:-<missing>}"
+          echo "browser required : $REQUIRED"
+          echo "extended         : $EXTENDED"
+          echo "expected shards  : $EXPECTED"
+
+          # A MISSING result is treated as failure, not success. `needs.<job>.result`
+          # is empty only when the matrix job never materialised, which for a
+          # required lane means something went wrong upstream.
+          if [ -z "${SHARD_RESULT:-}" ]; then
+            if [ "$REQUIRED" = "true" ]; then
+              echo "::error::browser shard result is MISSING while browser coverage was required"
+              exit 1
+            fi
+            echo "no shard result and no browser coverage required — satisfied"
+            exit 0
+          fi
+
+          if [ "$EXTENDED" = "true" ] && [ "$EXPECTED" -ne 4 ]; then
+            echo "::error::extended coverage must run exactly 4 shards, got $EXPECTED"
+            exit 1
+          fi
+
+          case "$SHARD_RESULT" in
             success)
-              echo "all browser shards passed"; exit 0 ;;
+              echo "all $EXPECTED browser shard(s) passed"
+              exit 0 ;;
             skipped)
-              if [ "${{ needs.changes.outputs.browser_run }}" = "true" ]; then
-                echo "shards were skipped but the diff required browser coverage"; exit 1
+              if [ "$REQUIRED" = "true" ]; then
+                echo "::error::shards were skipped but the diff required browser coverage"
+                exit 1
               fi
-              echo "no browser coverage required for this diff — satisfied"; exit 0 ;;
+              echo "no browser coverage required for this diff — satisfied"
+              exit 0 ;;
+            cancelled)
+              # Run 30767725631: shards were cancelled at their hard timeout with
+              # zero test failures. That must FAIL the required check, never pass.
+              echo "::error::browser shard(s) were CANCELLED (timeout or manual cancel) — treated as failure"
+              exit 1 ;;
             *)
-              echo "browser shards did not pass (result: $RESULT)"; exit 1 ;;
+              echo "::error::browser shard(s) did not pass (result: $SHARD_RESULT)"
+              exit 1 ;;
           esac
 
   # PR #419. Dedicated payment browser E2E lane. Same LOCAL-only posture as
@@ -490,8 +558,31 @@ jobs:
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
 
-      - name: Install Playwright Chromium
+      # Playwright browsers are ~150MB and were previously re-downloaded on
+      # every browser job (Chromium + FFmpeg + headless shell). Keyed to the
+      # EXACT resolved Playwright version so a dependency bump busts the cache
+      # rather than silently reusing incompatible binaries.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        # Browser binaries come from the cache; only OS-level libs are needed.
+        run: npx playwright install-deps chromium
 
       - name: Payment browser E2E (quick checkout, guarded fake Stripe)
         run: npm run test:e2e:payment
@@ -568,9 +659,27 @@ jobs:
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
 
-      - name: Install Playwright Chromium
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
         # Both projects (iPhone-profile + Pixel 5 control) run on Chromium.
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Mobile completion browser E2E (chromium iphone-profile + control)
         run: npm run test:e2e:mobile
@@ -638,8 +747,31 @@ jobs:
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
 
-      - name: Install Playwright Chromium
+      # Playwright browsers are ~150MB and were previously re-downloaded on
+      # every browser job (Chromium + FFmpeg + headless shell). Keyed to the
+      # EXACT resolved Playwright version so a dependency bump busts the cache
+      # rather than silently reusing incompatible binaries.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        # Browser binaries come from the cache; only OS-level libs are needed.
+        run: npx playwright install-deps chromium
 
       - name: Synthetic Google browser E2E (dual destination, guarded fake Google)
         run: npm run test:e2e:google

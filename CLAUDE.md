@@ -136,9 +136,14 @@ was the single test step** — 53 specs running serially (`workers: 1`). Setup w
 only ~2.6 min, so caching setup was never the win.
 
 Now: a PR runs only the browser **groups** its diff can affect (plus `smoke`),
-and genuinely broad runs are **sharded across two separate jobs** — separate
-runners mean separate Supabase stacks, preserving the isolation the
-single-worker config protects.
+and genuinely broad runs are **sharded across four separate jobs** (~45 specs
+each) — separate runners mean separate Supabase stacks, preserving the
+isolation the single-worker config protects.
+
+Playwright browsers are cached in **every** browser-driving job, keyed to
+runner OS + the exact resolved `@playwright/test` version + the lockfile hash.
+On a cache hit only `playwright install-deps` runs; the ~150MB browser download
+is skipped.
 
 Shared paths (`e2e/helpers/**`, `playwright.config.*`, `lib/supabase/**`,
 `middleware.*`, app shell, `package.json`, `.github/workflows/**`) force
@@ -187,16 +192,20 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   containment, deployment success where applicable, and a clean tree.
 - **Green CI is not merge authorization.**
 
-Every required job has a latency budget; a job exceeding it **fails clearly**
-rather than appearing stuck:
+**A hard timeout must always EXCEED its performance target.** Run
+`30767725631` set both to 10 minutes, so two extended shards were *cancelled*
+at exactly their target — shard 2 had completed 72/90 tests with **zero
+failures**. A budget problem was reported as a test failure. Targets and hard
+timeouts are now separate numbers:
 
 | Job | Budget |
 |---|---|
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser lane | 8 min |
-| extended browser shard | 10 min |
+| targeted browser lane | target ~6 min · **hard timeout 10 min** |
+| extended browser shard (×4) | target <10 min · **hard timeout 12 min** |
+| nightly browser shard (×4) | hard timeout 15 min |
 | payment / Google / mobile | 10 min each |
 
 ---
